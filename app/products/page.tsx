@@ -13,14 +13,14 @@ const productCards = [
   {
     title: "Product Templates",
     description: "Reusable product structures and specification fields.",
-    href: "#",
-    action: "Coming soon",
+    href: "/products/templates",
+    action: "Manage",
   },
   {
     title: "Price Components",
-    description: "Future setup for pricing inputs, components, and update review.",
+    description: "Components are managed inside each product template for now.",
     href: "#",
-    action: "Coming soon",
+    action: "Open a template",
   },
 ];
 
