@@ -1,6 +1,28 @@
+import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
+
+const productCards = [
+  {
+    title: "Brands & Categories",
+    description: "Manage brand records, main categories, and nested sub categories.",
+    href: "/products/brands",
+    action: "Manage",
+  },
+  {
+    title: "Product Templates",
+    description: "Reusable product structures and specification fields.",
+    href: "#",
+    action: "Coming soon",
+  },
+  {
+    title: "Price Components",
+    description: "Future setup for pricing inputs, components, and update review.",
+    href: "#",
+    action: "Coming soon",
+  },
+];
 
 export default async function ProductsPage() {
   const { user, displayName } = await requireActiveUser();
@@ -11,17 +33,51 @@ export default async function ProductsPage() {
       <div className="flex-1">
         <TopBar
           title="Products & Templates"
-          description="Placeholder workspace for product records, reusable line items, templates, and specification inputs."
+          description="Manage product foundations before templates, pricing, and quotation logic are added."
           userDisplayName={displayName}
           userEmail={user.email}
         />
         <main className="px-5 py-6 sm:px-8">
-          <section className="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-zinc-950">Coming next</h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">
-              Product catalog structure, template fields, option groups, and
-              price update review tools will be shaped here in a later phase.
-            </p>
+          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {productCards.map((card) => {
+              const isReady = card.href !== "#";
+              const className =
+                "rounded-lg border border-zinc-200 bg-white p-5 shadow-sm transition";
+
+              if (!isReady) {
+                return (
+                  <div key={card.title} className={`${className} opacity-75`}>
+                    <h2 className="text-base font-semibold text-zinc-950">
+                      {card.title}
+                    </h2>
+                    <p className="mt-2 text-sm leading-6 text-zinc-500">
+                      {card.description}
+                    </p>
+                    <p className="mt-6 text-sm font-semibold text-zinc-500">
+                      {card.action}
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <Link
+                  key={card.title}
+                  href={card.href}
+                  className={`${className} hover:border-emerald-900/25 hover:shadow-md`}
+                >
+                  <h2 className="text-base font-semibold text-zinc-950">
+                    {card.title}
+                  </h2>
+                  <p className="mt-2 text-sm leading-6 text-zinc-500">
+                    {card.description}
+                  </p>
+                  <p className="mt-6 text-sm font-semibold text-emerald-900">
+                    {card.action}
+                  </p>
+                </Link>
+              );
+            })}
           </section>
         </main>
       </div>

@@ -80,3 +80,14 @@ export async function requireSystemOwner(): Promise<AuthenticatedUser> {
 
   return authenticatedUser;
 }
+
+export async function requireSettingsManager(): Promise<AuthenticatedUser> {
+  const authenticatedUser = await requireActiveUser();
+  const role = authenticatedUser.profile?.role;
+
+  if (role !== "system_owner" && role !== "admin_manager") {
+    redirect("/dashboard");
+  }
+
+  return authenticatedUser;
+}
