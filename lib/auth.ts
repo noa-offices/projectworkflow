@@ -9,6 +9,8 @@ export type UserProfile = {
   full_name: string | null;
   role: AppRole | null;
   account_status: AccountStatus | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type AuthenticatedUser = {
@@ -52,13 +54,6 @@ export async function requireActiveUser(): Promise<AuthenticatedUser> {
     console.error("AUTH PROFILE ERROR", profileError.message);
   }
 
-  console.log(
-    "AUTH PROFILE STATUS",
-    profile?.email,
-    profile?.role,
-    profile?.account_status,
-  );
-
   if (profile?.account_status === "disabled") {
     await supabase.auth.signOut();
     redirect("/login?message=Your%20account%20has%20been%20disabled.");
@@ -74,4 +69,14 @@ export async function requireActiveUser(): Promise<AuthenticatedUser> {
     displayName:
       profile.full_name ?? user.user_metadata.full_name ?? user.email ?? "User",
   };
+}
+
+export async function requireSystemOwner(): Promise<AuthenticatedUser> {
+  const authenticatedUser = await requireActiveUser();
+
+  if (authenticatedUser.profile?.role !== "system_owner") {
+    redirect("/dashboard");
+  }
+
+  return authenticatedUser;
 }
