@@ -1,7 +1,10 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { TopBar } from "@/components/top-bar";
+import { requireActiveUser } from "@/lib/auth";
 
-export default function ClientsPage() {
+export default async function ClientsPage() {
+  const { user, displayName } = await requireActiveUser();
+
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
       <AppSidebar />
@@ -9,6 +12,8 @@ export default function ClientsPage() {
         <TopBar
           title="Clients & Projects"
           description="Placeholder workspace for client profiles, project details, contacts, and related quotation history."
+          userDisplayName={displayName}
+          userEmail={user.email}
         />
         <main className="px-5 py-6 sm:px-8">
           <section className="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">

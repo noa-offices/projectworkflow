@@ -1,7 +1,10 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { TopBar } from "@/components/top-bar";
+import { requireActiveUser } from "@/lib/auth";
 
-export default function ProductsPage() {
+export default async function ProductsPage() {
+  const { user, displayName } = await requireActiveUser();
+
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
       <AppSidebar />
@@ -9,6 +12,8 @@ export default function ProductsPage() {
         <TopBar
           title="Products & Templates"
           description="Placeholder workspace for product records, reusable line items, templates, and specification inputs."
+          userDisplayName={displayName}
+          userEmail={user.email}
         />
         <main className="px-5 py-6 sm:px-8">
           <section className="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">

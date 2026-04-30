@@ -1,6 +1,7 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { ModuleCard } from "@/components/module-card";
 import { TopBar } from "@/components/top-bar";
+import { requireActiveUser } from "@/lib/auth";
 
 const modules = [
   {
@@ -41,7 +42,9 @@ const modules = [
   },
 ];
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const { user, displayName } = await requireActiveUser();
+
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
       <AppSidebar />
@@ -49,6 +52,8 @@ export default function DashboardPage() {
         <TopBar
           title="Dashboard"
           description="A calm starting point for quotations, specifications, clients, and project order workflow."
+          userDisplayName={displayName}
+          userEmail={user.email}
         />
         <main className="px-5 py-6 sm:px-8">
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

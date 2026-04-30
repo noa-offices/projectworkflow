@@ -1,7 +1,10 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { TopBar } from "@/components/top-bar";
+import { requireActiveUser } from "@/lib/auth";
 
-export default function QuotationsPage() {
+export default async function QuotationsPage() {
+  const { user, displayName } = await requireActiveUser();
+
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
       <AppSidebar />
@@ -9,6 +12,8 @@ export default function QuotationsPage() {
         <TopBar
           title="Quotations"
           description="Placeholder area for creating, reviewing, and organizing project quotations."
+          userDisplayName={displayName}
+          userEmail={user.email}
         />
         <main className="px-5 py-6 sm:px-8">
           <section className="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
