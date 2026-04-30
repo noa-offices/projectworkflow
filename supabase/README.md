@@ -1,6 +1,9 @@
 # Supabase Setup
 
-Run `migrations/001_profiles_roles_rls.sql` first.
+Run migrations in this order:
+
+1. `migrations/001_profiles_roles_rls.sql`
+2. `migrations/002_brands_categories.sql`
 
 The first user should sign up normally through the app. After that signup creates
 the profile row, promote the first user manually in Supabase SQL:
