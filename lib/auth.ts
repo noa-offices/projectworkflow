@@ -91,3 +91,18 @@ export async function requireSettingsManager(): Promise<AuthenticatedUser> {
 
   return authenticatedUser;
 }
+
+export async function requireRecordsManager(): Promise<AuthenticatedUser> {
+  const authenticatedUser = await requireActiveUser();
+  const role = authenticatedUser.profile?.role;
+
+  if (
+    role !== "system_owner" &&
+    role !== "admin_manager" &&
+    role !== "sales_designer"
+  ) {
+    redirect("/dashboard");
+  }
+
+  return authenticatedUser;
+}
