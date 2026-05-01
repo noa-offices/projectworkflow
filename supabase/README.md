@@ -9,6 +9,7 @@ Run migrations in this order:
 5. `migrations/005_clients_projects.sql`
 6. `migrations/006_add_project_year.sql`
 7. `migrations/007_project_contact_fields.sql`
+8. `migrations/008_quotations.sql`
 
 The first user should sign up normally through the app. After that signup creates
 the profile row, promote the first user manually in Supabase SQL:
