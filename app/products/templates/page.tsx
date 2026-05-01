@@ -71,13 +71,17 @@ type ProductComponent = {
 };
 
 const optionTypes = [
-  "material/finish",
-  "fabric category",
-  "size variant",
-  "cluster preset",
-  "linked add-on",
-  "other",
+  { value: "material_finish", label: "Material / Finish" },
+  { value: "fabric_category", label: "Fabric Category" },
+  { value: "size_variant", label: "Size Variant" },
+  { value: "cluster_preset", label: "Cluster Preset" },
+  { value: "linked_addon", label: "Linked Add-on" },
+  { value: "other", label: "Other" },
 ];
+
+const optionTypeLabels = new Map(
+  optionTypes.map((optionType) => [optionType.value, optionType.label]),
+);
 
 function StatusBadge({ active }: { active: boolean }) {
   return (
@@ -334,8 +338,8 @@ function OptionTypeSelect({ defaultValue }: { defaultValue?: string | null }) {
       >
         <option value="">Select option type</option>
         {optionTypes.map((optionType) => (
-          <option key={optionType} value={optionType}>
-            {optionType}
+          <option key={optionType.value} value={optionType.value}>
+            {optionType.label}
           </option>
         ))}
       </select>
@@ -469,9 +473,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
   const { data: components, error: componentsError } = await supabase
     .from("product_components")
-    .select(
-      "id,template_id,option_type,component_group,component_code,component_name,description,qty,unit_label,unit_price,currency,is_optional,is_default_selected,sort_order,is_active,last_price_checked_at,price_notes",
-    )
+    .select("*")
     .order("template_id", { ascending: true })
     .order("component_group", { ascending: true })
     .order("sort_order", { ascending: true })
@@ -610,7 +612,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         Template options
                       </h3>
                       <p className="mt-1 text-sm leading-6 text-zinc-500">
-                        Use option groups for material/finish, fabric category,
+                        Use option groups for material / finish, fabric category,
                         size variant, cluster preset, and linked add-on choices.
                         Workstation linked-item quantities stay manual.
                       </p>
@@ -637,7 +639,8 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                         </p>
                                         <StatusBadge active={component.is_active} />
                                         <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-xs font-semibold text-zinc-500">
-                                          {component.option_type}
+                                          {optionTypeLabels.get(component.option_type) ??
+                                            "Other"}
                                         </span>
                                       </div>
                                       <p className="mt-1 text-sm text-zinc-500">

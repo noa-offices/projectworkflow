@@ -5,6 +5,15 @@ import { redirect } from "next/navigation";
 import { requireSettingsManager } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
+const allowedOptionTypes = new Set([
+  "material_finish",
+  "fabric_category",
+  "size_variant",
+  "cluster_preset",
+  "linked_addon",
+  "other",
+]);
+
 function textValue(formData: FormData, name: string) {
   const value = formData.get(name);
   return typeof value === "string" ? value.trim() : "";
@@ -131,11 +140,30 @@ export async function createProductComponent(formData: FormData) {
     );
   }
 
+  if (!allowedOptionTypes.has(payload.option_type)) {
+    redirectWithMessage("Select a valid option type.");
+  }
+
   const supabase = await createClient();
+  const { data: template, error: templateError } = await supabase
+    .from("product_templates")
+    .select("id")
+    .eq("id", payload.template_id)
+    .maybeSingle();
+
+  if (templateError) {
+    console.error("CREATE PRODUCT COMPONENT ERROR", templateError);
+    redirectWithMessage("Template option could not be created.");
+  }
+
+  if (!template) {
+    redirectWithMessage("Template was not found.");
+  }
+
   const { error } = await supabase.from("product_components").insert(payload);
 
   if (error) {
-    console.error("PRODUCT COMPONENT CREATE ERROR", error.message);
+    console.error("CREATE PRODUCT COMPONENT ERROR", error);
     redirectWithMessage("Template option could not be created.");
   }
 
@@ -158,6 +186,10 @@ export async function updateProductComponent(formData: FormData) {
     redirectWithMessage(
       "Option id, template, option type, option group, and option name are required.",
     );
+  }
+
+  if (!allowedOptionTypes.has(payload.option_type)) {
+    redirectWithMessage("Select a valid option type.");
   }
 
   const supabase = await createClient();
