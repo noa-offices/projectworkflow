@@ -53,6 +53,7 @@ type ProductTemplate = {
 type ProductComponent = {
   id: string;
   template_id: string;
+  option_type: string;
   component_group: string;
   component_code: string | null;
   component_name: string;
@@ -68,6 +69,15 @@ type ProductComponent = {
   last_price_checked_at: string | null;
   price_notes: string | null;
 };
+
+const optionTypes = [
+  "material/finish",
+  "fabric category",
+  "size variant",
+  "cluster preset",
+  "linked add-on",
+  "other",
+];
 
 function StatusBadge({ active }: { active: boolean }) {
   return (
@@ -310,6 +320,29 @@ function CategorySelect({
   );
 }
 
+function OptionTypeSelect({ defaultValue }: { defaultValue?: string | null }) {
+  return (
+    <label className="block">
+      <span className="text-xs font-semibold uppercase text-zinc-500">
+        Option type
+      </span>
+      <select
+        name="option_type"
+        defaultValue={defaultValue ?? ""}
+        required
+        className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+      >
+        <option value="">Select option type</option>
+        {optionTypes.map((optionType) => (
+          <option key={optionType} value={optionType}>
+            {optionType}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function ComponentForm({
   templateId,
   component,
@@ -324,15 +357,16 @@ function ComponentForm({
     >
       {component ? <input type="hidden" name="id" value={component.id} /> : null}
       <input type="hidden" name="template_id" value={templateId} />
+      <OptionTypeSelect defaultValue={component?.option_type} />
       <Field
         name="component_group"
-        label="Group"
+        label="Option group"
         defaultValue={component?.component_group}
         required
       />
       <Field
         name="component_name"
-        label="Component name"
+        label="Option name"
         defaultValue={component?.component_name}
         required
       />
@@ -384,11 +418,11 @@ function ComponentForm({
       <TextArea name="description" label="Description" defaultValue={component?.description} />
       <TextArea
         name="price_notes"
-        label="Pricing notes / formula notes"
+        label="Pricing notes"
         defaultValue={component?.price_notes}
       />
       <div className="flex justify-end md:col-span-2 xl:col-span-3">
-        <SubmitButton label={component ? "Save component" : "Add component"} />
+        <SubmitButton label={component ? "Save option" : "Add option"} />
       </div>
     </form>
   );
@@ -436,7 +470,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const { data: components, error: componentsError } = await supabase
     .from("product_components")
     .select(
-      "id,template_id,component_group,component_code,component_name,description,qty,unit_label,unit_price,currency,is_optional,is_default_selected,sort_order,is_active,last_price_checked_at,price_notes",
+      "id,template_id,option_type,component_group,component_code,component_name,description,qty,unit_label,unit_price,currency,is_optional,is_default_selected,sort_order,is_active,last_price_checked_at,price_notes",
     )
     .order("template_id", { ascending: true })
     .order("component_group", { ascending: true })
@@ -467,7 +501,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
       <div className="flex-1">
         <TopBar
           title="Product Templates"
-          description="Manage reusable product templates and their price components."
+          description="Manage reusable product templates and configurable options."
           userDisplayName={displayName}
           userEmail={user.email}
         />
@@ -573,12 +607,12 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   <div className="grid gap-5 p-5 xl:grid-cols-[1fr_420px]">
                     <div>
                       <h3 className="text-sm font-semibold uppercase text-zinc-500">
-                        Price components
+                        Template options
                       </h3>
                       <p className="mt-1 text-sm leading-6 text-zinc-500">
-                        Use components for base prices, optional accessories, or
-                        incremental pricing. Example: Starter CL2 + Additional
-                        cluster x 2 = CL6 price.
+                        Use option groups for material/finish, fabric category,
+                        size variant, cluster preset, and linked add-on choices.
+                        Workstation linked-item quantities stay manual.
                       </p>
                       <div className="mt-3 space-y-4">
                         {Array.from(groups.entries()).map(([groupName, group]) => (
@@ -602,6 +636,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                           {component.component_name}
                                         </p>
                                         <StatusBadge active={component.is_active} />
+                                        <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-xs font-semibold text-zinc-500">
+                                          {component.option_type}
+                                        </span>
                                       </div>
                                       <p className="mt-1 text-sm text-zinc-500">
                                         {component.component_code
@@ -633,7 +670,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                   </div>
                                   <details className="mt-3">
                                     <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                                      Edit component
+                                      Edit option
                                     </summary>
                                     <div className="mt-3">
                                       <ComponentForm
@@ -649,7 +686,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         ))}
                         {!templateComponents.length ? (
                           <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
-                            No components yet.
+                            No options yet.
                           </p>
                         ) : null}
                       </div>
@@ -657,7 +694,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
                     <aside className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
                       <h3 className="text-sm font-semibold uppercase text-zinc-500">
-                        Add component
+                        Add option
                       </h3>
                       <div className="mt-4">
                         <ComponentForm templateId={template.id} />

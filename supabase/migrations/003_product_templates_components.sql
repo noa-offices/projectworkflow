@@ -35,6 +35,7 @@ create table if not exists public.product_templates (
 create table if not exists public.product_components (
   id uuid primary key default gen_random_uuid(),
   template_id uuid not null references public.product_templates(id) on delete cascade,
+  option_type text not null default 'other',
   component_group text not null,
   component_code text,
   component_name text not null,
@@ -55,6 +56,9 @@ create table if not exists public.product_components (
   updated_at timestamptz not null default now()
 );
 
+alter table public.product_components
+add column if not exists option_type text not null default 'other';
+
 create index if not exists product_templates_brand_id_idx
 on public.product_templates (brand_id);
 
@@ -66,6 +70,9 @@ on public.product_templates (sub_category_id);
 
 create index if not exists product_components_template_id_idx
 on public.product_components (template_id);
+
+create index if not exists product_components_option_type_idx
+on public.product_components (option_type);
 
 create index if not exists product_components_component_group_idx
 on public.product_components (component_group);

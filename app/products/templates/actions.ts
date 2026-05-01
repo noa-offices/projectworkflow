@@ -53,6 +53,7 @@ function templatePayload(formData: FormData, userId?: string) {
 function componentPayload(formData: FormData, userId?: string) {
   const payload = {
     template_id: textValue(formData, "template_id"),
+    option_type: textValue(formData, "option_type"),
     component_group: textValue(formData, "component_group"),
     component_code: optionalTextValue(formData, "component_code"),
     component_name: textValue(formData, "component_name"),
@@ -119,8 +120,15 @@ export async function createProductComponent(formData: FormData) {
   const { user } = await requireSettingsManager();
   const payload = componentPayload(formData, user.id);
 
-  if (!payload.template_id || !payload.component_group || !payload.component_name) {
-    redirectWithMessage("Template, component group, and component name are required.");
+  if (
+    !payload.template_id ||
+    !payload.option_type ||
+    !payload.component_group ||
+    !payload.component_name
+  ) {
+    redirectWithMessage(
+      "Template, option type, option group, and option name are required.",
+    );
   }
 
   const supabase = await createClient();
@@ -128,11 +136,11 @@ export async function createProductComponent(formData: FormData) {
 
   if (error) {
     console.error("PRODUCT COMPONENT CREATE ERROR", error.message);
-    redirectWithMessage("Product component could not be created.");
+    redirectWithMessage("Template option could not be created.");
   }
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Product component created.");
+  redirectWithMessage("Template option created.");
 }
 
 export async function updateProductComponent(formData: FormData) {
@@ -140,8 +148,16 @@ export async function updateProductComponent(formData: FormData) {
   const id = textValue(formData, "id");
   const payload = componentPayload(formData);
 
-  if (!id || !payload.template_id || !payload.component_group || !payload.component_name) {
-    redirectWithMessage("Component id, template, group, and name are required.");
+  if (
+    !id ||
+    !payload.template_id ||
+    !payload.option_type ||
+    !payload.component_group ||
+    !payload.component_name
+  ) {
+    redirectWithMessage(
+      "Option id, template, option type, option group, and option name are required.",
+    );
   }
 
   const supabase = await createClient();
@@ -152,11 +168,11 @@ export async function updateProductComponent(formData: FormData) {
 
   if (error) {
     console.error("PRODUCT COMPONENT UPDATE ERROR", error.message);
-    redirectWithMessage("Product component could not be updated.");
+    redirectWithMessage("Template option could not be updated.");
   }
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Product component updated.");
+  redirectWithMessage("Template option updated.");
 }
 
 export async function markTemplatePriceChecked(formData: FormData) {
@@ -190,7 +206,7 @@ export async function markComponentPriceChecked(formData: FormData) {
   const id = textValue(formData, "id");
 
   if (!id) {
-    redirectWithMessage("Component id is required.");
+    redirectWithMessage("Option id is required.");
   }
 
   const supabase = await createClient();
@@ -204,9 +220,9 @@ export async function markComponentPriceChecked(formData: FormData) {
 
   if (error) {
     console.error("COMPONENT PRICE CHECK ERROR", error.message);
-    redirectWithMessage("Component price check saved failed.");
+    redirectWithMessage("Option price check could not be saved.");
   }
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Component price check saved.");
+  redirectWithMessage("Option price check saved.");
 }

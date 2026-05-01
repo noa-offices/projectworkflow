@@ -17,8 +17,8 @@ const productCards = [
     action: "Manage",
   },
   {
-    title: "Price Components",
-    description: "Components are managed inside each product template for now.",
+    title: "Template Options",
+    description: "Option groups are managed inside each product template for now.",
     href: "#",
     action: "Open a template",
   },
