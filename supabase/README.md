@@ -17,6 +17,29 @@ Run migrations in this order:
 13. `migrations/013_quotation_total_discount.sql`
 14. `migrations/014_quotation_row_height_limits.sql`
 15. `migrations/015_quotation_item_cell_layout.sql`
+16. `migrations/016_storage_quote_images.sql`
+
+## Storage buckets
+
+Migration `016_storage_quote_images.sql` creates these private Supabase Storage
+buckets when it is run with normal migration privileges:
+
+- `quote-images`
+- `product-images`
+
+The migration also creates storage object policies so active authenticated users
+can read images, while only `system_owner`, `admin_manager`, and
+`sales_designer` can upload or update images. Viewers are read-only. Do not use
+a service role key in frontend code.
+
+If your Supabase environment does not allow bucket creation through SQL, create
+both buckets manually in the Supabase dashboard with:
+
+- Public bucket: off
+- File size limit: 5 MB
+- Allowed MIME types: `image/png`, `image/jpeg`, `image/webp`
+
+Then run the policy part of `016_storage_quote_images.sql` in the SQL editor.
 
 The first user should sign up normally through the app. After that signup creates
 the profile row, promote the first user manually in Supabase SQL:

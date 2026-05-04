@@ -4,6 +4,7 @@ import { Fragment, type CSSProperties, type ReactNode } from "react";
 import { InlineRowAutosave } from "@/components/quotations/inline-row-autosave";
 import { CellFormattingToolbar } from "@/components/quotations/cell-formatting-toolbar";
 import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
+import { QuotationImageCell } from "@/components/quotations/quotation-image-cell";
 import { RowHeightTextarea } from "@/components/quotations/row-height-textarea";
 import { requireActiveUser } from "@/lib/auth";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
@@ -528,31 +529,6 @@ function SheetInfo({ label, value }: { label: string; value?: string | number | 
   );
 }
 
-function ImageThumb({ value }: { value: string | null }) {
-  const boxClassName =
-    "mx-auto flex h-full min-h-12 max-h-[160px] w-full max-w-[180px] items-center justify-center border border-dashed border-zinc-300 bg-white";
-
-  if (!value) {
-    return (
-      <span className={`${boxClassName} text-center text-[11px] text-zinc-400`}>
-        No image
-      </span>
-    );
-  }
-
-  return (
-    <a href={value} target="_blank" rel="noreferrer" className={boxClassName}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={value}
-        alt="Quotation item"
-        aria-label="Open image"
-        className="block h-full w-full object-contain p-1"
-      />
-    </a>
-  );
-}
-
 function CellInput({
   formId,
   name,
@@ -1023,11 +999,14 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     label: "Reference Image",
     className: "w-32",
     defaultWidth: 180,
-    render: (item) => (
-      <div className="flex h-full min-h-16 flex-col items-center justify-center gap-1">
-        <ImageThumb value={item.proposed_image_url_snapshot} />
-        <span className="block text-[10px] font-semibold text-emerald-900">Edit image</span>
-      </div>
+    render: (item, _serial, _formId, canEdit) => (
+      <QuotationImageCell
+        canEdit={canEdit}
+        field="proposed_image_url_snapshot"
+        itemId={item.id}
+        quotationId={item.quotation_id}
+        value={item.proposed_image_url_snapshot}
+      />
     ),
   };
   const specifiedImage: Column = {
@@ -1035,11 +1014,14 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     label: "Specified Item Reference Image",
     className: "w-32",
     defaultWidth: 180,
-    render: (item) => (
-      <div className="flex h-full min-h-16 flex-col items-center justify-center gap-1">
-        <ImageThumb value={item.specified_image_url_snapshot} />
-        <span className="block text-[10px] font-semibold text-emerald-900">Edit image</span>
-      </div>
+    render: (item, _serial, _formId, canEdit) => (
+      <QuotationImageCell
+        canEdit={canEdit}
+        field="specified_image_url_snapshot"
+        itemId={item.id}
+        quotationId={item.quotation_id}
+        value={item.specified_image_url_snapshot}
+      />
     ),
   };
   const proposedImage: Column = {
@@ -1047,11 +1029,14 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     label: "Proposed Item Reference Image",
     className: "w-32",
     defaultWidth: 180,
-    render: (item) => (
-      <div className="flex h-full min-h-16 flex-col items-center justify-center gap-1">
-        <ImageThumb value={item.proposed_image_url_snapshot} />
-        <span className="block text-[10px] font-semibold text-emerald-900">Edit image</span>
-      </div>
+    render: (item, _serial, _formId, canEdit) => (
+      <QuotationImageCell
+        canEdit={canEdit}
+        field="proposed_image_url_snapshot"
+        itemId={item.id}
+        quotationId={item.quotation_id}
+        value={item.proposed_image_url_snapshot}
+      />
     ),
   };
   const description: Column = {
