@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
+import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { createQuotation } from "./actions";
 
@@ -120,14 +121,29 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function formatMoney(currency: string, value: number) {
-  return `${currency} ${value.toFixed(2)}`;
-}
-
 function matchesSearch(values: Array<string | number | null | undefined>, query: string) {
   if (!query) return true;
   const normalizedQuery = query.toLowerCase();
   return values.some((value) => String(value ?? "").toLowerCase().includes(normalizedQuery));
+}
+
+function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
+  return (
+    <label className="block">
+      <span className="text-xs font-semibold uppercase text-zinc-500">Currency</span>
+      <select
+        name="currency"
+        defaultValue={normalizeCurrency(defaultValue ?? defaultCurrency)}
+        className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+      >
+        {supportedCurrencies.map((currency) => (
+          <option key={currency.code} value={currency.code}>
+            {currency.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 function QuotationForm({ clients, projects }: { clients: Client[]; projects: Project[] }) {
@@ -182,7 +198,7 @@ function QuotationForm({ clients, projects }: { clients: Client[]; projects: Pro
           ))}
         </select>
       </label>
-      <Field name="currency" label="Currency" defaultValue="AED" />
+      <CurrencySelect />
       <Field name="vat_percent" label="VAT %" type="number" defaultValue={5} />
       <Field name="payment_terms" label="Payment terms" />
       <Field name="validity" label="Validity" />

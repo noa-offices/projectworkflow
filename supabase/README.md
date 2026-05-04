@@ -19,6 +19,11 @@ Run migrations in this order:
 15. `migrations/015_quotation_item_cell_layout.sql`
 16. `migrations/016_storage_quote_images.sql`
 17. `migrations/017_product_template_images.sql`
+18. `migrations/018_product_template_multi_images.sql`
+19. `migrations/019_desking_option_calculation_data.sql`
+20. `migrations/020_desking_size_pricing.sql`
+21. `migrations/021_product_template_origin_supplier.sql`
+22. `migrations/022_brand_origin.sql`
 
 ## Storage buckets
 

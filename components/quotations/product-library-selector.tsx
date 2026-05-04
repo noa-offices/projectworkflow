@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
+import { formatMoney, normalizeCurrency } from "@/lib/currencies";
 import { createClient } from "@/lib/supabase/client";
 
 export type ProductLibraryBrand = {
@@ -26,10 +27,30 @@ export type ProductLibraryTemplate = {
   item_code: string | null;
   description: string | null;
   default_specification: string | null;
+  origin: string | null;
+  supplier_name: string | null;
   default_image_url: string | null;
   reference_image_url: string | null;
+  proposed_image_url_1: string | null;
+  proposed_image_url_2: string | null;
+  proposed_image_url_3: string | null;
+  desking_size_pricing: DeskingSizePricingRow[] | null;
   currency: string;
   default_unit_price: number;
+};
+
+type DeskingSizePricingRow = {
+  id?: string;
+  label?: string;
+  length?: number;
+  depth?: number;
+  height?: number;
+  dimension_unit?: string;
+  default_price?: number;
+  additional_price?: number;
+  currency?: string;
+  sort_order?: number;
+  is_active?: boolean;
 };
 
 export type ProductLibraryComponent = {
@@ -47,6 +68,19 @@ export type ProductLibraryComponent = {
   is_optional: boolean;
   is_default_selected: boolean;
   sort_order: number;
+  calculation_data: {
+    desking_role?: string;
+    base_cluster_seats?: number;
+    module_length?: number;
+    depth?: number;
+    height?: number;
+    dimension_unit?: string;
+    price_role?: string;
+    seats_per_cluster?: number;
+    modules_per_cluster?: number;
+    label?: string;
+    allow_manual_quantity?: boolean;
+  } | null;
 };
 
 const optionTypeLabels = new Map([
@@ -71,7 +105,124 @@ function isDirectImageUrl(value: string) {
   return /^(https?:|blob:|data:|\/)/i.test(value);
 }
 
-function ProductThumbnail({ path }: { path: string | null }) {
+function numberValue(value: unknown, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function activeSizePricingRows(rows?: DeskingSizePricingRow[] | null) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => row.is_active !== false)
+    .filter((row) => numberValue(row.length) > 0 && numberValue(row.depth) > 0 && numberValue(row.height) > 0)
+    .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
+}
+
+function deskingRole(component: ProductLibraryComponent) {
+  return component.calculation_data?.desking_role ?? "";
+}
+
+function isDeskingTemplate({
+  mainCategory,
+  subCategory,
+  templateComponents,
+}: {
+  mainCategory: string | null | undefined;
+  subCategory: string | null | undefined;
+  templateComponents: ProductLibraryComponent[];
+}) {
+  return (
+    /workstation|desk|desking/.test(mainCategory?.toLowerCase() ?? "") ||
+    /workstation|desk|desking/.test(subCategory?.toLowerCase() ?? "") ||
+    false ||
+    templateComponents.some((component) => Boolean(deskingRole(component)))
+  );
+}
+
+function deskingSizePricingCalculation({
+  accessoryQuantities,
+  additionalClusterQty,
+  selectedSize,
+  template,
+  templateComponents,
+}: {
+  accessoryQuantities: Record<string, number>;
+  additionalClusterQty: number;
+  selectedSize: DeskingSizePricingRow;
+  template: ProductLibraryTemplate;
+  templateComponents: ProductLibraryComponent[];
+}) {
+  const accessoryLines = templateComponents
+    .filter((component) => component.option_type === "linked_addon" || deskingRole(component) === "accessory")
+    .map((component) => ({
+      component,
+      qty: Math.max(0, Math.trunc(numberValue(accessoryQuantities[component.id], 0))),
+    }))
+    .filter((line) => line.qty > 0);
+  const baseSeats = 2;
+  const seatsPerCluster = 2;
+  const modulesPerCluster = 1;
+  const additionalSeats = additionalClusterQty * seatsPerCluster;
+  const totalSeats = baseSeats + additionalSeats;
+  const baseModules = 1;
+  const additionalModules = additionalClusterQty * modulesPerCluster;
+  const totalModules = baseModules + additionalModules;
+  const moduleLength = numberValue(selectedSize.length, 0);
+  const depth = numberValue(selectedSize.depth, 0);
+  const height = numberValue(selectedSize.height, 0);
+  const dimensionUnit = selectedSize.dimension_unit ?? "cm";
+  const dimension =
+    moduleLength && depth && height && totalModules
+      ? `${moduleLength * totalModules} x ${depth} x ${height} ${dimensionUnit}`
+      : "";
+  const clusterName = "CL2";
+  const clusterLabel =
+    additionalClusterQty > 0
+      ? `${clusterName} + ${additionalClusterQty} additional / Cluster of ${totalSeats}`
+      : `Cluster of ${totalSeats}`;
+  const basePrice = numberValue(selectedSize.default_price, numberValue(template.default_unit_price));
+  const additionalPrice = numberValue(selectedSize.additional_price, basePrice);
+  const accessoryPrice = accessoryLines.reduce(
+    (total, line) => total + line.qty * numberValue(line.component.unit_price),
+    0,
+  );
+  const unitPrice = basePrice + additionalPrice * additionalClusterQty + accessoryPrice;
+  const selectedOptionNames = [
+    selectedSize.label || `${moduleLength} x ${depth} x ${height}`,
+    clusterName,
+    ...accessoryLines.map((line) => `${line.component.component_name} x${line.qty}`),
+  ];
+
+  return {
+    accessoryLines,
+    accessoryPrice,
+    additionalClusterQty,
+    basePrice,
+    clusterLabel,
+    clusterName,
+    dimension,
+    mainCurrency: selectedSize.currency ?? template.currency,
+    formula:
+      additionalClusterQty > 0
+        ? `${formatMoney(selectedSize.currency ?? template.currency, basePrice)} + (${formatMoney(selectedSize.currency ?? template.currency, additionalPrice)} x ${additionalClusterQty}) = ${formatMoney(selectedSize.currency ?? template.currency, unitPrice)}`
+        : `${formatMoney(selectedSize.currency ?? template.currency, basePrice)} x 1 = ${formatMoney(selectedSize.currency ?? template.currency, unitPrice)}`,
+    finishNames: [] as string[],
+    selectedOptionNames,
+    sizeLabel: selectedSize.label ?? `${moduleLength}x${depth}x${height}`,
+    totalModules,
+    totalSeats,
+    unitPrice: unitPrice || numberValue(template.default_unit_price),
+  };
+}
+
+function ProductThumbnail({
+  label,
+  path,
+  selected,
+}: {
+  label?: string;
+  path: string | null;
+  selected?: boolean;
+}) {
   const [previewUrl, setPreviewUrl] = useState("");
 
   useEffect(() => {
@@ -105,7 +256,12 @@ function ProductThumbnail({ path }: { path: string | null }) {
   }, [path]);
 
   return (
-    <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden border border-dashed border-zinc-300 bg-white text-center text-[10px] text-zinc-400">
+    <div
+      className={`flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden border bg-white text-center text-[10px] ${
+        selected ? "border-emerald-900 ring-2 ring-emerald-900/20" : "border-dashed border-zinc-300"
+      } text-zinc-400`}
+      title={label}
+    >
       {previewUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -143,6 +299,10 @@ export function ProductLibrarySelector({
   const [subcategoryId, setSubcategoryId] = useState("");
   const [search, setSearch] = useState("");
   const [selectedOptions, setSelectedOptions] = useState<Record<string, Record<string, string | string[]>>>({});
+  const [selectedImages, setSelectedImages] = useState<Record<string, string>>({});
+  const [additionalClusterQuantities, setAdditionalClusterQuantities] = useState<Record<string, number>>({});
+  const [accessoryQuantities, setAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
+  const [selectedDeskingSizes, setSelectedDeskingSizes] = useState<Record<string, string>>({});
 
   const brandNameById = useMemo(
     () => new Map(brands.map((brand) => [brand.id, brand.name])),
@@ -286,8 +446,24 @@ export function ProductLibrarySelector({
                     ? categoryNameById.get(template.sub_category_id)
                     : null;
                   const templateComponents = componentsByTemplate.get(template.id) ?? [];
+                  const sizePricingRows = activeSizePricingRows(template.desking_size_pricing);
                   const groupedOptions = new Map<string, ProductLibraryComponent[]>();
                   const templateSelections = selectedOptions[template.id] ?? {};
+                  const additionalClusterQty = Math.max(
+                    0,
+                    Math.trunc(numberValue(additionalClusterQuantities[template.id], 0)),
+                  );
+                  const templateAccessoryQuantities = accessoryQuantities[template.id] ?? {};
+                  const proposedImages = [
+                    template.proposed_image_url_1 ?? template.default_image_url,
+                    template.proposed_image_url_2,
+                    template.proposed_image_url_3,
+                  ].filter((value): value is string => Boolean(value));
+                  const selectedImage =
+                    selectedImages[template.id] &&
+                    proposedImages.includes(selectedImages[template.id])
+                      ? selectedImages[template.id]
+                      : proposedImages[0] ?? "";
 
                   for (const component of templateComponents) {
                     const groupKey = `${component.option_type}:${component.component_group}`;
@@ -299,11 +475,37 @@ export function ProductLibrarySelector({
                     ([groupKey, groupOptions]) => {
                       const [optionType] = groupKey.split(":");
                       const selectedValue = templateSelections[groupKey];
+                      const selectableOptions = groupOptions.filter(
+                        (option) => deskingRole(option) !== "accessory",
+                      );
+                      const accessoryIds = groupOptions
+                        .filter(
+                          (option) =>
+                            deskingRole(option) === "accessory" ||
+                            (isDesking && option.option_type === "linked_addon"),
+                        )
+                        .filter((option) => numberValue(templateAccessoryQuantities[option.id]) > 0)
+                        .map((option) => option.id);
+
+                      if (accessoryIds.length) {
+                        const selectedId =
+                          typeof selectedValue === "string"
+                            ? selectedValue
+                            : selectableOptions.find((option) => option.is_default_selected)?.id ??
+                              (isDesking &&
+                              selectableOptions.some((option) =>
+                                ["base_size", "cluster_type"].includes(deskingRole(option)),
+                              )
+                                ? selectableOptions[0]?.id ?? ""
+                                : "");
+
+                        return selectedId ? [selectedId, ...accessoryIds] : accessoryIds;
+                      }
 
                       if (optionType === "linked_addon") {
                         if (Array.isArray(selectedValue)) return selectedValue;
 
-                        return groupOptions
+                        return selectableOptions
                           .filter((option) => option.is_default_selected)
                           .map((option) => option.id);
                       }
@@ -312,23 +514,53 @@ export function ProductLibrarySelector({
                         return selectedValue ? [selectedValue] : [];
                       }
 
-                      const defaultOption = groupOptions.find((option) => option.is_default_selected);
+                      const defaultOption =
+                        selectableOptions.find((option) => option.is_default_selected) ??
+                        (isDesking &&
+                        selectableOptions.some((option) =>
+                          ["base_size", "cluster_type"].includes(deskingRole(option)),
+                        )
+                          ? selectableOptions[0]
+                          : undefined);
 
                       return defaultOption ? [defaultOption.id] : [];
                     },
                   );
+                  const isDesking = isDeskingTemplate({
+                    mainCategory,
+                    subCategory,
+                    templateComponents,
+                  }) || sizePricingRows.length > 0;
+                  const selectedSizeRow =
+                    sizePricingRows.find((row) => row.id === selectedDeskingSizes[template.id]) ??
+                    sizePricingRows[0] ??
+                    null;
+                  const derivedDesking = isDesking && selectedSizeRow
+                    ? deskingSizePricingCalculation({
+                        accessoryQuantities: templateAccessoryQuantities,
+                        additionalClusterQty,
+                        selectedSize: selectedSizeRow,
+                        template,
+                        templateComponents,
+                      })
+                    : null;
                   const effectiveSelectedNames = effectiveSelectedIds
                     .map((id) => templateComponents.find((component) => component.id === id)?.component_name)
                     .filter(Boolean);
+                  const hasMixedOptionCurrencies = effectiveSelectedIds
+                    .map((id) => templateComponents.find((component) => component.id === id))
+                    .filter(Boolean)
+                    .some(
+                      (option) =>
+                        normalizeCurrency(option?.currency) !== normalizeCurrency(template.currency),
+                    );
 
                   return (
                     <article
                       key={template.id}
                       className="flex gap-3 border border-zinc-200 bg-white p-3"
                     >
-                      <ProductThumbnail
-                        path={template.default_image_url ?? template.reference_image_url}
-                      />
+                      <ProductThumbnail path={selectedImage || null} />
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-semibold text-zinc-950">
@@ -350,6 +582,60 @@ export function ProductLibrarySelector({
                             template.description ??
                             "No specification yet."}
                         </p>
+                        {proposedImages.length ? (
+                          <div className="mt-3">
+                            <p className="text-[10px] font-bold uppercase text-zinc-500">
+                              Proposed Item Reference Images
+                            </p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {proposedImages.map((imagePath, imageIndex) => (
+                                <button
+                                  key={`${imagePath}-${imageIndex}`}
+                                  type="button"
+                                  onClick={() =>
+                                    setSelectedImages((current) => ({
+                                      ...current,
+                                      [template.id]: imagePath,
+                                    }))
+                                  }
+                                  className="text-left"
+                                >
+                                  <ProductThumbnail
+                                    label={`Image ${imageIndex + 1}`}
+                                    path={imagePath}
+                                    selected={selectedImage === imagePath}
+                                  />
+                                  <span className="mt-1 block text-center text-[10px] font-semibold text-zinc-500">
+                                    Image {imageIndex + 1}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                        {isDesking && sizePricingRows.length ? (
+                          <label className="mt-3 block">
+                            <span className="text-[10px] font-bold uppercase text-zinc-500">
+                              Size
+                            </span>
+                            <select
+                              value={selectedSizeRow?.id ?? ""}
+                              onChange={(event) =>
+                                setSelectedDeskingSizes((current) => ({
+                                  ...current,
+                                  [template.id]: event.target.value,
+                                }))
+                              }
+                              className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                            >
+                              {sizePricingRows.map((row, index) => (
+                                <option key={row.id ?? index} value={row.id ?? `size-${index}`}>
+                                  {row.label ?? `${row.length} x ${row.depth} x ${row.height}`} - {formatMoney(row.currency ?? template.currency, numberValue(row.default_price))}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        ) : null}
                         {groupedOptions.size ? (
                           <div className="mt-3 grid gap-2 md:grid-cols-2">
                             {Array.from(groupedOptions.entries())
@@ -365,6 +651,99 @@ export function ProductLibrarySelector({
                               .map(([groupKey, groupOptions]) => {
                                 const [optionType, componentGroup] = groupKey.split(":");
                                 const selectedValue = templateSelections[groupKey];
+                                const accessoryOptions = groupOptions.filter(
+                                  (option) =>
+                                    deskingRole(option) === "accessory" ||
+                                    (isDesking && option.option_type === "linked_addon"),
+                                );
+                                const selectableOptions = groupOptions.filter(
+                                  (option) =>
+                                    deskingRole(option) !== "accessory" &&
+                                    !(isDesking && option.option_type === "linked_addon"),
+                                );
+
+                                if (isDesking && accessoryOptions.length) {
+                                  return (
+                                    <fieldset
+                                      key={groupKey}
+                                      className="border border-zinc-200 bg-zinc-50 p-2"
+                                    >
+                                      <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
+                                        Accessories: {componentGroup}
+                                      </legend>
+                                      {selectableOptions.length ? (
+                                        <label className="mt-1 block">
+                                          <span className="text-[10px] font-bold uppercase text-zinc-500">
+                                            Base selection
+                                          </span>
+                                          <select
+                                            value={
+                                              typeof selectedValue === "string"
+                                                ? selectedValue
+                                                : selectableOptions.find((option) => option.is_default_selected)?.id ??
+                                                  selectableOptions[0]?.id ??
+                                                  ""
+                                            }
+                                            onChange={(event) =>
+                                              setSelectedOptions((current) => ({
+                                                ...current,
+                                                [template.id]: {
+                                                  ...(current[template.id] ?? {}),
+                                                  [groupKey]: event.target.value,
+                                                },
+                                              }))
+                                            }
+                                            className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                          >
+                                            <option value="">No selection</option>
+                                            {selectableOptions.map((option) => (
+                                              <option key={option.id} value={option.id}>
+                                                {option.component_name}
+                                                {option.unit_price > 0
+                                                  ? ` (+${formatMoney(option.currency, option.unit_price)})`
+                                                  : ""}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </label>
+                                      ) : null}
+                                      <div className="mt-2 space-y-2">
+                                        {accessoryOptions.map((option) => (
+                                          <label
+                                            key={option.id}
+                                            className="block text-xs text-zinc-700"
+                                          >
+                                            <span className="font-medium">
+                                              {option.component_name}
+                                              {option.unit_price > 0
+                                                ? ` (+${formatMoney(option.currency, option.unit_price)} each)`
+                                                : ""}
+                                            </span>
+                                            <input
+                                              type="number"
+                                              min={0}
+                                              step={1}
+                                              value={templateAccessoryQuantities[option.id] ?? 0}
+                                              onChange={(event) =>
+                                                setAccessoryQuantities((current) => ({
+                                                  ...current,
+                                                  [template.id]: {
+                                                    ...(current[template.id] ?? {}),
+                                                    [option.id]: Math.max(
+                                                      0,
+                                                      Math.trunc(Number(event.target.value) || 0),
+                                                    ),
+                                                  },
+                                                }))
+                                              }
+                                              className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                            />
+                                          </label>
+                                        ))}
+                                      </div>
+                                    </fieldset>
+                                  );
+                                }
 
                                 if (optionType === "linked_addon") {
                                   const checkedIds = Array.isArray(selectedValue)
@@ -408,7 +787,7 @@ export function ProductLibrarySelector({
                                             <span>
                                               {option.component_name}
                                               {option.unit_price > 0
-                                                ? ` (+${option.currency} ${option.unit_price.toFixed(2)})`
+                                                ? ` (+${formatMoney(option.currency, option.unit_price)})`
                                                 : ""}
                                             </span>
                                           </label>
@@ -421,13 +800,23 @@ export function ProductLibrarySelector({
                                 return (
                                   <label key={groupKey} className="block">
                                     <span className="text-[10px] font-bold uppercase text-zinc-500">
-                                      {optionTypeLabels.get(optionType) ?? "Option"}: {componentGroup}
+                                      {groupOptions.some((option) => deskingRole(option) === "base_size")
+                                        ? "Size"
+                                        : groupOptions.some((option) => deskingRole(option) === "cluster_type")
+                                          ? "Workstation Type"
+                                          : `${optionTypeLabels.get(optionType) ?? "Option"}: ${componentGroup}`}
                                     </span>
                                     <select
                                       value={
                                         typeof selectedValue === "string"
                                           ? selectedValue
-                                          : groupOptions.find((option) => option.is_default_selected)?.id ?? ""
+                                          : groupOptions.find((option) => option.is_default_selected)?.id ??
+                                            (isDesking &&
+                                            groupOptions.some((option) =>
+                                              ["base_size", "cluster_type"].includes(deskingRole(option)),
+                                            )
+                                              ? groupOptions[0]?.id ?? ""
+                                              : "")
                                       }
                                       onChange={(event) =>
                                         setSelectedOptions((current) => ({
@@ -445,7 +834,7 @@ export function ProductLibrarySelector({
                                         <option key={option.id} value={option.id}>
                                           {option.component_name}
                                           {option.unit_price > 0
-                                            ? ` (+${option.currency} ${option.unit_price.toFixed(2)})`
+                                            ? ` (+${formatMoney(option.currency, option.unit_price)})`
                                             : ""}
                                         </option>
                                       ))}
@@ -458,17 +847,73 @@ export function ProductLibrarySelector({
                       </div>
                       <div className="flex shrink-0 flex-col items-end justify-between gap-3 text-right">
                         <p className="text-sm font-semibold text-zinc-950">
-                          {template.currency} {template.default_unit_price.toFixed(2)}
+                          {formatMoney(
+                            derivedDesking?.mainCurrency ?? template.currency,
+                            derivedDesking?.unitPrice ?? template.default_unit_price,
+                          )}
                         </p>
+                        {derivedDesking ? (
+                          <div className="max-w-48 space-y-1 text-xs leading-5 text-zinc-600">
+                            {derivedDesking.clusterLabel ? (
+                              <p>Selected size: {derivedDesking.sizeLabel}</p>
+                            ) : null}
+                            {derivedDesking.clusterLabel ? (
+                              <p className="font-semibold text-zinc-950">
+                                Cluster: {derivedDesking.clusterLabel}
+                              </p>
+                            ) : null}
+                            {derivedDesking.dimension ? (
+                              <p>Dimension: {derivedDesking.dimension}</p>
+                            ) : null}
+                            <p>Price: {formatMoney(derivedDesking.mainCurrency, derivedDesking.unitPrice)}</p>
+                            <p>Formula: {derivedDesking.formula}</p>
+                            {derivedDesking.finishNames.length ? (
+                              <p>Finish: {derivedDesking.finishNames.join(", ")}</p>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {isDesking ? (
+                          <label className="block max-w-48 text-right">
+                            <span className="text-[10px] font-bold uppercase text-zinc-500">
+                              Additional {derivedDesking?.clusterName ?? "CL2"} Quantity
+                            </span>
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              value={additionalClusterQty}
+                              onChange={(event) =>
+                                setAdditionalClusterQuantities((current) => ({
+                                  ...current,
+                                  [template.id]: Math.max(
+                                    0,
+                                    Math.trunc(Number(event.target.value) || 0),
+                                  ),
+                                }))
+                              }
+                              className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-right text-xs outline-none focus:border-emerald-800"
+                            />
+                          </label>
+                        ) : null}
                         {effectiveSelectedNames.length ? (
                           <p className="max-w-40 text-xs leading-5 text-zinc-500">
                             Selected: {effectiveSelectedNames.join(", ")}
+                          </p>
+                        ) : null}
+                        {hasMixedOptionCurrencies ? (
+                          <p className="max-w-44 text-xs leading-5 text-amber-700">
+                            Currency conversion is not enabled yet. Mixed-currency totals should be reviewed manually.
                           </p>
                         ) : null}
                         <form action={addProductTemplateToQuotation}>
                           <input type="hidden" name="quotation_id" value={quotationId} />
                           <input type="hidden" name="section_id" value={sectionId} />
                           <input type="hidden" name="template_id" value={template.id} />
+                          <input
+                            type="hidden"
+                            name="selected_template_image_path"
+                            value={selectedImage}
+                          />
                           <input type="hidden" name="return_to" value={returnTo} />
                           {effectiveSelectedIds.map((id) => (
                             <input
@@ -478,6 +923,30 @@ export function ProductLibrarySelector({
                               value={id}
                             />
                           ))}
+                          {isDesking ? (
+                            <input
+                              type="hidden"
+                              name="desking_additional_cluster_qty"
+                              value={additionalClusterQty}
+                            />
+                          ) : null}
+                          {derivedDesking && selectedSizeRow ? (
+                            <input
+                              type="hidden"
+                              name="desking_size_id"
+                              value={selectedSizeRow.id ?? ""}
+                            />
+                          ) : null}
+                          {Object.entries(templateAccessoryQuantities).map(([id, qty]) =>
+                            qty > 0 ? (
+                              <input
+                                key={id}
+                                type="hidden"
+                                name="accessory_qty"
+                                value={`${id}:${qty}`}
+                              />
+                            ) : null,
+                          )}
                           <button
                             type="submit"
                             className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"

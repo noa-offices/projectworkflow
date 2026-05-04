@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import type { ChangeEvent } from "react";
 import {
   updateProductTemplateImageSettings,
-  updateProductTemplateMainImage,
+  updateProductTemplateImage,
 } from "@/app/products/templates/actions";
 import {
   ImageAdjustmentDialog,
@@ -16,6 +16,10 @@ import { uploadProductTemplateImage } from "@/lib/quotation-image-upload";
 import { createClient } from "@/lib/supabase/client";
 
 type UploadStatus = "idle" | "uploading" | "failed";
+type ProductTemplateImageField =
+  | "proposed_image_url_1"
+  | "proposed_image_url_2"
+  | "proposed_image_url_3";
 
 function isDirectImageUrl(value: string) {
   return /^(https?:|blob:|data:|\/)/i.test(value);
@@ -38,18 +42,24 @@ async function signedProductImageUrl(path: string) {
 
 export function ProductTemplateImageUploader({
   canEdit = false,
+  field = "proposed_image_url_1",
+  formOnly = false,
   imageSettings,
+  label = "Product template image",
   templateId,
   value,
 }: {
   canEdit?: boolean;
+  field?: ProductTemplateImageField;
+  formOnly?: boolean;
   imageSettings?: Partial<ImageDisplaySettings> | null;
+  label?: string;
   templateId: string;
   value: string | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [uploadedValue, setUploadedValue] = useState("");
+  const [currentValue, setCurrentValue] = useState(value ?? "");
   const [previewUrl, setPreviewUrl] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [currentImageSettings, setCurrentImageSettings] = useState<ImageDisplaySettings>(
@@ -59,7 +69,7 @@ export function ProductTemplateImageUploader({
   const [status, setStatus] = useState<UploadStatus>("idle");
   const [settingsStatus, setSettingsStatus] = useState<UploadStatus>("idle");
   const [, startTransition] = useTransition();
-  const imageValue = uploadedValue || value || "";
+  const imageValue = currentValue;
 
   useEffect(() => {
     let cancelled = false;
@@ -90,12 +100,27 @@ export function ProductTemplateImageUploader({
   }, [imageValue]);
 
   function saveImagePath(path: string) {
+    const pathInput = containerRef.current
+      ?.closest("form")
+      ?.querySelector<HTMLInputElement>(`input[name="${field}"]`);
+
+    if (pathInput) {
+      pathInput.value = path;
+    }
+
+    if (formOnly) {
+      setCurrentValue(path);
+      setStatus("idle");
+      return;
+    }
+
     const formData = new FormData();
     formData.set("id", templateId);
-    formData.set("default_image_url", path);
+    formData.set("image_field", field);
+    formData.set("image_path", path);
 
     startTransition(() => {
-      void updateProductTemplateMainImage(formData)
+      void updateProductTemplateImage(formData)
         .then((result) => {
           if (!result.ok) {
             setErrorMessage(
@@ -105,15 +130,7 @@ export function ProductTemplateImageUploader({
             return;
           }
 
-          setUploadedValue(path);
-          const pathInput = containerRef.current
-            ?.closest("form")
-            ?.querySelector<HTMLInputElement>('input[name="default_image_url"]');
-
-          if (pathInput) {
-            pathInput.value = path;
-          }
-
+          setCurrentValue(path);
           setStatus("idle");
         })
         .catch((error: unknown) => {
@@ -123,6 +140,12 @@ export function ProductTemplateImageUploader({
           setStatus("failed");
         });
     });
+  }
+
+  function clearImage() {
+    setStatus("uploading");
+    setErrorMessage("");
+    saveImagePath("");
   }
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -145,8 +168,24 @@ export function ProductTemplateImageUploader({
   }
 
   function saveImageSettings(settings: ImageDisplaySettings) {
+    if (formOnly) {
+      const settingsInput = containerRef.current
+        ?.closest("form")
+        ?.querySelector<HTMLInputElement>(`input[name="image_settings_${field}"]`);
+
+      if (settingsInput) {
+        settingsInput.value = JSON.stringify(settings);
+      }
+
+      setCurrentImageSettings(settings);
+      setIsAdjusting(false);
+      setSettingsStatus("idle");
+      return;
+    }
+
     const formData = new FormData();
     formData.set("id", templateId);
+    formData.set("image_field", field);
     formData.set("image_fit", settings.fit);
     formData.set("image_zoom", String(settings.zoom));
     formData.set("image_position_x", String(settings.positionX));
@@ -186,7 +225,7 @@ export function ProductTemplateImageUploader({
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={previewUrl}
-            alt="Product template"
+            alt={label}
             className="block h-full w-full p-1"
             style={imageDisplayStyle(currentImageSettings)}
           />
@@ -217,6 +256,16 @@ export function ProductTemplateImageUploader({
                   ? "Replace image"
                   : "Upload image"}
             </button>
+            {imageValue ? (
+              <button
+                type="button"
+                onClick={clearImage}
+                disabled={status === "uploading"}
+                className="ml-3 text-xs font-semibold text-red-700 transition hover:text-red-800 disabled:text-zinc-400"
+              >
+                Remove
+              </button>
+            ) : null}
             {previewUrl ? (
               <button
                 type="button"

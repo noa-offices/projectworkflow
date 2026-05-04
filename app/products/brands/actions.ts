@@ -40,6 +40,7 @@ export async function createBrand(formData: FormData) {
   const { error } = await supabase.from("brands").insert({
     name,
     code: optionalTextValue(formData, "code"),
+    origin: optionalTextValue(formData, "origin"),
     description: optionalTextValue(formData, "description"),
     website: optionalTextValue(formData, "website"),
     logo_url: optionalTextValue(formData, "logo_url"),
@@ -71,6 +72,7 @@ export async function updateBrand(formData: FormData) {
     .update({
       name,
       code: optionalTextValue(formData, "code"),
+      origin: optionalTextValue(formData, "origin"),
       description: optionalTextValue(formData, "description"),
       website: optionalTextValue(formData, "website"),
       logo_url: optionalTextValue(formData, "logo_url"),

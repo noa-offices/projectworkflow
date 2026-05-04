@@ -22,6 +22,7 @@ type Brand = {
   id: string;
   name: string;
   code: string | null;
+  origin: string | null;
   description: string | null;
   website: string | null;
   logo_url: string | null;
@@ -142,6 +143,11 @@ function BrandForm({ brand }: { brand?: Brand }) {
         required
       />
       <TextInput name="code" label="Code" defaultValue={brand?.code} />
+      <TextInput
+        name="origin"
+        label="Origin / Country"
+        defaultValue={brand?.origin}
+      />
       <TextInput name="website" label="Website" defaultValue={brand?.website} />
       <TextInput
         name="logo_url"
@@ -214,7 +220,7 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
 
   const { data: brands, error: brandsError } = await supabase
     .from("brands")
-    .select("id,name,code,description,website,logo_url,is_active")
+    .select("id,name,code,origin,description,website,logo_url,is_active")
     .order("name", { ascending: true })
     .returns<Brand[]>();
 
@@ -306,6 +312,7 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                         </div>
                         <p className="mt-1 text-sm text-zinc-500">
                           {brand.code ? `${brand.code} · ` : ""}
+                          {brand.origin ? `${brand.origin} · ` : ""}
                           {brand.description ?? "No description yet."}
                         </p>
                       </div>

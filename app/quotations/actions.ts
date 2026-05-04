@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireRecordsManager } from "@/lib/auth";
+import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 const quotationStatuses = new Set([
@@ -172,6 +173,150 @@ function productImageSnapshotPath(value: string | null) {
   return `product-images:${value}`;
 }
 
+function calculationNumber(value: unknown, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function deskingRole(option: ProductComponentSnapshotSource) {
+  return option.calculation_data?.desking_role ?? "";
+}
+
+function accessoryQuantities(formData: FormData) {
+  const quantities = new Map<string, number>();
+
+  for (const value of formData.getAll("accessory_qty")) {
+    if (typeof value !== "string") continue;
+
+    const [id, rawQty] = value.split(":");
+    const qty = Math.max(0, Math.trunc(Number(rawQty) || 0));
+
+    if (id && qty > 0) {
+      quantities.set(id, qty);
+    }
+  }
+
+  return quantities;
+}
+
+function deskingAdditionalClusterQty(formData: FormData) {
+  return Math.max(0, Math.trunc(numberValue(formData, "desking_additional_cluster_qty", 0)));
+}
+
+function activeDeskingSizeRows(rows?: DeskingSizePricingRow[] | null) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => row.is_active !== false)
+    .filter(
+      (row) =>
+        calculationNumber(row.length) > 0 &&
+        calculationNumber(row.depth) > 0 &&
+        calculationNumber(row.height) > 0,
+    )
+    .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
+}
+
+function selectedDeskingSize(formData: FormData, rows?: DeskingSizePricingRow[] | null) {
+  const selectedId = textValue(formData, "desking_size_id");
+  const activeRows = activeDeskingSizeRows(rows);
+
+  return activeRows.find((row) => row.id === selectedId) ?? activeRows[0] ?? null;
+}
+
+function deskingSizePricingSnapshot({
+  accessoryQtyById,
+  additionalClusterQty,
+  baseText,
+  selectedSize,
+  selectedOptions,
+  template,
+}: {
+  accessoryQtyById: Map<string, number>;
+  additionalClusterQty: number;
+  baseText: string;
+  selectedSize: DeskingSizePricingRow;
+  selectedOptions: ProductComponentSnapshotSource[];
+  template: ProductTemplateSnapshotSource;
+}) {
+  const accessoryLines = selectedOptions
+    .filter((option) => option.option_type === "linked_addon" || deskingRole(option) === "accessory")
+    .map((option) => ({ option, qty: accessoryQtyById.get(option.id) ?? 0 }))
+    .filter((line) => line.qty > 0);
+  const selectedCoreOptions = selectedOptions.filter(
+    (option) => option.option_type !== "linked_addon" && deskingRole(option) !== "accessory",
+  );
+  const baseSeats = 2;
+  const seatsPerCluster = 2;
+  const modulesPerCluster = 1;
+  const totalSeats = baseSeats + additionalClusterQty * seatsPerCluster;
+  const totalModules = 1 + additionalClusterQty * modulesPerCluster;
+  const moduleLength = calculationNumber(selectedSize.length);
+  const depth = calculationNumber(selectedSize.depth);
+  const height = calculationNumber(selectedSize.height);
+  const dimensionUnit = selectedSize.dimension_unit ?? "cm";
+  const dimensionValue =
+    moduleLength && depth && height
+      ? `${moduleLength * totalModules} x ${depth} x ${height}`
+      : "";
+  const dimension = dimensionValue ? `${dimensionValue} ${dimensionUnit}` : "";
+  const clusterName = "CL2";
+  const clusterLabel =
+    additionalClusterQty > 0
+      ? `${clusterName} + ${additionalClusterQty} additional / Cluster of ${totalSeats}`
+      : `Cluster of ${totalSeats}`;
+  const basePrice = calculationNumber(selectedSize.default_price, template.default_unit_price ?? 0);
+  const additionalUnitPrice = calculationNumber(selectedSize.additional_price, basePrice);
+  const additionalClusterPrice = money(additionalUnitPrice * additionalClusterQty);
+  const accessoryPrice = money(
+    accessoryLines.reduce(
+      (total, line) => total + line.qty * calculationNumber(line.option.unit_price),
+      0,
+    ),
+  );
+  const unitPrice = money(basePrice + additionalClusterPrice + accessoryPrice);
+  const selectedOptionNames = [
+    ...selectedCoreOptions.map((option) => option.component_name),
+    ...accessoryLines.map((line) => `${line.option.component_name} x${line.qty}`),
+  ];
+  const finishOptions = selectedCoreOptions
+    .filter(
+      (option) =>
+        option.option_type === "material_finish" ||
+        option.option_type === "fabric_category",
+    )
+    .map((option) => option.component_name);
+  const specification = [baseText, `Cluster of ${totalSeats}`]
+    .filter(Boolean)
+    .join(", ");
+
+  return {
+    accessoryPrice,
+    additionalClusterPrice,
+    additionalClusterQty,
+    additionalUnitPrice,
+    baseClusterSeats: baseSeats,
+    basePrice,
+    clusterLabel,
+    clusterName,
+    dimension,
+    dimensionValue,
+    finishOptions,
+    mainCurrency: selectedSize.currency || template.currency || defaultCurrency,
+    selectedOptionNames,
+    selectedOptions: [
+      ...selectedCoreOptions,
+      ...accessoryLines.map((line) => ({
+        ...line.option,
+        selected_quantity: line.qty,
+      })),
+    ],
+    sizeLabel: selectedSize.label ?? `${moduleLength} x ${depth} x ${height}`,
+    specification,
+    totalModules,
+    totalSeats,
+    unitPrice,
+  };
+}
+
 function numberInRange(formData: FormData, name: string, fallback: number, min: number, max: number) {
   const value = numberValue(formData, name, fallback);
 
@@ -292,7 +437,7 @@ function quotationPayload(formData: FormData, userId?: string) {
     quotation_date: textValue(formData, "quotation_date") || new Date().toISOString().slice(0, 10),
     status: textValue(formData, "status") || "draft",
     layout_mode: textValue(formData, "layout_mode") || "standard_proposal",
-    currency: textValue(formData, "currency") || "AED",
+    currency: normalizeCurrency(textValue(formData, "currency") || defaultCurrency),
     vat_percent: numberValue(formData, "vat_percent", 5),
     overall_discount_type: allowedText(
       formData,
@@ -402,11 +547,32 @@ type ProductTemplateSnapshotSource = {
   item_code: string | null;
   description: string | null;
   default_specification: string | null;
+  origin: string | null;
+  supplier_name: string | null;
   default_image_url: string | null;
   reference_image_url: string | null;
+  proposed_image_url_1: string | null;
+  proposed_image_url_2: string | null;
+  proposed_image_url_3: string | null;
+  image_settings: Record<string, ImageDisplaySettings> | null;
+  desking_size_pricing: DeskingSizePricingRow[] | null;
   unit_label: string;
   currency: string;
   default_unit_price: number;
+};
+
+type DeskingSizePricingRow = {
+  id?: string;
+  label?: string;
+  length?: number;
+  depth?: number;
+  height?: number;
+  dimension_unit?: string;
+  default_price?: number;
+  additional_price?: number;
+  currency?: string;
+  sort_order?: number;
+  is_active?: boolean;
 };
 
 type ProductComponentSnapshotSource = {
@@ -421,6 +587,19 @@ type ProductComponentSnapshotSource = {
   unit_label: string;
   unit_price: number;
   currency: string;
+  calculation_data: {
+    desking_role?: string;
+    base_cluster_seats?: number;
+    module_length?: number;
+    depth?: number;
+    height?: number;
+    dimension_unit?: string;
+    price_role?: string;
+    seats_per_cluster?: number;
+    modules_per_cluster?: number;
+    label?: string;
+    allow_manual_quantity?: boolean;
+  } | null;
 };
 
 const quotationCopySelect =
@@ -473,7 +652,7 @@ function itemPayload(formData: FormData, userId?: string) {
     discount_value: discountValue,
     net_price: netPrice,
     net_total: money(qty * netPrice),
-    currency: textValue(formData, "currency") || "AED",
+    currency: normalizeCurrency(textValue(formData, "currency") || defaultCurrency),
     sort_order: integerValue(formData, "sort_order", 0),
     is_optional: boolValue(formData, "is_optional"),
     internal_cost: numberValue(formData, "internal_cost", 0),
@@ -1209,6 +1388,9 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const quotationId = textValue(formData, "quotation_id");
   const sectionId = textValue(formData, "section_id");
   const templateId = textValue(formData, "template_id");
+  const selectedTemplateImagePath = optionalTextValue(formData, "selected_template_image_path");
+  const accessoryQtyById = accessoryQuantities(formData);
+  const additionalClusterQty = deskingAdditionalClusterQty(formData);
   const selectedComponentIds = Array.from(
     new Set(
       formData
@@ -1239,7 +1421,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const { data: template, error: templateError } = await supabase
     .from("product_templates")
     .select(
-      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,default_image_url,reference_image_url,unit_label,currency,default_unit_price",
+      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,image_settings,unit_label,currency,default_unit_price",
     )
     .eq("id", templateId)
     .eq("is_active", true)
@@ -1252,9 +1434,9 @@ export async function addProductTemplateToQuotation(formData: FormData) {
 
   const { data: brand } = await supabase
     .from("brands")
-    .select("name")
+    .select("name,origin")
     .eq("id", template.brand_id)
-    .maybeSingle<{ name: string }>();
+    .maybeSingle<{ name: string; origin: string | null }>();
 
   const categoryIds = [template.main_category_id, template.sub_category_id].filter(
     (value): value is string => Boolean(value),
@@ -1274,7 +1456,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const { data: selectedComponents, error: selectedComponentsError } = selectedComponentIds.length
     ? await supabase
         .from("product_components")
-        .select("id,template_id,option_type,component_group,component_code,component_name,description,qty,unit_label,unit_price,currency")
+        .select("id,template_id,option_type,component_group,component_code,component_name,description,qty,unit_label,unit_price,currency,calculation_data")
         .eq("template_id", templateId)
         .eq("is_active", true)
         .in("id", selectedComponentIds)
@@ -1287,6 +1469,26 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   }
 
   const selectedOptions = selectedComponents ?? [];
+  const originSnapshot = template.origin ?? brand?.origin ?? null;
+  const supplierNameSnapshot = template.supplier_name ?? brand?.name ?? null;
+  const selectedSizePricing = selectedDeskingSize(formData, template.desking_size_pricing);
+  const isDesking =
+    /workstation|desk|desking/.test(categoryName.toLowerCase()) ||
+    Boolean(selectedSizePricing) ||
+    selectedOptions.some((option) => Boolean(deskingRole(option)));
+  const derivedDesking = isDesking && selectedSizePricing
+    ? deskingSizePricingSnapshot({
+        accessoryQtyById,
+        additionalClusterQty,
+        baseText:
+          template.default_specification ??
+          template.description ??
+          template.template_name,
+        selectedSize: selectedSizePricing,
+        template,
+        selectedOptions,
+      })
+    : null;
   const selectedOptionNames = selectedOptions.map((option) => option.component_name);
   const selectedFinishOptions = selectedOptions
     .filter((option) => option.option_type === "material_finish" || option.option_type === "fabric_category")
@@ -1316,14 +1518,76 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     .limit(1)
     .maybeSingle<{ sort_order: number }>();
 
-  const unitPrice = money((template.default_unit_price ?? 0) + selectedOptionPrice);
-  const imagePath = productImageSnapshotPath(template.default_image_url ?? template.reference_image_url);
+  const unitPrice = derivedDesking
+    ? derivedDesking.unitPrice || money(template.default_unit_price ?? 0)
+    : money((template.default_unit_price ?? 0) + selectedOptionPrice);
+  const sourceSelectedOptionsPrice = derivedDesking?.unitPrice ?? selectedOptionPrice;
+  const proposedImageFields = [
+    "proposed_image_url_1",
+    "proposed_image_url_2",
+    "proposed_image_url_3",
+  ] as const;
+  const availableProposedImages = proposedImageFields
+    .map((field) => ({
+      field,
+      path:
+        field === "proposed_image_url_1"
+          ? template.proposed_image_url_1 ?? template.default_image_url
+          : template[field],
+    }))
+    .filter((image): image is { field: (typeof proposedImageFields)[number]; path: string } =>
+      Boolean(image.path),
+    );
+  const proposedImages = availableProposedImages.map((image) => image.path);
+  const selectedProposedImage =
+    selectedTemplateImagePath && proposedImages.includes(selectedTemplateImagePath)
+      ? selectedTemplateImagePath
+      : proposedImages[0] ?? null;
+  const selectedImageField =
+    availableProposedImages.find((image) => image.path === selectedProposedImage)?.field ??
+    null;
+  const selectedImageSettings = selectedImageField
+    ? template.image_settings?.[selectedImageField] ??
+      (selectedImageField === "proposed_image_url_1"
+        ? template.image_settings?.default_image_url
+        : undefined)
+    : undefined;
+  const proposedImagePath = productImageSnapshotPath(selectedProposedImage);
   const baseSpecification = template.default_specification ?? template.description ?? "";
-  const specification = selectedOptionNames.length
+  const specification = derivedDesking?.specification || (selectedOptionNames.length
     ? [baseSpecification, `Selected options: ${selectedOptionNames.join(", ")}`]
         .filter(Boolean)
         .join("\n")
-    : baseSpecification || null;
+    : baseSpecification || null);
+  const snapshotSelectedOptions = derivedDesking
+    ? [
+        {
+          item_type: "desking_size",
+          label: derivedDesking.sizeLabel,
+          additional_qty: derivedDesking.additionalClusterQty,
+          dimension: derivedDesking.dimension,
+          default_price: derivedDesking.basePrice,
+          additional_price: derivedDesking.additionalUnitPrice,
+          final_price: derivedDesking.unitPrice,
+        },
+        ...derivedDesking.selectedOptions,
+      ]
+    : selectedOptions;
+  const deskingSourceData = derivedDesking
+    ? {
+        size_label: derivedDesking.sizeLabel,
+        cluster_label: derivedDesking.clusterLabel,
+        additional_qty: derivedDesking.additionalClusterQty,
+        total_seats: derivedDesking.totalSeats,
+        total_modules: derivedDesking.totalModules,
+        dimension: derivedDesking.dimension,
+        default_price: derivedDesking.basePrice,
+        additional_price: derivedDesking.additionalUnitPrice,
+        additional_total: derivedDesking.additionalClusterPrice,
+        accessory_price: derivedDesking.accessoryPrice,
+        final_price: derivedDesking.unitPrice,
+      }
+    : null;
   const payload = {
     quotation_id: quotationId,
     section_id: sectionId,
@@ -1334,6 +1598,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       template_name: template.template_name,
       brand_id: template.brand_id,
       brand_name: brand?.name ?? null,
+      origin: originSnapshot,
+      supplier_name: supplierNameSnapshot,
       main_category_id: template.main_category_id,
       main_category_name: template.main_category_id
         ? categoryNameById.get(template.main_category_id) ?? null
@@ -1344,19 +1610,29 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         : null,
       default_image_url: template.default_image_url,
       reference_image_url: template.reference_image_url,
-      selected_options: selectedOptions,
-      selected_options_price: selectedOptionPrice,
+      proposed_image_url_1: template.proposed_image_url_1,
+      proposed_image_url_2: template.proposed_image_url_2,
+      proposed_image_url_3: template.proposed_image_url_3,
+      selected_proposed_image_url: selectedProposedImage,
+      selected_options: snapshotSelectedOptions,
+      selected_options_price: sourceSelectedOptionsPrice,
+      ...(deskingSourceData ? { desking: deskingSourceData } : {}),
     },
     item_code_snapshot: template.item_code ?? template.template_code,
     item_name_snapshot: template.template_name,
     brand_name_snapshot: brand?.name ?? null,
     category_name_snapshot: categoryName || null,
-    proposed_image_url_snapshot: imagePath,
+    specified_image_url_snapshot: null,
+    proposed_image_url_snapshot: proposedImagePath,
     specification_snapshot: specification,
-    selected_options_snapshot: selectedOptions,
-    model_snapshot: selectedClusterOptions.join(", ") || null,
-    finish_snapshot: selectedFinishOptions.join(", ") || null,
-    size_snapshot: selectedSizeOptions.join(", ") || null,
+    selected_options_snapshot: snapshotSelectedOptions,
+    model_snapshot: derivedDesking
+      ? `Cluster of ${derivedDesking.totalSeats}`
+      : selectedClusterOptions.join(", ") || null,
+    finish_snapshot: derivedDesking?.finishOptions.join(", ") || selectedFinishOptions.join(", ") || null,
+    size_snapshot: derivedDesking?.dimensionValue || selectedSizeOptions.join(", ") || null,
+    origin_snapshot: originSnapshot,
+    supplier_name_snapshot: supplierNameSnapshot,
     qty: 1,
     unit_label: template.unit_label || "Pc",
     unit_price: unitPrice,
@@ -1364,7 +1640,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     discount_value: 0,
     net_price: unitPrice,
     net_total: unitPrice,
-    currency: template.currency || "AED",
+    currency: normalizeCurrency(derivedDesking?.mainCurrency || template.currency || defaultCurrency),
     sort_order: (lastItem?.sort_order ?? 0) + 10,
     is_optional: false,
     internal_cost: 0,
@@ -1372,7 +1648,9 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     margin_value: 0,
     is_rate_only: false,
     line_style: "normal",
-    cell_layout: {},
+    cell_layout: selectedImageSettings
+      ? { images: { proposed_image_url_snapshot: selectedImageSettings } }
+      : {},
     is_active: true,
     created_by: user.id,
   };

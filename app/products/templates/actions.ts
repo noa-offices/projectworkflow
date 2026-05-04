@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSettingsManager } from "@/lib/auth";
+import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import { createClient } from "@/lib/supabase/server";
 
 const allowedOptionTypes = new Set([
@@ -14,6 +15,17 @@ const allowedOptionTypes = new Set([
   "other",
 ]);
 const imageFits = new Set(["contain", "cover"]);
+const imageFields = new Set([
+  "proposed_image_url_1",
+  "proposed_image_url_2",
+  "proposed_image_url_3",
+]);
+const deskingRoles = new Set([
+  "none",
+  "base_size",
+  "cluster_type",
+  "accessory",
+]);
 
 function textValue(formData: FormData, name: string) {
   const value = formData.get(name);
@@ -32,6 +44,14 @@ function boolValue(formData: FormData, name: string) {
 function numberValue(formData: FormData, name: string, fallback: number) {
   const value = Number.parseFloat(textValue(formData, name));
   return Number.isFinite(value) ? value : fallback;
+}
+
+function optionalNumberValue(formData: FormData, name: string) {
+  const rawValue = textValue(formData, name);
+  if (!rawValue) return undefined;
+
+  const value = Number.parseFloat(rawValue);
+  return Number.isFinite(value) ? value : undefined;
 }
 
 function numberInRange(formData: FormData, name: string, fallback: number, min: number, max: number) {
@@ -55,6 +75,95 @@ function imageDisplaySettingsValue(formData: FormData) {
   };
 }
 
+function imageSettingsValue(formData: FormData) {
+  const settings: Record<string, ReturnType<typeof imageDisplaySettingsValue>> = {};
+
+  for (const field of imageFields) {
+    const rawValue = textValue(formData, `image_settings_${field}`);
+    if (!rawValue) continue;
+
+    try {
+      const parsed = JSON.parse(rawValue) as {
+        fit?: string;
+        zoom?: number;
+        positionX?: number;
+        positionY?: number;
+      };
+
+      settings[field] = {
+        fit: parsed.fit === "cover" ? "cover" : "contain",
+        zoom: Math.min(Math.max(Number(parsed.zoom) || 1, 1), 3),
+        positionX: Math.min(Math.max(Number(parsed.positionX) || 50, 0), 100),
+        positionY: Math.min(Math.max(Number(parsed.positionY) || 50, 0), 100),
+      };
+    } catch {
+      // Ignore malformed client-side display metadata.
+    }
+  }
+
+  return Object.keys(settings).length ? settings : undefined;
+}
+
+function deskingSizePricingValue(formData: FormData) {
+  const rawValue = textValue(formData, "desking_size_pricing");
+  if (!rawValue) return [];
+
+  try {
+    const parsed = JSON.parse(rawValue) as Array<Record<string, unknown>>;
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((row, index) => {
+        const label = typeof row.label === "string" ? row.label.trim() : "";
+        const parsedDimensions = label
+          .split(/\s*x\s*/i)
+          .map((part) => Number(part.trim()))
+          .filter((value) => Number.isFinite(value));
+        const length = parsedDimensions[0] ?? Number(row.length);
+        const depth = parsedDimensions[1] ?? Number(row.depth);
+        const height = parsedDimensions[2] ?? Number(row.height);
+        const defaultPrice = Number(row.default_price);
+        const additionalPrice = Number(row.additional_price);
+
+        return {
+          id: typeof row.id === "string" && row.id ? row.id : `size-${index}`,
+          label: label
+              ? label
+              : Number.isFinite(length) && Number.isFinite(depth) && Number.isFinite(height)
+                ? `${length} x ${depth} x ${height}`
+                : "",
+          length: Number.isFinite(length) ? length : 0,
+          depth: Number.isFinite(depth) ? depth : 0,
+          height: Number.isFinite(height) ? height : 0,
+          dimension_unit:
+            typeof row.dimension_unit === "string" && row.dimension_unit.trim()
+              ? row.dimension_unit.trim()
+              : "cm",
+          default_price: Number.isFinite(defaultPrice) ? defaultPrice : 0,
+          additional_price: Number.isFinite(additionalPrice) ? additionalPrice : 0,
+          currency: normalizeCurrency(
+            typeof row.currency === "string" ? row.currency : defaultCurrency,
+          ),
+          sort_order: Number.isFinite(Number(row.sort_order))
+            ? Number(row.sort_order)
+            : index,
+          is_active: row.is_active !== false,
+        };
+      })
+      .filter(
+        (row) =>
+          row.label ||
+          row.length > 0 ||
+          row.depth > 0 ||
+          row.height > 0 ||
+          row.default_price > 0 ||
+          row.additional_price > 0,
+      );
+  } catch {
+    return [];
+  }
+}
+
 function templatePayload(formData: FormData, userId?: string) {
   const payload = {
     brand_id: textValue(formData, "brand_id"),
@@ -65,16 +174,77 @@ function templatePayload(formData: FormData, userId?: string) {
     item_code: optionalTextValue(formData, "item_code"),
     description: optionalTextValue(formData, "description"),
     default_specification: optionalTextValue(formData, "default_specification"),
-    default_image_url: optionalTextValue(formData, "default_image_url"),
+    origin: optionalTextValue(formData, "origin"),
+    supplier_name: optionalTextValue(formData, "supplier_name"),
+    default_image_url: optionalTextValue(formData, "proposed_image_url_1"),
+    proposed_image_url_1: optionalTextValue(formData, "proposed_image_url_1"),
+    proposed_image_url_2: optionalTextValue(formData, "proposed_image_url_2"),
+    proposed_image_url_3: optionalTextValue(formData, "proposed_image_url_3"),
     reference_image_url: optionalTextValue(formData, "reference_image_url"),
+    desking_size_pricing: deskingSizePricingValue(formData),
     unit_label: textValue(formData, "unit_label") || "Pc",
-    currency: textValue(formData, "currency") || "AED",
+    currency: normalizeCurrency(textValue(formData, "currency") || defaultCurrency),
     default_unit_price: numberValue(formData, "default_unit_price", 0),
     is_active: boolValue(formData, "is_active"),
     price_notes: optionalTextValue(formData, "price_notes"),
   };
 
   return userId ? { ...payload, created_by: userId } : payload;
+}
+
+function createTemplatePayload(formData: FormData, userId: string) {
+  const id = optionalTextValue(formData, "id");
+  const imageSettings = imageSettingsValue(formData);
+  const payload = {
+    ...templatePayload(formData, userId),
+    ...(imageSettings ? { image_settings: imageSettings } : {}),
+  };
+
+  return id ? { ...payload, id } : payload;
+}
+
+function calculationDataValue(formData: FormData) {
+  const role = textValue(formData, "desking_role") || "none";
+
+  if (!deskingRoles.has(role) || role === "none") {
+    return {};
+  }
+
+  const calculationData: Record<string, boolean | string | number> = {
+    desking_role: role,
+  };
+  const numericFields = [
+    "base_cluster_seats",
+    "module_length",
+    "depth",
+    "height",
+    "seats_per_cluster",
+    "modules_per_cluster",
+  ];
+
+  for (const field of numericFields) {
+    const value = optionalNumberValue(formData, field);
+    if (value !== undefined) {
+      calculationData[field] = value;
+    }
+  }
+
+  const dimensionUnit = textValue(formData, "dimension_unit");
+  if (dimensionUnit) {
+    calculationData.dimension_unit = dimensionUnit;
+  }
+
+  if (textValue(formData, "price_role")) {
+    calculationData.price_role = textValue(formData, "price_role");
+  }
+
+  if (textValue(formData, "desking_label")) {
+    calculationData.label = textValue(formData, "desking_label");
+  }
+
+  calculationData.allow_manual_quantity = boolValue(formData, "allow_manual_quantity");
+
+  return calculationData;
 }
 
 function componentPayload(formData: FormData, userId?: string) {
@@ -88,12 +258,13 @@ function componentPayload(formData: FormData, userId?: string) {
     qty: numberValue(formData, "qty", 1),
     unit_label: textValue(formData, "unit_label") || "Pc",
     unit_price: numberValue(formData, "unit_price", 0),
-    currency: textValue(formData, "currency") || "AED",
+    currency: normalizeCurrency(textValue(formData, "currency") || defaultCurrency),
     is_optional: boolValue(formData, "is_optional"),
     is_default_selected: boolValue(formData, "is_default_selected"),
     sort_order: Math.trunc(numberValue(formData, "sort_order", 0)),
     is_active: boolValue(formData, "is_active"),
     price_notes: optionalTextValue(formData, "price_notes"),
+    calculation_data: calculationDataValue(formData),
   };
 
   return userId ? { ...payload, created_by: userId } : payload;
@@ -101,7 +272,7 @@ function componentPayload(formData: FormData, userId?: string) {
 
 export async function createProductTemplate(formData: FormData) {
   const { user } = await requireSettingsManager();
-  const payload = templatePayload(formData, user.id);
+  const payload = createTemplatePayload(formData, user.id);
 
   if (!payload.brand_id || !payload.template_name) {
     redirectWithMessage("Brand and template name are required.");
@@ -143,19 +314,24 @@ export async function updateProductTemplate(formData: FormData) {
   redirectWithMessage("Product template updated.");
 }
 
-export async function updateProductTemplateMainImage(formData: FormData) {
+export async function updateProductTemplateImage(formData: FormData) {
   await requireSettingsManager();
   const id = textValue(formData, "id");
-  const path = optionalTextValue(formData, "default_image_url");
+  const field = textValue(formData, "image_field");
+  const path = optionalTextValue(formData, "image_path");
 
-  if (!id) {
-    return { ok: false, message: "Template id is required." };
+  if (!id || !imageFields.has(field)) {
+    return { ok: false, message: "Template id and image field are required." };
   }
 
   const supabase = await createClient();
+  const updates = {
+    [field]: path,
+    ...(field === "proposed_image_url_1" ? { default_image_url: path } : {}),
+  };
   const { error } = await supabase
     .from("product_templates")
-    .update({ default_image_url: path })
+    .update(updates)
     .eq("id", id);
 
   if (error) {
@@ -170,17 +346,30 @@ export async function updateProductTemplateMainImage(formData: FormData) {
 export async function updateProductTemplateImageSettings(formData: FormData) {
   await requireSettingsManager();
   const id = textValue(formData, "id");
+  const field = textValue(formData, "image_field");
 
-  if (!id) {
-    return { ok: false, message: "Template id is required." };
+  if (!id || !imageFields.has(field)) {
+    return { ok: false, message: "Template id and image field are required." };
   }
 
   const supabase = await createClient();
+  const { data: currentTemplate, error: readError } = await supabase
+    .from("product_templates")
+    .select("image_settings")
+    .eq("id", id)
+    .single<{ image_settings: Record<string, unknown> | null }>();
+
+  if (readError || !currentTemplate) {
+    console.error("PRODUCT TEMPLATE IMAGE SETTINGS READ ERROR", readError?.message);
+    return { ok: false, message: "Product image settings could not be loaded." };
+  }
+
   const { error } = await supabase
     .from("product_templates")
     .update({
       image_settings: {
-        default_image_url: imageDisplaySettingsValue(formData),
+        ...(currentTemplate.image_settings ?? {}),
+        [field]: imageDisplaySettingsValue(formData),
       },
     })
     .eq("id", id);
@@ -274,6 +463,57 @@ export async function updateProductComponent(formData: FormData) {
 
   revalidatePath("/products/templates");
   redirectWithMessage("Template option updated.");
+}
+
+export async function deactivateProductComponent(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectWithMessage("Option id is required.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_components")
+    .update({ is_active: false })
+    .eq("id", id);
+
+  if (error) {
+    console.error("PRODUCT COMPONENT DEACTIVATE ERROR", error.message);
+    redirectWithMessage("Template option could not be deactivated.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Template option deactivated.");
+}
+
+export async function deactivateProductComponentGroup(formData: FormData) {
+  await requireSettingsManager();
+  const templateId = textValue(formData, "template_id");
+  const optionType = textValue(formData, "option_type");
+  const componentGroup = textValue(formData, "component_group");
+
+  if (!templateId || !optionType || !componentGroup) {
+    redirectWithMessage("Template, option type, and option group are required.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_components")
+    .update({ is_active: false })
+    .eq("template_id", templateId)
+    .eq("option_type", optionType)
+    .eq("component_group", componentGroup)
+    .eq("is_active", true);
+
+  if (error) {
+    console.error("PRODUCT COMPONENT GROUP DEACTIVATE ERROR", error.message);
+    redirectWithMessage("Template option group could not be deactivated.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Template option group deactivated.");
 }
 
 export async function markTemplatePriceChecked(formData: FormData) {

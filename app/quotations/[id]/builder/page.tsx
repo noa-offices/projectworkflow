@@ -14,6 +14,7 @@ import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-tab
 import { QuotationImageCell } from "@/components/quotations/quotation-image-cell";
 import { RowHeightTextarea } from "@/components/quotations/row-height-textarea";
 import { requireActiveUser } from "@/lib/auth";
+import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
   createQuotationItem,
@@ -243,7 +244,7 @@ const titleSizes = [
 ] as const;
 
 function money(currency: string, value: number) {
-  return `${currency} ${value.toFixed(2)}`;
+  return formatMoney(currency, value);
 }
 
 function statusLabel(status: string) {
@@ -514,6 +515,25 @@ function TextArea({
   );
 }
 
+function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Currency</span>
+      <select
+        name="currency"
+        defaultValue={normalizeCurrency(defaultValue ?? defaultCurrency)}
+        className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20"
+      >
+        {supportedCurrencies.map((currency) => (
+          <option key={currency.code} value={currency.code}>
+            {currency.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function SubmitButton({ label }: { label: string }) {
   return (
     <button
@@ -718,7 +738,6 @@ function LineForm({
       <input type="hidden" name="quotation_id" value={quotation.id} />
       <input type="hidden" name="section_id" value={sectionId ?? item?.section_id ?? ""} />
       <input type="hidden" name="item_type" value={item?.item_type ?? "custom"} />
-      <input type="hidden" name="currency" value={quotation.currency} />
       <input type="hidden" name="is_active" value="on" />
       <input type="hidden" name="return_to" value={returnTo} />
       {item ? (
@@ -747,6 +766,7 @@ function LineForm({
           <Field name="qty" label="Qty" type="number" step="1" defaultValue={item?.qty ?? 1} />
           <Field name="unit_label" label="Unit" defaultValue={item?.unit_label ?? "Pc"} />
           <Field name="unit_price" label="U.Price" type="number" defaultValue={item?.unit_price ?? 0} />
+          <CurrencySelect defaultValue={item?.currency ?? quotation.currency} />
           <label className="block">
             <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Discount type</span>
             <select name="discount_type" defaultValue={item?.discount_type ?? "amount"} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20">
@@ -1834,7 +1854,7 @@ export default async function QuotationBuilderPage({
   const { data: productTemplates, error: productTemplatesError } = await supabase
     .from("product_templates")
     .select(
-      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,default_image_url,reference_image_url,currency,default_unit_price",
+      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,currency,default_unit_price",
     )
     .eq("is_active", true)
     .order("template_name", { ascending: true })
@@ -1842,7 +1862,7 @@ export default async function QuotationBuilderPage({
 
   const { data: productComponents, error: productComponentsError } = await supabase
     .from("product_components")
-    .select("id,template_id,option_type,component_group,component_code,component_name,description,qty,unit_label,unit_price,currency,is_optional,is_default_selected,sort_order")
+    .select("id,template_id,option_type,component_group,component_code,component_name,description,qty,unit_label,unit_price,currency,is_optional,is_default_selected,sort_order,calculation_data")
     .eq("is_active", true)
     .order("template_id", { ascending: true })
     .order("option_type", { ascending: true })
@@ -1887,6 +1907,14 @@ export default async function QuotationBuilderPage({
     sectionItems.push(item);
     itemsBySection.set(key, sectionItems);
   }
+  const itemCurrencies = new Set(
+    (items ?? [])
+      .filter((item) => item.is_active)
+      .map((item) => normalizeCurrency(item.currency)),
+  );
+  const hasMixedCurrencies =
+    itemCurrencies.size > 1 ||
+    (itemCurrencies.size === 1 && !itemCurrencies.has(normalizeCurrency(quotation.currency)));
 
   const defaultColumns = getColumns(quotation.layout_mode, showInternal, quotation.layout_settings);
   const columns = configuredColumns(defaultColumns, quotation.layout_settings);
@@ -2381,6 +2409,11 @@ export default async function QuotationBuilderPage({
 
         <section className="mt-4 flex justify-end">
           <div className="w-full max-w-md border border-zinc-300 bg-white text-sm">
+            {hasMixedCurrencies ? (
+              <p className="border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+                Currency conversion is not enabled yet. Mixed-currency totals should be reviewed manually.
+              </p>
+            ) : null}
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">Total Price</span>
               <span>{money(quotation.currency, quotation.subtotal)}</span>

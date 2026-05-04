@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { AppSidebar } from "@/components/app-sidebar";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
+import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
   createQuotationItem,
@@ -218,16 +219,31 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function formatMoney(currency: string, value: number) {
-  return `${currency} ${value.toFixed(2)}`;
-}
-
 function InfoValue({ label, value }: { label: string; value?: string | number | null }) {
   return (
     <div>
       <p className="text-xs font-semibold uppercase text-zinc-500">{label}</p>
       <p className="mt-1 text-sm text-zinc-800">{value || "-"}</p>
     </div>
+  );
+}
+
+function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
+  return (
+    <label className="block">
+      <span className="text-xs font-semibold uppercase text-zinc-500">Currency</span>
+      <select
+        name="currency"
+        defaultValue={normalizeCurrency(defaultValue ?? defaultCurrency)}
+        className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+      >
+        {supportedCurrencies.map((currency) => (
+          <option key={currency.code} value={currency.code}>
+            {currency.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -347,7 +363,7 @@ function QuotationTermsForm({ quotation, mode }: { quotation: Quotation; mode: "
           <Field name="validity" label="Validity" defaultValue={quotation.validity} />
           <Field name="delivery_terms" label="Delivery terms" defaultValue={quotation.delivery_terms} />
           <Field name="warranty_terms" label="Warranty terms" defaultValue={quotation.warranty_terms} />
-          <Field name="currency" label="Currency" defaultValue={quotation.currency} />
+          <CurrencySelect defaultValue={quotation.currency} />
           <Field name="vat_percent" label="VAT %" type="number" defaultValue={quotation.vat_percent} />
           <label className="block">
             <span className="text-xs font-semibold uppercase text-zinc-500">Extra Discount Type</span>
@@ -436,7 +452,6 @@ function ItemForm({
       <input type="hidden" name="section_id" value={sectionId ?? item?.section_id ?? ""} />
       <input type="hidden" name="item_type" value={item?.item_type ?? "custom"} />
       <input type="hidden" name="manual_serial" value={item?.manual_serial ?? ""} />
-      <input type="hidden" name="currency" value={quotation.currency} />
       <input type="hidden" name="is_active" value="on" />
       {item?.is_optional ? <input type="hidden" name="is_optional" value="on" /> : null}
       <input type="hidden" name="room_name_snapshot" value={item?.room_name_snapshot ?? ""} />
@@ -486,6 +501,7 @@ function ItemForm({
         type="number"
         defaultValue={item?.unit_price ?? 0}
       />
+      <CurrencySelect defaultValue={item?.currency ?? quotation.currency} />
       <label className="block">
         <span className="text-xs font-semibold uppercase text-zinc-500">
           Discount type
@@ -604,6 +620,14 @@ export default async function QuotationDetailPage({
     sectionItems.push(item);
     itemsBySection.set(key, sectionItems);
   }
+  const itemCurrencies = new Set(
+    (items ?? [])
+      .filter((item) => item.is_active)
+      .map((item) => normalizeCurrency(item.currency)),
+  );
+  const hasMixedCurrencies =
+    itemCurrencies.size > 1 ||
+    (itemCurrencies.size === 1 && !itemCurrencies.has(normalizeCurrency(quotation.currency)));
 
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
@@ -680,6 +704,11 @@ export default async function QuotationDetailPage({
 
             <aside className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
               <h2 className="text-sm font-semibold uppercase text-zinc-500">Totals</h2>
+              {hasMixedCurrencies ? (
+                <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+                  Currency conversion is not enabled yet. Mixed-currency totals should be reviewed manually.
+                </p>
+              ) : null}
               <div className="mt-4 space-y-3 text-sm">
                 <div className="flex justify-between gap-4">
                   <span className="text-zinc-500">Total Price</span>
