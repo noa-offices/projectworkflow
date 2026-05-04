@@ -25,10 +25,14 @@ function isDirectImageUrl(value: string) {
 async function signedImageUrl(path: string) {
   if (isDirectImageUrl(path)) return path;
 
+  const bucket = path.startsWith("product-images:") ? "product-images" : "quote-images";
+  const storagePath = path.startsWith("product-images:")
+    ? path.slice("product-images:".length)
+    : path;
   const supabase = createClient();
   const { data, error } = await supabase.storage
-    .from("quote-images")
-    .createSignedUrl(path, 60 * 60);
+    .from(bucket)
+    .createSignedUrl(storagePath, 60 * 60);
 
   if (error) {
     throw new Error(error.message || "Image could not be loaded.");

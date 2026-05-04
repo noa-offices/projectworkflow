@@ -160,6 +160,18 @@ function isCellLayoutPayload(value: unknown): value is CellLayoutPayload {
   return typeof value === "object" && value !== null;
 }
 
+function isDirectImagePath(value: string) {
+  return /^(https?:|blob:|data:|\/)/i.test(value);
+}
+
+function productImageSnapshotPath(value: string | null) {
+  if (!value || isDirectImagePath(value) || value.startsWith("product-images:")) {
+    return value;
+  }
+
+  return `product-images:${value}`;
+}
+
 function numberInRange(formData: FormData, name: string, fallback: number, min: number, max: number) {
   const value = numberValue(formData, name, fallback);
 
@@ -378,6 +390,37 @@ type QuotationItemCopySource = {
   row_height: number | null;
   cell_layout: unknown;
   notes: string | null;
+};
+
+type ProductTemplateSnapshotSource = {
+  id: string;
+  brand_id: string;
+  main_category_id: string | null;
+  sub_category_id: string | null;
+  template_code: string | null;
+  template_name: string;
+  item_code: string | null;
+  description: string | null;
+  default_specification: string | null;
+  default_image_url: string | null;
+  reference_image_url: string | null;
+  unit_label: string;
+  currency: string;
+  default_unit_price: number;
+};
+
+type ProductComponentSnapshotSource = {
+  id: string;
+  template_id: string;
+  option_type: string;
+  component_group: string;
+  component_code: string | null;
+  component_name: string;
+  description: string | null;
+  qty: number;
+  unit_label: string;
+  unit_price: number;
+  currency: string;
 };
 
 const quotationCopySelect =
@@ -1159,6 +1202,192 @@ export async function createQuotationItem(formData: FormData) {
   revalidatePath(`/quotations/${payload.quotation_id}`);
   revalidatePath(redirectPath);
   redirectWithMessage(redirectPath, "Line item created.");
+}
+
+export async function addProductTemplateToQuotation(formData: FormData) {
+  const { user } = await requireRecordsManager();
+  const quotationId = textValue(formData, "quotation_id");
+  const sectionId = textValue(formData, "section_id");
+  const templateId = textValue(formData, "template_id");
+  const selectedComponentIds = Array.from(
+    new Set(
+      formData
+        .getAll("selected_component_id")
+        .filter((value): value is string => typeof value === "string" && Boolean(value)),
+    ),
+  );
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}`);
+
+  if (!quotationId || !sectionId || !templateId) {
+    redirectWithMessage(redirectPath, "Quotation, section, and product are required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: section, error: sectionError } = await supabase
+    .from("quotation_sections")
+    .select("id")
+    .eq("id", sectionId)
+    .eq("quotation_id", quotationId)
+    .eq("is_active", true)
+    .maybeSingle<{ id: string }>();
+
+  if (sectionError || !section) {
+    console.error("PRODUCT TEMPLATE ADD SECTION ERROR", sectionError?.message);
+    redirectWithMessage(redirectPath, "Section could not be loaded.");
+  }
+
+  const { data: template, error: templateError } = await supabase
+    .from("product_templates")
+    .select(
+      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,default_image_url,reference_image_url,unit_label,currency,default_unit_price",
+    )
+    .eq("id", templateId)
+    .eq("is_active", true)
+    .single<ProductTemplateSnapshotSource>();
+
+  if (templateError || !template) {
+    console.error("PRODUCT TEMPLATE ADD READ ERROR", templateError?.message);
+    redirectWithMessage(redirectPath, "Product template could not be loaded.");
+  }
+
+  const { data: brand } = await supabase
+    .from("brands")
+    .select("name")
+    .eq("id", template.brand_id)
+    .maybeSingle<{ name: string }>();
+
+  const categoryIds = [template.main_category_id, template.sub_category_id].filter(
+    (value): value is string => Boolean(value),
+  );
+  const { data: categories } = categoryIds.length
+    ? await supabase
+        .from("product_categories")
+        .select("id,name")
+        .in("id", categoryIds)
+        .returns<Array<{ id: string; name: string }>>()
+    : { data: [] };
+  const categoryNameById = new Map((categories ?? []).map((category) => [category.id, category.name]));
+  const categoryName = [
+    template.main_category_id ? categoryNameById.get(template.main_category_id) : null,
+    template.sub_category_id ? categoryNameById.get(template.sub_category_id) : null,
+  ].filter(Boolean).join(" / ");
+  const { data: selectedComponents, error: selectedComponentsError } = selectedComponentIds.length
+    ? await supabase
+        .from("product_components")
+        .select("id,template_id,option_type,component_group,component_code,component_name,description,qty,unit_label,unit_price,currency")
+        .eq("template_id", templateId)
+        .eq("is_active", true)
+        .in("id", selectedComponentIds)
+        .returns<ProductComponentSnapshotSource[]>()
+    : { data: [], error: null };
+
+  if (selectedComponentsError) {
+    console.error("PRODUCT TEMPLATE ADD OPTIONS ERROR", selectedComponentsError.message);
+    redirectWithMessage(redirectPath, "Product options could not be loaded.");
+  }
+
+  const selectedOptions = selectedComponents ?? [];
+  const selectedOptionNames = selectedOptions.map((option) => option.component_name);
+  const selectedFinishOptions = selectedOptions
+    .filter((option) => option.option_type === "material_finish" || option.option_type === "fabric_category")
+    .map((option) => option.component_name);
+  const selectedSizeOptions = selectedOptions
+    .filter((option) => option.option_type === "size_variant")
+    .map((option) => option.component_name);
+  const selectedClusterOptions = selectedOptions
+    .filter((option) => option.option_type === "cluster_preset")
+    .map((option) => option.component_name);
+  const selectedOptionPrice = money(
+    selectedOptions.reduce((total, option) => {
+      const optionQty = Number.isFinite(option.qty) && option.qty > 0 ? option.qty : 1;
+      const optionPrice =
+        Number.isFinite(option.unit_price) && option.unit_price > 0 ? option.unit_price : 0;
+
+      return total + optionQty * optionPrice;
+    }, 0),
+  );
+
+  const { data: lastItem } = await supabase
+    .from("quotation_items")
+    .select("sort_order")
+    .eq("quotation_id", quotationId)
+    .eq("section_id", sectionId)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ sort_order: number }>();
+
+  const unitPrice = money((template.default_unit_price ?? 0) + selectedOptionPrice);
+  const imagePath = productImageSnapshotPath(template.default_image_url ?? template.reference_image_url);
+  const baseSpecification = template.default_specification ?? template.description ?? "";
+  const specification = selectedOptionNames.length
+    ? [baseSpecification, `Selected options: ${selectedOptionNames.join(", ")}`]
+        .filter(Boolean)
+        .join("\n")
+    : baseSpecification || null;
+  const payload = {
+    quotation_id: quotationId,
+    section_id: sectionId,
+    item_type: "product",
+    source_template_id: template.id,
+    source_component_data: {
+      template_code: template.template_code,
+      template_name: template.template_name,
+      brand_id: template.brand_id,
+      brand_name: brand?.name ?? null,
+      main_category_id: template.main_category_id,
+      main_category_name: template.main_category_id
+        ? categoryNameById.get(template.main_category_id) ?? null
+        : null,
+      sub_category_id: template.sub_category_id,
+      sub_category_name: template.sub_category_id
+        ? categoryNameById.get(template.sub_category_id) ?? null
+        : null,
+      default_image_url: template.default_image_url,
+      reference_image_url: template.reference_image_url,
+      selected_options: selectedOptions,
+      selected_options_price: selectedOptionPrice,
+    },
+    item_code_snapshot: template.item_code ?? template.template_code,
+    item_name_snapshot: template.template_name,
+    brand_name_snapshot: brand?.name ?? null,
+    category_name_snapshot: categoryName || null,
+    proposed_image_url_snapshot: imagePath,
+    specification_snapshot: specification,
+    selected_options_snapshot: selectedOptions,
+    model_snapshot: selectedClusterOptions.join(", ") || null,
+    finish_snapshot: selectedFinishOptions.join(", ") || null,
+    size_snapshot: selectedSizeOptions.join(", ") || null,
+    qty: 1,
+    unit_label: template.unit_label || "Pc",
+    unit_price: unitPrice,
+    discount_type: "amount",
+    discount_value: 0,
+    net_price: unitPrice,
+    net_total: unitPrice,
+    currency: template.currency || "AED",
+    sort_order: (lastItem?.sort_order ?? 0) + 10,
+    is_optional: false,
+    internal_cost: 0,
+    margin_type: "amount",
+    margin_value: 0,
+    is_rate_only: false,
+    line_style: "normal",
+    cell_layout: {},
+    is_active: true,
+    created_by: user.id,
+  };
+
+  const { error } = await supabase.from("quotation_items").insert(payload);
+
+  if (error) {
+    console.error("PRODUCT TEMPLATE ADD ITEM ERROR", error.message);
+    redirectWithMessage(redirectPath, "Product could not be added to quotation.");
+  }
+
+  await recalculateQuotationTotals(quotationId);
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(redirectPath);
+  redirectWithMessage(redirectPath, "Product added to quotation.");
 }
 
 export async function updateQuotationItem(formData: FormData) {

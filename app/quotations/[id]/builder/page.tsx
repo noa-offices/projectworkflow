@@ -3,6 +3,13 @@ import { notFound } from "next/navigation";
 import { Fragment, type CSSProperties, type ReactNode } from "react";
 import { InlineRowAutosave } from "@/components/quotations/inline-row-autosave";
 import { CellFormattingToolbar } from "@/components/quotations/cell-formatting-toolbar";
+import {
+  ProductLibrarySelector,
+  type ProductLibraryBrand,
+  type ProductLibraryCategory,
+  type ProductLibraryComponent,
+  type ProductLibraryTemplate,
+} from "@/components/quotations/product-library-selector";
 import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
 import { QuotationImageCell } from "@/components/quotations/quotation-image-cell";
 import { RowHeightTextarea } from "@/components/quotations/row-height-textarea";
@@ -871,11 +878,19 @@ function QuickLineForm({
 }
 
 function RowActionPanel({
+  brands,
+  categories,
+  components,
+  productTemplates,
   quotation,
   returnTo,
   sectionId,
   showInternal,
 }: {
+  brands: ProductLibraryBrand[];
+  categories: ProductLibraryCategory[];
+  components: ProductLibraryComponent[];
+  productTemplates: ProductLibraryTemplate[];
   quotation: Quotation;
   returnTo: string;
   sectionId: string;
@@ -887,6 +902,15 @@ function RowActionPanel({
   return (
     <div className="border border-zinc-300 bg-zinc-50 p-3">
       <div className="flex flex-wrap items-center gap-2">
+        <ProductLibrarySelector
+          brands={brands}
+          categories={categories}
+          components={components}
+          quotationId={quotation.id}
+          returnTo={returnTo}
+          sectionId={sectionId}
+          templates={productTemplates}
+        />
         <details>
           <summary className={summaryClass}>+ Item Row</summary>
           <div className="mt-3 w-[min(1080px,calc(100vw-4rem))] border border-zinc-300 bg-white p-3">
@@ -1793,6 +1817,40 @@ export default async function QuotationBuilderPage({
     .eq("id", quotation.project_id)
     .single<Project>();
 
+  const { data: productBrands, error: productBrandsError } = await supabase
+    .from("brands")
+    .select("id,name")
+    .order("name", { ascending: true })
+    .returns<ProductLibraryBrand[]>();
+
+  const { data: productCategories, error: productCategoriesError } = await supabase
+    .from("product_categories")
+    .select("id,brand_id,parent_id,name")
+    .order("brand_id", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .order("name", { ascending: true })
+    .returns<ProductLibraryCategory[]>();
+
+  const { data: productTemplates, error: productTemplatesError } = await supabase
+    .from("product_templates")
+    .select(
+      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,default_image_url,reference_image_url,currency,default_unit_price",
+    )
+    .eq("is_active", true)
+    .order("template_name", { ascending: true })
+    .returns<ProductLibraryTemplate[]>();
+
+  const { data: productComponents, error: productComponentsError } = await supabase
+    .from("product_components")
+    .select("id,template_id,option_type,component_group,component_code,component_name,description,qty,unit_label,unit_price,currency,is_optional,is_default_selected,sort_order")
+    .eq("is_active", true)
+    .order("template_id", { ascending: true })
+    .order("option_type", { ascending: true })
+    .order("component_group", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .order("component_name", { ascending: true })
+    .returns<ProductLibraryComponent[]>();
+
   const { data: sections, error: sectionsError } = await supabase
     .from("quotation_sections")
     .select("id,quotation_id,section_title,section_notes,section_type,title_align,title_bold,title_bg,title_size,row_height,sort_order,is_active")
@@ -1816,6 +1874,10 @@ export default async function QuotationBuilderPage({
 
   if (sectionsError) console.error("QUOTATION BUILDER SECTIONS ERROR", sectionsError.message);
   if (itemsError) console.error("QUOTATION BUILDER ITEMS ERROR", itemsError.message);
+  if (productBrandsError) console.error("PRODUCT SELECTOR BRANDS ERROR", productBrandsError.message);
+  if (productCategoriesError) console.error("PRODUCT SELECTOR CATEGORIES ERROR", productCategoriesError.message);
+  if (productTemplatesError) console.error("PRODUCT SELECTOR TEMPLATES ERROR", productTemplatesError.message);
+  if (productComponentsError) console.error("PRODUCT SELECTOR OPTIONS ERROR", productComponentsError.message);
 
   const itemsBySection = new Map<string, QuotationItem[]>();
 
@@ -2275,6 +2337,10 @@ export default async function QuotationBuilderPage({
                         <tr>
                           <td colSpan={totalColumns} className="border border-zinc-300 bg-zinc-50 px-2 py-2">
                             <RowActionPanel
+                              brands={productBrands ?? []}
+                              categories={productCategories ?? []}
+                              components={productComponents ?? []}
+                              productTemplates={productTemplates ?? []}
                               quotation={quotation}
                               returnTo={builderPath}
                               sectionId={section.id}
