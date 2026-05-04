@@ -275,14 +275,14 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
       <div className="flex-1">
         <TopBar
           title="Quotations"
-          description="Create quotation headers and manage editable line-item snapshots."
+          description="All quotations across projects. Project folders are the main workflow."
           userDisplayName={displayName}
           userEmail={user.email}
         />
         <main className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-zinc-500">
-              Product template selection and PDF export will come later.
+              Use this as a global search page. Project-specific quotation work now lives inside each project folder.
             </p>
             {message ? (
               <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">

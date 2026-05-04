@@ -703,6 +703,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                     <th className="py-3 pr-4">Attention</th>
                     <th className="py-3 pr-4">Status</th>
                     <th className="py-3 pr-4">Active</th>
+                    <th className="py-3 pr-4">Open</th>
                     {canManageRecords ? <th className="py-3">Edit</th> : null}
                   </tr>
                 </thead>
@@ -737,6 +738,14 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                       </td>
                       <td className="py-3 pr-4">
                         <StatusBadge active={project.is_active} />
+                      </td>
+                      <td className="py-3 pr-4">
+                        <Link
+                          href={`/clients/projects/${project.id}`}
+                          className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
+                        >
+                          Open project
+                        </Link>
                       </td>
                       {canManageRecords ? (
                         <td className="py-3">
@@ -803,6 +812,12 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                       </div>
                     </details>
                   ) : null}
+                  <Link
+                    href={`/clients/projects/${project.id}`}
+                    className="mt-3 inline-flex h-10 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-emerald-900 transition hover:border-emerald-900/25"
+                  >
+                    Open project
+                  </Link>
                 </div>
               ))}
               {!filteredProjects.length ? (
@@ -865,8 +880,9 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                     </h3>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {clientProjects.map((project) => (
-                        <span
+                        <Link
                           key={project.id}
+                          href={`/clients/projects/${project.id}`}
                           className="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600"
                         >
                           <span className="font-medium text-zinc-800">
@@ -877,7 +893,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                             <span>{projectContactLine(project)}</span>
                           ) : null}
                           <ProjectStatusBadge status={project.project_status} />
-                        </span>
+                        </Link>
                       ))}
                       {!clientProjects.length ? (
                         <span className="text-sm text-zinc-500">

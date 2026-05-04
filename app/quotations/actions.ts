@@ -120,7 +120,9 @@ function redirectWithMessage(path: string, message: string): never {
 function returnPath(formData: FormData, fallback: string) {
   const value = textValue(formData, "return_to");
 
-  return value.startsWith("/quotations/") ? value : fallback;
+  return value.startsWith("/quotations/") || value.startsWith("/clients/projects/")
+    ? value
+    : fallback;
 }
 
 function allowedText(formData: FormData, name: string, allowed: Set<string>, fallback: string) {
@@ -207,6 +209,95 @@ function quotationPayload(formData: FormData, userId?: string) {
 
   return userId ? { ...payload, created_by: userId } : payload;
 }
+
+type QuotationCopyMode = "duplicate" | "revision" | "option";
+
+type QuotationCopySource = {
+  id: string;
+  client_id: string;
+  project_id: string;
+  quotation_no: string | null;
+  revision_no: number;
+  title: string;
+  quotation_date: string;
+  currency: string;
+  vat_percent: number;
+  payment_terms: string | null;
+  validity: string | null;
+  delivery_terms: string | null;
+  warranty_terms: string | null;
+  notes: string | null;
+  layout_mode: string;
+  layout_settings: Record<string, unknown> | null;
+  overall_discount_type: string;
+  overall_discount_value: number;
+};
+
+type QuotationSectionCopySource = {
+  id: string;
+  section_title: string;
+  section_notes: string | null;
+  section_type: string;
+  title_align: string;
+  title_bold: boolean;
+  title_bg: string;
+  title_size: string;
+  row_height: number | null;
+  sort_order: number;
+};
+
+type QuotationItemCopySource = {
+  id: string;
+  section_id: string | null;
+  item_type: string;
+  source_template_id: string | null;
+  source_component_data: unknown;
+  manual_serial: string | null;
+  item_code_snapshot: string | null;
+  item_name_snapshot: string | null;
+  brand_name_snapshot: string | null;
+  category_name_snapshot: string | null;
+  specified_image_url_snapshot: string | null;
+  proposed_image_url_snapshot: string | null;
+  specification_snapshot: string | null;
+  selected_options_snapshot: unknown;
+  internal_components_snapshot: unknown;
+  room_name_snapshot: string | null;
+  model_snapshot: string | null;
+  finish_snapshot: string | null;
+  size_snapshot: string | null;
+  origin_snapshot: string | null;
+  warranty_snapshot: string | null;
+  supplier_name_snapshot: string | null;
+  supplier_notes_snapshot: string | null;
+  qty: number;
+  unit_label: string;
+  unit_price: number;
+  discount_type: string;
+  discount_value: number;
+  net_price: number;
+  net_total: number;
+  currency: string;
+  sort_order: number;
+  is_optional: boolean;
+  internal_cost: number;
+  margin_type: string;
+  margin_value: number;
+  is_rate_only: boolean;
+  line_style: string;
+  row_height: number | null;
+  cell_layout: unknown;
+  notes: string | null;
+};
+
+const quotationCopySelect =
+  "id,client_id,project_id,quotation_no,revision_no,title,quotation_date,currency,vat_percent,payment_terms,validity,delivery_terms,warranty_terms,notes,layout_mode,layout_settings,overall_discount_type,overall_discount_value";
+
+const sectionCopySelect =
+  "id,section_title,section_notes,section_type,title_align,title_bold,title_bg,title_size,row_height,sort_order";
+
+const itemCopySelect =
+  "id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,notes";
 
 function itemPayload(formData: FormData, userId?: string) {
   const qty = numberValue(formData, "qty", 1);
@@ -345,13 +436,14 @@ export async function recalculateQuotationTotals(quotationId: string) {
 export async function createQuotation(formData: FormData) {
   const { user } = await requireRecordsManager();
   const payload = quotationPayload(formData, user.id);
+  const redirectPath = returnPath(formData, "/quotations");
 
   if (!payload.client_id || !payload.project_id || !payload.title) {
-    redirectWithMessage("/quotations", "Client, project, and title are required.");
+    redirectWithMessage(redirectPath, "Client, project, and title are required.");
   }
 
   if (!quotationStatuses.has(payload.status) || !layoutModes.has(payload.layout_mode)) {
-    redirectWithMessage("/quotations", "Select valid quotation settings.");
+    redirectWithMessage(redirectPath, "Select valid quotation settings.");
   }
 
   const supabase = await createSupabaseClient();
@@ -363,11 +455,270 @@ export async function createQuotation(formData: FormData) {
 
   if (error) {
     console.error("QUOTATION CREATE ERROR", error.message);
-    redirectWithMessage("/quotations", "Quotation could not be created.");
+    redirectWithMessage(redirectPath, "Quotation could not be created.");
   }
 
   revalidatePath("/quotations");
+  revalidatePath(redirectPath);
   redirectWithMessage(`/quotations/${data.id}`, "Quotation created.");
+}
+
+function actionQuotationId(formData: FormData) {
+  return textValue(formData, "quotation_id");
+}
+
+function optionNumberFromTitle(title: string, baseTitle: string) {
+  const match = title.match(new RegExp(`^${baseTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} - Option (\\d+)$`));
+
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+function baseQuotationNo(quotationNo: string | null) {
+  return quotationNo?.replace(/(?:-R\d+)+$/i, "") ?? null;
+}
+
+function revisionNoFromQuotationNo(quotationNo: string | null, baseNo: string) {
+  if (quotationNo === baseNo) return 0;
+
+  const match = quotationNo?.match(new RegExp(`^${baseNo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-R(\\d+)$`, "i"));
+
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+function baseRevisionTitle(title: string) {
+  return title.replace(/(?:\s+Rev\s+\d+)+$/i, "");
+}
+
+async function copyQuotation(
+  formData: FormData,
+  mode: QuotationCopyMode,
+  message: string,
+) {
+  const { user } = await requireRecordsManager();
+  const quotationId = actionQuotationId(formData);
+  const redirectPath = returnPath(formData, "/quotations");
+
+  if (!quotationId) {
+    redirectWithMessage(redirectPath, "Quotation is required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: source, error: sourceError } = await supabase
+    .from("quotations")
+    .select(quotationCopySelect)
+    .eq("id", quotationId)
+    .single<QuotationCopySource>();
+
+  if (sourceError || !source) {
+    console.error("QUOTATION COPY READ ERROR", sourceError?.message);
+    redirectWithMessage(redirectPath, "Quotation could not be copied.");
+  }
+
+  let title = `${source.title} - Copy`;
+  let quotationNo: string | null = null;
+  let revisionNo = 0;
+
+  if (mode === "revision") {
+    const baseNo = baseQuotationNo(source.quotation_no);
+    let highestRevisionNo = source.revision_no ?? 0;
+
+    if (baseNo) {
+      const { data: siblingRevisions, error: siblingError } = await supabase
+        .from("quotations")
+        .select("quotation_no,revision_no")
+        .eq("client_id", source.client_id)
+        .eq("project_id", source.project_id)
+        .eq("is_active", true)
+        .returns<Array<{ quotation_no: string | null; revision_no: number }>>();
+
+      if (siblingError) {
+        console.error("QUOTATION REVISION LIST ERROR", siblingError.message);
+        redirectWithMessage(redirectPath, "Revision could not be created.");
+      }
+
+      highestRevisionNo = Math.max(
+        0,
+        ...(siblingRevisions ?? [])
+          .map((quotation) => revisionNoFromQuotationNo(quotation.quotation_no, baseNo))
+          .filter((value): value is number => value !== null && Number.isFinite(value)),
+      );
+    }
+
+    const nextRevisionNo = highestRevisionNo + 1;
+    title = `${baseRevisionTitle(source.title)} Rev ${nextRevisionNo}`;
+    quotationNo = baseNo ? `${baseNo}-R${nextRevisionNo}` : null;
+    revisionNo = nextRevisionNo;
+  }
+
+  if (mode === "option") {
+    const { data: siblingQuotations, error: siblingError } = await supabase
+      .from("quotations")
+      .select("title")
+      .eq("project_id", source.project_id)
+      .eq("is_active", true)
+      .returns<Array<{ title: string }>>();
+
+    if (siblingError) {
+      console.error("QUOTATION OPTION LIST ERROR", siblingError.message);
+      redirectWithMessage(redirectPath, "Option could not be created.");
+    }
+
+    const nextOption = Math.max(
+      1,
+      ...(siblingQuotations ?? [])
+        .map((quotation) => optionNumberFromTitle(quotation.title, source.title))
+        .filter((value): value is number => value !== null && Number.isFinite(value)),
+    ) + 1;
+
+    title = `${source.title} - Option ${nextOption}`;
+  }
+
+  const { data: newQuotation, error: insertError } = await supabase
+    .from("quotations")
+    .insert({
+      client_id: source.client_id,
+      project_id: source.project_id,
+      quotation_no: quotationNo,
+      revision_no: revisionNo,
+      title,
+      quotation_date: new Date().toISOString().slice(0, 10),
+      status: "draft",
+      currency: source.currency,
+      vat_percent: source.vat_percent,
+      payment_terms: source.payment_terms,
+      validity: source.validity,
+      delivery_terms: source.delivery_terms,
+      warranty_terms: source.warranty_terms,
+      notes: source.notes,
+      layout_mode: source.layout_mode,
+      layout_settings: source.layout_settings ?? {},
+      overall_discount_type: source.overall_discount_type,
+      overall_discount_value: source.overall_discount_value,
+      is_active: true,
+      created_by: user.id,
+    })
+    .select("id")
+    .single<{ id: string }>();
+
+  if (insertError || !newQuotation) {
+    console.error("QUOTATION COPY CREATE ERROR", insertError?.message);
+    redirectWithMessage(redirectPath, "Quotation could not be copied.");
+  }
+
+  const { data: sections, error: sectionsError } = await supabase
+    .from("quotation_sections")
+    .select(sectionCopySelect)
+    .eq("quotation_id", source.id)
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true })
+    .returns<QuotationSectionCopySource[]>();
+
+  if (sectionsError) {
+    console.error("QUOTATION COPY SECTIONS READ ERROR", sectionsError.message);
+    redirectWithMessage(redirectPath, "Quotation sections could not be copied.");
+  }
+
+  const sectionIdMap = new Map<string, string>();
+  for (const section of sections ?? []) {
+    const { id: _oldId, ...sectionPayload } = section;
+    const { data: newSection, error: sectionInsertError } = await supabase
+      .from("quotation_sections")
+      .insert({
+        ...sectionPayload,
+        quotation_id: newQuotation.id,
+        is_active: true,
+        created_by: user.id,
+      })
+      .select("id")
+      .single<{ id: string }>();
+
+    if (sectionInsertError || !newSection) {
+      console.error("QUOTATION COPY SECTION CREATE ERROR", sectionInsertError?.message);
+      redirectWithMessage(redirectPath, "Quotation sections could not be copied.");
+    }
+
+    sectionIdMap.set(_oldId, newSection.id);
+  }
+
+  const { data: items, error: itemsError } = await supabase
+    .from("quotation_items")
+    .select(itemCopySelect)
+    .eq("quotation_id", source.id)
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true })
+    .returns<QuotationItemCopySource[]>();
+
+  if (itemsError) {
+    console.error("QUOTATION COPY ITEMS READ ERROR", itemsError.message);
+    redirectWithMessage(redirectPath, "Quotation items could not be copied.");
+  }
+
+  const itemPayloads = (items ?? []).map((item) => {
+    const { id, section_id: sectionId, ...itemPayload } = item;
+    void id;
+
+    return {
+      ...itemPayload,
+      quotation_id: newQuotation.id,
+      section_id: sectionId ? sectionIdMap.get(sectionId) ?? null : null,
+      is_active: true,
+      created_by: user.id,
+    };
+  });
+
+  if (itemPayloads.length) {
+    const { error: itemInsertError } = await supabase
+      .from("quotation_items")
+      .insert(itemPayloads);
+
+    if (itemInsertError) {
+      console.error("QUOTATION COPY ITEM CREATE ERROR", itemInsertError.message);
+      redirectWithMessage(redirectPath, "Quotation items could not be copied.");
+    }
+  }
+
+  await recalculateQuotationTotals(newQuotation.id);
+  revalidatePath("/quotations");
+  revalidatePath(`/quotations/${newQuotation.id}`);
+  revalidatePath(redirectPath);
+  redirectWithMessage(redirectPath, message);
+}
+
+export async function duplicateQuotation(formData: FormData) {
+  await copyQuotation(formData, "duplicate", "Quotation duplicated.");
+}
+
+export async function createQuotationRevision(formData: FormData) {
+  await copyQuotation(formData, "revision", "Revision created.");
+}
+
+export async function createQuotationOption(formData: FormData) {
+  await copyQuotation(formData, "option", "Option created.");
+}
+
+export async function deactivateQuotation(formData: FormData) {
+  await requireRecordsManager();
+  const quotationId = actionQuotationId(formData);
+  const redirectPath = returnPath(formData, "/quotations");
+
+  if (!quotationId) {
+    redirectWithMessage(redirectPath, "Quotation is required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase
+    .from("quotations")
+    .update({ is_active: false })
+    .eq("id", quotationId);
+
+  if (error) {
+    console.error("QUOTATION DEACTIVATE ERROR", error.message);
+    redirectWithMessage(redirectPath, "Quotation could not be deactivated.");
+  }
+
+  revalidatePath("/quotations");
+  revalidatePath(redirectPath);
+  redirectWithMessage(redirectPath, "Quotation deactivated.");
 }
 
 export async function updateQuotation(formData: FormData) {
