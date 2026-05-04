@@ -152,7 +152,7 @@ export async function createProductComponent(formData: FormData) {
     .maybeSingle();
 
   if (templateError) {
-    console.error("CREATE PRODUCT COMPONENT ERROR", templateError);
+    console.error("CREATE PRODUCT COMPONENT ERROR", templateError.message);
     redirectWithMessage("Template option could not be created.");
   }
 
@@ -163,7 +163,7 @@ export async function createProductComponent(formData: FormData) {
   const { error } = await supabase.from("product_components").insert(payload);
 
   if (error) {
-    console.error("CREATE PRODUCT COMPONENT ERROR", error);
+    console.error("CREATE PRODUCT COMPONENT ERROR", error.message);
     redirectWithMessage("Template option could not be created.");
   }
 

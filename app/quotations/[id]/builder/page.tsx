@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Fragment, type ReactNode } from "react";
+import { Fragment, type CSSProperties, type ReactNode } from "react";
+import { InlineRowAutosave } from "@/components/quotations/inline-row-autosave";
+import { CellFormattingToolbar } from "@/components/quotations/cell-formatting-toolbar";
 import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
 import { RowHeightTextarea } from "@/components/quotations/row-height-textarea";
 import { requireActiveUser } from "@/lib/auth";
@@ -12,6 +14,7 @@ import {
   deactivateQuotationSection,
   moveQuotationItemDown,
   moveQuotationItemUp,
+  updateQuotationExtraDiscount,
   updateQuotationLayoutSettings,
   updateQuotationItemInline,
   updateQuotationItem,
@@ -110,9 +113,26 @@ type QuotationItem = {
   is_rate_only: boolean;
   line_style: string;
   row_height: number | null;
+  cell_layout: CellLayout | null;
   is_active: boolean;
   notes: string | null;
   created_at?: string;
+};
+
+type MergeMode = "none" | "merge_specification" | "merge_full_row";
+
+type CellLayout = {
+  mergeMode?: string;
+  cells?: Record<string, CellStyle | undefined>;
+};
+
+type CellStyle = {
+  fontSize?: number;
+  fontWeight?: CSSProperties["fontWeight"];
+  fontStyle?: CSSProperties["fontStyle"];
+  textDecoration?: CSSProperties["textDecoration"];
+  textAlign?: CSSProperties["textAlign"];
+  wrapText?: boolean;
 };
 
 type Column = {
@@ -130,6 +150,15 @@ type LayoutSettings = {
     visible?: boolean;
     width?: number;
   }>;
+  specificationMetadata?: {
+    title?: boolean;
+    model?: boolean;
+    size?: boolean;
+    finish?: boolean;
+    warranty?: boolean;
+    origin?: boolean;
+    supplier?: boolean;
+  };
 };
 
 const layoutLabels = new Map([
@@ -155,6 +184,29 @@ const lineStyles = [
   ["no_quote", "No Quote"],
   ["note", "Note"],
   ["heading", "Heading"],
+] as const;
+
+const mergeModes = [
+  ["none", "No merge"],
+  ["merge_specification", "Merge spec"],
+  ["merge_full_row", "Merge full row"],
+] as const;
+
+const commercialColumnKeys = new Set([
+  "qty",
+  "unit_price",
+  "discount",
+  "discount_percentage",
+  "discount_amount",
+  "net_price",
+  "net_total",
+]);
+
+const specificationMetadataFields = [
+  ["title", "Show item/model title in specification"],
+  ["size", "Show dimension in specification"],
+  ["finish", "Show finish in specification"],
+  ["warranty", "Show warranty in specification"],
 ] as const;
 
 const titleAlignments = [
@@ -203,10 +255,10 @@ function formatNumber(value: number) {
 
 function discountAmount(item: QuotationItem) {
   if (item.discount_type === "percent") {
-    return (item.qty * item.unit_price * item.discount_value) / 100;
+    return (item.unit_price * item.discount_value) / 100;
   }
 
-  return item.qty * item.discount_value;
+  return item.discount_value;
 }
 
 function overallDiscountAmount(quotation: Quotation) {
@@ -217,6 +269,148 @@ function overallDiscountAmount(quotation: Quotation) {
   }
 
   return quotation.overall_discount_value;
+}
+
+function mergeModeForItem(item: QuotationItem): MergeMode {
+  const mergeMode = item.cell_layout?.mergeMode;
+  if (mergeMode === "none") {
+    return "none";
+  }
+
+  if (mergeMode === "merge_specification" || mergeMode === "merge_full_row") {
+    return mergeMode;
+  }
+
+  if (item.line_style === "heading" || item.line_style === "note" || item.item_type === "blank") {
+    return "merge_full_row";
+  }
+
+  return "none";
+}
+
+function mergedRowText(item: QuotationItem) {
+  return [item.item_name_snapshot, item.specification_snapshot, item.notes]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function cellStyleForItem(item: QuotationItem, cellKey: string): CellStyle {
+  return item.cell_layout?.cells?.[cellKey] ?? {};
+}
+
+function cellStyleCss(style: CellStyle, fallbackAlign: "left" | "center" | "right" = "left"): CSSProperties {
+  const wrapText = style.wrapText !== false;
+
+  return {
+    fontSize: style.fontSize ? `${style.fontSize}px` : undefined,
+    fontWeight: style.fontWeight,
+    fontStyle: style.fontStyle,
+    textDecoration: style.textDecoration,
+    textAlign: style.textAlign ?? fallbackAlign,
+    whiteSpace: wrapText ? "pre-wrap" : "nowrap",
+    overflow: wrapText ? undefined : "hidden",
+    textOverflow: wrapText ? undefined : "ellipsis",
+  };
+}
+
+function specificationMetadataSettings(settings?: LayoutSettings | null) {
+  const metadata = settings?.specificationMetadata;
+
+  return {
+    title: metadata?.title !== false,
+    model: metadata?.model === true,
+    size: metadata?.size !== false,
+    finish: metadata?.finish === true,
+    warranty: metadata?.warranty === true,
+  };
+}
+
+function specificationTitle(item: QuotationItem) {
+  return item.item_name_snapshot || item.model_snapshot || item.item_code_snapshot || "Custom item";
+}
+
+function SpecificationDetailBlock({
+  item,
+  settings,
+  visibleColumnKeys,
+}: {
+  item: QuotationItem;
+  settings: ReturnType<typeof specificationMetadataSettings>;
+  visibleColumnKeys: Set<string>;
+}) {
+  const title = specificationTitle(item).trim().toLowerCase();
+  const rows = [
+    settings.model &&
+    item.model_snapshot &&
+    item.model_snapshot.trim().toLowerCase() !== title
+      ? ["Model", item.model_snapshot]
+      : null,
+    settings.size && !visibleColumnKeys.has("size") && item.size_snapshot
+      ? ["Dimension", item.size_snapshot]
+      : null,
+    settings.finish && !visibleColumnKeys.has("finish") && item.finish_snapshot
+      ? ["Finish", item.finish_snapshot]
+      : null,
+    settings.warranty && !visibleColumnKeys.has("warranty") && item.warranty_snapshot
+      ? ["Warranty", item.warranty_snapshot]
+      : null,
+  ].filter((row): row is [string, string] => Boolean(row));
+
+  if (!rows.length) return null;
+
+  return (
+    <dl className="mt-2 grid gap-0.5 border-t border-zinc-200 pt-1.5 text-[11px] leading-4 text-zinc-500">
+      {rows.map(([label, value]) => (
+        <div key={label} className="grid grid-cols-[88px_1fr] gap-1">
+          <dt className="font-semibold text-zinc-500">{label}:</dt>
+          <dd className="text-zinc-600">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function CellStyleInputs({
+  formId,
+  item,
+  cellKey,
+  fallbackAlign = "left",
+}: {
+  formId?: string;
+  item: QuotationItem;
+  cellKey: string;
+  fallbackAlign?: "left" | "center" | "right";
+}) {
+  const style = cellStyleForItem(item, cellKey);
+
+  return (
+    <>
+      <input form={formId} type="hidden" name="cell_style_key" value={cellKey} />
+      <input form={formId} type="hidden" name={`cell_style_${cellKey}_font_size`} defaultValue={style.fontSize ?? 12} />
+      <input form={formId} type="hidden" name={`cell_style_${cellKey}_font_weight`} defaultValue={style.fontWeight ?? "400"} />
+      <input form={formId} type="hidden" name={`cell_style_${cellKey}_font_style`} defaultValue={style.fontStyle ?? "normal"} />
+      <input form={formId} type="hidden" name={`cell_style_${cellKey}_text_decoration`} defaultValue={style.textDecoration ?? "none"} />
+      <input form={formId} type="hidden" name={`cell_style_${cellKey}_text_align`} defaultValue={style.textAlign ?? fallbackAlign} />
+      <input form={formId} type="hidden" name={`cell_style_${cellKey}_wrap_text`} defaultValue={style.wrapText === false ? "false" : "true"} />
+    </>
+  );
+}
+
+function MergeModeSelect({ item }: { item?: QuotationItem }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Merge cells</span>
+      <select
+        name="merge_mode"
+        defaultValue={item ? mergeModeForItem(item) : "none"}
+        className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20"
+      >
+        {mergeModes.map(([value, label]) => (
+          <option key={value} value={value}>{label}</option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 function isPriceHiddenLine(item: QuotationItem) {
@@ -298,7 +492,7 @@ function TextArea({
         name={name}
         defaultValue={defaultValue ?? ""}
         rows={2}
-        className="w-full border border-zinc-300 bg-white px-2 py-1.5 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20"
+        className="w-full resize-none border border-zinc-300 bg-white px-2 py-1.5 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20"
       />
     </label>
   );
@@ -335,20 +529,25 @@ function SheetInfo({ label, value }: { label: string; value?: string | number | 
 }
 
 function ImageThumb({ value }: { value: string | null }) {
+  const boxClassName =
+    "mx-auto flex h-full min-h-12 max-h-[160px] w-full max-w-[180px] items-center justify-center border border-dashed border-zinc-300 bg-white";
+
   if (!value) {
     return (
-      <span className="flex min-h-10 items-center justify-center border border-dashed border-zinc-300 text-[11px] text-zinc-400">
+      <span className={`${boxClassName} text-center text-[11px] text-zinc-400`}>
         No image
       </span>
     );
   }
 
   return (
-    <a href={value} target="_blank" rel="noreferrer" className="block h-full min-h-14">
-      <span
+    <a href={value} target="_blank" rel="noreferrer" className={boxClassName}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={value}
+        alt="Quotation item"
         aria-label="Open image"
-        className="block h-full max-h-[180px] min-h-14 w-full bg-contain bg-center bg-no-repeat"
-        style={{ backgroundImage: `url(${value})` }}
+        className="block h-full w-full object-contain p-1"
       />
     </a>
   );
@@ -361,6 +560,8 @@ function CellInput({
   align = "left",
   type = "text",
   step,
+  cellStyle,
+  formatCellKey,
 }: {
   formId: string;
   name: string;
@@ -368,6 +569,8 @@ function CellInput({
   align?: "left" | "right" | "center";
   type?: string;
   step?: string;
+  cellStyle?: CSSProperties;
+  formatCellKey?: string;
 }) {
   return (
     <input
@@ -375,10 +578,13 @@ function CellInput({
       name={name}
       type={type}
       step={type === "number" ? step : undefined}
+      data-form-id={formatCellKey ? formId : undefined}
+      data-format-cell={formatCellKey}
       defaultValue={defaultValue ?? ""}
       className={`w-full border-0 bg-transparent px-1 py-0.5 text-xs text-zinc-800 outline-none focus:bg-emerald-50 focus:ring-1 focus:ring-emerald-800 ${
         align === "right" ? "text-right" : align === "center" ? "text-center" : ""
       }`}
+      style={cellStyle}
     />
   );
 }
@@ -524,6 +730,12 @@ function LineForm({
       <input type="hidden" name="currency" value={quotation.currency} />
       <input type="hidden" name="is_active" value="on" />
       <input type="hidden" name="return_to" value={returnTo} />
+      {item ? (
+        <>
+          <CellStyleInputs item={item} cellKey="specification" />
+          <CellStyleInputs item={item} cellKey="full_row" fallbackAlign={item.line_style === "heading" ? "center" : "left"} />
+        </>
+      ) : null}
       {item?.is_optional ? <input type="hidden" name="is_optional" value="on" /> : null}
       {!showInternal && item ? (
         <>
@@ -540,7 +752,7 @@ function LineForm({
         <div className="grid gap-2 md:grid-cols-6">
           <Field name="manual_serial" label="Manual S.No." defaultValue={item?.manual_serial} />
           <Field name="item_code_snapshot" label="Code" defaultValue={item?.item_code_snapshot} />
-          <Field name="item_name_snapshot" label="Item Name / Title" defaultValue={item?.item_name_snapshot} className="md:col-span-2" />
+          <Field name="item_name_snapshot" label="Item / Model Name" defaultValue={item?.item_name_snapshot} className="md:col-span-2" />
           <Field name="qty" label="Qty" type="number" step="1" defaultValue={item?.qty ?? 1} />
           <Field name="unit_label" label="Unit" defaultValue={item?.unit_label ?? "Pc"} />
           <Field name="unit_price" label="U.Price" type="number" defaultValue={item?.unit_price ?? 0} />
@@ -562,51 +774,52 @@ function LineForm({
           </label>
           <Field name="sort_order" label="Sort" type="number" defaultValue={item?.sort_order ?? 0} />
           <Field name="row_height" label="Row height" type="number" defaultValue={item?.row_height} />
-          <p className="self-end pb-2 text-[11px] text-zinc-500 md:col-span-2">
-            Resize the specification box or enter height; save row to keep it.
+          <MergeModeSelect item={item} />
+          <p className="self-end pb-2 text-[11px] text-zinc-500 md:col-span-3">
+            Item / Model Name is the main visible title at the top of the Specification cell.
           </p>
           <label className="flex items-end gap-2 text-xs font-semibold text-zinc-600">
             <input type="checkbox" name="is_rate_only" defaultChecked={item?.is_rate_only ?? false} className="mb-2 h-4 w-4 rounded border-zinc-300" />
             <span className="pb-2">Rate only</span>
           </label>
-          <TextArea name="specification_snapshot" label="Specification" defaultValue={item?.specification_snapshot} className="md:col-span-6" />
         </div>
       </fieldset>
 
-      <details>
-        <summary className="cursor-pointer border border-zinc-300 bg-white px-3 py-2 text-xs font-bold uppercase text-zinc-600">
-          Images
-        </summary>
-        <div className="grid gap-2 border-x border-b border-zinc-300 bg-white p-3 md:grid-cols-2">
-          <p className="text-xs text-zinc-500 md:col-span-2">
-            Upload/paste image support will be added later.
+      <fieldset className="border border-zinc-300 bg-white p-3">
+        <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Specification</legend>
+        <div className="grid gap-2 md:grid-cols-6">
+          <TextArea name="specification_snapshot" label="Specification" defaultValue={item?.specification_snapshot} className="md:col-span-6" />
+          <p className="text-[11px] text-zinc-500 md:col-span-6">
+            Description appears below the main title and keeps text wrapping in the row.
           </p>
-          <Field name="specified_image_url_snapshot" label="Specified Image URL" defaultValue={item?.specified_image_url_snapshot} />
-          <Field name="proposed_image_url_snapshot" label="Reference / Proposed Image URL" defaultValue={item?.proposed_image_url_snapshot} />
         </div>
-      </details>
+      </fieldset>
 
-      <details>
-        <summary className="cursor-pointer border border-zinc-300 bg-white px-3 py-2 text-xs font-bold uppercase text-zinc-600">
-          Details
-        </summary>
-        <div className="grid gap-2 border-x border-b border-zinc-300 bg-white p-3 md:grid-cols-3 xl:grid-cols-6">
+      <fieldset className="border border-zinc-300 bg-white p-3">
+        <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Product details</legend>
+        <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
           <Field name="room_name_snapshot" label="Room" defaultValue={item?.room_name_snapshot} />
-          <Field name="model_snapshot" label="Model" defaultValue={item?.model_snapshot} />
+          <Field name="model_snapshot" label="Model code / alternate model" defaultValue={item?.model_snapshot} />
+          <Field name="size_snapshot" label="Dimension" defaultValue={item?.size_snapshot} />
           <Field name="finish_snapshot" label="Finish" defaultValue={item?.finish_snapshot} />
-          <Field name="size_snapshot" label="Size" defaultValue={item?.size_snapshot} />
           <Field name="origin_snapshot" label="Origin" defaultValue={item?.origin_snapshot} />
           <Field name="warranty_snapshot" label="Warranty" defaultValue={item?.warranty_snapshot} />
           <Field name="supplier_name_snapshot" label="Supplier" defaultValue={item?.supplier_name_snapshot} />
         </div>
-      </details>
+      </fieldset>
+
+      <fieldset className="border border-zinc-300 bg-white p-3">
+        <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Images</legend>
+        <div className="grid gap-2 md:grid-cols-2">
+          <Field name="specified_image_url_snapshot" label="Specified Image URL" defaultValue={item?.specified_image_url_snapshot} />
+          <Field name="proposed_image_url_snapshot" label="Proposed / Reference Image URL" defaultValue={item?.proposed_image_url_snapshot} />
+        </div>
+      </fieldset>
 
       {showInternal ? (
-        <details open>
-          <summary className="cursor-pointer border border-zinc-300 bg-white px-3 py-2 text-xs font-bold uppercase text-zinc-600">
-            Internal
-          </summary>
-          <div className="grid gap-2 border-x border-b border-zinc-300 bg-white p-3 md:grid-cols-4">
+        <fieldset className="border border-zinc-300 bg-white p-3">
+          <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Internal</legend>
+          <div className="grid gap-2 md:grid-cols-4">
             <Field name="internal_cost" label="Internal Cost" type="number" defaultValue={item?.internal_cost ?? 0} />
             <label className="block">
               <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Margin type</span>
@@ -619,7 +832,7 @@ function LineForm({
             <TextArea name="supplier_notes_snapshot" label="Supplier Notes" defaultValue={item?.supplier_notes_snapshot} className="md:col-span-2" />
             <TextArea name="notes" label="Internal Notes" defaultValue={item?.notes} className="md:col-span-2" />
           </div>
-        </details>
+        </fieldset>
       ) : null}
 
       <div className="flex justify-end">
@@ -651,6 +864,7 @@ function QuickLineForm({
       <input type="hidden" name="item_type" value={itemType} />
       <input type="hidden" name="manual_serial" value="" />
       <input type="hidden" name="line_style" value={lineStyle} />
+      <input type="hidden" name="merge_mode" value="merge_full_row" />
       <input type="hidden" name="currency" value={quotation.currency} />
       <input type="hidden" name="is_active" value="on" />
       <input type="hidden" name="qty" value="0" />
@@ -730,6 +944,7 @@ function RowActionPanel({
           <input type="hidden" name="item_type" value="blank" />
           <input type="hidden" name="manual_serial" value="" />
           <input type="hidden" name="line_style" value="no_quote" />
+          <input type="hidden" name="merge_mode" value="merge_full_row" />
           <input type="hidden" name="currency" value={quotation.currency} />
           <input type="hidden" name="is_active" value="on" />
           <input type="hidden" name="qty" value="0" />
@@ -753,12 +968,19 @@ function RowActionPanel({
   );
 }
 
-function getColumns(layoutMode: string, showInternal: boolean): Column[] {
+function getColumns(layoutMode: string, showInternal: boolean, settings?: LayoutSettings | null): Column[] {
+  const settingsMap = columnSettingsMap(settings);
+  const metadataSettings = specificationMetadataSettings(settings);
+
+  function settingVisible(key: string, defaultVisible = true) {
+    return settingsMap.get(key)?.visible ?? defaultVisible;
+  }
+
   const serial: Column = {
     key: "s_no",
     label: "S. No.",
     className: "w-14 text-center",
-    defaultWidth: 60,
+    defaultWidth: 54,
     render: (item, serial, formId, canEdit) =>
       canEdit ? (
         <CellInput
@@ -802,9 +1024,9 @@ function getColumns(layoutMode: string, showInternal: boolean): Column[] {
     className: "w-32",
     defaultWidth: 180,
     render: (item) => (
-      <div className="space-y-1">
+      <div className="flex h-full min-h-16 flex-col items-center justify-center gap-1">
         <ImageThumb value={item.proposed_image_url_snapshot} />
-        <span className="block text-[10px] font-semibold text-emerald-900">Edit image in Advanced row details</span>
+        <span className="block text-[10px] font-semibold text-emerald-900">Edit image</span>
       </div>
     ),
   };
@@ -814,9 +1036,9 @@ function getColumns(layoutMode: string, showInternal: boolean): Column[] {
     className: "w-32",
     defaultWidth: 180,
     render: (item) => (
-      <div className="space-y-1">
+      <div className="flex h-full min-h-16 flex-col items-center justify-center gap-1">
         <ImageThumb value={item.specified_image_url_snapshot} />
-        <span className="block text-[10px] font-semibold text-emerald-900">Edit image in Advanced row details</span>
+        <span className="block text-[10px] font-semibold text-emerald-900">Edit image</span>
       </div>
     ),
   };
@@ -826,9 +1048,9 @@ function getColumns(layoutMode: string, showInternal: boolean): Column[] {
     className: "w-32",
     defaultWidth: 180,
     render: (item) => (
-      <div className="space-y-1">
+      <div className="flex h-full min-h-16 flex-col items-center justify-center gap-1">
         <ImageThumb value={item.proposed_image_url_snapshot} />
-        <span className="block text-[10px] font-semibold text-emerald-900">Edit image in Advanced row details</span>
+        <span className="block text-[10px] font-semibold text-emerald-900">Edit image</span>
       </div>
     ),
   };
@@ -837,18 +1059,25 @@ function getColumns(layoutMode: string, showInternal: boolean): Column[] {
     label: layoutMode === "boq_schedule" ? "Description" : "Specifications",
     className: "min-w-[320px]",
     defaultWidth: 420,
-    render: (item, _serial, formId, canEdit) => (
-      <div>
+    render: (item, _serial, formId, canEdit) => {
+      const style = cellStyleForItem(item, "specification");
+      const css = cellStyleCss(style);
+
+      return (
+      <div className="flex h-full flex-col justify-center text-left" style={css}>
+        {canEdit ? <CellStyleInputs formId={formId} item={item} cellKey="specification" /> : null}
         <div className="flex flex-wrap items-center gap-2">
           {canEdit ? (
             <CellInput
               formId={formId}
               name="item_name_snapshot"
               defaultValue={item.item_name_snapshot}
+              cellStyle={css}
+              formatCellKey="specification"
             />
           ) : (
             <span className="font-semibold text-zinc-950">
-              {item.item_name_snapshot ?? "Custom item"}
+              {specificationTitle(item)}
             </span>
           )}
           {(item.line_style === "optional" || item.is_optional) ? (
@@ -864,33 +1093,55 @@ function getColumns(layoutMode: string, showInternal: boolean): Column[] {
               name="specification_snapshot"
               defaultValue={item.specification_snapshot}
               rowHeight={item.row_height}
+              cellStyle={css}
+              formatCellKey="specification"
             />
           ) : (
-            <p className="whitespace-pre-wrap text-zinc-700">
+            <p className="text-zinc-700" style={css}>
               {item.specification_snapshot ?? "-"}
             </p>
           )}
         </div>
       </div>
-    ),
+      );
+    },
   };
   const room: Column = { key: "room", label: "Room", className: "w-28", defaultWidth: 110, render: (item, _serial, formId, canEdit) => canEdit ? <CellInput formId={formId} name="room_name_snapshot" defaultValue={item.room_name_snapshot} /> : item.room_name_snapshot ?? "-" };
   const model: Column = { key: "model", label: "Model", className: "w-28", defaultWidth: 110, render: (item, _serial, formId, canEdit) => canEdit ? <CellInput formId={formId} name="model_snapshot" defaultValue={item.model_snapshot} /> : item.model_snapshot ?? "-" };
   const finish: Column = { key: "finish", label: "Finish", className: "w-28", defaultWidth: 110, render: (item, _serial, formId, canEdit) => canEdit ? <CellInput formId={formId} name="finish_snapshot" defaultValue={item.finish_snapshot} /> : item.finish_snapshot ?? "-" };
   const size: Column = { key: "size", label: "Size", className: "w-28", defaultWidth: 110, render: (item, _serial, formId, canEdit) => canEdit ? <CellInput formId={formId} name="size_snapshot" defaultValue={item.size_snapshot} /> : item.size_snapshot ?? "-" };
-  const origin: Column = { key: "origin", label: "Origin", className: "w-24", defaultWidth: 100, render: (item, _serial, formId, canEdit) => canEdit ? <CellInput formId={formId} name="origin_snapshot" defaultValue={item.origin_snapshot} /> : item.origin_snapshot ?? "-" };
+  const origin: Column = {
+    key: "origin",
+    label: "ORIGIN / SUPPLIER",
+    className: "w-32",
+    defaultWidth: 136,
+    render: (item, _serial, formId, canEdit) =>
+      canEdit ? (
+        <div className="grid h-full content-center gap-1">
+          <CellInput formId={formId} name="origin_snapshot" defaultValue={item.origin_snapshot} />
+          <CellInput formId={formId} name="supplier_name_snapshot" defaultValue={item.supplier_name_snapshot} />
+        </div>
+      ) : (
+        <div className="flex h-full flex-col items-center justify-center whitespace-pre-wrap text-center leading-5">
+          {[
+            item.origin_snapshot,
+            item.supplier_name_snapshot,
+          ].filter(Boolean).join("\n") || "-"}
+        </div>
+      ),
+  };
   const warranty: Column = { key: "warranty", label: "Warranty", className: "w-24", defaultWidth: 100, render: (item, _serial, formId, canEdit) => canEdit ? <CellInput formId={formId} name="warranty_snapshot" defaultValue={item.warranty_snapshot} /> : item.warranty_snapshot ?? "-" };
   const qty: Column = {
     key: "qty",
     label: "Qty",
-    className: "w-20 text-right",
+    className: "w-20 text-center",
     defaultWidth: 70,
     render: (item, _serial, formId, canEdit) =>
       isPriceHiddenLine(item) ? (
         "-"
       ) : canEdit ? (
-        <div className="grid grid-cols-[1fr_44px] gap-1">
-          <CellInput formId={formId} name="qty" type="number" step="1" defaultValue={formatNumber(item.qty)} align="right" />
+        <div className="grid h-full grid-cols-[1fr_44px] items-center gap-1">
+          <CellInput formId={formId} name="qty" type="number" step="1" defaultValue={formatNumber(item.qty)} align="center" />
           <CellInput formId={formId} name="unit_label" defaultValue={item.unit_label} align="center" />
         </div>
       ) : (
@@ -900,21 +1151,21 @@ function getColumns(layoutMode: string, showInternal: boolean): Column[] {
   const unitPrice: Column = {
     key: "unit_price",
     label: "U.Price",
-    className: "w-24 text-right",
+    className: "w-24 text-center",
     defaultWidth: 90,
     render: (item, _serial, formId, canEdit) =>
-      isPriceHiddenLine(item) ? "-" : canEdit ? <CellInput formId={formId} name="unit_price" type="number" step="0.01" defaultValue={item.unit_price} align="right" /> : moneyCell(item.unit_price),
+      isPriceHiddenLine(item) ? "-" : canEdit ? <CellInput formId={formId} name="unit_price" type="number" step="0.01" defaultValue={item.unit_price} align="center" /> : moneyCell(item.unit_price),
   };
   const discount: Column = {
     key: "discount",
     label: "Discount",
-    className: "w-24 text-right",
+    className: "w-24 text-center",
     defaultWidth: 90,
     render: (item, _serial, formId, canEdit) =>
       isPriceHiddenLine(item)
         ? "-"
         : canEdit
-          ? <CellInput formId={formId} name="discount_value" type="number" step="0.01" defaultValue={item.discount_value} align="right" />
+          ? <CellInput formId={formId} name="discount_value" type="number" step="0.01" defaultValue={item.discount_value} align="center" />
           : item.discount_type === "percent"
             ? `${formatNumber(item.discount_value)}%`
             : moneyCell(item.discount_value),
@@ -922,7 +1173,7 @@ function getColumns(layoutMode: string, showInternal: boolean): Column[] {
   const discountPercentage: Column = {
     key: "discount_percentage",
     label: "Discount %",
-    className: "w-24 text-right",
+    className: "w-24 text-center",
     defaultWidth: 90,
     defaultVisible: false,
     render: (item) =>
@@ -935,23 +1186,23 @@ function getColumns(layoutMode: string, showInternal: boolean): Column[] {
   const discountAmountColumn: Column = {
     key: "discount_amount",
     label: "Disc. Amount",
-    className: "w-28 text-right",
-    defaultWidth: 100,
+    className: "w-28 text-center",
+    defaultWidth: 96,
     defaultVisible: false,
     render: (item) => (isPriceHiddenLine(item) ? "-" : moneyCell(discountAmount(item))),
   };
   const netPrice: Column = {
     key: "net_price",
     label: "Net Price",
-    className: "w-24 text-right",
-    defaultWidth: 90,
+    className: "w-24 text-center",
+    defaultWidth: 96,
     render: (item) => (isPriceHiddenLine(item) ? "-" : moneyCell(item.net_price)),
   };
   const netTotal: Column = {
     key: "net_total",
     label: "Net Total",
-    className: "w-28 text-right font-bold",
-    defaultWidth: 100,
+    className: "w-28 text-center font-bold",
+    defaultWidth: 106,
     render: totalCell,
   };
   const supplier: Column = {
@@ -959,7 +1210,7 @@ function getColumns(layoutMode: string, showInternal: boolean): Column[] {
     label: "Supplier",
     className: "w-32",
     defaultWidth: 128,
-    defaultVisible: showInternal || layoutMode === "internal_costing",
+    defaultVisible: layoutMode === "internal_costing",
     render: (item, _serial, formId, canEdit) =>
       canEdit ? (
         <CellInput formId={formId} name="supplier_name_snapshot" defaultValue={item.supplier_name_snapshot} />
@@ -997,13 +1248,17 @@ function getColumns(layoutMode: string, showInternal: boolean): Column[] {
       { ...code, defaultVisible: false },
       { ...specifiedImage, defaultVisible: false },
       proposedImage,
-      description,
-      { ...origin, defaultVisible: false },
+      { ...description, defaultWidth: 500 },
+      origin,
+      { ...model, defaultVisible: false },
+      { ...finish, defaultVisible: false },
+      { ...size, defaultVisible: false },
+      { ...warranty, defaultVisible: false },
       qty,
       unitPrice,
-      discount,
+      { ...discount, defaultVisible: false },
       discountPercentage,
-      discountAmountColumn,
+      { ...discountAmountColumn, defaultVisible: true },
       netPrice,
       netTotal,
     ],
@@ -1037,6 +1292,81 @@ function getColumns(layoutMode: string, showInternal: boolean): Column[] {
 
   const columns = byLayout[layoutMode] ?? byLayout.standard_proposal;
   const columnsWithManualSerial = [manualSerial, ...columns];
+  const allColumns =
+    showInternal && layoutMode !== "internal_costing"
+      ? [...columnsWithManualSerial, supplier, internalCost, margin, notes]
+      : layoutMode !== "internal_costing"
+        ? [...columnsWithManualSerial, supplier]
+        : columnsWithManualSerial;
+  const visibleColumnKeys = new Set(
+    allColumns
+      .filter((column) => settingVisible(column.key, column.defaultVisible ?? true))
+      .map((column) => column.key),
+  );
+
+  description.render = (item, _serial, formId, canEdit) => {
+    const style = cellStyleForItem(item, "specification");
+    const css = cellStyleCss(style);
+    const titleStyle: CSSProperties = {
+      ...css,
+      fontWeight: css.fontWeight ?? 600,
+    };
+    const descriptionStyle: CSSProperties = {
+      ...css,
+      fontWeight: css.fontWeight,
+    };
+
+    return (
+      <div className="flex h-full flex-col justify-center text-left">
+        {canEdit ? <CellStyleInputs formId={formId} item={item} cellKey="specification" /> : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {canEdit ? (
+            <CellInput
+              formId={formId}
+              name="item_name_snapshot"
+              defaultValue={item.item_name_snapshot}
+              cellStyle={titleStyle}
+              formatCellKey="specification"
+            />
+          ) : metadataSettings.title ? (
+            <span className="text-zinc-950" style={titleStyle}>
+              {specificationTitle(item)}
+            </span>
+          ) : null}
+          {metadataSettings.title ? null : canEdit ? (
+            <span className="text-[10px] font-semibold uppercase text-zinc-400">Title hidden in client display</span>
+          ) : null}
+          {(item.line_style === "optional" || item.is_optional) ? (
+            <span className="border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-800">
+              Optional
+            </span>
+          ) : null}
+        </div>
+        <div className="mt-1.5">
+          {canEdit ? (
+            <RowHeightTextarea
+              formId={formId}
+              name="specification_snapshot"
+              defaultValue={item.specification_snapshot}
+              rowHeight={item.row_height}
+              cellStyle={descriptionStyle}
+              formatCellKey="specification"
+            />
+          ) : (
+            <p className="text-zinc-700" style={descriptionStyle}>
+              {item.specification_snapshot ?? "-"}
+            </p>
+          )}
+        </div>
+        <SpecificationDetailBlock
+          item={item}
+          settings={metadataSettings}
+          visibleColumnKeys={visibleColumnKeys}
+        />
+      </div>
+    );
+  };
+
   if (showInternal && layoutMode !== "internal_costing") {
     return [...columnsWithManualSerial, supplier, internalCost, margin, notes];
   }
@@ -1090,8 +1420,9 @@ function ColumnSettingsForm({
   canManageRecords: boolean;
 }) {
   const settingsMap = columnSettingsMap(quotation.layout_settings);
+  const metadataSettings = specificationMetadataSettings(quotation.layout_settings);
   const editableColumns = canManageRecords
-    ? [...columns, { key: "edit", label: "Edit / Actions", defaultWidth: 150, defaultVisible: true }]
+    ? [...columns, { key: "edit", label: "Edit / Actions", defaultWidth: 132, defaultVisible: true }]
     : columns;
 
   return (
@@ -1101,6 +1432,24 @@ function ColumnSettingsForm({
       <p className="text-xs text-zinc-500">
         Column changes apply only to this quotation. Adjust width here or drag a header edge in the sheet.
       </p>
+      <fieldset className="border border-zinc-200 bg-zinc-50 p-2">
+        <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
+          Specification details
+        </legend>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {specificationMetadataFields.map(([key, label]) => (
+            <label key={key} className="flex items-center gap-2 text-xs font-semibold text-zinc-700">
+              <input
+                type="checkbox"
+                name={`show_spec_${key}`}
+                defaultChecked={metadataSettings[key]}
+                className="h-4 w-4 rounded border-zinc-300"
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
       <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
         {editableColumns.map((column) => {
           const setting = settingsMap.get(column.key);
@@ -1144,6 +1493,7 @@ function ColumnSettingsForm({
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function RowMoveDeactivateActions({
   item,
   quotationId,
@@ -1161,7 +1511,8 @@ function RowMoveDeactivateActions({
         <input type="hidden" name="return_to" value={returnTo} />
         <button
           type="submit"
-          className="border border-zinc-300 bg-white px-2 py-1 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+          title="Move up"
+          className="h-7 border border-zinc-300 bg-white px-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
         >
           ↑
         </button>
@@ -1172,7 +1523,8 @@ function RowMoveDeactivateActions({
         <input type="hidden" name="return_to" value={returnTo} />
         <button
           type="submit"
-          className="border border-zinc-300 bg-white px-2 py-1 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+          title="Move down"
+          className="h-7 border border-zinc-300 bg-white px-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
         >
           ↓
         </button>
@@ -1183,12 +1535,164 @@ function RowMoveDeactivateActions({
         <input type="hidden" name="return_to" value={returnTo} />
         <button
           type="submit"
-          className="border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-700 transition hover:border-red-700"
+          className="h-7 border border-red-200 bg-white px-2 text-xs font-semibold text-red-700 transition hover:border-red-700"
         >
-          Deactivate row
+          Deactivate
         </button>
       </form>
     </div>
+  );
+}
+
+function RowMoveActions({
+  item,
+  quotationId,
+  returnTo,
+}: {
+  item: QuotationItem;
+  quotationId: string;
+  returnTo: string;
+}) {
+  const buttonClass =
+    "h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900";
+
+  return (
+    <div className="flex items-center gap-1">
+      <form action={moveQuotationItemUp}>
+        <input type="hidden" name="id" value={item.id} />
+        <input type="hidden" name="quotation_id" value={quotationId} />
+        <input type="hidden" name="return_to" value={returnTo} />
+        <button type="submit" title="Move up" className={buttonClass}>
+          ^
+        </button>
+      </form>
+      <form action={moveQuotationItemDown}>
+        <input type="hidden" name="id" value={item.id} />
+        <input type="hidden" name="quotation_id" value={quotationId} />
+        <input type="hidden" name="return_to" value={returnTo} />
+        <button type="submit" title="Move down" className={buttonClass}>
+          v
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function DeactivateRowAction({
+  item,
+  quotationId,
+  returnTo,
+}: {
+  item: QuotationItem;
+  quotationId: string;
+  returnTo: string;
+}) {
+  return (
+    <form action={deactivateQuotationItem}>
+      <input type="hidden" name="id" value={item.id} />
+      <input type="hidden" name="quotation_id" value={quotationId} />
+      <input type="hidden" name="return_to" value={returnTo} />
+      <button
+        type="submit"
+        className="h-7 border border-red-200 bg-white px-2 text-xs font-semibold text-red-700 transition hover:border-red-700"
+      >
+        Deactivate
+      </button>
+    </form>
+  );
+}
+
+function InlineRowActions({
+  item,
+  quotation,
+  returnTo,
+  inlineFormId,
+  showInternal,
+}: {
+  item: QuotationItem;
+  quotation: Quotation;
+  returnTo: string;
+  inlineFormId: string;
+  showInternal: boolean;
+}) {
+  return (
+    <div className="grid h-full content-center justify-items-center gap-1">
+      <form id={inlineFormId} action={updateQuotationItemInline}>
+        <input type="hidden" name="id" value={item.id} />
+        <input type="hidden" name="quotation_id" value={quotation.id} />
+        <input type="hidden" name="return_to" value={returnTo} />
+      </form>
+      <div className="flex items-center gap-1.5">
+        <button
+          type="submit"
+          form={inlineFormId}
+          className="h-6 border border-emerald-900 bg-emerald-900 px-2 text-[11px] font-semibold text-white transition hover:bg-emerald-800"
+        >
+          Save
+        </button>
+        <InlineRowAutosave formId={inlineFormId} />
+      </div>
+      <div className="flex items-center gap-1">
+        <RowMoveActions item={item} quotationId={quotation.id} returnTo={returnTo} />
+        <details className="relative">
+          <summary className="h-6 cursor-pointer border border-zinc-300 bg-white px-2 py-1 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
+            More
+          </summary>
+          <div className="absolute right-0 z-30 mt-1 w-56 border border-zinc-300 bg-white p-2 text-left shadow-lg">
+            <label className="grid gap-1">
+              <span className="text-[10px] font-semibold uppercase text-zinc-500">Merge</span>
+              <select
+                form={inlineFormId}
+                name="merge_mode"
+                defaultValue={mergeModeForItem(item)}
+                className="h-7 w-full border border-zinc-300 bg-white px-1.5 text-xs text-zinc-800 outline-none focus:border-emerald-800"
+              >
+                {mergeModes.map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <DeactivateRowAction item={item} quotationId={quotation.id} returnTo={returnTo} />
+              <details className="relative">
+                <summary className="h-7 cursor-pointer border border-zinc-300 bg-white px-2 py-1.5 text-xs font-semibold text-emerald-900">
+                  Details
+                </summary>
+                <div className="absolute right-0 top-full z-40 mt-2 w-[1080px] max-w-[calc(100vw-3rem)] border border-zinc-300 bg-zinc-50 p-3 shadow-lg">
+                  <LineForm quotation={quotation} returnTo={returnTo} item={item} showInternal={showInternal} />
+                </div>
+              </details>
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
+  );
+}
+
+function InlineRowEditCell({
+  item,
+  quotation,
+  returnTo,
+  inlineFormId,
+  showInternal,
+}: {
+  item: QuotationItem;
+  quotation: Quotation;
+  returnTo: string;
+  inlineFormId: string;
+  showInternal: boolean;
+}) {
+  return (
+    <td className="border border-zinc-300 px-1.5 py-1 text-center align-middle">
+      <InlineRowActions
+        item={item}
+        quotation={quotation}
+        returnTo={returnTo}
+        inlineFormId={inlineFormId}
+        showInternal={showInternal}
+      />
+    </td>
   );
 }
 
@@ -1211,6 +1715,49 @@ function ItemRowResizeHandle({
         />
       </td>
     </tr>
+  );
+}
+
+function ExtraDiscountForm({
+  quotation,
+  returnTo,
+}: {
+  quotation: Quotation;
+  returnTo: string;
+}) {
+  return (
+    <form action={updateQuotationExtraDiscount} className="grid gap-2 sm:grid-cols-[120px_1fr_auto] sm:items-end">
+      <input type="hidden" name="id" value={quotation.id} />
+      <input type="hidden" name="return_to" value={returnTo} />
+      <label className="block">
+        <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Extra Discount Type</span>
+        <select
+          name="overall_discount_type"
+          defaultValue={quotation.overall_discount_type}
+          className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+        >
+          <option value="amount">Amount</option>
+          <option value="percent">Percent</option>
+        </select>
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Extra Discount Value</span>
+        <div className="flex h-8 border border-zinc-300 bg-white focus-within:border-emerald-800">
+          <input
+            name="overall_discount_value"
+            type="number"
+            step="0.01"
+            min="0"
+            defaultValue={quotation.overall_discount_value}
+            className="min-w-0 flex-1 px-2 text-xs outline-none"
+          />
+          <span className="flex items-center border-l border-zinc-300 bg-zinc-50 px-2 text-[10px] font-semibold text-zinc-500">
+            {quotation.overall_discount_type === "percent" ? "%" : quotation.currency}
+          </span>
+        </div>
+      </label>
+      <SubmitButton label="Save" />
+    </form>
   );
 }
 
@@ -1262,7 +1809,7 @@ export default async function QuotationBuilderPage({
   const { data: items, error: itemsError } = await supabase
     .from("quotation_items")
     .select(
-      "id,quotation_id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,is_active,notes,created_at",
+      "id,quotation_id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,is_active,notes,created_at",
     )
     .eq("quotation_id", id)
     .eq("is_active", true)
@@ -1283,11 +1830,11 @@ export default async function QuotationBuilderPage({
     itemsBySection.set(key, sectionItems);
   }
 
-  const defaultColumns = getColumns(quotation.layout_mode, showInternal);
+  const defaultColumns = getColumns(quotation.layout_mode, showInternal, quotation.layout_settings);
   const columns = configuredColumns(defaultColumns, quotation.layout_settings);
   const settingsMap = columnSettingsMap(quotation.layout_settings);
   const showEditColumn = canManageRecords;
-  const editColumnWidth = settingsMap.get("edit")?.width ?? 150;
+  const editColumnWidth = settingsMap.get("edit")?.width ?? 132;
   const totalColumns = columns.length + (showEditColumn ? 1 : 0);
   const sheetColumns = [
     ...columns.map((column) => ({ key: column.key, width: column.width })),
@@ -1296,6 +1843,7 @@ export default async function QuotationBuilderPage({
 
   return (
     <div className="min-h-screen bg-zinc-100 text-zinc-950">
+      {canManageRecords ? <CellFormattingToolbar /> : null}
       <header className="sticky top-0 z-20 border-b border-zinc-300 bg-white">
         <div className="flex flex-col gap-3 px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-3">
@@ -1317,7 +1865,7 @@ export default async function QuotationBuilderPage({
             <span className="border border-zinc-300 bg-zinc-50 px-2.5 py-1 text-xs font-semibold text-zinc-700">
               {layoutLabels.get(quotation.layout_mode) ?? quotation.layout_mode}
             </span>
-            <span className="text-xs text-zinc-500">Saved by server actions</span>
+            <span className="text-xs text-zinc-500">All changes saved automatically</span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -1481,29 +2029,113 @@ export default async function QuotationBuilderPage({
                       {sectionItems.map((item) => {
                         const mergedText = item.item_name_snapshot ?? item.specification_snapshot ?? "";
                         const rowSerial = isSerialCountedLine(item) ? ++serialNumber : 0;
+                        const inlineFormId = `inline-row-${item.id}`;
+                        const mergeMode = mergeModeForItem(item);
 
-                        if (item.line_style === "heading") {
+                        if (mergeMode === "merge_full_row") {
+                          const fullRowStyle = cellStyleForItem(item, "full_row");
+                          const fullRowCss = cellStyleCss(
+                            fullRowStyle,
+                            item.line_style === "heading" ? "center" : "left",
+                          );
+
                           return (
                             <Fragment key={item.id}>
-                              <tr style={item.row_height ? { height: `${item.row_height}px` } : undefined}>
+                              <tr
+                                className="align-middle"
+                                style={item.row_height ? { height: `${item.row_height}px` } : undefined}
+                              >
+                                <td
+                                  colSpan={showEditColumn ? totalColumns - 1 : totalColumns}
+                                  className={`border border-zinc-300 px-3 py-2 text-zinc-800 ${
+                                    item.line_style === "heading"
+                                      ? "bg-zinc-100 text-center text-sm font-bold uppercase text-zinc-900"
+                                      : "bg-white text-xs"
+                                  }`}
+                                  style={fullRowCss}
+                                >
+                                  {canManageRecords ? (
+                                    <div className="grid gap-1">
+                                      <CellStyleInputs
+                                        formId={inlineFormId}
+                                        item={item}
+                                        cellKey="full_row"
+                                        fallbackAlign={item.line_style === "heading" ? "center" : "left"}
+                                      />
+                                      <CellInput
+                                        formId={inlineFormId}
+                                        name="item_name_snapshot"
+                                        defaultValue={item.item_name_snapshot}
+                                        align={item.line_style === "heading" ? "center" : "left"}
+                                        cellStyle={fullRowCss}
+                                        formatCellKey="full_row"
+                                      />
+                                      {item.line_style === "heading" ? null : (
+                                        <RowHeightTextarea
+                                          formId={inlineFormId}
+                                          name="specification_snapshot"
+                                          defaultValue={item.specification_snapshot ?? item.notes}
+                                          rowHeight={item.row_height}
+                                          cellStyle={fullRowCss}
+                                          formatCellKey="full_row"
+                                        />
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <p style={fullRowCss}>{mergedRowText(item) || (item.line_style === "heading" ? "Heading" : "-")}</p>
+                                  )}
+                                </td>
+                                {showEditColumn ? (
+                                  <InlineRowEditCell
+                                    item={item}
+                                    quotation={quotation}
+                                    returnTo={builderPath}
+                                    inlineFormId={inlineFormId}
+                                    showInternal={showInternal}
+                                  />
+                                ) : null}
+                              </tr>
+                              <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
+                            </Fragment>
+                          );
+                        }
+
+                        if (item.line_style === "heading") {
+                          const fullRowStyle = cellStyleForItem(item, "full_row");
+                          const fullRowCss = cellStyleCss(fullRowStyle, "center");
+
+                          return (
+                            <Fragment key={item.id}>
+                              <tr className="align-middle" style={item.row_height ? { height: `${item.row_height}px` } : undefined}>
                                 <td
                                   colSpan={showEditColumn ? totalColumns - 1 : totalColumns}
                                   className="border border-zinc-300 bg-zinc-100 px-3 py-2 text-center text-sm font-bold uppercase text-zinc-900"
+                                  style={fullRowCss}
                                 >
-                                  {mergedText || "Heading"}
+                                  {canManageRecords ? (
+                                    <>
+                                      <CellStyleInputs formId={inlineFormId} item={item} cellKey="full_row" fallbackAlign="center" />
+                                      <CellInput
+                                        formId={inlineFormId}
+                                        name="item_name_snapshot"
+                                        defaultValue={mergedText || "Heading"}
+                                        align="center"
+                                        cellStyle={fullRowCss}
+                                        formatCellKey="full_row"
+                                      />
+                                    </>
+                                  ) : (
+                                    mergedText || "Heading"
+                                  )}
                                 </td>
                                 {showEditColumn ? (
-                                  <td className="border border-zinc-300 px-2 py-2">
-                                    <RowMoveDeactivateActions item={item} quotationId={quotation.id} returnTo={builderPath} />
-                                    <details>
-                                      <summary className="mt-2 cursor-pointer font-semibold text-emerald-900">
-                                        Advanced row details
-                                      </summary>
-                                      <div className="mt-2 w-[1080px] max-w-[calc(100vw-3rem)] border border-zinc-300 bg-zinc-50 p-3">
-                                        <LineForm quotation={quotation} returnTo={builderPath} item={item} showInternal={showInternal} />
-                                      </div>
-                                    </details>
-                                  </td>
+                                  <InlineRowEditCell
+                                    item={item}
+                                    quotation={quotation}
+                                    returnTo={builderPath}
+                                    inlineFormId={inlineFormId}
+                                    showInternal={showInternal}
+                                  />
                                 ) : null}
                               </tr>
                               <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
@@ -1512,30 +2144,53 @@ export default async function QuotationBuilderPage({
                         }
 
                         if (item.line_style === "note") {
+                          const fullRowStyle = cellStyleForItem(item, "full_row");
+                          const fullRowCss = cellStyleCss(fullRowStyle);
+
                           return (
                             <Fragment key={item.id}>
-                              <tr style={item.row_height ? { height: `${item.row_height}px` } : undefined}>
+                              <tr className="align-middle" style={item.row_height ? { height: `${item.row_height}px` } : undefined}>
                                 <td
                                   colSpan={showEditColumn ? totalColumns - 1 : totalColumns}
                                   className="border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-700"
+                                  style={fullRowCss}
                                 >
-                                  <span className="font-semibold">{item.item_name_snapshot ?? "Note"}</span>
-                                  {item.specification_snapshot ? (
-                                    <span className="ml-2">{item.specification_snapshot}</span>
-                                  ) : null}
+                                  {canManageRecords ? (
+                                    <div className="grid gap-1">
+                                      <CellStyleInputs formId={inlineFormId} item={item} cellKey="full_row" />
+                                      <CellInput
+                                        formId={inlineFormId}
+                                        name="item_name_snapshot"
+                                        defaultValue={item.item_name_snapshot ?? "Note"}
+                                        cellStyle={fullRowCss}
+                                        formatCellKey="full_row"
+                                      />
+                                      <RowHeightTextarea
+                                        formId={inlineFormId}
+                                        name="specification_snapshot"
+                                        defaultValue={item.specification_snapshot}
+                                        rowHeight={item.row_height}
+                                        cellStyle={fullRowCss}
+                                        formatCellKey="full_row"
+                                      />
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <span className="font-semibold">{item.item_name_snapshot ?? "Note"}</span>
+                                      {item.specification_snapshot ? (
+                                        <span className="ml-2">{item.specification_snapshot}</span>
+                                      ) : null}
+                                    </>
+                                  )}
                                 </td>
                                 {showEditColumn ? (
-                                  <td className="border border-zinc-300 px-2 py-2">
-                                    <RowMoveDeactivateActions item={item} quotationId={quotation.id} returnTo={builderPath} />
-                                    <details>
-                                      <summary className="mt-2 cursor-pointer font-semibold text-emerald-900">
-                                        Advanced row details
-                                      </summary>
-                                      <div className="mt-2 w-[1080px] max-w-[calc(100vw-3rem)] border border-zinc-300 bg-zinc-50 p-3">
-                                        <LineForm quotation={quotation} returnTo={builderPath} item={item} showInternal={showInternal} />
-                                      </div>
-                                    </details>
-                                  </td>
+                                  <InlineRowEditCell
+                                    item={item}
+                                    quotation={quotation}
+                                    returnTo={builderPath}
+                                    inlineFormId={inlineFormId}
+                                    showInternal={showInternal}
+                                  />
                                 ) : null}
                               </tr>
                               <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
@@ -1546,20 +2201,16 @@ export default async function QuotationBuilderPage({
                         if (item.line_style === "no_quote" && !mergedText) {
                           return (
                             <Fragment key={item.id}>
-                              <tr style={item.row_height ? { height: `${item.row_height}px` } : undefined}>
-                                <td colSpan={showEditColumn ? totalColumns - 1 : totalColumns} className="h-8 border border-zinc-300 bg-white" />
+                              <tr className="align-middle" style={item.row_height ? { height: `${item.row_height}px` } : undefined}>
+                                <td colSpan={showEditColumn ? totalColumns - 1 : totalColumns} className="h-8 border border-zinc-300 bg-white align-middle" />
                                 {showEditColumn ? (
-                                  <td className="border border-zinc-300 px-2 py-2">
-                                    <RowMoveDeactivateActions item={item} quotationId={quotation.id} returnTo={builderPath} />
-                                    <details>
-                                      <summary className="mt-2 cursor-pointer font-semibold text-emerald-900">
-                                        Advanced row details
-                                      </summary>
-                                      <div className="mt-2 w-[1080px] max-w-[calc(100vw-3rem)] border border-zinc-300 bg-zinc-50 p-3">
-                                        <LineForm quotation={quotation} returnTo={builderPath} item={item} showInternal={showInternal} />
-                                      </div>
-                                    </details>
-                                  </td>
+                                  <InlineRowEditCell
+                                    item={item}
+                                    quotation={quotation}
+                                    returnTo={builderPath}
+                                    inlineFormId={inlineFormId}
+                                    showInternal={showInternal}
+                                  />
                                 ) : null}
                               </tr>
                               <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
@@ -1567,51 +2218,56 @@ export default async function QuotationBuilderPage({
                           );
                         }
 
-                        const inlineFormId = `inline-row-${item.id}`;
-
                         return (
                           <Fragment key={item.id}>
                             <tr
-                              className="align-top"
+                              className="align-middle"
                               style={item.row_height ? { height: `${item.row_height}px` } : undefined}
                             >
-                              {columns.map((column) => (
-                                <td
-                                  key={column.key}
-                                  className={`break-words whitespace-pre-wrap border border-zinc-300 px-2 py-2 text-zinc-700 ${column.className ?? ""}`}
-                                >
-                                  {column.render(item, rowSerial, inlineFormId, canManageRecords)}
-                                </td>
-                              ))}
-                              {showEditColumn ? (
-                                <td className="border border-zinc-300 px-2 py-2">
-                                  <form id={inlineFormId} action={updateQuotationItemInline}>
-                                    <input type="hidden" name="id" value={item.id} />
-                                    <input type="hidden" name="quotation_id" value={quotation.id} />
-                                    <input type="hidden" name="return_to" value={builderPath} />
-                                  </form>
-                                  <button
-                                    type="submit"
-                                    form={inlineFormId}
-                                    className="mb-2 w-full border border-emerald-900 bg-emerald-900 px-2 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-800"
+                              {columns.map((column, columnIndex) => {
+                                const descriptionIndex = columns.findIndex(
+                                  (candidate) => candidate.key === "specification" || candidate.key === "description",
+                                );
+                                const mergeSpecification =
+                                  mergeMode === "merge_specification" && descriptionIndex >= 0;
+                                const nextCommercialIndex = mergeSpecification
+                                  ? columns.findIndex(
+                                      (candidate, candidateIndex) =>
+                                        candidateIndex > descriptionIndex && commercialColumnKeys.has(candidate.key),
+                                    )
+                                  : -1;
+                                const spanEnd = nextCommercialIndex > descriptionIndex ? nextCommercialIndex : columns.length;
+
+                                if (
+                                  mergeSpecification &&
+                                  columnIndex > descriptionIndex &&
+                                  columnIndex < spanEnd
+                                ) {
+                                  return null;
+                                }
+
+                                return (
+                                  <td
+                                    key={column.key}
+                                    colSpan={
+                                      mergeSpecification && columnIndex === descriptionIndex
+                                        ? spanEnd - descriptionIndex
+                                        : undefined
+                                    }
+                                    className={`break-words whitespace-pre-wrap border border-zinc-300 px-2 py-2 align-middle text-zinc-700 ${column.className ?? ""}`}
                                   >
-                                    Save row
-                                  </button>
-                                  <RowMoveDeactivateActions item={item} quotationId={quotation.id} returnTo={builderPath} />
-                                  <details>
-                                    <summary className="mt-2 cursor-pointer font-semibold text-emerald-900">
-                                      Advanced row details
-                                    </summary>
-                                    <div className="mt-2 w-[1080px] max-w-[calc(100vw-3rem)] border border-zinc-300 bg-zinc-50 p-3">
-                                      <LineForm
-                                        quotation={quotation}
-                                        returnTo={builderPath}
-                                        item={item}
-                                        showInternal={showInternal}
-                                      />
-                                    </div>
-                                  </details>
-                                </td>
+                                    {column.render(item, rowSerial, inlineFormId, canManageRecords)}
+                                  </td>
+                                );
+                              })}
+                              {showEditColumn ? (
+                                <InlineRowEditCell
+                                  item={item}
+                                  quotation={quotation}
+                                  returnTo={builderPath}
+                                  inlineFormId={inlineFormId}
+                                  showInternal={showInternal}
+                                />
                               ) : null}
                             </tr>
                             <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
@@ -1669,13 +2325,13 @@ export default async function QuotationBuilderPage({
             </div>
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">Total Discount</span>
-              <span>
-                {money(
-                  quotation.currency,
-                  quotation.discount_total + overallDiscountAmount(quotation),
-                )}
-              </span>
+              <span>{money(quotation.currency, quotation.discount_total + overallDiscountAmount(quotation))}</span>
             </div>
+            {canManageRecords ? (
+              <div className="border-b border-zinc-300 bg-zinc-50 px-3 py-3">
+                <ExtraDiscountForm quotation={quotation} returnTo={builderPath} />
+              </div>
+            ) : null}
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">VAT {quotation.vat_percent}%</span>
               <span>{money(quotation.currency, quotation.vat_amount)}</span>

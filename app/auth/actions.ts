@@ -63,13 +63,6 @@ export async function login(formData: FormData) {
     );
   }
 
-  console.log(
-    "AUTH PROFILE STATUS",
-    profile?.email,
-    profile?.role,
-    profile?.account_status,
-  );
-
   if (profile?.account_status === "disabled") {
     await supabase.auth.signOut();
     redirectWithMessage("/login", "Your account has been disabled.");

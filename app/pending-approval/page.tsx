@@ -33,13 +33,6 @@ export default async function PendingApprovalPage() {
     console.error("AUTH PROFILE ERROR", profileError.message);
   }
 
-  console.log(
-    "AUTH PROFILE STATUS",
-    profile?.email,
-    profile?.role,
-    profile?.account_status,
-  );
-
   if (profile?.account_status === "active") {
     redirect("/dashboard");
   }

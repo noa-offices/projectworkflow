@@ -16,6 +16,7 @@ Run migrations in this order:
 12. `migrations/012_quotation_item_manual_serial.sql`
 13. `migrations/013_quotation_total_discount.sql`
 14. `migrations/014_quotation_row_height_limits.sql`
+15. `migrations/015_quotation_item_cell_layout.sql`
 
 The first user should sign up normally through the app. After that signup creates
 the profile row, promote the first user manually in Supabase SQL:

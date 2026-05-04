@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
+import type { CSSProperties } from "react";
 
 const MIN_ROW_HEIGHT = 40;
 const MAX_ROW_HEIGHT = 600;
@@ -14,11 +15,15 @@ export function RowHeightTextarea({
   name,
   defaultValue,
   rowHeight,
+  cellStyle,
+  formatCellKey,
 }: {
   formId: string;
   name: string;
   defaultValue?: string | null;
   rowHeight?: number | null;
+  cellStyle?: CSSProperties;
+  formatCellKey?: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const heightInputRef = useRef<HTMLInputElement>(null);
@@ -70,12 +75,17 @@ export function RowHeightTextarea({
         ref={textareaRef}
         form={formId}
         name={name}
+        data-form-id={formatCellKey ? formId : undefined}
+        data-format-cell={formatCellKey}
         defaultValue={defaultValue ?? ""}
         rows={2}
         onBlur={() => syncHeight(false)}
         onMouseUp={() => syncHeight(false)}
-        className="min-h-10 w-full resize-y border-0 bg-transparent px-1 py-0.5 text-xs text-zinc-700 outline-none focus:bg-emerald-50 focus:ring-1 focus:ring-emerald-800"
-        style={rowHeight ? { minHeight: `${Math.max(rowHeight - 18, MIN_ROW_HEIGHT)}px` } : undefined}
+        className="min-h-10 w-full resize-none border-0 bg-transparent px-1 py-0.5 text-xs text-zinc-700 outline-none focus:bg-emerald-50 focus:ring-1 focus:ring-emerald-800"
+        style={{
+          ...(rowHeight ? { minHeight: `${Math.max(rowHeight - 18, MIN_ROW_HEIGHT)}px` } : {}),
+          ...cellStyle,
+        }}
       />
     </>
   );

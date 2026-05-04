@@ -15,6 +15,7 @@ const quotationStatuses = new Set([
   "cancelled",
 ]);
 const discountTypes = new Set(["amount", "percent"]);
+const mergeModes = new Set(["none", "merge_specification", "merge_full_row"]);
 const itemTypes = new Set(["product", "custom", "note", "blank", "subtotal"]);
 const layoutModes = new Set([
   "simple_proposal",
@@ -27,6 +28,12 @@ const sectionTypes = new Set(["option", "floor", "room", "category", "section"])
 const titleAlignments = new Set(["left", "center", "right"]);
 const titleBackgrounds = new Set(["light_grey", "white", "dark_grey"]);
 const titleSizes = new Set(["normal", "large"]);
+const cellStyleKeys = new Set(["specification", "full_row"]);
+const fontSizes = new Set(["8", "9", "10", "11", "12", "14", "16", "18", "20", "24", "28", "32"]);
+const fontWeights = new Set(["400", "700"]);
+const fontStyles = new Set(["normal", "italic"]);
+const textDecorations = new Set(["none", "underline"]);
+const textAlignments = new Set(["left", "center", "right"]);
 const lineStyles = new Set([
   "normal",
   "optional",
@@ -122,6 +129,56 @@ function allowedText(formData: FormData, name: string, allowed: Set<string>, fal
   return allowed.has(value) ? value : fallback;
 }
 
+type CellLayoutPayload = {
+  mergeMode: string;
+  cells?: Record<string, {
+    fontSize: number;
+    fontWeight: string;
+    fontStyle: string;
+    textDecoration: string;
+    textAlign: string;
+    wrapText: boolean;
+  }>;
+};
+
+function isCellLayoutPayload(value: unknown): value is CellLayoutPayload {
+  return typeof value === "object" && value !== null;
+}
+
+function cellLayoutValue(formData: FormData, currentLayout?: unknown): CellLayoutPayload {
+  const current: Partial<CellLayoutPayload> = isCellLayoutPayload(currentLayout) ? currentLayout : {};
+  const layout: CellLayoutPayload = {
+    ...current,
+    mergeMode: formData.has("merge_mode")
+      ? allowedText(formData, "merge_mode", mergeModes, "none")
+      : current.mergeMode && mergeModes.has(current.mergeMode)
+        ? current.mergeMode
+        : "none",
+  };
+
+  const submittedCells = formData
+    .getAll("cell_style_key")
+    .filter((value): value is string => typeof value === "string" && cellStyleKeys.has(value));
+  const cells: CellLayoutPayload["cells"] = { ...(current.cells ?? {}) };
+
+  for (const cellKey of Array.from(new Set(submittedCells))) {
+    cells[cellKey] = {
+      fontSize: Number(allowedText(formData, `cell_style_${cellKey}_font_size`, fontSizes, "12")),
+      fontWeight: allowedText(formData, `cell_style_${cellKey}_font_weight`, fontWeights, "400"),
+      fontStyle: allowedText(formData, `cell_style_${cellKey}_font_style`, fontStyles, "normal"),
+      textDecoration: allowedText(formData, `cell_style_${cellKey}_text_decoration`, textDecorations, "none"),
+      textAlign: allowedText(formData, `cell_style_${cellKey}_text_align`, textAlignments, "left"),
+      wrapText: textValue(formData, `cell_style_${cellKey}_wrap_text`) !== "false",
+    };
+  }
+
+  if (Object.keys(cells).length) {
+    layout.cells = cells;
+  }
+
+  return layout;
+}
+
 function quotationPayload(formData: FormData, userId?: string) {
   const payload = {
     client_id: textValue(formData, "client_id"),
@@ -201,6 +258,7 @@ function itemPayload(formData: FormData, userId?: string) {
     is_rate_only: boolValue(formData, "is_rate_only"),
     line_style: textValue(formData, "line_style") || "normal",
     row_height: optionalIntegerInRange(formData, "row_height", 40, 600),
+    cell_layout: cellLayoutValue(formData),
     is_active: boolValue(formData, "is_active"),
     notes: optionalTextValue(formData, "notes"),
   };
@@ -339,6 +397,43 @@ export async function updateQuotation(formData: FormData) {
   redirectWithMessage(`/quotations/${id}`, "Quotation updated.");
 }
 
+export async function updateQuotationExtraDiscount(formData: FormData) {
+  await requireRecordsManager();
+  const id = textValue(formData, "id");
+  const redirectPath = returnPath(formData, `/quotations/${id}`);
+  const overallDiscountType = allowedText(
+    formData,
+    "overall_discount_type",
+    discountTypes,
+    "amount",
+  );
+  const overallDiscountValue = Math.max(numberValue(formData, "overall_discount_value", 0), 0);
+
+  if (!id) {
+    redirectWithMessage("/quotations", "Quotation is required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase
+    .from("quotations")
+    .update({
+      overall_discount_type: overallDiscountType,
+      overall_discount_value: overallDiscountValue,
+    })
+    .eq("id", id);
+
+  if (error) {
+    console.error("QUOTATION EXTRA DISCOUNT UPDATE ERROR", error.message);
+    redirectWithMessage(redirectPath, "Extra discount could not be updated.");
+  }
+
+  await recalculateQuotationTotals(id);
+  revalidatePath("/quotations");
+  revalidatePath(`/quotations/${id}`);
+  revalidatePath(`/quotations/${id}/builder`);
+  redirectWithMessage(redirectPath, "Extra discount updated.");
+}
+
 export async function updateQuotationLayoutSettings(formData: FormData) {
   await requireRecordsManager();
   const quotationId = textValue(formData, "quotation_id");
@@ -362,7 +457,16 @@ export async function updateQuotationLayoutSettings(formData: FormData) {
     };
   });
 
-  const layoutSettings = { columns };
+  const layoutSettings = {
+    columns,
+    specificationMetadata: {
+      title: boolValue(formData, "show_spec_title"),
+      model: boolValue(formData, "show_spec_model"),
+      size: boolValue(formData, "show_spec_size"),
+      finish: boolValue(formData, "show_spec_finish"),
+      warranty: boolValue(formData, "show_spec_warranty"),
+    },
+  };
   const supabase = await createSupabaseClient();
   const { error } = await supabase
     .from("quotations")
@@ -662,13 +766,14 @@ export async function updateQuotationItemInline(formData: FormData) {
   const supabase = await createSupabaseClient();
   const { data: currentItem, error: readError } = await supabase
     .from("quotation_items")
-    .select("qty,unit_price,discount_type,discount_value")
+    .select("qty,unit_price,discount_type,discount_value,cell_layout")
     .eq("id", id)
     .single<{
       qty: number;
       unit_price: number;
       discount_type: string;
       discount_value: number;
+      cell_layout: CellLayoutPayload | null;
     }>();
 
   if (readError || !currentItem) {
@@ -676,7 +781,7 @@ export async function updateQuotationItemInline(formData: FormData) {
     redirectWithMessage(redirectPath, "Line item could not be loaded.");
   }
 
-  const payload: Record<string, string | number | null> = {};
+  const payload: Record<string, string | number | CellLayoutPayload | null> = {};
   const textFields = [
     "manual_serial",
     "item_code_snapshot",
@@ -719,6 +824,9 @@ export async function updateQuotationItemInline(formData: FormData) {
   if (formData.has("row_height")) {
     payload.row_height = optionalIntegerInRange(formData, "row_height", 40, 600);
   }
+  if (formData.has("merge_mode") || formData.has("cell_style_key")) {
+    payload.cell_layout = cellLayoutValue(formData, currentItem.cell_layout);
+  }
   payload.net_price = netPrice;
   payload.net_total = money(qty * netPrice);
 
@@ -733,6 +841,107 @@ export async function updateQuotationItemInline(formData: FormData) {
   revalidatePath(`/quotations/${quotationId}`);
   revalidatePath(redirectPath);
   redirectWithMessage(redirectPath, "Row saved.");
+}
+
+export async function autosaveQuotationItemInline(formData: FormData) {
+  await requireRecordsManager();
+  const id = textValue(formData, "id");
+  const quotationId = textValue(formData, "quotation_id");
+
+  if (!id || !quotationId) {
+    return { ok: false, message: "Line item id and quotation are required." };
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: currentItem, error: readError } = await supabase
+    .from("quotation_items")
+    .select("qty,unit_price,discount_type,discount_value,cell_layout")
+    .eq("id", id)
+    .eq("quotation_id", quotationId)
+    .single<{
+      qty: number;
+      unit_price: number;
+      discount_type: string;
+      discount_value: number;
+      cell_layout: CellLayoutPayload | null;
+    }>();
+
+  if (readError || !currentItem) {
+    console.error("QUOTATION ITEM AUTOSAVE READ ERROR", readError?.message);
+    return { ok: false, message: "Line item could not be loaded." };
+  }
+
+  const payload: Record<string, string | number | CellLayoutPayload | null> = {};
+  const textFields = [
+    "manual_serial",
+    "item_code_snapshot",
+    "item_name_snapshot",
+    "specification_snapshot",
+    "room_name_snapshot",
+    "model_snapshot",
+    "finish_snapshot",
+    "size_snapshot",
+    "origin_snapshot",
+    "warranty_snapshot",
+    "supplier_name_snapshot",
+    "unit_label",
+  ];
+
+  for (const field of textFields) {
+    if (formData.has(field)) {
+      payload[field] = optionalTextValue(formData, field);
+    }
+  }
+
+  const discountType = formData.has("discount_type")
+    ? allowedText(formData, "discount_type", discountTypes, currentItem.discount_type)
+    : currentItem.discount_type;
+  const qty = formData.has("qty")
+    ? numberValue(formData, "qty", currentItem.qty)
+    : currentItem.qty;
+  const unitPrice = formData.has("unit_price")
+    ? numberValue(formData, "unit_price", currentItem.unit_price)
+    : currentItem.unit_price;
+  const discountValue = formData.has("discount_value")
+    ? numberValue(formData, "discount_value", currentItem.discount_value)
+    : currentItem.discount_value;
+  const rawNetPrice =
+    discountType === "percent"
+      ? unitPrice - (unitPrice * discountValue) / 100
+      : unitPrice - discountValue;
+  const netPrice = money(Math.max(rawNetPrice, 0));
+
+  if (formData.has("discount_type")) payload.discount_type = discountType;
+  if (formData.has("line_style")) {
+    payload.line_style = allowedText(formData, "line_style", lineStyles, "normal");
+  }
+  if (formData.has("qty")) payload.qty = qty;
+  if (formData.has("unit_price")) payload.unit_price = unitPrice;
+  if (formData.has("discount_value")) payload.discount_value = discountValue;
+  if (formData.has("row_height")) {
+    payload.row_height = optionalIntegerInRange(formData, "row_height", 40, 600);
+  }
+  if (formData.has("merge_mode") || formData.has("cell_style_key")) {
+    payload.cell_layout = cellLayoutValue(formData, currentItem.cell_layout);
+  }
+  payload.net_price = netPrice;
+  payload.net_total = money(qty * netPrice);
+
+  const { error } = await supabase
+    .from("quotation_items")
+    .update(payload)
+    .eq("id", id)
+    .eq("quotation_id", quotationId);
+
+  if (error) {
+    console.error("QUOTATION ITEM AUTOSAVE ERROR", error.message);
+    return { ok: false, message: "Save failed." };
+  }
+
+  await recalculateQuotationTotals(quotationId);
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(`/quotations/${quotationId}/builder`);
+  return { ok: true };
 }
 
 async function moveQuotationItem(formData: FormData, direction: "up" | "down") {

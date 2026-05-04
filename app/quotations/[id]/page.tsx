@@ -10,6 +10,7 @@ import {
   deactivateQuotationItem,
   deactivateQuotationSection,
   updateQuotation,
+  updateQuotationExtraDiscount,
   updateQuotationItem,
   updateQuotationSection,
 } from "../actions";
@@ -122,9 +123,27 @@ type QuotationItem = {
   is_rate_only: boolean;
   line_style: string;
   row_height: number | null;
+  cell_layout: CellLayout | null;
   is_active: boolean;
   notes: string | null;
 };
+
+type CellLayout = {
+  mergeMode?: string;
+};
+
+function mergeModeForItem(item?: QuotationItem): string {
+  const mergeMode = item?.cell_layout?.mergeMode;
+  if (mergeMode === "none" || mergeMode === "merge_specification" || mergeMode === "merge_full_row") {
+    return mergeMode;
+  }
+
+  if (item?.line_style === "heading" || item?.line_style === "note" || item?.item_type === "blank") {
+    return "merge_full_row";
+  }
+
+  return "none";
+}
 
 function Field({
   name,
@@ -234,6 +253,49 @@ function overallDiscountAmount(quotation: Quotation) {
   return quotation.overall_discount_value;
 }
 
+function ExtraDiscountForm({
+  quotation,
+  returnTo,
+  compact = false,
+}: {
+  quotation: Quotation;
+  returnTo: string;
+  compact?: boolean;
+}) {
+  return (
+    <form action={updateQuotationExtraDiscount} className={compact ? "grid gap-2" : "grid gap-3 md:grid-cols-[180px_1fr_auto]"}>
+      <input type="hidden" name="id" value={quotation.id} />
+      <input type="hidden" name="return_to" value={returnTo} />
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Extra Discount Type</span>
+        <select name="overall_discount_type" defaultValue={quotation.overall_discount_type} className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10">
+          <option value="amount">Amount</option>
+          <option value="percent">Percent</option>
+        </select>
+      </label>
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Extra Discount Value</span>
+        <div className="mt-1 flex h-10 overflow-hidden rounded-md border border-zinc-200 bg-white focus-within:border-emerald-800 focus-within:ring-2 focus-within:ring-emerald-900/10">
+          <input
+            name="overall_discount_value"
+            type="number"
+            step="0.01"
+            min="0"
+            defaultValue={quotation.overall_discount_value}
+            className="min-w-0 flex-1 px-3 text-sm outline-none"
+          />
+          <span className="flex items-center border-l border-zinc-200 bg-zinc-50 px-3 text-xs font-semibold text-zinc-500">
+            {quotation.overall_discount_type === "percent" ? "%" : quotation.currency}
+          </span>
+        </div>
+      </label>
+      <div className={compact ? "" : "flex items-end"}>
+        <SubmitButton label="Save extra discount" />
+      </div>
+    </form>
+  );
+}
+
 function QuotationTermsForm({ quotation, mode }: { quotation: Quotation; mode: "details" | "terms" }) {
   const isDetails = mode === "details";
 
@@ -288,7 +350,7 @@ function QuotationTermsForm({ quotation, mode }: { quotation: Quotation; mode: "
           <Field name="currency" label="Currency" defaultValue={quotation.currency} />
           <Field name="vat_percent" label="VAT %" type="number" defaultValue={quotation.vat_percent} />
           <label className="block">
-            <span className="text-xs font-semibold uppercase text-zinc-500">Overall discount type</span>
+            <span className="text-xs font-semibold uppercase text-zinc-500">Extra Discount Type</span>
             <select name="overall_discount_type" defaultValue={quotation.overall_discount_type} className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10">
               <option value="amount">Amount</option>
               <option value="percent">Percent</option>
@@ -296,7 +358,7 @@ function QuotationTermsForm({ quotation, mode }: { quotation: Quotation; mode: "
           </label>
           <Field
             name="overall_discount_value"
-            label="Overall discount"
+            label="Extra Discount Value"
             type="number"
             defaultValue={quotation.overall_discount_value}
           />
@@ -390,6 +452,7 @@ function ItemForm({
       <input type="hidden" name="margin_value" value={item?.margin_value ?? 0} />
       <input type="hidden" name="line_style" value={item?.line_style ?? "normal"} />
       <input type="hidden" name="row_height" value={item?.row_height ?? ""} />
+      <input type="hidden" name="merge_mode" value={mergeModeForItem(item)} />
       {item?.is_rate_only ? <input type="hidden" name="is_rate_only" value="on" /> : null}
       <Field
         name="item_code_snapshot"
@@ -523,7 +586,7 @@ export default async function QuotationDetailPage({
   const { data: items, error: itemsError } = await supabase
     .from("quotation_items")
     .select(
-      "id,quotation_id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,is_active,notes",
+      "id,quotation_id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,is_active,notes",
     )
     .eq("quotation_id", id)
     .order("section_id", { ascending: true, nullsFirst: true })
@@ -623,14 +686,18 @@ export default async function QuotationDetailPage({
                   <span className="font-medium text-zinc-950">{formatMoney(quotation.currency, quotation.subtotal)}</span>
                 </div>
                 <div className="flex justify-between gap-4">
-                  <span className="text-zinc-500">Total Discount</span>
-                  <span className="font-medium text-zinc-950">
-                    {formatMoney(
-                      quotation.currency,
-                      quotation.discount_total + overallDiscountAmount(quotation),
-                    )}
-                  </span>
+                  <span className="text-zinc-500">Item Discount</span>
+                  <span className="font-medium text-zinc-950">{formatMoney(quotation.currency, quotation.discount_total)}</span>
                 </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-zinc-500">Extra Discount</span>
+                  <span className="font-medium text-zinc-950">{formatMoney(quotation.currency, overallDiscountAmount(quotation))}</span>
+                </div>
+                {canManageRecords ? (
+                  <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                    <ExtraDiscountForm quotation={quotation} returnTo={`/quotations/${quotation.id}`} compact />
+                  </div>
+                ) : null}
                 <div className="flex justify-between gap-4">
                   <span className="text-zinc-500">VAT {quotation.vat_percent}%</span>
                   <span className="font-medium text-zinc-950">{formatMoney(quotation.currency, quotation.vat_amount)}</span>
@@ -657,7 +724,7 @@ export default async function QuotationDetailPage({
                   <InfoValue label="Currency" value={quotation.currency} />
                   <InfoValue label="VAT %" value={`${quotation.vat_percent}%`} />
                   <InfoValue
-                    label="Overall Discount"
+                    label="Extra Discount"
                     value={
                       quotation.overall_discount_type === "percent"
                         ? `${quotation.overall_discount_value}%`
