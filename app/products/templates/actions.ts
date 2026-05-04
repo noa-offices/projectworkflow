@@ -13,6 +13,7 @@ const allowedOptionTypes = new Set([
   "linked_addon",
   "other",
 ]);
+const imageFits = new Set(["contain", "cover"]);
 
 function textValue(formData: FormData, name: string) {
   const value = formData.get(name);
@@ -33,8 +34,25 @@ function numberValue(formData: FormData, name: string, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
 }
 
+function numberInRange(formData: FormData, name: string, fallback: number, min: number, max: number) {
+  const value = numberValue(formData, name, fallback);
+
+  return Math.min(Math.max(value, min), max);
+}
+
 function redirectWithMessage(message: string): never {
   redirect(`/products/templates?message=${encodeURIComponent(message)}`);
+}
+
+function imageDisplaySettingsValue(formData: FormData) {
+  const fit = textValue(formData, "image_fit");
+
+  return {
+    fit: imageFits.has(fit) ? fit : "contain",
+    zoom: numberInRange(formData, "image_zoom", 1, 1, 3),
+    positionX: numberInRange(formData, "image_position_x", 50, 0, 100),
+    positionY: numberInRange(formData, "image_position_y", 50, 0, 100),
+  };
 }
 
 function templatePayload(formData: FormData, userId?: string) {
@@ -123,6 +141,57 @@ export async function updateProductTemplate(formData: FormData) {
 
   revalidatePath("/products/templates");
   redirectWithMessage("Product template updated.");
+}
+
+export async function updateProductTemplateMainImage(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+  const path = optionalTextValue(formData, "default_image_url");
+
+  if (!id) {
+    return { ok: false, message: "Template id is required." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_templates")
+    .update({ default_image_url: path })
+    .eq("id", id);
+
+  if (error) {
+    console.error("PRODUCT TEMPLATE IMAGE UPDATE ERROR", error.message);
+    return { ok: false, message: "Product template image could not be saved." };
+  }
+
+  revalidatePath("/products/templates");
+  return { ok: true };
+}
+
+export async function updateProductTemplateImageSettings(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    return { ok: false, message: "Template id is required." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_templates")
+    .update({
+      image_settings: {
+        default_image_url: imageDisplaySettingsValue(formData),
+      },
+    })
+    .eq("id", id);
+
+  if (error) {
+    console.error("PRODUCT TEMPLATE IMAGE SETTINGS UPDATE ERROR", error.message);
+    return { ok: false, message: "Product image settings could not be saved." };
+  }
+
+  revalidatePath("/products/templates");
+  return { ok: true };
 }
 
 export async function createProductComponent(formData: FormData) {

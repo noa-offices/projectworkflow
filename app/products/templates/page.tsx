@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
+import { ProductTemplateImageUploader } from "@/components/products/product-template-image-uploader";
 import { TopBar } from "@/components/top-bar";
 import { requireSettingsManager } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -42,6 +43,14 @@ type ProductTemplate = {
   default_specification: string | null;
   default_image_url: string | null;
   reference_image_url: string | null;
+  image_settings: {
+    default_image_url?: {
+      fit?: "contain" | "cover";
+      zoom?: number;
+      positionX?: number;
+      positionY?: number;
+    };
+  } | null;
   unit_label: string;
   currency: string;
   default_unit_price: number;
@@ -259,7 +268,7 @@ function TemplateForm({
       />
       <Field
         name="default_image_url"
-        label="Default image URL"
+        label="Main image path / URL"
         defaultValue={template?.default_image_url}
       />
       <Field
@@ -285,6 +294,21 @@ function TemplateForm({
         label="Pricing notes / formula notes"
         defaultValue={template?.price_notes}
       />
+      {template ? (
+        <div className="md:col-span-2 xl:col-span-3">
+          <span className="text-xs font-semibold uppercase text-zinc-500">
+            Main image
+          </span>
+          <div className="mt-2">
+            <ProductTemplateImageUploader
+              canEdit
+              imageSettings={template.image_settings?.default_image_url}
+              templateId={template.id}
+              value={template.default_image_url}
+            />
+          </div>
+        </div>
+      ) : null}
       <div className="flex justify-end md:col-span-2 xl:col-span-3">
         <SubmitButton label={template ? "Save template" : "Add template"} />
       </div>
@@ -465,7 +489,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const { data: templates, error: templatesError } = await supabase
     .from("product_templates")
     .select(
-      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,default_image_url,reference_image_url,unit_label,currency,default_unit_price,is_active,last_price_checked_at,price_notes",
+      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,default_image_url,reference_image_url,image_settings,unit_label,currency,default_unit_price,is_active,last_price_checked_at,price_notes",
     )
     .order("brand_id", { ascending: true })
     .order("template_name", { ascending: true })
@@ -552,14 +576,20 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                 >
                   <div className="border-b border-zinc-200 p-5">
                     <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex min-w-0 gap-4">
+                        <ProductTemplateImageUploader
+                          imageSettings={template.image_settings?.default_image_url}
+                          templateId={template.id}
+                          value={template.default_image_url}
+                        />
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
                           <h2 className="text-xl font-semibold text-zinc-950">
                             {template.template_name}
                           </h2>
                           <StatusBadge active={template.is_active} />
-                        </div>
-                        <p className="mt-2 text-sm text-zinc-500">
+                          </div>
+                          <p className="mt-2 text-sm text-zinc-500">
                           {brandMap.get(template.brand_id) ?? "Unknown brand"}
                           {template.main_category_id
                             ? ` / ${categoryMap.get(template.main_category_id) ?? "Main category"}`
@@ -567,11 +597,12 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           {template.sub_category_id
                             ? ` / ${categoryMap.get(template.sub_category_id) ?? "Sub category"}`
                             : ""}
-                        </p>
-                        <p className="mt-1 text-sm text-zinc-500">
+                          </p>
+                          <p className="mt-1 text-sm text-zinc-500">
                           {template.item_code ? `${template.item_code} · ` : ""}
                           {template.description ?? "No description yet."}
-                        </p>
+                          </p>
+                        </div>
                       </div>
                       <div className="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm">
                         <p className="font-semibold text-zinc-950">

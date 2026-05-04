@@ -125,6 +125,14 @@ type MergeMode = "none" | "merge_specification" | "merge_full_row";
 type CellLayout = {
   mergeMode?: string;
   cells?: Record<string, CellStyle | undefined>;
+  images?: Record<string, ImageDisplaySettings | undefined>;
+};
+
+type ImageDisplaySettings = {
+  fit?: "contain" | "cover";
+  zoom?: number;
+  positionX?: number;
+  positionY?: number;
 };
 
 type CellStyle = {
@@ -1003,6 +1011,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
       <QuotationImageCell
         canEdit={canEdit}
         field="proposed_image_url_snapshot"
+        imageSettings={item.cell_layout?.images?.proposed_image_url_snapshot}
         itemId={item.id}
         quotationId={item.quotation_id}
         value={item.proposed_image_url_snapshot}
@@ -1018,6 +1027,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
       <QuotationImageCell
         canEdit={canEdit}
         field="specified_image_url_snapshot"
+        imageSettings={item.cell_layout?.images?.specified_image_url_snapshot}
         itemId={item.id}
         quotationId={item.quotation_id}
         value={item.specified_image_url_snapshot}
@@ -1033,6 +1043,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
       <QuotationImageCell
         canEdit={canEdit}
         field="proposed_image_url_snapshot"
+        imageSettings={item.cell_layout?.images?.proposed_image_url_snapshot}
         itemId={item.id}
         quotationId={item.quotation_id}
         value={item.proposed_image_url_snapshot}

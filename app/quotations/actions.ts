@@ -43,6 +43,11 @@ const lineStyles = new Set([
   "heading",
 ]);
 const excludedTotalLineStyles = new Set(["rate_only", "no_quote", "note", "heading"]);
+const imageFields = new Set([
+  "specified_image_url_snapshot",
+  "proposed_image_url_snapshot",
+]);
+const imageFits = new Set(["contain", "cover"]);
 const layoutColumnKeys = [
   "s_no",
   "code",
@@ -141,10 +146,50 @@ type CellLayoutPayload = {
     textAlign: string;
     wrapText: boolean;
   }>;
+  images?: Record<string, ImageDisplaySettings>;
+};
+
+type ImageDisplaySettings = {
+  fit: "contain" | "cover";
+  zoom: number;
+  positionX: number;
+  positionY: number;
 };
 
 function isCellLayoutPayload(value: unknown): value is CellLayoutPayload {
   return typeof value === "object" && value !== null;
+}
+
+function numberInRange(formData: FormData, name: string, fallback: number, min: number, max: number) {
+  const value = numberValue(formData, name, fallback);
+
+  return Math.min(Math.max(value, min), max);
+}
+
+function imageDisplaySettingsValue(formData: FormData): ImageDisplaySettings {
+  const fit = allowedText(formData, "image_fit", imageFits, "contain");
+
+  return {
+    fit: fit === "cover" ? "cover" : "contain",
+    zoom: numberInRange(formData, "image_zoom", 1, 1, 3),
+    positionX: numberInRange(formData, "image_position_x", 50, 0, 100),
+    positionY: numberInRange(formData, "image_position_y", 50, 0, 100),
+  };
+}
+
+function cellLayoutWithImageSettings(currentLayout: unknown, field: string, settings: ImageDisplaySettings) {
+  const current: Partial<CellLayoutPayload> = isCellLayoutPayload(currentLayout)
+    ? currentLayout
+    : {};
+
+  return {
+    ...current,
+    mergeMode: current.mergeMode && mergeModes.has(current.mergeMode) ? current.mergeMode : "none",
+    images: {
+      ...(current.images ?? {}),
+      [field]: settings,
+    },
+  };
 }
 
 function cellLayoutValue(formData: FormData, currentLayout?: unknown): CellLayoutPayload {
@@ -179,6 +224,51 @@ function cellLayoutValue(formData: FormData, currentLayout?: unknown): CellLayou
   }
 
   return layout;
+}
+
+export async function updateQuotationItemImageSettings(formData: FormData) {
+  await requireRecordsManager();
+  const id = textValue(formData, "id");
+  const quotationId = textValue(formData, "quotation_id");
+  const field = textValue(formData, "image_field");
+
+  if (!id || !quotationId || !imageFields.has(field)) {
+    return { ok: false, message: "Line item, quotation, and image field are required." };
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: currentItem, error: readError } = await supabase
+    .from("quotation_items")
+    .select("cell_layout")
+    .eq("id", id)
+    .eq("quotation_id", quotationId)
+    .single<{ cell_layout: CellLayoutPayload | null }>();
+
+  if (readError || !currentItem) {
+    console.error("QUOTATION IMAGE SETTINGS READ ERROR", readError?.message);
+    return { ok: false, message: "Image settings could not be loaded." };
+  }
+
+  const cellLayout = cellLayoutWithImageSettings(
+    currentItem.cell_layout,
+    field,
+    imageDisplaySettingsValue(formData),
+  );
+
+  const { error } = await supabase
+    .from("quotation_items")
+    .update({ cell_layout: cellLayout })
+    .eq("id", id)
+    .eq("quotation_id", quotationId);
+
+  if (error) {
+    console.error("QUOTATION IMAGE SETTINGS UPDATE ERROR", error.message);
+    return { ok: false, message: "Image settings could not be saved." };
+  }
+
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(`/quotations/${quotationId}/builder`);
+  return { ok: true };
 }
 
 function quotationPayload(formData: FormData, userId?: string) {

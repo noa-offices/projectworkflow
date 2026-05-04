@@ -18,6 +18,7 @@ Run migrations in this order:
 14. `migrations/014_quotation_row_height_limits.sql`
 15. `migrations/015_quotation_item_cell_layout.sql`
 16. `migrations/016_storage_quote_images.sql`
+17. `migrations/017_product_template_images.sql`
 
 ## Storage buckets
 
@@ -40,6 +41,11 @@ both buckets manually in the Supabase dashboard with:
 - Allowed MIME types: `image/png`, `image/jpeg`, `image/webp`
 
 Then run the policy part of `016_storage_quote_images.sql` in the SQL editor.
+
+Image adjustment settings are non-destructive display metadata. Quotation item
+settings live in `quotation_items.cell_layout.images`; product template settings
+live in `product_templates.image_settings`. Future PDF export must apply these
+settings when rendering thumbnails.
 
 The first user should sign up normally through the app. After that signup creates
 the profile row, promote the first user manually in Supabase SQL:

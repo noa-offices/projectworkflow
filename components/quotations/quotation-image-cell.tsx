@@ -2,7 +2,16 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { ChangeEvent, ClipboardEvent, FocusEvent, MouseEvent } from "react";
-import { autosaveQuotationItemInline } from "@/app/quotations/actions";
+import {
+  autosaveQuotationItemInline,
+  updateQuotationItemImageSettings,
+} from "@/app/quotations/actions";
+import {
+  ImageAdjustmentDialog,
+  imageDisplayStyle,
+  normalizeImageDisplaySettings,
+  type ImageDisplaySettings,
+} from "@/components/images/image-adjustment-dialog";
 import { createClient } from "@/lib/supabase/client";
 import { uploadQuotationItemImage } from "@/lib/quotation-image-upload";
 
@@ -59,12 +68,14 @@ function clipboardImageFile(event: ClipboardEvent<HTMLDivElement>) {
 export function QuotationImageCell({
   canEdit,
   field,
+  imageSettings,
   itemId,
   quotationId,
   value,
 }: {
   canEdit: boolean;
   field: ImageField;
+  imageSettings?: Partial<ImageDisplaySettings> | null;
   itemId: string;
   quotationId: string;
   value: string | null;
@@ -74,8 +85,13 @@ export function QuotationImageCell({
   const [uploadedValue, setUploadedValue] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [currentImageSettings, setCurrentImageSettings] = useState<ImageDisplaySettings>(
+    normalizeImageDisplaySettings(imageSettings),
+  );
+  const [isAdjusting, setIsAdjusting] = useState(false);
   const [isSelected, setIsSelected] = useState(false);
   const [status, setStatus] = useState<UploadStatus>("idle");
+  const [settingsStatus, setSettingsStatus] = useState<UploadStatus>("idle");
   const [, startTransition] = useTransition();
   const imageValue = uploadedValue || value || "";
 
@@ -166,6 +182,41 @@ export function QuotationImageCell({
     await uploadAndSaveImage(file);
   }
 
+  function saveImageSettings(settings: ImageDisplaySettings) {
+    const formData = new FormData();
+    formData.set("id", itemId);
+    formData.set("quotation_id", quotationId);
+    formData.set("image_field", field);
+    formData.set("image_fit", settings.fit);
+    formData.set("image_zoom", String(settings.zoom));
+    formData.set("image_position_x", String(settings.positionX));
+    formData.set("image_position_y", String(settings.positionY));
+
+    setSettingsStatus("uploading");
+    setErrorMessage("");
+
+    startTransition(() => {
+      void updateQuotationItemImageSettings(formData)
+        .then((result) => {
+          if (!result.ok) {
+            setErrorMessage(result.message || "Image settings could not be saved.");
+            setSettingsStatus("failed");
+            return;
+          }
+
+          setCurrentImageSettings(settings);
+          setIsAdjusting(false);
+          setSettingsStatus("idle");
+        })
+        .catch((error: unknown) => {
+          setErrorMessage(
+            error instanceof Error ? error.message : "Image settings could not be saved.",
+          );
+          setSettingsStatus("failed");
+        });
+    });
+  }
+
   function handleBlur(event: FocusEvent<HTMLDivElement>) {
     const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
 
@@ -187,7 +238,7 @@ export function QuotationImageCell({
   }
 
   const boxClassName =
-    "flex h-full min-h-16 max-h-[160px] w-full max-w-[180px] items-center justify-center border border-dashed bg-white transition";
+    "relative flex h-[116px] w-[180px] max-w-full items-center justify-center overflow-hidden border border-dashed bg-white transition";
   const selectedClassName = isSelected
     ? "border-emerald-600 ring-1 ring-emerald-600"
     : "border-zinc-300";
@@ -212,12 +263,18 @@ export function QuotationImageCell({
           rel="noreferrer"
           className={`${boxClassName} ${selectedClassName}`}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={previewUrl}
-            alt="Quotation item"
-            className="block h-full w-full object-contain p-1"
-          />
+          <span className="absolute inset-0 h-full w-full overflow-hidden">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={previewUrl}
+              alt="Quotation item"
+              className="block h-full w-full"
+              style={{
+                ...imageDisplayStyle(currentImageSettings),
+                transformOrigin: "center center",
+              }}
+            />
+          </span>
         </a>
       ) : (
         <span
@@ -244,6 +301,16 @@ export function QuotationImageCell({
           >
             {status === "uploading" ? "Uploading..." : imageValue ? "Replace" : "Upload"}
           </button>
+          {previewUrl ? (
+            <button
+              type="button"
+              onClick={() => setIsAdjusting(true)}
+              disabled={settingsStatus === "uploading"}
+              className="text-[10px] font-semibold text-zinc-600 transition hover:text-zinc-950 disabled:text-zinc-400"
+            >
+              Adjust
+            </button>
+          ) : null}
         </>
       ) : null}
 
@@ -251,6 +318,16 @@ export function QuotationImageCell({
         <span className="max-w-[180px] text-center text-[10px] leading-4 text-red-700">
           {errorMessage}
         </span>
+      ) : null}
+
+      {isAdjusting && previewUrl ? (
+        <ImageAdjustmentDialog
+          imageUrl={previewUrl}
+          initialSettings={currentImageSettings}
+          onCancel={() => setIsAdjusting(false)}
+          onSave={saveImageSettings}
+          saving={settingsStatus === "uploading"}
+        />
       ) : null}
     </div>
   );
