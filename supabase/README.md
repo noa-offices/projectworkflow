@@ -24,6 +24,9 @@ Run migrations in this order:
 20. `migrations/020_desking_size_pricing.sql`
 21. `migrations/021_product_template_origin_supplier.sql`
 22. `migrations/022_brand_origin.sql`
+23. `migrations/023_product_variant_pricing_tables.sql`
+24. `migrations/024_product_accessory_pricing.sql`
+25. `migrations/025_product_template_linked_families.sql`
 
 ## Storage buckets
 

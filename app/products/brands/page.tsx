@@ -12,10 +12,18 @@ import {
 
 export const dynamic = "force-dynamic";
 
+type BrandsSearchParams = {
+  message?: string | string[];
+  q?: string | string[];
+  status?: string | string[];
+  brand?: string | string[];
+  category?: string | string[];
+  addBrand?: string | string[];
+  editBrand?: string | string[];
+};
+
 type BrandsPageProps = {
-  searchParams?: Promise<{
-    message?: string;
-  }>;
+  searchParams?: Promise<BrandsSearchParams>;
 };
 
 type Brand = {
@@ -40,10 +48,46 @@ type ProductCategory = {
   sort_order: number;
 };
 
+function stringParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+}
+
+function brandsHref(
+  params: BrandsSearchParams,
+  updates: Partial<
+    Record<
+      "q" | "status" | "brand" | "category" | "addBrand" | "editBrand",
+      string | null
+    >
+  >,
+) {
+  const next = new URLSearchParams();
+
+  for (const key of [
+    "q",
+    "status",
+    "brand",
+    "category",
+    "addBrand",
+    "editBrand",
+  ] as const) {
+    const updatedValue = updates[key];
+    const value =
+      updatedValue === undefined ? stringParam(params[key]) : updatedValue;
+
+    if (value) {
+      next.set(key, value);
+    }
+  }
+
+  const query = next.toString();
+  return `/products/brands${query ? `?${query}` : ""}`;
+}
+
 function StatusBadge({ active }: { active: boolean }) {
   return (
     <span
-      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${
+      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold capitalize ${
         active
           ? "border-emerald-200 bg-emerald-50 text-emerald-900"
           : "border-zinc-200 bg-zinc-100 text-zinc-600"
@@ -129,7 +173,18 @@ function SubmitButton({ label }: { label: string }) {
   );
 }
 
-function BrandForm({ brand }: { brand?: Brand }) {
+function SecondaryLink({ href, label }: { href: string; label: string }) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+    >
+      {label}
+    </Link>
+  );
+}
+
+function BrandForm({ brand, cancelHref }: { brand?: Brand; cancelHref?: string }) {
   return (
     <form
       action={brand ? updateBrand : createBrand}
@@ -142,12 +197,12 @@ function BrandForm({ brand }: { brand?: Brand }) {
         defaultValue={brand?.name}
         required
       />
-      <TextInput name="code" label="Code" defaultValue={brand?.code} />
       <TextInput
         name="origin"
         label="Origin / Country"
         defaultValue={brand?.origin}
       />
+      <TextInput name="code" label="Code" defaultValue={brand?.code} />
       <TextInput name="website" label="Website" defaultValue={brand?.website} />
       <TextInput
         name="logo_url"
@@ -159,9 +214,12 @@ function BrandForm({ brand }: { brand?: Brand }) {
         label="Description"
         defaultValue={brand?.description}
       />
-      <div className="flex items-end justify-between gap-3 md:col-span-2">
+      <div className="flex flex-col gap-3 md:col-span-2 sm:flex-row sm:items-end sm:justify-between">
         <ActiveToggle defaultChecked={brand?.is_active ?? true} />
-        <SubmitButton label={brand ? "Save brand" : "Add brand"} />
+        <div className="flex gap-2">
+          {cancelHref ? <SecondaryLink href={cancelHref} label="Cancel" /> : null}
+          <SubmitButton label={brand ? "Save" : "Save"} />
+        </div>
       </div>
     </form>
   );
@@ -213,9 +271,24 @@ function CategoryForm({
   );
 }
 
+function categoryCountLabel(count: number) {
+  return `${count} ${count === 1 ? "category" : "categories"}`;
+}
+
+function subcategoryCountLabel(count: number) {
+  return `${count} ${count === 1 ? "subcategory" : "subcategories"}`;
+}
+
 export default async function BrandsPage({ searchParams }: BrandsPageProps) {
   const { user, displayName } = await requireSettingsManager();
-  const message = (await searchParams)?.message;
+  const params = (await searchParams) ?? {};
+  const message = stringParam(params.message);
+  const searchQuery = stringParam(params.q).trim();
+  const statusFilter = stringParam(params.status);
+  const selectedBrandId = stringParam(params.brand);
+  const selectedCategoryId = stringParam(params.category);
+  const showAddBrand = stringParam(params.addBrand) === "1";
+  const editBrandId = stringParam(params.editBrand);
   const supabase = await createClient();
 
   const { data: brands, error: brandsError } = await supabase
@@ -241,6 +314,7 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
     console.error("CATEGORIES LIST ERROR", categoriesError.message);
   }
 
+  const brandList = brands ?? [];
   const categoryList = categories ?? [];
   const mainCategoriesByBrand = new Map<string, ProductCategory[]>();
   const subCategoriesByParent = new Map<string, ProductCategory[]>();
@@ -256,6 +330,45 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
       mainCategoriesByBrand.set(category.brand_id, siblings);
     }
   }
+
+  const subcategoryCountByBrand = new Map<string, number>();
+  for (const [brandId, mainCategories] of mainCategoriesByBrand.entries()) {
+    const count = mainCategories.reduce(
+      (total, category) =>
+        total + (subCategoriesByParent.get(category.id)?.length ?? 0),
+      0,
+    );
+    subcategoryCountByBrand.set(brandId, count);
+  }
+
+  const normalizedSearch = searchQuery.toLowerCase();
+  const filteredBrands = brandList.filter((brand) => {
+    const matchesSearch =
+      !normalizedSearch ||
+      brand.name.toLowerCase().includes(normalizedSearch) ||
+      (brand.origin ?? "").toLowerCase().includes(normalizedSearch);
+    const matchesStatus =
+      !statusFilter ||
+      statusFilter === "all" ||
+      (statusFilter === "active" && brand.is_active) ||
+      (statusFilter === "inactive" && !brand.is_active);
+
+    return matchesSearch && matchesStatus;
+  });
+
+  const selectedBrand =
+    brandList.find((brand) => brand.id === selectedBrandId) ?? null;
+  const selectedMainCategories = selectedBrand
+    ? mainCategoriesByBrand.get(selectedBrand.id) ?? []
+    : [];
+  const selectedCategory =
+    selectedMainCategories.find(
+      (category) => category.id === selectedCategoryId,
+    ) ??
+    null;
+  const selectedSubCategories = selectedCategory
+    ? subCategoriesByParent.get(selectedCategory.id) ?? []
+    : [];
 
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
@@ -282,198 +395,463 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
             ) : null}
           </div>
 
-          <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-            <h2 className="text-lg font-semibold text-zinc-950">Add brand</h2>
-            <p className="mt-1 text-sm text-zinc-500">
-              Create the brand first, then add main categories and sub categories.
-            </p>
-            <div className="mt-5">
-              <BrandForm />
+          <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <form
+                action="/products/brands"
+                className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_160px_auto] xl:min-w-[680px]"
+              >
+                <input
+                  name="q"
+                  defaultValue={searchQuery}
+                  placeholder="Search brands or origin"
+                  className="h-10 rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+                />
+                <select
+                  name="status"
+                  defaultValue={statusFilter || "all"}
+                  className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+                >
+                  <option value="all">All statuses</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+                <button
+                  type="submit"
+                  className="h-10 rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                >
+                  Search
+                </button>
+              </form>
+
+              <Link
+                href={brandsHref(params, { addBrand: "1" })}
+                className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+              >
+                + Add Brand
+              </Link>
             </div>
+
+            {showAddBrand ? (
+              <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="font-semibold text-zinc-950">Add brand</h2>
+                    <p className="mt-1 text-sm text-zinc-500">
+                      Create the brand, then open it to manage categories.
+                    </p>
+                  </div>
+                  <SecondaryLink
+                    href={brandsHref(params, { addBrand: null })}
+                    label="Cancel"
+                  />
+                </div>
+                <BrandForm cancelHref={brandsHref(params, { addBrand: null })} />
+              </div>
+            ) : null}
           </section>
 
-          <section className="mt-6 space-y-5">
-            {(brands ?? []).map((brand) => {
-              const mainCategories = mainCategoriesByBrand.get(brand.id) ?? [];
+          <section className="mt-6 grid gap-6 2xl:grid-cols-[minmax(420px,520px)_1fr]">
+            <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+              <div className="border-b border-zinc-200 p-4">
+                <h2 className="font-semibold text-zinc-950">Brands</h2>
+                <p className="mt-1 text-sm text-zinc-500">
+                  {filteredBrands.length} of {brandList.length} shown
+                </p>
+              </div>
 
-              return (
-                <article
-                  key={brand.id}
-                  className="rounded-lg border border-zinc-200 bg-white shadow-sm"
-                >
-                  <div className="border-b border-zinc-200 p-5">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="hidden md:block">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase text-zinc-500">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Brand</th>
+                      <th className="px-4 py-3 font-semibold">Origin</th>
+                      <th className="px-4 py-3 font-semibold">Structure</th>
+                      <th className="px-4 py-3 font-semibold">Status</th>
+                      <th className="px-4 py-3 text-right font-semibold">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {filteredBrands.map((brand) => {
+                      const mainCount =
+                        mainCategoriesByBrand.get(brand.id)?.length ?? 0;
+                      const subCount = subcategoryCountByBrand.get(brand.id) ?? 0;
+                      const isSelected = brand.id === selectedBrand?.id;
+
+                      return (
+                        <tr
+                          key={brand.id}
+                          className={isSelected ? "bg-emerald-50/60" : ""}
+                        >
+                          <td className="px-4 py-3 font-semibold text-zinc-950">
+                            {brand.name}
+                            {brand.code ? (
+                              <span className="ml-2 text-xs font-medium text-zinc-400">
+                                {brand.code}
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="px-4 py-3 text-zinc-600">
+                            {brand.origin ?? "-"}
+                          </td>
+                          <td className="px-4 py-3 text-zinc-600">
+                            {categoryCountLabel(mainCount)} /{" "}
+                            {subcategoryCountLabel(subCount)}
+                          </td>
+                          <td className="px-4 py-3">
+                            <StatusBadge active={brand.is_active} />
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex justify-end gap-2">
+                              <Link
+                                href={brandsHref(params, {
+                                  brand: brand.id,
+                                  category: null,
+                                  addBrand: null,
+                                  editBrand: null,
+                                })}
+                                className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
+                              >
+                                Open
+                              </Link>
+                              <Link
+                                href={brandsHref(params, {
+                                  brand: brand.id,
+                                  category: null,
+                                  addBrand: null,
+                                  editBrand: brand.id,
+                                })}
+                                className="text-sm font-semibold text-zinc-600 transition hover:text-zinc-950"
+                              >
+                                Edit
+                              </Link>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="space-y-3 p-4 md:hidden">
+                {filteredBrands.map((brand) => {
+                  const mainCount = mainCategoriesByBrand.get(brand.id)?.length ?? 0;
+                  const subCount = subcategoryCountByBrand.get(brand.id) ?? 0;
+                  const isSelected = brand.id === selectedBrand?.id;
+
+                  return (
+                    <article
+                      key={brand.id}
+                      className={`rounded-md border p-3 ${
+                        isSelected
+                          ? "border-emerald-200 bg-emerald-50"
+                          : "border-zinc-200"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="font-semibold text-zinc-950">
+                            {brand.name}
+                          </h3>
+                          <p className="mt-1 text-sm text-zinc-500">
+                            {brand.origin ?? "No origin"} /{" "}
+                            {categoryCountLabel(mainCount)} /{" "}
+                            {subcategoryCountLabel(subCount)}
+                          </p>
+                        </div>
+                        <StatusBadge active={brand.is_active} />
+                      </div>
+                      <div className="mt-3 flex gap-3">
+                        <Link
+                          href={brandsHref(params, {
+                            brand: brand.id,
+                            category: null,
+                            addBrand: null,
+                            editBrand: null,
+                          })}
+                          className="text-sm font-semibold text-emerald-900"
+                        >
+                          Open
+                        </Link>
+                        <Link
+                          href={brandsHref(params, {
+                            brand: brand.id,
+                            category: null,
+                            addBrand: null,
+                            editBrand: brand.id,
+                          })}
+                          className="text-sm font-semibold text-zinc-600"
+                        >
+                          Edit
+                        </Link>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              {!filteredBrands.length ? (
+                <div className="p-8 text-center text-sm text-zinc-500">
+                  No brands match the current search.
+                </div>
+              ) : null}
+            </div>
+
+            <div className="space-y-5">
+              {selectedBrand ? (
+                <>
+                  <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <h2 className="text-xl font-semibold text-zinc-950">
-                            {brand.name}
+                            {selectedBrand.name}
                           </h2>
-                          <StatusBadge active={brand.is_active} />
+                          <StatusBadge active={selectedBrand.is_active} />
                         </div>
-                        <p className="mt-1 text-sm text-zinc-500">
-                          {brand.code ? `${brand.code} · ` : ""}
-                          {brand.origin ? `${brand.origin} · ` : ""}
-                          {brand.description ?? "No description yet."}
-                        </p>
-                      </div>
-                    </div>
-
-                    <details className="mt-5">
-                      <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                        Edit brand
-                      </summary>
-                      <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                        <BrandForm brand={brand} />
-                      </div>
-                    </details>
-                  </div>
-
-                  <div className="grid gap-5 p-5 xl:grid-cols-[1fr_360px]">
-                    <div>
-                      <h3 className="text-sm font-semibold uppercase text-zinc-500">
-                        Main categories
-                      </h3>
-                      <div className="mt-3 space-y-4">
-                        {mainCategories.map((category) => {
-                          const subCategories =
-                            subCategoriesByParent.get(category.id) ?? [];
-
-                          return (
-                            <div
-                              key={category.id}
-                              className="rounded-lg border border-zinc-200 p-4"
-                            >
-                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                <div>
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <h4 className="font-semibold text-zinc-950">
-                                      {category.name}
-                                    </h4>
-                                    <StatusBadge active={category.is_active} />
-                                  </div>
-                                  <p className="mt-1 text-sm text-zinc-500">
-                                    {category.code ? `${category.code} · ` : ""}
-                                    {category.description ??
-                                      "No description yet."}
-                                  </p>
-                                </div>
-                                <p className="text-xs font-medium text-zinc-500">
-                                  Sort {category.sort_order}
-                                </p>
-                              </div>
-
-                              <details className="mt-4">
-                                <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                                  Edit main category
-                                </summary>
-                                <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                                  <CategoryForm
-                                    brandId={brand.id}
-                                    category={category}
-                                    submitLabel="Save category"
-                                  />
-                                </div>
-                              </details>
-
-                              <div className="mt-4 border-l border-zinc-200 pl-4">
-                                <h5 className="text-sm font-semibold text-zinc-800">
-                                  Sub categories
-                                </h5>
-                                <div className="mt-3 space-y-3">
-                                  {subCategories.map((subCategory) => (
-                                    <div
-                                      key={subCategory.id}
-                                      className="rounded-md border border-zinc-200 bg-zinc-50 p-3"
-                                    >
-                                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                                        <div>
-                                          <div className="flex flex-wrap items-center gap-2">
-                                            <p className="font-medium text-zinc-950">
-                                              {subCategory.name}
-                                            </p>
-                                            <StatusBadge
-                                              active={subCategory.is_active}
-                                            />
-                                          </div>
-                                          <p className="mt-1 text-sm text-zinc-500">
-                                            {subCategory.code
-                                              ? `${subCategory.code} · `
-                                              : ""}
-                                            {subCategory.description ??
-                                              "No description yet."}
-                                          </p>
-                                        </div>
-                                        <p className="text-xs font-medium text-zinc-500">
-                                          Sort {subCategory.sort_order}
-                                        </p>
-                                      </div>
-                                      <details className="mt-3">
-                                        <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                                          Edit sub category
-                                        </summary>
-                                        <div className="mt-3">
-                                          <CategoryForm
-                                            brandId={brand.id}
-                                            parentId={category.id}
-                                            category={subCategory}
-                                            submitLabel="Save sub category"
-                                          />
-                                        </div>
-                                      </details>
-                                    </div>
-                                  ))}
-                                  {!subCategories.length ? (
-                                    <p className="text-sm text-zinc-500">
-                                      No sub categories yet.
-                                    </p>
-                                  ) : null}
-                                </div>
-
-                                <details className="mt-4">
-                                  <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                                    Add sub category
-                                  </summary>
-                                  <div className="mt-3 rounded-md border border-zinc-200 bg-white p-4">
-                                    <CategoryForm
-                                      brandId={brand.id}
-                                      parentId={category.id}
-                                      submitLabel="Add sub category"
-                                    />
-                                  </div>
-                                </details>
-                              </div>
-                            </div>
-                          );
-                        })}
-                        {!mainCategories.length ? (
-                          <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
-                            No main categories yet.
+                        <dl className="mt-3 grid gap-3 text-sm text-zinc-600 sm:grid-cols-3">
+                          <div>
+                            <dt className="text-xs font-semibold uppercase text-zinc-400">
+                              Origin
+                            </dt>
+                            <dd>{selectedBrand.origin ?? "-"}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs font-semibold uppercase text-zinc-400">
+                              Website
+                            </dt>
+                            <dd className="truncate">
+                              {selectedBrand.website ? (
+                                <a
+                                  href={selectedBrand.website}
+                                  className="font-medium text-emerald-900 hover:text-emerald-800"
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {selectedBrand.website}
+                                </a>
+                              ) : (
+                                "-"
+                              )}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs font-semibold uppercase text-zinc-400">
+                              Code
+                            </dt>
+                            <dd>{selectedBrand.code ?? "-"}</dd>
+                          </div>
+                        </dl>
+                        {selectedBrand.description ? (
+                          <p className="mt-3 text-sm text-zinc-500">
+                            {selectedBrand.description}
                           </p>
                         ) : null}
                       </div>
                     </div>
 
-                    <aside className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-                      <h3 className="text-sm font-semibold uppercase text-zinc-500">
-                        Add main category
-                      </h3>
-                      <div className="mt-4">
-                        <CategoryForm
-                          brandId={brand.id}
-                          submitLabel="Add main category"
-                        />
+                    <details className="mt-4" open={editBrandId === selectedBrand.id}>
+                      <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
+                        Edit Brand
+                      </summary>
+                      <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                        <BrandForm brand={selectedBrand} />
                       </div>
-                    </aside>
-                  </div>
-                </article>
-              );
-            })}
+                    </details>
+                  </section>
 
-            {!brands?.length ? (
-              <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
-                No brands yet. Add your first brand above.
-              </section>
-            ) : null}
+                  <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+                    <div className="flex flex-col gap-3 border-b border-zinc-200 p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h2 className="font-semibold text-zinc-950">
+                          Main Categories
+                        </h2>
+                        <p className="mt-1 text-sm text-zinc-500">
+                          Open a category to manage its subcategories.
+                        </p>
+                      </div>
+                      <details className="sm:min-w-[320px]">
+                        <summary className="cursor-pointer rounded-md bg-emerald-900 px-4 py-2 text-center text-sm font-semibold text-white transition hover:bg-emerald-800">
+                          + Add Main Category
+                        </summary>
+                        <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                          <CategoryForm
+                            brandId={selectedBrand.id}
+                            submitLabel="Save"
+                          />
+                        </div>
+                      </details>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[680px] text-left text-sm">
+                        <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase text-zinc-500">
+                          <tr>
+                            <th className="px-4 py-3 font-semibold">Category</th>
+                            <th className="px-4 py-3 font-semibold">Code</th>
+                            <th className="px-4 py-3 font-semibold">
+                              Subcategories
+                            </th>
+                            <th className="px-4 py-3 font-semibold">Status</th>
+                            <th className="px-4 py-3 text-right font-semibold">
+                              Actions
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-100">
+                          {selectedMainCategories.map((category) => {
+                            const subCount =
+                              subCategoriesByParent.get(category.id)?.length ?? 0;
+                            const isOpen = category.id === selectedCategory?.id;
+
+                            return (
+                              <tr
+                                key={category.id}
+                                className={isOpen ? "bg-emerald-50/60" : ""}
+                              >
+                                <td className="px-4 py-3 font-semibold text-zinc-950">
+                                  {category.name}
+                                </td>
+                                <td className="px-4 py-3 text-zinc-600">
+                                  {category.code ?? "-"}
+                                </td>
+                                <td className="px-4 py-3 text-zinc-600">
+                                  {subcategoryCountLabel(subCount)}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <StatusBadge active={category.is_active} />
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="flex justify-end gap-3">
+                                    <Link
+                                      href={brandsHref(params, {
+                                        brand: selectedBrand.id,
+                                        category: category.id,
+                                        editBrand: null,
+                                      })}
+                                      className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
+                                    >
+                                      Open
+                                    </Link>
+                                    <Link
+                                      href={brandsHref(params, {
+                                        brand: selectedBrand.id,
+                                        category: category.id,
+                                        editBrand: null,
+                                      })}
+                                      className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
+                                    >
+                                      + Subcategory
+                                    </Link>
+                                    <details>
+                                      <summary className="cursor-pointer list-none text-sm font-semibold text-zinc-600 transition hover:text-zinc-950">
+                                        Edit
+                                      </summary>
+                                      <div className="absolute right-8 z-10 mt-2 w-[min(560px,calc(100vw-3rem))] rounded-md border border-zinc-200 bg-white p-4 text-left shadow-lg">
+                                        <CategoryForm
+                                          brandId={selectedBrand.id}
+                                          category={category}
+                                          submitLabel="Save"
+                                        />
+                                      </div>
+                                    </details>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {!selectedMainCategories.length ? (
+                      <div className="p-8 text-center text-sm text-zinc-500">
+                        No main categories yet.
+                      </div>
+                    ) : null}
+                  </section>
+
+                  {selectedCategory ? (
+                    <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+                      <div className="flex flex-col gap-3 border-b border-zinc-200 p-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                          <h2 className="font-semibold text-zinc-950">
+                            {selectedCategory.name} Subcategories
+                          </h2>
+                          <p className="mt-1 text-sm text-zinc-500">
+                            {selectedCategory.code ?? "No code"} /{" "}
+                            {subcategoryCountLabel(selectedSubCategories.length)}
+                          </p>
+                        </div>
+                        <details className="lg:min-w-[320px]">
+                          <summary className="cursor-pointer rounded-md bg-emerald-900 px-4 py-2 text-center text-sm font-semibold text-white transition hover:bg-emerald-800">
+                            + Add Subcategory
+                          </summary>
+                          <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                            <CategoryForm
+                              brandId={selectedBrand.id}
+                              parentId={selectedCategory.id}
+                              submitLabel="Save"
+                            />
+                          </div>
+                        </details>
+                      </div>
+
+                      <div className="divide-y divide-zinc-100">
+                        {selectedSubCategories.map((subCategory) => (
+                          <div
+                            key={subCategory.id}
+                            className="grid gap-3 p-4 text-sm md:grid-cols-[1fr_120px_120px_auto]"
+                          >
+                            <div>
+                              <p className="font-semibold text-zinc-950">
+                                {subCategory.name}
+                              </p>
+                              {subCategory.description ? (
+                                <p className="mt-1 text-zinc-500">
+                                  {subCategory.description}
+                                </p>
+                              ) : null}
+                            </div>
+                            <p className="text-zinc-600">
+                              {subCategory.code ?? "-"}
+                            </p>
+                            <StatusBadge active={subCategory.is_active} />
+                            <details className="justify-self-start md:justify-self-end">
+                              <summary className="cursor-pointer text-sm font-semibold text-zinc-600 transition hover:text-zinc-950">
+                                Edit
+                              </summary>
+                              <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-4 md:w-[560px]">
+                                <CategoryForm
+                                  brandId={selectedBrand.id}
+                                  parentId={selectedCategory.id}
+                                  category={subCategory}
+                                  submitLabel="Save"
+                                />
+                              </div>
+                            </details>
+                          </div>
+                        ))}
+                      </div>
+
+                      {!selectedSubCategories.length ? (
+                        <div className="p-8 text-center text-sm text-zinc-500">
+                          No subcategories yet.
+                        </div>
+                      ) : null}
+                    </section>
+                  ) : null}
+                </>
+              ) : (
+                <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
+                  Open a brand to manage its details, categories, and
+                  subcategories.
+                </section>
+              )}
+            </div>
           </section>
         </main>
       </div>

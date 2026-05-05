@@ -35,6 +35,9 @@ export type ProductLibraryTemplate = {
   proposed_image_url_2: string | null;
   proposed_image_url_3: string | null;
   desking_size_pricing: DeskingSizePricingRow[] | null;
+  variant_pricing: VariantPricingRow[] | null;
+  category_pricing: CategoryPricingRow[] | null;
+  accessory_pricing: AccessoryPricingRow[] | null;
   currency: string;
   default_unit_price: number;
 };
@@ -51,6 +54,50 @@ type DeskingSizePricingRow = {
   currency?: string;
   sort_order?: number;
   is_active?: boolean;
+};
+
+type VariantPricingRow = {
+  id?: string;
+  variant_name?: string;
+  dimension?: string;
+  price?: number;
+  currency?: string;
+  specification?: string;
+  is_active?: boolean;
+  sort_order?: number;
+};
+
+type CategoryPricingRow = {
+  id?: string;
+  variant_name?: string;
+  dimension?: string;
+  currency?: string;
+  prices?: Record<string, number>;
+  specification?: string;
+  is_active?: boolean;
+  sort_order?: number;
+};
+
+type AccessoryPricingRow = {
+  id?: string;
+  group_name?: string;
+  items?: AccessoryPricingItem[];
+  item_name?: string;
+  price?: number;
+  currency?: string;
+  specification?: string;
+  is_active?: boolean;
+  sort_order?: number;
+};
+
+type AccessoryPricingItem = {
+  id?: string;
+  item_name?: string;
+  price?: number;
+  currency?: string;
+  specification?: string;
+  is_active?: boolean;
+  sort_order?: number;
 };
 
 export type ProductLibraryComponent = {
@@ -81,6 +128,20 @@ export type ProductLibraryComponent = {
     label?: string;
     allow_manual_quantity?: boolean;
   } | null;
+};
+
+export type ProductLibraryLinkedFamily = {
+  id: string;
+  parent_template_id: string;
+  linked_template_id: string;
+  label: string | null;
+  is_required: boolean;
+  allow_multiple: boolean;
+  add_to_parent_price: boolean;
+  append_to_specification: boolean;
+  default_qty: number;
+  sort_order: number;
+  is_active: boolean;
 };
 
 const optionTypeLabels = new Map([
@@ -117,6 +178,56 @@ function activeSizePricingRows(rows?: DeskingSizePricingRow[] | null) {
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
 }
 
+function activeVariantRows(rows?: VariantPricingRow[] | null) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => row.is_active !== false)
+    .filter((row) => row.variant_name || row.dimension || numberValue(row.price) > 0)
+    .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
+}
+
+function activeCategoryRows(rows?: CategoryPricingRow[] | null) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => row.is_active !== false)
+    .filter((row) => row.variant_name || row.dimension || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
+    .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
+}
+
+function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
+  const sourceRows = Array.isArray(rows) ? rows : [];
+  const groups = sourceRows
+    .filter((row) => row.group_name || row.items)
+    .map((group, groupIndex) => ({
+      id: group.id ?? `add-on-group-${groupIndex}`,
+      group_name: group.group_name?.trim() || "Accessories",
+      is_active: group.is_active !== false,
+      sort_order: numberValue(group.sort_order, groupIndex),
+      items: (group.items ?? [])
+        .filter((item) => item.is_active !== false)
+        .filter((item) => item.item_name || numberValue(item.price) > 0)
+        .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order)),
+    }))
+    .filter((group) => group.is_active && group.items.length)
+    .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
+  const flatRows = sourceRows
+    .filter((row) => !row.group_name && !row.items)
+    .filter((row) => row.is_active !== false)
+    .filter((row) => row.item_name || numberValue(row.price) > 0)
+    .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
+
+  return flatRows.length
+    ? [
+        ...groups,
+        {
+          id: "accessories",
+          group_name: "Accessories",
+          is_active: true,
+          sort_order: groups.length,
+          items: flatRows,
+        },
+      ]
+    : groups;
+}
+
 function deskingRole(component: ProductLibraryComponent) {
   return component.calculation_data?.desking_role ?? "";
 }
@@ -131,9 +242,8 @@ function isDeskingTemplate({
   templateComponents: ProductLibraryComponent[];
 }) {
   return (
-    /workstation|desk|desking/.test(mainCategory?.toLowerCase() ?? "") ||
-    /workstation|desk|desking/.test(subCategory?.toLowerCase() ?? "") ||
-    false ||
+    /workstation|desking/.test(mainCategory?.toLowerCase() ?? "") ||
+    /workstation|desking/.test(subCategory?.toLowerCase() ?? "") ||
     templateComponents.some((component) => Boolean(deskingRole(component)))
   );
 }
@@ -280,6 +390,7 @@ export function ProductLibrarySelector({
   brands,
   categories,
   components,
+  linkedFamilies,
   quotationId,
   returnTo,
   sectionId,
@@ -288,6 +399,7 @@ export function ProductLibrarySelector({
   brands: ProductLibraryBrand[];
   categories: ProductLibraryCategory[];
   components: ProductLibraryComponent[];
+  linkedFamilies: ProductLibraryLinkedFamily[];
   quotationId: string;
   returnTo: string;
   sectionId: string;
@@ -303,11 +415,43 @@ export function ProductLibrarySelector({
   const [additionalClusterQuantities, setAdditionalClusterQuantities] = useState<Record<string, number>>({});
   const [accessoryQuantities, setAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [selectedDeskingSizes, setSelectedDeskingSizes] = useState<Record<string, string>>({});
+  const [selectedVariantRows, setSelectedVariantRows] = useState<Record<string, string>>({});
+  const [selectedCategoryRows, setSelectedCategoryRows] = useState<Record<string, string>>({});
+  const [selectedFabricCategories, setSelectedFabricCategories] = useState<Record<string, string>>({});
+  const [pricingAccessoryQuantities, setPricingAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
+  const [linkedProductQuantities, setLinkedProductQuantities] = useState<Record<string, number>>({});
+  const [selectedLinkedVariants, setSelectedLinkedVariants] = useState<Record<string, string>>({});
+  const [selectedLinkedCategories, setSelectedLinkedCategories] = useState<Record<string, string>>({});
+  const [selectedLinkedFabricCategories, setSelectedLinkedFabricCategories] = useState<Record<string, string>>({});
+  const [exchangeRates, setExchangeRates] = useState<Record<string, Record<string, string>>>({});
+  const [discountTypes, setDiscountTypes] = useState<Record<string, string>>({});
+  const [discountValues, setDiscountValues] = useState<Record<string, string>>({});
 
   const brandNameById = useMemo(
     () => new Map(brands.map((brand) => [brand.id, brand.name])),
     [brands],
   );
+  const templateById = useMemo(
+    () => new Map(templates.map((template) => [template.id, template])),
+    [templates],
+  );
+  const linkedFamiliesByParent = useMemo(() => {
+    const map = new Map<string, ProductLibraryLinkedFamily[]>();
+
+    for (const link of linkedFamilies) {
+      if (!link.is_active) continue;
+
+      const list = map.get(link.parent_template_id) ?? [];
+      list.push(link);
+      map.set(link.parent_template_id, list);
+    }
+
+    for (const list of map.values()) {
+      list.sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
+    }
+
+    return map;
+  }, [linkedFamilies]);
   const categoryNameById = useMemo(
     () => new Map(categories.map((category) => [category.id, category.name])),
     [categories],
@@ -447,6 +591,29 @@ export function ProductLibrarySelector({
                     : null;
                   const templateComponents = componentsByTemplate.get(template.id) ?? [];
                   const sizePricingRows = activeSizePricingRows(template.desking_size_pricing);
+                  const variantRows = activeVariantRows(template.variant_pricing);
+                  const categoryRows = activeCategoryRows(template.category_pricing);
+                  const accessoryGroups = activeAccessoryRows(template.accessory_pricing);
+                  const templateLinkedFamilies = linkedFamiliesByParent.get(template.id) ?? [];
+                  const usesVariantPricing = variantRows.length > 0;
+                  const usesCategoryPricing = !usesVariantPricing && categoryRows.length > 0;
+                  const templatePricingAccessoryQuantities = pricingAccessoryQuantities[template.id] ?? {};
+                  const selectedVariantRow =
+                    usesVariantPricing
+                      ? variantRows.find((row) => row.id === selectedVariantRows[template.id]) ??
+                        variantRows[0] ??
+                        null
+                      : null;
+                  const selectedCategoryRow =
+                    usesCategoryPricing
+                      ? categoryRows.find((row) => row.id === selectedCategoryRows[template.id]) ??
+                        categoryRows[0] ??
+                        null
+                      : null;
+                  const selectedFabricCategory = selectedFabricCategories[template.id] ?? "Cat A";
+                  const selectedCategoryPrice = selectedCategoryRow
+                    ? numberValue(selectedCategoryRow.prices?.[selectedFabricCategory])
+                    : 0;
                   const groupedOptions = new Map<string, ProductLibraryComponent[]>();
                   const templateSelections = selectedOptions[template.id] ?? {};
                   const additionalClusterQty = Math.max(
@@ -454,6 +621,159 @@ export function ProductLibrarySelector({
                     Math.trunc(numberValue(additionalClusterQuantities[template.id], 0)),
                   );
                   const templateAccessoryQuantities = accessoryQuantities[template.id] ?? {};
+                  const isDesking = !usesVariantPricing && !usesCategoryPricing && (
+                    sizePricingRows.length > 0 ||
+                    isDeskingTemplate({
+                      mainCategory,
+                      subCategory,
+                      templateComponents,
+                    })
+                  );
+                  const selectedSizeRow =
+                    sizePricingRows.find((row) => row.id === selectedDeskingSizes[template.id]) ??
+                    sizePricingRows[0] ??
+                    null;
+                  const derivedDesking = isDesking && selectedSizeRow
+                    ? deskingSizePricingCalculation({
+                        accessoryQuantities: templateAccessoryQuantities,
+                        additionalClusterQty,
+                        selectedSize: selectedSizeRow,
+                        template,
+                        templateComponents,
+                      })
+                    : null;
+                  const rowCurrency = derivedDesking?.mainCurrency ??
+                    selectedCategoryRow?.currency ??
+                    selectedVariantRow?.currency ??
+                    template.currency;
+                  const selectedPricingAccessories = accessoryGroups
+                    .flatMap((group) =>
+                      group.items.map((accessory) => {
+                        const id = accessory.id ?? accessory.item_name ?? "";
+
+                        return {
+                          accessory,
+                          groupName: group.group_name,
+                          qty: Math.max(0, Math.trunc(numberValue(templatePricingAccessoryQuantities[id]))),
+                        };
+                      }),
+                    )
+                    .filter((line) => line.qty > 0);
+                  const matchingAccessoryTotal = selectedPricingAccessories
+                    .filter((line) => normalizeCurrency(line.accessory.currency ?? rowCurrency) === normalizeCurrency(rowCurrency))
+                    .reduce((total, line) => total + line.qty * numberValue(line.accessory.price), 0);
+                  const hasMixedAccessoryCurrencies = selectedPricingAccessories.some(
+                    (line) => normalizeCurrency(line.accessory.currency ?? rowCurrency) !== normalizeCurrency(rowCurrency),
+                  );
+                  const previewUnitPrice =
+                    (derivedDesking?.unitPrice ??
+                      (selectedCategoryRow ? selectedCategoryPrice : undefined) ??
+                      selectedVariantRow?.price ??
+                      template.default_unit_price) + matchingAccessoryTotal;
+                  const selectedLinkedProducts = templateLinkedFamilies
+                    .map((link) => {
+                      const childTemplate = templateById.get(link.linked_template_id);
+                      if (!childTemplate) return null;
+
+                      const childCategoryRows = activeCategoryRows(childTemplate.category_pricing);
+                      const childVariantRows = activeVariantRows(childTemplate.variant_pricing);
+                      const childCategoryRow =
+                        childCategoryRows.find((row) => row.id === selectedLinkedCategories[link.id]) ??
+                        childCategoryRows[0] ??
+                        null;
+                      const childVariantRow =
+                        !childCategoryRow
+                          ? childVariantRows.find((row) => row.id === selectedLinkedVariants[link.id]) ??
+                            childVariantRows[0] ??
+                            null
+                          : null;
+                      const childCategory = selectedLinkedFabricCategories[link.id] ?? "Cat A";
+                      const unitPrice = childCategoryRow
+                        ? numberValue(childCategoryRow.prices?.[childCategory])
+                        : childVariantRow
+                          ? numberValue(childVariantRow.price)
+                          : numberValue(childTemplate.default_unit_price);
+                      const currency = childCategoryRow?.currency ?? childVariantRow?.currency ?? childTemplate.currency;
+                      const qty = Math.max(0, Math.trunc(numberValue(
+                        linkedProductQuantities[link.id],
+                        numberValue(link.default_qty),
+                      )));
+
+                      return {
+                        childCategory,
+                        childCategoryRow,
+                        childTemplate,
+                        childVariantRow,
+                        currency,
+                        link,
+                        qty,
+                        unitPrice,
+                      };
+                    })
+                    .filter((line): line is NonNullable<typeof line> => Boolean(line));
+                  const matchingLinkedProductTotal = selectedLinkedProducts
+                    .filter((line) => line.qty > 0 && line.link.add_to_parent_price)
+                    .filter((line) => normalizeCurrency(line.currency) === normalizeCurrency(rowCurrency))
+                    .reduce((total, line) => total + line.qty * line.unitPrice, 0);
+                  const hasMixedLinkedProductCurrencies = selectedLinkedProducts
+                    .filter((line) => line.qty > 0 && line.link.add_to_parent_price)
+                    .some((line) => normalizeCurrency(line.currency) !== normalizeCurrency(rowCurrency));
+                  const totalPreviewUnitPrice = previewUnitPrice + matchingLinkedProductTotal;
+                  const baseProductPrice =
+                    derivedDesking?.unitPrice ??
+                    (selectedCategoryRow ? selectedCategoryPrice : undefined) ??
+                    selectedVariantRow?.price ??
+                    template.default_unit_price;
+                  const originalCurrencyTotals = new Map<string, number>();
+                  const addCurrencyTotal = (currency: string | undefined, amount: number) => {
+                    const normalizedCurrency = normalizeCurrency(currency ?? "AED");
+                    originalCurrencyTotals.set(
+                      normalizedCurrency,
+                      (originalCurrencyTotals.get(normalizedCurrency) ?? 0) + amount,
+                    );
+                  };
+
+                  addCurrencyTotal(rowCurrency, baseProductPrice);
+                  for (const line of selectedPricingAccessories) {
+                    addCurrencyTotal(line.accessory.currency ?? rowCurrency, line.qty * numberValue(line.accessory.price));
+                  }
+                  for (const line of selectedLinkedProducts) {
+                    if (line.qty > 0 && line.link.add_to_parent_price) {
+                      addCurrencyTotal(line.currency, line.qty * line.unitPrice);
+                    }
+                  }
+
+                  const templateExchangeRates = exchangeRates[template.id] ?? {};
+                  const nonAedCurrencies = Array.from(originalCurrencyTotals.keys())
+                    .filter((currency) => currency !== "AED" && (originalCurrencyTotals.get(currency) ?? 0) > 0);
+                  const missingExchangeRate = nonAedCurrencies.some(
+                    (currency) => numberValue(templateExchangeRates[currency]) <= 0,
+                  );
+                  const convertedPreviewTotal = Array.from(originalCurrencyTotals.entries()).reduce(
+                    (total, [currency, amount]) =>
+                      currency === "AED"
+                        ? total + amount
+                        : total + amount * numberValue(templateExchangeRates[currency]),
+                    0,
+                  );
+                  const previewCurrency = nonAedCurrencies.length ? "AED" : rowCurrency;
+                  const previewUnitPriceWithConversion = nonAedCurrencies.length
+                    ? convertedPreviewTotal
+                    : totalPreviewUnitPrice;
+                  const selectedDiscountType = discountTypes[template.id] ?? "none";
+                  const rawDiscountValue = Math.max(0, numberValue(discountValues[template.id], 0));
+                  const selectedDiscountValue = selectedDiscountType === "percent"
+                    ? Math.min(rawDiscountValue, 100)
+                    : selectedDiscountType === "amount"
+                      ? rawDiscountValue
+                      : 0;
+                  const unitDiscountAmount = selectedDiscountType === "percent"
+                    ? previewUnitPriceWithConversion * selectedDiscountValue / 100
+                    : selectedDiscountType === "amount"
+                      ? selectedDiscountValue
+                      : 0;
+                  const netPricePreview = Math.max(previewUnitPriceWithConversion - unitDiscountAmount, 0);
+                  const netTotalPreview = netPricePreview;
                   const proposedImages = [
                     template.proposed_image_url_1 ?? template.default_image_url,
                     template.proposed_image_url_2,
@@ -526,24 +846,6 @@ export function ProductLibrarySelector({
                       return defaultOption ? [defaultOption.id] : [];
                     },
                   );
-                  const isDesking = isDeskingTemplate({
-                    mainCategory,
-                    subCategory,
-                    templateComponents,
-                  }) || sizePricingRows.length > 0;
-                  const selectedSizeRow =
-                    sizePricingRows.find((row) => row.id === selectedDeskingSizes[template.id]) ??
-                    sizePricingRows[0] ??
-                    null;
-                  const derivedDesking = isDesking && selectedSizeRow
-                    ? deskingSizePricingCalculation({
-                        accessoryQuantities: templateAccessoryQuantities,
-                        additionalClusterQty,
-                        selectedSize: selectedSizeRow,
-                        template,
-                        templateComponents,
-                      })
-                    : null;
                   const effectiveSelectedNames = effectiveSelectedIds
                     .map((id) => templateComponents.find((component) => component.id === id)?.component_name)
                     .filter(Boolean);
@@ -635,6 +937,203 @@ export function ProductLibrarySelector({
                               ))}
                             </select>
                           </label>
+                        ) : null}
+                        {usesCategoryPricing ? (
+                          <div className="mt-3 grid gap-2 md:grid-cols-2">
+                            <label className="block">
+                              <span className="text-[10px] font-bold uppercase text-zinc-500">Variant</span>
+                              <select
+                                value={selectedCategoryRow?.id ?? ""}
+                                onChange={(event) => setSelectedCategoryRows((current) => ({ ...current, [template.id]: event.target.value }))}
+                                className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                              >
+                                {categoryRows.map((row, index) => (
+                                  <option key={row.id ?? index} value={row.id ?? `category-${index}`}>
+                                    {row.variant_name} {row.dimension ? `- ${row.dimension}` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="block">
+                              <span className="text-[10px] font-bold uppercase text-zinc-500">Fabric / Leather Category</span>
+                              <select
+                                value={selectedFabricCategory}
+                                onChange={(event) => setSelectedFabricCategories((current) => ({ ...current, [template.id]: event.target.value }))}
+                                className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                              >
+                                {["Cat A", "Cat B", "Cat C", "Cat D"].map((category) => (
+                                  <option key={category} value={category}>
+                                    {category} {selectedCategoryRow ? `- ${formatMoney(selectedCategoryRow.currency ?? template.currency, numberValue(selectedCategoryRow.prices?.[category]))}` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                        ) : null}
+                        {usesVariantPricing ? (
+                          <label className="mt-3 block">
+                            <span className="text-[10px] font-bold uppercase text-zinc-500">Select Size / Model Variant</span>
+                            <select
+                              value={selectedVariantRow?.id ?? ""}
+                              onChange={(event) => setSelectedVariantRows((current) => ({ ...current, [template.id]: event.target.value }))}
+                              className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                            >
+                                {variantRows.map((row, index) => (
+                                  <option key={row.id ?? index} value={row.id ?? `variant-${index}`}>
+                                    {row.variant_name} {row.dimension ? `- ${row.dimension}` : ""} - {formatMoney(row.currency ?? template.currency, numberValue(row.price))}
+                                  </option>
+                                ))}
+                              </select>
+                            {selectedVariantRow ? (
+                              <span className="mt-1 block text-xs leading-5 text-zinc-500">
+                                {selectedVariantRow.variant_name}
+                                {selectedVariantRow.dimension ? ` - ${selectedVariantRow.dimension}` : ""}
+                                {" - "}
+                                {formatMoney(selectedVariantRow.currency ?? template.currency, numberValue(selectedVariantRow.price))}
+                                {selectedVariantRow.specification ? ` - ${selectedVariantRow.specification}` : ""}
+                              </span>
+                            ) : null}
+                          </label>
+                        ) : null}
+                        {accessoryGroups.length ? (
+                          <div className="mt-3 space-y-2">
+                            {accessoryGroups.map((group) => (
+                              <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
+                                <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
+                                  {group.group_name}
+                                </legend>
+                                <div className="mt-1 space-y-2">
+                                  {group.items.map((accessory) => {
+                                    const id = accessory.id ?? accessory.item_name ?? "";
+                                    const qty = templatePricingAccessoryQuantities[id] ?? 0;
+
+                                    return (
+                                      <label key={id} className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
+                                        <span>
+                                          <input
+                                            type="checkbox"
+                                            checked={qty > 0}
+                                            onChange={(event) =>
+                                              setPricingAccessoryQuantities((current) => ({
+                                                ...current,
+                                                [template.id]: {
+                                                  ...(current[template.id] ?? {}),
+                                                  [id]: event.target.checked ? Math.max(1, qty || 1) : 0,
+                                                },
+                                              }))
+                                            }
+                                            className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle"
+                                          />
+                                          {accessory.item_name}
+                                        </span>
+                                        <span className="font-semibold">
+                                          {formatMoney(accessory.currency ?? rowCurrency, numberValue(accessory.price))}
+                                        </span>
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          step={1}
+                                          value={qty || 1}
+                                          disabled={qty <= 0}
+                                          onChange={(event) =>
+                                            setPricingAccessoryQuantities((current) => ({
+                                              ...current,
+                                              [template.id]: {
+                                                ...(current[template.id] ?? {}),
+                                                [id]: Math.max(1, Math.trunc(Number(event.target.value) || 1)),
+                                              },
+                                            }))
+                                          }
+                                          className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100"
+                                        />
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </fieldset>
+                            ))}
+                          </div>
+                        ) : null}
+                        {selectedLinkedProducts.length ? (
+                          <div className="mt-3 space-y-2">
+                            <p className="text-[10px] font-bold uppercase text-zinc-500">
+                              Linked Product Families
+                            </p>
+                            {selectedLinkedProducts.map((line) => (
+                              <fieldset key={line.link.id} className="border border-zinc-200 bg-zinc-50 p-2">
+                                <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
+                                  {line.link.label || line.childTemplate.template_name}
+                                  {line.link.is_required ? " (Required)" : ""}
+                                </legend>
+                                <p className="text-xs font-semibold text-zinc-900">
+                                  {line.childTemplate.template_name}
+                                </p>
+                                {line.childCategoryRow ? (
+                                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                                    <label className="block">
+                                      <span className="text-[10px] font-bold uppercase text-zinc-500">Variant</span>
+                                      <select
+                                        value={line.childCategoryRow.id ?? ""}
+                                        onChange={(event) => setSelectedLinkedCategories((current) => ({ ...current, [line.link.id]: event.target.value }))}
+                                        className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                      >
+                                        {activeCategoryRows(line.childTemplate.category_pricing).map((row, index) => (
+                                          <option key={row.id ?? index} value={row.id ?? `linked-category-${index}`}>
+                                            {row.variant_name} {row.dimension ? `- ${row.dimension}` : ""}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label className="block">
+                                      <span className="text-[10px] font-bold uppercase text-zinc-500">Category</span>
+                                      <select
+                                        value={line.childCategory}
+                                        onChange={(event) => setSelectedLinkedFabricCategories((current) => ({ ...current, [line.link.id]: event.target.value }))}
+                                        className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                      >
+                                        {["Cat A", "Cat B", "Cat C", "Cat D"].map((category) => (
+                                          <option key={category} value={category}>
+                                            {category} - {formatMoney(line.childCategoryRow?.currency ?? line.childTemplate.currency, numberValue(line.childCategoryRow?.prices?.[category]))}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                  </div>
+                                ) : activeVariantRows(line.childTemplate.variant_pricing).length ? (
+                                  <label className="mt-2 block">
+                                    <span className="text-[10px] font-bold uppercase text-zinc-500">Variant</span>
+                                    <select
+                                      value={line.childVariantRow?.id ?? ""}
+                                      onChange={(event) => setSelectedLinkedVariants((current) => ({ ...current, [line.link.id]: event.target.value }))}
+                                      className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                    >
+                                      {activeVariantRows(line.childTemplate.variant_pricing).map((row, index) => (
+                                        <option key={row.id ?? index} value={row.id ?? `linked-variant-${index}`}>
+                                          {row.variant_name} {row.dimension ? `- ${row.dimension}` : ""} - {formatMoney(row.currency ?? line.childTemplate.currency, numberValue(row.price))}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                ) : null}
+                                <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_90px] sm:items-end">
+                                  <p className="text-xs text-zinc-600">
+                                    Price: {formatMoney(line.currency, line.unitPrice)}
+                                  </p>
+                                  <label className="block">
+                                    <span className="text-[10px] font-bold uppercase text-zinc-500">Qty</span>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step={1}
+                                      value={line.qty}
+                                      onChange={(event) => setLinkedProductQuantities((current) => ({ ...current, [line.link.id]: Math.max(0, Math.trunc(Number(event.target.value) || 0)) }))}
+                                      className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                    />
+                                  </label>
+                                </div>
+                              </fieldset>
+                            ))}
+                          </div>
                         ) : null}
                         {groupedOptions.size ? (
                           <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -847,10 +1346,7 @@ export function ProductLibrarySelector({
                       </div>
                       <div className="flex shrink-0 flex-col items-end justify-between gap-3 text-right">
                         <p className="text-sm font-semibold text-zinc-950">
-                          {formatMoney(
-                            derivedDesking?.mainCurrency ?? template.currency,
-                            derivedDesking?.unitPrice ?? template.default_unit_price,
-                          )}
+                          {formatMoney(previewCurrency, previewUnitPriceWithConversion)}
                         </p>
                         {derivedDesking ? (
                           <div className="max-w-48 space-y-1 text-xs leading-5 text-zinc-600">
@@ -869,6 +1365,22 @@ export function ProductLibrarySelector({
                             <p>Formula: {derivedDesking.formula}</p>
                             {derivedDesking.finishNames.length ? (
                               <p>Finish: {derivedDesking.finishNames.join(", ")}</p>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {usesVariantPricing && selectedVariantRow ? (
+                          <div className="max-w-48 space-y-1 text-xs leading-5 text-zinc-600">
+                            <p className="font-semibold text-zinc-950">
+                              Model: {selectedVariantRow.variant_name}
+                            </p>
+                            {selectedVariantRow.dimension ? (
+                              <p>Dimension: {selectedVariantRow.dimension}</p>
+                            ) : null}
+                            <p>
+                              Price: {formatMoney(selectedVariantRow.currency ?? template.currency, numberValue(selectedVariantRow.price))}
+                            </p>
+                            {selectedVariantRow.specification ? (
+                              <p className="line-clamp-3">{selectedVariantRow.specification}</p>
                             ) : null}
                           </div>
                         ) : null}
@@ -902,9 +1414,105 @@ export function ProductLibrarySelector({
                         ) : null}
                         {hasMixedOptionCurrencies ? (
                           <p className="max-w-44 text-xs leading-5 text-amber-700">
-                            Currency conversion is not enabled yet. Mixed-currency totals should be reviewed manually.
+                            Mixed-currency advanced options should be reviewed manually.
                           </p>
                         ) : null}
+                        {hasMixedAccessoryCurrencies ? (
+                          <p className="max-w-44 text-xs leading-5 text-amber-700">
+                            Mixed-currency add-ons use the conversion rates below.
+                          </p>
+                        ) : null}
+                        {hasMixedLinkedProductCurrencies ? (
+                          <p className="max-w-44 text-xs leading-5 text-amber-700">
+                            Mixed-currency linked products use the conversion rates below.
+                          </p>
+                        ) : null}
+                        {nonAedCurrencies.length ? (
+                          <div className="max-w-56 space-y-2 border border-amber-200 bg-amber-50 p-2 text-left text-xs leading-5 text-amber-900">
+                            <p className="font-bold uppercase">Currency Conversion</p>
+                            {Array.from(originalCurrencyTotals.entries()).map(([currency, amount]) => (
+                              <p key={currency}>
+                                {currency} total: {formatMoney(currency, amount)}
+                              </p>
+                            ))}
+                            {nonAedCurrencies.map((currency) => (
+                              <label key={currency} className="block">
+                                <span className="text-[10px] font-bold uppercase">
+                                  {currency} to AED rate
+                                </span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step="0.0001"
+                                  placeholder={currency === "USD" ? "3.67" : currency === "EUR" ? "4.10" : ""}
+                                  value={templateExchangeRates[currency] ?? ""}
+                                  onChange={(event) =>
+                                    setExchangeRates((current) => ({
+                                      ...current,
+                                      [template.id]: {
+                                        ...(current[template.id] ?? {}),
+                                        [currency]: event.target.value,
+                                      },
+                                    }))
+                                  }
+                                  className="mt-1 h-8 w-full border border-amber-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                />
+                              </label>
+                            ))}
+                            {missingExchangeRate ? (
+                              <p>Enter exchange rate to add this item in AED.</p>
+                            ) : (
+                              <p className="font-semibold">
+                                Converted final: {formatMoney("AED", convertedPreviewTotal)}
+                              </p>
+                            )}
+                          </div>
+                        ) : null}
+                        <div className="max-w-56 space-y-2 border border-zinc-200 bg-zinc-50 p-2 text-left text-xs leading-5 text-zinc-700">
+                          <p className="font-bold uppercase text-zinc-500">Pricing / Discount</p>
+                          <p>U.Price: {formatMoney(previewCurrency, previewUnitPriceWithConversion)}</p>
+                          <label className="block">
+                            <span className="text-[10px] font-bold uppercase text-zinc-500">Discount Type</span>
+                            <select
+                              value={selectedDiscountType}
+                              onChange={(event) =>
+                                setDiscountTypes((current) => ({
+                                  ...current,
+                                  [template.id]: event.target.value,
+                                }))
+                              }
+                              className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                            >
+                              <option value="none">None</option>
+                              <option value="amount">Amount</option>
+                              <option value="percent">Percent</option>
+                            </select>
+                          </label>
+                          <label className="block">
+                            <span className="text-[10px] font-bold uppercase text-zinc-500">Discount</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={selectedDiscountType === "percent" ? 100 : undefined}
+                              step="0.01"
+                              disabled={selectedDiscountType === "none"}
+                              value={selectedDiscountType === "none" ? "" : discountValues[template.id] ?? ""}
+                              onChange={(event) =>
+                                setDiscountValues((current) => ({
+                                  ...current,
+                                  [template.id]: event.target.value,
+                                }))
+                              }
+                              className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100"
+                            />
+                          </label>
+                          <p>
+                            Discount: {selectedDiscountType === "percent" ? `${selectedDiscountValue}% / ` : ""}
+                            {formatMoney(previewCurrency, unitDiscountAmount)}
+                          </p>
+                          <p>Net Price: {formatMoney(previewCurrency, netPricePreview)}</p>
+                          <p>Net Total: {formatMoney(previewCurrency, netTotalPreview)}</p>
+                        </div>
                         <form action={addProductTemplateToQuotation}>
                           <input type="hidden" name="quotation_id" value={quotationId} />
                           <input type="hidden" name="section_id" value={sectionId} />
@@ -937,6 +1545,57 @@ export function ProductLibrarySelector({
                               value={selectedSizeRow.id ?? ""}
                             />
                           ) : null}
+                          {usesCategoryPricing && selectedCategoryRow ? (
+                            <>
+                              <input type="hidden" name="category_pricing_row_id" value={selectedCategoryRow.id ?? ""} />
+                              <input type="hidden" name="category_pricing_category" value={selectedFabricCategory} />
+                            </>
+                          ) : null}
+                          {usesVariantPricing && selectedVariantRow ? (
+                            <input type="hidden" name="variant_pricing_row_id" value={selectedVariantRow.id ?? ""} />
+                          ) : null}
+                          {selectedPricingAccessories.map((line) => (
+                            <input
+                              key={line.accessory.id ?? line.accessory.item_name}
+                              type="hidden"
+                              name="accessory_pricing_qty"
+                              value={`${line.accessory.id ?? line.accessory.item_name ?? ""}:${line.qty}`}
+                            />
+                          ))}
+                          {selectedLinkedProducts.map((line) => (
+                            line.qty > 0 ? (
+                              <input
+                                key={line.link.id}
+                                type="hidden"
+                                name="linked_product_selection"
+                                value={[
+                                  line.link.id,
+                                  line.qty,
+                                  line.childCategoryRow?.id ?? "",
+                                  line.childCategoryRow ? line.childCategory : "",
+                                  line.childVariantRow?.id ?? "",
+                                ].join(":")}
+                              />
+                            ) : null
+                          ))}
+                          {nonAedCurrencies.map((currency) => (
+                            <input
+                              key={currency}
+                              type="hidden"
+                              name="currency_exchange_rate"
+                              value={`${currency}:${templateExchangeRates[currency] ?? ""}`}
+                            />
+                          ))}
+                          <input
+                            type="hidden"
+                            name="product_library_discount_type"
+                            value={selectedDiscountType}
+                          />
+                          <input
+                            type="hidden"
+                            name="product_library_discount_value"
+                            value={selectedDiscountValue}
+                          />
                           {Object.entries(templateAccessoryQuantities).map(([id, qty]) =>
                             qty > 0 ? (
                               <input
@@ -949,7 +1608,8 @@ export function ProductLibrarySelector({
                           )}
                           <button
                             type="submit"
-                            className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
+                            disabled={missingExchangeRate}
+                            className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                           >
                             Add
                           </button>

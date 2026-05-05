@@ -273,7 +273,7 @@ export function DeskingSizePricingTable({
         }}
         className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
       >
-        + Add size
+        + Add Size
       </button>
       <button
         type="submit"

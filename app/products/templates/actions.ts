@@ -64,6 +64,161 @@ function redirectWithMessage(message: string): never {
   redirect(`/products/templates?message=${encodeURIComponent(message)}`);
 }
 
+function redirectToTemplates(
+  message: string,
+  params: Record<string, string | null | undefined> = {},
+): never {
+  const query = new URLSearchParams();
+  query.set("message", message);
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value) {
+      query.set(key, value);
+    }
+  }
+
+  redirect(`/products/templates?${query.toString()}`);
+}
+
+async function duplicateCategoryExists({
+  brandId,
+  name,
+  parentId,
+}: {
+  brandId: string;
+  name: string;
+  parentId: string | null;
+}) {
+  const supabase = await createClient();
+  let query = supabase
+    .from("product_categories")
+    .select("id")
+    .eq("brand_id", brandId)
+    .ilike("name", name);
+
+  query = parentId ? query.eq("parent_id", parentId) : query.is("parent_id", null);
+
+  const { data, error } = await query.limit(1);
+
+  if (error) {
+    console.error("CATEGORY DUPLICATE CHECK ERROR", error.message);
+    return false;
+  }
+
+  return Boolean(data?.length);
+}
+
+export async function createMainCategoryFromTemplates(formData: FormData) {
+  const { user } = await requireSettingsManager();
+  const brandId = textValue(formData, "brand_id");
+  const name = textValue(formData, "name");
+  const returnMode = textValue(formData, "return_mode");
+
+  if (!brandId || !name) {
+    redirectToTemplates("Brand and category name are required.", {
+      addTemplate: returnMode === "add-template" ? "1" : null,
+      brand: brandId,
+    });
+  }
+
+  if (await duplicateCategoryExists({ brandId, name, parentId: null })) {
+    redirectToTemplates("A main category with that name already exists.", {
+      addTemplate: returnMode === "add-template" ? "1" : null,
+      brand: brandId,
+    });
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("product_categories")
+    .insert({
+      brand_id: brandId,
+      parent_id: null,
+      name,
+      code: optionalTextValue(formData, "code"),
+      description: optionalTextValue(formData, "description"),
+      is_active: boolValue(formData, "is_active"),
+      sort_order: 0,
+      created_by: user.id,
+    })
+    .select("id")
+    .single<{ id: string }>();
+
+  if (error || !data) {
+    console.error("MAIN CATEGORY CREATE ERROR", error?.message);
+    redirectToTemplates("Main category could not be created.", {
+      addTemplate: returnMode === "add-template" ? "1" : null,
+      brand: brandId,
+    });
+  }
+
+  revalidatePath("/products/templates");
+  revalidatePath("/products/brands");
+  redirectToTemplates("Main category created.", {
+    addTemplate: returnMode === "add-template" ? "1" : null,
+    brand: brandId,
+    main: data.id,
+  });
+}
+
+export async function createSubCategoryFromTemplates(formData: FormData) {
+  const { user } = await requireSettingsManager();
+  const brandId = textValue(formData, "brand_id");
+  const parentId = textValue(formData, "parent_id");
+  const name = textValue(formData, "name");
+  const returnMode = textValue(formData, "return_mode");
+
+  if (!brandId || !parentId || !name) {
+    redirectToTemplates("Brand, main category, and subcategory name are required.", {
+      addTemplate: returnMode === "add-template" ? "1" : null,
+      brand: brandId,
+      main: parentId,
+    });
+  }
+
+  if (await duplicateCategoryExists({ brandId, name, parentId })) {
+    redirectToTemplates("A subcategory with that name already exists.", {
+      addTemplate: returnMode === "add-template" ? "1" : null,
+      brand: brandId,
+      main: parentId,
+    });
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("product_categories")
+    .insert({
+      brand_id: brandId,
+      parent_id: parentId,
+      name,
+      code: optionalTextValue(formData, "code"),
+      description: optionalTextValue(formData, "description"),
+      is_active: boolValue(formData, "is_active"),
+      sort_order: 0,
+      created_by: user.id,
+    })
+    .select("id")
+    .single<{ id: string }>();
+
+  if (error || !data) {
+    console.error("SUBCATEGORY CREATE ERROR", error?.message);
+    redirectToTemplates("Subcategory could not be created.", {
+      addTemplate: returnMode === "add-template" ? "1" : null,
+      brand: brandId,
+      main: parentId,
+    });
+  }
+
+  revalidatePath("/products/templates");
+  revalidatePath("/products/brands");
+  redirectToTemplates("Subcategory created.", {
+    addTemplate: returnMode === "add-template" ? "1" : null,
+    brand: brandId,
+    main: parentId,
+    sub: data.id,
+  });
+}
+
 function imageDisplaySettingsValue(formData: FormData) {
   const fit = textValue(formData, "image_fit");
 
@@ -164,6 +319,126 @@ function deskingSizePricingValue(formData: FormData) {
   }
 }
 
+function variantPricingValue(formData: FormData) {
+  const rawValue = textValue(formData, "variant_pricing");
+  if (!rawValue) return [];
+
+  try {
+    const parsed = JSON.parse(rawValue) as Array<Record<string, unknown>>;
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((row, index) => ({
+        id: typeof row.id === "string" && row.id ? row.id : `variant-${index}`,
+        variant_name: typeof row.variant_name === "string" ? row.variant_name.trim() : "",
+        dimension: typeof row.dimension === "string" ? row.dimension.trim() : "",
+        price: Number.isFinite(Number(row.price)) ? Number(row.price) : 0,
+        currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
+        specification: typeof row.specification === "string" ? row.specification.trim() : "",
+        sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
+        is_active: row.is_active !== false,
+      }))
+      .filter((row) => row.variant_name || row.dimension || row.price > 0 || row.specification);
+  } catch {
+    return [];
+  }
+}
+
+function categoryPricingValue(formData: FormData) {
+  const rawValue = textValue(formData, "category_pricing");
+  if (!rawValue) return [];
+
+  try {
+    const parsed = JSON.parse(rawValue) as Array<Record<string, unknown>>;
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((row, index) => {
+        const prices = typeof row.prices === "object" && row.prices !== null
+          ? row.prices as Record<string, unknown>
+          : {};
+
+        return {
+          id: typeof row.id === "string" && row.id ? row.id : `category-${index}`,
+          variant_name: typeof row.variant_name === "string" ? row.variant_name.trim() : "",
+          dimension: typeof row.dimension === "string" ? row.dimension.trim() : "",
+          currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
+          prices: {
+            "Cat A": Number.isFinite(Number(prices["Cat A"])) ? Number(prices["Cat A"]) : 0,
+            "Cat B": Number.isFinite(Number(prices["Cat B"])) ? Number(prices["Cat B"]) : 0,
+            "Cat C": Number.isFinite(Number(prices["Cat C"])) ? Number(prices["Cat C"]) : 0,
+            "Cat D": Number.isFinite(Number(prices["Cat D"])) ? Number(prices["Cat D"]) : 0,
+          },
+          specification: typeof row.specification === "string" ? row.specification.trim() : "",
+          sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
+          is_active: row.is_active !== false,
+        };
+      })
+      .filter((row) => row.variant_name || row.dimension || Object.values(row.prices).some((price) => price > 0) || row.specification);
+  } catch {
+    return [];
+  }
+}
+
+function accessoryPricingValue(formData: FormData) {
+  const rawValue = textValue(formData, "accessory_pricing");
+  if (!rawValue) return [];
+
+  try {
+    const parsed = JSON.parse(rawValue) as Array<Record<string, unknown>>;
+    if (!Array.isArray(parsed)) return [];
+
+    const normalizeItem = (row: Record<string, unknown>, index: number) => ({
+      id: typeof row.id === "string" && row.id ? row.id : `add-on-${index}`,
+      item_name: typeof row.item_name === "string" ? row.item_name.trim() : "",
+      price: Number.isFinite(Number(row.price)) ? Number(row.price) : 0,
+      currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
+      specification: typeof row.specification === "string" ? row.specification.trim() : "",
+      sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
+      is_active: row.is_active !== false,
+    });
+
+    const groupedRows = parsed.filter((row) => row.group_name || row.items);
+    const flatRows = parsed.filter((row) => !row.group_name && !row.items);
+    const groups = groupedRows
+      .map((row, index) => {
+        const items = Array.isArray(row.items)
+          ? row.items
+              .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+              .map(normalizeItem)
+              .filter((item) => item.item_name || item.price > 0 || item.specification)
+          : [];
+
+        return {
+          id: typeof row.id === "string" && row.id ? row.id : `add-on-group-${index}`,
+          group_name: typeof row.group_name === "string" && row.group_name.trim()
+            ? row.group_name.trim()
+            : "Accessories",
+          sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
+          is_active: row.is_active !== false,
+          items,
+        };
+      })
+      .filter((group) => group.group_name || group.items.length);
+
+    if (flatRows.length) {
+      groups.push({
+        id: "accessories",
+        group_name: "Accessories",
+        sort_order: groups.length,
+        is_active: true,
+        items: flatRows
+          .map(normalizeItem)
+          .filter((item) => item.item_name || item.price > 0 || item.specification),
+      });
+    }
+
+    return groups.filter((group) => group.items.length);
+  } catch {
+    return [];
+  }
+}
+
 function templatePayload(formData: FormData, userId?: string) {
   const payload = {
     brand_id: textValue(formData, "brand_id"),
@@ -182,6 +457,9 @@ function templatePayload(formData: FormData, userId?: string) {
     proposed_image_url_3: optionalTextValue(formData, "proposed_image_url_3"),
     reference_image_url: optionalTextValue(formData, "reference_image_url"),
     desking_size_pricing: deskingSizePricingValue(formData),
+    variant_pricing: variantPricingValue(formData),
+    category_pricing: categoryPricingValue(formData),
+    accessory_pricing: accessoryPricingValue(formData),
     unit_label: textValue(formData, "unit_label") || "Pc",
     currency: normalizeCurrency(textValue(formData, "currency") || defaultCurrency),
     default_unit_price: numberValue(formData, "default_unit_price", 0),
@@ -312,6 +590,97 @@ export async function updateProductTemplate(formData: FormData) {
 
   revalidatePath("/products/templates");
   redirectWithMessage("Product template updated.");
+}
+
+export async function createLinkedProductFamily(formData: FormData) {
+  await requireSettingsManager();
+  const parentTemplateId = textValue(formData, "parent_template_id");
+  const linkedTemplateId = textValue(formData, "linked_template_id");
+  const payload = {
+    parent_template_id: parentTemplateId,
+    linked_template_id: linkedTemplateId,
+    label: optionalTextValue(formData, "label"),
+    is_required: boolValue(formData, "is_required"),
+    allow_multiple: boolValue(formData, "allow_multiple"),
+    add_to_parent_price: boolValue(formData, "add_to_parent_price"),
+    append_to_specification: boolValue(formData, "append_to_specification"),
+    default_qty: numberValue(formData, "default_qty", 0),
+    sort_order: Math.trunc(numberValue(formData, "sort_order", 0)),
+    is_active: boolValue(formData, "is_active"),
+  };
+
+  if (!parentTemplateId || !linkedTemplateId || parentTemplateId === linkedTemplateId) {
+    redirectWithMessage("Select a parent template and a different linked product family.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_template_linked_families")
+    .upsert(payload, { onConflict: "parent_template_id,linked_template_id" });
+
+  if (error) {
+    console.error("LINKED PRODUCT FAMILY CREATE ERROR", error.message);
+    redirectWithMessage("Linked product family could not be saved.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Linked product family saved.");
+}
+
+export async function updateLinkedProductFamily(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+  const payload = {
+    label: optionalTextValue(formData, "label"),
+    is_required: boolValue(formData, "is_required"),
+    allow_multiple: boolValue(formData, "allow_multiple"),
+    add_to_parent_price: boolValue(formData, "add_to_parent_price"),
+    append_to_specification: boolValue(formData, "append_to_specification"),
+    default_qty: numberValue(formData, "default_qty", 0),
+    sort_order: Math.trunc(numberValue(formData, "sort_order", 0)),
+    is_active: boolValue(formData, "is_active"),
+  };
+
+  if (!id) {
+    redirectWithMessage("Linked product family id is required.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_template_linked_families")
+    .update(payload)
+    .eq("id", id);
+
+  if (error) {
+    console.error("LINKED PRODUCT FAMILY UPDATE ERROR", error.message);
+    redirectWithMessage("Linked product family could not be updated.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Linked product family updated.");
+}
+
+export async function deactivateLinkedProductFamily(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectWithMessage("Linked product family id is required.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_template_linked_families")
+    .update({ is_active: false })
+    .eq("id", id);
+
+  if (error) {
+    console.error("LINKED PRODUCT FAMILY DEACTIVATE ERROR", error.message);
+    redirectWithMessage("Linked product family could not be removed.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Linked product family removed.");
 }
 
 export async function updateProductTemplateImage(formData: FormData) {

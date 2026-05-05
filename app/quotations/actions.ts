@@ -199,6 +199,62 @@ function accessoryQuantities(formData: FormData) {
   return quantities;
 }
 
+function accessoryPricingQuantities(formData: FormData) {
+  const quantities = new Map<string, number>();
+
+  for (const value of formData.getAll("accessory_pricing_qty")) {
+    if (typeof value !== "string") continue;
+
+    const [id, rawQty] = value.split(":");
+    const qty = Math.max(0, Math.trunc(Number(rawQty) || 0));
+
+    if (id && qty > 0) {
+      quantities.set(id, qty);
+    }
+  }
+
+  return quantities;
+}
+
+type LinkedProductSelectionInput = {
+  category: string;
+  categoryRowId: string;
+  linkId: string;
+  qty: number;
+  variantRowId: string;
+};
+
+function linkedProductSelections(formData: FormData) {
+  return formData
+    .getAll("linked_product_selection")
+    .filter((value): value is string => typeof value === "string")
+    .map((value): LinkedProductSelectionInput | null => {
+      const [linkId, rawQty, categoryRowId = "", category = "", variantRowId = ""] = value.split(":");
+      const qty = Math.max(0, Math.trunc(Number(rawQty) || 0));
+
+      return linkId && qty > 0 ? { category, categoryRowId, linkId, qty, variantRowId } : null;
+    })
+    .filter((value): value is LinkedProductSelectionInput => Boolean(value));
+}
+
+function currencyExchangeRates(formData: FormData) {
+  const rates = new Map<string, number>();
+
+  for (const value of formData.getAll("currency_exchange_rate")) {
+    if (typeof value !== "string") continue;
+
+    const [currency, rawRate] = value.split(":");
+    const normalizedCurrency = normalizeCurrency(currency || "");
+    const rate = Number(rawRate);
+
+    if (normalizedCurrency && Number.isFinite(rate) && rate > 0) {
+      rates.set(normalizedCurrency, rate);
+    }
+  }
+
+  return rates;
+}
+
 function deskingAdditionalClusterQty(formData: FormData) {
   return Math.max(0, Math.trunc(numberValue(formData, "desking_additional_cluster_qty", 0)));
 }
@@ -218,6 +274,70 @@ function activeDeskingSizeRows(rows?: DeskingSizePricingRow[] | null) {
 function selectedDeskingSize(formData: FormData, rows?: DeskingSizePricingRow[] | null) {
   const selectedId = textValue(formData, "desking_size_id");
   const activeRows = activeDeskingSizeRows(rows);
+
+  return activeRows.find((row) => row.id === selectedId) ?? activeRows[0] ?? null;
+}
+
+function activeVariantRows(rows?: VariantPricingRow[] | null) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => row.is_active !== false)
+    .filter((row) => row.variant_name || row.dimension || calculationNumber(row.price) > 0)
+    .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
+}
+
+function activeCategoryRows(rows?: CategoryPricingRow[] | null) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => row.is_active !== false)
+    .filter((row) => row.variant_name || row.dimension || Object.values(row.prices ?? {}).some((price) => calculationNumber(price) > 0))
+    .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
+}
+
+function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
+  const sourceRows = Array.isArray(rows) ? rows : [];
+  const groups = sourceRows
+    .filter((row) => row.group_name || row.items)
+    .map((group, groupIndex) => ({
+      id: group.id ?? `add-on-group-${groupIndex}`,
+      group_name: group.group_name?.trim() || "Accessories",
+      is_active: group.is_active !== false,
+      sort_order: calculationNumber(group.sort_order, groupIndex),
+      items: (group.items ?? [])
+        .filter((item) => item.is_active !== false)
+        .filter((item) => item.item_name || calculationNumber(item.price) > 0)
+        .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order)),
+    }))
+    .filter((group) => group.is_active && group.items.length)
+    .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
+  const flatRows = sourceRows
+    .filter((row) => !row.group_name && !row.items)
+    .filter((row) => row.is_active !== false)
+    .filter((row) => row.item_name || calculationNumber(row.price) > 0)
+    .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
+
+  return flatRows.length
+    ? [
+        ...groups,
+        {
+          id: "accessories",
+          group_name: "Accessories",
+          is_active: true,
+          sort_order: groups.length,
+          items: flatRows,
+        },
+      ]
+    : groups;
+}
+
+function selectedVariantPricing(formData: FormData, rows?: VariantPricingRow[] | null) {
+  const selectedId = textValue(formData, "variant_pricing_row_id");
+  const activeRows = activeVariantRows(rows);
+
+  return activeRows.find((row) => row.id === selectedId) ?? activeRows[0] ?? null;
+}
+
+function selectedCategoryPricing(formData: FormData, rows?: CategoryPricingRow[] | null) {
+  const selectedId = textValue(formData, "category_pricing_row_id");
+  const activeRows = activeCategoryRows(rows);
 
   return activeRows.find((row) => row.id === selectedId) ?? activeRows[0] ?? null;
 }
@@ -556,9 +676,26 @@ type ProductTemplateSnapshotSource = {
   proposed_image_url_3: string | null;
   image_settings: Record<string, ImageDisplaySettings> | null;
   desking_size_pricing: DeskingSizePricingRow[] | null;
+  variant_pricing: VariantPricingRow[] | null;
+  category_pricing: CategoryPricingRow[] | null;
+  accessory_pricing: AccessoryPricingRow[] | null;
   unit_label: string;
   currency: string;
   default_unit_price: number;
+};
+
+type LinkedProductFamilySource = {
+  id: string;
+  parent_template_id: string;
+  linked_template_id: string;
+  label: string | null;
+  is_required: boolean;
+  allow_multiple: boolean;
+  add_to_parent_price: boolean;
+  append_to_specification: boolean;
+  default_qty: number;
+  sort_order: number;
+  is_active: boolean;
 };
 
 type DeskingSizePricingRow = {
@@ -573,6 +710,50 @@ type DeskingSizePricingRow = {
   currency?: string;
   sort_order?: number;
   is_active?: boolean;
+};
+
+type VariantPricingRow = {
+  id?: string;
+  variant_name?: string;
+  dimension?: string;
+  price?: number;
+  currency?: string;
+  specification?: string;
+  is_active?: boolean;
+  sort_order?: number;
+};
+
+type CategoryPricingRow = {
+  id?: string;
+  variant_name?: string;
+  dimension?: string;
+  currency?: string;
+  prices?: Record<string, number>;
+  specification?: string;
+  is_active?: boolean;
+  sort_order?: number;
+};
+
+type AccessoryPricingRow = {
+  id?: string;
+  group_name?: string;
+  items?: AccessoryPricingItem[];
+  item_name?: string;
+  price?: number;
+  currency?: string;
+  specification?: string;
+  is_active?: boolean;
+  sort_order?: number;
+};
+
+type AccessoryPricingItem = {
+  id?: string;
+  item_name?: string;
+  price?: number;
+  currency?: string;
+  specification?: string;
+  is_active?: boolean;
+  sort_order?: number;
 };
 
 type ProductComponentSnapshotSource = {
@@ -1390,6 +1571,9 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const templateId = textValue(formData, "template_id");
   const selectedTemplateImagePath = optionalTextValue(formData, "selected_template_image_path");
   const accessoryQtyById = accessoryQuantities(formData);
+  const accessoryPricingQtyById = accessoryPricingQuantities(formData);
+  const linkedProductSelectionInputs = linkedProductSelections(formData);
+  const exchangeRateByCurrency = currencyExchangeRates(formData);
   const additionalClusterQty = deskingAdditionalClusterQty(formData);
   const selectedComponentIds = Array.from(
     new Set(
@@ -1421,7 +1605,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const { data: template, error: templateError } = await supabase
     .from("product_templates")
     .select(
-      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,image_settings,unit_label,currency,default_unit_price",
+      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price",
     )
     .eq("id", templateId)
     .eq("is_active", true)
@@ -1468,14 +1652,57 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     redirectWithMessage(redirectPath, "Product options could not be loaded.");
   }
 
+  const selectedLinkedIds = linkedProductSelectionInputs.map((selection) => selection.linkId);
+  const { data: linkedFamilies, error: linkedFamiliesError } = selectedLinkedIds.length
+    ? await supabase
+        .from("product_template_linked_families")
+        .select("id,parent_template_id,linked_template_id,label,is_required,allow_multiple,add_to_parent_price,append_to_specification,default_qty,sort_order,is_active")
+        .eq("parent_template_id", templateId)
+        .eq("is_active", true)
+        .in("id", selectedLinkedIds)
+        .returns<LinkedProductFamilySource[]>()
+    : { data: [], error: null };
+
+  if (linkedFamiliesError) {
+    console.error("PRODUCT TEMPLATE ADD LINKED FAMILIES ERROR", linkedFamiliesError.message);
+    redirectWithMessage(redirectPath, "Linked product families could not be loaded.");
+  }
+
+  const linkedTemplateIds = Array.from(new Set((linkedFamilies ?? []).map((link) => link.linked_template_id)));
+  const { data: linkedTemplates, error: linkedTemplatesError } = linkedTemplateIds.length
+    ? await supabase
+        .from("product_templates")
+        .select(
+          "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price",
+        )
+        .eq("is_active", true)
+        .in("id", linkedTemplateIds)
+        .returns<ProductTemplateSnapshotSource[]>()
+    : { data: [], error: null };
+
+  if (linkedTemplatesError) {
+    console.error("PRODUCT TEMPLATE ADD LINKED TEMPLATES ERROR", linkedTemplatesError.message);
+    redirectWithMessage(redirectPath, "Linked product templates could not be loaded.");
+  }
+
   const selectedOptions = selectedComponents ?? [];
   const originSnapshot = template.origin ?? brand?.origin ?? null;
   const supplierNameSnapshot = template.supplier_name ?? brand?.name ?? null;
-  const selectedSizePricing = selectedDeskingSize(formData, template.desking_size_pricing);
+  const selectedVariantPricingRow = selectedVariantPricing(formData, template.variant_pricing);
+  const selectedCategoryPricingRow = selectedVariantPricingRow
+    ? null
+    : selectedCategoryPricing(formData, template.category_pricing);
+  const selectedSizePricing = selectedVariantPricingRow || selectedCategoryPricingRow
+    ? null
+    : selectedDeskingSize(formData, template.desking_size_pricing);
+  const selectedCategory = textValue(formData, "category_pricing_category") || "Cat A";
+  const selectedCategoryPrice = selectedCategoryPricingRow
+    ? money(calculationNumber(selectedCategoryPricingRow.prices?.[selectedCategory]))
+    : 0;
   const isDesking =
-    /workstation|desk|desking/.test(categoryName.toLowerCase()) ||
+    (!selectedVariantPricingRow && !selectedCategoryPricingRow && /workstation|desking/.test(categoryName.toLowerCase())) ||
     Boolean(selectedSizePricing) ||
-    selectedOptions.some((option) => Boolean(deskingRole(option)));
+    (!selectedVariantPricingRow && !selectedCategoryPricingRow && selectedOptions.some((option) => Boolean(deskingRole(option))));
   const derivedDesking = isDesking && selectedSizePricing
     ? deskingSizePricingSnapshot({
         accessoryQtyById,
@@ -1508,6 +1735,97 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       return total + optionQty * optionPrice;
     }, 0),
   );
+  const rowCurrency = normalizeCurrency(
+    derivedDesking?.mainCurrency ||
+    selectedCategoryPricingRow?.currency ||
+    selectedVariantPricingRow?.currency ||
+    template.currency ||
+    defaultCurrency,
+  );
+  const selectedAccessoryPricing = activeAccessoryRows(template.accessory_pricing)
+    .flatMap((group) =>
+      group.items.map((accessory) => {
+        const id = accessory.id ?? accessory.item_name ?? "";
+
+        return {
+          type: "add_on",
+          item_type: "add_on",
+          id,
+          group_name: group.group_name,
+          item_name: accessory.item_name ?? "",
+          qty: accessoryPricingQtyById.get(id) ?? 0,
+          price: calculationNumber(accessory.price),
+          currency: normalizeCurrency(accessory.currency ?? rowCurrency),
+          specification: accessory.specification ?? "",
+        };
+      }),
+    )
+    .filter((accessory) => accessory.qty > 0);
+  const matchingAccessoryTotal = money(
+    selectedAccessoryPricing
+      .filter((accessory) => accessory.currency === rowCurrency)
+      .reduce((total, accessory) => total + accessory.qty * accessory.price, 0),
+  );
+  const linkedFamilyById = new Map((linkedFamilies ?? []).map((link) => [link.id, link]));
+  const linkedTemplateById = new Map((linkedTemplates ?? []).map((linkedTemplate) => [linkedTemplate.id, linkedTemplate]));
+  const selectedLinkedProducts = linkedProductSelectionInputs
+    .map((selection) => {
+      const link = linkedFamilyById.get(selection.linkId);
+      const linkedTemplate = link ? linkedTemplateById.get(link.linked_template_id) : null;
+
+      if (!link || !linkedTemplate) return null;
+
+      const categoryRow = activeCategoryRows(linkedTemplate.category_pricing)
+        .find((row) => row.id === selection.categoryRowId) ??
+        activeCategoryRows(linkedTemplate.category_pricing)[0] ??
+        null;
+      const variantRow = categoryRow
+        ? null
+        : activeVariantRows(linkedTemplate.variant_pricing)
+            .find((row) => row.id === selection.variantRowId) ??
+          activeVariantRows(linkedTemplate.variant_pricing)[0] ??
+          null;
+      const selectedCategoryLabel = selection.category || "Cat A";
+      const unitPrice = categoryRow
+        ? money(calculationNumber(categoryRow.prices?.[selectedCategoryLabel]))
+        : variantRow
+          ? money(calculationNumber(variantRow.price))
+          : money(linkedTemplate.default_unit_price ?? 0);
+      const currency = normalizeCurrency(
+        categoryRow?.currency ||
+        variantRow?.currency ||
+        linkedTemplate.currency ||
+        defaultCurrency,
+      );
+      const specification =
+        categoryRow?.specification ||
+        variantRow?.specification ||
+        linkedTemplate.default_specification ||
+        linkedTemplate.description ||
+        "";
+
+      return {
+        type: "linked_product_family",
+        label: link.label || linkedTemplate.template_name,
+        linked_template_id: linkedTemplate.id,
+        template_name: linkedTemplate.template_name,
+        selected_variant: categoryRow?.variant_name || variantRow?.variant_name || null,
+        selected_category: categoryRow ? selectedCategoryLabel : null,
+        qty: selection.qty,
+        unit_price: unitPrice,
+        currency,
+        line_total: money(unitPrice * selection.qty),
+        specification,
+        add_to_parent_price: link.add_to_parent_price,
+        append_to_specification: link.append_to_specification,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const matchingLinkedProductsTotal = money(
+    selectedLinkedProducts
+      .filter((item) => item.add_to_parent_price && item.currency === rowCurrency)
+      .reduce((total, item) => total + item.line_total, 0),
+  );
 
   const { data: lastItem } = await supabase
     .from("quotation_items")
@@ -1518,10 +1836,87 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     .limit(1)
     .maybeSingle<{ sort_order: number }>();
 
-  const unitPrice = derivedDesking
+  const baseUnitPrice = derivedDesking
     ? derivedDesking.unitPrice || money(template.default_unit_price ?? 0)
-    : money((template.default_unit_price ?? 0) + selectedOptionPrice);
-  const sourceSelectedOptionsPrice = derivedDesking?.unitPrice ?? selectedOptionPrice;
+    : selectedCategoryPricingRow
+      ? selectedCategoryPrice
+      : selectedVariantPricingRow
+        ? money(calculationNumber(selectedVariantPricingRow.price))
+        : money((template.default_unit_price ?? 0) + selectedOptionPrice);
+  const originalCurrencyTotals = new Map<string, number>();
+  const addCurrencyTotal = (currency: string, amount: number) => {
+    const normalizedCurrency = normalizeCurrency(currency || defaultCurrency);
+    originalCurrencyTotals.set(
+      normalizedCurrency,
+      money((originalCurrencyTotals.get(normalizedCurrency) ?? 0) + amount),
+    );
+  };
+
+  addCurrencyTotal(rowCurrency, baseUnitPrice);
+  for (const accessory of selectedAccessoryPricing) {
+    addCurrencyTotal(accessory.currency, accessory.qty * accessory.price);
+  }
+  for (const linkedProduct of selectedLinkedProducts) {
+    if (linkedProduct.add_to_parent_price) {
+      addCurrencyTotal(linkedProduct.currency, linkedProduct.line_total);
+    }
+  }
+
+  const nonAedCurrencies = Array.from(originalCurrencyTotals.entries())
+    .filter(([currency, amount]) => currency !== "AED" && amount > 0)
+    .map(([currency]) => currency);
+
+  for (const currency of nonAedCurrencies) {
+    if (!exchangeRateByCurrency.get(currency)) {
+      redirectWithMessage(redirectPath, `Enter ${currency} to AED exchange rate before adding this product.`);
+    }
+  }
+
+  const convertedUnitPrice = money(
+    Array.from(originalCurrencyTotals.entries()).reduce((total, [currency, amount]) => {
+      if (currency === "AED") return total + amount;
+
+      return total + amount * (exchangeRateByCurrency.get(currency) ?? 0);
+    }, 0),
+  );
+  const unitPrice = nonAedCurrencies.length
+    ? convertedUnitPrice
+    : money(baseUnitPrice + matchingAccessoryTotal + matchingLinkedProductsTotal);
+  const rowOutputCurrency = nonAedCurrencies.length ? "AED" : rowCurrency;
+  const currencyConversionData = nonAedCurrencies.length
+    ? {
+        target_currency: "AED",
+        original_totals: Object.fromEntries(originalCurrencyTotals),
+        rates: Object.fromEntries(
+          nonAedCurrencies.map((currency) => [currency, exchangeRateByCurrency.get(currency)]),
+        ),
+        converted_total: unitPrice,
+      }
+    : null;
+  const requestedDiscountType = textValue(formData, "product_library_discount_type");
+  const discountType = requestedDiscountType === "percent" ? "percent" : "amount";
+  const rawDiscountValue =
+    requestedDiscountType === "none"
+      ? 0
+      : Math.max(numberValue(formData, "product_library_discount_value", 0), 0);
+  const discountValue = discountType === "percent"
+    ? Math.min(rawDiscountValue, 100)
+    : rawDiscountValue;
+  const unitDiscountAmount = money(
+    discountType === "percent"
+      ? (unitPrice * discountValue) / 100
+      : discountValue,
+  );
+  const netPrice = money(Math.max(unitPrice - unitDiscountAmount, 0));
+  const pricingAdjustmentData = {
+    discount_type: requestedDiscountType === "none" ? "none" : discountType,
+    discount_value: requestedDiscountType === "none" ? 0 : discountValue,
+    unit_discount_amount: unitDiscountAmount,
+  };
+  const sourceSelectedOptionsPrice =
+    selectedAccessoryPricing.length || selectedLinkedProducts.length || currencyConversionData
+      ? unitPrice
+      : baseUnitPrice;
   const proposedImageFields = [
     "proposed_image_url_1",
     "proposed_image_url_2",
@@ -1554,11 +1949,43 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     : undefined;
   const proposedImagePath = productImageSnapshotPath(selectedProposedImage);
   const baseSpecification = template.default_specification ?? template.description ?? "";
-  const specification = derivedDesking?.specification || (selectedOptionNames.length
+  const specification = derivedDesking?.specification ||
+    selectedCategoryPricingRow?.specification ||
+    selectedVariantPricingRow?.specification ||
+    (selectedOptionNames.length
     ? [baseSpecification, `Selected options: ${selectedOptionNames.join(", ")}`]
         .filter(Boolean)
         .join("\n")
     : baseSpecification || null);
+  const accessoryNamesByGroup = new Map<string, string[]>();
+  for (const accessory of selectedAccessoryPricing) {
+    if (!accessory.item_name) continue;
+
+    accessoryNamesByGroup.set(accessory.group_name, [
+      ...(accessoryNamesByGroup.get(accessory.group_name) ?? []),
+      accessory.item_name,
+    ]);
+  }
+  const accessorySpecificationLines = Array.from(accessoryNamesByGroup.entries()).map(
+    ([groupName, names]) => `${groupName}: ${names.join(", ")}`,
+  );
+  const linkedProductSpecificationLines = selectedLinkedProducts
+    .filter((item) => item.append_to_specification)
+    .map((item) => {
+      const parts = [
+        item.template_name,
+        item.selected_variant,
+        item.selected_category,
+        `Qty ${item.qty}`,
+      ].filter(Boolean);
+
+      return `${item.label}: ${parts.join(", ")}`;
+    });
+  const specificationWithAccessories = accessorySpecificationLines.length || linkedProductSpecificationLines.length
+    ? [specification, ...accessorySpecificationLines, ...linkedProductSpecificationLines]
+        .filter(Boolean)
+        .join("\n")
+    : specification;
   const snapshotSelectedOptions = derivedDesking
     ? [
         {
@@ -1573,6 +2000,31 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         ...derivedDesking.selectedOptions,
       ]
     : selectedOptions;
+  const variantSnapshot = selectedVariantPricingRow
+    ? {
+        item_type: "variant_pricing",
+        selected_variant: selectedVariantPricingRow,
+      }
+    : null;
+  const categorySnapshot = selectedCategoryPricingRow
+    ? {
+        item_type: "category_pricing",
+        selected_variant: selectedCategoryPricingRow,
+        selected_category: selectedCategory,
+        selected_price: selectedCategoryPrice,
+      }
+    : null;
+  const finalSelectedOptions = categorySnapshot
+    ? [categorySnapshot, ...snapshotSelectedOptions]
+    : variantSnapshot
+      ? [variantSnapshot, ...snapshotSelectedOptions]
+      : snapshotSelectedOptions;
+  const finalSelectedOptionsWithAccessories = selectedAccessoryPricing.length
+    ? [...finalSelectedOptions, ...selectedAccessoryPricing]
+    : finalSelectedOptions;
+  const finalSelectedOptionsWithLinkedProducts = selectedLinkedProducts.length
+    ? [...finalSelectedOptionsWithAccessories, ...selectedLinkedProducts]
+    : finalSelectedOptionsWithAccessories;
   const deskingSourceData = derivedDesking
     ? {
         size_label: derivedDesking.sizeLabel,
@@ -1614,9 +2066,49 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       proposed_image_url_2: template.proposed_image_url_2,
       proposed_image_url_3: template.proposed_image_url_3,
       selected_proposed_image_url: selectedProposedImage,
-      selected_options: snapshotSelectedOptions,
+      selected_options: finalSelectedOptionsWithLinkedProducts,
       selected_options_price: sourceSelectedOptionsPrice,
       ...(deskingSourceData ? { desking: deskingSourceData } : {}),
+      ...(selectedVariantPricingRow ? { variant_pricing: selectedVariantPricingRow } : {}),
+      ...(selectedCategoryPricingRow
+        ? {
+            category_pricing: {
+              selected_row: selectedCategoryPricingRow,
+              selected_category: selectedCategory,
+              selected_price: selectedCategoryPrice,
+            },
+          }
+        : {}),
+      ...(selectedAccessoryPricing.length
+        ? {
+            add_ons: {
+              groups: Array.from(
+                selectedAccessoryPricing.reduce((groups, item) => {
+                  const currentItems = groups.get(item.group_name) ?? [];
+                  groups.set(item.group_name, [...currentItems, item]);
+                  return groups;
+                }, new Map<string, typeof selectedAccessoryPricing>()),
+              ).map(([group_name, items]) => ({ group_name, items })),
+              matching_currency_total: matchingAccessoryTotal,
+              mixed_currency_warning: selectedAccessoryPricing.some(
+                (item) => item.currency !== rowCurrency,
+              ),
+            },
+          }
+        : {}),
+      ...(selectedLinkedProducts.length
+        ? {
+            linked_products: {
+              items: selectedLinkedProducts,
+              matching_currency_total: matchingLinkedProductsTotal,
+              mixed_currency_warning: selectedLinkedProducts.some(
+                (item) => item.add_to_parent_price && item.currency !== rowCurrency,
+              ),
+            },
+          }
+        : {}),
+      ...(currencyConversionData ? { currency_conversion: currencyConversionData } : {}),
+      pricing_adjustment: pricingAdjustmentData,
     },
     item_code_snapshot: template.item_code ?? template.template_code,
     item_name_snapshot: template.template_name,
@@ -1624,23 +2116,32 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     category_name_snapshot: categoryName || null,
     specified_image_url_snapshot: null,
     proposed_image_url_snapshot: proposedImagePath,
-    specification_snapshot: specification,
-    selected_options_snapshot: snapshotSelectedOptions,
+    specification_snapshot: specificationWithAccessories,
+    selected_options_snapshot: finalSelectedOptionsWithLinkedProducts,
     model_snapshot: derivedDesking
       ? `Cluster of ${derivedDesking.totalSeats}`
-      : selectedClusterOptions.join(", ") || null,
-    finish_snapshot: derivedDesking?.finishOptions.join(", ") || selectedFinishOptions.join(", ") || null,
-    size_snapshot: derivedDesking?.dimensionValue || selectedSizeOptions.join(", ") || null,
+      : selectedCategoryPricingRow?.variant_name ||
+        selectedVariantPricingRow?.variant_name ||
+        selectedClusterOptions.join(", ") ||
+        null,
+    finish_snapshot: selectedCategoryPricingRow
+      ? selectedCategory
+      : derivedDesking?.finishOptions.join(", ") || selectedFinishOptions.join(", ") || null,
+    size_snapshot: derivedDesking?.dimensionValue ||
+      selectedCategoryPricingRow?.dimension ||
+      selectedVariantPricingRow?.dimension ||
+      selectedSizeOptions.join(", ") ||
+      null,
     origin_snapshot: originSnapshot,
     supplier_name_snapshot: supplierNameSnapshot,
     qty: 1,
     unit_label: template.unit_label || "Pc",
     unit_price: unitPrice,
-    discount_type: "amount",
-    discount_value: 0,
-    net_price: unitPrice,
-    net_total: unitPrice,
-    currency: normalizeCurrency(derivedDesking?.mainCurrency || template.currency || defaultCurrency),
+    discount_type: discountType,
+    discount_value: discountValue,
+    net_price: netPrice,
+    net_total: netPrice,
+    currency: rowOutputCurrency,
     sort_order: (lastItem?.sort_order ?? 0) + 10,
     is_optional: false,
     internal_cost: 0,

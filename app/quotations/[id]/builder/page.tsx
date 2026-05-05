@@ -4,6 +4,7 @@ import { Fragment, type CSSProperties, type ReactNode } from "react";
 import { InlineRowAutosave } from "@/components/quotations/inline-row-autosave";
 import { CellFormattingToolbar } from "@/components/quotations/cell-formatting-toolbar";
 import {
+  type ProductLibraryLinkedFamily,
   ProductLibrarySelector,
   type ProductLibraryBrand,
   type ProductLibraryCategory,
@@ -330,6 +331,16 @@ function cellStyleCss(style: CellStyle, fallbackAlign: "left" | "center" | "righ
   };
 }
 
+function visibleWrapCss(style: CSSProperties): CSSProperties {
+  return {
+    ...style,
+    overflow: undefined,
+    textOverflow: undefined,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+  };
+}
+
 function specificationMetadataSettings(settings?: LayoutSettings | null) {
   const metadata = settings?.specificationMetadata;
 
@@ -362,7 +373,7 @@ function SpecificationDetailBlock({
     item.model_snapshot.trim().toLowerCase() !== title
       ? ["Model", item.model_snapshot]
       : null,
-    settings.size && !visibleColumnKeys.has("size") && item.size_snapshot
+    item.size_snapshot
       ? ["Dimension", item.size_snapshot]
       : null,
     settings.finish && !visibleColumnKeys.has("finish") && item.finish_snapshot
@@ -901,6 +912,7 @@ function RowActionPanel({
   brands,
   categories,
   components,
+  linkedFamilies,
   productTemplates,
   quotation,
   returnTo,
@@ -911,6 +923,7 @@ function RowActionPanel({
   categories: ProductLibraryCategory[];
   components: ProductLibraryComponent[];
   productTemplates: ProductLibraryTemplate[];
+  linkedFamilies: ProductLibraryLinkedFamily[];
   quotation: Quotation;
   returnTo: string;
   sectionId: string;
@@ -926,6 +939,7 @@ function RowActionPanel({
           brands={brands}
           categories={categories}
           components={components}
+          linkedFamilies={linkedFamilies}
           quotationId={quotation.id}
           returnTo={returnTo}
           sectionId={sectionId}
@@ -1102,9 +1116,10 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     render: (item, _serial, formId, canEdit) => {
       const style = cellStyleForItem(item, "specification");
       const css = cellStyleCss(style);
+      const displayCss = visibleWrapCss(css);
 
       return (
-      <div className="flex h-full flex-col justify-center text-left" style={css}>
+      <div className="flex min-h-full flex-col justify-center text-left" style={canEdit ? css : displayCss}>
         {canEdit ? <CellStyleInputs formId={formId} item={item} cellKey="specification" /> : null}
         <div className="flex flex-wrap items-center gap-2">
           {canEdit ? (
@@ -1137,11 +1152,16 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
               formatCellKey="specification"
             />
           ) : (
-            <p className="text-zinc-700" style={css}>
+            <p className="text-zinc-700" style={displayCss}>
               {item.specification_snapshot ?? "-"}
             </p>
           )}
         </div>
+        {item.size_snapshot ? (
+          <p className="mt-1 text-xs leading-4 text-zinc-500" style={displayCss}>
+            <span className="font-semibold">Dimension:</span> {item.size_snapshot}
+          </p>
+        ) : null}
       </div>
       );
     },
@@ -1355,9 +1375,11 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
       ...css,
       fontWeight: css.fontWeight,
     };
+    const displayTitleStyle = visibleWrapCss(titleStyle);
+    const displayDescriptionStyle = visibleWrapCss(descriptionStyle);
 
     return (
-      <div className="flex h-full flex-col justify-center text-left">
+      <div className="flex min-h-full flex-col justify-center text-left">
         {canEdit ? <CellStyleInputs formId={formId} item={item} cellKey="specification" /> : null}
         <div className="flex flex-wrap items-center gap-2">
           {canEdit ? (
@@ -1369,7 +1391,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
               formatCellKey="specification"
             />
           ) : metadataSettings.title ? (
-            <span className="text-zinc-950" style={titleStyle}>
+            <span className="text-zinc-950" style={displayTitleStyle}>
               {specificationTitle(item)}
             </span>
           ) : null}
@@ -1393,7 +1415,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
               formatCellKey="specification"
             />
           ) : (
-            <p className="text-zinc-700" style={descriptionStyle}>
+            <p className="text-zinc-700" style={displayDescriptionStyle}>
               {item.specification_snapshot ?? "-"}
             </p>
           )}
@@ -1854,7 +1876,7 @@ export default async function QuotationBuilderPage({
   const { data: productTemplates, error: productTemplatesError } = await supabase
     .from("product_templates")
     .select(
-      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,currency,default_unit_price",
+      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,currency,default_unit_price",
     )
     .eq("is_active", true)
     .order("template_name", { ascending: true })
@@ -1870,6 +1892,14 @@ export default async function QuotationBuilderPage({
     .order("sort_order", { ascending: true })
     .order("component_name", { ascending: true })
     .returns<ProductLibraryComponent[]>();
+
+  const { data: linkedFamilies, error: linkedFamiliesError } = await supabase
+    .from("product_template_linked_families")
+    .select("id,parent_template_id,linked_template_id,label,is_required,allow_multiple,add_to_parent_price,append_to_specification,default_qty,sort_order,is_active")
+    .eq("is_active", true)
+    .order("parent_template_id", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .returns<ProductLibraryLinkedFamily[]>();
 
   const { data: sections, error: sectionsError } = await supabase
     .from("quotation_sections")
@@ -1898,6 +1928,7 @@ export default async function QuotationBuilderPage({
   if (productCategoriesError) console.error("PRODUCT SELECTOR CATEGORIES ERROR", productCategoriesError.message);
   if (productTemplatesError) console.error("PRODUCT SELECTOR TEMPLATES ERROR", productTemplatesError.message);
   if (productComponentsError) console.error("PRODUCT SELECTOR OPTIONS ERROR", productComponentsError.message);
+  if (linkedFamiliesError) console.error("PRODUCT SELECTOR LINKED FAMILIES ERROR", linkedFamiliesError.message);
 
   const itemsBySection = new Map<string, QuotationItem[]>();
 
@@ -2368,6 +2399,7 @@ export default async function QuotationBuilderPage({
                               brands={productBrands ?? []}
                               categories={productCategories ?? []}
                               components={productComponents ?? []}
+                              linkedFamilies={linkedFamilies ?? []}
                               productTemplates={productTemplates ?? []}
                               quotation={quotation}
                               returnTo={builderPath}

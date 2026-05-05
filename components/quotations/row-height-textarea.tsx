@@ -29,10 +29,24 @@ export function RowHeightTextarea({
   const heightInputRef = useRef<HTMLInputElement>(null);
   const initialHeightRef = useRef<number | null>(null);
 
+  const resizeToContent = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const manualMinHeight = rowHeight
+      ? Math.max(rowHeight - 18, MIN_ROW_HEIGHT)
+      : MIN_ROW_HEIGHT;
+
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.max(textarea.scrollHeight, manualMinHeight)}px`;
+  }, [rowHeight]);
+
   const syncHeight = useCallback((force = false) => {
     const textarea = textareaRef.current;
     const heightInput = heightInputRef.current;
     if (!textarea || !heightInput) return;
+
+    resizeToContent();
 
     const measuredHeight = clampHeight(textarea.getBoundingClientRect().height);
     if (initialHeightRef.current === null) {
@@ -43,7 +57,7 @@ export function RowHeightTextarea({
     if (rowHeight || resized || force) {
       heightInput.value = String(measuredHeight);
     }
-  }, [rowHeight]);
+  }, [resizeToContent, rowHeight]);
 
   useEffect(() => {
     const form = document.getElementById(formId);
@@ -51,6 +65,7 @@ export function RowHeightTextarea({
     if (!form || !textarea) return;
 
     const animationFrame = window.requestAnimationFrame(() => {
+      resizeToContent();
       initialHeightRef.current = clampHeight(textarea.getBoundingClientRect().height);
     });
     const handleSubmit = () => syncHeight(false);
@@ -60,7 +75,7 @@ export function RowHeightTextarea({
       window.cancelAnimationFrame(animationFrame);
       form.removeEventListener("submit", handleSubmit);
     };
-  }, [formId, syncHeight]);
+  }, [formId, resizeToContent, syncHeight]);
 
   return (
     <>
@@ -79,9 +94,10 @@ export function RowHeightTextarea({
         data-format-cell={formatCellKey}
         defaultValue={defaultValue ?? ""}
         rows={2}
+        onInput={() => syncHeight(true)}
         onBlur={() => syncHeight(false)}
         onMouseUp={() => syncHeight(false)}
-        className="min-h-10 w-full resize-none border-0 bg-transparent px-1 py-0.5 text-xs text-zinc-700 outline-none focus:bg-emerald-50 focus:ring-1 focus:ring-emerald-800"
+        className="min-h-10 w-full resize-none overflow-hidden border-0 bg-transparent px-1 py-0.5 text-xs text-zinc-700 outline-none focus:bg-emerald-50 focus:ring-1 focus:ring-emerald-800"
         style={{
           ...(rowHeight ? { minHeight: `${Math.max(rowHeight - 18, MIN_ROW_HEIGHT)}px` } : {}),
           ...cellStyle,
