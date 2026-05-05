@@ -500,7 +500,13 @@ export default async function QuotationDetailPage({
                     href={`/quotations/${quotation.id}/pdf`}
                     className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
                   >
-                    Print / Export PDF
+                    Preview PDF
+                  </Link>
+                  <Link
+                    href={`/quotations/${quotation.id}/download-pdf`}
+                    className="rounded-md border border-emerald-900 bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                  >
+                    Download PDF
                   </Link>
                   <Link
                     href={`/quotations/${quotation.id}/builder`}
