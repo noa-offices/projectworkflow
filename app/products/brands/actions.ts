@@ -28,6 +28,12 @@ function redirectWithMessage(message: string): never {
   redirect(`/products/brands?message=${encodeURIComponent(message)}`);
 }
 
+function redirectToBrands(message: string, params: Record<string, string> = {}): never {
+  const query = new URLSearchParams(params);
+  query.set("message", message);
+  redirect(`/products/brands?${query.toString()}`);
+}
+
 export async function createBrand(formData: FormData) {
   const { user } = await requireSettingsManager();
   const name = textValue(formData, "name");
@@ -87,6 +93,80 @@ export async function updateBrand(formData: FormData) {
 
   revalidatePath("/products/brands");
   redirectWithMessage("Brand updated.");
+}
+
+export async function archiveBrand(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) redirectWithMessage("Brand id is required.");
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("brands").update({ is_active: false }).eq("id", id);
+
+  if (error) {
+    console.error("BRAND ARCHIVE ERROR", error.message);
+    redirectWithMessage("Brand could not be moved to Archive.");
+  }
+
+  revalidatePath("/products/brands");
+  redirectWithMessage("Brand moved to Archive.");
+}
+
+export async function restoreBrand(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) redirectToBrands("Brand id is required.", { status: "archive" });
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("brands").update({ is_active: true }).eq("id", id);
+
+  if (error) {
+    console.error("BRAND RESTORE ERROR", error.message);
+    redirectToBrands("Brand could not be restored.", { status: "archive" });
+  }
+
+  revalidatePath("/products/brands");
+  redirectToBrands("Brand restored.", { status: "archive" });
+}
+
+export async function permanentlyDeleteBrand(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) redirectToBrands("Brand id is required.", { status: "archive" });
+
+  const supabase = await createClient();
+  const { count: categoryCount, error: categoryError } = await supabase
+    .from("product_categories")
+    .select("id", { count: "exact", head: true })
+    .eq("brand_id", id);
+  const { count: templateCount, error: templateError } = await supabase
+    .from("product_templates")
+    .select("id", { count: "exact", head: true })
+    .eq("brand_id", id);
+
+  if (categoryError || templateError) {
+    console.error("BRAND DEPENDENCY CHECK ERROR", categoryError?.message ?? templateError?.message);
+    redirectToBrands("Brand dependencies could not be checked.", { status: "archive" });
+  }
+
+  if ((categoryCount ?? 0) > 0 || (templateCount ?? 0) > 0) {
+    redirectToBrands("This brand has categories or product templates. Keep it archived.", {
+      status: "archive",
+    });
+  }
+
+  const { error } = await supabase.from("brands").delete().eq("id", id);
+
+  if (error) {
+    console.error("BRAND PERMANENT DELETE ERROR", error.message);
+    redirectToBrands("Brand could not be permanently deleted.", { status: "archive" });
+  }
+
+  revalidatePath("/products/brands");
+  redirectToBrands("Brand permanently deleted.", { status: "archive" });
 }
 
 export async function createCategory(formData: FormData) {
@@ -152,4 +232,117 @@ export async function updateCategory(formData: FormData) {
 
   revalidatePath("/products/brands");
   redirectWithMessage("Category updated.");
+}
+
+export async function archiveCategory(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) redirectWithMessage("Category id is required.");
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_categories")
+    .update({ is_active: false })
+    .eq("id", id);
+
+  if (error) {
+    console.error("CATEGORY ARCHIVE ERROR", error.message);
+    redirectWithMessage("Category could not be moved to Archive.");
+  }
+
+  revalidatePath("/products/brands");
+  redirectWithMessage("Category moved to Archive.");
+}
+
+export async function restoreCategory(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) redirectToBrands("Category id is required.", { status: "archive" });
+
+  const supabase = await createClient();
+  const { data: category, error: readError } = await supabase
+    .from("product_categories")
+    .select("brand_id,parent_id")
+    .eq("id", id)
+    .single<{ brand_id: string; parent_id: string | null }>();
+
+  if (readError || !category) {
+    console.error("CATEGORY RESTORE READ ERROR", readError?.message);
+    redirectToBrands("Category could not be loaded.", { status: "archive" });
+  }
+
+  const { data: brand } = await supabase
+    .from("brands")
+    .select("is_active")
+    .eq("id", category.brand_id)
+    .single<{ is_active: boolean }>();
+
+  if (!brand?.is_active) {
+    redirectToBrands("Restore the parent brand/category first.", { status: "archive" });
+  }
+
+  if (category.parent_id) {
+    const { data: parent } = await supabase
+      .from("product_categories")
+      .select("is_active")
+      .eq("id", category.parent_id)
+      .single<{ is_active: boolean }>();
+
+    if (!parent?.is_active) {
+      redirectToBrands("Restore the parent brand/category first.", { status: "archive" });
+    }
+  }
+
+  const { error } = await supabase
+    .from("product_categories")
+    .update({ is_active: true })
+    .eq("id", id);
+
+  if (error) {
+    console.error("CATEGORY RESTORE ERROR", error.message);
+    redirectToBrands("Category could not be restored.", { status: "archive" });
+  }
+
+  revalidatePath("/products/brands");
+  redirectToBrands("Category restored.", { status: "archive" });
+}
+
+export async function permanentlyDeleteCategory(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) redirectToBrands("Category id is required.", { status: "archive" });
+
+  const supabase = await createClient();
+  const { count: childCount, error: childError } = await supabase
+    .from("product_categories")
+    .select("id", { count: "exact", head: true })
+    .eq("parent_id", id);
+  const { count: templateCount, error: templateError } = await supabase
+    .from("product_templates")
+    .select("id", { count: "exact", head: true })
+    .or(`main_category_id.eq.${id},sub_category_id.eq.${id}`);
+
+  if (childError || templateError) {
+    console.error("CATEGORY DEPENDENCY CHECK ERROR", childError?.message ?? templateError?.message);
+    redirectToBrands("Category dependencies could not be checked.", { status: "archive" });
+  }
+
+  if ((childCount ?? 0) > 0 || (templateCount ?? 0) > 0) {
+    redirectToBrands("This category has subcategories or product templates. Keep it archived.", {
+      status: "archive",
+    });
+  }
+
+  const { error } = await supabase.from("product_categories").delete().eq("id", id);
+
+  if (error) {
+    console.error("CATEGORY PERMANENT DELETE ERROR", error.message);
+    redirectToBrands("Category could not be permanently deleted.", { status: "archive" });
+  }
+
+  revalidatePath("/products/brands");
+  redirectToBrands("Category permanently deleted.", { status: "archive" });
 }

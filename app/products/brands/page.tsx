@@ -1,11 +1,18 @@
 import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
+import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { TopBar } from "@/components/top-bar";
 import { requireSettingsManager } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import {
+  archiveBrand,
+  archiveCategory,
   createBrand,
   createCategory,
+  permanentlyDeleteBrand,
+  permanentlyDeleteCategory,
+  restoreBrand,
+  restoreCategory,
   updateBrand,
   updateCategory,
 } from "./actions";
@@ -316,10 +323,19 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
 
   const brandList = brands ?? [];
   const categoryList = categories ?? [];
+  const activeBrandList = brandList.filter((brand) => brand.is_active);
+  const archivedBrandList = brandList.filter((brand) => !brand.is_active);
+  const activeCategoryList = categoryList.filter((category) => category.is_active);
+  const archivedMainCategories = categoryList.filter(
+    (category) => !category.is_active && !category.parent_id,
+  );
+  const archivedSubCategories = categoryList.filter(
+    (category) => !category.is_active && category.parent_id,
+  );
   const mainCategoriesByBrand = new Map<string, ProductCategory[]>();
   const subCategoriesByParent = new Map<string, ProductCategory[]>();
 
-  for (const category of categoryList) {
+  for (const category of activeCategoryList) {
     if (category.parent_id) {
       const siblings = subCategoriesByParent.get(category.parent_id) ?? [];
       siblings.push(category);
@@ -342,7 +358,11 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
   }
 
   const normalizedSearch = searchQuery.toLowerCase();
-  const filteredBrands = brandList.filter((brand) => {
+  const visibleBrandList =
+    statusFilter === "inactive" || statusFilter === "archive"
+      ? archivedBrandList
+      : activeBrandList;
+  const filteredBrands = visibleBrandList.filter((brand) => {
     const matchesSearch =
       !normalizedSearch ||
       brand.name.toLowerCase().includes(normalizedSearch) ||
@@ -350,6 +370,7 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
     const matchesStatus =
       !statusFilter ||
       statusFilter === "all" ||
+      statusFilter === "archive" ||
       (statusFilter === "active" && brand.is_active) ||
       (statusFilter === "inactive" && !brand.is_active);
 
@@ -357,7 +378,7 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
   });
 
   const selectedBrand =
-    brandList.find((brand) => brand.id === selectedBrandId) ?? null;
+    activeBrandList.find((brand) => brand.id === selectedBrandId) ?? null;
   const selectedMainCategories = selectedBrand
     ? mainCategoriesByBrand.get(selectedBrand.id) ?? []
     : [];
@@ -527,6 +548,15 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                               >
                                 Edit
                               </Link>
+                              <form action={archiveBrand}>
+                                <input type="hidden" name="id" value={brand.id} />
+                                <ConfirmSubmitButton
+                                  message="This will move the brand to Archive. You can restore it later."
+                                  className="text-sm font-semibold text-red-700 transition hover:text-red-800"
+                                >
+                                  Delete
+                                </ConfirmSubmitButton>
+                              </form>
                             </div>
                           </td>
                         </tr>
@@ -587,6 +617,15 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                         >
                           Edit
                         </Link>
+                        <form action={archiveBrand}>
+                          <input type="hidden" name="id" value={brand.id} />
+                          <ConfirmSubmitButton
+                            message="This will move the brand to Archive. You can restore it later."
+                            className="text-sm font-semibold text-red-700"
+                          >
+                            Delete
+                          </ConfirmSubmitButton>
+                        </form>
                       </div>
                     </article>
                   );
@@ -758,6 +797,15 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                                         />
                                       </div>
                                     </details>
+                                    <form action={archiveCategory}>
+                                      <input type="hidden" name="id" value={category.id} />
+                                      <ConfirmSubmitButton
+                                        message="This will move the category to Archive. You can restore it later."
+                                        className="text-sm font-semibold text-red-700 transition hover:text-red-800"
+                                      >
+                                        Delete
+                                      </ConfirmSubmitButton>
+                                    </form>
                                   </div>
                                 </td>
                               </tr>
@@ -820,19 +868,30 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                               {subCategory.code ?? "-"}
                             </p>
                             <StatusBadge active={subCategory.is_active} />
-                            <details className="justify-self-start md:justify-self-end">
-                              <summary className="cursor-pointer text-sm font-semibold text-zinc-600 transition hover:text-zinc-950">
-                                Edit
-                              </summary>
-                              <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-4 md:w-[560px]">
-                                <CategoryForm
-                                  brandId={selectedBrand.id}
-                                  parentId={selectedCategory.id}
-                                  category={subCategory}
-                                  submitLabel="Save"
-                                />
-                              </div>
-                            </details>
+                            <div className="flex gap-3 justify-self-start md:justify-self-end">
+                              <details>
+                                <summary className="cursor-pointer text-sm font-semibold text-zinc-600 transition hover:text-zinc-950">
+                                  Edit
+                                </summary>
+                                <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-4 md:w-[560px]">
+                                  <CategoryForm
+                                    brandId={selectedBrand.id}
+                                    parentId={selectedCategory.id}
+                                    category={subCategory}
+                                    submitLabel="Save"
+                                  />
+                                </div>
+                              </details>
+                              <form action={archiveCategory}>
+                                <input type="hidden" name="id" value={subCategory.id} />
+                                <ConfirmSubmitButton
+                                  message="This will move the subcategory to Archive. You can restore it later."
+                                  className="text-sm font-semibold text-red-700 transition hover:text-red-800"
+                                >
+                                  Delete
+                                </ConfirmSubmitButton>
+                              </form>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -851,6 +910,76 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                   subcategories.
                 </section>
               )}
+              <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+                <div className="border-b border-zinc-200 p-4">
+                  <h2 className="font-semibold text-zinc-950">Archive</h2>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    Restore archived brands and categories, or permanently delete unused records.
+                  </p>
+                </div>
+                <div className="divide-y divide-zinc-100">
+                  {[
+                    ...archivedBrandList.map((item) => ({
+                      id: item.id,
+                      label: item.name,
+                      meta: "Brand",
+                      restoreAction: restoreBrand,
+                      deleteAction: permanentlyDeleteBrand,
+                    })),
+                    ...archivedMainCategories.map((item) => ({
+                      id: item.id,
+                      label: item.name,
+                      meta: `Main Category / ${brandList.find((brand) => brand.id === item.brand_id)?.name ?? "Unknown brand"}`,
+                      restoreAction: restoreCategory,
+                      deleteAction: permanentlyDeleteCategory,
+                    })),
+                    ...archivedSubCategories.map((item) => ({
+                      id: item.id,
+                      label: item.name,
+                      meta: `Sub Category / ${brandList.find((brand) => brand.id === item.brand_id)?.name ?? "Unknown brand"}`,
+                      restoreAction: restoreCategory,
+                      deleteAction: permanentlyDeleteCategory,
+                    })),
+                  ].map((item) => (
+                    <div
+                      key={`${item.meta}-${item.id}`}
+                      className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"
+                    >
+                      <div>
+                        <h3 className="font-semibold text-zinc-950">{item.label}</h3>
+                        <p className="mt-1 text-sm text-zinc-500">{item.meta}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2 md:justify-end">
+                        <form action={item.restoreAction}>
+                          <input type="hidden" name="id" value={item.id} />
+                          <button
+                            type="submit"
+                            className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                          >
+                            Restore
+                          </button>
+                        </form>
+                        <form action={item.deleteAction}>
+                          <input type="hidden" name="id" value={item.id} />
+                          <ConfirmSubmitButton
+                            message="Permanently delete this item? This cannot be undone."
+                            className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
+                          >
+                            Delete permanently
+                          </ConfirmSubmitButton>
+                        </form>
+                      </div>
+                    </div>
+                  ))}
+                  {!archivedBrandList.length &&
+                  !archivedMainCategories.length &&
+                  !archivedSubCategories.length ? (
+                    <p className="p-6 text-sm text-zinc-500">
+                      No archived brands or categories.
+                    </p>
+                  ) : null}
+                </div>
+              </section>
             </div>
           </section>
         </main>

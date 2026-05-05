@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppSidebar } from "@/components/app-sidebar";
+import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { TopBar } from "@/components/top-bar";
 import {
   createQuotation,
@@ -8,6 +9,8 @@ import {
   createQuotationRevision,
   deactivateQuotation,
   duplicateQuotation,
+  permanentlyDeleteQuotation,
+  restoreQuotation,
 } from "@/app/quotations/actions";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
@@ -57,6 +60,7 @@ type Quotation = {
   status: string;
   currency: string;
   grand_total: number;
+  is_active: boolean;
 };
 
 type QuotationAction = (formData: FormData) => Promise<void>;
@@ -240,27 +244,34 @@ function QuotationActionForm({
   quotationId,
   projectId,
   danger = false,
+  confirm,
 }: {
   action: QuotationAction;
   label: string;
   quotationId: string;
   projectId: string;
   danger?: boolean;
+  confirm?: string;
 }) {
+  const className = `w-full rounded-md px-3 py-2 text-left text-sm font-semibold transition ${
+    danger
+      ? "text-red-700 hover:bg-red-50"
+      : "text-zinc-700 hover:bg-zinc-50 hover:text-emerald-900"
+  }`;
+
   return (
     <form action={action}>
       <input type="hidden" name="quotation_id" value={quotationId} />
       <input type="hidden" name="return_to" value={`/clients/projects/${projectId}`} />
-      <button
-        type="submit"
-        className={`w-full rounded-md px-3 py-2 text-left text-sm font-semibold transition ${
-          danger
-            ? "text-red-700 hover:bg-red-50"
-            : "text-zinc-700 hover:bg-zinc-50 hover:text-emerald-900"
-        }`}
-      >
-        {label}
-      </button>
+      {confirm ? (
+        <ConfirmSubmitButton message={confirm} className={className}>
+          {label}
+        </ConfirmSubmitButton>
+      ) : (
+        <button type="submit" className={className}>
+          {label}
+        </button>
+      )}
     </form>
   );
 }
@@ -293,9 +304,8 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
 
   const { data: quotations, error: quotationsError } = await supabase
     .from("quotations")
-    .select("id,quotation_no,revision_no,title,quotation_date,status,currency,grand_total")
+    .select("id,quotation_no,revision_no,title,quotation_date,status,currency,grand_total,is_active")
     .eq("project_id", project.id)
-    .eq("is_active", true)
     .order("quotation_date", { ascending: false })
     .order("created_at", { ascending: false })
     .returns<Quotation[]>();
@@ -303,12 +313,14 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
   if (clientError) console.error("PROJECT CLIENT READ ERROR", clientError.message);
   if (quotationsError) console.error("PROJECT QUOTATIONS LIST ERROR", quotationsError.message);
 
-  const quotationList = [...(quotations ?? [])].sort((a, b) => {
+  const allQuotationList = [...(quotations ?? [])].sort((a, b) => {
     const baseCompare = baseQuotationNo(a.quotation_no).localeCompare(baseQuotationNo(b.quotation_no));
     if (baseCompare !== 0) return baseCompare;
 
     return (a.revision_no ?? 0) - (b.revision_no ?? 0);
   });
+  const quotationList = allQuotationList.filter((quotation) => quotation.is_active);
+  const archivedQuotationList = allQuotationList.filter((quotation) => !quotation.is_active);
 
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
@@ -496,13 +508,14 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                                 <p className="px-3 py-2 text-xs leading-5 text-zinc-500">
                                   Deactivate this quotation? This will hide it from active lists.
                                 </p>
-                                <QuotationActionForm
-                                  action={deactivateQuotation}
-                                  label="Confirm deactivate"
-                                  quotationId={quotation.id}
-                                  projectId={project.id}
-                                  danger
-                                />
+                              <QuotationActionForm
+                                action={deactivateQuotation}
+                                label="Move to Archive"
+                                quotationId={quotation.id}
+                                projectId={project.id}
+                                confirm="Move this quotation to Archive? Quotation line items will not be changed."
+                                danger
+                              />
                               </details>
                             </div>
                           </details>
@@ -518,6 +531,53 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                 </p>
               ) : null}
             </div>
+            {archivedQuotationList.length ? (
+              <div className="mt-6 rounded-lg border border-zinc-200 bg-zinc-50 p-4">
+                <h3 className="font-semibold text-zinc-950">Archived Quotations</h3>
+                <p className="mt-1 text-sm text-zinc-500">
+                  Restore archived quotations, or permanently delete archived quotation records.
+                </p>
+                <div className="mt-3 divide-y divide-zinc-200 rounded-md border border-zinc-200 bg-white">
+                  {archivedQuotationList.map((quotation) => (
+                    <div
+                      key={quotation.id}
+                      className="grid gap-3 p-3 md:grid-cols-[1fr_auto] md:items-center"
+                    >
+                      <div>
+                        <p className="font-semibold text-zinc-950">
+                          {quotation.quotation_no ?? "Draft quotation"} - {quotation.title}
+                        </p>
+                        <p className="mt-1 text-sm text-zinc-500">
+                          {quotation.quotation_date} / {quotationStatuses.get(quotation.status) ?? quotation.status}
+                        </p>
+                      </div>
+                      {canManageRecords ? (
+                        <div className="flex flex-wrap gap-2 md:justify-end">
+                          <div className="w-28">
+                            <QuotationActionForm
+                              action={restoreQuotation}
+                              label="Restore"
+                              quotationId={quotation.id}
+                              projectId={project.id}
+                            />
+                          </div>
+                          <div className="w-44">
+                            <QuotationActionForm
+                              action={permanentlyDeleteQuotation}
+                              label="Delete permanently"
+                              quotationId={quotation.id}
+                              projectId={project.id}
+                              confirm="Permanently delete this archived quotation? This will delete its sections and line items. This cannot be undone."
+                              danger
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </section>
 
           <section className="mt-6 grid gap-5 xl:grid-cols-2">

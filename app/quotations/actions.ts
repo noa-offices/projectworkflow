@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireRecordsManager } from "@/lib/auth";
+import { requireActiveUser, requireRecordsManager } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
@@ -615,6 +615,7 @@ type QuotationSectionCopySource = {
 
 type QuotationItemCopySource = {
   id: string;
+  quotation_id: string;
   section_id: string | null;
   item_type: string;
   source_template_id: string | null;
@@ -790,7 +791,7 @@ const sectionCopySelect =
   "id,section_title,section_notes,section_type,title_align,title_bold,title_bg,title_size,row_height,sort_order";
 
 const itemCopySelect =
-  "id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,notes";
+  "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,notes";
 
 function itemPayload(formData: FormData, userId?: string) {
   const qty = numberValue(formData, "qty", 1);
@@ -1211,7 +1212,155 @@ export async function deactivateQuotation(formData: FormData) {
 
   revalidatePath("/quotations");
   revalidatePath(redirectPath);
-  redirectWithMessage(redirectPath, "Quotation deactivated.");
+  redirectWithMessage(redirectPath, "Quotation moved to Archive.");
+}
+
+export async function restoreQuotation(formData: FormData) {
+  await requireRecordsManager();
+  const quotationId = actionQuotationId(formData);
+  const redirectPath = returnPath(formData, "/quotations");
+
+  if (!quotationId) {
+    redirectWithMessage(redirectPath, "Quotation is required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase
+    .from("quotations")
+    .update({ is_active: true })
+    .eq("id", quotationId);
+
+  if (error) {
+    console.error("QUOTATION RESTORE ERROR", error.message);
+    redirectWithMessage(redirectPath, "Quotation could not be restored.");
+  }
+
+  revalidatePath("/quotations");
+  revalidatePath(redirectPath);
+  redirectWithMessage(redirectPath, "Quotation restored.");
+}
+
+export async function permanentlyDeleteQuotation(formData: FormData) {
+  const { profile } = await requireActiveUser();
+  const quotationId = actionQuotationId(formData);
+  const redirectPath = returnPath(formData, "/quotations");
+
+  if (!quotationId) {
+    redirectWithMessage(redirectPath, "Quotation is required.");
+  }
+
+  const canManageRecords =
+    profile?.role === "system_owner" ||
+    profile?.role === "admin_manager" ||
+    profile?.role === "sales_designer";
+
+  if (!canManageRecords) {
+    redirectWithMessage(
+      redirectPath,
+      "You do not have permission to permanently delete quotations.",
+    );
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: quotation, error: quotationError } = await supabase
+    .from("quotations")
+    .select("id,project_id,is_active")
+    .eq("id", quotationId)
+    .maybeSingle<{ id: string; project_id: string | null; is_active: boolean }>();
+
+  if (quotationError) {
+    console.error("QUOTATION PERMANENT DELETE READ ERROR", quotationError.message);
+    redirectWithMessage(redirectPath, "Quotation could not be loaded.");
+  }
+
+  if (!quotation) {
+    redirectWithMessage(redirectPath, "Quotation could not be deleted because it was not found.");
+  }
+
+  if (quotation.is_active) {
+    redirectWithMessage(redirectPath, "Archive this quotation before permanent deletion.");
+  }
+
+  const { data: sections, error: sectionsReadError } = await supabase
+    .from("quotation_sections")
+    .select("id")
+    .eq("quotation_id", quotationId)
+    .returns<Array<{ id: string }>>();
+
+  if (sectionsReadError) {
+    console.error("QUOTATION SECTIONS PERMANENT DELETE READ ERROR", sectionsReadError.message);
+    redirectWithMessage(
+      redirectPath,
+      `Quotation sections could not be loaded: ${sectionsReadError.message}`,
+    );
+  }
+
+  const sectionIds = (sections ?? []).map((section) => section.id);
+
+  if (sectionIds.length) {
+    const { error: sectionItemsError } = await supabase
+      .from("quotation_items")
+      .delete()
+      .in("section_id", sectionIds);
+
+    if (sectionItemsError) {
+      console.error("QUOTATION SECTION ITEMS PERMANENT DELETE ERROR", sectionItemsError.message);
+      redirectWithMessage(
+        redirectPath,
+        `Quotation line items could not be permanently deleted: ${sectionItemsError.message}`,
+      );
+    }
+  }
+
+  const { error: unsectionedItemsError } = await supabase
+    .from("quotation_items")
+    .delete()
+    .eq("quotation_id", quotationId)
+    .is("section_id", null);
+
+  if (unsectionedItemsError) {
+    console.error("QUOTATION UNSECTIONED ITEMS PERMANENT DELETE ERROR", unsectionedItemsError.message);
+    redirectWithMessage(
+      redirectPath,
+      `Quotation line items could not be permanently deleted: ${unsectionedItemsError.message}`,
+    );
+  }
+
+  const { error: sectionsError } = await supabase
+    .from("quotation_sections")
+    .delete()
+    .eq("quotation_id", quotationId);
+
+  if (sectionsError) {
+    console.error("QUOTATION SECTIONS PERMANENT DELETE ERROR", sectionsError.message);
+    redirectWithMessage(
+      redirectPath,
+      `Quotation sections could not be permanently deleted: ${sectionsError.message}`,
+    );
+  }
+
+  const { error: deleteError } = await supabase
+    .from("quotations")
+    .delete()
+    .eq("id", quotationId)
+    .eq("is_active", false);
+
+  if (deleteError) {
+    console.error("QUOTATION PERMANENT DELETE ERROR", deleteError.message);
+    redirectWithMessage(
+      redirectPath,
+      `Quotation could not be permanently deleted: ${deleteError.message}`,
+    );
+  }
+
+  revalidatePath("/quotations");
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(`/quotations/${quotationId}/builder`);
+  if (quotation.project_id) {
+    revalidatePath(`/clients/projects/${quotation.project_id}`);
+  }
+  revalidatePath(redirectPath);
+  redirectWithMessage(redirectPath, "Quotation permanently deleted.");
 }
 
 export async function updateQuotation(formData: FormData) {
@@ -1620,6 +1769,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     .from("brands")
     .select("name,origin")
     .eq("id", template.brand_id)
+    .eq("is_active", true)
     .maybeSingle<{ name: string; origin: string | null }>();
 
   const categoryIds = [template.main_category_id, template.sub_category_id].filter(
@@ -1629,6 +1779,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     ? await supabase
         .from("product_categories")
         .select("id,name")
+        .eq("is_active", true)
         .in("id", categoryIds)
         .returns<Array<{ id: string; name: string }>>()
     : { data: [] };
@@ -2292,6 +2443,439 @@ export async function updateQuotationItemInline(formData: FormData) {
   revalidatePath(`/quotations/${quotationId}`);
   revalidatePath(redirectPath);
   redirectWithMessage(redirectPath, "Row saved.");
+}
+
+export async function copyQuotationItem(formData: FormData) {
+  const { user } = await requireRecordsManager();
+  const id = textValue(formData, "id");
+  const sourceQuotationId = textValue(formData, "quotation_id");
+  const destinationQuotationId = textValue(formData, "destination_quotation_id");
+  const destinationSectionId = optionalTextValue(formData, "destination_section_id");
+  const copyPosition = textValue(formData, "copy_position");
+  const redirectPath = returnPath(
+    formData,
+    `/quotations/${sourceQuotationId}/builder`,
+  );
+
+  if (!id || !sourceQuotationId || !destinationQuotationId) {
+    redirectWithMessage(
+      redirectPath || "/quotations",
+      "Source row and destination quotation are required.",
+    );
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: sourceItem, error: sourceError } = await supabase
+    .from("quotation_items")
+    .select(itemCopySelect)
+    .eq("id", id)
+    .eq("quotation_id", sourceQuotationId)
+    .eq("is_active", true)
+    .single<QuotationItemCopySource>();
+
+  if (sourceError || !sourceItem) {
+    console.error("QUOTATION ITEM COPY READ ERROR", sourceError?.message);
+    redirectWithMessage(redirectPath, "Source row could not be copied.");
+  }
+
+  const { data: destinationQuotation, error: quotationError } = await supabase
+    .from("quotations")
+    .select("id,quotation_no,title")
+    .eq("id", destinationQuotationId)
+    .eq("is_active", true)
+    .single<{ id: string; quotation_no: string | null; title: string }>();
+
+  if (quotationError || !destinationQuotation) {
+    console.error("QUOTATION ITEM COPY QUOTATION ERROR", quotationError?.message);
+    redirectWithMessage(redirectPath, "Destination quotation was not found.");
+  }
+
+  if (destinationSectionId) {
+    const { data: section, error: sectionError } = await supabase
+      .from("quotation_sections")
+      .select("id")
+      .eq("id", destinationSectionId)
+      .eq("quotation_id", destinationQuotationId)
+      .eq("is_active", true)
+      .maybeSingle<{ id: string }>();
+
+    if (sectionError || !section) {
+      console.error("QUOTATION ITEM COPY SECTION ERROR", sectionError?.message);
+      redirectWithMessage(
+        redirectPath,
+        "Destination section does not belong to the selected quotation.",
+      );
+    }
+  }
+
+  let itemsQuery = supabase
+    .from("quotation_items")
+    .select("id,sort_order,created_at")
+    .eq("quotation_id", destinationQuotationId)
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
+
+  itemsQuery = destinationSectionId
+    ? itemsQuery.eq("section_id", destinationSectionId)
+    : itemsQuery.is("section_id", null);
+
+  const { data: destinationItems, error: itemsError } = await itemsQuery.returns<
+    Array<{ id: string; sort_order: number; created_at: string }>
+  >();
+
+  if (itemsError) {
+    console.error("QUOTATION ITEM COPY SORT READ ERROR", itemsError.message);
+    redirectWithMessage(redirectPath, "Destination section could not be loaded.");
+  }
+
+  let sortOrder = ((destinationItems ?? []).at(-1)?.sort_order ?? 0) + 10;
+  const sameLocation =
+    destinationQuotationId === sourceQuotationId &&
+    (destinationSectionId ?? null) === sourceItem.section_id;
+
+  if (sameLocation && copyPosition === "after_current") {
+    const orderedItems = destinationItems ?? [];
+    const sourceIndex = orderedItems.findIndex((item) => item.id === id);
+
+    if (sourceIndex >= 0) {
+      const afterItems = orderedItems.slice(sourceIndex + 1);
+
+      for (const [index, item] of afterItems.entries()) {
+        const { error } = await supabase
+          .from("quotation_items")
+          .update({ sort_order: (sourceIndex + index + 3) * 10 })
+          .eq("id", item.id);
+
+        if (error) {
+          console.error("QUOTATION ITEM COPY REORDER ERROR", error.message);
+          redirectWithMessage(redirectPath, "Destination rows could not be reordered.");
+        }
+      }
+
+      sortOrder = (sourceIndex + 2) * 10;
+    }
+  }
+
+  const {
+    id: _sourceItemId,
+    quotation_id: _sourceItemQuotationId,
+    section_id: _sourceItemSectionId,
+    manual_serial: _manualSerial,
+    sort_order: _sourceSortOrder,
+    ...copyPayload
+  } = sourceItem;
+  void _sourceItemId;
+  void _sourceItemQuotationId;
+  void _sourceItemSectionId;
+  void _manualSerial;
+  void _sourceSortOrder;
+
+  const { error: insertError } = await supabase.from("quotation_items").insert({
+    ...copyPayload,
+    quotation_id: destinationQuotationId,
+    section_id: destinationSectionId,
+    manual_serial: null,
+    sort_order: sortOrder,
+    is_active: true,
+    created_by: user.id,
+  });
+
+  if (insertError) {
+    console.error("QUOTATION ITEM COPY INSERT ERROR", insertError.message);
+    redirectWithMessage(redirectPath, "Row could not be copied.");
+  }
+
+  await recalculateQuotationTotals(destinationQuotationId);
+  revalidatePath(`/quotations/${destinationQuotationId}`);
+  revalidatePath(`/quotations/${destinationQuotationId}/builder`);
+  revalidatePath(`/quotations/${sourceQuotationId}`);
+  revalidatePath(redirectPath);
+
+  const destinationLabel =
+    destinationQuotation.quotation_no || destinationQuotation.title || "destination quotation";
+  redirectWithMessage(redirectPath, `Row copied to quotation ${destinationLabel}.`);
+}
+
+function copiedItemPayload(
+  item: Omit<
+    QuotationItemCopySource,
+    "id" | "quotation_id" | "section_id" | "manual_serial" | "sort_order"
+  >,
+  userId: string,
+  quotationId: string,
+  sectionId: string | null,
+  sortOrder: number,
+) {
+  return {
+    ...item,
+    quotation_id: quotationId,
+    section_id: sectionId,
+    manual_serial: null,
+    sort_order: sortOrder,
+    is_active: true,
+    created_by: userId,
+  };
+}
+
+async function sectionBelongsToQuotation(
+  sectionId: string,
+  quotationId: string,
+) {
+  const supabase = await createSupabaseClient();
+  const { data, error } = await supabase
+    .from("quotation_sections")
+    .select("id")
+    .eq("id", sectionId)
+    .eq("quotation_id", quotationId)
+    .eq("is_active", true)
+    .maybeSingle<{ id: string }>();
+
+  if (error) {
+    console.error("QUOTATION SECTION VERIFY ERROR", error.message);
+    return false;
+  }
+
+  return Boolean(data);
+}
+
+async function nextSortOrder(quotationId: string, sectionId: string | null) {
+  const supabase = await createSupabaseClient();
+  let query = supabase
+    .from("quotation_items")
+    .select("sort_order")
+    .eq("quotation_id", quotationId)
+    .eq("is_active", true)
+    .order("sort_order", { ascending: false })
+    .limit(1);
+
+  query = sectionId ? query.eq("section_id", sectionId) : query.is("section_id", null);
+
+  const { data, error } = await query.returns<Array<{ sort_order: number }>>();
+
+  if (error) {
+    console.error("QUOTATION ITEM SORT READ ERROR", error.message);
+    return 10;
+  }
+
+  return ((data ?? [])[0]?.sort_order ?? 0) + 10;
+}
+
+export async function duplicateQuotationItemBelow(formData: FormData) {
+  const { user } = await requireRecordsManager();
+  const id = textValue(formData, "id");
+  const quotationId = textValue(formData, "quotation_id");
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
+
+  if (!id || !quotationId) {
+    redirectWithMessage(redirectPath || "/quotations", "Line item id and quotation are required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: sourceItem, error: sourceError } = await supabase
+    .from("quotation_items")
+    .select(itemCopySelect)
+    .eq("id", id)
+    .eq("quotation_id", quotationId)
+    .eq("is_active", true)
+    .single<QuotationItemCopySource>();
+
+  if (sourceError || !sourceItem) {
+    console.error("QUOTATION ITEM DUPLICATE READ ERROR", sourceError?.message);
+    redirectWithMessage(redirectPath, "Source row could not be duplicated.");
+  }
+
+  let query = supabase
+    .from("quotation_items")
+    .select("id,sort_order,created_at")
+    .eq("quotation_id", quotationId)
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
+
+  query = sourceItem.section_id
+    ? query.eq("section_id", sourceItem.section_id)
+    : query.is("section_id", null);
+
+  const { data: orderedItems, error: itemsError } = await query.returns<
+    Array<{ id: string; sort_order: number; created_at: string }>
+  >();
+
+  if (itemsError) {
+    console.error("QUOTATION ITEM DUPLICATE SORT READ ERROR", itemsError.message);
+    redirectWithMessage(redirectPath, "Rows could not be reordered.");
+  }
+
+  const sourceIndex = (orderedItems ?? []).findIndex((item) => item.id === id);
+  const afterItems = sourceIndex >= 0 ? (orderedItems ?? []).slice(sourceIndex + 1) : [];
+
+  for (const [index, item] of afterItems.entries()) {
+    const { error } = await supabase
+      .from("quotation_items")
+      .update({ sort_order: (sourceIndex + index + 3) * 10 })
+      .eq("id", item.id);
+
+    if (error) {
+      console.error("QUOTATION ITEM DUPLICATE REORDER ERROR", error.message);
+      redirectWithMessage(redirectPath, "Rows could not be reordered.");
+    }
+  }
+
+  const {
+    id: _id,
+    quotation_id: _quotationId,
+    section_id: _sectionId,
+    manual_serial: _manualSerial,
+    sort_order: _sortOrder,
+    ...copySource
+  } = sourceItem;
+  void _id;
+  void _quotationId;
+  void _sectionId;
+  void _manualSerial;
+  void _sortOrder;
+
+  const sortOrder = sourceIndex >= 0
+    ? (sourceIndex + 2) * 10
+    : await nextSortOrder(quotationId, sourceItem.section_id);
+  const { error: insertError } = await supabase.from("quotation_items").insert(
+    copiedItemPayload(
+      copySource,
+      user.id,
+      quotationId,
+      sourceItem.section_id,
+      sortOrder,
+    ),
+  );
+
+  if (insertError) {
+    console.error("QUOTATION ITEM DUPLICATE INSERT ERROR", insertError.message);
+    redirectWithMessage(redirectPath, "Row could not be duplicated.");
+  }
+
+  await recalculateQuotationTotals(quotationId);
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(redirectPath);
+  redirectWithMessage(redirectPath, "Row duplicated.");
+}
+
+function objectValue(value: unknown) {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function stringOrNull(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function numberOr(value: unknown, fallback: number) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function booleanOr(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function sanitizeCopiedRowSnapshot(value: unknown) {
+  const source = objectValue(value);
+  const qty = numberOr(source.qty, 1);
+  const unitPrice = numberOr(source.unit_price, 0);
+  const discountType = discountTypes.has(String(source.discount_type))
+    ? String(source.discount_type)
+    : "amount";
+  const discountValue = numberOr(source.discount_value, 0);
+  const netPrice = numberOr(source.net_price, unitPrice);
+
+  return {
+    item_type: itemTypes.has(String(source.item_type)) ? String(source.item_type) : "custom",
+    source_template_id: stringOrNull(source.source_template_id),
+    source_component_data: source.source_component_data ?? null,
+    item_code_snapshot: stringOrNull(source.item_code_snapshot),
+    item_name_snapshot: stringOrNull(source.item_name_snapshot),
+    brand_name_snapshot: stringOrNull(source.brand_name_snapshot),
+    category_name_snapshot: stringOrNull(source.category_name_snapshot),
+    specified_image_url_snapshot: stringOrNull(source.specified_image_url_snapshot),
+    proposed_image_url_snapshot: stringOrNull(source.proposed_image_url_snapshot),
+    specification_snapshot: stringOrNull(source.specification_snapshot),
+    selected_options_snapshot: source.selected_options_snapshot ?? null,
+    internal_components_snapshot: source.internal_components_snapshot ?? null,
+    room_name_snapshot: stringOrNull(source.room_name_snapshot),
+    model_snapshot: stringOrNull(source.model_snapshot),
+    finish_snapshot: stringOrNull(source.finish_snapshot),
+    size_snapshot: stringOrNull(source.size_snapshot),
+    origin_snapshot: stringOrNull(source.origin_snapshot),
+    warranty_snapshot: stringOrNull(source.warranty_snapshot),
+    supplier_name_snapshot: stringOrNull(source.supplier_name_snapshot),
+    supplier_notes_snapshot: stringOrNull(source.supplier_notes_snapshot),
+    qty,
+    unit_label: stringOrNull(source.unit_label) ?? "Pc",
+    unit_price: unitPrice,
+    discount_type: discountType,
+    discount_value: discountValue,
+    net_price: netPrice,
+    net_total: numberOr(source.net_total, money(qty * netPrice)),
+    currency: normalizeCurrency(String(source.currency || defaultCurrency)),
+    is_optional: booleanOr(source.is_optional, false),
+    internal_cost: numberOr(source.internal_cost, 0),
+    margin_type: discountTypes.has(String(source.margin_type)) ? String(source.margin_type) : "amount",
+    margin_value: numberOr(source.margin_value, 0),
+    is_rate_only: booleanOr(source.is_rate_only, false),
+    line_style: lineStyles.has(String(source.line_style)) ? String(source.line_style) : "normal",
+    row_height: Number.isFinite(Number(source.row_height))
+      ? Math.min(Math.max(Number(source.row_height), 40), 600)
+      : null,
+    cell_layout: objectValue(source.cell_layout),
+    notes: stringOrNull(source.notes),
+  };
+}
+
+export async function pasteCopiedQuotationItem(formData: FormData) {
+  const { user } = await requireRecordsManager();
+  const quotationId = textValue(formData, "quotation_id");
+  const sectionId = textValue(formData, "section_id");
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
+  const rawSnapshot = textValue(formData, "row_snapshot");
+
+  if (!quotationId || !sectionId || !rawSnapshot) {
+    redirectWithMessage(redirectPath || "/quotations", "Copied row and destination section are required.");
+  }
+
+  if (!(await sectionBelongsToQuotation(sectionId, quotationId))) {
+    redirectWithMessage(redirectPath, "Destination section was not found.");
+  }
+
+  let parsedSnapshot: unknown;
+  try {
+    parsedSnapshot = JSON.parse(rawSnapshot);
+  } catch {
+    redirectWithMessage(redirectPath, "Copied row data is invalid.");
+  }
+
+  const payload = sanitizeCopiedRowSnapshot(parsedSnapshot);
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase.from("quotation_items").insert({
+    ...payload,
+    quotation_id: quotationId,
+    section_id: sectionId,
+    manual_serial: null,
+    sort_order: await nextSortOrder(quotationId, sectionId),
+    is_active: true,
+    created_by: user.id,
+  });
+
+  if (error) {
+    console.error("QUOTATION ITEM PASTE ERROR", error.message);
+    redirectWithMessage(redirectPath, "Copied row could not be pasted.");
+  }
+
+  await recalculateQuotationTotals(quotationId);
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(redirectPath);
+  redirectWithMessage(redirectPath, "Copied row pasted.");
 }
 
 export async function autosaveQuotationItemInline(formData: FormData) {

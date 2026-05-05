@@ -2,6 +2,7 @@ import Link from "next/link";
 import { randomUUID } from "crypto";
 import type { ReactNode } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
+import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import {
   DeskingSizePricingTable,
   type DeskingSizePricingRow,
@@ -34,8 +35,13 @@ import {
   createProductTemplate,
   createSubCategoryFromTemplates,
   deactivateLinkedProductFamily,
+  deactivateProductTemplate,
   markComponentPriceChecked,
   markTemplatePriceChecked,
+  permanentlyDeleteLinkedProductFamily,
+  permanentlyDeleteProductTemplate,
+  restoreLinkedProductFamily,
+  restoreProductTemplate,
   updateLinkedProductFamily,
   updateProductComponent,
   updateProductTemplate,
@@ -952,12 +958,14 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const { data: brands, error: brandsError } = await supabase
     .from("brands")
     .select("id,name")
+    .eq("is_active", true)
     .order("name", { ascending: true })
     .returns<Brand[]>();
 
   const { data: categories, error: categoriesError } = await supabase
     .from("product_categories")
     .select("id,brand_id,parent_id,name,code,description,is_active")
+    .eq("is_active", true)
     .order("brand_id", { ascending: true })
     .order("sort_order", { ascending: true })
     .order("name", { ascending: true })
@@ -997,6 +1005,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const brandList = brands ?? [];
   const categoryList = categories ?? [];
   const templateList = templates ?? [];
+  const activeTemplateList = templateList.filter((template) => template.is_active);
+  const archivedTemplateList = templateList.filter((template) => !template.is_active);
+  const archivedLinkedFamilyList = (linkedFamilies ?? []).filter((link) => !link.is_active);
   const brandMap = new Map(brandList.map((brand) => [brand.id, brand.name]));
   const categoryMap = new Map(
     categoryList.map((category) => [category.id, category.name]),
@@ -1023,14 +1034,14 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     componentsByTemplate.set(component.template_id, templateComponents);
   }
 
-  for (const link of linkedFamilies ?? []) {
+  for (const link of (linkedFamilies ?? []).filter((link) => link.is_active)) {
     const templateLinks = linkedFamiliesByTemplate.get(link.parent_template_id) ?? [];
     templateLinks.push(link);
     linkedFamiliesByTemplate.set(link.parent_template_id, templateLinks);
   }
 
   const normalizedSearch = searchQuery.toLowerCase();
-  const filteredTemplates = templateList.filter((template) => {
+  const filteredTemplates = activeTemplateList.filter((template) => {
     const matchesSearch =
       !normalizedSearch ||
       template.template_name.toLowerCase().includes(normalizedSearch) ||
@@ -1046,7 +1057,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     return matchesSearch && matchesBrand && matchesMain && matchesSub;
   });
   const selectedTemplate =
-    templateList.find((template) => template.id === openTemplateId) ?? null;
+    activeTemplateList.find((template) => template.id === openTemplateId) ?? null;
 
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
@@ -1173,27 +1184,16 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
               <div className="border-b border-zinc-200 p-4">
                 <h2 className="font-semibold text-zinc-950">Library Structure</h2>
                 <p className="mt-1 text-sm text-zinc-500">
-                  {filteredTemplates.length} of {templateList.length} templates
+                  {filteredTemplates.length} of {activeTemplateList.length} templates
                 </p>
               </div>
               <div className="max-h-[720px] space-y-3 overflow-auto p-4">
-                {brandList
-                  .filter((brand) =>
-                    filteredTemplates.some(
-                      (template) => template.brand_id === brand.id,
-                    ),
-                  )
-                  .map((brand) => {
+                {brandList.map((brand) => {
                     const brandTemplates = filteredTemplates.filter(
                       (template) => template.brand_id === brand.id,
                     );
                     const brandMainCategories = mainCategories.filter(
-                      (category) =>
-                        category.brand_id === brand.id &&
-                        brandTemplates.some(
-                          (template) =>
-                            template.main_category_id === category.id,
-                        ),
+                      (category) => category.brand_id === brand.id,
                     );
                     const uncategorizedCount = brandTemplates.filter(
                       (template) => !template.main_category_id,
@@ -1206,9 +1206,25 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         className="rounded-md border border-zinc-200"
                       >
                         <summary className="cursor-pointer bg-zinc-50 px-3 py-2 text-sm font-semibold text-zinc-950">
-                          {brand.name}{" "}
-                          <span className="font-medium text-zinc-500">
-                            ({brandTemplates.length})
+                          <span className="flex items-center justify-between gap-3">
+                            <span>
+                              {brand.name}{" "}
+                              <span className="font-medium text-zinc-500">
+                                ({brandTemplates.length})
+                              </span>
+                            </span>
+                            <Link
+                              href={templatesHref(params, {
+                                brand: brand.id,
+                                main: null,
+                                sub: null,
+                                template: null,
+                                editTemplate: null,
+                              })}
+                              className="text-xs font-semibold text-emerald-900"
+                            >
+                              View
+                            </Link>
                           </span>
                         </summary>
                         <div className="space-y-2 p-3">
@@ -1230,11 +1246,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             );
                             const mainSubCategories = subCategories.filter(
                               (category) =>
-                                category.parent_id === mainCategory.id &&
-                                mainTemplates.some(
-                                  (template) =>
-                                    template.sub_category_id === category.id,
-                                ),
+                                category.parent_id === mainCategory.id,
                             );
                             const withoutSubCount = mainTemplates.filter(
                               (template) => !template.sub_category_id,
@@ -1243,9 +1255,25 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             return (
                               <details key={mainCategory.id} open>
                                 <summary className="cursor-pointer text-sm font-medium text-zinc-800">
-                                  {mainCategory.name}{" "}
-                                  <span className="text-zinc-500">
-                                    ({mainTemplates.length})
+                                  <span className="flex items-center justify-between gap-3">
+                                    <span>
+                                      {mainCategory.name}{" "}
+                                      <span className="text-zinc-500">
+                                        ({mainTemplates.length})
+                                      </span>
+                                    </span>
+                                    <Link
+                                      href={templatesHref(params, {
+                                        brand: brand.id,
+                                        main: mainCategory.id,
+                                        sub: null,
+                                        template: null,
+                                        editTemplate: null,
+                                      })}
+                                      className="text-xs font-semibold text-emerald-900"
+                                    >
+                                      View
+                                    </Link>
                                   </span>
                                 </summary>
                                 <div className="mt-2 space-y-1 border-l border-zinc-200 pl-3">
@@ -1282,8 +1310,13 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                       >
                                         {subCategory.name} ({count})
                                       </Link>
-                                    );
+                                      );
                                   })}
+                                  {!mainSubCategories.length ? (
+                                    <p className="px-2 py-1.5 text-sm text-zinc-500">
+                                      No subcategories yet.
+                                    </p>
+                                  ) : null}
                                   {withoutSubCount ? (
                                     <Link
                                       href={templatesHref(params, {
@@ -1302,6 +1335,11 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                               </details>
                             );
                           })}
+                          {!brandMainCategories.length ? (
+                            <p className="rounded-md border border-dashed border-zinc-200 px-3 py-2 text-sm text-zinc-500">
+                              No main categories yet.
+                            </p>
+                          ) : null}
                           {uncategorizedCount ? (
                             <p className="rounded-md border border-dashed border-zinc-200 px-3 py-2 text-sm text-zinc-500">
                               No main category ({uncategorizedCount})
@@ -1311,9 +1349,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                       </details>
                     );
                   })}
-                {!filteredTemplates.length ? (
+                {!brandList.length ? (
                   <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
-                    No templates match the current filters.
+                    No brands yet. Create a brand first.
                   </p>
                 ) : null}
               </div>
@@ -1410,6 +1448,15 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                               Mark checked now
                             </button>
                           </form>
+                          <form action={deactivateProductTemplate}>
+                            <input type="hidden" name="id" value={template.id} />
+                            <ConfirmSubmitButton
+                              message="This will move the product template to Archive. You can restore it later."
+                              className="text-sm font-semibold text-red-700 transition hover:text-red-800"
+                            >
+                              Delete
+                            </ConfirmSubmitButton>
+                          </form>
                         </div>
                       </div>
                     );
@@ -1417,7 +1464,13 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                 </div>
                 {!filteredTemplates.length ? (
                   <div className="p-8 text-center text-sm text-zinc-500">
-                    No product templates match the current filters.
+                    <p>No product templates in this selection yet.</p>
+                    <Link
+                      href={templatesHref(params, { addTemplate: "1" })}
+                      className="mt-3 inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                    >
+                      + Add Product Template
+                    </Link>
                   </div>
                 ) : null}
               </section>
@@ -1554,14 +1607,14 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         <div className="mt-3 w-[min(960px,calc(100vw-4rem))] rounded-lg border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
                           <LinkedProductFamilyForm
                             templateId={template.id}
-                            templates={templateList}
+                            templates={activeTemplateList}
                           />
                         </div>
                       </details>
                     </div>
                     <div className="mt-4 grid gap-3 lg:grid-cols-2">
                       {(linkedFamiliesByTemplate.get(template.id) ?? []).map((link) => {
-                        const linkedTemplate = templateList.find(
+                        const linkedTemplate = activeTemplateList.find(
                           (candidate) => candidate.id === link.linked_template_id,
                         );
 
@@ -1586,7 +1639,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                 <LinkedProductFamilyForm
                                   link={link}
                                   templateId={template.id}
-                                  templates={templateList}
+                                  templates={activeTemplateList}
                                 />
                               </div>
                             </details>
@@ -1731,18 +1784,123 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
               );
             })}
 
-            {!selectedTemplate && templateList.length ? (
+            {!selectedTemplate && activeTemplateList.length ? (
               <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
                 Open a product template to manage its images, pricing tables,
                 linked product families, and advanced options.
               </section>
             ) : null}
 
-            {!templateList.length ? (
+            {!activeTemplateList.length ? (
               <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
                 No product templates yet. Add the first template from the toolbar.
               </section>
             ) : null}
+
+            <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+              <div className="border-b border-zinc-200 p-4">
+                <h2 className="font-semibold text-zinc-950">Archive</h2>
+                <p className="mt-1 text-sm text-zinc-500">
+                  Restore archived product templates, or permanently delete unused templates.
+                </p>
+              </div>
+              <div className="divide-y divide-zinc-100">
+                {archivedTemplateList.map((template) => (
+                  <div
+                    key={template.id}
+                    className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"
+                  >
+                    <div>
+                      <h3 className="font-semibold text-zinc-950">
+                        {template.template_name}
+                      </h3>
+                      <p className="mt-1 text-sm text-zinc-500">
+                        {brandMap.get(template.brand_id) ?? "Unknown brand"} / {template.template_code ?? "No template code"}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 md:justify-end">
+                      <form action={restoreProductTemplate}>
+                        <input type="hidden" name="id" value={template.id} />
+                        <button
+                          type="submit"
+                          className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                        >
+                          Restore
+                        </button>
+                      </form>
+                      <form action={permanentlyDeleteProductTemplate}>
+                        <input type="hidden" name="id" value={template.id} />
+                        <ConfirmSubmitButton
+                          message="Permanently delete this product template? This cannot be undone."
+                          className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
+                        >
+                          Delete permanently
+                        </ConfirmSubmitButton>
+                      </form>
+                    </div>
+                  </div>
+                ))}
+                {!archivedTemplateList.length ? (
+                  <p className="p-6 text-sm text-zinc-500">
+                    No archived product templates.
+                  </p>
+                ) : null}
+              </div>
+              <div className="border-t border-zinc-200 p-4">
+                <h3 className="font-semibold text-zinc-950">Archived Linked Families</h3>
+              </div>
+              <div className="divide-y divide-zinc-100">
+                {archivedLinkedFamilyList.map((link) => {
+                  const parentTemplate = templateList.find(
+                    (template) => template.id === link.parent_template_id,
+                  );
+                  const linkedTemplate = templateList.find(
+                    (template) => template.id === link.linked_template_id,
+                  );
+
+                  return (
+                    <div
+                      key={link.id}
+                      className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"
+                    >
+                      <div>
+                        <h3 className="font-semibold text-zinc-950">
+                          {link.label || "Linked family"}
+                        </h3>
+                        <p className="mt-1 text-sm text-zinc-500">
+                          {parentTemplate?.template_name ?? "Unknown parent"} / {linkedTemplate?.template_name ?? "Unknown linked template"}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2 md:justify-end">
+                        <form action={restoreLinkedProductFamily}>
+                          <input type="hidden" name="id" value={link.id} />
+                          <button
+                            type="submit"
+                            className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                          >
+                            Restore
+                          </button>
+                        </form>
+                        <form action={permanentlyDeleteLinkedProductFamily}>
+                          <input type="hidden" name="id" value={link.id} />
+                          <ConfirmSubmitButton
+                            message="Permanently delete this linked product family? This cannot be undone."
+                            className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
+                          >
+                            Delete permanently
+                          </ConfirmSubmitButton>
+                        </form>
+                      </div>
+                    </div>
+                  );
+                })}
+                {!archivedLinkedFamilyList.length ? (
+                  <p className="p-6 text-sm text-zinc-500">
+                    No archived linked product families.
+                  </p>
+                ) : null}
+              </div>
+            </section>
             </div>
           </section>
         </main>

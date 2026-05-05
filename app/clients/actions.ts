@@ -36,6 +36,12 @@ function redirectWithMessage(message: string): never {
   redirect(`/clients?message=${encodeURIComponent(message)}`);
 }
 
+function redirectToClients(message: string, params: Record<string, string> = {}): never {
+  const query = new URLSearchParams(params);
+  query.set("message", message);
+  redirect(`/clients?${query.toString()}`);
+}
+
 function clientPayload(formData: FormData, userId?: string) {
   const payload = {
     company_name: textValue(formData, "company_name"),
@@ -182,4 +188,175 @@ export async function updateProject(formData: FormData) {
 
   revalidatePath("/clients");
   redirectWithMessage("Project updated.");
+}
+
+export async function deactivateProject(formData: FormData) {
+  await requireRecordsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectWithMessage("Project id is required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase
+    .from("projects")
+    .update({ is_active: false })
+    .eq("id", id);
+
+  if (error) {
+    console.error("PROJECT DEACTIVATE ERROR", error.message);
+    redirectWithMessage("Project could not be deactivated.");
+  }
+
+  revalidatePath("/clients");
+  redirectWithMessage("Project moved to Archive. Linked quotations were not deleted.");
+}
+
+export async function restoreProject(formData: FormData) {
+  await requireRecordsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectToClients("Project id is required.", { tab: "archive" });
+  }
+
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase
+    .from("projects")
+    .update({ is_active: true })
+    .eq("id", id);
+
+  if (error) {
+    console.error("PROJECT RESTORE ERROR", error.message);
+    redirectToClients("Project could not be restored.", { tab: "archive" });
+  }
+
+  revalidatePath("/clients");
+  redirectToClients("Project restored.", { tab: "archive" });
+}
+
+export async function permanentlyDeleteProject(formData: FormData) {
+  await requireRecordsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectToClients("Project id is required.", { tab: "archive" });
+  }
+
+  const supabase = await createSupabaseClient();
+  const { count, error: countError } = await supabase
+    .from("quotations")
+    .select("id", { count: "exact", head: true })
+    .eq("project_id", id);
+
+  if (countError) {
+    console.error("PROJECT QUOTATION DEPENDENCY CHECK ERROR", countError.message);
+    redirectToClients("Project dependencies could not be checked.", { tab: "archive" });
+  }
+
+  if ((count ?? 0) > 0) {
+    redirectToClients("This project has linked quotations. Keep it archived.", {
+      tab: "archive",
+    });
+  }
+
+  const { error } = await supabase.from("projects").delete().eq("id", id);
+
+  if (error) {
+    console.error("PROJECT PERMANENT DELETE ERROR", error.message);
+    redirectToClients("Project could not be permanently deleted.", { tab: "archive" });
+  }
+
+  revalidatePath("/clients");
+  redirectToClients("Project permanently deleted.", { tab: "archive" });
+}
+
+export async function deactivateClient(formData: FormData) {
+  await requireRecordsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectWithMessage("Client id is required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase
+    .from("clients")
+    .update({ is_active: false })
+    .eq("id", id);
+
+  if (error) {
+    console.error("CLIENT DEACTIVATE ERROR", error.message);
+    redirectWithMessage("Client could not be moved to Archive.");
+  }
+
+  revalidatePath("/clients");
+  redirectWithMessage("Client moved to Archive. Linked projects and quotations were not deleted.");
+}
+
+export async function restoreClient(formData: FormData) {
+  await requireRecordsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectToClients("Client id is required.", { tab: "archive" });
+  }
+
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase
+    .from("clients")
+    .update({ is_active: true })
+    .eq("id", id);
+
+  if (error) {
+    console.error("CLIENT RESTORE ERROR", error.message);
+    redirectToClients("Client could not be restored.", { tab: "archive" });
+  }
+
+  revalidatePath("/clients");
+  redirectToClients("Client restored.", { tab: "archive" });
+}
+
+export async function permanentlyDeleteClient(formData: FormData) {
+  await requireRecordsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectToClients("Client id is required.", { tab: "archive" });
+  }
+
+  const supabase = await createSupabaseClient();
+  const { count: projectCount, error: projectCountError } = await supabase
+    .from("projects")
+    .select("id", { count: "exact", head: true })
+    .eq("client_id", id);
+  const { count: quotationCount, error: quotationCountError } = await supabase
+    .from("quotations")
+    .select("id", { count: "exact", head: true })
+    .eq("client_id", id);
+
+  if (projectCountError || quotationCountError) {
+    console.error(
+      "CLIENT DEPENDENCY CHECK ERROR",
+      projectCountError?.message ?? quotationCountError?.message,
+    );
+    redirectToClients("Client dependencies could not be checked.", { tab: "archive" });
+  }
+
+  if ((projectCount ?? 0) > 0 || (quotationCount ?? 0) > 0) {
+    redirectToClients("This client has linked projects or quotations. Keep it archived.", {
+      tab: "archive",
+    });
+  }
+
+  const { error } = await supabase.from("clients").delete().eq("id", id);
+
+  if (error) {
+    console.error("CLIENT PERMANENT DELETE ERROR", error.message);
+    redirectToClients("Client could not be permanently deleted.", { tab: "archive" });
+  }
+
+  revalidatePath("/clients");
+  redirectToClients("Client permanently deleted.", { tab: "archive" });
 }

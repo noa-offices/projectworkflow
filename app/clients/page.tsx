@@ -1,11 +1,18 @@
 import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
+import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
   createClient as createClientRecord,
   createProject,
+  deactivateClient,
+  deactivateProject,
+  permanentlyDeleteClient,
+  permanentlyDeleteProject,
+  restoreClient,
+  restoreProject,
   updateClient,
   updateProject,
 } from "./actions";
@@ -15,10 +22,14 @@ export const dynamic = "force-dynamic";
 type ClientsPageProps = {
   searchParams?: Promise<{
     active?: string;
+    addClient?: string;
+    addProject?: string;
     client?: string;
     message?: string;
+    project?: string;
     q?: string;
     status?: string;
+    tab?: string;
     year?: string;
   }>;
 };
@@ -57,6 +68,16 @@ type Project = {
   project_status: string;
   notes: string | null;
   is_active: boolean;
+  created_at: string;
+};
+
+type ProjectQuotation = {
+  id: string;
+  project_id: string;
+  quotation_no: string | null;
+  revision_no: number | null;
+  title: string;
+  quotation_date: string | null;
   created_at: string;
 };
 
@@ -102,6 +123,49 @@ function matchesSearch(values: Array<string | null | undefined>, query: string) 
   return values.some((value) => value?.toLowerCase().includes(normalizedQuery));
 }
 
+type ClientsSearchParams = NonNullable<Awaited<ClientsPageProps["searchParams"]>>;
+
+function clientsHref(
+  params: ClientsSearchParams,
+  updates: Partial<
+    Record<
+      | "active"
+      | "addClient"
+      | "addProject"
+      | "client"
+      | "project"
+      | "q"
+      | "status"
+      | "tab"
+      | "year",
+      string | null
+    >
+  >,
+) {
+  const next = new URLSearchParams();
+
+  for (const key of [
+    "active",
+    "addClient",
+    "addProject",
+    "client",
+    "project",
+    "q",
+    "status",
+    "tab",
+    "year",
+  ] as const) {
+    const value = updates[key] === undefined ? params[key] : updates[key];
+
+    if (value) {
+      next.set(key, value);
+    }
+  }
+
+  const query = next.toString();
+  return `/clients${query ? `?${query}` : ""}`;
+}
+
 function projectContactLine(project: Project) {
   return [
     project.attention_to ? `Attn: ${project.attention_to}` : null,
@@ -112,6 +176,26 @@ function projectContactLine(project: Project) {
   ]
     .filter(Boolean)
     .join(" - ");
+}
+
+function quoteNoLabel(quotation?: ProjectQuotation) {
+  if (!quotation) {
+    return "-";
+  }
+
+  const quotationNo = quotation.quotation_no || quotation.title;
+  const revisionNo = quotation.revision_no ?? 0;
+
+  if (!revisionNo || /-R\d+$/i.test(quotationNo)) {
+    return quotationNo;
+  }
+
+  return `${quotationNo}-R${revisionNo}`;
+}
+
+// TODO: Future phase: auto-generate project numbers by year/company sequence.
+function projectNoLabel(project: Project) {
+  return project.project_code ?? "-";
 }
 
 function TextInput({
@@ -383,12 +467,22 @@ function ProjectForm({
 export default async function ClientsPage({ searchParams }: ClientsPageProps) {
   const { user, profile, displayName } = await requireActiveUser();
   const resolvedSearchParams = await searchParams;
+  const pageParams = resolvedSearchParams ?? {};
   const message = resolvedSearchParams?.message;
   const query = resolvedSearchParams?.q?.trim() ?? "";
   const selectedStatus = resolvedSearchParams?.status ?? "";
   const selectedClientId = resolvedSearchParams?.client ?? "";
   const selectedActive = resolvedSearchParams?.active ?? "";
   const selectedYear = resolvedSearchParams?.year ?? "";
+  const selectedProjectId = resolvedSearchParams?.project ?? "";
+  const activeTab =
+    resolvedSearchParams?.tab === "clients"
+      ? "clients"
+      : resolvedSearchParams?.tab === "archive"
+        ? "archive"
+        : "projects";
+  const showAddClient = resolvedSearchParams?.addClient === "1";
+  const showAddProject = resolvedSearchParams?.addProject === "1";
   const canManageRecords =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
@@ -411,6 +505,14 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
     .order("created_at", { ascending: false })
     .returns<Project[]>();
 
+  const { data: quotations, error: quotationsError } = await supabase
+    .from("quotations")
+    .select("id,project_id,quotation_no,revision_no,title,quotation_date,created_at")
+    .eq("is_active", true)
+    .order("quotation_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .returns<ProjectQuotation[]>();
+
   if (clientsError) {
     console.error("CLIENTS LIST ERROR", clientsError.message);
   }
@@ -419,14 +521,30 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
     console.error("PROJECTS LIST ERROR", projectsError.message);
   }
 
+  if (quotationsError) {
+    console.error("CLIENTS PROJECT QUOTATIONS LIST ERROR", quotationsError.message);
+  }
+
   const clientList = clients ?? [];
   const projectList = projects ?? [];
+  const activeClientList = clientList.filter((client) => client.is_active);
+  const archivedClientList = clientList.filter((client) => !client.is_active);
+  const activeProjectList = projectList.filter((project) => project.is_active);
+  const archivedProjectList = projectList.filter((project) => !project.is_active);
+  const quotationList = quotations ?? [];
   const clientNameById = new Map(
     clientList.map((client) => [client.id, client.company_name]),
   );
+  const quotationsByProject = new Map<string, ProjectQuotation[]>();
+
+  for (const quotation of quotationList) {
+    const projectQuotations = quotationsByProject.get(quotation.project_id) ?? [];
+    projectQuotations.push(quotation);
+    quotationsByProject.set(quotation.project_id, projectQuotations);
+  }
   const projectYears = Array.from(
     new Set(
-      projectList
+      activeProjectList
         .map((project) => project.project_year)
         .filter((year): year is number => year !== null),
     ),
@@ -443,7 +561,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
     return true;
   };
 
-  const filteredProjects = projectList.filter((project) => {
+  const filteredProjects = activeProjectList.filter((project) => {
     const clientName = clientNameById.get(project.client_id);
 
     return (
@@ -481,8 +599,8 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
     filteredProjectIdsByClient.set(project.client_id, clientProjects);
   }
 
-  const filteredClients = clientList.filter((client) => {
-    const clientProjects = projectList.filter((project) => project.client_id === client.id);
+  const filteredClients = activeClientList.filter((client) => {
+    const clientProjects = activeProjectList.filter((project) => project.client_id === client.id);
     const hasMatchingStatus =
       !selectedStatus ||
       clientProjects.some((project) => project.project_status === selectedStatus);
@@ -515,12 +633,21 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
     );
   });
 
-  const projectsByClient = new Map<string, Project[]>();
-  for (const project of filteredProjects) {
-    const clientProjects = projectsByClient.get(project.client_id) ?? [];
+  const allProjectsByClient = new Map<string, Project[]>();
+  for (const project of activeProjectList) {
+    const clientProjects = allProjectsByClient.get(project.client_id) ?? [];
     clientProjects.push(project);
-    projectsByClient.set(project.client_id, clientProjects);
+    allProjectsByClient.set(project.client_id, clientProjects);
   }
+  const selectedProject = selectedProjectId
+    ? activeProjectList.find((project) => project.id === selectedProjectId) ?? null
+    : null;
+  const selectedProjectQuotations = selectedProject
+    ? quotationsByProject.get(selectedProject.id) ?? []
+    : [];
+  const selectedClient = selectedClientId
+    ? activeClientList.find((client) => client.id === selectedClientId) ?? null
+    : null;
 
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
@@ -644,285 +771,628 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
             </form>
           </section>
 
-          {canManageRecords ? (
-            <section className="mt-6 grid gap-5 xl:grid-cols-2">
-              <details
-                open={!clientList.length}
-                className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"
-              >
-                <summary className="cursor-pointer text-lg font-semibold text-zinc-950">
-                  Add client
-                </summary>
-                <p className="mt-1 text-sm text-zinc-500">
-                  Create and maintain client records independently from projects.
-                </p>
-                <div className="mt-5">
-                  <ClientForm />
-                </div>
-              </details>
-
-              <details
-                open={clientList.length > 0 && !projectList.length}
-                className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"
-              >
-                <summary className="cursor-pointer text-lg font-semibold text-zinc-950">
-                  Add project
-                </summary>
-                <p className="mt-1 text-sm text-zinc-500">
-                  Tip: include year in project code or project name for now, e.g.
-                  HCT Commercial Proposal 2026.
-                </p>
-                <div className="mt-5">
-                  {clientList.length ? (
-                    <ProjectForm clients={clientList} />
-                  ) : (
-                    <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
-                      Create a client before adding a project.
-                    </p>
-                  )}
-                </div>
-              </details>
-            </section>
-          ) : null}
-
-          <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-            <h2 className="text-lg font-semibold text-zinc-950">Projects</h2>
-            <p className="mt-1 text-sm text-zinc-500">
-              All project records, labelled by linked client.
-            </p>
-
-            <div className="mt-4 hidden overflow-x-auto md:block">
-              <table className="w-full min-w-[1040px] text-left text-sm">
-                <thead>
-                  <tr className="border-b border-zinc-200 text-xs font-semibold uppercase text-zinc-500">
-                    <th className="py-3 pr-4">Project</th>
-                    <th className="py-3 pr-4">Client</th>
-                    <th className="py-3 pr-4">Year</th>
-                    <th className="py-3 pr-4">Code</th>
-                    <th className="py-3 pr-4">Location</th>
-                    <th className="py-3 pr-4">Attention</th>
-                    <th className="py-3 pr-4">Status</th>
-                    <th className="py-3 pr-4">Active</th>
-                    <th className="py-3 pr-4">Open</th>
-                    {canManageRecords ? <th className="py-3">Edit</th> : null}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredProjects.map((project) => (
-                    <tr key={project.id} className="border-b border-zinc-100 align-top">
-                      <td className="py-3 pr-4 font-medium text-zinc-950">
-                        {project.project_name}
-                      </td>
-                      <td className="py-3 pr-4 text-zinc-600">
-                        {clientNameById.get(project.client_id) ?? "Unknown client"}
-                      </td>
-                      <td className="py-3 pr-4 text-zinc-600">
-                        {project.project_year ?? "No year"}
-                      </td>
-                      <td className="py-3 pr-4 text-zinc-600">
-                        {project.project_code ?? "-"}
-                      </td>
-                      <td className="py-3 pr-4 text-zinc-600">
-                        {project.location ?? "-"}
-                      </td>
-                      <td className="py-3 pr-4 text-zinc-600">
-                        <div>{project.attention_to ?? "-"}</div>
-                        {projectContactLine(project) ? (
-                          <div className="mt-1 text-xs text-zinc-500">
-                            {projectContactLine(project)}
-                          </div>
-                        ) : null}
-                      </td>
-                      <td className="py-3 pr-4">
-                        <ProjectStatusBadge status={project.project_status} />
-                      </td>
-                      <td className="py-3 pr-4">
-                        <StatusBadge active={project.is_active} />
-                      </td>
-                      <td className="py-3 pr-4">
-                        <Link
-                          href={`/clients/projects/${project.id}`}
-                          className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
-                        >
-                          Open project
-                        </Link>
-                      </td>
-                      {canManageRecords ? (
-                        <td className="py-3">
-                          <details>
-                            <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                              Edit
-                            </summary>
-                            <div className="mt-3 w-[520px] rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                              <ProjectForm clients={clientList} project={project} />
-                            </div>
-                          </details>
-                        </td>
-                      ) : null}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {!filteredProjects.length ? (
-                <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
-                  No projects match filters.
-                </p>
-              ) : null}
-            </div>
-
-            <div className="mt-4 grid gap-3 md:hidden">
-              {filteredProjects.map((project) => (
-                <div
-                  key={project.id}
-                  className="rounded-md border border-zinc-200 bg-zinc-50 p-4"
+          <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="inline-flex rounded-md border border-zinc-200 bg-zinc-50 p-1">
+                <Link
+                  href={clientsHref(pageParams, {
+                    tab: "projects",
+                    addClient: null,
+                    client: null,
+                  })}
+                  className={`rounded px-4 py-2 text-sm font-semibold ${
+                    activeTab === "projects"
+                      ? "bg-white text-emerald-900 shadow-sm"
+                      : "text-zinc-600"
+                  }`}
                 >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-semibold text-zinc-950">
-                      {project.project_name}
-                    </h3>
-                    <StatusBadge active={project.is_active} />
-                    <ProjectStatusBadge status={project.project_status} />
-                  </div>
-                  <p className="mt-1 text-sm text-zinc-500">
-                    {clientNameById.get(project.client_id) ?? "Unknown client"}
-                    {" - "}
-                    {project.project_year ?? "No year"}
-                    {project.project_code ? ` - ${project.project_code}` : ""}
-                  </p>
-                  <p className="mt-1 text-sm text-zinc-500">
-                    {[
-                      project.location,
-                      projectContactLine(project),
-                    ]
-                      .filter(Boolean)
-                      .join(" - ") || "No location or attention contact yet."}
-                  </p>
-                  {project.project_address ? (
-                    <p className="mt-1 text-sm text-zinc-500">
-                      {project.project_address}
-                    </p>
-                  ) : null}
-                  {canManageRecords ? (
-                    <details className="mt-3">
-                      <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                        Edit project
-                      </summary>
-                      <div className="mt-3">
-                        <ProjectForm clients={clientList} project={project} />
-                      </div>
-                    </details>
-                  ) : null}
+                  Projects
+                </Link>
+                <Link
+                  href={clientsHref(pageParams, {
+                    tab: "clients",
+                    addProject: null,
+                    project: null,
+                  })}
+                  className={`rounded px-4 py-2 text-sm font-semibold ${
+                    activeTab === "clients"
+                      ? "bg-white text-emerald-900 shadow-sm"
+                      : "text-zinc-600"
+                  }`}
+                >
+                  Clients
+                </Link>
+                <Link
+                  href={clientsHref(pageParams, {
+                    tab: "archive",
+                    addClient: null,
+                    addProject: null,
+                    client: null,
+                    project: null,
+                  })}
+                  className={`rounded px-4 py-2 text-sm font-semibold ${
+                    activeTab === "archive"
+                      ? "bg-white text-emerald-900 shadow-sm"
+                      : "text-zinc-600"
+                  }`}
+                >
+                  Archive
+                </Link>
+              </div>
+
+              {canManageRecords ? (
+                <div className="flex flex-wrap gap-2">
                   <Link
-                    href={`/clients/projects/${project.id}`}
-                    className="mt-3 inline-flex h-10 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-emerald-900 transition hover:border-emerald-900/25"
+                    href={clientsHref(pageParams, {
+                      addProject: "1",
+                      addClient: null,
+                      tab: "projects",
+                    })}
+                    className="inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
                   >
-                    Open project
+                    + Add Project
+                  </Link>
+                  <Link
+                    href={clientsHref(pageParams, {
+                      addClient: "1",
+                      addProject: null,
+                      tab: "clients",
+                    })}
+                    className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                  >
+                    + Add Client
                   </Link>
                 </div>
-              ))}
-              {!filteredProjects.length ? (
-                <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
-                  No projects match filters.
-                </p>
               ) : null}
             </div>
-          </section>
 
-          <section className="mt-6 space-y-5">
-            <div>
-              <h2 className="text-lg font-semibold text-zinc-950">Clients</h2>
-              <p className="mt-1 text-sm text-zinc-500">
-                Client records with linked project history.
-              </p>
-            </div>
-            {filteredClients.map((client) => {
-              const clientProjects = projectsByClient.get(client.id) ?? [];
-
-              return (
-                <article
-                  key={client.id}
-                  className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"
-                >
-                  <div className="grid gap-4 xl:grid-cols-[1fr_auto]">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="text-xl font-semibold text-zinc-950">
-                          {client.company_name}
-                        </h2>
-                        <StatusBadge active={client.is_active} />
-                      </div>
-                      <p className="mt-1 text-sm text-zinc-500">
-                        {client.client_code ? `${client.client_code} - ` : ""}
-                        {client.contact_person ?? "No contact person yet."}
-                      </p>
-                      <p className="mt-1 text-sm text-zinc-500">
-                        {[client.email, client.phone, client.city, client.country]
-                          .filter(Boolean)
-                          .join(" - ") || "No contact details yet."}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-start gap-2 xl:justify-end">
-                      <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-medium text-zinc-600">
-                        {clientProjects.length}{" "}
-                        {clientProjects.length === 1 ? "project" : "projects"}
-                      </span>
-                      {client.trn ? (
-                        <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-medium text-zinc-600">
-                          TRN {client.trn}
-                        </span>
-                      ) : null}
-                    </div>
+            {canManageRecords && showAddProject ? (
+              <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="font-semibold text-zinc-950">Add project</h2>
+                    <p className="mt-1 text-sm text-zinc-500">
+                      Link the project to an existing client.
+                    </p>
                   </div>
+                  <Link
+                    href={clientsHref(pageParams, { addProject: null })}
+                    className="text-sm font-semibold text-zinc-500 transition hover:text-zinc-950"
+                  >
+                    Cancel
+                  </Link>
+                </div>
+                {clientList.length ? (
+                  <ProjectForm clients={clientList} />
+                ) : (
+                  <p className="rounded-md border border-dashed border-zinc-200 bg-white p-4 text-sm text-zinc-500">
+                    Create a client before adding a project.
+                  </p>
+                )}
+              </div>
+            ) : null}
 
-                  <div className="mt-4">
-                    <h3 className="text-sm font-semibold uppercase text-zinc-500">
-                      Linked projects
-                    </h3>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {clientProjects.map((project) => (
-                        <Link
-                          key={project.id}
-                          href={`/clients/projects/${project.id}`}
-                          className="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600"
-                        >
-                          <span className="font-medium text-zinc-800">
-                            {project.project_name}
-                          </span>
-                          <span>{project.project_year ?? "No year"}</span>
-                          {projectContactLine(project) ? (
-                            <span>{projectContactLine(project)}</span>
-                          ) : null}
-                          <ProjectStatusBadge status={project.project_status} />
-                        </Link>
-                      ))}
-                      {!clientProjects.length ? (
-                        <span className="text-sm text-zinc-500">
-                          No linked projects match filters.
-                        </span>
-                      ) : null}
-                    </div>
+            {canManageRecords && showAddClient ? (
+              <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="font-semibold text-zinc-950">Add client</h2>
+                    <p className="mt-1 text-sm text-zinc-500">
+                      Create a client record for projects and quotations.
+                    </p>
                   </div>
-
-                  {canManageRecords ? (
-                    <details className="mt-4">
-                      <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                        Edit client
-                      </summary>
-                      <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                        <ClientForm client={client} />
-                      </div>
-                    </details>
-                  ) : null}
-                </article>
-              );
-            })}
-
-            {!filteredClients.length ? (
-              <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
-                No clients match filters.
-              </section>
+                  <Link
+                    href={clientsHref(pageParams, { addClient: null })}
+                    className="text-sm font-semibold text-zinc-500 transition hover:text-zinc-950"
+                  >
+                    Cancel
+                  </Link>
+                </div>
+                <ClientForm />
+              </div>
             ) : null}
           </section>
+
+          {activeTab === "projects" ? (
+            <section className="mt-6 grid gap-6 2xl:grid-cols-[minmax(0,1fr)_420px]">
+              <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+                <div className="border-b border-zinc-200 p-4">
+                  <h2 className="font-semibold text-zinc-950">Projects</h2>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    {filteredProjects.length} of {activeProjectList.length} projects shown
+                  </p>
+                </div>
+
+                <div className="hidden overflow-x-auto md:block">
+                  <table className="w-full min-w-[760px] text-left text-sm">
+                    <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase text-zinc-500">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold">Project No.</th>
+                        <th className="px-4 py-3 font-semibold">Project Name</th>
+                        <th className="px-4 py-3 font-semibold">Client</th>
+                        <th className="px-4 py-3 font-semibold">Year</th>
+                        <th className="px-4 py-3 text-right font-semibold">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-100">
+                      {filteredProjects.map((project) => {
+                        return (
+                          <tr
+                            key={project.id}
+                            className={project.id === selectedProject?.id ? "bg-emerald-50/60" : ""}
+                          >
+                            <td className="px-4 py-3 text-zinc-600">
+                              <span className="font-medium text-zinc-800">
+                                {projectNoLabel(project)}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 font-semibold text-zinc-950">
+                              {project.project_name}
+                            </td>
+                            <td className="px-4 py-3 text-zinc-600">
+                              {clientNameById.get(project.client_id) ?? "Unknown client"}
+                            </td>
+                            <td className="px-4 py-3 text-zinc-600">
+                              {project.project_year ?? "-"}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex justify-end gap-2">
+                                <Link
+                                  href={clientsHref(pageParams, {
+                                    tab: "projects",
+                                    project: project.id,
+                                    client: null,
+                                    addProject: null,
+                                  })}
+                                  className="inline-flex h-8 items-center rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
+                                >
+                                  Open
+                                </Link>
+                                {canManageRecords ? (
+                                  <>
+                                    <Link
+                                      href={clientsHref(pageParams, {
+                                        tab: "projects",
+                                        project: project.id,
+                                        addProject: null,
+                                      })}
+                                      className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                                    >
+                                      Edit
+                                    </Link>
+                                    <form action={deactivateProject}>
+                                      <input type="hidden" name="id" value={project.id} />
+                                      <ConfirmSubmitButton
+                                        message="Move this project to Archive? Linked quotations will not be deleted."
+                                        className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
+                                      >
+                                        Delete
+                                      </ConfirmSubmitButton>
+                                    </form>
+                                  </>
+                                ) : null}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="grid gap-3 p-4 md:hidden">
+                  {filteredProjects.map((project) => {
+                    return (
+                      <article key={project.id} className="rounded-md border border-zinc-200 p-3">
+                        <p className="text-xs font-semibold uppercase text-zinc-400">
+                          Project No. {projectNoLabel(project)}
+                        </p>
+                        <h3 className="mt-1 font-semibold text-zinc-950">
+                          {project.project_name}
+                        </h3>
+                        <p className="mt-1 text-sm text-zinc-500">
+                          {clientNameById.get(project.client_id) ?? "Unknown client"} / {project.project_year ?? "No year"}
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Link
+                            href={clientsHref(pageParams, {
+                              tab: "projects",
+                              project: project.id,
+                              client: null,
+                              addProject: null,
+                            })}
+                            className="inline-flex h-8 items-center rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white"
+                          >
+                            Open
+                          </Link>
+                          {canManageRecords ? (
+                            <>
+                              <Link
+                                href={clientsHref(pageParams, {
+                                  tab: "projects",
+                                  project: project.id,
+                                  addProject: null,
+                                })}
+                                className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700"
+                              >
+                                Edit
+                              </Link>
+                              <form action={deactivateProject}>
+                                <input type="hidden" name="id" value={project.id} />
+                                <ConfirmSubmitButton
+                                  message="Move this project to Archive? Linked quotations will not be deleted."
+                                  className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700"
+                                >
+                                  Delete
+                                </ConfirmSubmitButton>
+                              </form>
+                            </>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+
+                {!filteredProjects.length ? (
+                  <div className="p-8 text-center text-sm text-zinc-500">
+                    <p>No projects yet.</p>
+                    {canManageRecords ? (
+                      <Link
+                        href={clientsHref(pageParams, {
+                          addProject: "1",
+                          tab: "projects",
+                        })}
+                        className="mt-3 inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white"
+                      >
+                        + Add Project
+                      </Link>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <aside className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                {selectedProject ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-xl font-semibold text-zinc-950">
+                        {selectedProject.project_name}
+                      </h2>
+                      <ProjectStatusBadge status={selectedProject.project_status} />
+                      <StatusBadge active={selectedProject.is_active} />
+                    </div>
+                    <dl className="mt-4 grid gap-3 text-sm text-zinc-600">
+                      <div>
+                        <dt className="text-xs font-semibold uppercase text-zinc-400">Client</dt>
+                        <dd>{clientNameById.get(selectedProject.client_id) ?? "Unknown client"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs font-semibold uppercase text-zinc-400">Code / Year</dt>
+                        <dd>{selectedProject.project_code ?? "-"} / {selectedProject.project_year ?? "-"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs font-semibold uppercase text-zinc-400">Location</dt>
+                        <dd>{selectedProject.location ?? "-"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs font-semibold uppercase text-zinc-400">Attention</dt>
+                        <dd>{projectContactLine(selectedProject) || "-"}</dd>
+                      </div>
+                    </dl>
+                    {selectedProject.project_address ? (
+                      <p className="mt-3 text-sm text-zinc-500">
+                        {selectedProject.project_address}
+                      </p>
+                    ) : null}
+                    <div className="mt-4">
+                      <h3 className="text-sm font-semibold uppercase text-zinc-500">
+                        Linked quotations
+                      </h3>
+                      <div className="mt-2 grid gap-2">
+                        {selectedProjectQuotations.map((quotation) => (
+                          <Link
+                            key={quotation.id}
+                            href={`/quotations/${quotation.id}`}
+                            className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 transition hover:border-emerald-900/25 hover:text-emerald-900"
+                          >
+                            <span className="font-semibold text-zinc-950">
+                              {quoteNoLabel(quotation)}
+                            </span>
+                            <span className="ml-2">{quotation.title}</span>
+                          </Link>
+                        ))}
+                        {!selectedProjectQuotations.length ? (
+                          <p className="text-sm text-zinc-500">
+                            No linked quotations yet.
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <Link
+                        href={`/clients/projects/${selectedProject.id}`}
+                        className="inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white"
+                      >
+                        Open project
+                      </Link>
+                    </div>
+                    {canManageRecords ? (
+                      <details className="mt-4">
+                        <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
+                          Edit project
+                        </summary>
+                        <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                          <ProjectForm clients={clientList} project={selectedProject} />
+                        </div>
+                      </details>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="text-sm text-zinc-500">Open a project to view details.</p>
+                )}
+              </aside>
+            </section>
+          ) : activeTab === "clients" ? (
+            <section className="mt-6 grid gap-6 2xl:grid-cols-[minmax(0,1fr)_420px]">
+              <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+                <div className="border-b border-zinc-200 p-4">
+                  <h2 className="font-semibold text-zinc-950">Clients</h2>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    {filteredClients.length} of {activeClientList.length} clients shown
+                  </p>
+                </div>
+                <div className="divide-y divide-zinc-100">
+                  {filteredClients.map((client) => {
+                    const clientProjects = allProjectsByClient.get(client.id) ?? [];
+
+                    return (
+                      <div
+                        key={client.id}
+                        className={`grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center ${
+                          client.id === selectedClient?.id ? "bg-emerald-50/60" : ""
+                        }`}
+                      >
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="font-semibold text-zinc-950">
+                              {client.company_name}
+                            </h3>
+                            <StatusBadge active={client.is_active} />
+                          </div>
+                          <p className="mt-1 text-sm text-zinc-500">
+                            {[client.contact_person, client.email, client.phone].filter(Boolean).join(" / ") || "No contact summary"}
+                          </p>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            {[client.city, client.country].filter(Boolean).join(" / ") || "No location"} / {clientProjects.length} {clientProjects.length === 1 ? "project" : "projects"}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2 md:justify-end">
+                          <Link
+                            href={clientsHref(pageParams, {
+                              tab: "clients",
+                              client: client.id,
+                              project: null,
+                              addClient: null,
+                            })}
+                            className="text-sm font-semibold text-emerald-900"
+                          >
+                            Open
+                          </Link>
+                          {canManageRecords ? (
+                            <>
+                              <Link
+                                href={clientsHref(pageParams, {
+                                  tab: "clients",
+                                  client: client.id,
+                                  addClient: null,
+                                })}
+                                className="text-sm font-semibold text-zinc-600"
+                              >
+                                Edit
+                              </Link>
+                              <form action={deactivateClient}>
+                                <input type="hidden" name="id" value={client.id} />
+                                <ConfirmSubmitButton
+                                  message="Move this client to Archive? Linked projects and quotations will not be deleted."
+                                  className="text-sm font-semibold text-red-700"
+                                >
+                                  Delete
+                                </ConfirmSubmitButton>
+                              </form>
+                            </>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {!filteredClients.length ? (
+                  <div className="p-8 text-center text-sm text-zinc-500">
+                    <p>No clients yet.</p>
+                    {canManageRecords ? (
+                      <Link
+                        href={clientsHref(pageParams, {
+                          addClient: "1",
+                          tab: "clients",
+                        })}
+                        className="mt-3 inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white"
+                      >
+                        + Add Client
+                      </Link>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <aside className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                {selectedClient ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-xl font-semibold text-zinc-950">
+                        {selectedClient.company_name}
+                      </h2>
+                      <StatusBadge active={selectedClient.is_active} />
+                    </div>
+                    <dl className="mt-4 grid gap-3 text-sm text-zinc-600">
+                      <div>
+                        <dt className="text-xs font-semibold uppercase text-zinc-400">Contact</dt>
+                        <dd>{selectedClient.contact_person ?? "-"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs font-semibold uppercase text-zinc-400">Email / Phone</dt>
+                        <dd>{[selectedClient.email, selectedClient.phone].filter(Boolean).join(" / ") || "-"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs font-semibold uppercase text-zinc-400">Location</dt>
+                        <dd>{[selectedClient.city, selectedClient.country].filter(Boolean).join(" / ") || "-"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs font-semibold uppercase text-zinc-400">Projects</dt>
+                        <dd>{(allProjectsByClient.get(selectedClient.id) ?? []).length}</dd>
+                      </div>
+                    </dl>
+                    <div className="mt-4">
+                      <h3 className="text-sm font-semibold uppercase text-zinc-500">
+                        Linked projects
+                      </h3>
+                      <div className="mt-2 grid gap-2">
+                        {(allProjectsByClient.get(selectedClient.id) ?? []).map((project) => (
+                          <Link
+                            key={project.id}
+                            href={`/clients/projects/${project.id}`}
+                            className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600"
+                          >
+                            <span className="font-semibold text-zinc-950">{project.project_name}</span>
+                            <span className="ml-2">{project.project_year ?? "No year"}</span>
+                          </Link>
+                        ))}
+                        {!(allProjectsByClient.get(selectedClient.id) ?? []).length ? (
+                          <p className="text-sm text-zinc-500">No linked projects yet.</p>
+                        ) : null}
+                      </div>
+                    </div>
+                    {canManageRecords ? (
+                      <details className="mt-4">
+                        <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
+                          Edit client
+                        </summary>
+                        <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                          <ClientForm client={selectedClient} />
+                        </div>
+                      </details>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="text-sm text-zinc-500">Open a client to view details.</p>
+                )}
+              </aside>
+            </section>
+          ) : (
+            <section className="mt-6 grid gap-6 xl:grid-cols-2">
+              <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+                <div className="border-b border-zinc-200 p-4">
+                  <h2 className="font-semibold text-zinc-950">Archived Projects</h2>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    Restore projects or permanently delete records with no linked quotations.
+                  </p>
+                </div>
+                <div className="divide-y divide-zinc-100">
+                  {archivedProjectList.map((project) => (
+                    <div
+                      key={project.id}
+                      className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"
+                    >
+                      <div>
+                        <h3 className="font-semibold text-zinc-950">
+                          {project.project_name}
+                        </h3>
+                        <p className="mt-1 text-sm text-zinc-500">
+                          {clientNameById.get(project.client_id) ?? "Unknown client"} / {project.project_year ?? "No year"}
+                        </p>
+                      </div>
+                      {canManageRecords ? (
+                        <div className="flex flex-wrap gap-2 md:justify-end">
+                          <form action={restoreProject}>
+                            <input type="hidden" name="id" value={project.id} />
+                            <button
+                              type="submit"
+                              className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                            >
+                              Restore
+                            </button>
+                          </form>
+                          <form action={permanentlyDeleteProject}>
+                            <input type="hidden" name="id" value={project.id} />
+                            <ConfirmSubmitButton
+                              message="Permanently delete this project? This cannot be undone."
+                              className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
+                            >
+                              Delete permanently
+                            </ConfirmSubmitButton>
+                          </form>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                  {!archivedProjectList.length ? (
+                    <p className="p-6 text-sm text-zinc-500">No archived projects.</p>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+                <div className="border-b border-zinc-200 p-4">
+                  <h2 className="font-semibold text-zinc-950">Archived Clients</h2>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    Restore clients or permanently delete records with no linked projects or quotations.
+                  </p>
+                </div>
+                <div className="divide-y divide-zinc-100">
+                  {archivedClientList.map((client) => (
+                    <div
+                      key={client.id}
+                      className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"
+                    >
+                      <div>
+                        <h3 className="font-semibold text-zinc-950">
+                          {client.company_name}
+                        </h3>
+                        <p className="mt-1 text-sm text-zinc-500">
+                          {[client.contact_person, client.email, client.phone].filter(Boolean).join(" / ") || "No contact summary"}
+                        </p>
+                      </div>
+                      {canManageRecords ? (
+                        <div className="flex flex-wrap gap-2 md:justify-end">
+                          <form action={restoreClient}>
+                            <input type="hidden" name="id" value={client.id} />
+                            <button
+                              type="submit"
+                              className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                            >
+                              Restore
+                            </button>
+                          </form>
+                          <form action={permanentlyDeleteClient}>
+                            <input type="hidden" name="id" value={client.id} />
+                            <ConfirmSubmitButton
+                              message="Permanently delete this client? This cannot be undone."
+                              className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
+                            >
+                              Delete permanently
+                            </ConfirmSubmitButton>
+                          </form>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                  {!archivedClientList.length ? (
+                    <p className="p-6 text-sm text-zinc-500">No archived clients.</p>
+                  ) : null}
+                </div>
+              </div>
+            </section>
+          )}
         </main>
       </div>
     </div>

@@ -592,6 +592,95 @@ export async function updateProductTemplate(formData: FormData) {
   redirectWithMessage("Product template updated.");
 }
 
+export async function deactivateProductTemplate(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectWithMessage("Product template id is required.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_templates")
+    .update({ is_active: false })
+    .eq("id", id);
+
+  if (error) {
+    console.error("PRODUCT TEMPLATE ARCHIVE ERROR", error.message);
+    redirectWithMessage("Product template could not be moved to Archive.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Product template moved to Archive.");
+}
+
+export async function restoreProductTemplate(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectWithMessage("Product template id is required.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_templates")
+    .update({ is_active: true })
+    .eq("id", id);
+
+  if (error) {
+    console.error("PRODUCT TEMPLATE RESTORE ERROR", error.message);
+    redirectWithMessage("Product template could not be restored.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Product template restored.");
+}
+
+export async function permanentlyDeleteProductTemplate(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectWithMessage("Product template id is required.");
+  }
+
+  const supabase = await createClient();
+  const { count: quotationItemCount, error: quotationItemError } = await supabase
+    .from("quotation_items")
+    .select("id", { count: "exact", head: true })
+    .eq("source_template_id", id);
+  const { count: linkedFamilyCount, error: linkedFamilyError } = await supabase
+    .from("product_template_linked_families")
+    .select("id", { count: "exact", head: true })
+    .or(`parent_template_id.eq.${id},linked_template_id.eq.${id}`);
+
+  if (quotationItemError || linkedFamilyError) {
+    console.error(
+      "PRODUCT TEMPLATE DEPENDENCY CHECK ERROR",
+      quotationItemError?.message ?? linkedFamilyError?.message,
+    );
+    redirectWithMessage("Product template dependencies could not be checked.");
+  }
+
+  if ((quotationItemCount ?? 0) > 0 || (linkedFamilyCount ?? 0) > 0) {
+    redirectWithMessage(
+      "This product template is used in quotations or linked product families. Keep it archived.",
+    );
+  }
+
+  const { error } = await supabase.from("product_templates").delete().eq("id", id);
+
+  if (error) {
+    console.error("PRODUCT TEMPLATE PERMANENT DELETE ERROR", error.message);
+    redirectWithMessage("Product template could not be permanently deleted.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Product template permanently deleted.");
+}
+
 export async function createLinkedProductFamily(formData: FormData) {
   await requireSettingsManager();
   const parentTemplateId = textValue(formData, "parent_template_id");
@@ -681,6 +770,52 @@ export async function deactivateLinkedProductFamily(formData: FormData) {
 
   revalidatePath("/products/templates");
   redirectWithMessage("Linked product family removed.");
+}
+
+export async function restoreLinkedProductFamily(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectWithMessage("Linked product family id is required.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_template_linked_families")
+    .update({ is_active: true })
+    .eq("id", id);
+
+  if (error) {
+    console.error("LINKED PRODUCT FAMILY RESTORE ERROR", error.message);
+    redirectWithMessage("Linked product family could not be restored.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Linked product family restored.");
+}
+
+export async function permanentlyDeleteLinkedProductFamily(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectWithMessage("Linked product family id is required.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_template_linked_families")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    console.error("LINKED PRODUCT FAMILY PERMANENT DELETE ERROR", error.message);
+    redirectWithMessage("Linked product family could not be permanently deleted.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Linked product family permanently deleted.");
 }
 
 export async function updateProductTemplateImage(formData: FormData) {

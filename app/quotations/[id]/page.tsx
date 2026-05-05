@@ -1,19 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppSidebar } from "@/components/app-sidebar";
+import { ContextBackLink } from "@/components/navigation/context-back-link";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
-  createQuotationItem,
-  createQuotationSection,
-  deactivateQuotationItem,
-  deactivateQuotationSection,
   updateQuotation,
   updateQuotationExtraDiscount,
-  updateQuotationItem,
-  updateQuotationSection,
 } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -132,19 +127,6 @@ type QuotationItem = {
 type CellLayout = {
   mergeMode?: string;
 };
-
-function mergeModeForItem(item?: QuotationItem): string {
-  const mergeMode = item?.cell_layout?.mergeMode;
-  if (mergeMode === "none" || mergeMode === "merge_specification" || mergeMode === "merge_full_row") {
-    return mergeMode;
-  }
-
-  if (item?.line_style === "heading" || item?.line_style === "note" || item?.item_type === "blank") {
-    return "merge_full_row";
-  }
-
-  return "none";
-}
 
 function Field({
   name,
@@ -388,158 +370,6 @@ function QuotationTermsForm({ quotation, mode }: { quotation: Quotation; mode: "
   );
 }
 
-function SectionForm({
-  quotationId,
-  section,
-}: {
-  quotationId: string;
-  section?: QuotationSection;
-}) {
-  return (
-    <form
-      action={section ? updateQuotationSection : createQuotationSection}
-      className="grid gap-3 md:grid-cols-2"
-    >
-      {section ? <input type="hidden" name="id" value={section.id} /> : null}
-      <input type="hidden" name="quotation_id" value={quotationId} />
-      <input type="hidden" name="is_active" value="on" />
-      <input type="hidden" name="section_type" value={section?.section_type ?? "section"} />
-      <input type="hidden" name="title_align" value={section?.title_align ?? "center"} />
-      <input type="hidden" name="title_bg" value={section?.title_bg ?? "light_grey"} />
-      <input type="hidden" name="title_size" value={section?.title_size ?? "normal"} />
-      <input type="hidden" name="row_height" value={section?.row_height ?? ""} />
-      {(section?.title_bold ?? true) ? <input type="hidden" name="title_bold" value="on" /> : null}
-      <Field
-        name="section_title"
-        label="Section title"
-        defaultValue={section?.section_title}
-        required
-      />
-      <Field
-        name="sort_order"
-        label="Sort order"
-        type="number"
-        defaultValue={section?.sort_order ?? 0}
-      />
-      <TextArea
-        name="section_notes"
-        label="Section notes"
-        defaultValue={section?.section_notes}
-      />
-      <div className="flex justify-end md:col-span-2">
-        <SubmitButton label={section ? "Save section" : "Add section"} />
-      </div>
-    </form>
-  );
-}
-
-function ItemForm({
-  quotation,
-  sectionId,
-  item,
-}: {
-  quotation: Quotation;
-  sectionId?: string | null;
-  item?: QuotationItem;
-}) {
-  return (
-    <form
-      action={item ? updateQuotationItem : createQuotationItem}
-      className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"
-    >
-      {item ? <input type="hidden" name="id" value={item.id} /> : null}
-      <input type="hidden" name="quotation_id" value={quotation.id} />
-      <input type="hidden" name="section_id" value={sectionId ?? item?.section_id ?? ""} />
-      <input type="hidden" name="item_type" value={item?.item_type ?? "custom"} />
-      <input type="hidden" name="manual_serial" value={item?.manual_serial ?? ""} />
-      <input type="hidden" name="is_active" value="on" />
-      {item?.is_optional ? <input type="hidden" name="is_optional" value="on" /> : null}
-      <input type="hidden" name="room_name_snapshot" value={item?.room_name_snapshot ?? ""} />
-      <input type="hidden" name="model_snapshot" value={item?.model_snapshot ?? ""} />
-      <input type="hidden" name="finish_snapshot" value={item?.finish_snapshot ?? ""} />
-      <input type="hidden" name="size_snapshot" value={item?.size_snapshot ?? ""} />
-      <input type="hidden" name="origin_snapshot" value={item?.origin_snapshot ?? ""} />
-      <input type="hidden" name="warranty_snapshot" value={item?.warranty_snapshot ?? ""} />
-      <input type="hidden" name="supplier_name_snapshot" value={item?.supplier_name_snapshot ?? ""} />
-      <input type="hidden" name="supplier_notes_snapshot" value={item?.supplier_notes_snapshot ?? ""} />
-      <input type="hidden" name="internal_cost" value={item?.internal_cost ?? 0} />
-      <input type="hidden" name="margin_type" value={item?.margin_type ?? "amount"} />
-      <input type="hidden" name="margin_value" value={item?.margin_value ?? 0} />
-      <input type="hidden" name="line_style" value={item?.line_style ?? "normal"} />
-      <input type="hidden" name="row_height" value={item?.row_height ?? ""} />
-      <input type="hidden" name="merge_mode" value={mergeModeForItem(item)} />
-      {item?.is_rate_only ? <input type="hidden" name="is_rate_only" value="on" /> : null}
-      <Field
-        name="item_code_snapshot"
-        label="Item code"
-        defaultValue={item?.item_code_snapshot}
-      />
-      <Field
-        name="item_name_snapshot"
-        label="Item name"
-        defaultValue={item?.item_name_snapshot}
-      />
-      <Field
-        name="specified_image_url_snapshot"
-        label="Specified image URL"
-        defaultValue={item?.specified_image_url_snapshot}
-      />
-      <Field
-        name="proposed_image_url_snapshot"
-        label="Proposed reference image URL"
-        defaultValue={item?.proposed_image_url_snapshot}
-      />
-      <Field name="qty" label="Qty" type="number" defaultValue={item?.qty ?? 1} />
-      <Field
-        name="unit_label"
-        label="Unit"
-        defaultValue={item?.unit_label ?? "Pc"}
-      />
-      <Field
-        name="unit_price"
-        label="U.Price"
-        type="number"
-        defaultValue={item?.unit_price ?? 0}
-      />
-      <CurrencySelect defaultValue={item?.currency ?? quotation.currency} />
-      <label className="block">
-        <span className="text-xs font-semibold uppercase text-zinc-500">
-          Discount type
-        </span>
-        <select
-          name="discount_type"
-          defaultValue={item?.discount_type ?? "amount"}
-          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-        >
-          <option value="amount">amount</option>
-          <option value="percent">percent</option>
-        </select>
-      </label>
-      <Field
-        name="discount_value"
-        label="Discount"
-        type="number"
-        defaultValue={item?.discount_value ?? 0}
-      />
-      <Field
-        name="sort_order"
-        label="Sort order"
-        type="number"
-        defaultValue={item?.sort_order ?? 0}
-      />
-      <TextArea
-        name="specification_snapshot"
-        label="Specification"
-        defaultValue={item?.specification_snapshot}
-      />
-      <TextArea name="notes" label="Notes" defaultValue={item?.notes} />
-      <div className="flex justify-end md:col-span-2 xl:col-span-3">
-        <SubmitButton label={item ? "Save line" : "Add custom line"} />
-      </div>
-    </form>
-  );
-}
-
 function ImageCell({ value }: { value: string | null }) {
   if (!value) {
     return <span className="text-xs text-zinc-400">No image</span>;
@@ -634,19 +464,19 @@ export default async function QuotationDetailPage({
       <AppSidebar />
       <div className="flex-1">
         <TopBar
-          title="Quotation Builder"
-          description="Build editable quotation sections and custom line-item snapshots."
+          title="Quotation Detail"
+          description="Review quotation details, totals, terms, and line-item snapshots."
           userDisplayName={displayName}
           userEmail={user.email}
         />
         <main className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <Link
-              href="/quotations"
+            <ContextBackLink
+              fallbackHref={`/clients/projects/${quotation.project_id}`}
               className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
             >
-              Back to quotations
-            </Link>
+              Back
+            </ContextBackLink>
             {message ? (
               <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
                 {message}
@@ -783,18 +613,16 @@ export default async function QuotationDetailPage({
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="text-lg font-semibold text-zinc-950">Sections & Line Items</h2>
-                  <p className="mt-1 text-sm text-zinc-500">Build sections and quote-only custom lines.</p>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    Read-only line summary. To edit items, open the quotation builder.
+                  </p>
                 </div>
-                {canManageRecords ? (
-                  <details className="sm:w-[420px]">
-                    <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                      Add section
-                    </summary>
-                    <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                      <SectionForm quotationId={quotation.id} />
-                    </div>
-                  </details>
-                ) : null}
+                <Link
+                  href={`/quotations/${quotation.id}/builder`}
+                  className="inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                >
+                  Open Builder
+                </Link>
               </div>
             </div>
             {(sections ?? []).map((section) => {
@@ -820,34 +648,7 @@ export default async function QuotationDetailPage({
                           </p>
                         ) : null}
                       </div>
-                      {canManageRecords ? (
-                        <form action={deactivateQuotationSection}>
-                          <input type="hidden" name="id" value={section.id} />
-                          <input
-                            type="hidden"
-                            name="quotation_id"
-                            value={quotation.id}
-                          />
-                          <button
-                            type="submit"
-                            className="text-sm font-semibold text-zinc-500 transition hover:text-red-700"
-                          >
-                            Deactivate
-                          </button>
-                        </form>
-                      ) : null}
                     </div>
-
-                    {canManageRecords ? (
-                      <details className="mt-4">
-                        <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                          Edit section
-                        </summary>
-                        <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                          <SectionForm quotationId={quotation.id} section={section} />
-                        </div>
-                      </details>
-                    ) : null}
                   </div>
 
                   <div className="overflow-x-auto p-5">
@@ -864,7 +665,6 @@ export default async function QuotationDetailPage({
                           <th className="py-3 pr-3">Discount</th>
                           <th className="py-3 pr-3">Net Price</th>
                           <th className="py-3 pr-3">Net Total</th>
-                          {canManageRecords ? <th className="py-3">Actions</th> : null}
                         </tr>
                       </thead>
                       <tbody>
@@ -905,39 +705,6 @@ export default async function QuotationDetailPage({
                             <td className="py-3 pr-3 font-semibold text-zinc-950">
                               {formatMoney(item.currency, item.net_total)}
                             </td>
-                            {canManageRecords ? (
-                              <td className="py-3">
-                                <details>
-                                  <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                                    Edit line
-                                  </summary>
-                                  <div className="mt-3 w-[720px] rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                                    <ItemForm quotation={quotation} item={item} />
-                                    <form
-                                      action={deactivateQuotationItem}
-                                      className="mt-3"
-                                    >
-                                      <input
-                                        type="hidden"
-                                        name="id"
-                                        value={item.id}
-                                      />
-                                      <input
-                                        type="hidden"
-                                        name="quotation_id"
-                                        value={quotation.id}
-                                      />
-                                      <button
-                                        type="submit"
-                                        className="text-sm font-semibold text-zinc-500 transition hover:text-red-700"
-                                      >
-                                        Deactivate line
-                                      </button>
-                                    </form>
-                                  </div>
-                                </details>
-                              </td>
-                            ) : null}
                           </tr>
                         ))}
                       </tbody>
@@ -949,23 +716,13 @@ export default async function QuotationDetailPage({
                     ) : null}
                   </div>
 
-                  {canManageRecords ? (
-                    <details className="border-t border-zinc-200 bg-zinc-50 p-5">
-                      <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                        Add custom line
-                      </summary>
-                      <div className="mt-4 rounded-md border border-zinc-200 bg-white p-4">
-                        <ItemForm quotation={quotation} sectionId={section.id} />
-                      </div>
-                    </details>
-                  ) : null}
                 </article>
               );
             })}
 
             {!sections?.length ? (
               <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
-                No sections yet. Add the first section above, such as General.
+                No sections yet. Open the builder to add quotation sections and items.
               </section>
             ) : null}
           </section>

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Fragment, type CSSProperties, type ReactNode } from "react";
+import { ContextBackLink } from "@/components/navigation/context-back-link";
 import { InlineRowAutosave } from "@/components/quotations/inline-row-autosave";
 import { CellFormattingToolbar } from "@/components/quotations/cell-formatting-toolbar";
 import {
@@ -13,6 +14,10 @@ import {
 } from "@/components/quotations/product-library-selector";
 import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
 import { QuotationImageCell } from "@/components/quotations/quotation-image-cell";
+import {
+  CopyQuotationRowButton,
+  PasteQuotationRowControls,
+} from "@/components/quotations/quotation-row-clipboard";
 import { RowHeightTextarea } from "@/components/quotations/row-height-textarea";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
@@ -21,6 +26,7 @@ import {
   createQuotationItem,
   createQuotationSection,
   deactivateQuotationItem,
+  duplicateQuotationItemBelow,
   deactivateQuotationSection,
   moveQuotationItemDown,
   moveQuotationItemUp,
@@ -93,12 +99,18 @@ type QuotationItem = {
   quotation_id: string;
   section_id: string | null;
   item_type: string;
+  source_template_id: string | null;
+  source_component_data: unknown;
   manual_serial: string | null;
   item_code_snapshot: string | null;
   item_name_snapshot: string | null;
+  brand_name_snapshot: string | null;
+  category_name_snapshot: string | null;
   specified_image_url_snapshot: string | null;
   proposed_image_url_snapshot: string | null;
   specification_snapshot: string | null;
+  selected_options_snapshot: unknown;
+  internal_components_snapshot: unknown;
   room_name_snapshot: string | null;
   model_snapshot: string | null;
   finish_snapshot: string | null;
@@ -1664,6 +1676,61 @@ function DeactivateRowAction({
   );
 }
 
+function rowClipboardPayload({
+  item,
+  quotation,
+}: {
+  item: QuotationItem;
+  quotation: Quotation;
+}) {
+  return {
+    copied_at: new Date().toISOString(),
+    source_item_id: item.id,
+    source_quotation_id: quotation.id,
+    source_quotation_label: quotation.quotation_no ?? quotation.title,
+    source_section_id: item.section_id,
+    row_snapshot: {
+      item_type: item.item_type,
+      source_template_id: item.source_template_id,
+      source_component_data: item.source_component_data,
+      item_code_snapshot: item.item_code_snapshot,
+      item_name_snapshot: item.item_name_snapshot,
+      brand_name_snapshot: item.brand_name_snapshot,
+      category_name_snapshot: item.category_name_snapshot,
+      specified_image_url_snapshot: item.specified_image_url_snapshot,
+      proposed_image_url_snapshot: item.proposed_image_url_snapshot,
+      specification_snapshot: item.specification_snapshot,
+      selected_options_snapshot: item.selected_options_snapshot,
+      internal_components_snapshot: item.internal_components_snapshot,
+      room_name_snapshot: item.room_name_snapshot,
+      model_snapshot: item.model_snapshot,
+      finish_snapshot: item.finish_snapshot,
+      size_snapshot: item.size_snapshot,
+      origin_snapshot: item.origin_snapshot,
+      warranty_snapshot: item.warranty_snapshot,
+      supplier_name_snapshot: item.supplier_name_snapshot,
+      supplier_notes_snapshot: item.supplier_notes_snapshot,
+      qty: item.qty,
+      unit_label: item.unit_label,
+      unit_price: item.unit_price,
+      discount_type: item.discount_type,
+      discount_value: item.discount_value,
+      net_price: item.net_price,
+      net_total: item.net_total,
+      currency: item.currency,
+      is_optional: item.is_optional,
+      internal_cost: item.internal_cost,
+      margin_type: item.margin_type,
+      margin_value: item.margin_value,
+      is_rate_only: item.is_rate_only,
+      line_style: item.line_style,
+      row_height: item.row_height,
+      cell_layout: item.cell_layout,
+      notes: item.notes,
+    },
+  };
+}
+
 function InlineRowActions({
   item,
   quotation,
@@ -1714,7 +1781,21 @@ function InlineRowActions({
                 ))}
               </select>
             </label>
-            <div className="mt-2 flex items-center justify-between gap-2">
+            <div className="mt-2 grid gap-2">
+              <form action={duplicateQuotationItemBelow}>
+                <input type="hidden" name="id" value={item.id} />
+                <input type="hidden" name="quotation_id" value={quotation.id} />
+                <input type="hidden" name="return_to" value={returnTo} />
+                <button
+                  type="submit"
+                  className="h-7 w-full border border-zinc-300 bg-white px-2 text-left text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                >
+                  Duplicate below
+                </button>
+              </form>
+              <CopyQuotationRowButton
+                payload={rowClipboardPayload({ item, quotation })}
+              />
               <DeactivateRowAction item={item} quotationId={quotation.id} returnTo={returnTo} />
               <details className="relative">
                 <summary className="h-7 cursor-pointer border border-zinc-300 bg-white px-2 py-1.5 text-xs font-semibold text-emerald-900">
@@ -1862,12 +1943,14 @@ export default async function QuotationBuilderPage({
   const { data: productBrands, error: productBrandsError } = await supabase
     .from("brands")
     .select("id,name")
+    .eq("is_active", true)
     .order("name", { ascending: true })
     .returns<ProductLibraryBrand[]>();
 
   const { data: productCategories, error: productCategoriesError } = await supabase
     .from("product_categories")
     .select("id,brand_id,parent_id,name")
+    .eq("is_active", true)
     .order("brand_id", { ascending: true })
     .order("sort_order", { ascending: true })
     .order("name", { ascending: true })
@@ -1913,7 +1996,7 @@ export default async function QuotationBuilderPage({
   const { data: items, error: itemsError } = await supabase
     .from("quotation_items")
     .select(
-      "id,quotation_id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,is_active,notes,created_at",
+      "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,is_active,notes,created_at",
     )
     .eq("quotation_id", id)
     .eq("is_active", true)
@@ -1964,12 +2047,12 @@ export default async function QuotationBuilderPage({
       <header className="sticky top-0 z-20 border-b border-zinc-300 bg-white">
         <div className="flex flex-col gap-3 px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <Link
-              href={`/quotations/${quotation.id}`}
+            <ContextBackLink
+              fallbackHref={`/clients/projects/${quotation.project_id}`}
               className="border border-zinc-300 px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
             >
-              Back to quotation
-            </Link>
+              Back
+            </ContextBackLink>
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-zinc-950">
                 {quotation.quotation_no ?? "Draft quotation"} - {quotation.title}
@@ -2405,6 +2488,11 @@ export default async function QuotationBuilderPage({
                               returnTo={builderPath}
                               sectionId={section.id}
                               showInternal={showInternal}
+                            />
+                            <PasteQuotationRowControls
+                              quotationId={quotation.id}
+                              returnTo={builderPath}
+                              sectionId={section.id}
                             />
                             <details>
                               <summary className="mt-2 cursor-pointer text-xs font-semibold text-zinc-600">
