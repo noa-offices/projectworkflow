@@ -189,7 +189,7 @@ function InfoLine({ label, value }: { label: string; value?: string | number | n
   return (
     <div>
       <dt className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">{label}</dt>
-      <dd className="mt-1 text-xs text-zinc-900">{value || "-"}</dd>
+      <dd className="mt-0.5 text-xs text-zinc-900">{value || "-"}</dd>
     </div>
   );
 }
@@ -205,7 +205,7 @@ function MetaLine({ label, value }: { label: string; value?: string | number | n
 
 function ImageBox({ src }: { src: string | null }) {
   return (
-    <div className="mx-auto flex h-[78px] w-[105px] items-center justify-center overflow-hidden bg-white">
+    <div className="mx-auto flex h-[85px] w-[115px] items-center justify-center overflow-hidden bg-white">
       {src ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={src} alt="Proposed item" className="max-h-full max-w-full object-contain" />
@@ -216,7 +216,7 @@ function ImageBox({ src }: { src: string | null }) {
 
 function SpecificationBlock({ item }: { item: QuotationItem }) {
   return (
-    <div className="space-y-1">
+    <div className="space-y-0.5">
       <p className="font-semibold text-zinc-950">
         {item.item_name_snapshot ?? item.model_snapshot ?? "Custom item"}
       </p>
@@ -332,24 +332,24 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
         @page { size: A4 landscape; margin: 8mm; }
         @media print {
           .no-print { display: none !important; }
-          .print-sheet { box-shadow: none !important; border: 0 !important; width: 100% !important; max-width: none !important; padding: 0 !important; }
+          .print-sheet { box-shadow: none !important; width: 100% !important; max-width: 100% !important; padding: 24px !important; box-sizing: border-box !important; }
           thead { display: table-header-group; }
-          tr, .avoid-break, .totals-box, .terms-block, .print-section-heading { break-inside: avoid; page-break-inside: avoid; }
+          tr, .avoid-break, .totals-box, .terms-block, .signature-block, .print-section-heading { break-inside: avoid; page-break-inside: avoid; }
           .print-section + .print-section { break-before: page; page-break-before: always; }
           .final-section { break-before: page; page-break-before: always; }
           body { background: #fff !important; }
         }
       `}</style>
 
-      <div className="no-print mx-auto mb-4 flex max-w-[1280px] flex-wrap items-center justify-between gap-3">
+      <div className="no-print mx-auto mb-4 flex w-[281mm] max-w-full flex-wrap items-center justify-between gap-3">
         <Link href={`/quotations/${quotation.id}`} className="text-sm font-semibold text-emerald-900">
           Back to quotation
         </Link>
         <PrintActions />
       </div>
 
-      <article className="print-sheet mx-auto box-border w-full max-w-[1280px] bg-white p-8 shadow-sm ring-1 ring-zinc-200">
-        <header className="border-b border-zinc-300 pb-5">
+      <article className="print-sheet mx-auto box-border w-[281mm] max-w-full bg-white p-6 shadow-sm ring-1 ring-zinc-200">
+        <header className="border-b border-zinc-300 pb-4">
           <div className="grid w-full max-w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-6 box-border">
             <div className="min-w-0 justify-self-start">
               {hasLogo ? (
@@ -360,8 +360,8 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                   NOA Office Solutions
                 </div>
               )}
-              <div className="mt-2">
-                <p className="text-base font-bold leading-tight text-zinc-950">{COMPANY_PROFILE.name}</p>
+              <div className="mt-1.5">
+                <p className="text-sm font-bold leading-tight text-zinc-950">{COMPANY_PROFILE.name}</p>
                 <p className="hidden">
                   {COMPANY_PROFILE.offices.map((office) => office.location).join(" · ")}
                 </p>
@@ -375,7 +375,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
               <p className="text-[22px] font-bold tracking-[0.08em] text-zinc-950">QUOTATION</p>
             </div>
             <div className="box-border flex w-full min-w-0 justify-end justify-self-end text-right">
-              <dl className="grid w-full max-w-[240px] min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+              <dl className="grid w-full max-w-[240px] min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
                 <MetaLine label="Ref No." value={quotation.quotation_no ?? "Draft"} />
                 <MetaLine label="Date" value={quotation.quotation_date} />
                 {quotation.revision_no ? <MetaLine label="Revision" value={revisionLabel(quotation)} /> : null}
@@ -385,10 +385,10 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
           </div>
         </header>
 
-        <section className="mt-5">
-          <div className="border-b border-zinc-300 pb-4">
+        <section className="mt-3">
+          <div className="border-b border-zinc-300 pb-3">
             <h2 className="text-xs font-bold uppercase tracking-wide text-zinc-500">Client & Project</h2>
-            <dl className="mt-3 grid gap-3 md:grid-cols-2">
+            <dl className="mt-2 grid gap-x-4 gap-y-2 md:grid-cols-3">
               <InfoLine label="Client" value={client?.company_name ?? "Unknown client"} />
               <InfoLine label="Project" value={project?.project_name ?? "Unknown project"} />
               <InfoLine label="Location" value={project?.location} />
@@ -399,20 +399,14 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
           </div>
         </section>
 
-        <section className="mt-6 space-y-6">
+        <section className="mt-4 space-y-5">
           {printableSections.map((section) => {
             const sectionItems = itemsBySection.get(section.id) ?? [];
             const subtotal = sectionSubtotal(sectionItems);
 
             return (
               <section key={section.id} className="print-section">
-                <div className="print-section-heading border border-zinc-300 bg-zinc-100 px-3 py-2 text-center">
-                  <h2 className="text-sm font-bold text-zinc-950">{section.section_title}</h2>
-                  {section.section_notes ? (
-                    <p className="mt-1 text-xs text-zinc-600">{section.section_notes}</p>
-                  ) : null}
-                </div>
-                <table className="w-full table-fixed border-collapse text-[10px] leading-snug">
+                <table className="w-full table-fixed border-collapse text-[9.5px] leading-tight">
                   <colgroup>
                     <col className="w-[5%]" />
                     <col className="w-[13%]" />
@@ -426,26 +420,36 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                     <col className="w-[6%]" />
                   </colgroup>
                   <thead>
+                    <tr className="print-section-heading bg-zinc-200">
+                      <th colSpan={10} className="border border-zinc-300 px-3 py-1.5 text-center">
+                        <span className="block text-sm font-bold text-zinc-950">{section.section_title}</span>
+                        {section.section_notes ? (
+                          <span className="mt-0.5 block text-[10px] font-medium normal-case tracking-normal text-zinc-600">
+                            {section.section_notes}
+                          </span>
+                        ) : null}
+                      </th>
+                    </tr>
                     <tr className="bg-zinc-100 text-left text-[9px] uppercase tracking-wide text-zinc-600">
-                      <th className="border border-zinc-300 px-2 py-2 text-center">S. No.</th>
-                      <th className="border border-zinc-300 px-2 py-2 text-center">Specified Item Reference Image</th>
-                      <th className="border border-zinc-300 px-2 py-2 text-center">Proposed Item Reference Image</th>
-                      <th className="border border-zinc-300 px-2 py-2">Specifications</th>
-                      <th className="border border-zinc-300 px-2 py-2">Origin / Supplier</th>
-                      <th className="border border-zinc-300 px-2 py-2 text-center">Qty</th>
-                      <th className="border border-zinc-300 px-2 py-2 text-center">
+                      <th className="border border-zinc-300 px-1.5 py-1.5 text-center">S. No.</th>
+                      <th className="border border-zinc-300 px-1.5 py-1.5 text-center">Specified Item Reference Image</th>
+                      <th className="border border-zinc-300 px-1.5 py-1.5 text-center">Proposed Item Reference Image</th>
+                      <th className="border border-zinc-300 px-1.5 py-1.5">Specifications</th>
+                      <th className="border border-zinc-300 px-1.5 py-1.5">Origin / Supplier</th>
+                      <th className="border border-zinc-300 px-1.5 py-1.5 text-center">Qty</th>
+                      <th className="border border-zinc-300 px-1.5 py-1.5 text-center">
                         <span className="block">U.Price</span>
                         <span className="block text-[8px] font-semibold">{quotation.currency}</span>
                       </th>
-                      <th className="border border-zinc-300 px-2 py-2 text-center">
+                      <th className="border border-zinc-300 px-1.5 py-1.5 text-center">
                         <span className="block">Disc. Amount</span>
                         <span className="block text-[8px] font-semibold">{quotation.currency}</span>
                       </th>
-                      <th className="border border-zinc-300 px-2 py-2 text-center">
+                      <th className="border border-zinc-300 px-1.5 py-1.5 text-center">
                         <span className="block">Net Price</span>
                         <span className="block text-[8px] font-semibold">{quotation.currency}</span>
                       </th>
-                      <th className="border border-zinc-300 px-2 py-2 text-center">
+                      <th className="border border-zinc-300 px-1.5 py-1.5 text-center">
                         <span className="block">Net Total</span>
                         <span className="block text-[8px] font-semibold">{quotation.currency}</span>
                       </th>
@@ -457,55 +461,55 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                         <tr key={item.id} className="avoid-break">
                           <td
                             colSpan={10}
-                            className="border border-zinc-300 bg-zinc-50 px-3 py-2 text-center text-sm font-bold text-zinc-900"
+                            className="border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-center text-sm font-bold text-zinc-900"
                           >
                             {fullWidthRowText(item) || "Heading"}
                           </td>
                         </tr>
                       ) : (
                         <tr key={item.id}>
-                          <td className="border border-zinc-300 px-2 py-2 text-center align-middle text-zinc-700">
+                          <td className="border border-zinc-300 px-1.5 py-1.5 text-center align-middle text-zinc-700">
                             {item.manual_serial || `${index + 1}`}
                           </td>
-                          <td className="border border-zinc-300 px-2 py-2 text-center align-middle">
+                          <td className="border border-zinc-300 px-1 py-1.5 text-center align-middle">
                             <ImageBox src={specifiedImageUrlByItemId.get(item.id) ?? null} />
                           </td>
-                          <td className="border border-zinc-300 px-2 py-2 text-center align-middle">
+                          <td className="border border-zinc-300 px-1 py-1.5 text-center align-middle">
                             <ImageBox src={proposedImageUrlByItemId.get(item.id) ?? null} />
                           </td>
-                          <td className="border border-zinc-300 px-2 py-2 align-top">
+                          <td className="border border-zinc-300 px-1.5 py-1.5 align-top">
                             <SpecificationBlock item={item} />
                           </td>
-                          <td className="border border-zinc-300 px-2 py-2 text-center align-middle text-zinc-700">
+                          <td className="border border-zinc-300 px-1.5 py-1.5 text-center align-middle text-zinc-700">
                             {item.origin_snapshot ? <p>{item.origin_snapshot}</p> : null}
                             {item.supplier_name_snapshot ? <p className="mt-1">{item.supplier_name_snapshot}</p> : null}
                             {item.supplier_notes_snapshot ? (
                               <p className="mt-1 whitespace-pre-wrap text-zinc-500">{item.supplier_notes_snapshot}</p>
                             ) : null}
                           </td>
-                          <td className="border border-zinc-300 px-2 py-2 text-center align-middle">
+                          <td className="border border-zinc-300 px-1.5 py-1.5 text-center align-middle">
                             {item.qty} {item.unit_label}
                           </td>
-                          <td className="border border-zinc-300 px-2 py-2 text-center align-middle">
+                          <td className="border border-zinc-300 px-1.5 py-1.5 text-center align-middle">
                             {tableNumber(item.unit_price)}
                           </td>
-                          <td className="border border-zinc-300 px-2 py-2 text-center align-middle">
+                          <td className="border border-zinc-300 px-1.5 py-1.5 text-center align-middle">
                             {tableNumber(discountAmount(item))}
                           </td>
-                          <td className="border border-zinc-300 px-2 py-2 text-center align-middle">
+                          <td className="border border-zinc-300 px-1.5 py-1.5 text-center align-middle">
                             {tableNumber(item.net_price)}
                           </td>
-                          <td className="border border-zinc-300 px-2 py-2 text-center align-middle font-semibold">
+                          <td className="border border-zinc-300 px-1.5 py-1.5 text-center align-middle font-semibold">
                             {tableNumber(item.net_total)}
                           </td>
                         </tr>
                       )
                     ))}
                     <tr className="avoid-break bg-zinc-50">
-                      <td colSpan={9} className="border border-zinc-300 px-3 py-2 text-right font-bold uppercase tracking-wide text-zinc-600">
+                      <td colSpan={9} className="border border-zinc-300 px-3 py-1.5 text-right font-bold uppercase tracking-wide text-zinc-600">
                         Section Subtotal
                       </td>
-                      <td className="border border-zinc-300 px-2 py-2 text-right font-bold text-zinc-950">
+                      <td className="border border-zinc-300 px-1.5 py-1.5 text-right font-bold text-zinc-950">
                         {formatMoney(quotation.currency, subtotal)}
                       </td>
                     </tr>
@@ -516,17 +520,19 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
           })}
         </section>
 
-        <section className="final-section mt-6 grid items-start gap-6 md:grid-cols-[1fr_360px]">
-          <div className="terms-block space-y-4">
+        <section className="final-section mt-6 grid w-full max-w-full box-border items-start gap-6 md:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+          <div className="terms-block min-w-0 rounded-sm border border-zinc-300 bg-white p-4">
             {quotation.notes ? (
-              <div className="border-l-4 border-emerald-900 bg-zinc-50 p-4">
+              <div className="mb-4 border-l-4 border-emerald-900 bg-zinc-50 p-3">
                 <h2 className="text-xs font-bold uppercase tracking-wide text-zinc-500">Notes</h2>
                 <p className="mt-2 whitespace-pre-wrap text-xs text-zinc-700">{quotation.notes}</p>
               </div>
             ) : null}
-            <div className="border-t border-zinc-300 pt-4">
-              <h2 className="text-sm font-bold uppercase tracking-wide text-zinc-700">Commercial Terms</h2>
-              <dl className="mt-3 grid gap-3 md:grid-cols-3">
+            <div>
+              <h2 className="border-b border-zinc-200 pb-2 text-sm font-bold uppercase tracking-wide text-zinc-800">
+                Commercial Terms
+              </h2>
+              <dl className="mt-3 grid gap-x-4 gap-y-3 md:grid-cols-3">
                 <InfoLine label="Payment Terms" value={quotation.payment_terms} />
                 <InfoLine label="Validity" value={quotation.validity} />
                 <InfoLine label="Warranty" value={quotation.warranty_terms} />
@@ -536,48 +542,48 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
               </dl>
             </div>
           </div>
-          <div className="totals-box border border-zinc-900 bg-white">
+          <div className="totals-box box-border w-full max-w-[420px] justify-self-end overflow-hidden border border-zinc-900 bg-white shadow-sm">
             <div className="bg-zinc-900 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white">
-              Summary
+              Summary / Totals
             </div>
-            <div className="flex justify-between border-b border-zinc-200 px-4 py-2 text-xs">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
               <span>Total Price</span>
-              <span className="font-semibold">{formatMoney(quotation.currency, quotation.subtotal)}</span>
+              <span className="whitespace-nowrap font-semibold">{formatMoney(quotation.currency, quotation.subtotal)}</span>
             </div>
-            <div className="flex justify-between border-b border-zinc-200 px-4 py-2 text-xs">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
               <span>Item Discount</span>
-              <span className="font-semibold">{formatMoney(quotation.currency, quotation.discount_total)}</span>
+              <span className="whitespace-nowrap font-semibold">{formatMoney(quotation.currency, quotation.discount_total)}</span>
             </div>
-            <div className="flex justify-between border-b border-zinc-200 px-4 py-2 text-xs">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
               <span>Extra Discount</span>
-              <span className="font-semibold">{formatMoney(quotation.currency, overallDiscountAmount(quotation))}</span>
+              <span className="whitespace-nowrap font-semibold">{formatMoney(quotation.currency, overallDiscountAmount(quotation))}</span>
             </div>
-            <div className="flex justify-between border-b border-zinc-200 px-4 py-2 text-xs">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
               <span>VAT {quotation.vat_percent}%</span>
-              <span className="font-semibold">{formatMoney(quotation.currency, quotation.vat_amount)}</span>
+              <span className="whitespace-nowrap font-semibold">{formatMoney(quotation.currency, quotation.vat_amount)}</span>
             </div>
-            <div className="flex justify-between px-4 py-4 text-base font-black text-zinc-950">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 bg-zinc-50 px-4 py-4 text-lg font-black text-zinc-950">
               <span>Final Total</span>
-              <span>{formatMoney(quotation.currency, quotation.grand_total)}</span>
+              <span className="whitespace-nowrap">{formatMoney(quotation.currency, quotation.grand_total)}</span>
             </div>
           </div>
         </section>
 
-        <section className="terms-block mt-8 border-t border-zinc-300 pt-6">
-          <p className="text-sm text-zinc-700">
-            Assuring you of our best cooperation we remain,
-          </p>
-          <p className="mt-2 text-sm font-semibold text-zinc-950">Yours faithfully,</p>
-          <div className="mt-8 grid gap-8 md:grid-cols-2">
-            <div>
+        <section className="signature-block mt-6 rounded-sm border border-zinc-300 bg-white p-5">
+          <div className="text-sm leading-6 text-zinc-700">
+            <p>Assuring you of our best cooperation we remain,</p>
+            <p className="font-semibold text-zinc-950">Yours faithfully,</p>
+          </div>
+          <div className="mt-6 grid gap-8 md:grid-cols-2">
+            <div className="min-h-[96px]">
               <p className="text-xs font-bold uppercase tracking-wide text-zinc-500">NOA Office Solutions</p>
-              <div className="mt-12 border-t border-zinc-400 pt-2 text-xs text-zinc-600">
+              <div className="mt-14 border-t border-zinc-400 pt-2 text-xs text-zinc-600">
                 Prepared by
               </div>
             </div>
-            <div>
+            <div className="min-h-[96px]">
               <p className="text-xs font-bold uppercase tracking-wide text-zinc-500">For Approval</p>
-              <div className="mt-12 border-t border-zinc-400 pt-2 text-xs text-zinc-600">
+              <div className="mt-14 border-t border-zinc-400 pt-2 text-xs text-zinc-600">
                 Authorized signature / stamp
               </div>
             </div>

@@ -1,10 +1,12 @@
-import { chromium } from "playwright";
+import serverlessChromium from "@sparticuz/chromium";
+import { chromium as playwrightChromium } from "playwright-core";
 import type { NextRequest } from "next/server";
 import { requireActiveUser } from "@/lib/auth";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 type DownloadPdfRouteContext = {
   params: Promise<{ id: string }>;
@@ -20,6 +22,16 @@ function quotationPdfFilename(quotation: QuotationFilenameData) {
   const title = quotation.title || "Quotation";
 
   return `${quotationNo} - ${title}`.replace(/[\\/:*?"<>|]/g, "-");
+}
+
+async function launchPdfBrowser() {
+  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+  return playwrightChromium.launch({
+    args: isServerless ? serverlessChromium.args : undefined,
+    executablePath: isServerless ? await serverlessChromium.executablePath() : undefined,
+    headless: true,
+  });
 }
 
 export async function GET(request: NextRequest, { params }: DownloadPdfRouteContext) {
@@ -41,9 +53,10 @@ export async function GET(request: NextRequest, { params }: DownloadPdfRouteCont
     return new Response("Quotation not found.", { status: 404 });
   }
 
-  const previewUrl = new URL(`/quotations/${id}/pdf?download=1`, request.url);
+  const origin = new URL(request.url).origin;
+  const previewUrl = new URL(`/quotations/${id}/pdf?download=1`, origin);
   const cookieHeader = request.headers.get("cookie") ?? "";
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchPdfBrowser();
 
   try {
     const context = await browser.newContext({
@@ -56,6 +69,12 @@ export async function GET(request: NextRequest, { params }: DownloadPdfRouteCont
       waitUntil: "networkidle",
       timeout: 60_000,
     });
+    const renderedPath = new URL(page.url()).pathname;
+
+    if (renderedPath === "/login" || renderedPath === "/pending-approval") {
+      throw new Error(`PDF preview loaded an auth page instead of quotation content: ${renderedPath}`);
+    }
+
     await page.emulateMedia({ media: "print" });
 
     const pdf = await page.pdf({
@@ -84,7 +103,7 @@ export async function GET(request: NextRequest, { params }: DownloadPdfRouteCont
   } catch (pdfError) {
     console.error("QUOTATION PDF DOWNLOAD ERROR", pdfError);
 
-    return new Response("Quotation PDF could not be generated.", { status: 500 });
+    return new Response("PDF generation failed. Please use Preview PDF as a fallback.", { status: 500 });
   } finally {
     await browser.close();
   }
