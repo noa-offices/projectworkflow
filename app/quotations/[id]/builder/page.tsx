@@ -24,7 +24,8 @@ import {
 } from "@/components/quotations/quotation-row-clipboard";
 import { RowHeightTextarea } from "@/components/quotations/row-height-textarea";
 import { requireActiveUser } from "@/lib/auth";
-import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import { formatQuotationMoney, quotationMoneyCell } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
   createQuotationItem,
@@ -280,7 +281,7 @@ const titleSizes = [
 ] as const;
 
 function money(currency: string, value: number) {
-  return formatMoney(currency, value);
+  return formatQuotationMoney(currency, value);
 }
 
 function statusLabel(status: string) {
@@ -288,7 +289,7 @@ function statusLabel(status: string) {
 }
 
 function moneyCell(value: number) {
-  return value.toFixed(2);
+  return quotationMoneyCell(value);
 }
 
 function totalCell(item: QuotationItem) {
@@ -495,7 +496,7 @@ function sectionTotal(items: QuotationItem[]) {
 }
 
 function isSerialCountedLine(item: QuotationItem) {
-  return !["heading", "note", "no_quote"].includes(item.line_style) && item.item_type !== "blank";
+  return !["heading", "note", "no_quote"].includes(item.line_style) && !["heading", "note", "blank", "subtotal"].includes(item.item_type);
 }
 
 function sectionTitleClass(section: QuotationSection) {
@@ -1313,17 +1314,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     label: "S. No.",
     className: "w-14 text-center",
     defaultWidth: 54,
-    render: (item, serial, formId, canEdit) =>
-      canEdit ? (
-        <CellInput
-          formId={formId}
-          name="manual_serial"
-          defaultValue={item.manual_serial ?? serial}
-          align="center"
-        />
-      ) : (
-        item.manual_serial || serial
-      ),
+    render: (_item, serial) => serial || "-",
   };
   const manualSerial: Column = {
     key: "manual_serial",
@@ -1473,16 +1464,15 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     defaultWidth: 136,
     render: (item, _serial, formId, canEdit) =>
       canEdit ? (
-        <div className="grid h-full content-center gap-1">
-          <CellInput formId={formId} name="origin_snapshot" defaultValue={item.origin_snapshot} />
+        <div className="grid h-full content-center gap-1.5">
           <CellInput formId={formId} name="supplier_name_snapshot" defaultValue={item.supplier_name_snapshot} />
+          <CellInput formId={formId} name="origin_snapshot" defaultValue={item.origin_snapshot} />
         </div>
       ) : (
-        <div className="flex h-full flex-col items-center justify-center whitespace-pre-wrap text-center leading-5">
-          {[
-            item.origin_snapshot,
-            item.supplier_name_snapshot,
-          ].filter(Boolean).join("\n") || "-"}
+        <div className="flex h-full flex-col items-center justify-center gap-1 text-center leading-5">
+          {item.supplier_name_snapshot ? <span>{item.supplier_name_snapshot}</span> : null}
+          {item.origin_snapshot ? <span>{item.origin_snapshot}</span> : null}
+          {!item.supplier_name_snapshot && !item.origin_snapshot ? "-" : null}
         </div>
       ),
   };
@@ -1496,12 +1486,11 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
       isPriceHiddenLine(item) ? (
         "-"
       ) : canEdit ? (
-        <div className="grid h-full grid-cols-[1fr_44px] items-center gap-1">
+        <div className="grid h-full items-center">
           <CellInput formId={formId} name="qty" type="number" step="1" defaultValue={formatNumber(item.qty)} align="center" />
-          <CellInput formId={formId} name="unit_label" defaultValue={item.unit_label} align="center" />
         </div>
       ) : (
-        `${formatNumber(item.qty)} ${item.unit_label}`
+        formatNumber(item.qty)
       ),
   };
   const unitPrice: Column = {
@@ -1510,7 +1499,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     className: "w-24 text-center",
     defaultWidth: 90,
     render: (item, _serial, formId, canEdit) =>
-      isPriceHiddenLine(item) ? "-" : canEdit ? <CellInput formId={formId} name="unit_price" type="number" step="0.01" defaultValue={item.unit_price} align="center" /> : moneyCell(item.unit_price),
+      isPriceHiddenLine(item) ? "-" : canEdit ? <CellInput formId={formId} name="unit_price" type="number" step="5" defaultValue={item.unit_price} align="center" /> : moneyCell(item.unit_price),
   };
   const discount: Column = {
     key: "discount",
@@ -2378,6 +2367,7 @@ export default async function QuotationBuilderPage({
 
     displaySections.push(section);
   }
+  let runningSerialNumber = 0;
 
   return (
     <div className="min-h-screen bg-zinc-100 text-zinc-950">
@@ -2462,6 +2452,12 @@ export default async function QuotationBuilderPage({
               className="border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
             >
               Specification Sheet
+            </Link>
+            <Link
+              href={`/quotations/${quotation.id}/download-specification`}
+              className="border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+            >
+              Download Specification
             </Link>
             <div className="flex border border-zinc-300 text-xs font-semibold">
               <Link
@@ -2637,7 +2633,6 @@ export default async function QuotationBuilderPage({
                   }
 
                   const sectionItems = itemsBySection.get(section.id) ?? [];
-                  let serialNumber = 0;
 
                   return (
                     <Fragment key={section.id}>
@@ -2720,7 +2715,7 @@ export default async function QuotationBuilderPage({
 
                       {sectionItems.map((item) => {
                         const mergedText = item.item_name_snapshot ?? item.specification_snapshot ?? "";
-                        const rowSerial = isSerialCountedLine(item) ? ++serialNumber : 0;
+                        const rowSerial = isSerialCountedLine(item) ? ++runningSerialNumber : 0;
                         const inlineFormId = `inline-row-${item.id}`;
                         const mergeMode = mergeModeForItem(item);
 

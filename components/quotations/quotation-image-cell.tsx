@@ -244,7 +244,7 @@ export function QuotationImageCell({
   }
 
   const boxClassName =
-    "relative flex h-[116px] w-[180px] max-w-full items-center justify-center overflow-hidden border border-dashed bg-white transition";
+    "relative flex h-[132px] w-full min-w-[150px] max-w-full items-center justify-center overflow-hidden border border-dashed bg-white transition";
   const selectedClassName = isSelected
     ? "border-emerald-600 ring-1 ring-emerald-600"
     : "border-zinc-300";

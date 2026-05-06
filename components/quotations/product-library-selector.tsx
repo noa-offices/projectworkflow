@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
 import { formatMoney, normalizeCurrency } from "@/lib/currencies";
+import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 import { createClient } from "@/lib/supabase/client";
 
 export type ProductLibraryBrand = {
@@ -942,9 +943,10 @@ export function ProductLibrarySelector({
                     0,
                   );
                   const previewCurrency = nonAedCurrencies.length ? "AED" : rowCurrency;
-                  const previewUnitPriceWithConversion = nonAedCurrencies.length
+                  const rawPreviewUnitPriceWithConversion = nonAedCurrencies.length
                     ? convertedPreviewTotal
                     : totalPreviewUnitPrice;
+                  const previewUnitPriceWithConversion = quotationMoneyValue(rawPreviewUnitPriceWithConversion);
                   const selectedDiscountType = discountTypes[template.id] ?? "none";
                   const rawDiscountValue = Math.max(0, numberValue(discountValues[template.id], 0));
                   const selectedDiscountValue = selectedDiscountType === "percent"
@@ -952,13 +954,15 @@ export function ProductLibrarySelector({
                     : selectedDiscountType === "amount"
                       ? rawDiscountValue
                       : 0;
-                  const unitDiscountAmount = selectedDiscountType === "percent"
-                    ? previewUnitPriceWithConversion * selectedDiscountValue / 100
-                    : selectedDiscountType === "amount"
-                      ? selectedDiscountValue
-                      : 0;
-                  const netPricePreview = Math.max(previewUnitPriceWithConversion - unitDiscountAmount, 0);
-                  const netTotalPreview = netPricePreview;
+                  const unitDiscountAmount = quotationMoneyValue(
+                    selectedDiscountType === "percent"
+                      ? previewUnitPriceWithConversion * selectedDiscountValue / 100
+                      : selectedDiscountType === "amount"
+                        ? selectedDiscountValue
+                        : 0,
+                  );
+                  const netPricePreview = quotationMoneyValue(Math.max(previewUnitPriceWithConversion - unitDiscountAmount, 0));
+                  const netTotalPreview = quotationMoneyValue(netPricePreview);
                   const proposedImages = [
                     template.proposed_image_url_1 ?? template.default_image_url,
                     template.proposed_image_url_2,
@@ -1531,7 +1535,7 @@ export function ProductLibrarySelector({
                       </div>
                       <div className="flex shrink-0 flex-col gap-3 border-t border-zinc-200 pt-3 text-left">
                         <p className="text-sm font-semibold text-zinc-950">
-                          {formatMoney(previewCurrency, previewUnitPriceWithConversion)}
+                          {formatQuotationMoney(previewCurrency, previewUnitPriceWithConversion)}
                         </p>
                         {derivedDesking ? (
                           <div className="max-w-48 space-y-1 text-xs leading-5 text-zinc-600">
@@ -1648,14 +1652,14 @@ export function ProductLibrarySelector({
                               <p>Enter exchange rate to add this item in AED.</p>
                             ) : (
                               <p className="font-semibold">
-                                Converted final: {formatMoney("AED", convertedPreviewTotal)}
+                                Converted final: {formatQuotationMoney("AED", convertedPreviewTotal)}
                               </p>
                             )}
                           </div>
                         ) : null}
                         <div className="max-w-56 space-y-2 border border-zinc-200 bg-zinc-50 p-2 text-left text-xs leading-5 text-zinc-700">
                           <p className="font-bold uppercase text-zinc-500">Pricing / Discount</p>
-                          <p>U.Price: {formatMoney(previewCurrency, previewUnitPriceWithConversion)}</p>
+                          <p>U.Price: {formatQuotationMoney(previewCurrency, previewUnitPriceWithConversion)}</p>
                           <label className="block">
                             <span className="text-[10px] font-bold uppercase text-zinc-500">Discount Type</span>
                             <select
@@ -1693,10 +1697,10 @@ export function ProductLibrarySelector({
                           </label>
                           <p>
                             Discount: {selectedDiscountType === "percent" ? `${selectedDiscountValue}% / ` : ""}
-                            {formatMoney(previewCurrency, unitDiscountAmount)}
+                            {formatQuotationMoney(previewCurrency, unitDiscountAmount)}
                           </p>
-                          <p>Net Price: {formatMoney(previewCurrency, netPricePreview)}</p>
-                          <p>Net Total: {formatMoney(previewCurrency, netTotalPreview)}</p>
+                          <p>Net Price: {formatQuotationMoney(previewCurrency, netPricePreview)}</p>
+                          <p>Net Total: {formatQuotationMoney(previewCurrency, netTotalPreview)}</p>
                         </div>
                         <form action={addProductTemplateToQuotation} className="sticky bottom-0 -mx-3 border-t border-zinc-200 bg-white px-3 py-3 text-right">
                           <input type="hidden" name="quotation_id" value={quotationId} />

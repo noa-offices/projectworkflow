@@ -5,6 +5,11 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { requireActiveUser } from "@/lib/auth";
 import { COMPANY_PROFILE } from "@/lib/company-profile";
+import {
+  imageDisplayStyle,
+  normalizeImageDisplaySettings,
+  type ImageDisplaySettings,
+} from "@/lib/image-display-settings";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -78,7 +83,12 @@ type QuotationItem = {
   sort_order: number;
   line_style: string;
   is_active: boolean;
+  cell_layout: CellLayout | null;
   notes: string | null;
+};
+
+type CellLayout = {
+  images?: Record<string, Partial<ImageDisplaySettings> | undefined>;
 };
 
 type DisplaySection = QuotationSection & {
@@ -233,8 +243,12 @@ function isBlankRow(item: QuotationItem) {
   return item.item_type === "blank" || item.line_style === "blank";
 }
 
+function isSerialCountedLine(item: QuotationItem) {
+  return !["heading", "note", "no_quote"].includes(item.line_style) && !["heading", "note", "blank", "subtotal"].includes(item.item_type);
+}
+
 function rowText(item: QuotationItem) {
-  return [item.item_name_snapshot, item.specification_snapshot, item.notes]
+  return [item.item_name_snapshot, item.specification_snapshot]
     .filter(Boolean)
     .join(" - ");
 }
@@ -344,21 +358,30 @@ function DetailLine({ label, value }: { label: string; value?: string | null }) 
 }
 
 function SpecImage({
+  imageSettings,
   src,
   label,
   large,
 }: {
+  imageSettings?: Partial<ImageDisplaySettings> | null;
   src: string | null;
   label: string;
   large?: boolean;
 }) {
+  const settings = normalizeImageDisplaySettings(imageSettings);
+
   return (
     <div>
       <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">{label}</p>
-      <div className={`flex items-center justify-center border border-zinc-200 bg-white ${large ? "h-[350px]" : "h-28"}`}>
+      <div className={`flex items-center justify-center overflow-hidden bg-white ${large ? "h-[350px]" : "h-28"}`}>
         {src ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={src} alt={label} className="max-h-full max-w-full object-contain" />
+          <img
+            src={src}
+            alt={label}
+            className="block h-full w-full"
+            style={imageDisplayStyle(settings)}
+          />
         ) : (
           <span className="text-xs text-zinc-400">No image</span>
         )}
@@ -485,7 +508,7 @@ function SelectedFinishCard({ finish }: { finish: SelectedFinish }) {
 
   return (
     <div className="flex w-24 flex-col items-center bg-white text-center">
-      <div className="flex h-12 w-12 items-center justify-center border border-zinc-200 bg-zinc-50">
+      <div className="flex h-12 w-12 items-center justify-center bg-white">
         {finish.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={finish.imageUrl} alt={finish.value || finish.label} className="max-h-full max-w-full object-contain" />
@@ -567,8 +590,8 @@ function MaterialChartBlock({
       </div>
       <div className="mt-2 grid grid-cols-5 gap-2">
         {swatches.map((swatch, index) => (
-          <div key={`${chart.id}-${start + index}`} className="border border-zinc-200 bg-white p-1.5">
-            <div className="flex h-14 items-center justify-center border border-zinc-100 bg-zinc-50">
+          <div key={`${chart.id}-${start + index}`} className="bg-white p-1.5">
+            <div className="flex h-14 items-center justify-center bg-white">
               {swatch.imageUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={swatch.imageUrl} alt={swatch.name || swatch.code || chart.groupLabel} className="max-h-full max-w-full object-contain" />
@@ -702,8 +725,7 @@ function ProductSpecPage({
   totalPages: number;
 }) {
   const title = item.item_name_snapshot || item.model_snapshot || item.item_code_snapshot || `Item ${serial}`;
-  const originSupplier = [item.origin_snapshot, item.supplier_name_snapshot].filter(Boolean).join(" / ");
-  const supportingNotes = [item.notes, item.supplier_notes_snapshot].filter(Boolean).join("\n");
+  const originSupplier = [item.supplier_name_snapshot, item.origin_snapshot].filter(Boolean).join(" / ");
   const { charts, selectedFinishes } = materialContent(item, finishImageUrlById);
 
   return (
@@ -719,16 +741,25 @@ function ProductSpecPage({
         </div>
         <div className="text-right">
           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">Item No.</p>
-          <p className="mt-1 text-xl font-bold text-zinc-950">{item.manual_serial || serial}</p>
+          <p className="mt-1 text-xl font-bold text-zinc-950">{serial || "-"}</p>
         </div>
       </div>
 
       <div className="mt-6 grid gap-7 md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
         <div className="space-y-4">
-          <SpecImage src={proposedImage} label="Proposed image" large />
+          <SpecImage
+            imageSettings={item.cell_layout?.images?.proposed_image_url_snapshot}
+            src={proposedImage}
+            label="Proposed image"
+            large
+          />
           {specifiedImage ? (
             <div className="max-w-[260px]">
-              <SpecImage src={specifiedImage} label="Specified / reference image" />
+              <SpecImage
+                imageSettings={item.cell_layout?.images?.specified_image_url_snapshot}
+                src={specifiedImage}
+                label="Specified / reference image"
+              />
             </div>
           ) : null}
         </div>
@@ -753,12 +784,6 @@ function ProductSpecPage({
             </div>
           ) : null}
 
-          {supportingNotes ? (
-            <div className="mt-7 border-t border-zinc-200 pt-5">
-              <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Accessories / Notes</h3>
-              <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-zinc-700">{supportingNotes}</p>
-            </div>
-          ) : null}
         </div>
       </div>
       <MaterialsFinishesArea charts={charts} selectedFinishes={selectedFinishes} />
@@ -804,7 +829,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
         .returns<QuotationSection[]>(),
       supabase
         .from("quotation_items")
-        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,sort_order,line_style,is_active,notes")
+        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,sort_order,line_style,is_active,cell_layout,notes")
         .eq("quotation_id", id)
         .eq("is_active", true)
         .order("sort_order", { ascending: true })
@@ -937,14 +962,14 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
         continue;
       }
 
-      productSerial += 1;
+      const rowSerial = isSerialCountedLine(item) ? ++productSerial : 0;
       documentPages.push({
         type: "product",
         item,
         mainSection,
         pageNumber: nextPageNumber,
         section,
-        serial: productSerial,
+        serial: rowSerial,
       });
       nextPageNumber += 1;
 
@@ -997,16 +1022,17 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
   return (
     <main className="min-h-screen bg-zinc-100 px-4 py-5 font-sans text-zinc-950 print:bg-white print:p-0">
       <style>{`
-        @page { size: A4 portrait; margin: 10mm; }
+        @page { size: A4 portrait; margin: 0; }
         .spec-page + .spec-page { margin-top: 24px; }
         @media print {
+          html, body { margin: 0 !important; padding: 0 !important; width: 210mm !important; background: #fff !important; }
           .no-print { display: none !important; }
-          .spec-sheet { box-shadow: none !important; width: 100% !important; max-width: 100% !important; }
-          .spec-page { box-shadow: none !important; min-height: 277mm !important; break-after: page; page-break-after: always; margin: 0 !important; }
+          .spec-sheet { box-shadow: none !important; width: 210mm !important; max-width: 210mm !important; margin: 0 !important; }
+          .spec-page { box-shadow: none !important; box-sizing: border-box !important; width: 210mm !important; height: 297mm !important; min-height: 297mm !important; overflow: hidden !important; break-after: page; page-break-after: always; margin: 0 !important; }
+          .spec-page + .spec-page { margin-top: 0 !important; }
           .spec-page:last-child { break-after: auto; page-break-after: auto; }
           .avoid-break, .spec-heading, .spec-page-header { break-inside: avoid; page-break-inside: avoid; }
           .spec-heading { break-after: avoid; page-break-after: avoid; }
-          body { background: #fff !important; }
         }
       `}</style>
 

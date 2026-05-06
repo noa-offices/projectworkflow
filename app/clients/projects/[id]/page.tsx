@@ -13,7 +13,8 @@ import {
   restoreQuotation,
 } from "@/app/quotations/actions";
 import { requireActiveUser } from "@/lib/auth";
-import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -446,7 +447,7 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                         <StatusBadge label={quotationStatuses.get(quotation.status) ?? quotation.status} />
                       </td>
                       <td className="py-3 pr-4 font-medium text-zinc-950">
-                        {formatMoney(quotation.currency, quotation.grand_total)}
+                        {formatQuotationMoney(quotation.currency, quotation.grand_total)}
                       </td>
                       <td className="py-3 pr-4">
                         <Link

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireActiveUser, requireRecordsManager } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
+import { quotationMoneyValue } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 const quotationStatuses = new Set([
@@ -116,6 +117,27 @@ function optionalIntegerInRange(formData: FormData, name: string, min: number, m
 
 function money(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function roundedLinePricing(unitPriceValue: number, discountType: string, discountValueInput: number, qty = 1) {
+  const unitPrice = quotationMoneyValue(unitPriceValue);
+  const discountValue = discountType === "percent"
+    ? discountValueInput
+    : quotationMoneyValue(discountValueInput);
+  const discountAmount = quotationMoneyValue(
+    discountType === "percent"
+      ? (unitPrice * discountValue) / 100
+      : discountValue,
+  );
+  const netPrice = quotationMoneyValue(Math.max(unitPrice - discountAmount, 0));
+
+  return {
+    discountAmount,
+    discountValue,
+    netPrice,
+    netTotal: quotationMoneyValue(qty * netPrice),
+    unitPrice,
+  };
 }
 
 function redirectWithMessage(path: string, message: string): never {
@@ -847,14 +869,10 @@ function finishSelectionsValue(formData: FormData) {
 
 function itemPayload(formData: FormData, userId?: string) {
   const qty = numberValue(formData, "qty", 1);
-  const unitPrice = numberValue(formData, "unit_price", 0);
+  const rawUnitPrice = numberValue(formData, "unit_price", 0);
   const discountType = textValue(formData, "discount_type") || "amount";
-  const discountValue = numberValue(formData, "discount_value", 0);
-  const rawNetPrice =
-    discountType === "percent"
-      ? unitPrice - (unitPrice * discountValue) / 100
-      : unitPrice - discountValue;
-  const netPrice = money(Math.max(rawNetPrice, 0));
+  const rawDiscountValue = numberValue(formData, "discount_value", 0);
+  const linePricing = roundedLinePricing(rawUnitPrice, discountType, rawDiscountValue, qty);
   const payload = {
     quotation_id: textValue(formData, "quotation_id"),
     section_id: optionalTextValue(formData, "section_id"),
@@ -882,11 +900,11 @@ function itemPayload(formData: FormData, userId?: string) {
     supplier_notes_snapshot: optionalTextValue(formData, "supplier_notes_snapshot"),
     qty,
     unit_label: textValue(formData, "unit_label") || "Pc",
-    unit_price: unitPrice,
+    unit_price: linePricing.unitPrice,
     discount_type: discountType,
-    discount_value: discountValue,
-    net_price: netPrice,
-    net_total: money(qty * netPrice),
+    discount_value: linePricing.discountValue,
+    net_price: linePricing.netPrice,
+    net_total: linePricing.netTotal,
     currency: normalizeCurrency(textValue(formData, "currency") || defaultCurrency),
     sort_order: integerValue(formData, "sort_order", 0),
     is_optional: boolValue(formData, "is_optional"),
@@ -949,21 +967,21 @@ export async function recalculateQuotationTotals(quotationId: string) {
       !["note", "blank", "subtotal"].includes(item.item_type),
   );
 
-  const subtotal = money(
-    pricedItems.reduce((total, item) => total + item.qty * item.unit_price, 0),
+  const subtotal = quotationMoneyValue(
+    pricedItems.reduce((total, item) => total + quotationMoneyValue(item.qty * item.unit_price), 0),
   );
-  const netTotal = money(
-    pricedItems.reduce((total, item) => total + item.net_total, 0),
+  const netTotal = quotationMoneyValue(
+    pricedItems.reduce((total, item) => total + quotationMoneyValue(item.net_total), 0),
   );
-  const discountTotal = money(subtotal - netTotal);
-  const overallDiscountAmount = money(
+  const discountTotal = quotationMoneyValue(Math.max(subtotal - netTotal, 0));
+  const overallDiscountAmount = quotationMoneyValue(
     quotation.overall_discount_type === "percent"
       ? (netTotal * quotation.overall_discount_value) / 100
       : quotation.overall_discount_value,
   );
-  const taxableTotal = money(Math.max(netTotal - overallDiscountAmount, 0));
-  const vatAmount = money((taxableTotal * quotation.vat_percent) / 100);
-  const grandTotal = money(taxableTotal + vatAmount);
+  const taxableTotal = quotationMoneyValue(Math.max(netTotal - overallDiscountAmount, 0));
+  const vatAmount = quotationMoneyValue((taxableTotal * quotation.vat_percent) / 100);
+  const grandTotal = quotationMoneyValue(taxableTotal + vatAmount);
 
   const { error } = await supabase
     .from("quotations")
@@ -2205,9 +2223,10 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       return total + amount * (exchangeRateByCurrency.get(currency) ?? 0);
     }, 0),
   );
-  const unitPrice = nonAedCurrencies.length
+  const rawUnitPrice = nonAedCurrencies.length
     ? convertedUnitPrice
     : money(baseUnitPrice + matchingAccessoryTotal + matchingLinkedProductsTotal);
+  const unitPrice = quotationMoneyValue(rawUnitPrice);
   const rowOutputCurrency = nonAedCurrencies.length ? "AED" : rowCurrency;
   const currencyConversionData = nonAedCurrencies.length
     ? {
@@ -2216,7 +2235,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         rates: Object.fromEntries(
           nonAedCurrencies.map((currency) => [currency, exchangeRateByCurrency.get(currency)]),
         ),
-        converted_total: unitPrice,
+        converted_total: rawUnitPrice,
+        rounded_converted_total: unitPrice,
       }
     : null;
   const requestedDiscountType = textValue(formData, "product_library_discount_type");
@@ -2225,15 +2245,13 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     requestedDiscountType === "none"
       ? 0
       : Math.max(numberValue(formData, "product_library_discount_value", 0), 0);
-  const discountValue = discountType === "percent"
+  const rawDiscountValueForType = discountType === "percent"
     ? Math.min(rawDiscountValue, 100)
     : rawDiscountValue;
-  const unitDiscountAmount = money(
-    discountType === "percent"
-      ? (unitPrice * discountValue) / 100
-      : discountValue,
-  );
-  const netPrice = money(Math.max(unitPrice - unitDiscountAmount, 0));
+  const linePricing = roundedLinePricing(unitPrice, discountType, rawDiscountValueForType);
+  const discountValue = linePricing.discountValue;
+  const unitDiscountAmount = linePricing.discountAmount;
+  const netPrice = linePricing.netPrice;
   const pricingAdjustmentData = {
     discount_type: requestedDiscountType === "none" ? "none" : discountType,
     discount_value: requestedDiscountType === "none" ? 0 : discountValue,
@@ -2466,7 +2484,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     discount_type: discountType,
     discount_value: discountValue,
     net_price: netPrice,
-    net_total: netPrice,
+    net_total: linePricing.netTotal,
     currency: rowOutputCurrency,
     sort_order: (lastItem?.sort_order ?? 0) + 10,
     is_optional: false,
@@ -2583,29 +2601,25 @@ export async function updateQuotationItemInline(formData: FormData) {
   const qty = formData.has("qty")
     ? numberValue(formData, "qty", currentItem.qty)
     : currentItem.qty;
-  const unitPrice = formData.has("unit_price")
+  const rawUnitPrice = formData.has("unit_price")
     ? numberValue(formData, "unit_price", currentItem.unit_price)
     : currentItem.unit_price;
-  const discountValue = formData.has("discount_value")
+  const rawDiscountValue = formData.has("discount_value")
     ? numberValue(formData, "discount_value", currentItem.discount_value)
     : currentItem.discount_value;
-  const rawNetPrice =
-    currentItem.discount_type === "percent"
-      ? unitPrice - (unitPrice * discountValue) / 100
-      : unitPrice - discountValue;
-  const netPrice = money(Math.max(rawNetPrice, 0));
+  const linePricing = roundedLinePricing(rawUnitPrice, currentItem.discount_type, rawDiscountValue, qty);
 
   if (formData.has("qty")) payload.qty = qty;
-  if (formData.has("unit_price")) payload.unit_price = unitPrice;
-  if (formData.has("discount_value")) payload.discount_value = discountValue;
+  if (formData.has("unit_price")) payload.unit_price = linePricing.unitPrice;
+  if (formData.has("discount_value")) payload.discount_value = linePricing.discountValue;
   if (formData.has("row_height")) {
     payload.row_height = optionalIntegerInRange(formData, "row_height", 40, 600);
   }
   if (formData.has("merge_mode") || formData.has("cell_style_key")) {
     payload.cell_layout = cellLayoutValue(formData, currentItem.cell_layout);
   }
-  payload.net_price = netPrice;
-  payload.net_total = money(qty * netPrice);
+  payload.net_price = linePricing.netPrice;
+  payload.net_total = linePricing.netTotal;
 
   const { error } = await supabase.from("quotation_items").update(payload).eq("id", id);
 
@@ -2963,7 +2977,7 @@ function sanitizeCopiedRowSnapshot(value: unknown) {
     ? String(source.discount_type)
     : "amount";
   const discountValue = numberOr(source.discount_value, 0);
-  const netPrice = numberOr(source.net_price, unitPrice);
+  const linePricing = roundedLinePricing(unitPrice, discountType, discountValue, qty);
 
   return {
     item_type: itemTypes.has(String(source.item_type)) ? String(source.item_type) : "custom",
@@ -2991,11 +3005,11 @@ function sanitizeCopiedRowSnapshot(value: unknown) {
     supplier_notes_snapshot: stringOrNull(source.supplier_notes_snapshot),
     qty,
     unit_label: stringOrNull(source.unit_label) ?? "Pc",
-    unit_price: unitPrice,
+    unit_price: linePricing.unitPrice,
     discount_type: discountType,
-    discount_value: discountValue,
-    net_price: netPrice,
-    net_total: numberOr(source.net_total, money(qty * netPrice)),
+    discount_value: linePricing.discountValue,
+    net_price: linePricing.netPrice,
+    net_total: linePricing.netTotal,
     currency: normalizeCurrency(String(source.currency || defaultCurrency)),
     is_optional: booleanOr(source.is_optional, false),
     internal_cost: numberOr(source.internal_cost, 0),
@@ -3114,33 +3128,29 @@ export async function autosaveQuotationItemInline(formData: FormData) {
   const qty = formData.has("qty")
     ? numberValue(formData, "qty", currentItem.qty)
     : currentItem.qty;
-  const unitPrice = formData.has("unit_price")
+  const rawUnitPrice = formData.has("unit_price")
     ? numberValue(formData, "unit_price", currentItem.unit_price)
     : currentItem.unit_price;
-  const discountValue = formData.has("discount_value")
+  const rawDiscountValue = formData.has("discount_value")
     ? numberValue(formData, "discount_value", currentItem.discount_value)
     : currentItem.discount_value;
-  const rawNetPrice =
-    discountType === "percent"
-      ? unitPrice - (unitPrice * discountValue) / 100
-      : unitPrice - discountValue;
-  const netPrice = money(Math.max(rawNetPrice, 0));
+  const linePricing = roundedLinePricing(rawUnitPrice, discountType, rawDiscountValue, qty);
 
   if (formData.has("discount_type")) payload.discount_type = discountType;
   if (formData.has("line_style")) {
     payload.line_style = allowedText(formData, "line_style", lineStyles, "normal");
   }
   if (formData.has("qty")) payload.qty = qty;
-  if (formData.has("unit_price")) payload.unit_price = unitPrice;
-  if (formData.has("discount_value")) payload.discount_value = discountValue;
+  if (formData.has("unit_price")) payload.unit_price = linePricing.unitPrice;
+  if (formData.has("discount_value")) payload.discount_value = linePricing.discountValue;
   if (formData.has("row_height")) {
     payload.row_height = optionalIntegerInRange(formData, "row_height", 40, 600);
   }
   if (formData.has("merge_mode") || formData.has("cell_style_key")) {
     payload.cell_layout = cellLayoutValue(formData, currentItem.cell_layout);
   }
-  payload.net_price = netPrice;
-  payload.net_total = money(qty * netPrice);
+  payload.net_price = linePricing.netPrice;
+  payload.net_total = linePricing.netTotal;
 
   const { error } = await supabase
     .from("quotation_items")

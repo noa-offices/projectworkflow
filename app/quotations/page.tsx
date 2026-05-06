@@ -2,7 +2,8 @@ import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
-import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { createQuotation } from "./actions";
 
@@ -419,7 +420,7 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
                         <td className="py-3 pr-4 text-zinc-600">{project?.project_year ?? "No year"}</td>
                         <td className="py-3 pr-4 text-zinc-600">{quotation.quotation_date}</td>
                         <td className="py-3 pr-4"><StatusBadge status={quotation.status} /></td>
-                        <td className="py-3 pr-4 font-medium text-zinc-950">{formatMoney(quotation.currency, quotation.grand_total)}</td>
+                        <td className="py-3 pr-4 font-medium text-zinc-950">{formatQuotationMoney(quotation.currency, quotation.grand_total)}</td>
                         <td className="py-3">
                           <Link href={`/quotations/${quotation.id}`} className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800">
                             Open

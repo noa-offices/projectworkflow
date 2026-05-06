@@ -6,7 +6,12 @@ import { join } from "node:path";
 import { PrintActions } from "@/components/quotations/print-actions";
 import { requireActiveUser } from "@/lib/auth";
 import { COMPANY_PROFILE } from "@/lib/company-profile";
-import { formatMoney } from "@/lib/currencies";
+import {
+  imageDisplayStyle,
+  normalizeImageDisplaySettings,
+  type ImageDisplaySettings,
+} from "@/lib/image-display-settings";
+import { formatQuotationMoney, quotationMoneyCell } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -101,7 +106,12 @@ type QuotationItem = {
   line_style: string;
   is_rate_only: boolean;
   is_active: boolean;
+  cell_layout: CellLayout | null;
   notes: string | null;
+};
+
+type CellLayout = {
+  images?: Record<string, Partial<ImageDisplaySettings> | undefined>;
 };
 
 type LayoutSettings = {
@@ -243,10 +253,11 @@ function discountAmount(item: QuotationItem) {
 }
 
 function tableNumber(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value || 0);
+  return quotationMoneyCell(value);
+}
+
+function money(currency: string, value: number) {
+  return formatQuotationMoney(currency, value);
 }
 
 function overallDiscountAmount(quotation: Quotation) {
@@ -277,12 +288,25 @@ function MetaLine({ label, value }: { label: string; value?: string | number | n
   );
 }
 
-function ImageBox({ src }: { src: string | null }) {
+function ImageBox({
+  imageSettings,
+  src,
+}: {
+  imageSettings?: Partial<ImageDisplaySettings> | null;
+  src: string | null;
+}) {
+  const settings = normalizeImageDisplaySettings(imageSettings);
+
   return (
     <div className="mx-auto flex h-[85px] w-[115px] items-center justify-center overflow-hidden bg-white">
       {src ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt="Proposed item" className="max-h-full max-w-full object-contain" />
+        <img
+          src={src}
+          alt="Proposed item"
+          className="block h-full w-full"
+          style={imageDisplayStyle(settings)}
+        />
       ) : null}
     </div>
   );
@@ -493,7 +517,6 @@ function SpecificationBlock({
         <p key={label} className="text-zinc-600">{label}: {value}</p>
       ))}
       {item.room_name_snapshot ? <p className="text-zinc-500">Room: {item.room_name_snapshot}</p> : null}
-      {item.notes ? <p className="whitespace-pre-wrap text-zinc-500">{item.notes}</p> : null}
     </div>
   );
 }
@@ -514,7 +537,7 @@ function sectionSubtotal(items: QuotationItem[]) {
 }
 
 function fullWidthRowText(item: QuotationItem) {
-  return [item.item_name_snapshot, item.specification_snapshot, item.notes]
+  return [item.item_name_snapshot, item.specification_snapshot]
     .filter(Boolean)
     .join(" - ");
 }
@@ -525,6 +548,10 @@ function isHeadingRow(item: QuotationItem) {
 
 function isFullWidthPdfRow(item: QuotationItem) {
   return item.line_style === "heading" || item.line_style === "note" || item.item_type === "blank";
+}
+
+function isSerialCountedLine(item: QuotationItem) {
+  return !["heading", "note", "no_quote"].includes(item.line_style) && !["heading", "note", "blank", "subtotal"].includes(item.item_type);
 }
 
 function isPriceHiddenLine(item: QuotationItem) {
@@ -566,16 +593,26 @@ function renderPdfCell({
 
   switch (column.key) {
     case "s_no":
-      return item.manual_serial || `${serial}`;
+      return serial ? `${serial}` : "-";
     case "manual_serial":
       return item.manual_serial ?? "-";
     case "code":
       return item.item_code_snapshot ?? "-";
     case "reference_image":
     case "proposed_image":
-      return <ImageBox src={proposedImageUrlByItemId.get(item.id) ?? null} />;
+      return (
+        <ImageBox
+          imageSettings={item.cell_layout?.images?.proposed_image_url_snapshot}
+          src={proposedImageUrlByItemId.get(item.id) ?? null}
+        />
+      );
     case "specified_image":
-      return <ImageBox src={specifiedImageUrlByItemId.get(item.id) ?? null} />;
+      return (
+        <ImageBox
+          imageSettings={item.cell_layout?.images?.specified_image_url_snapshot}
+          src={specifiedImageUrlByItemId.get(item.id) ?? null}
+        />
+      );
     case "specification":
     case "description":
       return <SpecificationBlock item={item} settings={settings} visibleColumnKeys={visibleColumnKeys} />;
@@ -599,14 +636,16 @@ function renderPdfCell({
       return item.size_snapshot ?? "-";
     case "origin":
       return (
-        <div className="whitespace-pre-wrap text-center">
-          {[item.origin_snapshot, item.supplier_name_snapshot].filter(Boolean).join("\n") || "-"}
+        <div className="flex flex-col items-center justify-center gap-1 text-center">
+          {item.supplier_name_snapshot ? <span className="font-medium text-zinc-800">{item.supplier_name_snapshot}</span> : null}
+          {item.origin_snapshot ? <span className="text-[9px] text-zinc-600">{item.origin_snapshot}</span> : null}
+          {!item.supplier_name_snapshot && !item.origin_snapshot ? "-" : null}
         </div>
       );
     case "warranty":
       return item.warranty_snapshot ?? "-";
     case "qty":
-      return `${item.qty} ${item.unit_label}`;
+      return `${item.qty}`;
     case "unit_price":
       return tableNumber(item.unit_price);
     case "discount":
@@ -665,7 +704,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
         .returns<QuotationSection[]>(),
       supabase
         .from("quotation_items")
-        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,line_style,is_rate_only,is_active,notes")
+        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,line_style,is_rate_only,is_active,cell_layout,notes")
         .eq("quotation_id", id)
         .eq("is_active", true)
         .order("sort_order", { ascending: true })
@@ -783,6 +822,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
     printableSections.push(section);
   }
   const hasLogo = existsSync(join(process.cwd(), "public", COMPANY_PROFILE.logoPath.replace(/^\//, "")));
+  let runningSerialNumber = 0;
 
   return (
     <main className="min-h-screen bg-zinc-100 px-4 py-5 font-sans text-zinc-950 print:bg-white print:p-0">
@@ -879,7 +919,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                       {!childSections.length ? (
                         <tr className="avoid-break bg-zinc-950">
                           <td className="border border-zinc-950 px-3 py-1.5 text-right font-bold uppercase tracking-wide text-white">
-                            {section.section_title || "Main Section"} Total: {formatMoney(quotation.currency, mainSectionTotals.get(section.id) ?? 0)}
+                            {section.section_title || "Main Section"} Total: {money(quotation.currency, mainSectionTotals.get(section.id) ?? 0)}
                           </td>
                         </tr>
                       ) : null}
@@ -891,7 +931,6 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
 
             const sectionItems = itemsBySection.get(section.id) ?? [];
             const subtotal = sectionTotals.get(section.id) ?? 0;
-            let serialNumber = 0;
 
             return (
               <section key={section.id} className="print-section">
@@ -916,17 +955,14 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                       {pdfColumns.map((column) => (
                         <th key={column.key} className={tableCellClass(column)}>
                           <span className="block">{column.label}</span>
-                          {["unit_price", "discount", "discount_amount", "net_price", "net_total"].includes(column.key) ? (
-                            <span className="block text-[8px] font-semibold">{quotation.currency}</span>
-                          ) : null}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {sectionItems.map((item) => {
-                      const rowSerial = !["heading", "note", "no_quote"].includes(item.line_style) && item.item_type !== "blank"
-                        ? ++serialNumber
+                      const rowSerial = isSerialCountedLine(item)
+                        ? ++runningSerialNumber
                         : 0;
 
                       return isFullWidthPdfRow(item) ? (
@@ -966,7 +1002,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                         Section Subtotal
                       </td>
                       <td className="border border-zinc-300 px-1.5 py-1.5 text-right font-bold text-zinc-950">
-                        {formatMoney(quotation.currency, subtotal)}
+                        {money(quotation.currency, subtotal)}
                       </td>
                     </tr>
                     {section.parent_section_id &&
@@ -974,7 +1010,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                     nextSection?.parent_section_id !== section.parent_section_id ? (
                       <tr className="avoid-break bg-zinc-950">
                         <td colSpan={columnCount} className="border border-zinc-950 px-3 py-1.5 text-right font-bold uppercase tracking-wide text-white">
-                          {sectionById.get(section.parent_section_id)?.section_title || "Main Section"} Total: {formatMoney(quotation.currency, mainSectionTotals.get(section.parent_section_id) ?? 0)}
+                          {sectionById.get(section.parent_section_id)?.section_title || "Main Section"} Total: {money(quotation.currency, mainSectionTotals.get(section.parent_section_id) ?? 0)}
                         </td>
                       </tr>
                     ) : null}
@@ -1014,23 +1050,23 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
               </div>
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
                 <span>Total Price</span>
-                <span className="whitespace-nowrap font-semibold">{formatMoney(quotation.currency, quotation.subtotal)}</span>
+                <span className="whitespace-nowrap font-semibold">{money(quotation.currency, quotation.subtotal)}</span>
               </div>
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
                 <span>Item Discount</span>
-                <span className="whitespace-nowrap font-semibold">{formatMoney(quotation.currency, quotation.discount_total)}</span>
+                <span className="whitespace-nowrap font-semibold">{money(quotation.currency, quotation.discount_total)}</span>
               </div>
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
                 <span>Extra Discount</span>
-                <span className="whitespace-nowrap font-semibold">{formatMoney(quotation.currency, overallDiscountAmount(quotation))}</span>
+                <span className="whitespace-nowrap font-semibold">{money(quotation.currency, overallDiscountAmount(quotation))}</span>
               </div>
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
                 <span>VAT {quotation.vat_percent}%</span>
-                <span className="whitespace-nowrap font-semibold">{formatMoney(quotation.currency, quotation.vat_amount)}</span>
+                <span className="whitespace-nowrap font-semibold">{money(quotation.currency, quotation.vat_amount)}</span>
               </div>
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 bg-zinc-50 px-4 py-4 text-lg font-black text-zinc-950">
                 <span>Final Total</span>
-                <span className="whitespace-nowrap">{formatMoney(quotation.currency, quotation.grand_total)}</span>
+                <span className="whitespace-nowrap">{money(quotation.currency, quotation.grand_total)}</span>
               </div>
             </div>
           </div>

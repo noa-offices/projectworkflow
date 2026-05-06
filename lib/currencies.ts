@@ -22,9 +22,14 @@ export function normalizeCurrency(value: string | null | undefined) {
   return supportedCurrencyCodes.has(code) ? code : defaultCurrency;
 }
 
-export function formatMoney(currency: string | null | undefined, value: number) {
+export function formatMoney(
+  currency: string | null | undefined,
+  value: number,
+  options?: Intl.NumberFormatOptions,
+) {
   return `${normalizeCurrency(currency)} ${value.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: options?.minimumFractionDigits ?? 2,
+    maximumFractionDigits: options?.maximumFractionDigits ?? 2,
+    ...options,
   })}`;
 }

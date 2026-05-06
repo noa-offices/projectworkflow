@@ -4,7 +4,8 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ContextBackLink } from "@/components/navigation/context-back-link";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
-import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
   updateQuotation,
@@ -249,6 +250,10 @@ function overallDiscountAmount(quotation: Quotation) {
   }
 
   return quotation.overall_discount_value;
+}
+
+function money(currency: string, value: number) {
+  return formatQuotationMoney(currency, value);
 }
 
 function isDirectImageUrl(value: string) {
@@ -556,6 +561,12 @@ export default async function QuotationDetailPage({
                     Specification Sheet
                   </Link>
                   <Link
+                    href={`/quotations/${quotation.id}/download-specification`}
+                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                  >
+                    Download Specification
+                  </Link>
+                  <Link
                     href={`/quotations/${quotation.id}/builder`}
                     className="rounded-md bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
                   >
@@ -601,15 +612,15 @@ export default async function QuotationDetailPage({
               <div className="mt-4 space-y-3 text-sm">
                 <div className="flex justify-between gap-4">
                   <span className="text-zinc-500">Total Price</span>
-                  <span className="font-medium text-zinc-950">{formatMoney(quotation.currency, quotation.subtotal)}</span>
+                  <span className="font-medium text-zinc-950">{money(quotation.currency, quotation.subtotal)}</span>
                 </div>
                 <div className="flex justify-between gap-4">
                   <span className="text-zinc-500">Item Discount</span>
-                  <span className="font-medium text-zinc-950">{formatMoney(quotation.currency, quotation.discount_total)}</span>
+                  <span className="font-medium text-zinc-950">{money(quotation.currency, quotation.discount_total)}</span>
                 </div>
                 <div className="flex justify-between gap-4">
                   <span className="text-zinc-500">Extra Discount</span>
-                  <span className="font-medium text-zinc-950">{formatMoney(quotation.currency, overallDiscountAmount(quotation))}</span>
+                  <span className="font-medium text-zinc-950">{money(quotation.currency, overallDiscountAmount(quotation))}</span>
                 </div>
                 {canManageRecords ? (
                   <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
@@ -618,12 +629,12 @@ export default async function QuotationDetailPage({
                 ) : null}
                 <div className="flex justify-between gap-4">
                   <span className="text-zinc-500">VAT {quotation.vat_percent}%</span>
-                  <span className="font-medium text-zinc-950">{formatMoney(quotation.currency, quotation.vat_amount)}</span>
+                  <span className="font-medium text-zinc-950">{money(quotation.currency, quotation.vat_amount)}</span>
                 </div>
                 <div className="border-t border-zinc-200 pt-3">
                   <p className="text-xs font-semibold uppercase text-zinc-500">Final Total</p>
                   <p className="mt-1 text-2xl font-semibold text-zinc-950">
-                    {formatMoney(quotation.currency, quotation.grand_total)}
+                    {money(quotation.currency, quotation.grand_total)}
                   </p>
                 </div>
               </div>
@@ -646,7 +657,7 @@ export default async function QuotationDetailPage({
                     value={
                       quotation.overall_discount_type === "percent"
                         ? `${quotation.overall_discount_value}%`
-                        : formatMoney(quotation.currency, quotation.overall_discount_value)
+                        : money(quotation.currency, quotation.overall_discount_value)
                     }
                   />
                 </div>
@@ -751,18 +762,18 @@ export default async function QuotationDetailPage({
                               {item.qty} {item.unit_label}
                             </td>
                             <td className="py-3 pr-3 text-zinc-600">
-                              {formatMoney(item.currency, item.unit_price)}
+                              {money(item.currency, item.unit_price)}
                             </td>
                             <td className="py-3 pr-3 text-zinc-600">
                               {item.discount_type === "percent"
                                 ? `${item.discount_value}%`
-                                : formatMoney(item.currency, item.discount_value)}
+                                : money(item.currency, item.discount_value)}
                             </td>
                             <td className="py-3 pr-3 text-zinc-600">
-                              {formatMoney(item.currency, item.net_price)}
+                              {money(item.currency, item.net_price)}
                             </td>
                             <td className="py-3 pr-3 font-semibold text-zinc-950">
-                              {formatMoney(item.currency, item.net_total)}
+                              {money(item.currency, item.net_total)}
                             </td>
                           </tr>
                         ))}
