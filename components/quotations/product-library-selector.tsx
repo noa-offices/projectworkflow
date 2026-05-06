@@ -353,9 +353,13 @@ function ProductThumbnail({
     }
 
     const supabase = createClient();
+    const storagePath = path.startsWith("product-images:")
+      ? path.slice("product-images:".length)
+      : path;
+
     void supabase.storage
       .from("product-images")
-      .createSignedUrl(path, 60 * 60)
+      .createSignedUrl(storagePath, 60 * 60)
       .then(({ data }) => {
         if (!cancelled) setPreviewUrl(data?.signedUrl ?? "");
       });
@@ -410,6 +414,7 @@ export function ProductLibrarySelector({
   const [categoryId, setCategoryId] = useState("");
   const [subcategoryId, setSubcategoryId] = useState("");
   const [search, setSearch] = useState("");
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [selectedOptions, setSelectedOptions] = useState<Record<string, Record<string, string | string[]>>>({});
   const [selectedImages, setSelectedImages] = useState<Record<string, string>>({});
   const [additionalClusterQuantities, setAdditionalClusterQuantities] = useState<Record<string, number>>({});
@@ -457,7 +462,14 @@ export function ProductLibrarySelector({
     [categories],
   );
   const mainCategories = categories.filter((category) => !category.parent_id);
+  const visibleMainCategories = mainCategories.filter((category) => !brandId || category.brand_id === brandId);
   const subcategories = categories.filter((category) => category.parent_id);
+  const visibleSubcategories = subcategories.filter((category) => {
+    if (brandId && category.brand_id !== brandId) return false;
+    if (categoryId && category.parent_id !== categoryId) return false;
+
+    return true;
+  });
   const componentsByTemplate = useMemo(() => {
     const map = new Map<string, ProductLibraryComponent[]>();
 
@@ -490,6 +502,32 @@ export function ProductLibrarySelector({
       .filter(Boolean)
       .some((value) => value?.toLowerCase().includes(normalizedSearch));
   });
+  const selectedTemplate = selectedTemplateId
+    ? filteredTemplates.find((template) => template.id === selectedTemplateId) ?? null
+    : null;
+  const productCountByBrand = useMemo(() => {
+    const map = new Map<string, number>();
+
+    for (const template of templates) {
+      map.set(template.brand_id, (map.get(template.brand_id) ?? 0) + 1);
+    }
+
+    return map;
+  }, [templates]);
+  const productCountByCategory = useMemo(() => {
+    const map = new Map<string, number>();
+
+    for (const template of templates) {
+      if (template.main_category_id) {
+        map.set(template.main_category_id, (map.get(template.main_category_id) ?? 0) + 1);
+      }
+      if (template.sub_category_id) {
+        map.set(template.sub_category_id, (map.get(template.sub_category_id) ?? 0) + 1);
+      }
+    }
+
+    return map;
+  }, [templates]);
 
   return (
     <>
@@ -503,7 +541,7 @@ export function ProductLibrarySelector({
 
       {isOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/30 px-4 py-6">
-          <div className="flex max-h-[88vh] w-full max-w-4xl flex-col border border-zinc-300 bg-white shadow-xl">
+          <div className="flex h-[90vh] w-[min(1200px,96vw)] flex-col border border-zinc-300 bg-white shadow-xl">
             <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
               <div>
                 <h2 className="text-sm font-semibold text-zinc-950">
@@ -522,17 +560,21 @@ export function ProductLibrarySelector({
               </button>
             </div>
 
-            <div className="grid gap-2 border-b border-zinc-200 bg-zinc-50 p-3 md:grid-cols-4">
+            <div className="grid shrink-0 gap-2 border-b border-zinc-200 bg-zinc-50 p-3 md:grid-cols-[minmax(220px,1fr)_170px_170px_170px_80px]">
               <input
                 type="search"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search products"
-                className="h-9 border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-emerald-800 md:col-span-4"
+                placeholder="Search products..."
+                className="h-9 border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-emerald-800"
               />
               <select
                 value={brandId}
-                onChange={(event) => setBrandId(event.target.value)}
+                onChange={(event) => {
+                  setBrandId(event.target.value);
+                  setCategoryId("");
+                  setSubcategoryId("");
+                }}
                 className="h-9 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
               >
                 <option value="">All brands</option>
@@ -544,11 +586,14 @@ export function ProductLibrarySelector({
               </select>
               <select
                 value={categoryId}
-                onChange={(event) => setCategoryId(event.target.value)}
+                onChange={(event) => {
+                  setCategoryId(event.target.value);
+                  setSubcategoryId("");
+                }}
                 className="h-9 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
               >
                 <option value="">All categories</option>
-                {mainCategories.map((category) => (
+                {visibleMainCategories.map((category) => (
                   <option key={category.id} value={category.id}>
                     {category.name}
                   </option>
@@ -560,7 +605,7 @@ export function ProductLibrarySelector({
                 className="h-9 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
               >
                 <option value="">All subcategories</option>
-                {subcategories.map((category) => (
+                {visibleSubcategories.map((category) => (
                   <option key={category.id} value={category.id}>
                     {category.name}
                   </option>
@@ -573,6 +618,7 @@ export function ProductLibrarySelector({
                   setCategoryId("");
                   setSubcategoryId("");
                   setSearch("");
+                  setSelectedTemplateId("");
                 }}
                 className="h-9 border border-zinc-300 bg-white px-2 text-xs font-semibold text-zinc-600 transition hover:border-zinc-400"
               >
@@ -580,9 +626,148 @@ export function ProductLibrarySelector({
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
-              <div className="space-y-2">
-                {filteredTemplates.map((template) => {
+            <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[220px_minmax(320px,1fr)_420px]">
+              <aside className="min-h-0 overflow-y-auto border-b border-zinc-200 bg-zinc-50 p-3 lg:border-b-0 lg:border-r">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-bold uppercase text-zinc-500">Library</p>
+                  <span className="text-[11px] font-semibold text-zinc-500">{templates.length} products</span>
+                </div>
+                <div className="space-y-2">
+                  {brands.map((brand) => {
+                    const brandCategories = mainCategories.filter((category) => category.brand_id === brand.id);
+                    const brandCount = productCountByBrand.get(brand.id) ?? 0;
+
+                    if (!brandCount && !brandCategories.length) return null;
+
+                    return (
+                      <details key={brand.id} className="border border-zinc-200 bg-white">
+                        <summary
+                          className="cursor-pointer px-2 py-2 text-xs font-bold text-zinc-800 transition hover:text-emerald-900"
+                          onClick={() => {
+                            setBrandId(brand.id);
+                            setCategoryId("");
+                            setSubcategoryId("");
+                          }}
+                        >
+                          {brand.name} <span className="font-semibold text-zinc-400">({brandCount})</span>
+                        </summary>
+                        <div className="border-t border-zinc-100 py-1">
+                          {brandCategories.map((category) => {
+                            const categorySubcategories = subcategories.filter((child) => child.parent_id === category.id);
+                            const categoryCount = productCountByCategory.get(category.id) ?? 0;
+
+                            return (
+                              <details key={category.id} className="border-t border-zinc-100">
+                                <summary
+                                  className={`cursor-pointer px-3 py-1.5 text-xs transition hover:bg-emerald-50 hover:text-emerald-900 ${
+                                    categoryId === category.id ? "bg-emerald-50 font-bold text-emerald-950" : "text-zinc-600"
+                                  }`}
+                                  onClick={() => {
+                                    setBrandId(brand.id);
+                                    setCategoryId(category.id);
+                                    setSubcategoryId("");
+                                  }}
+                                >
+                                  {category.name} <span className="text-zinc-400">({categoryCount})</span>
+                                </summary>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setBrandId(brand.id);
+                                    setCategoryId(category.id);
+                                    setSubcategoryId("");
+                                  }}
+                                  className="block w-full px-5 py-1 text-left text-[11px] font-semibold text-zinc-500 transition hover:bg-emerald-50 hover:text-emerald-900"
+                                >
+                                  All {category.name}
+                                </button>
+                                {categorySubcategories.map((subcategory) => (
+                                  <button
+                                    key={subcategory.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setBrandId(brand.id);
+                                      setCategoryId(category.id);
+                                      setSubcategoryId(subcategory.id);
+                                    }}
+                                    className={`block w-full px-5 py-1 text-left text-[11px] transition hover:bg-emerald-50 hover:text-emerald-900 ${
+                                      subcategoryId === subcategory.id ? "bg-emerald-50 font-bold text-emerald-950" : "text-zinc-500"
+                                    }`}
+                                  >
+                                    {subcategory.name} <span className="text-zinc-400">({productCountByCategory.get(subcategory.id) ?? 0})</span>
+                                  </button>
+                                ))}
+                              </details>
+                            );
+                          })}
+                        </div>
+                      </details>
+                    );
+                  })}
+                </div>
+              </aside>
+
+              <section className="min-h-0 overflow-y-auto border-b border-zinc-200 p-3 lg:border-b-0 lg:border-r">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-bold uppercase text-zinc-500">Products</p>
+                  <span className="text-xs font-semibold text-zinc-500">{filteredTemplates.length} found</span>
+                </div>
+                <div className="space-y-2">
+                  {filteredTemplates.map((template) => {
+                    const mainCategory = template.main_category_id
+                      ? categoryNameById.get(template.main_category_id)
+                      : null;
+                    const subCategory = template.sub_category_id
+                      ? categoryNameById.get(template.sub_category_id)
+                      : null;
+                    const thumbnailPath = template.proposed_image_url_1 ?? template.default_image_url ?? template.reference_image_url;
+                    const selected = selectedTemplateId === template.id;
+
+                    return (
+                      <button
+                        key={template.id}
+                        type="button"
+                        onClick={() => setSelectedTemplateId(template.id)}
+                        className={`flex w-full gap-3 border p-2 text-left transition hover:border-emerald-700 hover:bg-emerald-50 ${
+                          selected ? "border-emerald-900 bg-emerald-50" : "border-zinc-200 bg-white"
+                        }`}
+                      >
+                        <ProductThumbnail path={thumbnailPath ?? null} selected={selected} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-zinc-950">
+                            {template.template_name}
+                          </span>
+                          <span className="mt-1 block text-xs text-zinc-500">
+                            {brandNameById.get(template.brand_id) ?? "Unknown brand"}
+                            {mainCategory ? ` / ${mainCategory}` : ""}
+                            {subCategory ? ` / ${subCategory}` : ""}
+                          </span>
+                          <span className="mt-1 block text-[11px] font-semibold text-zinc-500">
+                            {template.item_code ?? template.template_code ?? "No code"}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-right text-xs font-bold text-zinc-700">
+                          {formatMoney(template.currency, numberValue(template.default_unit_price))}
+                        </span>
+                      </button>
+                    );
+                  })}
+
+                  {!filteredTemplates.length ? (
+                    <p className="border border-dashed border-zinc-200 p-6 text-center text-sm text-zinc-500">
+                      No products found. Try changing search or filters.
+                    </p>
+                  ) : null}
+                </div>
+              </section>
+
+              <section className="min-h-0 overflow-y-auto bg-white">
+                {!selectedTemplate ? (
+                  <div className="flex min-h-full items-center justify-center p-6 text-center text-sm text-zinc-500">
+                    Select a product to configure and add it.
+                  </div>
+                ) : null}
+                {selectedTemplate ? [selectedTemplate].map((template) => {
                   const mainCategory = template.main_category_id
                     ? categoryNameById.get(template.main_category_id)
                     : null;
@@ -860,9 +1045,9 @@ export function ProductLibrarySelector({
                   return (
                     <article
                       key={template.id}
-                      className="flex gap-3 border border-zinc-200 bg-white p-3"
+                      className="flex min-h-full flex-col gap-3 bg-white p-3"
                     >
-                      <ProductThumbnail path={selectedImage || null} />
+                      <ProductThumbnail path={selectedImage || null} selected />
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-semibold text-zinc-950">
@@ -1344,7 +1529,7 @@ export function ProductLibrarySelector({
                           </div>
                         ) : null}
                       </div>
-                      <div className="flex shrink-0 flex-col items-end justify-between gap-3 text-right">
+                      <div className="flex shrink-0 flex-col gap-3 border-t border-zinc-200 pt-3 text-left">
                         <p className="text-sm font-semibold text-zinc-950">
                           {formatMoney(previewCurrency, previewUnitPriceWithConversion)}
                         </p>
@@ -1513,7 +1698,7 @@ export function ProductLibrarySelector({
                           <p>Net Price: {formatMoney(previewCurrency, netPricePreview)}</p>
                           <p>Net Total: {formatMoney(previewCurrency, netTotalPreview)}</p>
                         </div>
-                        <form action={addProductTemplateToQuotation}>
+                        <form action={addProductTemplateToQuotation} className="sticky bottom-0 -mx-3 border-t border-zinc-200 bg-white px-3 py-3 text-right">
                           <input type="hidden" name="quotation_id" value={quotationId} />
                           <input type="hidden" name="section_id" value={sectionId} />
                           <input type="hidden" name="template_id" value={template.id} />
@@ -1617,14 +1802,8 @@ export function ProductLibrarySelector({
                       </div>
                     </article>
                   );
-                })}
-
-                {!filteredTemplates.length ? (
-                  <p className="border border-dashed border-zinc-200 p-6 text-center text-sm text-zinc-500">
-                    No product templates match your search.
-                  </p>
-                ) : null}
-              </div>
+                }) : null}
+              </section>
             </div>
           </div>
         </div>

@@ -251,6 +251,32 @@ function overallDiscountAmount(quotation: Quotation) {
   return quotation.overall_discount_value;
 }
 
+function isDirectImageUrl(value: string) {
+  return /^(https?:|data:|\/)/i.test(value);
+}
+
+async function signedImageUrl(value: string | null, supabase: Awaited<ReturnType<typeof createSupabaseClient>>) {
+  if (!value) return null;
+  if (isDirectImageUrl(value)) return value;
+
+  const bucket = value.startsWith("product-images:") ? "product-images" : "quote-images";
+  const storagePath = value.startsWith("product-images:")
+    ? value.slice("product-images:".length)
+    : value.startsWith("quote-images:")
+      ? value.slice("quote-images:".length)
+      : value;
+  const { data, error } = await supabase.storage
+    .from(bucket)
+    .createSignedUrl(storagePath, 60 * 60);
+
+  if (error) {
+    console.error("QUOTATION DETAIL IMAGE SIGN ERROR", error.message);
+    return null;
+  }
+
+  return data.signedUrl;
+}
+
 function ExtraDiscountForm({
   quotation,
   returnTo,
@@ -458,6 +484,21 @@ export default async function QuotationDetailPage({
   const hasMixedCurrencies =
     itemCurrencies.size > 1 ||
     (itemCurrencies.size === 1 && !itemCurrencies.has(normalizeCurrency(quotation.currency)));
+  const activeItems = (items ?? []).filter((item) => item.is_active);
+  const specifiedImageEntries = await Promise.all(
+    activeItems.map(async (item) => [
+      item.id,
+      await signedImageUrl(item.specified_image_url_snapshot, supabase),
+    ] as const),
+  );
+  const proposedImageEntries = await Promise.all(
+    activeItems.map(async (item) => [
+      item.id,
+      await signedImageUrl(item.proposed_image_url_snapshot, supabase),
+    ] as const),
+  );
+  const specifiedImageUrlByItemId = new Map(specifiedImageEntries);
+  const proposedImageUrlByItemId = new Map(proposedImageEntries);
 
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
@@ -687,10 +728,10 @@ export default async function QuotationDetailPage({
                               {item.item_code_snapshot ?? "-"}
                             </td>
                             <td className="py-3 pr-3">
-                              <ImageCell value={item.specified_image_url_snapshot} />
+                              <ImageCell value={specifiedImageUrlByItemId.get(item.id) ?? null} />
                             </td>
                             <td className="py-3 pr-3">
-                              <ImageCell value={item.proposed_image_url_snapshot} />
+                              <ImageCell value={proposedImageUrlByItemId.get(item.id) ?? null} />
                             </td>
                             <td className="py-3 pr-3 text-zinc-700">
                               <p className="font-medium text-zinc-950">

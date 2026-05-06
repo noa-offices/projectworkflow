@@ -26,6 +26,7 @@ const layoutModes = new Set([
   "internal_costing",
 ]);
 const sectionTypes = new Set(["option", "floor", "room", "category", "section"]);
+const sectionKinds = new Set(["main", "sub"]);
 const titleAlignments = new Set(["left", "center", "right"]);
 const titleBackgrounds = new Set(["light_grey", "white", "dark_grey"]);
 const titleSizes = new Set(["normal", "large"]);
@@ -605,6 +606,8 @@ type QuotationSectionCopySource = {
   section_title: string;
   section_notes: string | null;
   section_type: string;
+  parent_section_id: string | null;
+  section_kind: string;
   title_align: string;
   title_bold: boolean;
   title_bg: string;
@@ -788,7 +791,7 @@ const quotationCopySelect =
   "id,client_id,project_id,quotation_no,revision_no,title,quotation_date,currency,vat_percent,payment_terms,validity,delivery_terms,warranty_terms,notes,layout_mode,layout_settings,overall_discount_type,overall_discount_value";
 
 const sectionCopySelect =
-  "id,section_title,section_notes,section_type,title_align,title_bold,title_bg,title_size,row_height,sort_order";
+  "id,section_title,section_notes,section_type,parent_section_id,section_kind,title_align,title_bold,title_bg,title_size,row_height,sort_order";
 
 const itemCopySelect =
   "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,notes";
@@ -1112,14 +1115,16 @@ async function copyQuotation(
     redirectWithMessage(redirectPath, "Quotation sections could not be copied.");
   }
 
+  const pendingSectionParents: Array<{ id: string; parentSectionId: string | null }> = [];
   const sectionIdMap = new Map<string, string>();
   for (const section of sections ?? []) {
-    const { id: _oldId, ...sectionPayload } = section;
+    const { id: _oldId, parent_section_id: parentSectionId, ...sectionPayload } = section;
     const { data: newSection, error: sectionInsertError } = await supabase
       .from("quotation_sections")
       .insert({
         ...sectionPayload,
         quotation_id: newQuotation.id,
+        parent_section_id: null,
         is_active: true,
         created_by: user.id,
       })
@@ -1132,6 +1137,25 @@ async function copyQuotation(
     }
 
     sectionIdMap.set(_oldId, newSection.id);
+    pendingSectionParents.push({ id: newSection.id, parentSectionId });
+  }
+
+  for (const section of pendingSectionParents) {
+    const newParentId = section.parentSectionId
+      ? sectionIdMap.get(section.parentSectionId) ?? null
+      : null;
+
+    if (!newParentId) continue;
+
+    const { error } = await supabase
+      .from("quotation_sections")
+      .update({ parent_section_id: newParentId })
+      .eq("id", section.id);
+
+    if (error) {
+      console.error("QUOTATION COPY SECTION PARENT UPDATE ERROR", error.message);
+      redirectWithMessage(redirectPath, "Quotation section hierarchy could not be copied.");
+    }
   }
 
   const { data: items, error: itemsError } = await supabase
@@ -1581,14 +1605,93 @@ export async function updateQuotationSectionRowHeight(formData: FormData) {
   return { ok: true };
 }
 
+type OrderedSection = {
+  id: string;
+  sort_order: number;
+  created_at: string;
+};
+
+async function sectionInsertSortOrder(
+  quotationId: string,
+  insertAfterSectionId: string | null,
+) {
+  const supabase = await createSupabaseClient();
+  const { data, error } = await supabase
+    .from("quotation_sections")
+    .select("id,sort_order,created_at")
+    .eq("quotation_id", quotationId)
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
+    .returns<OrderedSection[]>();
+
+  if (error) {
+    console.error("QUOTATION SECTION SORT READ ERROR", error.message);
+    return 10;
+  }
+
+  const orderedSections = data ?? [];
+  const insertAfterIndex = insertAfterSectionId
+    ? orderedSections.findIndex((section) => section.id === insertAfterSectionId)
+    : orderedSections.length - 1;
+  const insertIndex = insertAfterSectionId === "__start"
+    ? 0
+    : insertAfterIndex >= 0
+      ? insertAfterIndex + 1
+      : orderedSections.length;
+
+  for (const [index, section] of orderedSections.slice(insertIndex).entries()) {
+    const { error: updateError } = await supabase
+      .from("quotation_sections")
+      .update({ sort_order: (insertIndex + index + 2) * 10 })
+      .eq("id", section.id);
+
+    if (updateError) {
+      console.error("QUOTATION SECTION SORT UPDATE ERROR", updateError.message);
+      return ((orderedSections.at(-1)?.sort_order ?? 0) + 10);
+    }
+  }
+
+  return (insertIndex + 1) * 10;
+}
+
+async function validParentSectionId(
+  quotationId: string,
+  parentSectionId: string | null,
+) {
+  if (!parentSectionId) return null;
+
+  const supabase = await createSupabaseClient();
+  const { data, error } = await supabase
+    .from("quotation_sections")
+    .select("id,section_kind")
+    .eq("id", parentSectionId)
+    .eq("quotation_id", quotationId)
+    .eq("is_active", true)
+    .maybeSingle<{ id: string; section_kind: string }>();
+
+  if (error) {
+    console.error("QUOTATION SECTION PARENT READ ERROR", error.message);
+    return null;
+  }
+
+  return data?.section_kind === "main" ? data.id : null;
+}
+
 export async function createQuotationSection(formData: FormData) {
   const { user } = await requireRecordsManager();
   const quotationId = textValue(formData, "quotation_id");
   const sectionTitle = textValue(formData, "section_title");
+  const sectionKind = allowedText(formData, "section_kind", sectionKinds, "sub");
+  const requestedParentSectionId = sectionKind === "sub"
+    ? optionalTextValue(formData, "parent_section_id")
+    : null;
+  const insertAfterSectionId = optionalTextValue(formData, "insert_after_section_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}`);
 
-  if (!quotationId || !sectionTitle) {
-    redirectWithMessage("/quotations", "Quotation and section title are required.");
+  if (!quotationId) {
+    redirectWithMessage("/quotations", "Quotation is required.");
   }
 
   const supabase = await createSupabaseClient();
@@ -1597,12 +1700,28 @@ export async function createQuotationSection(formData: FormData) {
     section_title: sectionTitle,
     section_notes: optionalTextValue(formData, "section_notes"),
     section_type: allowedText(formData, "section_type", sectionTypes, "section"),
+    parent_section_id: await validParentSectionId(quotationId, requestedParentSectionId),
+    section_kind: sectionKind,
     title_align: allowedText(formData, "title_align", titleAlignments, "center"),
-    title_bold: boolValue(formData, "title_bold"),
-    title_bg: allowedText(formData, "title_bg", titleBackgrounds, "light_grey"),
-    title_size: allowedText(formData, "title_size", titleSizes, "normal"),
+    title_bold: formData.has("title_bold") ? boolValue(formData, "title_bold") : true,
+    title_bg: allowedText(
+      formData,
+      "title_bg",
+      titleBackgrounds,
+      sectionKind === "main" ? "dark_grey" : "light_grey",
+    ),
+    title_size: allowedText(
+      formData,
+      "title_size",
+      titleSizes,
+      sectionKind === "main" ? "large" : "normal",
+    ),
     row_height: optionalIntegerInRange(formData, "row_height", 40, 600),
-    sort_order: integerValue(formData, "sort_order", 0),
+    sort_order: insertAfterSectionId
+      ? await sectionInsertSortOrder(quotationId, insertAfterSectionId)
+      : formData.has("sort_order")
+        ? integerValue(formData, "sort_order", 0)
+        : await sectionInsertSortOrder(quotationId, null),
     is_active: boolValue(formData, "is_active"),
     created_by: user.id,
   });
@@ -1622,10 +1741,14 @@ export async function updateQuotationSection(formData: FormData) {
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
   const sectionTitle = textValue(formData, "section_title");
+  const sectionKind = allowedText(formData, "section_kind", sectionKinds, "sub");
+  const requestedParentSectionId = sectionKind === "sub"
+    ? optionalTextValue(formData, "parent_section_id")
+    : null;
   const redirectPath = returnPath(formData, `/quotations/${quotationId}`);
 
-  if (!id || !quotationId || !sectionTitle) {
-    redirectWithMessage("/quotations", "Section id, quotation, and title are required.");
+  if (!id || !quotationId) {
+    redirectWithMessage("/quotations", "Section id and quotation are required.");
   }
 
   const supabase = await createSupabaseClient();
@@ -1635,6 +1758,8 @@ export async function updateQuotationSection(formData: FormData) {
       section_title: sectionTitle,
       section_notes: optionalTextValue(formData, "section_notes"),
       section_type: allowedText(formData, "section_type", sectionTypes, "section"),
+      parent_section_id: await validParentSectionId(quotationId, requestedParentSectionId),
+      section_kind: sectionKind,
       title_align: allowedText(formData, "title_align", titleAlignments, "center"),
       title_bold: boolValue(formData, "title_bold"),
       title_bg: allowedText(formData, "title_bg", titleBackgrounds, "light_grey"),

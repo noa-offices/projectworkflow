@@ -24,6 +24,17 @@ function quotationPdfFilename(quotation: QuotationFilenameData) {
   return `${quotationNo} - ${title}`.replace(/[\\/:*?"<>|]/g, "-");
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+  let timeout: ReturnType<typeof setTimeout>;
+
+  return Promise.race([
+    promise.finally(() => clearTimeout(timeout)),
+    new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]);
+}
+
 async function launchPdfBrowser() {
   const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
@@ -64,10 +75,12 @@ export async function GET(request: NextRequest, { params }: DownloadPdfRouteCont
       viewport: { width: 1280, height: 900 },
     });
     const page = await context.newPage();
+    page.setDefaultTimeout(30_000);
+    page.setDefaultNavigationTimeout(30_000);
 
     await page.goto(previewUrl.toString(), {
-      waitUntil: "networkidle",
-      timeout: 60_000,
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
     });
     const renderedPath = new URL(page.url()).pathname;
 
@@ -77,19 +90,29 @@ export async function GET(request: NextRequest, { params }: DownloadPdfRouteCont
 
     await page.emulateMedia({ media: "print" });
 
-    const pdf = await page.pdf({
-      format: "A4",
-      landscape: true,
-      printBackground: true,
-      displayHeaderFooter: false,
-      margin: {
-        top: "8mm",
-        right: "8mm",
-        bottom: "8mm",
-        left: "8mm",
-      },
-      preferCSSPageSize: true,
-    });
+    const pdf = await withTimeout(
+      page.pdf({
+        format: "A4",
+        landscape: true,
+        printBackground: true,
+        displayHeaderFooter: true,
+        headerTemplate: "<div></div>",
+        footerTemplate: `
+          <div style="width:100%; font-size:8px; color:#6b7280; text-align:center; padding:0 8mm;">
+            Page <span class="pageNumber"></span> of <span class="totalPages"></span>
+          </div>
+        `,
+        margin: {
+          top: "8mm",
+          right: "8mm",
+          bottom: "12mm",
+          left: "8mm",
+        },
+        preferCSSPageSize: true,
+      }),
+      30_000,
+      "PDF rendering timed out.",
+    );
     const filename = `${quotationPdfFilename(quotation)}.pdf`;
     const pdfBody = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength) as ArrayBuffer;
 

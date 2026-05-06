@@ -28,7 +28,9 @@ async function signedImageUrl(path: string) {
   const bucket = path.startsWith("product-images:") ? "product-images" : "quote-images";
   const storagePath = path.startsWith("product-images:")
     ? path.slice("product-images:".length)
-    : path;
+    : path.startsWith("quote-images:")
+      ? path.slice("quote-images:".length)
+      : path;
   const supabase = createClient();
   const { data, error } = await supabase.storage
     .from(bucket)

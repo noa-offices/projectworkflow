@@ -85,6 +85,8 @@ type QuotationSection = {
   section_title: string;
   section_notes: string | null;
   section_type: string;
+  parent_section_id: string | null;
+  section_kind: "main" | "sub";
   title_align: string;
   title_bold: boolean;
   title_bg: string;
@@ -92,6 +94,10 @@ type QuotationSection = {
   row_height: number | null;
   sort_order: number;
   is_active: boolean;
+};
+
+type DisplaySection = QuotationSection & {
+  renderAsMainOnly?: boolean;
 };
 
 type QuotationItem = {
@@ -457,11 +463,29 @@ function isPriceHiddenLine(item: QuotationItem) {
   return ["note", "heading", "blank"].includes(item.item_type) || ["note", "heading", "no_quote"].includes(item.line_style);
 }
 
+function isSectionTotalLine(item: QuotationItem) {
+  return (
+    !item.is_rate_only &&
+    !["rate_only", "no_quote", "note", "heading"].includes(item.line_style) &&
+    !["note", "blank", "subtotal"].includes(item.item_type)
+  );
+}
+
+function sectionTotal(items: QuotationItem[]) {
+  return items
+    .filter(isSectionTotalLine)
+    .reduce((total, item) => total + item.net_total, 0);
+}
+
 function isSerialCountedLine(item: QuotationItem) {
   return !["heading", "note", "no_quote"].includes(item.line_style) && item.item_type !== "blank";
 }
 
 function sectionTitleClass(section: QuotationSection) {
+  if (section.section_kind === "main") {
+    return "bg-zinc-900 text-center text-white font-bold text-base";
+  }
+
   const align = {
     left: "text-left",
     center: "text-center",
@@ -627,25 +651,37 @@ function SectionForm({
   quotationId,
   returnTo,
   section,
+  sectionKind = section?.section_kind ?? "sub",
+  parentSectionId = section?.parent_section_id ?? "",
+  insertAfterSectionId,
+  showSort = Boolean(section),
 }: {
   quotationId: string;
   returnTo: string;
   section?: QuotationSection;
+  sectionKind?: "main" | "sub";
+  parentSectionId?: string | null;
+  insertAfterSectionId?: string | null;
+  showSort?: boolean;
 }) {
   return (
     <form
       action={section ? updateQuotationSection : createQuotationSection}
-      className="grid gap-2 sm:grid-cols-[1fr_130px_90px_120px_120px_120px_auto]"
+      className="grid gap-2 sm:grid-cols-[1fr_130px_120px_120px_120px_auto]"
     >
       {section ? <input type="hidden" name="id" value={section.id} /> : null}
       <input type="hidden" name="quotation_id" value={quotationId} />
       <input type="hidden" name="is_active" value="on" />
       <input type="hidden" name="return_to" value={returnTo} />
+      <input type="hidden" name="section_kind" value={sectionKind} />
+      <input type="hidden" name="parent_section_id" value={sectionKind === "sub" ? parentSectionId ?? "" : ""} />
+      {insertAfterSectionId ? (
+        <input type="hidden" name="insert_after_section_id" value={insertAfterSectionId} />
+      ) : null}
       <Field
         name="section_title"
-        label="Section"
+        label={sectionKind === "main" ? "Main section" : "Section"}
         defaultValue={section?.section_title}
-        required
       />
       <label className="block">
         <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">
@@ -663,12 +699,14 @@ function SectionForm({
           ))}
         </select>
       </label>
-      <Field
-        name="sort_order"
-        label="Sort"
-        type="number"
-        defaultValue={section?.sort_order ?? 0}
-      />
+      {showSort ? (
+        <Field
+          name="sort_order"
+          label="Sort"
+          type="number"
+          defaultValue={section?.sort_order ?? 0}
+        />
+      ) : null}
       <Field
         name="row_height"
         label="Row height"
@@ -733,9 +771,155 @@ function SectionForm({
         name="section_notes"
         label="Notes"
         defaultValue={section?.section_notes}
-        className="sm:col-span-7"
+        className="sm:col-span-6"
       />
     </form>
+  );
+}
+
+function QuickSectionForm({
+  quotationId,
+  returnTo,
+  label,
+  sectionKind,
+  parentSectionId,
+  insertAfterSectionId,
+  placeholder,
+}: {
+  quotationId: string;
+  returnTo: string;
+  label: string;
+  sectionKind: "main" | "sub";
+  parentSectionId?: string | null;
+  insertAfterSectionId?: string | null;
+  placeholder?: string;
+}) {
+  return (
+    <form action={createQuotationSection} className="flex flex-wrap items-end gap-2">
+      <input type="hidden" name="quotation_id" value={quotationId} />
+      <input type="hidden" name="is_active" value="on" />
+      <input type="hidden" name="return_to" value={returnTo} />
+      <input type="hidden" name="section_kind" value={sectionKind} />
+      <input type="hidden" name="parent_section_id" value={sectionKind === "sub" ? parentSectionId ?? "" : ""} />
+      {insertAfterSectionId ? (
+        <input type="hidden" name="insert_after_section_id" value={insertAfterSectionId} />
+      ) : null}
+      <input type="hidden" name="section_type" value={sectionKind === "main" ? "floor" : "section"} />
+      <input type="hidden" name="title_align" value="center" />
+      <input type="hidden" name="title_bg" value={sectionKind === "main" ? "dark_grey" : "light_grey"} />
+      <input type="hidden" name="title_size" value={sectionKind === "main" ? "large" : "normal"} />
+      <input type="hidden" name="title_bold" value="on" />
+      <label className="min-w-52 flex-1">
+        <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">
+          {label}
+        </span>
+        <input
+          name="section_title"
+          placeholder={placeholder}
+          className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20"
+        />
+      </label>
+      <SubmitButton label="Add" />
+    </form>
+  );
+}
+
+function InsertSectionControl({
+  quotationId,
+  returnTo,
+  insertAfterSectionId,
+  mainInsertAfterSectionId,
+  parentSectionId,
+  totalColumns,
+  insideMain = false,
+}: {
+  quotationId: string;
+  returnTo: string;
+  insertAfterSectionId: string;
+  mainInsertAfterSectionId?: string;
+  parentSectionId?: string | null;
+  totalColumns: number;
+  insideMain?: boolean;
+}) {
+  return (
+    <tr>
+      <td colSpan={totalColumns} className="border-0 bg-white px-3 py-2">
+        <details className="group">
+          <summary className="flex cursor-pointer list-none items-center gap-3 text-[11px] font-semibold text-zinc-500 transition hover:text-emerald-900">
+            <span className="h-px flex-1 bg-zinc-200" />
+            <span className="border border-dashed border-zinc-300 bg-white px-3 py-1 group-open:border-emerald-700 group-open:text-emerald-900">
+              + Add section here
+            </span>
+            <span className="h-px flex-1 bg-zinc-200" />
+          </summary>
+          <div className="mx-auto mt-2 grid max-w-3xl gap-2 border border-zinc-300 bg-zinc-50 p-3 shadow-sm">
+            <QuickSectionForm
+              quotationId={quotationId}
+              returnTo={returnTo}
+              label={insideMain ? "Add Sub Section here" : "Add Section here"}
+              sectionKind="sub"
+              parentSectionId={insideMain ? parentSectionId : null}
+              insertAfterSectionId={insertAfterSectionId}
+              placeholder="Section name (optional)"
+            />
+            <QuickSectionForm
+              quotationId={quotationId}
+              returnTo={returnTo}
+              label={insideMain ? "Add Main Section after this group" : "Add Main Section here"}
+              sectionKind="main"
+              insertAfterSectionId={mainInsertAfterSectionId ?? insertAfterSectionId}
+              placeholder="GROUND FLOOR"
+            />
+          </div>
+        </details>
+      </td>
+    </tr>
+  );
+}
+
+function SectionTotalRow({
+  currency,
+  total,
+  totalColumns,
+}: {
+  currency: string;
+  total: number;
+  totalColumns: number;
+}) {
+  return (
+    <tr>
+      <td
+        colSpan={totalColumns}
+        className="border border-zinc-300 bg-zinc-50 px-3 py-2 text-right text-xs font-bold uppercase tracking-wide text-zinc-700"
+      >
+        <span className="mr-4 text-zinc-500">Section Total</span>
+        <span className="text-zinc-950">{money(currency, total)}</span>
+      </td>
+    </tr>
+  );
+}
+
+function MainSectionTotalRow({
+  currency,
+  label,
+  total,
+  totalColumns,
+}: {
+  currency: string;
+  label: string;
+  total: number;
+  totalColumns: number;
+}) {
+  return (
+    <tr>
+      <td
+        colSpan={totalColumns}
+        className="border border-zinc-950 bg-zinc-950 px-3 py-2 text-right text-sm font-bold uppercase tracking-wide text-white"
+      >
+        <span className="mr-4">{label || "Main Section"} Total</span>
+        <span>{money(currency, total)}</span>
+      </td>
+    </tr>
   );
 }
 
@@ -1986,7 +2170,7 @@ export default async function QuotationBuilderPage({
 
   const { data: sections, error: sectionsError } = await supabase
     .from("quotation_sections")
-    .select("id,quotation_id,section_title,section_notes,section_type,title_align,title_bold,title_bg,title_size,row_height,sort_order,is_active")
+    .select("id,quotation_id,section_title,section_notes,section_type,parent_section_id,section_kind,title_align,title_bold,title_bg,title_size,row_height,sort_order,is_active")
     .eq("quotation_id", id)
     .eq("is_active", true)
     .order("sort_order", { ascending: true })
@@ -2021,6 +2205,12 @@ export default async function QuotationBuilderPage({
     sectionItems.push(item);
     itemsBySection.set(key, sectionItems);
   }
+  const sectionTotals = new Map<string, number>();
+
+  for (const [sectionId, sectionItems] of itemsBySection.entries()) {
+    sectionTotals.set(sectionId, sectionTotal(sectionItems));
+  }
+
   const itemCurrencies = new Set(
     (items ?? [])
       .filter((item) => item.is_active)
@@ -2040,6 +2230,53 @@ export default async function QuotationBuilderPage({
     ...columns.map((column) => ({ key: column.key, width: column.width })),
     ...(showEditColumn ? [{ key: "edit", width: editColumnWidth }] : []),
   ];
+  const activeSections = sections ?? [];
+  const sectionById = new Map(activeSections.map((section) => [section.id, section]));
+  const mainSectionIds = new Set(
+    activeSections
+      .filter((section) => section.section_kind === "main")
+      .map((section) => section.id),
+  );
+  const childrenByParent = new Map<string, QuotationSection[]>();
+
+  for (const section of activeSections) {
+    if (section.section_kind !== "sub" || !section.parent_section_id) continue;
+
+    const children = childrenByParent.get(section.parent_section_id) ?? [];
+    children.push(section);
+    childrenByParent.set(section.parent_section_id, children);
+  }
+  const mainSectionTotals = new Map<string, number>();
+
+  for (const [mainSectionId, childSections] of childrenByParent.entries()) {
+    mainSectionTotals.set(
+      mainSectionId,
+      childSections.reduce(
+        (total, section) => total + (sectionTotals.get(section.id) ?? 0),
+        0,
+      ),
+    );
+  }
+
+  const displaySections: DisplaySection[] = [];
+
+  for (const section of activeSections) {
+    if (section.section_kind === "main") {
+      displaySections.push({ ...section, renderAsMainOnly: true });
+
+      for (const child of childrenByParent.get(section.id) ?? []) {
+        displaySections.push(child);
+      }
+
+      continue;
+    }
+
+    if (section.parent_section_id && mainSectionIds.has(section.parent_section_id)) {
+      continue;
+    }
+
+    displaySections.push(section);
+  }
 
   return (
     <div className="min-h-screen bg-zinc-100 text-zinc-950">
@@ -2074,8 +2311,21 @@ export default async function QuotationBuilderPage({
                 <summary className="cursor-pointer bg-emerald-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800">
                   Add Section
                 </summary>
-                <div className="absolute right-0 mt-2 w-[min(620px,calc(100vw-2rem))] border border-zinc-300 bg-white p-3 shadow-lg">
-                  <SectionForm quotationId={quotation.id} returnTo={builderPath} />
+                <div className="absolute right-0 mt-2 grid w-[min(620px,calc(100vw-2rem))] gap-3 border border-zinc-300 bg-white p-3 shadow-lg">
+                  <QuickSectionForm
+                    quotationId={quotation.id}
+                    returnTo={builderPath}
+                    label="Add Main Section"
+                    sectionKind="main"
+                    placeholder="GROUND FLOOR"
+                  />
+                  <QuickSectionForm
+                    quotationId={quotation.id}
+                    returnTo={builderPath}
+                    label="Add Section"
+                    sectionKind="sub"
+                    placeholder="Section name (optional)"
+                  />
                 </div>
               </details>
             ) : null}
@@ -2092,6 +2342,19 @@ export default async function QuotationBuilderPage({
                 />
               </div>
             </details>
+            <Link
+              href={`/quotations/${quotation.id}/pdf`}
+              target="_blank"
+              className="border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+            >
+              Preview PDF
+            </Link>
+            <Link
+              href={`/quotations/${quotation.id}/download-pdf`}
+              className="bg-emerald-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800"
+            >
+              Download PDF
+            </Link>
             <div className="flex border border-zinc-300 text-xs font-semibold">
               <Link
                 href={`/quotations/${quotation.id}/builder?view=client`}
@@ -2154,12 +2417,133 @@ export default async function QuotationBuilderPage({
           <div className="overflow-x-auto">
             <QuotationSheetTable quotationId={quotation.id} columns={sheetColumns}>
               <tbody>
-                {(sections ?? []).map((section) => {
+                {displaySections.map((section, sectionIndex) => {
+                  const previousSection = displaySections[sectionIndex - 1];
+                  const nextSection = displaySections[sectionIndex + 1];
+                  const insertAfterSectionId = previousSection?.id ?? "__start";
+                  const insertInsideMain =
+                    section.section_kind === "sub" &&
+                    section.parent_section_id &&
+                    mainSectionIds.has(section.parent_section_id);
+                  const parentChildren = section.parent_section_id
+                    ? childrenByParent.get(section.parent_section_id) ?? []
+                    : [];
+                  const mainInsertAfterSectionId = insertInsideMain
+                    ? parentChildren.at(-1)?.id ?? section.parent_section_id ?? insertAfterSectionId
+                    : insertAfterSectionId;
+
+                  if (section.renderAsMainOnly) {
+                    const childSections = childrenByParent.get(section.id) ?? [];
+                    const lastChild = childSections.at(-1);
+                    const addBelowId = lastChild?.id ?? section.id;
+                    const mainSectionTotal = mainSectionTotals.get(section.id) ?? 0;
+
+                    return (
+                      <Fragment key={section.id}>
+                        {canManageRecords ? (
+                          <InsertSectionControl
+                            quotationId={quotation.id}
+                            returnTo={builderPath}
+                            insertAfterSectionId={insertAfterSectionId}
+                            totalColumns={totalColumns}
+                          />
+                        ) : null}
+                        <tr>
+                          <td
+                            colSpan={totalColumns}
+                            className={`relative border border-zinc-300 px-3 py-3 uppercase tracking-wide ${sectionTitleClass(section)}`}
+                            style={section.row_height ? { height: `${section.row_height}px` } : undefined}
+                          >
+                            {section.section_title}
+                            {canManageRecords ? (
+                              <span
+                                aria-hidden="true"
+                                title="Drag to resize row"
+                                data-resize-row-id={section.id}
+                                data-resize-row-type="section"
+                                className="absolute bottom-0 left-0 h-2 w-full cursor-row-resize border-b-2 border-transparent transition hover:border-emerald-700"
+                              />
+                            ) : null}
+                          </td>
+                        </tr>
+                        {canManageRecords ? (
+                          <tr>
+                            <td colSpan={totalColumns} className="border border-zinc-300 bg-zinc-50 px-3 py-2">
+                              <div className="flex flex-wrap items-center justify-center gap-2">
+                                <details>
+                                  <summary className="cursor-pointer border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-900 transition hover:bg-emerald-50">
+                                    + Sub Section
+                                  </summary>
+                                  <div className="mt-2 w-[min(560px,calc(100vw-4rem))] border border-zinc-300 bg-white p-3">
+                                    <QuickSectionForm
+                                      quotationId={quotation.id}
+                                      returnTo={builderPath}
+                                      label="Sub Section"
+                                      sectionKind="sub"
+                                      parentSectionId={section.id}
+                                      insertAfterSectionId={addBelowId}
+                                      placeholder="Section name (optional)"
+                                    />
+                                  </div>
+                                </details>
+                                <details>
+                                  <summary className="cursor-pointer border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
+                                    Edit main section
+                                  </summary>
+                                  <div className="mt-2 w-[min(820px,calc(100vw-4rem))] border border-zinc-300 bg-white p-3 text-left">
+                                    <SectionForm quotationId={quotation.id} returnTo={builderPath} section={section} />
+                                    <form action={deactivateQuotationSection} className="mt-2">
+                                      <input type="hidden" name="id" value={section.id} />
+                                      <input type="hidden" name="quotation_id" value={quotation.id} />
+                                      <input type="hidden" name="return_to" value={builderPath} />
+                                      <button type="submit" className="h-8 px-2 text-xs font-semibold text-zinc-500 transition hover:text-red-700">
+                                        Deactivate main section
+                                      </button>
+                                    </form>
+                                  </div>
+                                </details>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                        {!childSections.length ? (
+                          <MainSectionTotalRow
+                            currency={quotation.currency}
+                            label={section.section_title}
+                            total={mainSectionTotal}
+                            totalColumns={totalColumns}
+                          />
+                        ) : null}
+                        {canManageRecords && nextSection?.parent_section_id !== section.id ? (
+                          <InsertSectionControl
+                            quotationId={quotation.id}
+                            returnTo={builderPath}
+                            insertAfterSectionId={addBelowId}
+                            parentSectionId={section.id}
+                            totalColumns={totalColumns}
+                            insideMain
+                          />
+                        ) : null}
+                      </Fragment>
+                    );
+                  }
+
                   const sectionItems = itemsBySection.get(section.id) ?? [];
                   let serialNumber = 0;
 
                   return (
                     <Fragment key={section.id}>
+                      {canManageRecords ? (
+                        <InsertSectionControl
+                          quotationId={quotation.id}
+                          returnTo={builderPath}
+                          insertAfterSectionId={insertAfterSectionId}
+                          parentSectionId={section.parent_section_id}
+                          mainInsertAfterSectionId={mainInsertAfterSectionId}
+                          totalColumns={totalColumns}
+                          insideMain={Boolean(insertInsideMain)}
+                        />
+                      ) : null}
                       <tr>
                         <td
                           colSpan={totalColumns}
@@ -2475,6 +2859,12 @@ export default async function QuotationBuilderPage({
                         );
                       })}
 
+                      <SectionTotalRow
+                        currency={quotation.currency}
+                        total={sectionTotals.get(section.id) ?? 0}
+                        totalColumns={totalColumns}
+                      />
+
                       {canManageRecords ? (
                         <tr>
                           <td colSpan={totalColumns} className="border border-zinc-300 bg-zinc-50 px-2 py-2">
@@ -2513,15 +2903,60 @@ export default async function QuotationBuilderPage({
                           </td>
                         </tr>
                       ) : null}
+                      {section.parent_section_id &&
+                      mainSectionIds.has(section.parent_section_id) &&
+                      nextSection?.parent_section_id !== section.parent_section_id ? (
+                        <MainSectionTotalRow
+                          currency={quotation.currency}
+                          label={sectionById.get(section.parent_section_id)?.section_title ?? ""}
+                          total={mainSectionTotals.get(section.parent_section_id) ?? 0}
+                          totalColumns={totalColumns}
+                        />
+                      ) : null}
                     </Fragment>
                   );
                 })}
+                {canManageRecords && displaySections.length ? (
+                  <InsertSectionControl
+                    quotationId={quotation.id}
+                    returnTo={builderPath}
+                    insertAfterSectionId={displaySections.at(-1)?.id ?? "__start"}
+                    parentSectionId={displaySections.at(-1)?.parent_section_id}
+                    totalColumns={totalColumns}
+                    insideMain={Boolean(
+                      displaySections.at(-1)?.parent_section_id &&
+                      mainSectionIds.has(displaySections.at(-1)?.parent_section_id ?? ""),
+                    )}
+                  />
+                ) : null}
               </tbody>
             </QuotationSheetTable>
 
             {!sections?.length ? (
-              <div className="border-t border-zinc-300 p-6 text-center text-sm text-zinc-500">
-                No sections yet. Use Add Section in the toolbar to start the sheet.
+              <div className="border-t border-zinc-300 bg-white p-8">
+                <div className="mx-auto max-w-xl border border-dashed border-zinc-300 bg-zinc-50 p-5 text-center">
+                  {canManageRecords ? (
+                    <div className="grid gap-3 text-left">
+                      <QuickSectionForm
+                        quotationId={quotation.id}
+                        returnTo={builderPath}
+                        label="Add Main Section"
+                        sectionKind="main"
+                        placeholder="GROUND FLOOR"
+                      />
+                      <QuickSectionForm
+                        quotationId={quotation.id}
+                        returnTo={builderPath}
+                        label="Add Section"
+                        sectionKind="sub"
+                        placeholder="Section name (optional)"
+                      />
+                    </div>
+                  ) : null}
+                  <p className="mt-4 text-sm text-zinc-500">
+                    Start with a main section like GROUND FLOOR, or add a normal section directly.
+                  </p>
+                </div>
               </div>
             ) : null}
           </div>
