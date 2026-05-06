@@ -13,6 +13,10 @@ import {
   type ProductLibraryTemplate,
 } from "@/components/quotations/product-library-selector";
 import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
+import {
+  FinishImagePreview,
+} from "@/components/quotations/finish-image-uploader";
+import { FinishSelectionsEditor } from "@/components/quotations/finish-selections-editor";
 import { QuotationImageCell } from "@/components/quotations/quotation-image-cell";
 import {
   CopyQuotationRowButton,
@@ -115,6 +119,7 @@ type QuotationItem = {
   specified_image_url_snapshot: string | null;
   proposed_image_url_snapshot: string | null;
   specification_snapshot: string | null;
+  finish_selections_snapshot: unknown;
   selected_options_snapshot: unknown;
   internal_components_snapshot: unknown;
   room_name_snapshot: string | null;
@@ -145,6 +150,18 @@ type QuotationItem = {
   is_active: boolean;
   notes: string | null;
   created_at?: string;
+};
+
+type FinishSelection = {
+  id?: string;
+  group_label?: string;
+  finish_code?: string;
+  finish_name?: string;
+  finish_description?: string;
+  finish_image_url?: string;
+  show_in_quotation?: boolean;
+  show_in_specification?: boolean;
+  sort_order?: number;
 };
 
 type MergeMode = "none" | "merge_specification" | "merge_full_row";
@@ -509,6 +526,7 @@ function Field({
   required,
   type = "text",
   step,
+  list,
   className = "",
 }: {
   name: string;
@@ -517,6 +535,7 @@ function Field({
   required?: boolean;
   type?: string;
   step?: string;
+  list?: string;
   className?: string;
 }) {
   return (
@@ -528,6 +547,7 @@ function Field({
         name={name}
         type={type}
         step={type === "number" ? (step ?? "0.01") : undefined}
+        list={list}
         defaultValue={defaultValue ?? ""}
         required={required}
         className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20"
@@ -923,6 +943,78 @@ function MainSectionTotalRow({
   );
 }
 
+function finishSelections(value: unknown): FinishSelection[] {
+  const normalize = (item: FinishSelection, index: number): FinishSelection => ({
+    ...item,
+    id: item.id || `finish-${index + 1}`,
+    show_in_quotation: item.show_in_quotation === true,
+    show_in_specification: item.show_in_specification !== false,
+    sort_order: typeof item.sort_order === "number" ? item.sort_order : index,
+  });
+
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is FinishSelection => typeof item === "object" && item !== null)
+      .map(normalize);
+  }
+  if (typeof value !== "string") return [];
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is FinishSelection => typeof item === "object" && item !== null)
+        .map(normalize)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function quotationVisibleFinishes(item: QuotationItem) {
+  return finishSelections(item.finish_selections_snapshot).filter((finish) => finish.show_in_quotation === true);
+}
+
+function FinishDisplay({ item }: { item: QuotationItem }) {
+  const rows = quotationVisibleFinishes(item);
+
+  if (!rows.length) return <span className="text-zinc-400">-</span>;
+
+  return (
+    <div className="grid gap-1.5 text-left">
+      {rows.map((finish, index) => {
+        const label = finish.group_label || "Finish";
+        const codeName = [finish.finish_code, finish.finish_name].filter(Boolean).join(" - ");
+
+        return (
+          <div key={`${finish.id ?? "finish"}-${index}`} className="grid grid-cols-[28px_minmax(0,1fr)] items-center gap-2">
+            <FinishImagePreview
+              alt={finish.finish_name || label}
+              className="h-7 w-7"
+              value={finish.finish_image_url}
+            />
+            <div className="min-w-0 leading-4">
+              <p className="font-semibold text-zinc-800">{label}</p>
+              {codeName ? <p className="text-[11px] text-zinc-600">{codeName}</p> : null}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MaterialsFinishesEditor({ item, quotationId }: { item?: QuotationItem; quotationId: string }) {
+  const rows = finishSelections(item?.finish_selections_snapshot);
+
+  return (
+    <FinishSelectionsEditor
+      initialFinishes={rows}
+      itemId={item?.id}
+      quotationId={quotationId}
+    />
+  );
+}
+
 function LineForm({
   quotation,
   returnTo,
@@ -1033,6 +1125,8 @@ function LineForm({
           <Field name="proposed_image_url_snapshot" label="Proposed / Reference Image URL" defaultValue={item?.proposed_image_url_snapshot} />
         </div>
       </fieldset>
+
+      <MaterialsFinishesEditor item={item} quotationId={quotation.id} />
 
       {showInternal ? (
         <fieldset className="border border-zinc-300 bg-white p-3">
@@ -1364,7 +1458,13 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
   };
   const room: Column = { key: "room", label: "Room", className: "w-28", defaultWidth: 110, render: (item, _serial, formId, canEdit) => canEdit ? <CellInput formId={formId} name="room_name_snapshot" defaultValue={item.room_name_snapshot} /> : item.room_name_snapshot ?? "-" };
   const model: Column = { key: "model", label: "Model", className: "w-28", defaultWidth: 110, render: (item, _serial, formId, canEdit) => canEdit ? <CellInput formId={formId} name="model_snapshot" defaultValue={item.model_snapshot} /> : item.model_snapshot ?? "-" };
-  const finish: Column = { key: "finish", label: "Finish", className: "w-28", defaultWidth: 110, render: (item, _serial, formId, canEdit) => canEdit ? <CellInput formId={formId} name="finish_snapshot" defaultValue={item.finish_snapshot} /> : item.finish_snapshot ?? "-" };
+  const finish: Column = {
+    key: "finish",
+    label: "Finish",
+    className: "w-44",
+    defaultWidth: 170,
+    render: (item) => <FinishDisplay item={item} />,
+  };
   const size: Column = { key: "size", label: "Size", className: "w-28", defaultWidth: 110, render: (item, _serial, formId, canEdit) => canEdit ? <CellInput formId={formId} name="size_snapshot" defaultValue={item.size_snapshot} /> : item.size_snapshot ?? "-" };
   const origin: Column = {
     key: "origin",
@@ -1884,6 +1984,7 @@ function rowClipboardPayload({
       specified_image_url_snapshot: item.specified_image_url_snapshot,
       proposed_image_url_snapshot: item.proposed_image_url_snapshot,
       specification_snapshot: item.specification_snapshot,
+      finish_selections_snapshot: item.finish_selections_snapshot,
       selected_options_snapshot: item.selected_options_snapshot,
       internal_components_snapshot: item.internal_components_snapshot,
       room_name_snapshot: item.room_name_snapshot,
@@ -2180,7 +2281,7 @@ export default async function QuotationBuilderPage({
   const { data: items, error: itemsError } = await supabase
     .from("quotation_items")
     .select(
-      "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,is_active,notes,created_at",
+      "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,is_active,notes,created_at",
     )
     .eq("quotation_id", id)
     .eq("is_active", true)
@@ -2354,6 +2455,13 @@ export default async function QuotationBuilderPage({
               className="bg-emerald-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800"
             >
               Download PDF
+            </Link>
+            <Link
+              href={`/quotations/${id}/specification`}
+              target="_blank"
+              className="border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+            >
+              Specification Sheet
             </Link>
             <div className="flex border border-zinc-300 text-xs font-semibold">
               <Link

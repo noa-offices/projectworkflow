@@ -66,6 +66,20 @@ export async function uploadQuotationItemImage({
   return uploadImage("quote-images", path, file);
 }
 
+export async function uploadQuotationFinishImage({
+  file,
+  itemId,
+  quotationId,
+}: {
+  file: File;
+  itemId?: string | null;
+  quotationId: string;
+}): Promise<QuotationImageUploadResult> {
+  const path = `quotation-finishes/${quotationId}/${itemId || "pending"}/${Date.now()}-${safeFilename(file.name)}`;
+
+  return uploadImage("quote-images", path, file);
+}
+
 export async function uploadProductTemplateImage({
   file,
   templateId,

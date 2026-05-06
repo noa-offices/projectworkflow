@@ -80,6 +80,7 @@ type QuotationItem = {
   specified_image_url_snapshot: string | null;
   proposed_image_url_snapshot: string | null;
   specification_snapshot: string | null;
+  finish_selections_snapshot: unknown;
   room_name_snapshot: string | null;
   model_snapshot: string | null;
   finish_snapshot: string | null;
@@ -180,6 +181,42 @@ async function signedImageUrl(value: string | null, supabase: Awaited<ReturnType
   return data.signedUrl;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringFromRecord(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+
+  return null;
+}
+
+function booleanFromRecord(record: Record<string, unknown>, key: string, fallback: boolean) {
+  const value = record[key];
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function finishSelections(value: unknown) {
+  if (Array.isArray(value)) return value.filter(isRecord);
+  if (typeof value !== "string") return [];
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter(isRecord) : [];
+  } catch {
+    return [];
+  }
+}
+
+function quotationVisibleFinishes(item: QuotationItem) {
+  return finishSelections(item.finish_selections_snapshot)
+    .filter((finish) => booleanFromRecord(finish, "show_in_quotation", false));
+}
+
 function projectContactLine(project?: Project | null) {
   return [
     project?.attention_to ? `Attn: ${project.attention_to}` : null,
@@ -247,6 +284,47 @@ function ImageBox({ src }: { src: string | null }) {
         // eslint-disable-next-line @next/next/no-img-element
         <img src={src} alt="Proposed item" className="max-h-full max-w-full object-contain" />
       ) : null}
+    </div>
+  );
+}
+
+function FinishPdfBlock({
+  finishImageUrlById,
+  item,
+}: {
+  finishImageUrlById: Map<string, string | null>;
+  item: QuotationItem;
+}) {
+  const finishes = quotationVisibleFinishes(item);
+
+  if (!finishes.length) return "-";
+
+  return (
+    <div className="grid gap-1 text-left">
+      {finishes.map((finish, index) => {
+        const id = stringFromRecord(finish, ["id"]) || `finish-${index + 1}`;
+        const label = stringFromRecord(finish, ["group_label"]) || "Finish";
+        const codeName = [
+          stringFromRecord(finish, ["finish_code"]),
+          stringFromRecord(finish, ["finish_name"]),
+        ].filter(Boolean).join(" - ");
+        const imageUrl = finishImageUrlById.get(id) ?? null;
+
+        return (
+          <div key={`${id}-${index}`} className="grid grid-cols-[24px_minmax(0,1fr)] items-center gap-1.5">
+            <span className="flex h-6 w-6 items-center justify-center overflow-hidden border border-zinc-200 bg-white">
+              {imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={imageUrl} alt={label} className="h-full w-full object-cover" />
+              ) : null}
+            </span>
+            <span className="leading-4">
+              <span className="block font-semibold text-zinc-800">{label}</span>
+              {codeName ? <span className="block text-[10px] text-zinc-600">{codeName}</span> : null}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -469,6 +547,7 @@ function renderPdfCell({
   serial,
   proposedImageUrlByItemId,
   specifiedImageUrlByItemId,
+  finishImageUrlByItemAndFinishId,
   settings,
   visibleColumnKeys,
 }: {
@@ -477,6 +556,7 @@ function renderPdfCell({
   serial: number;
   proposedImageUrlByItemId: Map<string, string | null>;
   specifiedImageUrlByItemId: Map<string, string | null>;
+  finishImageUrlByItemAndFinishId: Map<string, string | null>;
   settings: ReturnType<typeof specificationMetadataSettings>;
   visibleColumnKeys: Set<string>;
 }) {
@@ -504,7 +584,17 @@ function renderPdfCell({
     case "model":
       return item.model_snapshot ?? "-";
     case "finish":
-      return item.finish_snapshot ?? "-";
+      return (
+        <FinishPdfBlock
+          finishImageUrlById={new Map(
+            quotationVisibleFinishes(item).map((finish, index) => {
+              const finishId = stringFromRecord(finish, ["id"]) || `finish-${index + 1}`;
+              return [finishId, finishImageUrlByItemAndFinishId.get(`${item.id}:${finishId}`) ?? null] as const;
+            }),
+          )}
+          item={item}
+        />
+      );
     case "size":
       return item.size_snapshot ?? "-";
     case "origin":
@@ -575,7 +665,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
         .returns<QuotationSection[]>(),
       supabase
         .from("quotation_items")
-        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,line_style,is_rate_only,is_active,notes")
+        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,line_style,is_rate_only,is_active,notes")
         .eq("quotation_id", id)
         .eq("is_active", true)
         .order("sort_order", { ascending: true })
@@ -596,8 +686,22 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
       await signedImageUrl(item.proposed_image_url_snapshot, supabase),
     ] as const),
   );
+  const finishImageEntries = await Promise.all(
+    activeItems.flatMap((item) =>
+      quotationVisibleFinishes(item).map(async (finish, index) => {
+        const finishId = stringFromRecord(finish, ["id"]) || `finish-${index + 1}`;
+        const finishImageUrl = stringFromRecord(finish, ["finish_image_url"]);
+
+        return [
+          `${item.id}:${finishId}`,
+          await signedImageUrl(finishImageUrl, supabase),
+        ] as const;
+      }),
+    ),
+  );
   const specifiedImageUrlByItemId = new Map(specifiedImageEntries);
   const proposedImageUrlByItemId = new Map(proposedImageEntries);
+  const finishImageUrlByItemAndFinishId = new Map(finishImageEntries);
   const itemsBySection = new Map<string, QuotationItem[]>();
 
   for (const item of activeItems) {
@@ -845,6 +949,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                               {renderPdfCell({
                                 column,
                                 item,
+                                finishImageUrlByItemAndFinishId,
                                 proposedImageUrlByItemId,
                                 serial: rowSerial,
                                 settings: metadataSettings,

@@ -631,6 +631,7 @@ type QuotationItemCopySource = {
   specified_image_url_snapshot: string | null;
   proposed_image_url_snapshot: string | null;
   specification_snapshot: string | null;
+  finish_selections_snapshot: unknown;
   selected_options_snapshot: unknown;
   internal_components_snapshot: unknown;
   room_name_snapshot: string | null;
@@ -794,7 +795,55 @@ const sectionCopySelect =
   "id,section_title,section_notes,section_type,parent_section_id,section_kind,title_align,title_bold,title_bg,title_size,row_height,sort_order";
 
 const itemCopySelect =
-  "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,notes";
+  "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,notes";
+
+function finishSelectionsValue(formData: FormData) {
+  const labels = formData.getAll("finish_group_label[]");
+  const codes = formData.getAll("finish_code[]");
+  const names = formData.getAll("finish_name[]");
+  const descriptions = formData.getAll("finish_description[]");
+  const imageUrls = formData.getAll("finish_image_url[]");
+  const ids = formData.getAll("finish_id[]");
+  const removed = new Set(
+    formData
+      .getAll("finish_remove[]")
+      .map((value) => String(value)),
+  );
+  const maxRows = Math.max(labels.length, codes.length, names.length, descriptions.length, imageUrls.length, ids.length);
+
+  return Array.from({ length: maxRows })
+    .map((_, index) => {
+      const groupLabel = String(labels[index] ?? "").trim();
+      const finishCode = String(codes[index] ?? "").trim();
+      const finishName = String(names[index] ?? "").trim();
+      const finishDescription = String(descriptions[index] ?? "").trim();
+      const finishImageUrl = String(imageUrls[index] ?? "").trim();
+      const id = String(ids[index] ?? "").trim() || `finish-${index + 1}`;
+
+      return {
+        id,
+        group_label: groupLabel,
+        finish_code: finishCode,
+        finish_name: finishName,
+        finish_description: finishDescription,
+        finish_image_url: finishImageUrl,
+        show_in_quotation: formData.get(`finish_show_in_quotation_${index}`) === "on",
+        show_in_specification: formData.get(`finish_show_in_specification_${index}`) === "on",
+        sort_order: index,
+      };
+    })
+    .filter((finish, index) => {
+      if (removed.has(String(index))) return false;
+
+      return Boolean(
+        finish.group_label ||
+        finish.finish_code ||
+        finish.finish_name ||
+        finish.finish_description ||
+        finish.finish_image_url,
+      );
+    });
+}
 
 function itemPayload(formData: FormData, userId?: string) {
   const qty = numberValue(formData, "qty", 1);
@@ -822,6 +871,7 @@ function itemPayload(formData: FormData, userId?: string) {
       "proposed_image_url_snapshot",
     ),
     specification_snapshot: optionalTextValue(formData, "specification_snapshot"),
+    finish_selections_snapshot: finishSelectionsValue(formData),
     room_name_snapshot: optionalTextValue(formData, "room_name_snapshot"),
     model_snapshot: optionalTextValue(formData, "model_snapshot"),
     finish_snapshot: optionalTextValue(formData, "finish_snapshot"),
@@ -2926,6 +2976,9 @@ function sanitizeCopiedRowSnapshot(value: unknown) {
     specified_image_url_snapshot: stringOrNull(source.specified_image_url_snapshot),
     proposed_image_url_snapshot: stringOrNull(source.proposed_image_url_snapshot),
     specification_snapshot: stringOrNull(source.specification_snapshot),
+    finish_selections_snapshot: Array.isArray(source.finish_selections_snapshot)
+      ? source.finish_selections_snapshot
+      : [],
     selected_options_snapshot: source.selected_options_snapshot ?? null,
     internal_components_snapshot: source.internal_components_snapshot ?? null,
     room_name_snapshot: stringOrNull(source.room_name_snapshot),
