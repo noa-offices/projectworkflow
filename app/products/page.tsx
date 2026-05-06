@@ -17,6 +17,12 @@ const productCards = [
     action: "Manage",
   },
   {
+    title: "Brand Material Library",
+    description: "Reusable finish groups, material codes, and swatch references by brand.",
+    href: "/products/materials",
+    action: "Manage",
+  },
+  {
     title: "Template Options",
     description: "Option groups are managed inside each product template for now.",
     href: "#",

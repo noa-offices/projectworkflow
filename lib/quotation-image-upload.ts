@@ -91,3 +91,17 @@ export async function uploadProductTemplateImage({
 
   return uploadImage("product-images", path, file);
 }
+
+export async function uploadBrandMaterialImage({
+  brandId,
+  file,
+  groupId,
+}: {
+  brandId: string;
+  file: File;
+  groupId: string;
+}): Promise<QuotationImageUploadResult> {
+  const path = `brand-materials/${brandId}/${groupId}/${Date.now()}-${safeFilename(file.name)}`;
+
+  return uploadImage("product-images", path, file);
+}
