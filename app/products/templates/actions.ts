@@ -818,6 +818,95 @@ export async function permanentlyDeleteLinkedProductFamily(formData: FormData) {
   redirectWithMessage("Linked product family permanently deleted.");
 }
 
+export async function createProductTemplateMaterialGroup(formData: FormData) {
+  await requireSettingsManager();
+  const productTemplateId = textValue(formData, "product_template_id");
+  const materialGroupId = textValue(formData, "material_group_id");
+  const payload = {
+    product_template_id: productTemplateId,
+    material_group_id: materialGroupId,
+    label_override: optionalTextValue(formData, "label_override"),
+    is_required: boolValue(formData, "is_required"),
+    allow_multiple: boolValue(formData, "allow_multiple"),
+    show_in_specification: boolValue(formData, "show_in_specification"),
+    show_in_quotation: boolValue(formData, "show_in_quotation"),
+    sort_order: Math.trunc(numberValue(formData, "sort_order", 0)),
+    is_active: true,
+  };
+
+  if (!productTemplateId || !materialGroupId) {
+    redirectWithMessage("Select a product template and material group.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_template_material_groups")
+    .upsert(payload, { onConflict: "product_template_id,material_group_id" });
+
+  if (error) {
+    console.error("TEMPLATE MATERIAL GROUP CREATE ERROR", error.message);
+    redirectWithMessage("Material group could not be linked.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Material group linked.");
+}
+
+export async function updateProductTemplateMaterialGroup(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+  const payload = {
+    label_override: optionalTextValue(formData, "label_override"),
+    is_required: boolValue(formData, "is_required"),
+    allow_multiple: boolValue(formData, "allow_multiple"),
+    show_in_specification: boolValue(formData, "show_in_specification"),
+    show_in_quotation: boolValue(formData, "show_in_quotation"),
+    sort_order: Math.trunc(numberValue(formData, "sort_order", 0)),
+    is_active: boolValue(formData, "is_active"),
+  };
+
+  if (!id) {
+    redirectWithMessage("Material group link id is required.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_template_material_groups")
+    .update(payload)
+    .eq("id", id);
+
+  if (error) {
+    console.error("TEMPLATE MATERIAL GROUP UPDATE ERROR", error.message);
+    redirectWithMessage("Material group link could not be updated.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Material group link updated.");
+}
+
+export async function deactivateProductTemplateMaterialGroup(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectWithMessage("Material group link id is required.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_template_material_groups")
+    .update({ is_active: false })
+    .eq("id", id);
+
+  if (error) {
+    console.error("TEMPLATE MATERIAL GROUP DEACTIVATE ERROR", error.message);
+    redirectWithMessage("Material group link could not be removed.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Material group link removed.");
+}
+
 export async function updateProductTemplateImage(formData: FormData) {
   await requireSettingsManager();
   const id = textValue(formData, "id");

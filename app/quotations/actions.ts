@@ -821,37 +821,75 @@ const itemCopySelect =
 
 function finishSelectionsValue(formData: FormData) {
   const labels = formData.getAll("finish_group_label[]");
+  const sourceTypes = formData.getAll("finish_source_type[]");
+  const sourceScopes = formData.getAll("finish_source_scope[]");
+  const brandMaterialIds = formData.getAll("finish_brand_material_id[]");
+  const materialGroupIds = formData.getAll("finish_material_group_id[]");
+  const templateMaterialGroupIds = formData.getAll("finish_product_template_material_group_id[]");
+  const brandNames = formData.getAll("finish_brand_name[]");
+  const materialCategories = formData.getAll("finish_material_category[]");
   const codes = formData.getAll("finish_code[]");
   const names = formData.getAll("finish_name[]");
   const descriptions = formData.getAll("finish_description[]");
   const imageUrls = formData.getAll("finish_image_url[]");
+  const sortOrders = formData.getAll("finish_sort_order[]");
   const ids = formData.getAll("finish_id[]");
   const removed = new Set(
     formData
       .getAll("finish_remove[]")
       .map((value) => String(value)),
   );
-  const maxRows = Math.max(labels.length, codes.length, names.length, descriptions.length, imageUrls.length, ids.length);
+  const maxRows = Math.max(
+    labels.length,
+    sourceTypes.length,
+    sourceScopes.length,
+    brandMaterialIds.length,
+    materialGroupIds.length,
+    templateMaterialGroupIds.length,
+    brandNames.length,
+    materialCategories.length,
+    codes.length,
+    names.length,
+    descriptions.length,
+    imageUrls.length,
+    sortOrders.length,
+    ids.length,
+  );
 
   return Array.from({ length: maxRows })
     .map((_, index) => {
       const groupLabel = String(labels[index] ?? "").trim();
+      const sourceType = String(sourceTypes[index] ?? "").trim() || "custom";
+      const sourceScope = String(sourceScopes[index] ?? "").trim() || sourceType;
+      const brandMaterialId = String(brandMaterialIds[index] ?? "").trim();
+      const materialGroupId = String(materialGroupIds[index] ?? "").trim();
+      const templateMaterialGroupId = String(templateMaterialGroupIds[index] ?? "").trim();
+      const brandName = String(brandNames[index] ?? "").trim();
+      const materialCategory = String(materialCategories[index] ?? "").trim();
       const finishCode = String(codes[index] ?? "").trim();
       const finishName = String(names[index] ?? "").trim();
       const finishDescription = String(descriptions[index] ?? "").trim();
       const finishImageUrl = String(imageUrls[index] ?? "").trim();
       const id = String(ids[index] ?? "").trim() || `finish-${index + 1}`;
+      const sortOrder = Number.parseInt(String(sortOrders[index] ?? ""), 10);
 
       return {
         id,
+        source_type: sourceType,
+        source_scope: sourceScope,
+        brand_material_id: brandMaterialId,
+        material_group_id: materialGroupId,
+        product_template_material_group_id: templateMaterialGroupId,
+        brand_name: brandName,
         group_label: groupLabel,
+        material_category: materialCategory,
         finish_code: finishCode,
         finish_name: finishName,
         finish_description: finishDescription,
         finish_image_url: finishImageUrl,
         show_in_quotation: formData.get(`finish_show_in_quotation_${index}`) === "on",
         show_in_specification: formData.get(`finish_show_in_specification_${index}`) === "on",
-        sort_order: index,
+        sort_order: Number.isFinite(sortOrder) ? sortOrder : index,
       };
     })
     .filter((finish, index) => {

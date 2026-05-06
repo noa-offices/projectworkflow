@@ -32,9 +32,11 @@ import {
   createProductComponent,
   createLinkedProductFamily,
   createMainCategoryFromTemplates,
+  createProductTemplateMaterialGroup,
   createProductTemplate,
   createSubCategoryFromTemplates,
   deactivateLinkedProductFamily,
+  deactivateProductTemplateMaterialGroup,
   deactivateProductTemplate,
   markComponentPriceChecked,
   markTemplatePriceChecked,
@@ -44,6 +46,7 @@ import {
   restoreProductTemplate,
   updateLinkedProductFamily,
   updateProductComponent,
+  updateProductTemplateMaterialGroup,
   updateProductTemplate,
 } from "./actions";
 
@@ -177,6 +180,28 @@ type LinkedProductFamily = {
   add_to_parent_price: boolean;
   append_to_specification: boolean;
   default_qty: number;
+  sort_order: number;
+  is_active: boolean;
+};
+
+type BrandMaterialGroup = {
+  id: string;
+  brand_id: string;
+  group_name: string;
+  description: string | null;
+  sort_order: number;
+  is_active: boolean;
+};
+
+type ProductTemplateMaterialGroup = {
+  id: string;
+  product_template_id: string;
+  material_group_id: string;
+  label_override: string | null;
+  is_required: boolean;
+  allow_multiple: boolean;
+  show_in_specification: boolean;
+  show_in_quotation: boolean;
   sort_order: number;
   is_active: boolean;
 };
@@ -917,6 +942,68 @@ function LinkedProductFamilyForm({
   );
 }
 
+function TemplateMaterialGroupForm({
+  link,
+  materialGroups,
+  template,
+}: {
+  link?: ProductTemplateMaterialGroup;
+  materialGroups: BrandMaterialGroup[];
+  template: ProductTemplate;
+}) {
+  const linkedGroupOptions = materialGroups.filter((group) => group.brand_id === template.brand_id);
+
+  return (
+    <form action={link ? updateProductTemplateMaterialGroup : createProductTemplateMaterialGroup} className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      {link ? <input type="hidden" name="id" value={link.id} /> : null}
+      <input type="hidden" name="product_template_id" value={template.id} />
+      {!link ? (
+        <label className="block xl:col-span-2">
+          <span className="mb-1 block text-xs font-semibold uppercase text-zinc-500">Material group</span>
+          <select
+            name="material_group_id"
+            required
+            className="h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+          >
+            <option value="">Select group</option>
+            {linkedGroupOptions.map((group) => (
+              <option key={group.id} value={group.id}>
+                {group.group_name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      <Field name="label_override" label="Label override" defaultValue={link?.label_override} />
+      <Field name="sort_order" label="Sort order" type="number" defaultValue={link?.sort_order ?? 0} />
+      <div className="flex flex-wrap items-end gap-4 md:col-span-2 xl:col-span-4">
+        <Checkbox name="is_required" label="Required" defaultChecked={link?.is_required ?? false} />
+        <Checkbox name="allow_multiple" label="Allow multiple" defaultChecked={link?.allow_multiple ?? false} />
+        <Checkbox name="show_in_specification" label="Show in Specification" defaultChecked={link?.show_in_specification ?? true} />
+        <Checkbox name="show_in_quotation" label="Show in Quotation" defaultChecked={link?.show_in_quotation ?? false} />
+        {link ? <Checkbox name="is_active" label="Active" defaultChecked={link.is_active} /> : null}
+      </div>
+      <div className="md:col-span-2 xl:col-span-4">
+        <SubmitButton label={link ? "Save material group" : "Link Material Group"} />
+      </div>
+    </form>
+  );
+}
+
+function DeactivateTemplateMaterialGroupForm({ id }: { id: string }) {
+  return (
+    <form action={deactivateProductTemplateMaterialGroup}>
+      <input type="hidden" name="id" value={id} />
+      <button
+        type="submit"
+        className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:border-red-700"
+      >
+        Remove link
+      </button>
+    </form>
+  );
+}
+
 function DeactivateLinkedProductFamilyForm({ id }: { id: string }) {
   return (
     <form action={deactivateLinkedProductFamily}>
@@ -996,11 +1083,29 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     .order("sort_order", { ascending: true })
     .returns<LinkedProductFamily[]>();
 
+  const { data: materialGroups, error: materialGroupsError } = await supabase
+    .from("brand_material_groups")
+    .select("id,brand_id,group_name,description,sort_order,is_active")
+    .eq("is_active", true)
+    .order("brand_id", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .order("group_name", { ascending: true })
+    .returns<BrandMaterialGroup[]>();
+
+  const { data: templateMaterialGroups, error: templateMaterialGroupsError } = await supabase
+    .from("product_template_material_groups")
+    .select("id,product_template_id,material_group_id,label_override,is_required,allow_multiple,show_in_specification,show_in_quotation,sort_order,is_active")
+    .order("product_template_id", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .returns<ProductTemplateMaterialGroup[]>();
+
   if (brandsError) console.error("TEMPLATE BRANDS LIST ERROR", brandsError.message);
   if (categoriesError) console.error("TEMPLATE CATEGORIES LIST ERROR", categoriesError.message);
   if (templatesError) console.error("PRODUCT TEMPLATES LIST ERROR", templatesError.message);
   if (componentsError) console.error("PRODUCT COMPONENTS LIST ERROR", componentsError.message);
   if (linkedFamiliesError) console.error("LINKED PRODUCT FAMILIES LIST ERROR", linkedFamiliesError.message);
+  if (materialGroupsError) console.error("BRAND MATERIAL GROUPS LIST ERROR", materialGroupsError.message);
+  if (templateMaterialGroupsError) console.error("TEMPLATE MATERIAL GROUPS LIST ERROR", templateMaterialGroupsError.message);
 
   const brandList = brands ?? [];
   const categoryList = categories ?? [];
@@ -1008,6 +1113,8 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const activeTemplateList = templateList.filter((template) => template.is_active);
   const archivedTemplateList = templateList.filter((template) => !template.is_active);
   const archivedLinkedFamilyList = (linkedFamilies ?? []).filter((link) => !link.is_active);
+  const materialGroupList = materialGroups ?? [];
+  const activeTemplateMaterialGroupList = (templateMaterialGroups ?? []).filter((link) => link.is_active);
   const brandMap = new Map(brandList.map((brand) => [brand.id, brand.name]));
   const categoryMap = new Map(
     categoryList.map((category) => [category.id, category.name]),
@@ -1027,6 +1134,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   });
   const componentsByTemplate = new Map<string, ProductComponent[]>();
   const linkedFamiliesByTemplate = new Map<string, LinkedProductFamily[]>();
+  const materialGroupsByTemplate = new Map<string, ProductTemplateMaterialGroup[]>();
 
   for (const component of components ?? []) {
     const templateComponents = componentsByTemplate.get(component.template_id) ?? [];
@@ -1038,6 +1146,12 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     const templateLinks = linkedFamiliesByTemplate.get(link.parent_template_id) ?? [];
     templateLinks.push(link);
     linkedFamiliesByTemplate.set(link.parent_template_id, templateLinks);
+  }
+
+  for (const link of activeTemplateMaterialGroupList) {
+    const templateLinks = materialGroupsByTemplate.get(link.product_template_id) ?? [];
+    templateLinks.push(link);
+    materialGroupsByTemplate.set(link.product_template_id, templateLinks);
   }
 
   const normalizedSearch = searchQuery.toLowerCase();
@@ -1588,6 +1702,70 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         />
                       </div>
                     </details>
+                  </div>
+
+                  <div className="border-t border-zinc-200 p-5">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <h3 className="text-sm font-semibold uppercase text-zinc-500">
+                          Material Groups / Finish Options
+                        </h3>
+                        <p className="mt-1 text-sm leading-6 text-zinc-500">
+                          Link brand finish groups allowed for this template. Finish selection in quotations comes later.
+                        </p>
+                      </div>
+                      <details className="shrink-0">
+                        <summary className="cursor-pointer rounded-md bg-emerald-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800">
+                          + Link Material Group
+                        </summary>
+                        <div className="mt-3 w-[min(960px,calc(100vw-4rem))] rounded-lg border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
+                          <TemplateMaterialGroupForm
+                            materialGroups={materialGroupList}
+                            template={template}
+                          />
+                        </div>
+                      </details>
+                    </div>
+                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                      {(materialGroupsByTemplate.get(template.id) ?? []).map((link) => {
+                        const materialGroup = materialGroupList.find(
+                          (candidate) => candidate.id === link.material_group_id,
+                        );
+
+                        return (
+                          <div key={link.id} className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                              <div>
+                                <p className="font-semibold text-zinc-950">
+                                  {link.label_override || materialGroup?.group_name || "Material group"}
+                                </p>
+                                <p className="mt-1 text-xs leading-5 text-zinc-500">
+                                  {link.is_required ? "Required" : "Optional"}. {link.allow_multiple ? "Allows multiple" : "Single selection"}. {link.show_in_specification ? "Shows in specification" : "Hidden from specification"}. {link.show_in_quotation ? "Shows in quotation" : "Hidden from quotation"}.
+                                </p>
+                              </div>
+                              <DeactivateTemplateMaterialGroupForm id={link.id} />
+                            </div>
+                            <details className="mt-3">
+                              <summary className="inline-flex cursor-pointer rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
+                                Edit settings
+                              </summary>
+                              <div className="mt-3">
+                                <TemplateMaterialGroupForm
+                                  link={link}
+                                  materialGroups={materialGroupList}
+                                  template={template}
+                                />
+                              </div>
+                            </details>
+                          </div>
+                        );
+                      })}
+                      {!(materialGroupsByTemplate.get(template.id) ?? []).length ? (
+                        <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
+                          No linked material groups yet.
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
 
                   <div className="border-t border-zinc-200 p-5">

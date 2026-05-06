@@ -16,7 +16,13 @@ import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-tab
 import {
   FinishImagePreview,
 } from "@/components/quotations/finish-image-uploader";
-import { FinishSelectionsEditor } from "@/components/quotations/finish-selections-editor";
+import {
+  FinishSelectionsEditor,
+  type FinishMaterial,
+  type FinishMaterialBrand,
+  type FinishMaterialGroup,
+  type ProductTemplateMaterialGroupLink,
+} from "@/components/quotations/finish-selections-editor";
 import { QuotationImageCell } from "@/components/quotations/quotation-image-cell";
 import {
   CopyQuotationRowButton,
@@ -155,7 +161,14 @@ type QuotationItem = {
 
 type FinishSelection = {
   id?: string;
+  source_type?: string;
+  source_scope?: string;
+  brand_material_id?: string;
+  material_group_id?: string;
+  product_template_material_group_id?: string;
+  brand_name?: string;
   group_label?: string;
+  material_category?: string;
   finish_code?: string;
   finish_name?: string;
   finish_description?: string;
@@ -1004,30 +1017,63 @@ function FinishDisplay({ item }: { item: QuotationItem }) {
   );
 }
 
-function MaterialsFinishesEditor({ item, quotationId }: { item?: QuotationItem; quotationId: string }) {
+function MaterialsFinishesEditor({
+  brands,
+  item,
+  materialGroups,
+  materials,
+  productTemplates,
+  quotationId,
+  templateMaterialGroups,
+}: {
+  brands: FinishMaterialBrand[];
+  item?: QuotationItem;
+  materialGroups: FinishMaterialGroup[];
+  materials: FinishMaterial[];
+  productTemplates: ProductLibraryTemplate[];
+  quotationId: string;
+  templateMaterialGroups: ProductTemplateMaterialGroupLink[];
+}) {
   const rows = finishSelections(item?.finish_selections_snapshot);
+  const template = productTemplates.find((entry) => entry.id === item?.source_template_id);
+  const linkedGroups = templateMaterialGroups.filter((link) => link.product_template_id === item?.source_template_id);
 
   return (
     <FinishSelectionsEditor
+      brands={brands}
+      initialBrandId={template?.brand_id ?? null}
       initialFinishes={rows}
       itemId={item?.id}
+      materialGroups={materialGroups}
+      materials={materials}
+      templateMaterialGroups={linkedGroups}
       quotationId={quotationId}
     />
   );
 }
 
 function LineForm({
+  brands,
   quotation,
   returnTo,
   sectionId,
   item,
+  materialGroups,
+  materials,
+  productTemplates,
   showInternal,
+  templateMaterialGroups,
 }: {
+  brands: FinishMaterialBrand[];
   quotation: Quotation;
   returnTo: string;
   sectionId?: string | null;
   item?: QuotationItem;
+  materialGroups: FinishMaterialGroup[];
+  materials: FinishMaterial[];
+  productTemplates: ProductLibraryTemplate[];
   showInternal: boolean;
+  templateMaterialGroups: ProductTemplateMaterialGroupLink[];
 }) {
   return (
     <form
@@ -1127,7 +1173,15 @@ function LineForm({
         </div>
       </fieldset>
 
-      <MaterialsFinishesEditor item={item} quotationId={quotation.id} />
+      <MaterialsFinishesEditor
+        brands={brands}
+        item={item}
+        materialGroups={materialGroups}
+        materials={materials}
+        productTemplates={productTemplates}
+        quotationId={quotation.id}
+        templateMaterialGroups={templateMaterialGroups}
+      />
 
       {showInternal ? (
         <fieldset className="border border-zinc-300 bg-white p-3">
@@ -1204,21 +1258,27 @@ function RowActionPanel({
   categories,
   components,
   linkedFamilies,
+  materialGroups,
+  materials,
   productTemplates,
   quotation,
   returnTo,
   sectionId,
   showInternal,
+  templateMaterialGroups,
 }: {
   brands: ProductLibraryBrand[];
   categories: ProductLibraryCategory[];
   components: ProductLibraryComponent[];
   productTemplates: ProductLibraryTemplate[];
   linkedFamilies: ProductLibraryLinkedFamily[];
+  materialGroups: FinishMaterialGroup[];
+  materials: FinishMaterial[];
   quotation: Quotation;
   returnTo: string;
   sectionId: string;
   showInternal: boolean;
+  templateMaterialGroups: ProductTemplateMaterialGroupLink[];
 }) {
   const summaryClass =
     "cursor-pointer border border-zinc-300 bg-white px-3 py-2 text-xs font-bold text-emerald-900 transition hover:bg-emerald-50";
@@ -1240,10 +1300,15 @@ function RowActionPanel({
           <summary className={summaryClass}>+ Item Row</summary>
           <div className="mt-3 w-[min(1080px,calc(100vw-4rem))] border border-zinc-300 bg-white p-3">
             <LineForm
+              brands={brands}
+              materialGroups={materialGroups}
+              materials={materials}
+              productTemplates={productTemplates}
               quotation={quotation}
               returnTo={returnTo}
               sectionId={sectionId}
               showInternal={showInternal}
+              templateMaterialGroups={templateMaterialGroups}
             />
           </div>
         </details>
@@ -2007,16 +2072,26 @@ function rowClipboardPayload({
 
 function InlineRowActions({
   item,
+  brands,
+  materialGroups,
+  materials,
+  productTemplates,
   quotation,
   returnTo,
   inlineFormId,
   showInternal,
+  templateMaterialGroups,
 }: {
   item: QuotationItem;
+  brands: FinishMaterialBrand[];
+  materialGroups: FinishMaterialGroup[];
+  materials: FinishMaterial[];
+  productTemplates: ProductLibraryTemplate[];
   quotation: Quotation;
   returnTo: string;
   inlineFormId: string;
   showInternal: boolean;
+  templateMaterialGroups: ProductTemplateMaterialGroupLink[];
 }) {
   return (
     <div className="grid h-full content-center justify-items-center gap-1">
@@ -2076,7 +2151,17 @@ function InlineRowActions({
                   Details
                 </summary>
                 <div className="absolute right-0 top-full z-40 mt-2 w-[1080px] max-w-[calc(100vw-3rem)] border border-zinc-300 bg-zinc-50 p-3 shadow-lg">
-                  <LineForm quotation={quotation} returnTo={returnTo} item={item} showInternal={showInternal} />
+                  <LineForm
+                    brands={brands}
+                    item={item}
+                    materialGroups={materialGroups}
+                    materials={materials}
+                    productTemplates={productTemplates}
+                    quotation={quotation}
+                    returnTo={returnTo}
+                    showInternal={showInternal}
+                    templateMaterialGroups={templateMaterialGroups}
+                  />
                 </div>
               </details>
             </div>
@@ -2089,25 +2174,40 @@ function InlineRowActions({
 
 function InlineRowEditCell({
   item,
+  brands,
+  materialGroups,
+  materials,
+  productTemplates,
   quotation,
   returnTo,
   inlineFormId,
   showInternal,
+  templateMaterialGroups,
 }: {
   item: QuotationItem;
+  brands: FinishMaterialBrand[];
+  materialGroups: FinishMaterialGroup[];
+  materials: FinishMaterial[];
+  productTemplates: ProductLibraryTemplate[];
   quotation: Quotation;
   returnTo: string;
   inlineFormId: string;
   showInternal: boolean;
+  templateMaterialGroups: ProductTemplateMaterialGroupLink[];
 }) {
   return (
     <td className="border border-zinc-300 px-1.5 py-1 text-center align-middle">
       <InlineRowActions
         item={item}
+        brands={brands}
+        materialGroups={materialGroups}
+        materials={materials}
+        productTemplates={productTemplates}
         quotation={quotation}
         returnTo={returnTo}
         inlineFormId={inlineFormId}
         showInternal={showInternal}
+        templateMaterialGroups={templateMaterialGroups}
       />
     </td>
   );
@@ -2258,6 +2358,34 @@ export default async function QuotationBuilderPage({
     .order("sort_order", { ascending: true })
     .returns<ProductLibraryLinkedFamily[]>();
 
+  const { data: materialGroups, error: materialGroupsError } = await supabase
+    .from("brand_material_groups")
+    .select("id,brand_id,group_name,sort_order")
+    .eq("is_active", true)
+    .order("brand_id", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .order("group_name", { ascending: true })
+    .returns<FinishMaterialGroup[]>();
+
+  const { data: materials, error: materialsError } = await supabase
+    .from("brand_materials")
+    .select("id,brand_id,material_group_id,material_category,material_code,material_name,description,image_url,sort_order,is_active")
+    .eq("is_active", true)
+    .order("brand_id", { ascending: true })
+    .order("material_group_id", { ascending: true })
+    .order("material_category", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .order("material_code", { ascending: true })
+    .returns<FinishMaterial[]>();
+
+  const { data: templateMaterialGroups, error: templateMaterialGroupsError } = await supabase
+    .from("product_template_material_groups")
+    .select("id,product_template_id,material_group_id,label_override,is_required,allow_multiple,show_in_specification,show_in_quotation,sort_order")
+    .eq("is_active", true)
+    .order("product_template_id", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .returns<ProductTemplateMaterialGroupLink[]>();
+
   const { data: sections, error: sectionsError } = await supabase
     .from("quotation_sections")
     .select("id,quotation_id,section_title,section_notes,section_type,parent_section_id,section_kind,title_align,title_bold,title_bg,title_size,row_height,sort_order,is_active")
@@ -2286,6 +2414,9 @@ export default async function QuotationBuilderPage({
   if (productTemplatesError) console.error("PRODUCT SELECTOR TEMPLATES ERROR", productTemplatesError.message);
   if (productComponentsError) console.error("PRODUCT SELECTOR OPTIONS ERROR", productComponentsError.message);
   if (linkedFamiliesError) console.error("PRODUCT SELECTOR LINKED FAMILIES ERROR", linkedFamiliesError.message);
+  if (materialGroupsError) console.error("QUOTATION MATERIAL GROUPS ERROR", materialGroupsError.message);
+  if (materialsError) console.error("QUOTATION MATERIALS ERROR", materialsError.message);
+  if (templateMaterialGroupsError) console.error("QUOTATION TEMPLATE MATERIAL GROUPS ERROR", templateMaterialGroupsError.message);
 
   const itemsBySection = new Map<string, QuotationItem[]>();
 
@@ -2775,10 +2906,15 @@ export default async function QuotationBuilderPage({
                                 {showEditColumn ? (
                                   <InlineRowEditCell
                                     item={item}
+                                    brands={productBrands ?? []}
+                                    materialGroups={materialGroups ?? []}
+                                    materials={materials ?? []}
+                                    productTemplates={productTemplates ?? []}
                                     quotation={quotation}
                                     returnTo={builderPath}
                                     inlineFormId={inlineFormId}
                                     showInternal={showInternal}
+                                    templateMaterialGroups={templateMaterialGroups ?? []}
                                   />
                                 ) : null}
                               </tr>
@@ -2818,10 +2954,15 @@ export default async function QuotationBuilderPage({
                                 {showEditColumn ? (
                                   <InlineRowEditCell
                                     item={item}
+                                    brands={productBrands ?? []}
+                                    materialGroups={materialGroups ?? []}
+                                    materials={materials ?? []}
+                                    productTemplates={productTemplates ?? []}
                                     quotation={quotation}
                                     returnTo={builderPath}
                                     inlineFormId={inlineFormId}
                                     showInternal={showInternal}
+                                    templateMaterialGroups={templateMaterialGroups ?? []}
                                   />
                                 ) : null}
                               </tr>
@@ -2873,10 +3014,15 @@ export default async function QuotationBuilderPage({
                                 {showEditColumn ? (
                                   <InlineRowEditCell
                                     item={item}
+                                    brands={productBrands ?? []}
+                                    materialGroups={materialGroups ?? []}
+                                    materials={materials ?? []}
+                                    productTemplates={productTemplates ?? []}
                                     quotation={quotation}
                                     returnTo={builderPath}
                                     inlineFormId={inlineFormId}
                                     showInternal={showInternal}
+                                    templateMaterialGroups={templateMaterialGroups ?? []}
                                   />
                                 ) : null}
                               </tr>
@@ -2893,10 +3039,15 @@ export default async function QuotationBuilderPage({
                                 {showEditColumn ? (
                                   <InlineRowEditCell
                                     item={item}
+                                    brands={productBrands ?? []}
+                                    materialGroups={materialGroups ?? []}
+                                    materials={materials ?? []}
+                                    productTemplates={productTemplates ?? []}
                                     quotation={quotation}
                                     returnTo={builderPath}
                                     inlineFormId={inlineFormId}
                                     showInternal={showInternal}
+                                    templateMaterialGroups={templateMaterialGroups ?? []}
                                   />
                                 ) : null}
                               </tr>
@@ -2950,10 +3101,15 @@ export default async function QuotationBuilderPage({
                               {showEditColumn ? (
                                 <InlineRowEditCell
                                   item={item}
+                                  brands={productBrands ?? []}
+                                  materialGroups={materialGroups ?? []}
+                                  materials={materials ?? []}
+                                  productTemplates={productTemplates ?? []}
                                   quotation={quotation}
                                   returnTo={builderPath}
                                   inlineFormId={inlineFormId}
                                   showInternal={showInternal}
+                                  templateMaterialGroups={templateMaterialGroups ?? []}
                                 />
                               ) : null}
                             </tr>
@@ -2976,11 +3132,14 @@ export default async function QuotationBuilderPage({
                               categories={productCategories ?? []}
                               components={productComponents ?? []}
                               linkedFamilies={linkedFamilies ?? []}
+                              materialGroups={materialGroups ?? []}
+                              materials={materials ?? []}
                               productTemplates={productTemplates ?? []}
                               quotation={quotation}
                               returnTo={builderPath}
                               sectionId={section.id}
                               showInternal={showInternal}
+                              templateMaterialGroups={templateMaterialGroups ?? []}
                             />
                             <PasteQuotationRowControls
                               quotationId={quotation.id}

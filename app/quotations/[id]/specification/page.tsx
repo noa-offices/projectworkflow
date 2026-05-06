@@ -129,8 +129,14 @@ type SelectedFinish = {
   code: string | null;
   value: string;
   description: string | null;
+  groupSortOrder: number;
   imageUrl: string | null;
   sortOrder: number;
+};
+
+type ProductTemplateMaterialGroupOrder = {
+  id: string;
+  sort_order: number;
 };
 
 type MaterialChartSwatch = {
@@ -149,6 +155,7 @@ type MaterialChart = {
 type SelectedFinishGroup = {
   label: string;
   finishes: SelectedFinish[];
+  sortOrder: number;
 };
 
 const selectedFinishesPerProductPage = 6;
@@ -299,16 +306,24 @@ function swatchRecords(finish: Record<string, unknown>) {
   return Array.isArray(swatches) ? swatches.filter(isRecord) : [];
 }
 
-function materialContent(item: QuotationItem, finishImageUrlById: Map<string, string | null>) {
+function materialContent(
+  item: QuotationItem,
+  finishImageUrlById: Map<string, string | null>,
+  materialGroupSortOrderByLinkId: Map<string, number>,
+) {
   const selectedFinishes = materialEntries(item)
     .flatMap((finish, index): SelectedFinish[] => {
       if (stringFromRecord(finish, ["type"]) === "material_group_chart") return [];
       const id = stringFromRecord(finish, ["id"]) || `finish-${index + 1}`;
-      const label = stringFromRecord(finish, ["group_label"]) || "Finish";
+      const label = stringFromRecord(finish, ["group_label"]) || "Other Finishes";
       const code = stringFromRecord(finish, ["finish_code"]);
       const value = stringFromRecord(finish, ["finish_name"]) || code || "";
       const description = stringFromRecord(finish, ["finish_description"]);
       const sortOrderValue = finish.sort_order;
+      const linkedGroupId = stringFromRecord(finish, ["product_template_material_group_id"]);
+      const linkedGroupSortOrder = linkedGroupId
+        ? materialGroupSortOrderByLinkId.get(linkedGroupId)
+        : undefined;
 
       return [{
         id,
@@ -316,11 +331,18 @@ function materialContent(item: QuotationItem, finishImageUrlById: Map<string, st
         code,
         value,
         description,
+        groupSortOrder: typeof linkedGroupSortOrder === "number" ? linkedGroupSortOrder : Number.MAX_SAFE_INTEGER,
         imageUrl: finishImageUrlById.get(id) ?? null,
         sortOrder: typeof sortOrderValue === "number" && Number.isFinite(sortOrderValue) ? sortOrderValue : index,
       }];
     })
-    .filter((finish) => Boolean(finish.code || finish.value || finish.description || finish.imageUrl));
+    .filter((finish) => Boolean(finish.code || finish.value || finish.description || finish.imageUrl))
+    .sort(
+      (left, right) =>
+        left.groupSortOrder - right.groupSortOrder ||
+        left.label.localeCompare(right.label) ||
+        left.sortOrder - right.sortOrder,
+    );
   const charts = materialEntries(item)
     .flatMap((finish, index): MaterialChart[] => {
       if (stringFromRecord(finish, ["type"]) !== "material_group_chart") return [];
@@ -531,34 +553,44 @@ function selectedFinishGroups(finishes: SelectedFinish[]): SelectedFinishGroup[]
   const groupByLabel = new Map<string, SelectedFinishGroup>();
 
   for (const finish of finishes) {
-    const label = finish.label || "Finish";
+    const label = finish.label || "Other Finishes";
     const existingGroup = groupByLabel.get(label);
 
     if (existingGroup) {
       existingGroup.finishes.push(finish);
+      existingGroup.sortOrder = Math.min(existingGroup.sortOrder, finish.groupSortOrder);
       continue;
     }
 
-    const group = { label, finishes: [finish] };
+    const group = { label, finishes: [finish], sortOrder: finish.groupSortOrder };
     groups.push(group);
     groupByLabel.set(label, group);
   }
 
-  return groups.map((group) => ({
-    ...group,
-    finishes: [...group.finishes].sort((left, right) => left.sortOrder - right.sortOrder),
-  }));
+  return groups
+    .map((group) => ({
+      ...group,
+      finishes: [...group.finishes].sort((left, right) => left.sortOrder - right.sortOrder),
+    }))
+    .sort(
+      (left, right) =>
+        left.sortOrder - right.sortOrder ||
+        left.label.localeCompare(right.label),
+    );
 }
 
 function SelectedFinishGroups({ finishes }: { finishes: SelectedFinish[] }) {
   const groups = selectedFinishGroups(finishes);
 
   return (
-    <div className="mt-3 flex flex-wrap gap-x-8 gap-y-3">
+    <div className="mt-3 grid gap-4">
       {groups.map((group) => (
-        <div key={group.label} className="min-w-[120px]">
-          <h4 className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-700">{group.label}</h4>
-          <div className="mt-1.5 flex flex-wrap gap-2">
+        <div key={group.label} className="border-t border-zinc-200 pt-2 first:border-t-0 first:pt-0">
+          <div className="flex items-center gap-2">
+            <h4 className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-700">{group.label}</h4>
+            <span className="h-px flex-1 bg-zinc-200" />
+          </div>
+          <div className="mt-2 flex flex-wrap gap-3">
             {group.finishes.map((finish) => (
               <SelectedFinishCard key={finish.id} finish={finish} />
             ))}
@@ -649,6 +681,7 @@ function MaterialsFinishesArea({
 function MaterialsContinuationPage({
   finishImageUrlById,
   hasLogo,
+  materialGroupSortOrderByLinkId,
   page,
   project,
   quotation,
@@ -656,13 +689,14 @@ function MaterialsContinuationPage({
 }: {
   finishImageUrlById: Map<string, string | null>;
   hasLogo: boolean;
+  materialGroupSortOrderByLinkId: Map<string, number>;
   page: Extract<SpecDocumentPage, { type: "materials_continuation" }>;
   project?: Project | null;
   quotation: Quotation;
   totalPages: number;
 }) {
   const title = page.item.item_name_snapshot || page.item.model_snapshot || page.item.item_code_snapshot || "Product";
-  const { charts, selectedFinishes } = materialContent(page.item, finishImageUrlById);
+  const { charts, selectedFinishes } = materialContent(page.item, finishImageUrlById, materialGroupSortOrderByLinkId);
   const selectedSlice = typeof page.selectedStart === "number"
     ? selectedFinishes.slice(page.selectedStart, page.selectedStart + selectedFinishesPerProductPage)
     : [];
@@ -702,6 +736,7 @@ function ProductSpecPage({
   item,
   finishImageUrlById,
   mainSection,
+  materialGroupSortOrderByLinkId,
   pageNumber,
   project,
   proposedImage,
@@ -715,6 +750,7 @@ function ProductSpecPage({
   item: QuotationItem;
   finishImageUrlById: Map<string, string | null>;
   mainSection: QuotationSection | null;
+  materialGroupSortOrderByLinkId: Map<string, number>;
   pageNumber: number;
   project?: Project | null;
   proposedImage: string | null;
@@ -726,7 +762,7 @@ function ProductSpecPage({
 }) {
   const title = item.item_name_snapshot || item.model_snapshot || item.item_code_snapshot || `Item ${serial}`;
   const originSupplier = [item.supplier_name_snapshot, item.origin_snapshot].filter(Boolean).join(" / ");
-  const { charts, selectedFinishes } = materialContent(item, finishImageUrlById);
+  const { charts, selectedFinishes } = materialContent(item, finishImageUrlById, materialGroupSortOrderByLinkId);
 
   return (
     <section className="spec-page flex min-h-[277mm] flex-col bg-white p-10 shadow-sm ring-1 ring-zinc-200">
@@ -807,7 +843,13 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
     notFound();
   }
 
-  const [{ data: client }, { data: project }, { data: sections }, { data: items }] =
+  const [
+    { data: client },
+    { data: project },
+    { data: sections },
+    { data: items },
+    { data: materialGroupOrders, error: materialGroupOrdersError },
+  ] =
     await Promise.all([
       supabase
         .from("clients")
@@ -835,7 +877,16 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
         .order("sort_order", { ascending: true })
         .order("id", { ascending: true })
         .returns<QuotationItem[]>(),
+      supabase
+        .from("product_template_material_groups")
+        .select("id,sort_order")
+        .eq("is_active", true)
+        .returns<ProductTemplateMaterialGroupOrder[]>(),
     ]);
+
+  if (materialGroupOrdersError) {
+    console.error("SPECIFICATION MATERIAL GROUP ORDER ERROR", materialGroupOrdersError.message);
+  }
 
   const activeItems = (items ?? []).filter((item) => item.is_active);
   const proposedImageEntries = await Promise.all(
@@ -874,6 +925,9 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
   const proposedImageUrlByItemId = new Map(proposedImageEntries);
   const specifiedImageUrlByItemId = new Map(specifiedImageEntries);
   const finishImageUrlByItemAndFinishId = new Map(finishImageEntries);
+  const materialGroupSortOrderByLinkId = new Map(
+    (materialGroupOrders ?? []).map((row) => [row.id, row.sort_order] as const),
+  );
   const itemsBySection = new Map<string, QuotationItem[]>();
 
   for (const item of activeItems) {
@@ -1143,6 +1197,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
                   }),
                 )}
                 hasLogo={hasLogo}
+                materialGroupSortOrderByLinkId={materialGroupSortOrderByLinkId}
                 page={page}
                 project={project}
                 quotation={quotation}
@@ -1170,6 +1225,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
               hasLogo={hasLogo}
               item={page.item}
               mainSection={page.mainSection}
+              materialGroupSortOrderByLinkId={materialGroupSortOrderByLinkId}
               pageNumber={page.pageNumber}
               project={project}
               proposedImage={proposedImageUrlByItemId.get(page.item.id) ?? null}
