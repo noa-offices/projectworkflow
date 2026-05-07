@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { Suspense } from "react";
+import { PreserveUiState } from "@/components/preserve-ui-state";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -29,6 +31,9 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full bg-stone-50 text-zinc-900" suppressHydrationWarning>
+        <Suspense fallback={null}>
+          <PreserveUiState />
+        </Suspense>
         {children}
       </body>
     </html>

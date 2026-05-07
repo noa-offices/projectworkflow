@@ -4,6 +4,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -51,14 +52,20 @@ export function QuotationSheetTable({
   quotationId,
   columns,
   children,
+  minimumTableWidth,
 }: {
   quotationId: string;
   columns: SheetColumn[];
   children: ReactNode;
+  minimumTableWidth?: number;
 }) {
   const [widths, setWidths] = useState(() =>
     Object.fromEntries(columns.map((column) => [column.key, clampWidth(column.width)])),
   );
+  const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
+  const [stickySpacerWidth, setStickySpacerWidth] = useState(0);
+  const mainScrollRef = useRef<HTMLDivElement | null>(null);
+  const stickyScrollRef = useRef<HTMLDivElement | null>(null);
   const widthsRef = useRef(widths);
   const [, startTransition] = useTransition();
 
@@ -67,9 +74,71 @@ export function QuotationSheetTable({
   }, [widths]);
 
   const tableMinWidth = useMemo(
-    () => columns.reduce((total, column) => total + (widths[column.key] ?? column.width), 0),
-    [columns, widths],
+    () => Math.max(
+      columns.reduce((total, column) => total + (widths[column.key] ?? column.width), 0),
+      minimumTableWidth ?? 0,
+    ),
+    [columns, minimumTableWidth, widths],
   );
+
+  useLayoutEffect(() => {
+    const mainScroll = mainScrollRef.current;
+    if (!mainScroll) return;
+
+    const syncOverflowState = () => {
+      setHasHorizontalOverflow(mainScroll.scrollWidth > mainScroll.clientWidth + 1);
+      setStickySpacerWidth(mainScroll.scrollWidth);
+    };
+
+    syncOverflowState();
+
+    const resizeObserver = new ResizeObserver(() => {
+      syncOverflowState();
+    });
+
+    resizeObserver.observe(mainScroll);
+
+    const table = mainScroll.querySelector("table");
+    if (table instanceof HTMLElement) {
+      resizeObserver.observe(table);
+    }
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [children, columns, tableMinWidth]);
+
+  useEffect(() => {
+    const mainScroll = mainScrollRef.current;
+    const stickyScroll = stickyScrollRef.current;
+    if (!mainScroll || !stickyScroll) return;
+
+    let syncingFromMain = false;
+    let syncingFromSticky = false;
+
+    const syncStickyFromMain = () => {
+      if (syncingFromSticky) return;
+      syncingFromMain = true;
+      stickyScroll.scrollLeft = mainScroll.scrollLeft;
+      syncingFromMain = false;
+    };
+
+    const syncMainFromSticky = () => {
+      if (syncingFromMain) return;
+      syncingFromSticky = true;
+      mainScroll.scrollLeft = stickyScroll.scrollLeft;
+      syncingFromSticky = false;
+    };
+
+    syncStickyFromMain();
+    mainScroll.addEventListener("scroll", syncStickyFromMain);
+    stickyScroll.addEventListener("scroll", syncMainFromSticky);
+
+    return () => {
+      mainScroll.removeEventListener("scroll", syncStickyFromMain);
+      stickyScroll.removeEventListener("scroll", syncMainFromSticky);
+    };
+  }, [hasHorizontalOverflow]);
 
   function saveColumnWidth(key: string, width: number) {
     const formData = new FormData();
@@ -192,17 +261,33 @@ export function QuotationSheetTable({
   }
 
   return (
-    <table
-      className="w-full table-fixed border-collapse text-left text-xs"
-      style={{ minWidth: tableMinWidth }}
-      onMouseDown={startResize}
-    >
-      <colgroup>
-        {columns.map((column) => (
-          <col key={column.key} style={{ width: `${widths[column.key] ?? column.width}px` }} />
-        ))}
-      </colgroup>
-      {children}
-    </table>
+    <div className="relative">
+      {hasHorizontalOverflow ? (
+        <div className="pointer-events-none sticky bottom-0 z-10 -mb-3 px-1 pb-1">
+          <div className="pointer-events-auto rounded-t-md border border-zinc-200 bg-white/95 shadow-sm backdrop-blur">
+            <div
+              ref={stickyScrollRef}
+              className="overflow-x-auto overflow-y-hidden px-1 py-1"
+            >
+              <div style={{ width: stickySpacerWidth, height: 1 }} />
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <div ref={mainScrollRef} className="w-full overflow-x-auto overscroll-x-contain pb-2">
+        <table
+          className="w-full table-fixed border-collapse text-left text-xs"
+          style={{ minWidth: tableMinWidth }}
+          onMouseDown={startResize}
+        >
+          <colgroup>
+            {columns.map((column) => (
+              <col key={column.key} style={{ width: `${widths[column.key] ?? column.width}px` }} />
+            ))}
+          </colgroup>
+          {children}
+        </table>
+      </div>
+    </div>
   );
 }

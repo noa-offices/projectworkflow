@@ -170,8 +170,46 @@ function numberInRange(formData: FormData, name: string, fallback: number, min: 
   return Math.min(Math.max(value, min), max);
 }
 
+function splitRelativePath(path: string) {
+  const hashIndex = path.indexOf("#");
+  const hash = hashIndex >= 0 ? path.slice(hashIndex) : "";
+  const pathWithoutHash = hashIndex >= 0 ? path.slice(0, hashIndex) : path;
+  const queryIndex = pathWithoutHash.indexOf("?");
+  const pathname = queryIndex >= 0 ? pathWithoutHash.slice(0, queryIndex) : pathWithoutHash;
+  const queryString = queryIndex >= 0 ? pathWithoutHash.slice(queryIndex + 1) : "";
+
+  return { hash, pathname, queryString };
+}
+
+function pathWithParams(path: string, params: Record<string, string | null | undefined>) {
+  const { hash, pathname, queryString } = splitRelativePath(path);
+  const searchParams = new URLSearchParams(queryString);
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value) {
+      searchParams.set(key, value);
+    } else {
+      searchParams.delete(key);
+    }
+  }
+
+  const nextQuery = searchParams.toString();
+  const nextPath = nextQuery ? `${pathname}?${nextQuery}` : pathname;
+  return `${nextPath}${hash}`;
+}
+
+function returnPath(formData: FormData, fallback = "/products/templates") {
+  const value = textValue(formData, "return_to");
+
+  return value.startsWith("/products/templates") ? value : fallback;
+}
+
 function redirectWithMessage(message: string): never {
   redirect(`/products/templates?message=${encodeURIComponent(message)}`);
+}
+
+function redirectWithMessageToPath(path: string, message: string): never {
+  redirect(pathWithParams(path, { message }));
 }
 
 function redirectToTemplates(
@@ -755,6 +793,7 @@ export async function updateProductTemplate(formData: FormData) {
 
 export async function updateProductTemplateDefaultPrice(formData: FormData) {
   const { user, displayName } = await requireSettingsManager();
+  const redirectPath = returnPath(formData);
   const productTemplateId = textValue(formData, "product_template_id");
   const newDefaultUnitPrice = numberValue(formData, "new_default_unit_price", Number.NaN);
   const currency = normalizeCurrency(textValue(formData, "currency") || defaultCurrency);
@@ -763,7 +802,7 @@ export async function updateProductTemplateDefaultPrice(formData: FormData) {
   const note = optionalTextValue(formData, "note");
 
   if (!productTemplateId || !Number.isFinite(newDefaultUnitPrice) || newDefaultUnitPrice < 0) {
-    redirectWithMessage("Template and valid new price are required.");
+    redirectWithMessageToPath(redirectPath, "Template and valid new price are required.");
   }
 
   const supabase = await createClient();
@@ -780,7 +819,7 @@ export async function updateProductTemplateDefaultPrice(formData: FormData) {
 
   if (templateError || !template) {
     console.error("PRODUCT TEMPLATE PRICE UPDATE READ ERROR", templateError?.message);
-    redirectWithMessage("Product template could not be loaded.");
+    redirectWithMessageToPath(redirectPath, "Product template could not be loaded.");
   }
 
   if (brandPriceListUpdateId) {
@@ -793,7 +832,7 @@ export async function updateProductTemplateDefaultPrice(formData: FormData) {
 
     if (priceListError || !priceListUpdate) {
       console.error("PRODUCT TEMPLATE PRICE LIST UPDATE LOOKUP ERROR", priceListError?.message);
-      redirectWithMessage("Selected brand price list update could not be loaded.");
+      redirectWithMessageToPath(redirectPath, "Selected brand price list update could not be loaded.");
     }
   }
 
@@ -811,7 +850,7 @@ export async function updateProductTemplateDefaultPrice(formData: FormData) {
 
   if (historyError) {
     console.error("PRODUCT TEMPLATE PRICE HISTORY ERROR", historyError.message);
-    redirectWithMessage("Product template price history could not be saved.");
+    redirectWithMessageToPath(redirectPath, "Product template price history could not be saved.");
   }
 
   const { error: updateError } = await supabase
@@ -827,7 +866,7 @@ export async function updateProductTemplateDefaultPrice(formData: FormData) {
 
   if (updateError) {
     console.error("PRODUCT TEMPLATE PRICE UPDATE ERROR", updateError.message);
-    redirectWithMessage("Product template source price could not be updated.");
+    redirectWithMessageToPath(redirectPath, "Product template source price could not be updated.");
   }
 
   await createAuditLog(supabase, {
@@ -852,11 +891,13 @@ export async function updateProductTemplateDefaultPrice(formData: FormData) {
   });
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Product template source price updated.");
+  revalidatePath(splitRelativePath(redirectPath).pathname);
+  redirectWithMessageToPath(redirectPath, "Product template source price updated.");
 }
 
 export async function updateProductTemplateDetailPrice(formData: FormData) {
   const { user, displayName } = await requireSettingsManager();
+  const redirectPath = returnPath(formData);
   const productTemplateId = textValue(formData, "product_template_id");
   const sourceTable = detailPriceSourceValue(textValue(formData, "source_table"));
   const sourceRecordId = textValue(formData, "source_record_id");
@@ -875,7 +916,7 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
     !Number.isFinite(newPrice) ||
     newPrice < 0
   ) {
-    redirectWithMessage("Template, source row, price field, and valid new price are required.");
+    redirectWithMessageToPath(redirectPath, "Template, source row, price field, and valid new price are required.");
   }
 
   const normalizedCurrency = currency ? normalizeCurrency(currency) : null;
@@ -895,7 +936,7 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
 
   if (templateError || !template) {
     console.error("DETAIL PRICE TEMPLATE READ ERROR", templateError?.message);
-    redirectWithMessage("Product template could not be loaded.");
+    redirectWithMessageToPath(redirectPath, "Product template could not be loaded.");
   }
 
   if (brandPriceListUpdateId) {
@@ -909,7 +950,7 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
 
     if (priceListError || !priceListUpdate) {
       console.error("DETAIL PRICE LIST UPDATE LOOKUP ERROR", priceListError?.message);
-      redirectWithMessage("Selected brand price list update could not be loaded.");
+      redirectWithMessageToPath(redirectPath, "Selected brand price list update could not be loaded.");
     }
   }
 
@@ -931,7 +972,7 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
 
     if (componentError || !component || component.template_id !== template.id) {
       console.error("DETAIL PRICE COMPONENT READ ERROR", componentError?.message);
-      redirectWithMessage("Component price source could not be loaded.");
+      redirectWithMessageToPath(redirectPath, "Component price source could not be loaded.");
     }
 
     oldPrice = component.unit_price;
@@ -956,7 +997,7 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
     });
 
     if (!updated.matched) {
-      redirectWithMessage("Template price row could not be found.");
+      redirectWithMessageToPath(redirectPath, "Template price row could not be found.");
     }
 
     oldPrice = updated.oldPrice;
@@ -980,7 +1021,7 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
 
   if (historyError) {
     console.error("DETAIL PRICE HISTORY ERROR", historyError.message);
-    redirectWithMessage("Detail price history could not be saved.");
+    redirectWithMessageToPath(redirectPath, "Detail price history could not be saved.");
   }
 
   if (sourceTable === "product_components") {
@@ -991,7 +1032,7 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
 
     if (componentUpdateError) {
       console.error("DETAIL PRICE COMPONENT UPDATE ERROR", componentUpdateError.message);
-      redirectWithMessage("Component source price could not be updated.");
+      redirectWithMessageToPath(redirectPath, "Component source price could not be updated.");
     }
   } else {
     const { error: jsonUpdateError } = await supabase
@@ -1001,7 +1042,7 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
 
     if (jsonUpdateError) {
       console.error("DETAIL PRICE JSON UPDATE ERROR", jsonUpdateError.message);
-      redirectWithMessage("Template detail source price could not be updated.");
+      redirectWithMessageToPath(redirectPath, "Template detail source price could not be updated.");
     }
   }
 
@@ -1030,7 +1071,8 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
   });
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Detail source price updated.");
+  revalidatePath(splitRelativePath(redirectPath).pathname);
+  redirectWithMessageToPath(redirectPath, "Detail source price updated.");
 }
 
 export async function deactivateProductTemplate(formData: FormData) {
@@ -1261,6 +1303,7 @@ export async function permanentlyDeleteLinkedProductFamily(formData: FormData) {
 
 export async function createProductTemplateMaterialGroup(formData: FormData) {
   await requireSettingsManager();
+  const redirectPath = returnPath(formData);
   const productTemplateId = textValue(formData, "product_template_id");
   const materialGroupId = textValue(formData, "material_group_id");
   const selectionMode = selectionModeValue(formData);
@@ -1279,12 +1322,12 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
   };
 
   if (!productTemplateId || !materialGroupId) {
-    redirectWithMessage("Select a product template and material group.");
+    redirectWithMessageToPath(redirectPath, "Select a product template and material group.");
   }
 
   const supabase = await createClient();
   if (selectionMode === "selected_items" && selectedMaterialIds.length === 0) {
-    redirectWithMessage("Select at least one finish for selected finishes only.");
+    redirectWithMessageToPath(redirectPath, "Select at least one finish for selected finishes only.");
   }
 
   const { data: link, error } = await supabase
@@ -1295,7 +1338,7 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
 
   if (error) {
     console.error("TEMPLATE MATERIAL GROUP CREATE ERROR", error.message);
-    redirectWithMessage("Material group could not be linked.");
+    redirectWithMessageToPath(redirectPath, "Material group could not be linked.");
   }
 
   if (link?.id) {
@@ -1306,7 +1349,7 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
 
     if (deleteError) {
       console.error("TEMPLATE MATERIAL GROUP ITEMS CLEAR ERROR", deleteError.message);
-      redirectWithMessage("Material group finishes could not be saved.");
+      redirectWithMessageToPath(redirectPath, "Material group finishes could not be saved.");
     }
 
     if (selectionMode === "selected_items") {
@@ -1319,7 +1362,7 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
 
       if (materialsError) {
         console.error("TEMPLATE MATERIAL GROUP ITEMS VALIDATE ERROR", materialsError.message);
-        redirectWithMessage("Selected finishes could not be validated.");
+        redirectWithMessageToPath(redirectPath, "Selected finishes could not be validated.");
       }
 
       const allowedIds = new Set((allowedMaterials ?? []).map((material) => material.id as string));
@@ -1333,7 +1376,7 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
         }));
 
       if (!rows.length) {
-        redirectWithMessage("Select at least one active finish from the chosen group.");
+        redirectWithMessageToPath(redirectPath, "Select at least one active finish from the chosen group.");
       }
 
       const { error: itemsError } = await supabase
@@ -1342,17 +1385,19 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
 
       if (itemsError) {
         console.error("TEMPLATE MATERIAL GROUP ITEMS CREATE ERROR", itemsError.message);
-        redirectWithMessage("Selected finishes could not be saved.");
+        redirectWithMessageToPath(redirectPath, "Selected finishes could not be saved.");
       }
     }
   }
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Material group linked.");
+  revalidatePath(splitRelativePath(redirectPath).pathname);
+  redirectWithMessageToPath(redirectPath, "Material group linked.");
 }
 
 export async function updateProductTemplateMaterialGroup(formData: FormData) {
   await requireSettingsManager();
+  const redirectPath = returnPath(formData);
   const id = textValue(formData, "id");
   const selectionMode = selectionModeValue(formData);
   const selectedMaterialIds = selectedMaterialIdsValue(formData);
@@ -1368,12 +1413,12 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
   };
 
   if (!id) {
-    redirectWithMessage("Material group link id is required.");
+    redirectWithMessageToPath(redirectPath, "Material group link id is required.");
   }
 
   const supabase = await createClient();
   if (selectionMode === "selected_items" && selectedMaterialIds.length === 0) {
-    redirectWithMessage("Select at least one finish for selected finishes only.");
+    redirectWithMessageToPath(redirectPath, "Select at least one finish for selected finishes only.");
   }
 
   const { data: existingLink, error: linkError } = await supabase
@@ -1384,7 +1429,7 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
 
   if (linkError || !existingLink) {
     console.error("TEMPLATE MATERIAL GROUP LOOKUP ERROR", linkError?.message ?? "Missing material group link.");
-    redirectWithMessage("Material group link could not be loaded.");
+    redirectWithMessageToPath(redirectPath, "Material group link could not be loaded.");
   }
 
   const { error } = await supabase
@@ -1394,7 +1439,7 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
 
   if (error) {
     console.error("TEMPLATE MATERIAL GROUP UPDATE ERROR", error.message);
-    redirectWithMessage("Material group link could not be updated.");
+    redirectWithMessageToPath(redirectPath, "Material group link could not be updated.");
   }
 
   const { error: deleteError } = await supabase
@@ -1404,7 +1449,7 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
 
   if (deleteError) {
     console.error("TEMPLATE MATERIAL GROUP ITEMS CLEAR ERROR", deleteError.message);
-    redirectWithMessage("Material group finishes could not be saved.");
+    redirectWithMessageToPath(redirectPath, "Material group finishes could not be saved.");
   }
 
   if (selectionMode === "selected_items") {
@@ -1417,7 +1462,7 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
 
     if (materialsError) {
       console.error("TEMPLATE MATERIAL GROUP ITEMS VALIDATE ERROR", materialsError.message);
-      redirectWithMessage("Selected finishes could not be validated.");
+      redirectWithMessageToPath(redirectPath, "Selected finishes could not be validated.");
     }
 
     const allowedIds = new Set((allowedMaterials ?? []).map((material) => material.id as string));
@@ -1431,7 +1476,7 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
       }));
 
     if (!rows.length) {
-      redirectWithMessage("Select at least one active finish from this group.");
+      redirectWithMessageToPath(redirectPath, "Select at least one active finish from this group.");
     }
 
     const { error: itemsError } = await supabase
@@ -1440,20 +1485,22 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
 
     if (itemsError) {
       console.error("TEMPLATE MATERIAL GROUP ITEMS UPDATE ERROR", itemsError.message);
-      redirectWithMessage("Selected finishes could not be saved.");
+      redirectWithMessageToPath(redirectPath, "Selected finishes could not be saved.");
     }
   }
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Material group link updated.");
+  revalidatePath(splitRelativePath(redirectPath).pathname);
+  redirectWithMessageToPath(redirectPath, "Material group link updated.");
 }
 
 export async function deactivateProductTemplateMaterialGroup(formData: FormData) {
   await requireSettingsManager();
+  const redirectPath = returnPath(formData);
   const id = textValue(formData, "id");
 
   if (!id) {
-    redirectWithMessage("Material group link id is required.");
+    redirectWithMessageToPath(redirectPath, "Material group link id is required.");
   }
 
   const supabase = await createClient();
@@ -1464,11 +1511,12 @@ export async function deactivateProductTemplateMaterialGroup(formData: FormData)
 
   if (error) {
     console.error("TEMPLATE MATERIAL GROUP DEACTIVATE ERROR", error.message);
-    redirectWithMessage("Material group link could not be removed.");
+    redirectWithMessageToPath(redirectPath, "Material group link could not be removed.");
   }
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Material group link removed.");
+  revalidatePath(splitRelativePath(redirectPath).pathname);
+  redirectWithMessageToPath(redirectPath, "Material group link removed.");
 }
 
 export async function updateProductTemplateImage(formData: FormData) {
@@ -1673,11 +1721,15 @@ export async function deactivateProductComponentGroup(formData: FormData) {
   redirectWithMessage("Template option group deactivated.");
 }
 
-export async function markProductTemplatePriceChecked(templateId: string, note?: string | null) {
+export async function markProductTemplatePriceChecked(
+  templateId: string,
+  note?: string | null,
+  redirectPath = "/products/templates",
+) {
   const { user, displayName } = await requireSettingsManager();
 
   if (!templateId) {
-    redirectWithMessage("Template id is required.");
+    redirectWithMessageToPath(redirectPath, "Template id is required.");
   }
 
   const payload = {
@@ -1694,7 +1746,7 @@ export async function markProductTemplatePriceChecked(templateId: string, note?:
 
   if (templateError || !template) {
     console.error("TEMPLATE PRICE CHECK READ ERROR", templateError?.message);
-    redirectWithMessage("Template price check could not be saved.");
+    redirectWithMessageToPath(redirectPath, "Template price check could not be saved.");
   }
 
   const { error } = await supabase
@@ -1704,7 +1756,7 @@ export async function markProductTemplatePriceChecked(templateId: string, note?:
 
   if (error) {
     console.error("TEMPLATE PRICE CHECK ERROR", error.message);
-    redirectWithMessage("Template price check could not be saved.");
+    redirectWithMessageToPath(redirectPath, "Template price check could not be saved.");
   }
 
   await createAuditLog(supabase, {
@@ -1722,13 +1774,14 @@ export async function markProductTemplatePriceChecked(templateId: string, note?:
   });
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Template price check saved.");
+  redirectWithMessageToPath(redirectPath, "Template price check saved.");
 }
 
 export async function markTemplatePriceChecked(formData: FormData) {
   await markProductTemplatePriceChecked(
     textValue(formData, "id"),
     optionalTextValue(formData, "price_check_note"),
+    returnPath(formData),
   );
 }
 

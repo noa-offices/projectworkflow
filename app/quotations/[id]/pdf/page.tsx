@@ -879,7 +879,6 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                 <MetaLine label="Ref No." value={quotation.quotation_no ?? "Draft"} />
                 <MetaLine label="Date" value={quotation.quotation_date} />
                 {quotation.revision_no ? <MetaLine label="Revision" value={revisionLabel(quotation)} /> : null}
-                <MetaLine label="Status" value={quotation.status} />
               </dl>
             </div>
           </div>

@@ -14,6 +14,16 @@ import {
 } from "@/app/quotations/actions";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import {
+  formatQuotationDisplayNo,
+  quotationOptionLabel,
+  quotationRevisionBaseNo,
+  quotationRootBaseNo,
+} from "@/lib/quotation-options";
+import {
+  quotationStatusBadgeClassName,
+  quotationStatusLabel,
+} from "@/lib/quotation-status";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
@@ -55,6 +65,7 @@ type Project = {
 type Quotation = {
   id: string;
   quotation_no: string | null;
+  option_no: number;
   revision_no: number;
   title: string;
   quotation_date: string;
@@ -65,16 +76,6 @@ type Quotation = {
 };
 
 type QuotationAction = (formData: FormData) => Promise<void>;
-
-const quotationStatuses = new Map([
-  ["draft", "Draft"],
-  ["sent", "Sent"],
-  ["revised", "Revised"],
-  ["approved", "Approved"],
-  ["won", "Won"],
-  ["lost", "Lost"],
-  ["cancelled", "Cancelled"],
-]);
 
 const projectStatuses = new Map([
   ["active", "Active"],
@@ -140,6 +141,14 @@ function StatusBadge({ label }: { label: string }) {
   );
 }
 
+function QuotationStatusBadge({ status }: { status: string }) {
+  return (
+    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${quotationStatusBadgeClassName(status)}`}>
+      {quotationStatusLabel(status)}
+    </span>
+  );
+}
+
 function InfoValue({ label, value }: { label: string; value: string | number | null | undefined }) {
   return (
     <div>
@@ -162,7 +171,7 @@ function projectContactLine(project: Project) {
 }
 
 function baseQuotationNo(quotationNo: string | null) {
-  return quotationNo?.replace(/(?:-R\d+)+$/i, "") ?? "";
+  return quotationRevisionBaseNo(quotationNo) ?? "";
 }
 
 function quotationRevisionLabel(revisionNo: number | null | undefined) {
@@ -309,7 +318,7 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
 
   const { data: quotations, error: quotationsError } = await supabase
     .from("quotations")
-    .select("id,quotation_no,revision_no,title,quotation_date,status,currency,grand_total,is_active")
+    .select("id,quotation_no,option_no,revision_no,title,quotation_date,status,currency,grand_total,is_active")
     .eq("project_id", project.id)
     .order("quotation_date", { ascending: false })
     .order("created_at", { ascending: false })
@@ -319,6 +328,12 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
   if (quotationsError) console.error("PROJECT QUOTATIONS LIST ERROR", quotationsError.message);
 
   const allQuotationList = [...(quotations ?? [])].sort((a, b) => {
+    const rootBaseCompare = (quotationRootBaseNo(a.quotation_no) ?? "").localeCompare(quotationRootBaseNo(b.quotation_no) ?? "");
+    if (rootBaseCompare !== 0) return rootBaseCompare;
+
+    const optionCompare = (a.option_no ?? 1) - (b.option_no ?? 1);
+    if (optionCompare !== 0) return optionCompare;
+
     const baseCompare = baseQuotationNo(a.quotation_no).localeCompare(baseQuotationNo(b.quotation_no));
     if (baseCompare !== 0) return baseCompare;
 
@@ -327,6 +342,17 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
   const quotationList = allQuotationList.filter((quotation) => quotation.is_active);
   const archivedQuotationList = allQuotationList.filter((quotation) => !quotation.is_active);
   const latestRevisionByBaseNo = new Map<string, Quotation>();
+  const optionCountByRootBase = new Map<string, number>();
+
+  for (const quotation of allQuotationList) {
+    const rootBase = quotationRootBaseNo(quotation.quotation_no);
+    if (!rootBase) continue;
+
+    optionCountByRootBase.set(
+      rootBase,
+      Math.max(optionCountByRootBase.get(rootBase) ?? 0, quotation.option_no ?? 1),
+    );
+  }
 
   for (const quotation of allQuotationList) {
     const baseNo = baseQuotationNo(quotation.quotation_no);
@@ -456,12 +482,21 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                   {quotationList.map((quotation) => (
                     (() => {
                       const baseNo = baseQuotationNo(quotation.quotation_no);
+                      const rootBaseNo = quotationRootBaseNo(quotation.quotation_no);
                       const latestRevision = baseNo ? latestRevisionByBaseNo.get(baseNo) : null;
                       const isLatestRevision = latestRevision ? latestRevision.id === quotation.id : false;
+                      const showOptionNumber = Boolean(
+                        rootBaseNo && (optionCountByRootBase.get(rootBaseNo) ?? 1) > 1,
+                      );
+                      const displayQuotationNo = formatQuotationDisplayNo({
+                        optionNo: quotation.option_no,
+                        quotationNo: quotation.quotation_no,
+                        showOptionNumber,
+                      });
 
                       return (
                     <tr key={quotation.id} className="border-b border-zinc-100 align-top">
-                      <td className="py-3 pr-4 text-zinc-600">{quotation.quotation_no ?? "-"}</td>
+                      <td className="py-3 pr-4 text-zinc-600">{displayQuotationNo ?? "-"}</td>
                       <td className="py-3 pr-4 font-medium text-zinc-950">
                         <div className="flex flex-col gap-1">
                           <span>{quotation.title}</span>
@@ -471,15 +506,15 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                               {isLatestRevision ? " - Latest revision" : ` - Older revision${latestRevision ? `, latest is ${quotationRevisionLabel(latestRevision.revision_no)}` : ""}`}
                             </span>
                           ) : (
-                            <span className="text-xs font-medium text-amber-700">
-                              Add quotation number before creating revisions
+                            <span className="text-xs font-medium text-zinc-500">
+                              {quotationOptionLabel(quotation.option_no)}
                             </span>
                           )}
                         </div>
                       </td>
                       <td className="py-3 pr-4 text-zinc-600">{quotation.quotation_date}</td>
                       <td className="py-3 pr-4">
-                        <StatusBadge label={quotationStatuses.get(quotation.status) ?? quotation.status} />
+                        <QuotationStatusBadge status={quotation.status} />
                       </td>
                       <td className="py-3 pr-4 font-medium text-zinc-950">
                         {formatQuotationMoney(quotation.currency, quotation.grand_total)}
@@ -584,43 +619,55 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                   Restore archived quotations, or permanently delete archived quotation records.
                 </p>
                 <div className="mt-3 divide-y divide-zinc-200 rounded-md border border-zinc-200 bg-white">
-                  {archivedQuotationList.map((quotation) => (
-                    <div
-                      key={quotation.id}
-                      className="grid gap-3 p-3 md:grid-cols-[1fr_auto] md:items-center"
-                    >
-                      <div>
-                        <p className="font-semibold text-zinc-950">
-                          {quotation.quotation_no ?? "Draft quotation"} - {quotation.title}
-                        </p>
-                        <p className="mt-1 text-sm text-zinc-500">
-                          {quotation.quotation_date} / {quotationStatuses.get(quotation.status) ?? quotation.status}
-                        </p>
-                      </div>
-                      {canManageRecords ? (
-                        <div className="flex flex-wrap gap-2 md:justify-end">
-                          <div className="w-28">
-                            <QuotationActionForm
-                              action={restoreQuotation}
-                              label="Restore"
-                              quotationId={quotation.id}
-                              projectId={project.id}
-                            />
-                          </div>
-                          <div className="w-44">
-                            <QuotationActionForm
-                              action={permanentlyDeleteQuotation}
-                              label="Delete permanently"
-                              quotationId={quotation.id}
-                              projectId={project.id}
-                              confirm="Permanently delete this archived quotation? This will delete its sections and line items. This cannot be undone."
-                              danger
-                            />
-                          </div>
+                  {archivedQuotationList.map((quotation) => {
+                    const archivedRootBaseNo = quotationRootBaseNo(quotation.quotation_no);
+                    const archivedDisplayQuotationNo = formatQuotationDisplayNo({
+                      optionNo: quotation.option_no,
+                      quotationNo: quotation.quotation_no,
+                      showOptionNumber: Boolean(
+                        archivedRootBaseNo &&
+                        (optionCountByRootBase.get(archivedRootBaseNo) ?? 1) > 1,
+                      ),
+                    });
+
+                    return (
+                      <div
+                        key={quotation.id}
+                        className="grid gap-3 p-3 md:grid-cols-[1fr_auto] md:items-center"
+                      >
+                        <div>
+                          <p className="font-semibold text-zinc-950">
+                            {archivedDisplayQuotationNo ?? "Draft quotation"} - {quotation.title}
+                          </p>
+                          <p className="mt-1 text-sm text-zinc-500">
+                            {quotation.quotation_date} / {quotationStatusLabel(quotation.status)}
+                          </p>
                         </div>
-                      ) : null}
-                    </div>
-                  ))}
+                        {canManageRecords ? (
+                          <div className="flex flex-wrap gap-2 md:justify-end">
+                            <div className="w-28">
+                              <QuotationActionForm
+                                action={restoreQuotation}
+                                label="Restore"
+                                quotationId={quotation.id}
+                                projectId={project.id}
+                              />
+                            </div>
+                            <div className="w-44">
+                              <QuotationActionForm
+                                action={permanentlyDeleteQuotation}
+                                label="Delete permanently"
+                                quotationId={quotation.id}
+                                projectId={project.id}
+                                confirm="Permanently delete this archived quotation? This will delete its sections and line items. This cannot be undone."
+                                danger
+                              />
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ) : null}

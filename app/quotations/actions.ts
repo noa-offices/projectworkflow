@@ -5,18 +5,17 @@ import { redirect } from "next/navigation";
 import { requireActiveUser, requireRecordsManager } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit-log";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
+import {
+  quotationOptionLabel,
+  quotationOptionNoFromQuotationNo,
+  quotationRevisionBaseNo,
+  quotationRootBaseNo,
+} from "@/lib/quotation-options";
+import { allowedQuotationStatuses, quotationStatusLabel } from "@/lib/quotation-status";
 import { quotationMoneyValue } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
-const quotationStatuses = new Set([
-  "draft",
-  "sent",
-  "revised",
-  "approved",
-  "won",
-  "lost",
-  "cancelled",
-]);
+const quotationStatuses = allowedQuotationStatuses;
 const discountTypes = new Set(["amount", "percent"]);
 const mergeModes = new Set(["none", "merge_specification", "merge_full_row"]);
 const itemTypes = new Set(["product", "custom", "note", "blank", "subtotal"]);
@@ -141,10 +140,44 @@ function roundedLinePricing(unitPriceValue: number, discountType: string, discou
   };
 }
 
-function redirectWithMessage(path: string, message: string): never {
-  const separator = path.includes("?") ? "&" : "?";
+function splitRelativePath(path: string) {
+  const hashIndex = path.indexOf("#");
+  const hash = hashIndex >= 0 ? path.slice(hashIndex) : "";
+  const pathWithoutHash = hashIndex >= 0 ? path.slice(0, hashIndex) : path;
+  const queryIndex = pathWithoutHash.indexOf("?");
+  const pathname = queryIndex >= 0 ? pathWithoutHash.slice(0, queryIndex) : pathWithoutHash;
+  const queryString = queryIndex >= 0 ? pathWithoutHash.slice(queryIndex + 1) : "";
 
-  redirect(`${path}${separator}message=${encodeURIComponent(message)}`);
+  return { hash, pathname, queryString };
+}
+
+function redirectWithMessage(path: string, message: string): never {
+  redirect(pathWithParams(path, { message }));
+}
+
+function pathWithParams(path: string, params: Record<string, string | null | undefined>) {
+  const { hash, pathname, queryString } = splitRelativePath(path);
+  const searchParams = new URLSearchParams(queryString);
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value) {
+      searchParams.set(key, value);
+    } else {
+      searchParams.delete(key);
+    }
+  }
+
+  const nextQuery = searchParams.toString();
+  const nextPath = nextQuery ? `${pathname}?${nextQuery}` : pathname;
+  return `${nextPath}${hash}`;
+}
+
+function redirectWithMessageAndParams(
+  path: string,
+  message: string,
+  params: Record<string, string | null | undefined>,
+): never {
+  redirectWithMessage(pathWithParams(path, params), message);
 }
 
 function returnPath(formData: FormData, fallback: string) {
@@ -168,6 +201,18 @@ function quotationLabel(title: string | null | undefined, quotationNo?: string |
 function quotationItemAuditLabel(itemName: string | null | undefined) {
   return itemName?.trim() || "Quotation row";
 }
+
+function quotationSectionAuditLabel(sectionTitle: string | null | undefined) {
+  return sectionTitle?.trim() || "Quotation section";
+}
+
+type QuotationStatusState = {
+  id: string;
+  project_id: string;
+  quotation_no: string | null;
+  status: string;
+  title: string;
+};
 
 type CellLayoutPayload = {
   mergeMode: string;
@@ -616,6 +661,7 @@ type QuotationCopySource = {
   client_id: string;
   project_id: string;
   quotation_no: string | null;
+  option_no: number;
   revision_no: number;
   title: string;
   quotation_date: string;
@@ -1126,7 +1172,7 @@ async function insertQuotationItemPriceHistory({
 }
 
 const quotationCopySelect =
-  "id,client_id,project_id,quotation_no,revision_no,title,quotation_date,currency,vat_percent,payment_terms,validity,delivery_terms,warranty_terms,notes,layout_mode,layout_settings,overall_discount_type,overall_discount_value";
+  "id,client_id,project_id,quotation_no,option_no,revision_no,title,quotation_date,currency,vat_percent,payment_terms,validity,delivery_terms,warranty_terms,notes,layout_mode,layout_settings,overall_discount_type,overall_discount_value";
 
 const sectionCopySelect =
   "id,section_title,section_notes,section_type,parent_section_id,section_kind,title_align,title_bold,title_bg,title_size,row_height,sort_order";
@@ -1406,14 +1452,8 @@ function actionQuotationId(formData: FormData) {
   return textValue(formData, "quotation_id");
 }
 
-function optionNumberFromTitle(title: string, baseTitle: string) {
-  const match = title.match(new RegExp(`^${baseTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} - Option (\\d+)$`));
-
-  return match ? Number.parseInt(match[1], 10) : null;
-}
-
 function baseQuotationNo(quotationNo: string | null) {
-  return quotationNo?.replace(/(?:-R\d+)+$/i, "") ?? null;
+  return quotationRevisionBaseNo(quotationNo);
 }
 
 function revisionNoFromQuotationNo(quotationNo: string | null, baseNo: string) {
@@ -1428,9 +1468,14 @@ function baseRevisionTitle(title: string) {
   return title.replace(/(?:\s+Rev\s+\d+)+$/i, "");
 }
 
+function baseOptionTitle(title: string) {
+  return baseRevisionTitle(title).replace(/\s+-\s+Option\s+\d+$/i, "").trim();
+}
+
 type QuotationRevisionChainMember = {
   id: string;
   quotation_no: string | null;
+  option_no: number;
   revision_no: number;
   title: string;
   is_active?: boolean;
@@ -1447,6 +1492,74 @@ function quotationBelongsToRevisionChain(
   return baseQuotationNo(quotation.quotation_no) === baseNo;
 }
 
+type ProjectQuotationOptionMember = {
+  id: string;
+  quotation_no: string | null;
+  option_no: number;
+  revision_no: number;
+  is_active?: boolean;
+};
+
+function normalizedOptionNo(quotation: Pick<ProjectQuotationOptionMember, "option_no" | "quotation_no">) {
+  return Math.max(quotation.option_no || quotationOptionNoFromQuotationNo(quotation.quotation_no) || 1, 1);
+}
+
+function optionQuotationNo(baseNo: string, optionNo: number) {
+  return optionNo > 1 ? `${baseNo} ${quotationOptionLabel(optionNo)}` : baseNo;
+}
+
+async function resolveProjectOptionBaseNo({
+  clientId,
+  projectId,
+  sourceQuotationNo,
+  supabase,
+}: {
+  clientId: string;
+  projectId: string;
+  sourceQuotationNo: string | null;
+  supabase: Awaited<ReturnType<typeof createSupabaseClient>>;
+}) {
+  const { data: siblingQuotations, error: siblingQuotationsError } = await supabase
+    .from("quotations")
+    .select("id,quotation_no,option_no,revision_no,is_active")
+    .eq("client_id", clientId)
+    .eq("project_id", projectId)
+    .returns<ProjectQuotationOptionMember[]>();
+
+  if (siblingQuotationsError) {
+    return {
+      baseNo: null,
+      errorMessage: "Quotation options could not be loaded.",
+      siblingQuotations: [] as ProjectQuotationOptionMember[],
+    };
+  }
+
+  const { data: project, error: projectError } = await supabase
+    .from("projects")
+    .select("project_code")
+    .eq("id", projectId)
+    .maybeSingle<{ project_code: string | null }>();
+
+  if (projectError) {
+    console.error("PROJECT QUOTATION BASE READ ERROR", projectError.message);
+  }
+
+  const siblingBaseNo = (siblingQuotations ?? [])
+    .map((quotation) => quotationRootBaseNo(quotation.quotation_no))
+    .find((value): value is string => Boolean(value));
+  const baseNo =
+    quotationRootBaseNo(sourceQuotationNo) ??
+    siblingBaseNo ??
+    project?.project_code?.trim() ??
+    null;
+
+  return {
+    baseNo,
+    errorMessage: null,
+    siblingQuotations: siblingQuotations ?? [],
+  };
+}
+
 async function quotationRevisionChain({
   clientId,
   projectId,
@@ -1460,7 +1573,7 @@ async function quotationRevisionChain({
 }) {
   const { data: sourceQuotation, error: sourceQuotationError } = await supabase
     .from("quotations")
-    .select("id,client_id,project_id,quotation_no,revision_no,title,is_active")
+    .select("id,client_id,project_id,quotation_no,option_no,revision_no,title,is_active")
     .eq("id", quotationId)
     .eq("client_id", clientId)
     .eq("project_id", projectId)
@@ -1484,7 +1597,7 @@ async function quotationRevisionChain({
 
   const { data: siblingQuotations, error: siblingQuotationsError } = await supabase
     .from("quotations")
-    .select("id,quotation_no,revision_no,title,is_active")
+    .select("id,quotation_no,option_no,revision_no,title,is_active")
     .eq("client_id", clientId)
     .eq("project_id", projectId)
     .returns<QuotationRevisionChainMember[]>();
@@ -1542,6 +1655,7 @@ async function copyQuotation(
 
   let title = `${source.title} - Copy`;
   let quotationNo: string | null = null;
+  let optionNo = Math.max(source.option_no || 1, 1);
   let revisionNo = 0;
 
   if (mode === "revision") {
@@ -1573,30 +1687,53 @@ async function copyQuotation(
     const nextRevisionNo = highestRevisionNo + 1;
     title = `${baseRevisionTitle(source.title)} Rev ${nextRevisionNo}`;
     quotationNo = `${chainInfo.baseNo}-R${nextRevisionNo}`;
+    optionNo = Math.max(chainInfo.sourceQuotation.option_no || source.option_no || 1, 1);
     revisionNo = nextRevisionNo;
   }
 
   if (mode === "option") {
-    const { data: siblingQuotations, error: siblingError } = await supabase
-      .from("quotations")
-      .select("title")
-      .eq("project_id", source.project_id)
-      .eq("is_active", true)
-      .returns<Array<{ title: string }>>();
+    const optionInfo = await resolveProjectOptionBaseNo({
+      clientId: source.client_id,
+      projectId: source.project_id,
+      sourceQuotationNo: source.quotation_no,
+      supabase,
+    });
 
-    if (siblingError) {
-      console.error("QUOTATION OPTION LIST ERROR", siblingError.message);
-      redirectWithMessage(redirectPath, "Option could not be created.");
+    if (optionInfo.errorMessage || !optionInfo.baseNo) {
+      console.error("QUOTATION OPTION BASE ERROR", optionInfo.errorMessage ?? "Missing option base.");
+      redirectWithMessage(
+        redirectPath,
+        optionInfo.errorMessage ?? "Add a project code or quotation number before creating options.",
+      );
     }
 
-    const nextOption = Math.max(
+    const highestOptionNo = Math.max(
       1,
-      ...(siblingQuotations ?? [])
-        .map((quotation) => optionNumberFromTitle(quotation.title, source.title))
-        .filter((value): value is number => value !== null && Number.isFinite(value)),
-    ) + 1;
+      ...optionInfo.siblingQuotations
+        .filter((quotation) => quotationRootBaseNo(quotation.quotation_no) === optionInfo.baseNo)
+        .map((quotation) => normalizedOptionNo(quotation)),
+    );
+    const nextOptionNo = highestOptionNo + 1;
+    const sourceBaseQuotationNo = optionQuotationNo(optionInfo.baseNo, 1);
 
-    title = `${source.title} - Option ${nextOption}`;
+    if (!source.quotation_no) {
+      const { error: sourceUpdateError } = await supabase
+        .from("quotations")
+        .update({
+          option_no: 1,
+          quotation_no: sourceBaseQuotationNo,
+        })
+        .eq("id", source.id);
+
+      if (sourceUpdateError) {
+        console.error("QUOTATION OPTION SOURCE UPDATE ERROR", sourceUpdateError.message);
+        redirectWithMessage(redirectPath, "Original quotation number could not be prepared.");
+      }
+    }
+
+    optionNo = nextOptionNo;
+    quotationNo = optionQuotationNo(optionInfo.baseNo, nextOptionNo);
+    title = `${baseOptionTitle(source.title)} - ${quotationOptionLabel(nextOptionNo)}`;
   }
 
   const { data: newQuotation, error: insertError } = await supabase
@@ -1605,6 +1742,7 @@ async function copyQuotation(
       client_id: source.client_id,
       project_id: source.project_id,
       quotation_no: quotationNo,
+      option_no: optionNo,
       revision_no: revisionNo,
       title,
       quotation_date: new Date().toISOString().slice(0, 10),
@@ -1623,8 +1761,8 @@ async function copyQuotation(
       is_active: true,
       created_by: user.id,
     })
-    .select("id")
-    .single<{ id: string }>();
+    .select("id,quotation_no,option_no,title")
+    .single<{ id: string; quotation_no: string | null; option_no: number; title: string }>();
 
   if (insertError || !newQuotation) {
     console.error("QUOTATION COPY CREATE ERROR", insertError?.message);
@@ -1728,21 +1866,30 @@ async function copyQuotation(
   await createAuditLog(supabase, {
     entityType: "quotation",
     entityId: newQuotation.id,
-    action: mode === "revision" ? "revision_created" : "quotation_created",
+    action:
+      mode === "revision"
+        ? "revision_created"
+        : mode === "option"
+          ? "quotation_option_created"
+          : "quotation_created",
     title: mode === "revision"
       ? "Revision created"
+      : mode === "option"
+        ? "Quotation option created"
       : "Quotation created",
     description: mode === "revision"
       ? quotationLabel(title, quotationNo)
       : mode === "option"
-        ? `${quotationLabel(title, quotationNo)} option created`
+        ? quotationLabel(newQuotation.title, newQuotation.quotation_no)
         : `${quotationLabel(title, quotationNo)} duplicated`,
     metadata: {
       mode,
-      quotationLabel: quotationLabel(title, quotationNo),
+      optionNo,
+      quotationLabel: quotationLabel(newQuotation.title, newQuotation.quotation_no),
       newRevisionNo: revisionNo,
       sourceQuotationId: source.id,
       sourceQuotationNo: source.quotation_no,
+      sourceOptionNo: source.option_no,
       sourceRevisionNo: source.revision_no,
       sourceTitle: source.title,
     },
@@ -2055,6 +2202,70 @@ export async function updateQuotationExtraDiscount(formData: FormData) {
   revalidatePath(`/quotations/${id}`);
   revalidatePath(`/quotations/${id}/builder`);
   redirectWithMessage(redirectPath, "Extra discount updated.");
+}
+
+export async function updateQuotationStatus(formData: FormData) {
+  const { user, displayName } = await requireRecordsManager();
+  const quotationId = textValue(formData, "quotation_id");
+  const nextStatus = textValue(formData, "status");
+  const statusNote = optionalTextValue(formData, "status_note");
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}`);
+
+  if (!quotationId) {
+    redirectWithMessage("/quotations", "Quotation is required.");
+  }
+
+  if (!quotationStatuses.has(nextStatus)) {
+    redirectWithMessage(redirectPath, "Select a valid quotation status.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: quotation, error: quotationError } = await supabase
+    .from("quotations")
+    .select("id,project_id,title,quotation_no,status")
+    .eq("id", quotationId)
+    .maybeSingle<QuotationStatusState>();
+
+  if (quotationError || !quotation) {
+    console.error("QUOTATION STATUS READ ERROR", quotationError?.message);
+    redirectWithMessage(redirectPath, "Quotation status could not be updated.");
+  }
+
+  const { error: updateError } = await supabase
+    .from("quotations")
+    .update({
+      status: nextStatus,
+      status_note: statusNote,
+      status_updated_at: new Date().toISOString(),
+      status_updated_by: user.id,
+    })
+    .eq("id", quotationId);
+
+  if (updateError) {
+    console.error("QUOTATION STATUS UPDATE ERROR", updateError.message);
+    redirectWithMessage(redirectPath, "Quotation status could not be updated.");
+  }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation",
+    entityId: quotation.id,
+    action: "quotation_status_updated",
+    title: "Quotation status updated",
+    description: `Status changed to ${quotationStatusLabel(nextStatus)}`,
+    metadata: {
+      new_status: nextStatus,
+      note: statusNote,
+      old_status: quotation.status,
+      quotationLabel: quotationLabel(quotation.title, quotation.quotation_no),
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  revalidatePath("/quotations");
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(`/clients/projects/${quotation.project_id}`);
+  redirectWithMessage(redirectPath, "Quotation status updated.");
 }
 
 export async function updateQuotationLayoutSettings(formData: FormData) {
@@ -2387,16 +2598,28 @@ export async function updateQuotationSection(formData: FormData) {
 }
 
 export async function deactivateQuotationSection(formData: FormData) {
-  await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
-  const redirectPath = returnPath(formData, `/quotations/${quotationId}`);
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
 
   if (!id || !quotationId) {
     redirectWithMessage("/quotations", "Section id and quotation are required.");
   }
 
   const supabase = await createSupabaseClient();
+  const { data: section, error: sectionReadError } = await supabase
+    .from("quotation_sections")
+    .select("id,section_title")
+    .eq("id", id)
+    .eq("quotation_id", quotationId)
+    .maybeSingle<{ id: string; section_title: string | null }>();
+
+  if (sectionReadError || !section) {
+    console.error("QUOTATION SECTION DEACTIVATE READ ERROR", sectionReadError?.message);
+    redirectWithMessage(redirectPath, "Section could not be deactivated.");
+  }
+
   const { error } = await supabase
     .from("quotation_sections")
     .update({ is_active: false })
@@ -2407,9 +2630,24 @@ export async function deactivateQuotationSection(formData: FormData) {
     redirectWithMessage(redirectPath, "Section could not be deactivated.");
   }
 
+  await createAuditLog(supabase, {
+    entityType: "quotation_section",
+    entityId: section.id,
+    parentEntityType: "quotation",
+    parentEntityId: quotationId,
+    action: "deleted",
+    title: "Section removed",
+    description: quotationSectionAuditLabel(section.section_title),
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
   revalidatePath(`/quotations/${quotationId}`);
-  revalidatePath(redirectPath);
-  redirectWithMessage(redirectPath, "Section deactivated.");
+  revalidatePath(splitRelativePath(redirectPath).pathname);
+  redirectWithMessageAndParams(redirectPath, "Section deactivated.", {
+    undo_kind: "section",
+    undo_section_id: section.id,
+  });
 }
 
 export async function createQuotationItem(formData: FormData) {
@@ -3138,7 +3376,7 @@ export async function updateQuotationItem(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const payload = itemPayload(formData);
-  const redirectPath = returnPath(formData, `/quotations/${payload.quotation_id}`);
+  const redirectPath = returnPath(formData, `/quotations/${payload.quotation_id}/builder#item-${id}`);
 
   if (!id || !payload.quotation_id) {
     redirectWithMessage("/quotations", "Line item id and quotation are required.");
@@ -3192,7 +3430,7 @@ export async function updateQuotationItem(formData: FormData) {
 
   await recalculateQuotationTotals(payload.quotation_id);
   revalidatePath(`/quotations/${payload.quotation_id}`);
-  revalidatePath(redirectPath);
+  revalidatePath(splitRelativePath(redirectPath).pathname);
   redirectWithMessage(redirectPath, "Line item updated.");
 }
 
@@ -3200,7 +3438,7 @@ export async function updateQuotationItemInline(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
-  const redirectPath = returnPath(formData, `/quotations/${quotationId}`);
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${id}`);
 
   if (!id || !quotationId) {
     redirectWithMessage("/quotations", "Line item id and quotation are required.");
@@ -3306,7 +3544,7 @@ export async function updateQuotationItemInline(formData: FormData) {
 
   await recalculateQuotationTotals(quotationId);
   revalidatePath(`/quotations/${quotationId}`);
-  revalidatePath(redirectPath);
+  revalidatePath(splitRelativePath(redirectPath).pathname);
   redirectWithMessage(redirectPath, "Row saved.");
 }
 
@@ -3314,7 +3552,7 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
   const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "quotation_item_id");
   const quotationId = textValue(formData, "quotation_id");
-  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${id}`);
 
   if (!id || !quotationId) {
     redirectWithMessage("/quotations", "Line item and quotation are required.");
@@ -3438,7 +3676,7 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
 
   await recalculateQuotationTotals(quotationId);
   revalidatePath(`/quotations/${quotationId}`);
-  revalidatePath(redirectPath);
+  revalidatePath(splitRelativePath(redirectPath).pathname);
   redirectWithMessage(redirectPath, "Current source price applied to this row.");
 }
 
@@ -3663,7 +3901,7 @@ export async function duplicateQuotationItemBelow(formData: FormData) {
   const { user } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
-  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${id}`);
 
   if (!id || !quotationId) {
     redirectWithMessage(redirectPath || "/quotations", "Line item id and quotation are required.");
@@ -3754,7 +3992,7 @@ export async function duplicateQuotationItemBelow(formData: FormData) {
 
   await recalculateQuotationTotals(quotationId);
   revalidatePath(`/quotations/${quotationId}`);
-  revalidatePath(redirectPath);
+  revalidatePath(splitRelativePath(redirectPath).pathname);
   redirectWithMessage(redirectPath, "Row duplicated.");
 }
 
@@ -4001,14 +4239,23 @@ export async function autosaveQuotationItemInline(formData: FormData) {
   await recalculateQuotationTotals(quotationId);
   revalidatePath(`/quotations/${quotationId}`);
   revalidatePath(`/quotations/${quotationId}/builder`);
-  return { ok: true };
+  return {
+    ok: true,
+    row: {
+      discount_value: linePricing.discountValue,
+      net_price: linePricing.netPrice,
+      net_total: linePricing.netTotal,
+      qty,
+      unit_price: linePricing.unitPrice,
+    },
+  };
 }
 
 async function moveQuotationItem(formData: FormData, direction: "up" | "down") {
   await requireRecordsManager();
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
-  const redirectPath = returnPath(formData, `/quotations/${quotationId}`);
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${id}`);
 
   if (!id || !quotationId) {
     redirectWithMessage("/quotations", "Line item id and quotation are required.");
@@ -4076,7 +4323,7 @@ async function moveQuotationItem(formData: FormData, direction: "up" | "down") {
   }
 
   revalidatePath(`/quotations/${quotationId}`);
-  revalidatePath(redirectPath);
+  revalidatePath(splitRelativePath(redirectPath).pathname);
   redirectWithMessage(redirectPath, "Row moved.");
 }
 
@@ -4092,7 +4339,9 @@ export async function deactivateQuotationItem(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
-  const redirectPath = returnPath(formData, `/quotations/${quotationId}`);
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
+  const { pathname, queryString } = splitRelativePath(redirectPath);
+  const redirectBasePath = queryString ? `${pathname}?${queryString}` : pathname;
 
   if (!id || !quotationId) {
     redirectWithMessage("/quotations", "Line item id and quotation are required.");
@@ -4101,10 +4350,10 @@ export async function deactivateQuotationItem(formData: FormData) {
   const supabase = await createSupabaseClient();
   const { data: currentItem, error: currentItemError } = await supabase
     .from("quotation_items")
-    .select("id,item_name_snapshot")
+    .select("id,item_name_snapshot,section_id")
     .eq("id", id)
     .eq("quotation_id", quotationId)
-    .maybeSingle<{ id: string; item_name_snapshot: string | null }>();
+    .maybeSingle<{ id: string; item_name_snapshot: string | null; section_id: string | null }>();
 
   if (currentItemError || !currentItem) {
     console.error("QUOTATION ITEM DEACTIVATE READ ERROR", currentItemError?.message);
@@ -4135,6 +4384,126 @@ export async function deactivateQuotationItem(formData: FormData) {
 
   await recalculateQuotationTotals(quotationId);
   revalidatePath(`/quotations/${quotationId}`);
-  revalidatePath(redirectPath);
-  redirectWithMessage(redirectPath, "Line item deactivated.");
+  revalidatePath(splitRelativePath(redirectPath).pathname);
+  redirectWithMessageAndParams(
+    currentItem.section_id ? `${redirectBasePath}#section-${currentItem.section_id}` : redirectBasePath,
+    "Line item deactivated.",
+    {
+      undo_item_id: currentItem.id,
+      undo_kind: "item",
+    },
+  );
+}
+
+export async function restoreQuotationItem(formData: FormData) {
+  const { user, displayName } = await requireRecordsManager();
+  const quotationItemId = textValue(formData, "quotation_item_id");
+  const quotationId = textValue(formData, "quotation_id");
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${quotationItemId}`);
+
+  if (!quotationItemId || !quotationId) {
+    redirectWithMessage("/quotations", "Line item id and quotation are required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: item, error: itemReadError } = await supabase
+    .from("quotation_items")
+    .select("id,item_name_snapshot,is_active")
+    .eq("id", quotationItemId)
+    .eq("quotation_id", quotationId)
+    .maybeSingle<{ id: string; item_name_snapshot: string | null; is_active: boolean }>();
+
+  if (itemReadError || !item) {
+    console.error("QUOTATION ITEM RESTORE READ ERROR", itemReadError?.message);
+    redirectWithMessage(redirectPath, "Line item could not be restored.");
+  }
+
+  if (item.is_active) {
+    redirectWithMessage(redirectPath, "Line item is already active.");
+  }
+
+  const { error: restoreError } = await supabase
+    .from("quotation_items")
+    .update({ is_active: true })
+    .eq("id", quotationItemId)
+    .eq("quotation_id", quotationId);
+
+  if (restoreError) {
+    console.error("QUOTATION ITEM RESTORE ERROR", restoreError.message);
+    redirectWithMessage(redirectPath, "Line item could not be restored.");
+  }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation_item",
+    entityId: item.id,
+    parentEntityType: "quotation",
+    parentEntityId: quotationId,
+    action: "quotation_item_restored",
+    title: "Line item restored",
+    description: quotationItemAuditLabel(item.item_name_snapshot),
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  await recalculateQuotationTotals(quotationId);
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(`/quotations/${quotationId}/builder`);
+  revalidatePath(splitRelativePath(redirectPath).pathname);
+  redirectWithMessage(redirectPath, "Line item restored.");
+}
+
+export async function restoreQuotationSection(formData: FormData) {
+  const { user, displayName } = await requireRecordsManager();
+  const sectionId = textValue(formData, "quotation_section_id");
+  const quotationId = textValue(formData, "quotation_id");
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#section-${sectionId}`);
+
+  if (!sectionId || !quotationId) {
+    redirectWithMessage("/quotations", "Section id and quotation are required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: section, error: sectionReadError } = await supabase
+    .from("quotation_sections")
+    .select("id,section_title,is_active")
+    .eq("id", sectionId)
+    .eq("quotation_id", quotationId)
+    .maybeSingle<{ id: string; section_title: string | null; is_active: boolean }>();
+
+  if (sectionReadError || !section) {
+    console.error("QUOTATION SECTION RESTORE READ ERROR", sectionReadError?.message);
+    redirectWithMessage(redirectPath, "Section could not be restored.");
+  }
+
+  if (section.is_active) {
+    redirectWithMessage(redirectPath, "Section is already active.");
+  }
+
+  const { error: restoreError } = await supabase
+    .from("quotation_sections")
+    .update({ is_active: true })
+    .eq("id", sectionId)
+    .eq("quotation_id", quotationId);
+
+  if (restoreError) {
+    console.error("QUOTATION SECTION RESTORE ERROR", restoreError.message);
+    redirectWithMessage(redirectPath, "Section could not be restored.");
+  }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation_section",
+    entityId: section.id,
+    parentEntityType: "quotation",
+    parentEntityId: quotationId,
+    action: "restored",
+    title: "Section restored",
+    description: quotationSectionAuditLabel(section.section_title),
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(`/quotations/${quotationId}/builder`);
+  revalidatePath(splitRelativePath(redirectPath).pathname);
+  redirectWithMessage(redirectPath, "Section restored.");
 }

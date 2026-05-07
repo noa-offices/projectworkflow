@@ -5,12 +5,23 @@ import { ContextBackLink } from "@/components/navigation/context-back-link";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import {
+  formatQuotationDisplayNo,
+  quotationOptionLabel,
+  quotationRootBaseNo,
+} from "@/lib/quotation-options";
+import {
+  quotationStatusBadgeClassName,
+  quotationStatusLabel,
+  quotationStatuses,
+} from "@/lib/quotation-status";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { profileDisplayName } from "@/lib/user-display";
 import {
   updateQuotation,
   updateQuotationExtraDiscount,
+  updateQuotationStatus,
 } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +54,7 @@ type Quotation = {
   client_id: string;
   project_id: string;
   quotation_no: string | null;
+  option_no: number;
   title: string;
   quotation_date: string;
   status: string;
@@ -60,6 +72,9 @@ type Quotation = {
   delivery_terms: string | null;
   warranty_terms: string | null;
   notes: string | null;
+  status_note: string | null;
+  status_updated_at: string | null;
+  status_updated_by: string | null;
   is_active: boolean;
 };
 
@@ -221,8 +236,16 @@ function SubmitButton({ label }: { label: string }) {
 
 function StatusBadge({ status }: { status: string }) {
   return (
-    <span className="inline-flex rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-600">
-      {status}
+    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${quotationStatusBadgeClassName(status)}`}>
+      {quotationStatusLabel(status)}
+    </span>
+  );
+}
+
+function OptionBadge({ optionNo }: { optionNo: number }) {
+  return (
+    <span className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-semibold text-zinc-700">
+      {quotationOptionLabel(optionNo)}
     </span>
   );
 }
@@ -252,6 +275,45 @@ function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
         ))}
       </select>
     </label>
+  );
+}
+
+function StatusUpdateForm({
+  quotation,
+}: {
+  quotation: Pick<Quotation, "id" | "status" | "status_note">;
+}) {
+  return (
+    <form action={updateQuotationStatus} className="grid gap-3">
+      <input type="hidden" name="quotation_id" value={quotation.id} />
+      <input type="hidden" name="return_to" value={`/quotations/${quotation.id}`} />
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Change status</span>
+        <select
+          name="status"
+          defaultValue={quotation.status}
+          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+        >
+          {quotationStatuses.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Status note</span>
+        <textarea
+          name="status_note"
+          defaultValue={quotation.status_note ?? ""}
+          rows={2}
+          className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+        />
+      </label>
+      <div className="flex justify-end">
+        <SubmitButton label="Update status" />
+      </div>
+    </form>
   );
 }
 
@@ -594,6 +656,12 @@ export default async function QuotationDetailPage({
     .eq("id", quotation.project_id)
     .single<Project>();
 
+  const { data: projectQuotations, error: projectQuotationsError } = await supabase
+    .from("quotations")
+    .select("id,quotation_no,option_no")
+    .eq("project_id", quotation.project_id)
+    .returns<Array<{ id: string; quotation_no: string | null; option_no: number }>>();
+
   const { data: sections, error: sectionsError } = await supabase
     .from("quotation_sections")
     .select("id,quotation_id,section_title,section_notes,section_type,title_align,title_bold,title_bg,title_size,row_height,sort_order,is_active")
@@ -632,8 +700,25 @@ export default async function QuotationDetailPage({
 
   if (sectionsError) console.error("QUOTATION SECTIONS LIST ERROR", sectionsError.message);
   if (itemsError) console.error("QUOTATION ITEMS LIST ERROR", itemsError.message);
+  if (projectQuotationsError) console.error("PROJECT QUOTATIONS OPTION LIST ERROR", projectQuotationsError.message);
   if (quotationEventsError) console.error("QUOTATION ACTIVITY LOG ERROR", quotationEventsError.message);
   if (quotationChildEventsError) console.error("QUOTATION CHILD ACTIVITY LOG ERROR", quotationChildEventsError.message);
+
+  const rootBaseNo = quotationRootBaseNo(quotation.quotation_no);
+  const optionCountForRootBase = rootBaseNo
+    ? Math.max(
+        1,
+        ...(projectQuotations ?? [])
+          .filter((candidate) => quotationRootBaseNo(candidate.quotation_no) === rootBaseNo)
+          .map((candidate) => candidate.option_no ?? 1),
+      )
+    : 1;
+  const showOptionNumber = optionCountForRootBase > 1;
+  const displayQuotationNo = formatQuotationDisplayNo({
+    optionNo: quotation.option_no,
+    quotationNo: quotation.quotation_no,
+    showOptionNumber,
+  });
 
   const activityEntries = Array.from(
     new Map(
@@ -643,7 +728,8 @@ export default async function QuotationDetailPage({
     .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())
     .slice(0, 20);
   const activityActorIds = Array.from(new Set(
-    activityEntries.map((entry) => entry.created_by).filter((value): value is string => Boolean(value)),
+    [quotation.status_updated_by, ...activityEntries.map((entry) => entry.created_by)]
+      .filter((value): value is string => Boolean(value)),
   ));
   const activityActorNameById = new Map<string, string>();
 
@@ -729,7 +815,7 @@ export default async function QuotationDetailPage({
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-zinc-500">
-                    {quotation.quotation_no ?? "Draft quotation"}
+                    {displayQuotationNo ?? quotation.quotation_no ?? "Draft quotation"}
                   </p>
                   <h1 className="mt-1 text-2xl font-semibold text-zinc-950">
                     {quotation.title}
@@ -766,6 +852,7 @@ export default async function QuotationDetailPage({
                   >
                     Open Builder
                   </Link>
+                  {showOptionNumber ? <OptionBadge optionNo={quotation.option_no} /> : null}
                   <StatusBadge status={quotation.status} />
                 </div>
               </div>
@@ -785,7 +872,7 @@ export default async function QuotationDetailPage({
               ) : null}
 
               {canManageRecords ? (
-                <details className="mt-5">
+                <details className="mt-5" data-state-key={`quotation-details-${quotation.id}`}>
                   <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
                     Edit quote details
                   </summary>
@@ -838,6 +925,58 @@ export default async function QuotationDetailPage({
           <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div>
+                <h2 className="text-lg font-semibold text-zinc-950">Quotation Status</h2>
+                <div className="mt-3 flex items-center gap-3">
+                  <StatusBadge status={quotation.status} />
+                  <span className="text-sm text-zinc-600">
+                    Current: {quotationStatusLabel(quotation.status)}
+                  </span>
+                </div>
+                {quotation.status_updated_at ? (
+                  <p className="mt-3 text-sm text-zinc-500">
+                    Updated by {quotation.status_updated_by
+                      ? (activityActorName(activityActorNameById, {
+                          id: "status-meta",
+                          entity_type: "quotation",
+                          entity_id: quotation.id,
+                          parent_entity_type: null,
+                          parent_entity_id: null,
+                          action: "quotation_status_updated",
+                          title: "Quotation status updated",
+                          description: null,
+                          metadata: null,
+                          created_by: quotation.status_updated_by,
+                          created_at: quotation.status_updated_at,
+                        }))
+                      : "Unknown user"} on{" "}
+                    {new Intl.DateTimeFormat("en-US", {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    }).format(new Date(quotation.status_updated_at))}
+                  </p>
+                ) : null}
+                {quotation.status_note ? (
+                  <p className="mt-2 text-sm text-zinc-600">
+                    Note: {quotation.status_note}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            {canManageRecords ? (
+              <details className="mt-5" data-state-key={`quotation-status-${quotation.id}`}>
+                <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
+                  Change status
+                </summary>
+                <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                  <StatusUpdateForm quotation={quotation} />
+                </div>
+              </details>
+            ) : null}
+          </section>
+
+          <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
                 <h2 className="text-lg font-semibold text-zinc-950">Commercial Terms</h2>
                 <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                   <InfoValue label="Payment Terms" value={quotation.payment_terms} />
@@ -861,7 +1000,7 @@ export default async function QuotationDetailPage({
               </div>
             </div>
             {canManageRecords ? (
-              <details className="mt-5">
+              <details className="mt-5" data-state-key={`quotation-terms-${quotation.id}`}>
                 <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
                   Edit commercial terms
                 </summary>
@@ -899,7 +1038,10 @@ export default async function QuotationDetailPage({
                       </ul>
                     </div>
                   ))}
-                  <details className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
+                  <details
+                    className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2"
+                    data-state-key={`quotation-activity-log-${quotation.id}`}
+                  >
                     <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
                       View full activity log
                     </summary>

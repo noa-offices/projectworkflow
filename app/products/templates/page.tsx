@@ -376,6 +376,12 @@ function templatesHref(
   return `/products/templates${query ? `?${query}` : ""}`;
 }
 
+function withHash(path: string, hash: string) {
+  const hashIndex = path.indexOf("#");
+  const basePath = hashIndex >= 0 ? path.slice(0, hashIndex) : path;
+  return `${basePath}#${hash}`;
+}
+
 function StatusBadge({ active }: { active: boolean }) {
   return (
     <span
@@ -1049,12 +1055,14 @@ function TemplateMaterialGroupForm({
   linkedItemIds = new Set<string>(),
   materials,
   materialGroups,
+  returnTo,
   template,
 }: {
   link?: ProductTemplateMaterialGroup;
   linkedItemIds?: Set<string>;
   materials: BrandMaterial[];
   materialGroups: BrandMaterialGroup[];
+  returnTo: string;
   template: ProductTemplate;
 }) {
   const linkedGroupOptions = materialGroups.filter((group) => group.brand_id === template.brand_id);
@@ -1081,6 +1089,7 @@ function TemplateMaterialGroupForm({
     <form action={link ? updateProductTemplateMaterialGroup : createProductTemplateMaterialGroup} className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
       {link ? <input type="hidden" name="id" value={link.id} /> : null}
       <input type="hidden" name="product_template_id" value={template.id} />
+      <input type="hidden" name="return_to" value={returnTo} />
       {!link ? (
         <label className="block xl:col-span-2">
           <span className="mb-1 block text-xs font-semibold uppercase text-zinc-500">Material group</span>
@@ -1174,10 +1183,11 @@ function TemplateMaterialGroupForm({
   );
 }
 
-function DeactivateTemplateMaterialGroupForm({ id }: { id: string }) {
+function DeactivateTemplateMaterialGroupForm({ id, returnTo }: { id: string; returnTo: string }) {
   return (
     <form action={deactivateProductTemplateMaterialGroup}>
       <input type="hidden" name="id" value={id} />
+      <input type="hidden" name="return_to" value={returnTo} />
       <button
         type="submit"
         className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:border-red-700"
@@ -1390,9 +1400,11 @@ function BrandPriceListUpdateForm({
 
 function ProductTemplatePriceUpdateForm({
   priceListUpdates,
+  returnTo,
   template,
 }: {
   priceListUpdates: BrandPriceListUpdate[];
+  returnTo: string;
   template: ProductTemplate;
 }) {
   const activeUpdates = priceListUpdates.filter((update) => update.status === "active");
@@ -1400,6 +1412,7 @@ function ProductTemplatePriceUpdateForm({
   return (
     <form action={updateProductTemplateDefaultPrice} className="grid gap-2">
       <input type="hidden" name="product_template_id" value={template.id} />
+      <input type="hidden" name="return_to" value={returnTo} />
       <div className="rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-600">
         Current price: <span className="font-semibold text-zinc-950">{formatMoney(template.currency, template.default_unit_price)}</span>
       </div>
@@ -1447,6 +1460,7 @@ function DetailPriceUpdateForm({
   priceField,
   priceListUpdates,
   productTemplateId,
+  returnTo,
   sourceRecordId,
   sourceTable,
   value,
@@ -1456,6 +1470,7 @@ function DetailPriceUpdateForm({
   priceField: string;
   priceListUpdates: BrandPriceListUpdate[];
   productTemplateId: string;
+  returnTo: string;
   sourceRecordId?: string | null;
   sourceTable: string;
   value: number;
@@ -1471,12 +1486,16 @@ function DetailPriceUpdateForm({
   }
 
   return (
-    <details className="mt-2">
+    <details
+      className="mt-2"
+      data-state-key={`template-detail-price-form-${productTemplateId}-${sourceRecordId}-${priceField}`}
+    >
       <summary className="inline-flex cursor-pointer rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">
         Update price
       </summary>
       <form action={updateProductTemplateDetailPrice} className="mt-2 grid gap-2 rounded-md border border-zinc-200 bg-white p-3">
         <input type="hidden" name="product_template_id" value={productTemplateId} />
+        <input type="hidden" name="return_to" value={returnTo} />
         <input type="hidden" name="source_table" value={sourceTable} />
         <input type="hidden" name="source_record_id" value={sourceRecordId} />
         <input type="hidden" name="price_field" value={priceField} />
@@ -2465,6 +2484,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
               const templateDetailPriceHistoryRows = detailPriceHistoryByTemplate.get(template.id) ?? [];
               const templateAuditRows = auditHistoryByTemplate.get(template.id) ?? [];
               const templateBrandPriceListUpdates = priceListUpdatesByBrand.get(template.brand_id) ?? [];
+              const templateBaseReturnTo = templatesHref(params, { template: template.id });
+              const templatePriceUpdatesReturnTo = withHash(templateBaseReturnTo, `template-${template.id}-price-updates`);
+              const templateMaterialsReturnTo = withHash(templateBaseReturnTo, `template-${template.id}-materials`);
               const priceListUpdateById = new Map(templateBrandPriceListUpdates.map((update) => [update.id, update]));
               const groups = new Map<string, ProductComponent[]>();
               const hasWorkstationSizePricing = Boolean(
@@ -2489,6 +2511,8 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
               return (
                 <article
                   key={template.id}
+                  id={`template-${template.id}`}
+                  data-preserve-anchor={`template-${template.id}`}
                   className="rounded-lg border border-zinc-200 bg-white shadow-sm"
                 >
                   <div className="border-b border-zinc-200 p-5">
@@ -2556,6 +2580,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         <form action={markTemplatePriceChecked} className="mt-3">
                           <input type="hidden" name="id" value={template.id} />
                           <input type="hidden" name="price_check_note" value="" />
+                          <input type="hidden" name="return_to" value={withHash(templateBaseReturnTo, `template-${template.id}`)} />
                           <button
                             type="submit"
                             className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
@@ -2563,13 +2588,18 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             Mark checked now
                           </button>
                         </form>
-                        <details className="mt-3">
+                        <details
+                          className="mt-3"
+                          id={`template-${template.id}-source-price`}
+                          data-state-key={`template-source-price-${template.id}`}
+                        >
                           <summary className="cursor-pointer text-xs font-semibold text-emerald-900">
                             Update source price
                           </summary>
                           <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
                             <ProductTemplatePriceUpdateForm
                               priceListUpdates={templateBrandPriceListUpdates}
+                              returnTo={withHash(templateBaseReturnTo, `template-${template.id}-source-price`)}
                               template={template}
                             />
                           </div>
@@ -2608,7 +2638,11 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                       </div>
                     </div>
 
-                    <details className="mt-5" open={editTemplateId === template.id}>
+                    <details
+                      className="mt-5"
+                      data-state-key={`template-edit-${template.id}`}
+                      open={editTemplateId === template.id}
+                    >
                       <summary className="inline-flex cursor-pointer rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
                         Edit template details
                       </summary>
@@ -2632,7 +2666,10 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                     template.accessory_pricing?.length ||
                     templateDetailPriceHistoryRows.length) ? (
                     <div className="border-t border-zinc-200 p-5">
-                      <details>
+                      <details
+                        id={`template-${template.id}-price-updates`}
+                        data-state-key={`template-detail-prices-${template.id}`}
+                      >
                         <summary className="cursor-pointer list-none rounded-lg border border-zinc-200 bg-zinc-50 p-4 transition hover:border-emerald-900">
                           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                             <div>
@@ -2663,6 +2700,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                         priceField="unit_price"
                                         priceListUpdates={templateBrandPriceListUpdates}
                                         productTemplateId={template.id}
+                                        returnTo={templatePriceUpdatesReturnTo}
                                         sourceRecordId={component.id}
                                         sourceTable="product_components"
                                         value={component.unit_price}
@@ -2694,6 +2732,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                           priceField="default_price"
                                           priceListUpdates={templateBrandPriceListUpdates}
                                           productTemplateId={template.id}
+                                          returnTo={templatePriceUpdatesReturnTo}
                                           sourceRecordId={row.id}
                                           sourceTable="product_templates.desking_size_pricing"
                                           value={Number(row.default_price ?? 0)}
@@ -2704,6 +2743,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                           priceField="additional_price"
                                           priceListUpdates={templateBrandPriceListUpdates}
                                           productTemplateId={template.id}
+                                          returnTo={templatePriceUpdatesReturnTo}
                                           sourceRecordId={row.id}
                                           sourceTable="product_templates.desking_size_pricing"
                                           value={Number(row.additional_price ?? 0)}
@@ -2735,6 +2775,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                         priceField="price"
                                         priceListUpdates={templateBrandPriceListUpdates}
                                         productTemplateId={template.id}
+                                        returnTo={templatePriceUpdatesReturnTo}
                                         sourceRecordId={row.id}
                                         sourceTable="product_templates.variant_pricing"
                                         value={Number(row.price ?? 0)}
@@ -2768,6 +2809,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                             priceField={`prices.${category}`}
                                             priceListUpdates={templateBrandPriceListUpdates}
                                             productTemplateId={template.id}
+                                            returnTo={templatePriceUpdatesReturnTo}
                                             sourceRecordId={row.id}
                                             sourceTable="product_templates.category_pricing"
                                             value={Number(row.prices?.[category] ?? 0)}
@@ -2801,6 +2843,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                             priceField="price"
                                             priceListUpdates={templateBrandPriceListUpdates}
                                             productTemplateId={template.id}
+                                            returnTo={templatePriceUpdatesReturnTo}
                                             sourceRecordId={item.id}
                                             sourceTable="product_templates.accessory_pricing"
                                             value={Number(item.price ?? 0)}
@@ -2844,7 +2887,10 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   ) : null}
 
                   <div className="border-t border-zinc-200 p-5">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div
+                      id={`template-${template.id}-materials`}
+                      className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
+                    >
                       <div>
                         <h3 className="text-sm font-semibold uppercase text-zinc-500">
                           Material Groups / Finish Options
@@ -2853,7 +2899,10 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           Link brand finish groups allowed for this template. Finish selection in quotations comes later.
                         </p>
                       </div>
-                      <details className="shrink-0">
+                      <details
+                        className="shrink-0"
+                        data-state-key={`template-material-group-create-${template.id}`}
+                      >
                         <summary className="cursor-pointer rounded-md bg-emerald-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800">
                           + Link Material Group
                         </summary>
@@ -2861,6 +2910,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           <TemplateMaterialGroupForm
                             materials={materialList}
                             materialGroups={materialGroupList}
+                            returnTo={templateMaterialsReturnTo}
                             template={template}
                           />
                         </div>
@@ -2877,7 +2927,11 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           : "Full group";
 
                         return (
-                          <div key={link.id} className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                          <div
+                            key={link.id}
+                            id={`material-link-${link.id}`}
+                            className="rounded-md border border-zinc-200 bg-zinc-50 p-3"
+                          >
                             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                               <div>
                                 <p className="font-semibold text-zinc-950">
@@ -2887,9 +2941,16 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                   {modeLabel}. {link.is_required ? "Required" : "Optional"}. {link.allow_multiple ? "Allows multiple" : "Single selection"}. {link.show_in_specification ? "Shows in specification" : "Hidden from specification"}. {link.show_in_quotation ? "Shows in quotation" : "Hidden from quotation"}.
                                 </p>
                               </div>
-                              <DeactivateTemplateMaterialGroupForm id={link.id} />
+                              <DeactivateTemplateMaterialGroupForm
+                                id={link.id}
+                                returnTo={withHash(templateBaseReturnTo, `material-link-${link.id}`)}
+                              />
                             </div>
-                            <details className="mt-3">
+                            <details
+                              id={`template-${template.id}-material-link-${link.id}`}
+                              className="mt-3"
+                              data-state-key={`template-material-group-edit-${link.id}`}
+                            >
                               <summary className="inline-flex cursor-pointer rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
                                 Edit settings
                               </summary>
@@ -2899,6 +2960,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                   linkedItemIds={new Set((materialGroupItemsByLink.get(link.id) ?? []).map((item) => item.brand_material_id))}
                                   materials={materialList}
                                   materialGroups={materialGroupList}
+                                  returnTo={withHash(templateBaseReturnTo, `material-link-${link.id}`)}
                                   template={template}
                                 />
                               </div>
@@ -2924,7 +2986,10 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           Connect reusable product families such as screens, pedestals, cable trays, and power modules. These can be selected manually when adding this product to a quotation.
                         </p>
                       </div>
-                      <details className="shrink-0">
+                      <details
+                        className="shrink-0"
+                        data-state-key={`template-linked-family-create-${template.id}`}
+                      >
                         <summary className="cursor-pointer rounded-md bg-emerald-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800">
                           + Link Product Family
                         </summary>
@@ -2955,7 +3020,10 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                               </div>
                               <DeactivateLinkedProductFamilyForm id={link.id} />
                             </div>
-                            <details className="mt-3">
+                            <details
+                              className="mt-3"
+                              data-state-key={`template-linked-family-edit-${link.id}`}
+                            >
                               <summary className="inline-flex cursor-pointer rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
                                 Edit link
                               </summary>

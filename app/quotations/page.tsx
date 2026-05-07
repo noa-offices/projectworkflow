@@ -3,6 +3,11 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import {
+  quotationStatusBadgeClassName,
+  quotationStatusLabel,
+  quotationStatuses,
+} from "@/lib/quotation-status";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { createQuotation } from "./actions";
@@ -43,18 +48,6 @@ type Quotation = {
   grand_total: number;
   is_active: boolean;
 };
-
-const quotationStatuses = [
-  ["draft", "Draft"],
-  ["sent", "Sent"],
-  ["revised", "Revised"],
-  ["approved", "Approved"],
-  ["won", "Won"],
-  ["lost", "Lost"],
-  ["cancelled", "Cancelled"],
-] as const;
-
-const quotationStatusLabels = new Map<string, string>(quotationStatuses);
 
 const layoutModes = [
   ["simple_proposal", "Simple Proposal"],
@@ -116,8 +109,8 @@ function TextArea({
 
 function StatusBadge({ status }: { status: string }) {
   return (
-    <span className="inline-flex rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-600">
-      {quotationStatusLabels.get(status) ?? status}
+    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${quotationStatusBadgeClassName(status)}`}>
+      {quotationStatusLabel(status)}
     </span>
   );
 }

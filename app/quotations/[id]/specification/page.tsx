@@ -1206,7 +1206,6 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
                 <dl className="grid w-full max-w-[230px] grid-cols-[70px_minmax(0,1fr)] gap-x-4 gap-y-2 border-l border-zinc-200 pl-5">
                   <MetaLine label="Ref No." value={quotation.quotation_no ?? "Draft"} />
                   <MetaLine label="Date" value={quotation.quotation_date} />
-                  <MetaLine label="Status" value={quotation.status} />
                 </dl>
               </div>
             </div>

@@ -3,8 +3,13 @@ import { notFound } from "next/navigation";
 import { Fragment, type CSSProperties, type ReactNode } from "react";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { ContextBackLink } from "@/components/navigation/context-back-link";
-import { InlineRowAutosave } from "@/components/quotations/inline-row-autosave";
 import { CellFormattingToolbar } from "@/components/quotations/cell-formatting-toolbar";
+import {
+  QuotationRowComputedValue,
+  QuotationRowEditorProvider,
+  QuotationRowFieldInput,
+  QuotationRowSaveControls,
+} from "@/components/quotations/quotation-row-editor";
 import {
   type ProductLibraryLinkedFamily,
   ProductLibrarySelector,
@@ -34,6 +39,11 @@ import {
 import { RowHeightTextarea } from "@/components/quotations/row-height-textarea";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import {
+  formatQuotationDisplayNo,
+  quotationOptionLabel,
+  quotationRootBaseNo,
+} from "@/lib/quotation-options";
 import { formatQuotationMoney, quotationMoneyCell, quotationMoneyValue } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
@@ -44,6 +54,8 @@ import {
   deactivateQuotationSection,
   moveQuotationItemDown,
   moveQuotationItemUp,
+  restoreQuotationItem,
+  restoreQuotationSection,
   updateQuotationExtraDiscount,
   updateQuotationLayoutSettings,
   updateQuotationItemInline,
@@ -56,7 +68,13 @@ export const dynamic = "force-dynamic";
 
 type BuilderPageProps = {
   params: Promise<{ id: string }>;
-  searchParams?: Promise<{ message?: string; view?: string }>;
+  searchParams?: Promise<{
+    message?: string;
+    undo_item_id?: string;
+    undo_kind?: string;
+    undo_section_id?: string;
+    view?: string;
+  }>;
 };
 
 type Client = { id: string; company_name: string };
@@ -79,6 +97,7 @@ type Quotation = {
   client_id: string;
   project_id: string;
   quotation_no: string | null;
+  option_no: number;
   title: string;
   quotation_date: string;
   status: string;
@@ -162,6 +181,20 @@ type QuotationItem = {
   is_active: boolean;
   notes: string | null;
   created_at?: string;
+  updated_at?: string;
+};
+
+type InactiveQuotationItem = {
+  id: string;
+  item_name_snapshot: string | null;
+  updated_at: string;
+};
+
+type InactiveQuotationSection = {
+  id: string;
+  section_kind: string;
+  section_title: string | null;
+  updated_at: string;
 };
 
 type QuotationItemPriceHistoryEntry = {
@@ -258,6 +291,12 @@ const layoutLabels = new Map([
   ["internal_costing", "Internal Costing"],
 ]);
 
+function withHash(path: string, hash: string) {
+  const hashIndex = path.indexOf("#");
+  const basePath = hashIndex >= 0 ? path.slice(0, hashIndex) : path;
+  return `${basePath}#${hash}`;
+}
+
 const sectionTypes = [
   ["section", "Section"],
   ["option", "Option"],
@@ -321,6 +360,17 @@ function money(currency: string, value: number) {
 
 function statusLabel(status: string) {
   return status.replaceAll("_", " ");
+}
+
+function optionBadgeLabel(optionNo: number) {
+  return quotationOptionLabel(optionNo);
+}
+
+function recentChangeTimeLabel(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 function moneyCell(value: number) {
@@ -1231,18 +1281,15 @@ function CellInput({
   formatCellKey?: string;
 }) {
   return (
-    <input
-      form={formId}
+    <QuotationRowFieldInput
+      formId={formId}
       name={name}
       type={type}
-      step={type === "number" ? step : undefined}
-      data-form-id={formatCellKey ? formId : undefined}
-      data-format-cell={formatCellKey}
-      defaultValue={defaultValue ?? ""}
-      className={`w-full border-0 bg-transparent px-1 py-0.5 text-xs text-zinc-800 outline-none focus:bg-emerald-50 focus:ring-1 focus:ring-emerald-800 ${
-        align === "right" ? "text-right" : align === "center" ? "text-center" : ""
-      }`}
-      style={cellStyle}
+      step={step}
+      defaultValue={defaultValue}
+      align={align}
+      cellStyle={cellStyle}
+      formatCellKey={formatCellKey}
     />
   );
 }
@@ -1444,7 +1491,10 @@ function InsertSectionControl({
   return (
     <tr>
       <td colSpan={totalColumns} className="border-0 bg-white px-3 py-2">
-        <details className="group">
+        <details
+          className="group"
+          data-state-key={`insert-section-${insideMain ? parentSectionId ?? "root" : "root"}-${insertAfterSectionId}`}
+        >
           <summary className="flex cursor-pointer list-none items-center gap-3 text-[11px] font-semibold text-zinc-500 transition hover:text-emerald-900">
             <span className="h-px flex-1 bg-zinc-200" />
             <span className="border border-dashed border-zinc-300 bg-white px-3 py-1 group-open:border-emerald-700 group-open:text-emerald-900">
@@ -2185,9 +2235,12 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     render: (item) =>
       isPriceHiddenLine(item)
         ? "-"
-        : item.discount_type === "percent"
-          ? `${formatNumber(item.discount_value)}%`
-          : "-",
+        : (
+          <QuotationRowComputedValue
+            field="discount_percentage"
+            fallback={item.discount_type === "percent" ? `${formatNumber(item.discount_value)}%` : "-"}
+          />
+        ),
   };
   const discountAmountColumn: Column = {
     key: "discount_amount",
@@ -2195,21 +2248,33 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     className: "w-28 text-center",
     defaultWidth: 96,
     defaultVisible: false,
-    render: (item) => (isPriceHiddenLine(item) ? "-" : moneyCell(discountAmount(item))),
+    render: (item) => (
+      isPriceHiddenLine(item)
+        ? "-"
+        : <QuotationRowComputedValue field="discount_amount" fallback={moneyCell(discountAmount(item))} />
+    ),
   };
   const netPrice: Column = {
     key: "net_price",
     label: "Net Price",
     className: "w-24 text-center",
     defaultWidth: 96,
-    render: (item) => (isPriceHiddenLine(item) ? "-" : moneyCell(item.net_price)),
+    render: (item) => (
+      isPriceHiddenLine(item)
+        ? "-"
+        : <QuotationRowComputedValue field="net_price" fallback={moneyCell(item.net_price)} />
+    ),
   };
   const netTotal: Column = {
     key: "net_total",
     label: "Net Total",
     className: "w-28 text-center font-bold",
     defaultWidth: 106,
-    render: totalCell,
+    render: (item) => (
+      isPriceHiddenLine(item)
+        ? "-"
+        : <QuotationRowComputedValue field="net_total" fallback={totalCell(item)} />
+    ),
   };
   const supplier: Column = {
     key: "supplier_name",
@@ -2244,7 +2309,17 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     label: "Internal / Supplier Notes",
     className: "min-w-[220px]",
     defaultWidth: 240,
-    render: (item) => [item.notes, item.supplier_notes_snapshot].filter(Boolean).join("\n") || "-",
+    render: (item) => {
+      const value = [item.notes, item.supplier_notes_snapshot].filter(Boolean).join(" / ");
+
+      return value ? (
+        <div className="max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap" title={value}>
+          {value}
+        </div>
+      ) : (
+        "-"
+      );
+    },
   };
 
   const byLayout: Record<string, Column[]> = {
@@ -2697,25 +2772,21 @@ function InlineRowActions({
   templateMaterialGroups: ProductTemplateMaterialGroupLink[];
 }) {
   return (
-    <div className="grid h-full content-center justify-items-center gap-1">
+    <div
+      className="grid h-full content-center justify-items-center gap-1"
+      data-preserve-anchor={`item-${item.id}`}
+    >
       <form id={inlineFormId} action={updateQuotationItemInline}>
         <input type="hidden" name="id" value={item.id} />
         <input type="hidden" name="quotation_id" value={quotation.id} />
         <input type="hidden" name="return_to" value={returnTo} />
       </form>
       <div className="flex items-center gap-1.5">
-        <button
-          type="submit"
-          form={inlineFormId}
-          className="h-6 border border-emerald-900 bg-emerald-900 px-2 text-[11px] font-semibold text-white transition hover:bg-emerald-800"
-        >
-          Save
-        </button>
-        <InlineRowAutosave formId={inlineFormId} />
+        <QuotationRowSaveControls />
       </div>
       <div className="flex items-center gap-1">
         <RowMoveActions item={item} quotationId={quotation.id} returnTo={returnTo} />
-        <details className="relative">
+        <details className="relative" data-state-key={`quotation-item-more-${item.id}`}>
           <summary className="h-6 cursor-pointer border border-zinc-300 bg-white px-2 py-1 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
             More
           </summary>
@@ -2749,7 +2820,7 @@ function InlineRowActions({
                 payload={rowClipboardPayload({ item, quotation })}
               />
               <DeactivateRowAction item={item} quotationId={quotation.id} returnTo={returnTo} />
-              <details className="relative">
+              <details className="relative" data-state-key={`quotation-item-details-${item.id}`}>
                 <summary className="h-7 cursor-pointer border border-zinc-300 bg-white px-2 py-1.5 text-xs font-semibold text-emerald-900">
                   Details
                 </summary>
@@ -2928,6 +2999,76 @@ export default async function QuotationBuilderPage({
     .select("id,project_name,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
     .eq("id", quotation.project_id)
     .single<Project>();
+
+  const { data: projectQuotations, error: projectQuotationsError } = await supabase
+    .from("quotations")
+    .select("id,quotation_no,option_no")
+    .eq("project_id", quotation.project_id)
+    .returns<Array<{ id: string; quotation_no: string | null; option_no: number }>>();
+
+  const { data: inactiveItems, error: inactiveItemsError } = showInternal && canManageRecords
+    ? await supabase
+        .from("quotation_items")
+        .select("id,item_name_snapshot,updated_at")
+        .eq("quotation_id", quotation.id)
+        .eq("is_active", false)
+        .order("updated_at", { ascending: false })
+        .limit(5)
+        .returns<InactiveQuotationItem[]>()
+    : { data: [], error: null };
+
+  const { data: inactiveSections, error: inactiveSectionsError } = showInternal && canManageRecords
+    ? await supabase
+        .from("quotation_sections")
+        .select("id,section_title,section_kind,updated_at")
+        .eq("quotation_id", quotation.id)
+        .eq("is_active", false)
+        .order("updated_at", { ascending: false })
+        .limit(5)
+        .returns<InactiveQuotationSection[]>()
+    : { data: [], error: null };
+
+  if (projectQuotationsError) {
+    console.error("QUOTATION BUILDER PROJECT OPTIONS ERROR", projectQuotationsError.message);
+  }
+  if (inactiveItemsError) {
+    console.error("QUOTATION BUILDER INACTIVE ITEMS ERROR", inactiveItemsError.message);
+  }
+  if (inactiveSectionsError) {
+    console.error("QUOTATION BUILDER INACTIVE SECTIONS ERROR", inactiveSectionsError.message);
+  }
+
+  const builderRootBaseNo = quotationRootBaseNo(quotation.quotation_no);
+  const builderOptionCount = builderRootBaseNo
+    ? Math.max(
+        1,
+        ...(projectQuotations ?? [])
+          .filter((candidate) => quotationRootBaseNo(candidate.quotation_no) === builderRootBaseNo)
+          .map((candidate) => candidate.option_no ?? 1),
+      )
+    : 1;
+  const showBuilderOptionNumber = builderOptionCount > 1;
+  const builderDisplayQuotationNo = formatQuotationDisplayNo({
+    optionNo: quotation.option_no,
+    quotationNo: quotation.quotation_no,
+    showOptionNumber: showBuilderOptionNumber,
+  });
+  const recentUndoActions = [
+    ...(inactiveItems ?? []).map((item) => ({
+      id: item.id,
+      kind: "item" as const,
+      label: item.item_name_snapshot?.trim() || "Quotation row",
+      updatedAt: item.updated_at,
+    })),
+    ...(inactiveSections ?? []).map((section) => ({
+      id: section.id,
+      kind: "section" as const,
+      label: section.section_title?.trim() || "Quotation section",
+      updatedAt: section.updated_at,
+    })),
+  ]
+    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
+    .slice(0, 5);
 
   const { data: productBrands, error: productBrandsError } = await supabase
     .from("brands")
@@ -3160,6 +3301,7 @@ export default async function QuotationBuilderPage({
   const showEditColumn = canManageRecords;
   const editColumnWidth = settingsMap.get("edit")?.width ?? 132;
   const totalColumns = columns.length + (showEditColumn ? 1 : 0);
+  const minimumSheetWidth = showInternal ? 2200 : 1480;
   const sheetColumns = [
     ...columns.map((column) => ({ key: column.key, width: column.width })),
     ...(showEditColumn ? [{ key: "edit", width: editColumnWidth }] : []),
@@ -3227,13 +3369,18 @@ export default async function QuotationBuilderPage({
             </ContextBackLink>
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-zinc-950">
-                {quotation.quotation_no ?? "Draft quotation"} - {quotation.title}
+                {builderDisplayQuotationNo ?? quotation.quotation_no ?? "Draft quotation"} - {quotation.title}
               </p>
               <p className="truncate text-xs text-zinc-500">
                 {client?.company_name ?? "Unknown client"} / {project?.project_name ?? "Unknown project"}
               </p>
             </div>
             <StatusBadge status={quotation.status} />
+            {showBuilderOptionNumber ? (
+              <span className="border border-zinc-300 bg-zinc-50 px-2.5 py-1 text-xs font-semibold text-zinc-700">
+                {optionBadgeLabel(quotation.option_no)}
+              </span>
+            ) : null}
             <span className="border border-zinc-300 bg-zinc-50 px-2.5 py-1 text-xs font-semibold text-zinc-700">
               {layoutLabels.get(quotation.layout_mode) ?? quotation.layout_mode}
             </span>
@@ -3242,7 +3389,7 @@ export default async function QuotationBuilderPage({
 
           <div className="flex flex-wrap items-center gap-2">
             {canManageRecords ? (
-              <details className="relative">
+              <details className="relative" data-state-key={`quotation-builder-add-section-${quotation.id}`}>
                 <summary className="cursor-pointer bg-emerald-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800">
                   Add Section
                 </summary>
@@ -3264,7 +3411,7 @@ export default async function QuotationBuilderPage({
                 </div>
               </details>
             ) : null}
-            <details className="relative">
+            <details className="relative" data-state-key={`quotation-builder-columns-${quotation.id}`}>
               <summary className="cursor-pointer border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
                 Column settings
               </summary>
@@ -3326,9 +3473,92 @@ export default async function QuotationBuilderPage({
 
       <main className="mx-auto max-w-[1900px] px-4 py-5">
         {query?.message ? (
-          <p className="mb-4 border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
-            {query.message}
-          </p>
+          <div className="mb-4 flex flex-col gap-2 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950 sm:flex-row sm:items-center sm:justify-between">
+            <p>{query.message}</p>
+            {showInternal && canManageRecords && query.undo_kind === "item" && query.undo_item_id ? (
+              <form action={restoreQuotationItem}>
+                <input type="hidden" name="quotation_id" value={quotation.id} />
+                <input type="hidden" name="quotation_item_id" value={query.undo_item_id} />
+                <input type="hidden" name="return_to" value={builderPath} />
+                <button
+                  type="submit"
+                  className="text-sm font-semibold text-emerald-900 underline underline-offset-2 transition hover:text-emerald-700"
+                >
+                  Undo
+                </button>
+              </form>
+            ) : null}
+            {showInternal && canManageRecords && query.undo_kind === "section" && query.undo_section_id ? (
+              <form action={restoreQuotationSection}>
+                <input type="hidden" name="quotation_id" value={quotation.id} />
+                <input type="hidden" name="quotation_section_id" value={query.undo_section_id} />
+                <input type="hidden" name="return_to" value={builderPath} />
+                <button
+                  type="submit"
+                  className="text-sm font-semibold text-emerald-900 underline underline-offset-2 transition hover:text-emerald-700"
+                >
+                  Undo
+                </button>
+              </form>
+            ) : null}
+          </div>
+        ) : null}
+        {showInternal && canManageRecords ? (
+          <section className="mb-4 rounded border border-zinc-300 bg-white">
+            <details data-state-key={`quotation-builder-recent-changes-${quotation.id}`}>
+              <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-zinc-800">
+                Recent changes
+              </summary>
+              <div className="border-t border-zinc-200 px-3 py-3">
+                {recentUndoActions.length ? (
+                  <div className="grid gap-2">
+                    {recentUndoActions.map((action) => (
+                      <div
+                        key={`${action.kind}-${action.id}`}
+                        className="flex flex-col gap-2 rounded border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div>
+                          <p className="font-medium text-zinc-900">
+                            {action.kind === "item"
+                              ? `Restore deactivated row: ${action.label}`
+                              : `Restore deactivated section: ${action.label}`}
+                          </p>
+                          <p className="text-xs text-zinc-500">{recentChangeTimeLabel(action.updatedAt)}</p>
+                        </div>
+                        {action.kind === "item" ? (
+                          <form action={restoreQuotationItem}>
+                            <input type="hidden" name="quotation_id" value={quotation.id} />
+                            <input type="hidden" name="quotation_item_id" value={action.id} />
+                            <input type="hidden" name="return_to" value={builderPath} />
+                            <button
+                              type="submit"
+                              className="rounded border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                            >
+                              Restore row
+                            </button>
+                          </form>
+                        ) : (
+                          <form action={restoreQuotationSection}>
+                            <input type="hidden" name="quotation_id" value={quotation.id} />
+                            <input type="hidden" name="quotation_section_id" value={action.id} />
+                            <input type="hidden" name="return_to" value={builderPath} />
+                            <button
+                              type="submit"
+                              className="rounded border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                            >
+                              Restore section
+                            </button>
+                          </form>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-zinc-500">No recent undoable changes.</p>
+                )}
+              </div>
+            </details>
+          </section>
         ) : null}
 
         <section className="border border-zinc-300 bg-white">
@@ -3352,7 +3582,7 @@ export default async function QuotationBuilderPage({
               <div className="border-b border-zinc-300 px-3 py-2 text-center text-sm font-bold uppercase tracking-wide">
                 Reference
               </div>
-              <SheetInfo label="Quote No" value={quotation.quotation_no ?? "Draft"} />
+              <SheetInfo label="Quote No" value={builderDisplayQuotationNo ?? quotation.quotation_no ?? "Draft"} />
               <SheetInfo label="Date" value={quotation.quotation_date} />
               <SheetInfo label="Status" value={statusLabel(quotation.status)} />
               <SheetInfo label="Layout" value={layoutLabels.get(quotation.layout_mode) ?? quotation.layout_mode} />
@@ -3362,12 +3592,18 @@ export default async function QuotationBuilderPage({
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <QuotationSheetTable quotationId={quotation.id} columns={sheetColumns}>
+          <div className="w-full">
+            <QuotationSheetTable
+              quotationId={quotation.id}
+              columns={sheetColumns}
+              minimumTableWidth={minimumSheetWidth}
+            >
               <tbody>
                 {displaySections.map((section, sectionIndex) => {
                   const previousSection = displaySections[sectionIndex - 1];
                   const nextSection = displaySections[sectionIndex + 1];
+                  const sectionAnchor = `section-${section.id}`;
+                  const sectionReturnTo = withHash(builderPath, sectionAnchor);
                   const insertAfterSectionId = previousSection?.id ?? "__start";
                   const insertInsideMain =
                     section.section_kind === "sub" &&
@@ -3396,7 +3632,7 @@ export default async function QuotationBuilderPage({
                             totalColumns={totalColumns}
                           />
                         ) : null}
-                        <tr>
+                        <tr id={sectionAnchor}>
                           <td
                             colSpan={totalColumns}
                             className={`relative border border-zinc-300 px-3 py-3 uppercase tracking-wide ${sectionTitleClass(section)}`}
@@ -3418,14 +3654,14 @@ export default async function QuotationBuilderPage({
                           <tr>
                             <td colSpan={totalColumns} className="border border-zinc-300 bg-zinc-50 px-3 py-2">
                               <div className="flex flex-wrap items-center justify-center gap-2">
-                                <details>
+                                <details data-state-key={`quotation-main-section-add-sub-${section.id}`}>
                                   <summary className="cursor-pointer border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-900 transition hover:bg-emerald-50">
                                     + Sub Section
                                   </summary>
                                   <div className="mt-2 w-[min(560px,calc(100vw-4rem))] border border-zinc-300 bg-white p-3">
                                     <QuickSectionForm
                                       quotationId={quotation.id}
-                                      returnTo={builderPath}
+                                      returnTo={sectionReturnTo}
                                       label="Sub Section"
                                       sectionKind="sub"
                                       parentSectionId={section.id}
@@ -3434,16 +3670,19 @@ export default async function QuotationBuilderPage({
                                     />
                                   </div>
                                 </details>
-                                <details>
+                                <details
+                                  data-state-key={`quotation-main-section-edit-${section.id}`}
+                                  data-preserve-anchor={`quotation-section-${section.id}`}
+                                >
                                   <summary className="cursor-pointer border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
                                     Edit main section
                                   </summary>
                                   <div className="mt-2 w-[min(820px,calc(100vw-4rem))] border border-zinc-300 bg-white p-3 text-left">
-                                    <SectionForm quotationId={quotation.id} returnTo={builderPath} section={section} />
+                                    <SectionForm quotationId={quotation.id} returnTo={sectionReturnTo} section={section} />
                                     <form action={deactivateQuotationSection} className="mt-2">
                                       <input type="hidden" name="id" value={section.id} />
                                       <input type="hidden" name="quotation_id" value={quotation.id} />
-                                      <input type="hidden" name="return_to" value={builderPath} />
+                                      <input type="hidden" name="return_to" value={sectionReturnTo} />
                                       <button type="submit" className="h-8 px-2 text-xs font-semibold text-zinc-500 transition hover:text-red-700">
                                         Deactivate main section
                                       </button>
@@ -3491,7 +3730,7 @@ export default async function QuotationBuilderPage({
                           insideMain={Boolean(insertInsideMain)}
                         />
                       ) : null}
-                      <tr>
+                      <tr id={sectionAnchor}>
                         <td
                           colSpan={totalColumns}
                           className={`relative border border-zinc-300 px-3 py-2 uppercase tracking-wide ${sectionTitleClass(section)}`}
@@ -3561,6 +3800,7 @@ export default async function QuotationBuilderPage({
                         const mergedText = item.item_name_snapshot ?? item.specification_snapshot ?? "";
                         const rowSerial = isSerialCountedLine(item) ? ++runningSerialNumber : 0;
                         const inlineFormId = `inline-row-${item.id}`;
+                        const itemReturnTo = withHash(builderPath, `item-${item.id}`);
                         const mergeMode = mergeModeForItem(item);
 
                         if (mergeMode === "merge_full_row") {
@@ -3571,8 +3811,19 @@ export default async function QuotationBuilderPage({
                           );
 
                           return (
-                            <Fragment key={item.id}>
+                            <QuotationRowEditorProvider
+                              key={`${item.id}-${item.qty}-${item.unit_price}-${item.discount_value}`}
+                              formId={inlineFormId}
+                              row={{
+                                discountType: item.discount_type,
+                                discountValue: item.discount_value,
+                                qty: item.qty,
+                                rowId: item.id,
+                                unitPrice: item.unit_price,
+                              }}
+                            >
                               <tr
+                                id={`item-${item.id}`}
                                 className="align-middle"
                                 style={item.row_height ? { height: `${item.row_height}px` } : undefined}
                               >
@@ -3626,7 +3877,7 @@ export default async function QuotationBuilderPage({
                                     priceHistoryByItem={priceHistoryByItem}
                                     productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
-                                    returnTo={builderPath}
+                                    returnTo={itemReturnTo}
                                     inlineFormId={inlineFormId}
                                     showInternal={showInternal}
                                     templateMaterialGroupItems={templateMaterialGroupItems ?? []}
@@ -3640,12 +3891,12 @@ export default async function QuotationBuilderPage({
                                   item={item}
                                   productTemplateById={productTemplateById}
                                   quotationId={quotation.id}
-                                  returnTo={builderPath}
+                                  returnTo={itemReturnTo}
                                   totalColumns={totalColumns}
                                 />
                               ) : null}
                               <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
-                            </Fragment>
+                            </QuotationRowEditorProvider>
                           );
                         }
 
@@ -3654,8 +3905,18 @@ export default async function QuotationBuilderPage({
                           const fullRowCss = cellStyleCss(fullRowStyle, "center");
 
                           return (
-                            <Fragment key={item.id}>
-                              <tr className="align-middle" style={item.row_height ? { height: `${item.row_height}px` } : undefined}>
+                            <QuotationRowEditorProvider
+                              key={`${item.id}-${item.qty}-${item.unit_price}-${item.discount_value}`}
+                              formId={inlineFormId}
+                              row={{
+                                discountType: item.discount_type,
+                                discountValue: item.discount_value,
+                                qty: item.qty,
+                                rowId: item.id,
+                                unitPrice: item.unit_price,
+                              }}
+                            >
+                              <tr id={`item-${item.id}`} className="align-middle" style={item.row_height ? { height: `${item.row_height}px` } : undefined}>
                                 <td
                                   colSpan={showEditColumn ? totalColumns - 1 : totalColumns}
                                   className="border border-zinc-300 bg-zinc-100 px-3 py-2 text-center text-sm font-bold uppercase text-zinc-900"
@@ -3687,7 +3948,7 @@ export default async function QuotationBuilderPage({
                                     priceHistoryByItem={priceHistoryByItem}
                                     productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
-                                    returnTo={builderPath}
+                                    returnTo={itemReturnTo}
                                     inlineFormId={inlineFormId}
                                     showInternal={showInternal}
                                     templateMaterialGroupItems={templateMaterialGroupItems ?? []}
@@ -3696,7 +3957,7 @@ export default async function QuotationBuilderPage({
                                 ) : null}
                               </tr>
                               <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
-                            </Fragment>
+                            </QuotationRowEditorProvider>
                           );
                         }
 
@@ -3705,8 +3966,18 @@ export default async function QuotationBuilderPage({
                           const fullRowCss = cellStyleCss(fullRowStyle);
 
                           return (
-                            <Fragment key={item.id}>
-                              <tr className="align-middle" style={item.row_height ? { height: `${item.row_height}px` } : undefined}>
+                            <QuotationRowEditorProvider
+                              key={`${item.id}-${item.qty}-${item.unit_price}-${item.discount_value}`}
+                              formId={inlineFormId}
+                              row={{
+                                discountType: item.discount_type,
+                                discountValue: item.discount_value,
+                                qty: item.qty,
+                                rowId: item.id,
+                                unitPrice: item.unit_price,
+                              }}
+                            >
+                              <tr id={`item-${item.id}`} className="align-middle" style={item.row_height ? { height: `${item.row_height}px` } : undefined}>
                                 <td
                                   colSpan={showEditColumn ? totalColumns - 1 : totalColumns}
                                   className="border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-700"
@@ -3750,7 +4021,7 @@ export default async function QuotationBuilderPage({
                                     priceHistoryByItem={priceHistoryByItem}
                                     productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
-                                    returnTo={builderPath}
+                                    returnTo={itemReturnTo}
                                     inlineFormId={inlineFormId}
                                     showInternal={showInternal}
                                     templateMaterialGroupItems={templateMaterialGroupItems ?? []}
@@ -3759,14 +4030,24 @@ export default async function QuotationBuilderPage({
                                 ) : null}
                               </tr>
                               <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
-                            </Fragment>
+                            </QuotationRowEditorProvider>
                           );
                         }
 
                         if (item.line_style === "no_quote" && !mergedText) {
                           return (
-                            <Fragment key={item.id}>
-                              <tr className="align-middle" style={item.row_height ? { height: `${item.row_height}px` } : undefined}>
+                            <QuotationRowEditorProvider
+                              key={`${item.id}-${item.qty}-${item.unit_price}-${item.discount_value}`}
+                              formId={inlineFormId}
+                              row={{
+                                discountType: item.discount_type,
+                                discountValue: item.discount_value,
+                                qty: item.qty,
+                                rowId: item.id,
+                                unitPrice: item.unit_price,
+                              }}
+                            >
+                              <tr id={`item-${item.id}`} className="align-middle" style={item.row_height ? { height: `${item.row_height}px` } : undefined}>
                                 <td colSpan={showEditColumn ? totalColumns - 1 : totalColumns} className="h-8 border border-zinc-300 bg-white align-middle" />
                                 {showEditColumn ? (
                                   <InlineRowEditCell
@@ -3778,7 +4059,7 @@ export default async function QuotationBuilderPage({
                                     priceHistoryByItem={priceHistoryByItem}
                                     productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
-                                    returnTo={builderPath}
+                                    returnTo={itemReturnTo}
                                     inlineFormId={inlineFormId}
                                     showInternal={showInternal}
                                     templateMaterialGroupItems={templateMaterialGroupItems ?? []}
@@ -3787,13 +4068,24 @@ export default async function QuotationBuilderPage({
                                 ) : null}
                               </tr>
                               <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
-                            </Fragment>
+                            </QuotationRowEditorProvider>
                           );
                         }
 
                         return (
-                          <Fragment key={item.id}>
+                          <QuotationRowEditorProvider
+                            key={`${item.id}-${item.qty}-${item.unit_price}-${item.discount_value}`}
+                            formId={inlineFormId}
+                            row={{
+                              discountType: item.discount_type,
+                              discountValue: item.discount_value,
+                              qty: item.qty,
+                              rowId: item.id,
+                              unitPrice: item.unit_price,
+                            }}
+                          >
                             <tr
+                              id={`item-${item.id}`}
                               className="align-middle"
                               style={item.row_height ? { height: `${item.row_height}px` } : undefined}
                             >
@@ -3843,7 +4135,7 @@ export default async function QuotationBuilderPage({
                                   priceHistoryByItem={priceHistoryByItem}
                                   productTemplates={productTemplatesWithPriceChecks}
                                   quotation={quotation}
-                                  returnTo={builderPath}
+                                  returnTo={itemReturnTo}
                                   inlineFormId={inlineFormId}
                                   showInternal={showInternal}
                                   templateMaterialGroupItems={templateMaterialGroupItems ?? []}
@@ -3857,12 +4149,12 @@ export default async function QuotationBuilderPage({
                                 item={item}
                                 productTemplateById={productTemplateById}
                                 quotationId={quotation.id}
-                                returnTo={builderPath}
+                                returnTo={itemReturnTo}
                                 totalColumns={totalColumns}
                               />
                             ) : null}
                             <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
-                          </Fragment>
+                          </QuotationRowEditorProvider>
                         );
                       })}
 
@@ -3874,7 +4166,7 @@ export default async function QuotationBuilderPage({
 
                       {canManageRecords ? (
                         <tr>
-                          <td colSpan={totalColumns} className="border border-zinc-300 bg-zinc-50 px-2 py-2">
+                          <td id={`section-actions-${section.id}`} colSpan={totalColumns} className="border border-zinc-300 bg-zinc-50 px-2 py-2">
                             <RowActionPanel
                               brands={productBrands ?? []}
                               categories={productCategories ?? []}
@@ -3884,7 +4176,7 @@ export default async function QuotationBuilderPage({
                               materials={materials ?? []}
                               productTemplates={productTemplatesWithPriceChecks}
                               quotation={quotation}
-                              returnTo={builderPath}
+                              returnTo={sectionReturnTo}
                               sectionId={section.id}
                               showInternal={showInternal}
                               templateMaterialGroupItems={templateMaterialGroupItems ?? []}
@@ -3892,19 +4184,22 @@ export default async function QuotationBuilderPage({
                             />
                             <PasteQuotationRowControls
                               quotationId={quotation.id}
-                              returnTo={builderPath}
+                              returnTo={sectionReturnTo}
                               sectionId={section.id}
                             />
-                            <details>
+                            <details
+                              data-state-key={`quotation-section-edit-${section.id}`}
+                              data-preserve-anchor={`quotation-section-${section.id}`}
+                            >
                               <summary className="mt-2 cursor-pointer text-xs font-semibold text-zinc-600">
                                 Edit section
                               </summary>
                               <div className="mt-2 grid gap-3 xl:grid-cols-[1fr_auto]">
-                                <SectionForm quotationId={quotation.id} returnTo={builderPath} section={section} />
+                                <SectionForm quotationId={quotation.id} returnTo={sectionReturnTo} section={section} />
                                 <form action={deactivateQuotationSection}>
                                   <input type="hidden" name="id" value={section.id} />
                                   <input type="hidden" name="quotation_id" value={quotation.id} />
-                                  <input type="hidden" name="return_to" value={builderPath} />
+                                  <input type="hidden" name="return_to" value={sectionReturnTo} />
                                   <button type="submit" className="h-8 px-2 text-xs font-semibold text-zinc-500 transition hover:text-red-700">
                                     Deactivate section
                                   </button>
