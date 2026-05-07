@@ -33,7 +33,7 @@ import {
 import { RowHeightTextarea } from "@/components/quotations/row-height-textarea";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
-import { formatQuotationMoney, quotationMoneyCell } from "@/lib/quotation-pricing";
+import { formatQuotationMoney, quotationMoneyCell, quotationMoneyValue } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
   createQuotationItem,
@@ -496,6 +496,86 @@ function MergeModeSelect({ item }: { item?: QuotationItem }) {
 
 function isPriceHiddenLine(item: QuotationItem) {
   return ["note", "heading", "blank"].includes(item.item_type) || ["note", "heading", "no_quote"].includes(item.line_style);
+}
+
+function recordValue(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function hasMeaningfulSourcePriceOverride(item: QuotationItem) {
+  const sourceData = recordValue(item.source_component_data);
+  if (!sourceData) return false;
+
+  if (
+    sourceData.desking ||
+    sourceData.variant_pricing ||
+    sourceData.category_pricing ||
+    sourceData.add_ons ||
+    sourceData.linked_products ||
+    sourceData.pricing_adjustment
+  ) {
+    return true;
+  }
+
+  return Number(sourceData.selected_options_price ?? 0) > 0;
+}
+
+function sourcePriceWarning(
+  item: QuotationItem,
+  productTemplateById: Map<string, ProductLibraryTemplate>,
+) {
+  if (!item.source_template_id || isPriceHiddenLine(item) || hasMeaningfulSourcePriceOverride(item)) {
+    return null;
+  }
+
+  const template = productTemplateById.get(item.source_template_id);
+  if (!template) return null;
+
+  const quotedPrice = quotationMoneyValue(item.unit_price);
+  const sourcePrice = quotationMoneyValue(template.default_unit_price);
+  const quotedCurrency = normalizeCurrency(item.currency);
+  const sourceCurrency = normalizeCurrency(template.currency);
+  const priceChanged = Math.abs(quotedPrice - sourcePrice) >= 0.01;
+  const currencyChanged = quotedCurrency !== sourceCurrency;
+
+  if (!priceChanged && !currencyChanged) return null;
+
+  return {
+    quotedCurrency,
+    quotedPrice,
+    sourceCurrency,
+    sourcePrice,
+    templateName: template.template_name,
+  };
+}
+
+function SourcePriceWarning({
+  item,
+  productTemplateById,
+  totalColumns,
+}: {
+  item: QuotationItem;
+  productTemplateById: Map<string, ProductLibraryTemplate>;
+  totalColumns: number;
+}) {
+  const warning = sourcePriceWarning(item, productTemplateById);
+  if (!warning) return null;
+
+  return (
+    <tr>
+      <td colSpan={totalColumns} className="border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <span className="font-semibold">Source price changed</span>
+          <span>
+            Quoted: {formatQuotationMoney(warning.quotedCurrency, warning.quotedPrice)} / Current source: {formatQuotationMoney(warning.sourceCurrency, warning.sourcePrice)}
+          </span>
+          <span>Existing quotation price is unchanged.</span>
+        </div>
+      </td>
+    </tr>
+  );
 }
 
 function isSectionTotalLine(item: QuotationItem) {
@@ -2490,6 +2570,9 @@ export default async function QuotationBuilderPage({
     ...template,
     latest_brand_price_list_update: latestPriceListUpdateByBrand.get(template.brand_id) ?? null,
   }));
+  const productTemplateById = new Map(
+    productTemplatesWithPriceChecks.map((template) => [template.id, template]),
+  );
 
   const itemsBySection = new Map<string, QuotationItem[]>();
 
@@ -2992,6 +3075,11 @@ export default async function QuotationBuilderPage({
                                   />
                                 ) : null}
                               </tr>
+                              <SourcePriceWarning
+                                item={item}
+                                productTemplateById={productTemplateById}
+                                totalColumns={totalColumns}
+                              />
                               <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
                             </Fragment>
                           );
@@ -3191,6 +3279,11 @@ export default async function QuotationBuilderPage({
                                 />
                               ) : null}
                             </tr>
+                            <SourcePriceWarning
+                              item={item}
+                              productTemplateById={productTemplateById}
+                              totalColumns={totalColumns}
+                            />
                             <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
                           </Fragment>
                         );
