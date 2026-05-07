@@ -879,7 +879,7 @@ function SourceLibraryPriceReference({
             <p className="font-semibold text-zinc-900">
               {reference.currentSourcePrice !== null && reference.currentSourceCurrency
                 ? formatQuotationMoney(reference.currentSourceCurrency, reference.currentSourcePrice)
-                : "Not safely resolved"}
+                : "Not available for this row"}
             </p>
           </div>
           <div>
@@ -894,7 +894,9 @@ function SourceLibraryPriceReference({
           </div>
           <div>
             <p className="text-[10px] font-semibold uppercase text-zinc-500">Source type</p>
-            <p className="text-zinc-800">{[reference.sourceType, reference.sourceLabel].filter(Boolean).join(" / ") || "-"}</p>
+            <p className="text-zinc-800">
+              {[reference.sourceType, reference.sourceLabel].filter(Boolean).join(" / ") || "Original library snapshot"}
+            </p>
           </div>
           {reference.convertedPrice !== null ? (
             <div>
