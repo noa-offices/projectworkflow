@@ -1416,6 +1416,16 @@ export async function createQuotation(formData: FormData) {
   }
 
   const supabase = await createSupabaseClient();
+  const { data: project, error: projectError } = await supabase
+    .from("projects")
+    .select("id,client_id")
+    .eq("id", payload.project_id)
+    .maybeSingle<{ id: string; client_id: string }>();
+
+  if (projectError || !project || project.client_id !== payload.client_id) {
+    redirectWithMessage(redirectPath, "Select a project that belongs to the selected client.");
+  }
+
   const { data, error } = await supabase
     .from("quotations")
     .insert(payload)

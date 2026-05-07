@@ -8,6 +8,7 @@ export function ceilToNearest(value: unknown, step = QUOTE_ROUNDING_STEP) {
   const safeValue = Number.isFinite(number) ? number : 0;
   const safeStep = Number.isFinite(step) && step > 0 ? step : QUOTE_ROUNDING_STEP;
 
+  // Company pricing policy: quotation prices round up to the nearest 5 AED.
   return Math.ceil(safeValue / safeStep) * safeStep;
 }
 

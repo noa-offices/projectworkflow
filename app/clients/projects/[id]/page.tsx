@@ -443,7 +443,7 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
               <div>
                 <h2 className="text-lg font-semibold text-zinc-950">Quotations</h2>
                 <p className="mt-1 text-sm text-zinc-500">
-                  Revisions will appear under each quotation later.
+                  Manage quotation options, revisions, and builder access from this project folder.
                 </p>
               </div>
               {canManageRecords ? (
@@ -673,17 +673,11 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
             ) : null}
           </section>
 
-          <section className="mt-6 grid gap-5 xl:grid-cols-2">
+          <section className="mt-6">
             <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
               <h2 className="text-lg font-semibold text-zinc-950">Specification Sheets</h2>
               <p className="mt-2 text-sm leading-6 text-zinc-500">
-                Specification sheets will be generated from quotations later.
-              </p>
-            </div>
-            <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-              <h2 className="text-lg font-semibold text-zinc-950">Orders / OC / Delivery</h2>
-              <p className="mt-2 text-sm leading-6 text-zinc-500">
-                Orders, order confirmations, and delivery tracking will appear here later.
+                Open a quotation from this project to preview or download its specification sheet.
               </p>
             </div>
           </section>

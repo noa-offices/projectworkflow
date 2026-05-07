@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
+import { ProjectSelectByClient } from "@/components/quotations/project-select-by-client";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
@@ -141,40 +142,9 @@ function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
 }
 
 function QuotationForm({ clients, projects }: { clients: Client[]; projects: Project[] }) {
-  const clientMap = new Map(clients.map((client) => [client.id, client.company_name]));
-
   return (
     <form action={createQuotation} className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-      <label className="block">
-        <span className="text-xs font-semibold uppercase text-zinc-500">Client</span>
-        <select
-          name="client_id"
-          required
-          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-        >
-          <option value="">Select client</option>
-          {clients.map((client) => (
-            <option key={client.id} value={client.id}>
-              {client.company_name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="block">
-        <span className="text-xs font-semibold uppercase text-zinc-500">Project</span>
-        <select
-          name="project_id"
-          required
-          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-        >
-          <option value="">Select project</option>
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {clientMap.get(project.client_id) ?? "Unknown client"} - {project.project_name}
-            </option>
-          ))}
-        </select>
-      </label>
+      <ProjectSelectByClient clients={clients} projects={projects} />
       <Field name="title" label="Title" required />
       <Field name="quotation_no" label="Quotation no" />
       <Field name="quotation_date" label="Quotation date" type="date" defaultValue={new Date().toISOString().slice(0, 10)} />
