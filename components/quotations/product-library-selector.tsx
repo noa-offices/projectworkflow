@@ -49,6 +49,9 @@ export type ProductLibraryTemplate = {
   accessory_pricing: AccessoryPricingRow[] | null;
   currency: string;
   default_unit_price: number;
+  last_price_checked_at: string | null;
+  price_check_interval_days: number | null;
+  price_check_note?: string | null;
 };
 
 type DeskingSizePricingRow = {
@@ -178,6 +181,59 @@ function isDirectImageUrl(value: string) {
 function numberValue(value: unknown, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
+}
+
+function formatPriceCheckDate(value: string | null) {
+  if (!value) return "";
+
+  return new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+  }).format(new Date(value));
+}
+
+function priceCheckState(template: ProductLibraryTemplate) {
+  const intervalDays = template.price_check_interval_days && template.price_check_interval_days > 0
+    ? template.price_check_interval_days
+    : 90;
+
+  if (!template.last_price_checked_at) {
+    return {
+      detail: "No check recorded",
+      tone: "warning" as const,
+      label: "Price not checked yet",
+    };
+  }
+
+  const checkedAt = new Date(template.last_price_checked_at);
+  const dueAt = checkedAt.getTime() + intervalDays * 24 * 60 * 60 * 1000;
+
+  if (!Number.isFinite(checkedAt.getTime()) || dueAt < Date.now()) {
+    return {
+      detail: `Last checked: ${formatPriceCheckDate(template.last_price_checked_at)}`,
+      tone: "warning" as const,
+      label: "Price check due",
+    };
+  }
+
+  return {
+    detail: `Price checked: ${formatPriceCheckDate(template.last_price_checked_at)}`,
+    tone: "ok" as const,
+    label: "Price checked",
+  };
+}
+
+function PriceCheckBadge({ compact = false, template }: { compact?: boolean; template: ProductLibraryTemplate }) {
+  const status = priceCheckState(template);
+  const badgeClass = status.tone === "ok"
+    ? "inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-900"
+    : "inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-900";
+
+  return (
+    <span className={compact ? "mt-1 block" : "grid gap-1"}>
+      <span className={badgeClass}>{status.label}</span>
+      {!compact ? <span className="block text-[11px] font-medium text-zinc-500">{status.detail}</span> : null}
+    </span>
+  );
 }
 
 function activeSizePricingRows(rows?: DeskingSizePricingRow[] | null) {
@@ -763,6 +819,7 @@ export function ProductLibrarySelector({
                           <span className="mt-1 block text-[11px] font-semibold text-zinc-500">
                             {template.item_code ?? template.template_code ?? "No code"}
                           </span>
+                          <PriceCheckBadge compact template={template} />
                         </span>
                         <span className="shrink-0 text-right text-xs font-bold text-zinc-700">
                           {formatMoney(template.currency, numberValue(template.default_unit_price))}
@@ -1556,9 +1613,17 @@ export function ProductLibrarySelector({
                         ) : null}
                       </div>
                       <div className="flex shrink-0 flex-col gap-3 border-t border-zinc-200 pt-3 text-left">
-                        <p className="text-sm font-semibold text-zinc-950">
-                          {formatQuotationMoney(previewCurrency, previewUnitPriceWithConversion)}
-                        </p>
+                        <div className="grid gap-1">
+                          <p className="text-sm font-semibold text-zinc-950">
+                            {formatQuotationMoney(previewCurrency, previewUnitPriceWithConversion)}
+                          </p>
+                          <PriceCheckBadge template={template} />
+                          {priceCheckState(template).tone === "warning" ? (
+                            <p className="max-w-52 text-[11px] leading-4 text-amber-700">
+                              Please verify source price before finalizing quotation.
+                            </p>
+                          ) : null}
+                        </div>
                         {derivedDesking ? (
                           <div className="max-w-48 space-y-1 text-xs leading-5 text-zinc-600">
                             {derivedDesking.clusterLabel ? (

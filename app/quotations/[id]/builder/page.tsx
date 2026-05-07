@@ -2359,7 +2359,7 @@ export default async function QuotationBuilderPage({
   const { data: productTemplates, error: productTemplatesError } = await supabase
     .from("product_templates")
     .select(
-      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,currency,default_unit_price",
+      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note",
     )
     .eq("is_active", true)
     .order("template_name", { ascending: true })
