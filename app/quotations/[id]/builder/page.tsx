@@ -1041,11 +1041,7 @@ function PriceChangeHistory({
               <p className="font-semibold text-zinc-900">
                 {new Intl.DateTimeFormat("en-US", {
                   dateStyle: "medium",
-                }).format(new Date(entry.changed_at))}{" "}
-                - {historyChangeTypeLabel(entry.change_type)}
-              </p>
-              <p className="mt-1 text-zinc-700">
-                {entry.old_unit_price !== null
+                }).format(new Date(entry.changed_at))} - {entry.changed_by_name || "Unknown user"} - {historyChangeTypeLabel(entry.change_type)} - {entry.old_unit_price !== null
                   ? formatQuotationMoney(
                       normalizeCurrency(entry.old_currency ?? entry.new_currency ?? defaultCurrency),
                       entry.old_unit_price,
@@ -1053,9 +1049,7 @@ function PriceChangeHistory({
                   : "-"}{" "}
                 -&gt; {formatQuotationMoney(normalizeCurrency(entry.new_currency ?? entry.old_currency ?? defaultCurrency), entry.new_unit_price)}
               </p>
-              <p className="mt-1 text-zinc-500">
-                By: {entry.changed_by_name || "Unknown user"}
-              </p>
+              {entry.note ? <p className="mt-1 text-zinc-500">{entry.note}</p> : null}
             </div>
           ))}
         </div>

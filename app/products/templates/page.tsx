@@ -32,6 +32,7 @@ import {
   productTemplatePriceCheckState,
 } from "@/lib/product-price-check";
 import { createClient } from "@/lib/supabase/server";
+import { profileDisplayName } from "@/lib/user-display";
 import {
   createProductComponent,
   createLinkedProductFamily,
@@ -100,7 +101,9 @@ type BrandPriceListUpdate = {
   status: "draft" | "active" | "archived";
   notes: string | null;
   attachment_url: string | null;
+  created_by: string | null;
   created_at: string;
+  updated_at: string;
 };
 
 type ProductTemplatePriceHistory = {
@@ -112,6 +115,7 @@ type ProductTemplatePriceHistory = {
   currency: string | null;
   effective_from: string | null;
   note: string | null;
+  changed_by: string | null;
   changed_at: string;
 };
 
@@ -127,7 +131,22 @@ type ProductTemplateDetailPriceHistory = {
   currency: string | null;
   effective_from: string | null;
   note: string | null;
+  changed_by: string | null;
   changed_at: string;
+};
+
+type AuditActivityEntry = {
+  id: string;
+  entity_type: string;
+  entity_id: string | null;
+  parent_entity_type: string | null;
+  parent_entity_id: string | null;
+  action: string;
+  title: string;
+  description: string | null;
+  metadata: Record<string, unknown> | null;
+  created_by: string | null;
+  created_at: string;
 };
 
 type Category = {
@@ -1202,6 +1221,24 @@ function formatShortDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function auditMetadataActorName(metadata: Record<string, unknown> | null | undefined) {
+  const actorName = metadata?.actorName;
+
+  return typeof actorName === "string" && actorName.trim() ? actorName : null;
+}
+
+function actorDisplayName(
+  actorNameById: Map<string, string>,
+  actorId?: string | null,
+  metadata?: Record<string, unknown> | null,
+) {
+  if (actorId) {
+    return actorNameById.get(actorId) ?? auditMetadataActorName(metadata) ?? "Unknown user";
+  }
+
+  return auditMetadataActorName(metadata) ?? "Unknown user";
+}
+
 function priceCheckState(
   template: ProductTemplate,
   latestBrandUpdate?: BrandPriceListUpdate | null,
@@ -1216,10 +1253,12 @@ function priceCheckState(
 }
 
 function PriceCheckStatus({
+  actorNameById,
   brandName,
   latestBrandUpdate,
   template,
 }: {
+  actorNameById: Map<string, string>;
   brandName?: string | null;
   latestBrandUpdate?: BrandPriceListUpdate | null;
   template: ProductTemplate;
@@ -1234,7 +1273,11 @@ function PriceCheckStatus({
   return (
     <div className="mt-2 grid gap-1">
       <span className={className}>{status.label}</span>
-      <p className="text-xs text-zinc-500">{status.detail}</p>
+      <p className="text-xs text-zinc-500">
+        {template.last_price_checked_at
+          ? `Price checked by ${actorDisplayName(actorNameById, template.last_price_checked_by)} on ${formatDate(template.last_price_checked_at)}`
+          : status.detail}
+      </p>
       {template.price_check_note ? (
         <p className="line-clamp-2 text-xs text-zinc-500">{template.price_check_note}</p>
       ) : null}
@@ -1273,7 +1316,13 @@ function brandPriceCheckState(brand: Brand) {
   };
 }
 
-function BrandPriceCheckStatus({ brand }: { brand: Brand }) {
+function BrandPriceCheckStatus({
+  actorNameById,
+  brand,
+}: {
+  actorNameById: Map<string, string>;
+  brand: Brand;
+}) {
   const status = brandPriceCheckState(brand);
   const className = status.tone === "ok"
     ? "inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-900"
@@ -1282,7 +1331,11 @@ function BrandPriceCheckStatus({ brand }: { brand: Brand }) {
   return (
     <div className="grid gap-1">
       <span className={className}>{status.label}</span>
-      <p className="text-xs text-zinc-500">{status.detail}</p>
+      <p className="text-xs text-zinc-500">
+        {brand.last_price_list_checked_at
+          ? `Price checked by ${actorDisplayName(actorNameById, brand.last_price_list_checked_by)} on ${formatDate(brand.last_price_list_checked_at)}`
+          : status.detail}
+      </p>
       {brand.price_list_check_note ? (
         <p className="line-clamp-2 text-xs text-zinc-500">{brand.price_list_check_note}</p>
       ) : null}
@@ -1578,7 +1631,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
   const { data: brandPriceListUpdates, error: brandPriceListUpdatesError } = await supabase
     .from("brand_price_list_updates")
-    .select("id,brand_id,title,reference_no,currency,effective_from,received_at,status,notes,attachment_url,created_at")
+    .select("id,brand_id,title,reference_no,currency,effective_from,received_at,status,notes,attachment_url,created_by,created_at,updated_at")
     .order("brand_id", { ascending: true })
     .order("effective_from", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
@@ -1586,17 +1639,31 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
   const { data: templatePriceHistory, error: templatePriceHistoryError } = await supabase
     .from("product_template_price_history")
-    .select("id,product_template_id,brand_price_list_update_id,old_default_unit_price,new_default_unit_price,currency,effective_from,note,changed_at")
+    .select("id,product_template_id,brand_price_list_update_id,old_default_unit_price,new_default_unit_price,currency,effective_from,note,changed_by,changed_at")
     .order("product_template_id", { ascending: true })
     .order("changed_at", { ascending: false })
     .returns<ProductTemplatePriceHistory[]>();
 
   const { data: templateDetailPriceHistory, error: templateDetailPriceHistoryError } = await supabase
     .from("product_template_detail_price_history")
-    .select("id,product_template_id,brand_price_list_update_id,source_table,source_record_id,price_field,old_price,new_price,currency,effective_from,note,changed_at")
+    .select("id,product_template_id,brand_price_list_update_id,source_table,source_record_id,price_field,old_price,new_price,currency,effective_from,note,changed_by,changed_at")
     .order("product_template_id", { ascending: true })
     .order("changed_at", { ascending: false })
     .returns<ProductTemplateDetailPriceHistory[]>();
+
+  const { data: auditActivity, error: auditActivityError } = await supabase
+    .from("audit_activity_log")
+    .select("id,entity_type,entity_id,parent_entity_type,parent_entity_id,action,title,description,metadata,created_by,created_at")
+    .in("entity_type", [
+      "brand",
+      "brand_price_list_update",
+      "product_template",
+      "product_template_price",
+      "product_template_detail_price",
+    ])
+    .order("created_at", { ascending: false })
+    .limit(500)
+    .returns<AuditActivityEntry[]>();
 
   if (brandsError) console.error("TEMPLATE BRANDS LIST ERROR", brandsError.message);
   if (categoriesError) console.error("TEMPLATE CATEGORIES LIST ERROR", categoriesError.message);
@@ -1610,6 +1677,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   if (brandPriceListUpdatesError) console.error("BRAND PRICE LIST UPDATES ERROR", brandPriceListUpdatesError.message);
   if (templatePriceHistoryError) console.error("TEMPLATE PRICE HISTORY ERROR", templatePriceHistoryError.message);
   if (templateDetailPriceHistoryError) console.error("TEMPLATE DETAIL PRICE HISTORY ERROR", templateDetailPriceHistoryError.message);
+  if (auditActivityError) console.error("AUDIT ACTIVITY LOG ERROR", auditActivityError.message);
 
   const brandList = brands ?? [];
   const categoryList = categories ?? [];
@@ -1649,6 +1717,8 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const latestPriceListUpdateByBrand = new Map<string, BrandPriceListUpdate>();
   const priceHistoryByTemplate = new Map<string, ProductTemplatePriceHistory[]>();
   const detailPriceHistoryByTemplate = new Map<string, ProductTemplateDetailPriceHistory[]>();
+  const auditHistoryByTemplate = new Map<string, AuditActivityEntry[]>();
+  const auditHistoryByPriceListUpdate = new Map<string, AuditActivityEntry[]>();
 
   for (const component of components ?? []) {
     const templateComponents = componentsByTemplate.get(component.template_id) ?? [];
@@ -1702,6 +1772,74 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
       ...(detailPriceHistoryByTemplate.get(history.product_template_id) ?? []),
       history,
     ]);
+  }
+
+  const auditActivityList = auditActivity ?? [];
+  const actorIds = Array.from(new Set(
+    [
+      ...brandList.map((brand) => brand.last_price_list_checked_by),
+      ...templateList.map((template) => template.last_price_checked_by),
+      ...brandPriceListUpdateList.map((update) => update.created_by),
+      ...templatePriceHistoryList.map((history) => history.changed_by),
+      ...templateDetailPriceHistoryList.map((history) => history.changed_by),
+      ...auditActivityList.map((entry) => entry.created_by),
+    ].filter((value): value is string => Boolean(value)),
+  ));
+  const actorNameById = new Map<string, string>();
+
+  if (actorIds.length) {
+    const { data: actorProfiles, error: actorProfilesError } = await supabase
+      .from("profiles")
+      .select("id,full_name,email")
+      .in("id", actorIds)
+      .returns<Array<{ id: string; full_name: string | null; email: string | null }>>();
+
+    if (actorProfilesError) {
+      console.error("TEMPLATE ACTOR PROFILES ERROR", actorProfilesError.message);
+    } else {
+      for (const profile of actorProfiles ?? []) {
+        actorNameById.set(profile.id, profileDisplayName(profile));
+      }
+    }
+  }
+
+  const templateIds = new Set(templateList.map((template) => template.id));
+  const priceListUpdateIds = new Set(brandPriceListUpdateList.map((update) => update.id));
+
+  for (const entry of auditActivityList) {
+    if (
+      entry.entity_type === "product_template" &&
+      entry.entity_id &&
+      templateIds.has(entry.entity_id)
+    ) {
+      auditHistoryByTemplate.set(entry.entity_id, [
+        ...(auditHistoryByTemplate.get(entry.entity_id) ?? []),
+        entry,
+      ]);
+    }
+
+    if (
+      (entry.entity_type === "product_template_price" || entry.entity_type === "product_template_detail_price") &&
+      entry.parent_entity_type === "product_template" &&
+      entry.parent_entity_id &&
+      templateIds.has(entry.parent_entity_id)
+    ) {
+      auditHistoryByTemplate.set(entry.parent_entity_id, [
+        ...(auditHistoryByTemplate.get(entry.parent_entity_id) ?? []),
+        entry,
+      ]);
+    }
+
+    if (
+      entry.entity_type === "brand_price_list_update" &&
+      entry.entity_id &&
+      priceListUpdateIds.has(entry.entity_id)
+    ) {
+      auditHistoryByPriceListUpdate.set(entry.entity_id, [
+        ...(auditHistoryByPriceListUpdate.get(entry.entity_id) ?? []),
+        entry,
+      ]);
+    }
   }
 
   const normalizedSearch = searchQuery.toLowerCase();
@@ -1978,7 +2116,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         </summary>
                         <div className="space-y-2 p-3">
                           <div className="rounded-md border border-zinc-200 bg-white p-3">
-                            <BrandPriceCheckStatus brand={brand} />
+                            <BrandPriceCheckStatus actorNameById={actorNameById} brand={brand} />
                             <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-semibold">
                               <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-zinc-600">Templates: {brandPriceSummary.total}</span>
                               <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-900">Not checked: {brandPriceSummary.not_checked}</span>
@@ -2019,6 +2157,19 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                     <p>Effective from: {formatShortDate(latestPriceListUpdate.effective_from)}</p>
                                     <p>Status: {latestPriceListUpdate.status}</p>
                                     {latestPriceListUpdate.reference_no ? <p>Ref: {latestPriceListUpdate.reference_no}</p> : null}
+                                    <p>
+                                      Added by {actorDisplayName(actorNameById, latestPriceListUpdate.created_by)} on {formatDate(latestPriceListUpdate.created_at)}
+                                    </p>
+                                    {(() => {
+                                      const latestEditEntry = (auditHistoryByPriceListUpdate.get(latestPriceListUpdate.id) ?? [])
+                                        .find((entry) => entry.action === "updated" || entry.action === "archived");
+
+                                      return latestEditEntry ? (
+                                        <p>
+                                          Last edited by {actorDisplayName(actorNameById, latestEditEntry.created_by, latestEditEntry.metadata)} on {formatDate(latestEditEntry.created_at)}
+                                        </p>
+                                      ) : null;
+                                    })()}
                                   </div>
                                 ) : (
                                   <p className="mt-1 text-xs text-zinc-500">No price list updates recorded.</p>
@@ -2245,6 +2396,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             )}
                           </p>
                           <PriceCheckStatus
+                            actorNameById={actorNameById}
                             brandName={brandMap.get(template.brand_id)}
                             latestBrandUpdate={latestPriceListUpdateByBrand.get(template.brand_id)}
                             template={template}
@@ -2311,6 +2463,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
               const templateComponents = componentsByTemplate.get(template.id) ?? [];
               const templatePriceHistoryRows = priceHistoryByTemplate.get(template.id) ?? [];
               const templateDetailPriceHistoryRows = detailPriceHistoryByTemplate.get(template.id) ?? [];
+              const templateAuditRows = auditHistoryByTemplate.get(template.id) ?? [];
               const templateBrandPriceListUpdates = priceListUpdatesByBrand.get(template.brand_id) ?? [];
               const priceListUpdateById = new Map(templateBrandPriceListUpdates.map((update) => [update.id, update]));
               const groups = new Map<string, ProductComponent[]>();
@@ -2395,6 +2548,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           {formatMoney(template.currency, template.default_unit_price)}
                         </p>
                         <PriceCheckStatus
+                          actorNameById={actorNameById}
                           brandName={brandMap.get(template.brand_id)}
                           latestBrandUpdate={latestPriceListUpdateByBrand.get(template.brand_id)}
                           template={template}
@@ -2431,11 +2585,23 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
                                 return (
                                   <p key={history.id} className="text-xs leading-5 text-zinc-500">
-                                    {formatShortDate(history.changed_at)} - {formatMoney(history.currency ?? template.currency, Number(history.old_default_unit_price ?? 0))} {"->"} {formatMoney(history.currency ?? template.currency, Number(history.new_default_unit_price ?? 0))}
+                                    {formatShortDate(history.changed_at)} - {actorDisplayName(actorNameById, history.changed_by)} updated source price {formatMoney(history.currency ?? template.currency, Number(history.old_default_unit_price ?? 0))} {"->"} {formatMoney(history.currency ?? template.currency, Number(history.new_default_unit_price ?? 0))}
                                     {priceListUpdate ? ` - ${priceListUpdate.title}` : ""}
                                   </p>
                                 );
                               })}
+                            </div>
+                          </div>
+                        ) : null}
+                        {templateAuditRows.length ? (
+                          <div className="mt-4 border-t border-zinc-200 pt-3">
+                            <p className="text-xs font-semibold uppercase text-zinc-500">Recent activity</p>
+                            <div className="mt-2 grid gap-1.5">
+                              {templateAuditRows.slice(0, 4).map((entry) => (
+                                <p key={entry.id} className="text-xs leading-5 text-zinc-500">
+                                  {formatShortDate(entry.created_at)} - {actorDisplayName(actorNameById, entry.created_by, entry.metadata)} - {entry.title}
+                                </p>
+                              ))}
                             </div>
                           </div>
                         ) : null}
@@ -2664,7 +2830,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
                                   return (
                                     <p key={history.id} className="text-xs leading-5 text-zinc-500">
-                                      {formatShortDate(history.changed_at)} - {sourceLabel}: {history.price_field} - {formatMoney(history.currency ?? template.currency, Number(history.old_price ?? 0))} {"->"} {formatMoney(history.currency ?? template.currency, history.new_price)}
+                                      {formatShortDate(history.changed_at)} - {actorDisplayName(actorNameById, history.changed_by)} updated {sourceLabel} {history.price_field} {formatMoney(history.currency ?? template.currency, Number(history.old_price ?? 0))} {"->"} {formatMoney(history.currency ?? template.currency, history.new_price)}
                                       {priceListUpdate ? ` - ${priceListUpdate.title}` : ""}
                                     </p>
                                   );

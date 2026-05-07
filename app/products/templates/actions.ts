@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSettingsManager } from "@/lib/auth";
+import { createAuditLog } from "@/lib/audit-log";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import { createClient } from "@/lib/supabase/server";
 
@@ -187,6 +188,14 @@ function redirectToTemplates(
   }
 
   redirect(`/products/templates?${query.toString()}`);
+}
+
+function safeTemplateLabel(templateName: string | null | undefined) {
+  return templateName?.trim() || "Product template";
+}
+
+function safeBrandLabel(brandName: string | null | undefined) {
+  return brandName?.trim() || "Brand";
 }
 
 async function duplicateCategoryExists({
@@ -658,7 +667,7 @@ function componentPayload(formData: FormData, userId?: string) {
 }
 
 export async function createProductTemplate(formData: FormData) {
-  const { user } = await requireSettingsManager();
+  const { user, displayName } = await requireSettingsManager();
   const payload = createTemplatePayload(formData, user.id);
 
   if (!payload.brand_id || !payload.template_name) {
@@ -666,19 +675,37 @@ export async function createProductTemplate(formData: FormData) {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.from("product_templates").insert(payload);
+  const { data: template, error } = await supabase
+    .from("product_templates")
+    .insert(payload)
+    .select("id,brand_id,template_name")
+    .single<{ id: string; brand_id: string; template_name: string }>();
 
-  if (error) {
-    console.error("PRODUCT TEMPLATE CREATE ERROR", error.message);
+  if (error || !template) {
+    console.error("PRODUCT TEMPLATE CREATE ERROR", error?.message);
     redirectWithMessage("Product template could not be created.");
   }
+
+  await createAuditLog(supabase, {
+    entityType: "product_template",
+    entityId: template.id,
+    action: "created",
+    title: `${safeTemplateLabel(template.template_name)} created`,
+    description: "Product template created.",
+    metadata: {
+      brandId: template.brand_id,
+      templateName: template.template_name,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   revalidatePath("/products/templates");
   redirectWithMessage("Product template created.");
 }
 
 export async function updateProductTemplate(formData: FormData) {
-  await requireSettingsManager();
+  const { user, displayName } = await requireSettingsManager();
   const id = textValue(formData, "id");
   const payload = templatePayload(formData);
 
@@ -687,6 +714,17 @@ export async function updateProductTemplate(formData: FormData) {
   }
 
   const supabase = await createClient();
+  const { data: currentTemplate, error: currentTemplateError } = await supabase
+    .from("product_templates")
+    .select("id,brand_id,template_name")
+    .eq("id", id)
+    .maybeSingle<{ id: string; brand_id: string; template_name: string }>();
+
+  if (currentTemplateError || !currentTemplate) {
+    console.error("PRODUCT TEMPLATE UPDATE READ ERROR", currentTemplateError?.message);
+    redirectWithMessage("Product template could not be loaded.");
+  }
+
   const { error } = await supabase
     .from("product_templates")
     .update(payload)
@@ -697,12 +735,26 @@ export async function updateProductTemplate(formData: FormData) {
     redirectWithMessage("Product template could not be updated.");
   }
 
+  await createAuditLog(supabase, {
+    entityType: "product_template",
+    entityId: currentTemplate.id,
+    action: "updated",
+    title: `${safeTemplateLabel(payload.template_name)} updated`,
+    description: "Product template details updated.",
+    metadata: {
+      brandId: payload.brand_id,
+      templateName: payload.template_name,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
   revalidatePath("/products/templates");
   redirectWithMessage("Product template updated.");
 }
 
 export async function updateProductTemplateDefaultPrice(formData: FormData) {
-  const { user } = await requireSettingsManager();
+  const { user, displayName } = await requireSettingsManager();
   const productTemplateId = textValue(formData, "product_template_id");
   const newDefaultUnitPrice = numberValue(formData, "new_default_unit_price", Number.NaN);
   const currency = normalizeCurrency(textValue(formData, "currency") || defaultCurrency);
@@ -778,12 +830,33 @@ export async function updateProductTemplateDefaultPrice(formData: FormData) {
     redirectWithMessage("Product template source price could not be updated.");
   }
 
+  await createAuditLog(supabase, {
+    entityType: "product_template_price",
+    entityId: template.id,
+    parentEntityType: "product_template",
+    parentEntityId: template.id,
+    action: "price_updated",
+    title: "Source price updated",
+    description: `${normalizeCurrency(currency)} ${template.default_unit_price} -> ${newDefaultUnitPrice}`,
+    metadata: {
+      brandId: template.brand_id,
+      brandPriceListUpdateId,
+      currency: normalizeCurrency(currency),
+      effectiveFrom,
+      newDefaultUnitPrice,
+      note,
+      oldDefaultUnitPrice: template.default_unit_price,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
   revalidatePath("/products/templates");
   redirectWithMessage("Product template source price updated.");
 }
 
 export async function updateProductTemplateDetailPrice(formData: FormData) {
-  const { user } = await requireSettingsManager();
+  const { user, displayName } = await requireSettingsManager();
   const productTemplateId = textValue(formData, "product_template_id");
   const sourceTable = detailPriceSourceValue(textValue(formData, "source_table"));
   const sourceRecordId = textValue(formData, "source_record_id");
@@ -931,6 +1004,30 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
       redirectWithMessage("Template detail source price could not be updated.");
     }
   }
+
+  await createAuditLog(supabase, {
+    entityType: "product_template_detail_price",
+    entityId: componentSourceId ?? sourceRecordId,
+    parentEntityType: "product_template",
+    parentEntityId: template.id,
+    action: "detail_price_updated",
+    title: "Variant price updated",
+    description: `${normalizeCurrency(normalizedCurrency ?? defaultCurrency)} ${oldPrice ?? 0} -> ${newPrice}`,
+    metadata: {
+      brandId: template.brand_id,
+      brandPriceListUpdateId,
+      currency: normalizeCurrency(normalizedCurrency ?? defaultCurrency),
+      effectiveFrom,
+      newPrice,
+      note,
+      oldPrice,
+      priceField,
+      sourceRecordId,
+      sourceTable,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   revalidatePath("/products/templates");
   redirectWithMessage("Detail source price updated.");
@@ -1577,7 +1674,7 @@ export async function deactivateProductComponentGroup(formData: FormData) {
 }
 
 export async function markProductTemplatePriceChecked(templateId: string, note?: string | null) {
-  const { user } = await requireSettingsManager();
+  const { user, displayName } = await requireSettingsManager();
 
   if (!templateId) {
     redirectWithMessage("Template id is required.");
@@ -1589,6 +1686,17 @@ export async function markProductTemplatePriceChecked(templateId: string, note?:
     ...(note?.trim() ? { price_check_note: note.trim() } : {}),
   };
   const supabase = await createClient();
+  const { data: template, error: templateError } = await supabase
+    .from("product_templates")
+    .select("id,template_name,brand_id")
+    .eq("id", templateId)
+    .maybeSingle<{ id: string; template_name: string; brand_id: string }>();
+
+  if (templateError || !template) {
+    console.error("TEMPLATE PRICE CHECK READ ERROR", templateError?.message);
+    redirectWithMessage("Template price check could not be saved.");
+  }
+
   const { error } = await supabase
     .from("product_templates")
     .update(payload)
@@ -1598,6 +1706,20 @@ export async function markProductTemplatePriceChecked(templateId: string, note?:
     console.error("TEMPLATE PRICE CHECK ERROR", error.message);
     redirectWithMessage("Template price check could not be saved.");
   }
+
+  await createAuditLog(supabase, {
+    entityType: "product_template",
+    entityId: template.id,
+    action: "price_checked",
+    title: `${safeTemplateLabel(template.template_name)} price checked`,
+    description: "Product template marked as price checked.",
+    metadata: {
+      brandId: template.brand_id,
+      note: note?.trim() || null,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   revalidatePath("/products/templates");
   redirectWithMessage("Template price check saved.");
@@ -1611,7 +1733,7 @@ export async function markTemplatePriceChecked(formData: FormData) {
 }
 
 export async function markVisibleProductTemplatesPriceChecked(formData: FormData) {
-  const { user } = await requireSettingsManager();
+  const { user, displayName } = await requireSettingsManager();
   const ids = Array.from(new Set(
     formData
       .getAll("template_id[]")
@@ -1624,6 +1746,17 @@ export async function markVisibleProductTemplatesPriceChecked(formData: FormData
   }
 
   const supabase = await createClient();
+  const { data: templates, error: templatesError } = await supabase
+    .from("product_templates")
+    .select("id,brand_id,template_name")
+    .in("id", ids)
+    .returns<Array<{ id: string; brand_id: string; template_name: string }>>();
+
+  if (templatesError) {
+    console.error("VISIBLE TEMPLATE PRICE CHECK READ ERROR", templatesError.message);
+    redirectWithMessage("Visible template price checks could not be saved.");
+  }
+
   const { error } = await supabase
     .from("product_templates")
     .update({
@@ -1637,12 +1770,28 @@ export async function markVisibleProductTemplatesPriceChecked(formData: FormData
     redirectWithMessage("Visible template price checks could not be saved.");
   }
 
+  for (const template of templates ?? []) {
+    await createAuditLog(supabase, {
+      entityType: "product_template",
+      entityId: template.id,
+      action: "price_checked",
+      title: `${safeTemplateLabel(template.template_name)} price checked`,
+      description: "Product template marked as price checked from the current filtered list.",
+      metadata: {
+        brandId: template.brand_id,
+        source: "visible_templates_bulk_check",
+      },
+      actorName: displayName,
+      createdBy: user.id,
+    });
+  }
+
   revalidatePath("/products/templates");
   redirectWithMessage("Visible templates marked as price checked.");
 }
 
 export async function markBrandPriceListChecked(brandId: string, note?: string | null) {
-  const { user } = await requireSettingsManager();
+  const { user, displayName } = await requireSettingsManager();
 
   if (!brandId) {
     redirectWithMessage("Brand id is required.");
@@ -1654,6 +1803,17 @@ export async function markBrandPriceListChecked(brandId: string, note?: string |
     ...(note?.trim() ? { price_list_check_note: note.trim() } : {}),
   };
   const supabase = await createClient();
+  const { data: brand, error: brandReadError } = await supabase
+    .from("brands")
+    .select("id,name")
+    .eq("id", brandId)
+    .maybeSingle<{ id: string; name: string }>();
+
+  if (brandReadError || !brand) {
+    console.error("BRAND PRICE LIST CHECK READ ERROR", brandReadError?.message);
+    redirectWithMessage("Brand price list check could not be saved.");
+  }
+
   const { error } = await supabase
     .from("brands")
     .update(payload)
@@ -1663,6 +1823,19 @@ export async function markBrandPriceListChecked(brandId: string, note?: string |
     console.error("BRAND PRICE LIST CHECK ERROR", error.message);
     redirectWithMessage("Brand price list check could not be saved.");
   }
+
+  await createAuditLog(supabase, {
+    entityType: "brand",
+    entityId: brand.id,
+    action: "price_checked",
+    title: `${safeBrandLabel(brand.name)} price list checked`,
+    description: "Brand price list marked as checked.",
+    metadata: {
+      note: note?.trim() || null,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   revalidatePath("/products/templates");
   redirectWithMessage("Brand price list check saved.");
@@ -1676,7 +1849,7 @@ export async function markBrandPriceListCheckedAction(formData: FormData) {
 }
 
 export async function markBrandTemplatesPriceChecked(formData: FormData) {
-  const { user } = await requireSettingsManager();
+  const { user, displayName } = await requireSettingsManager();
   const brandId = textValue(formData, "brand_id");
 
   if (!brandId) {
@@ -1684,6 +1857,23 @@ export async function markBrandTemplatesPriceChecked(formData: FormData) {
   }
 
   const supabase = await createClient();
+  const { data: brand, error: brandError } = await supabase
+    .from("brands")
+    .select("id,name")
+    .eq("id", brandId)
+    .maybeSingle<{ id: string; name: string }>();
+  const { data: templates, error: templatesError } = await supabase
+    .from("product_templates")
+    .select("id,template_name")
+    .eq("brand_id", brandId)
+    .eq("is_active", true)
+    .returns<Array<{ id: string; template_name: string }>>();
+
+  if (brandError || !brand || templatesError) {
+    console.error("BRAND TEMPLATE PRICE CHECK READ ERROR", brandError?.message ?? templatesError?.message);
+    redirectWithMessage("Brand templates could not be marked as checked.");
+  }
+
   const { error } = await supabase
     .from("product_templates")
     .update({
@@ -1698,12 +1888,42 @@ export async function markBrandTemplatesPriceChecked(formData: FormData) {
     redirectWithMessage("Brand templates could not be marked as checked.");
   }
 
+  await createAuditLog(supabase, {
+    entityType: "brand",
+    entityId: brand.id,
+    action: "price_checked",
+    title: `${safeBrandLabel(brand.name)} templates marked checked`,
+    description: "All active brand templates were marked as price checked.",
+    metadata: {
+      templateCount: (templates ?? []).length,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  for (const template of templates ?? []) {
+    await createAuditLog(supabase, {
+      entityType: "product_template",
+      entityId: template.id,
+      parentEntityType: "brand",
+      parentEntityId: brand.id,
+      action: "price_checked",
+      title: `${safeTemplateLabel(template.template_name)} price checked`,
+      description: "Product template marked as price checked from brand bulk action.",
+      metadata: {
+        source: "brand_templates_bulk_check",
+      },
+      actorName: displayName,
+      createdBy: user.id,
+    });
+  }
+
   revalidatePath("/products/templates");
   redirectWithMessage("Brand templates marked as price checked.");
 }
 
 export async function createBrandPriceListUpdate(formData: FormData) {
-  const { user } = await requireSettingsManager();
+  const { user, displayName } = await requireSettingsManager();
   const brandId = textValue(formData, "brand_id");
   const title = textValue(formData, "title");
 
@@ -1724,7 +1944,7 @@ export async function createBrandPriceListUpdate(formData: FormData) {
     redirectWithMessage("Brand could not be loaded.");
   }
 
-  const { error } = await supabase.from("brand_price_list_updates").insert({
+  const updatePayload = {
     brand_id: brandId,
     title,
     reference_no: optionalTextValue(formData, "reference_no"),
@@ -1735,19 +1955,39 @@ export async function createBrandPriceListUpdate(formData: FormData) {
     notes: optionalTextValue(formData, "notes"),
     attachment_url: optionalTextValue(formData, "attachment_url"),
     created_by: user.id,
-  });
+  };
+  const { data: createdUpdate, error } = await supabase
+    .from("brand_price_list_updates")
+    .insert(updatePayload)
+    .select("id,brand_id,title,status")
+    .single<{ id: string; brand_id: string; title: string; status: string }>();
 
-  if (error) {
-    console.error("BRAND PRICE LIST UPDATE CREATE ERROR", error.message);
+  if (error || !createdUpdate) {
+    console.error("BRAND PRICE LIST UPDATE CREATE ERROR", error?.message);
     redirectWithMessage("Brand price list update could not be saved.");
   }
+
+  await createAuditLog(supabase, {
+    entityType: "brand_price_list_update",
+    entityId: createdUpdate.id,
+    parentEntityType: "brand",
+    parentEntityId: createdUpdate.brand_id,
+    action: "created",
+    title: `${createdUpdate.title} added`,
+    description: "Brand price list update added.",
+    metadata: {
+      status: createdUpdate.status,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   revalidatePath("/products/templates");
   redirectWithMessage("Brand price list update saved.");
 }
 
 export async function updateBrandPriceListUpdate(formData: FormData) {
-  await requireSettingsManager();
+  const { user, displayName } = await requireSettingsManager();
   const id = textValue(formData, "id");
   const title = textValue(formData, "title");
 
@@ -1756,6 +1996,17 @@ export async function updateBrandPriceListUpdate(formData: FormData) {
   }
 
   const supabase = await createClient();
+  const { data: currentUpdate, error: currentUpdateError } = await supabase
+    .from("brand_price_list_updates")
+    .select("id,brand_id,title,status")
+    .eq("id", id)
+    .maybeSingle<{ id: string; brand_id: string; title: string; status: string }>();
+
+  if (currentUpdateError || !currentUpdate) {
+    console.error("BRAND PRICE LIST UPDATE READ ERROR", currentUpdateError?.message);
+    redirectWithMessage("Brand price list update could not be updated.");
+  }
+
   const { error } = await supabase
     .from("brand_price_list_updates")
     .update({
@@ -1775,12 +2026,28 @@ export async function updateBrandPriceListUpdate(formData: FormData) {
     redirectWithMessage("Brand price list update could not be updated.");
   }
 
+  await createAuditLog(supabase, {
+    entityType: "brand_price_list_update",
+    entityId: currentUpdate.id,
+    parentEntityType: "brand",
+    parentEntityId: currentUpdate.brand_id,
+    action: "updated",
+    title: `${title} updated`,
+    description: "Brand price list update edited.",
+    metadata: {
+      previousStatus: currentUpdate.status,
+      title,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
   revalidatePath("/products/templates");
   redirectWithMessage("Brand price list update updated.");
 }
 
 export async function archiveBrandPriceListUpdate(formData: FormData) {
-  await requireSettingsManager();
+  const { user, displayName } = await requireSettingsManager();
   const id = textValue(formData, "id");
 
   if (!id) {
@@ -1788,6 +2055,17 @@ export async function archiveBrandPriceListUpdate(formData: FormData) {
   }
 
   const supabase = await createClient();
+  const { data: currentUpdate, error: currentUpdateError } = await supabase
+    .from("brand_price_list_updates")
+    .select("id,brand_id,title")
+    .eq("id", id)
+    .maybeSingle<{ id: string; brand_id: string; title: string }>();
+
+  if (currentUpdateError || !currentUpdate) {
+    console.error("BRAND PRICE LIST UPDATE ARCHIVE READ ERROR", currentUpdateError?.message);
+    redirectWithMessage("Brand price list update could not be archived.");
+  }
+
   const { error } = await supabase
     .from("brand_price_list_updates")
     .update({ status: "archived" })
@@ -1797,6 +2075,18 @@ export async function archiveBrandPriceListUpdate(formData: FormData) {
     console.error("BRAND PRICE LIST UPDATE ARCHIVE ERROR", error.message);
     redirectWithMessage("Brand price list update could not be archived.");
   }
+
+  await createAuditLog(supabase, {
+    entityType: "brand_price_list_update",
+    entityId: currentUpdate.id,
+    parentEntityType: "brand",
+    parentEntityId: currentUpdate.brand_id,
+    action: "archived",
+    title: `${currentUpdate.title} archived`,
+    description: "Brand price list update archived.",
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   revalidatePath("/products/templates");
   redirectWithMessage("Brand price list update archived.");

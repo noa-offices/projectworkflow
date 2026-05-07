@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireActiveUser, requireRecordsManager } from "@/lib/auth";
+import { createAuditLog } from "@/lib/audit-log";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import { quotationMoneyValue } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
@@ -158,6 +159,14 @@ function allowedText(formData: FormData, name: string, allowed: Set<string>, fal
   const value = textValue(formData, name);
 
   return allowed.has(value) ? value : fallback;
+}
+
+function quotationLabel(title: string | null | undefined, quotationNo?: string | null) {
+  return quotationNo?.trim() || title?.trim() || "Quotation";
+}
+
+function quotationItemAuditLabel(itemName: string | null | undefined) {
+  return itemName?.trim() || "Quotation row";
 }
 
 type CellLayoutPayload = {
@@ -997,6 +1006,7 @@ type QuotationItemPriceState = {
   id: string;
   currency: string;
   discount_value: number;
+  item_name_snapshot?: string | null;
   net_price: number;
   net_total: number;
   quotation_id: string;
@@ -1030,6 +1040,7 @@ function sourceReferenceMetadata(sourceData: unknown) {
 async function insertQuotationItemPriceHistory({
   changeType,
   changedBy,
+  actorName,
   current,
   newValues,
   note,
@@ -1037,6 +1048,7 @@ async function insertQuotationItemPriceHistory({
 }: {
   changeType: "manual" | "use_current_source_price" | "revision_adjustment" | "other";
   changedBy: string;
+  actorName?: string | null;
   current: QuotationItemPriceState;
   newValues: Pick<QuotationItemPriceState, "currency" | "discount_value" | "net_price" | "net_total" | "unit_price">;
   note: string | null;
@@ -1070,7 +1082,47 @@ async function insertQuotationItemPriceHistory({
 
   if (error) {
     console.error("QUOTATION ITEM PRICE HISTORY INSERT ERROR", error.message);
+    return;
   }
+
+  const oldCurrency = normalizeCurrency(current.currency);
+  const newCurrency = normalizeCurrency(newValues.currency);
+  const action = changeType === "use_current_source_price"
+    ? "row_price_updated"
+    : changeType === "revision_adjustment"
+      ? "revision_adjustment"
+      : "row_price_updated";
+  const title = changeType === "use_current_source_price"
+    ? "Use current source price"
+    : "Row price updated";
+
+  await createAuditLog(supabase, {
+    entityType: "quotation_item",
+    entityId: current.id,
+    parentEntityType: "quotation",
+    parentEntityId: current.quotation_id,
+    action,
+    title,
+    description: `${quotationItemAuditLabel(current.item_name_snapshot)} - ${oldCurrency} ${quotationMoneyValue(current.unit_price)} -> ${newCurrency} ${quotationMoneyValue(newValues.unit_price)}`,
+    metadata: {
+      changeType,
+      newCurrency,
+      newDiscountValue: quotationMoneyValue(newValues.discount_value),
+      newNetPrice: quotationMoneyValue(newValues.net_price),
+      newNetTotal: quotationMoneyValue(newValues.net_total),
+      newUnitPrice: quotationMoneyValue(newValues.unit_price),
+      note,
+      oldCurrency,
+      oldDiscountValue: quotationMoneyValue(current.discount_value),
+      oldNetPrice: quotationMoneyValue(current.net_price),
+      oldNetTotal: quotationMoneyValue(current.net_total),
+      oldUnitPrice: quotationMoneyValue(current.unit_price),
+      sourcePriceLabel,
+      sourcePriceType,
+    },
+    actorName,
+    createdBy: changedBy,
+  });
 }
 
 const quotationCopySelect =
@@ -1305,7 +1357,7 @@ export async function recalculateQuotationTotals(quotationId: string) {
 }
 
 export async function createQuotation(formData: FormData) {
-  const { user } = await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const payload = quotationPayload(formData, user.id);
   const redirectPath = returnPath(formData, "/quotations");
 
@@ -1321,13 +1373,29 @@ export async function createQuotation(formData: FormData) {
   const { data, error } = await supabase
     .from("quotations")
     .insert(payload)
-    .select("id")
-    .single<{ id: string }>();
+    .select("id,title,quotation_no")
+    .single<{ id: string; quotation_no: string | null; title: string }>();
 
-  if (error) {
-    console.error("QUOTATION CREATE ERROR", error.message);
+  if (error || !data) {
+    console.error("QUOTATION CREATE ERROR", error?.message);
     redirectWithMessage(redirectPath, "Quotation could not be created.");
   }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation",
+    entityId: data.id,
+    action: "quotation_created",
+    title: "Quotation created",
+    description: quotationLabel(data.title, data.quotation_no),
+    metadata: {
+      clientId: payload.client_id,
+      projectId: payload.project_id,
+      quotationLabel: quotationLabel(data.title, data.quotation_no),
+      status: payload.status,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   revalidatePath("/quotations");
   revalidatePath(redirectPath);
@@ -1365,7 +1433,7 @@ async function copyQuotation(
   mode: QuotationCopyMode,
   message: string,
 ) {
-  const { user } = await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const quotationId = actionQuotationId(formData);
   const redirectPath = returnPath(formData, "/quotations");
 
@@ -1570,6 +1638,28 @@ async function copyQuotation(
   }
 
   await recalculateQuotationTotals(newQuotation.id);
+  await createAuditLog(supabase, {
+    entityType: "quotation",
+    entityId: newQuotation.id,
+    action: mode === "revision" ? "revision_created" : "quotation_created",
+    title: mode === "revision"
+      ? "Revision created"
+      : "Quotation created",
+    description: mode === "revision"
+      ? quotationLabel(title, quotationNo)
+      : mode === "option"
+        ? `${quotationLabel(title, quotationNo)} option created`
+        : `${quotationLabel(title, quotationNo)} duplicated`,
+    metadata: {
+      mode,
+      quotationLabel: quotationLabel(title, quotationNo),
+      sourceQuotationId: source.id,
+      sourceQuotationNo: source.quotation_no,
+      sourceTitle: source.title,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
   revalidatePath("/quotations");
   revalidatePath(`/quotations/${newQuotation.id}`);
   revalidatePath(redirectPath);
@@ -1762,9 +1852,10 @@ export async function permanentlyDeleteQuotation(formData: FormData) {
 }
 
 export async function updateQuotation(formData: FormData) {
-  await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const payload = quotationPayload(formData);
+  const auditScope = textValue(formData, "audit_scope");
 
   if (!id || !payload.client_id || !payload.project_id || !payload.title) {
     redirectWithMessage("/quotations", "Quotation, client, project, and title are required.");
@@ -1775,12 +1866,38 @@ export async function updateQuotation(formData: FormData) {
   }
 
   const supabase = await createSupabaseClient();
+  const { data: currentQuotation, error: currentQuotationError } = await supabase
+    .from("quotations")
+    .select("id,title,quotation_no")
+    .eq("id", id)
+    .maybeSingle<{ id: string; quotation_no: string | null; title: string }>();
+
+  if (currentQuotationError || !currentQuotation) {
+    console.error("QUOTATION UPDATE READ ERROR", currentQuotationError?.message);
+    redirectWithMessage(`/quotations/${id}`, "Quotation could not be updated.");
+  }
+
   const { error } = await supabase.from("quotations").update(payload).eq("id", id);
 
   if (error) {
     console.error("QUOTATION UPDATE ERROR", error.message);
     redirectWithMessage(`/quotations/${id}`, "Quotation could not be updated.");
   }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation",
+    entityId: currentQuotation.id,
+    action: auditScope === "terms" ? "commercial_terms_updated" : "quotation_updated",
+    title: auditScope === "terms" ? "Commercial terms updated" : "Quote details updated",
+    description: quotationLabel(payload.title, payload.quotation_no),
+    metadata: {
+      layoutMode: payload.layout_mode,
+      quotationLabel: quotationLabel(payload.title, payload.quotation_no),
+      status: payload.status,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   await recalculateQuotationTotals(id);
   revalidatePath("/quotations");
@@ -1789,7 +1906,7 @@ export async function updateQuotation(formData: FormData) {
 }
 
 export async function updateQuotationExtraDiscount(formData: FormData) {
-  await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const redirectPath = returnPath(formData, `/quotations/${id}`);
   const overallDiscountType = allowedText(
@@ -1805,6 +1922,17 @@ export async function updateQuotationExtraDiscount(formData: FormData) {
   }
 
   const supabase = await createSupabaseClient();
+  const { data: currentQuotation, error: currentQuotationError } = await supabase
+    .from("quotations")
+    .select("id,title,quotation_no")
+    .eq("id", id)
+    .maybeSingle<{ id: string; quotation_no: string | null; title: string }>();
+
+  if (currentQuotationError || !currentQuotation) {
+    console.error("QUOTATION EXTRA DISCOUNT READ ERROR", currentQuotationError?.message);
+    redirectWithMessage(redirectPath, "Extra discount could not be updated.");
+  }
+
   const { error } = await supabase
     .from("quotations")
     .update({
@@ -1817,6 +1945,21 @@ export async function updateQuotationExtraDiscount(formData: FormData) {
     console.error("QUOTATION EXTRA DISCOUNT UPDATE ERROR", error.message);
     redirectWithMessage(redirectPath, "Extra discount could not be updated.");
   }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation",
+    entityId: currentQuotation.id,
+    action: "extra_discount_updated",
+    title: "Extra discount updated",
+    description: quotationLabel(currentQuotation.title, currentQuotation.quotation_no),
+    metadata: {
+      overallDiscountType,
+      overallDiscountValue,
+      quotationLabel: quotationLabel(currentQuotation.title, currentQuotation.quotation_no),
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   await recalculateQuotationTotals(id);
   revalidatePath("/quotations");
@@ -2181,7 +2324,7 @@ export async function deactivateQuotationSection(formData: FormData) {
 }
 
 export async function createQuotationItem(formData: FormData) {
-  const { user } = await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const payload = itemPayload(formData, user.id);
   const redirectPath = returnPath(formData, `/quotations/${payload.quotation_id}`);
 
@@ -2199,12 +2342,31 @@ export async function createQuotationItem(formData: FormData) {
   }
 
   const supabase = await createSupabaseClient();
-  const { error } = await supabase.from("quotation_items").insert(payload);
+  const { data: createdItem, error } = await supabase
+    .from("quotation_items")
+    .insert(payload)
+    .select("id,item_name_snapshot")
+    .single<{ id: string; item_name_snapshot: string | null }>();
 
-  if (error) {
+  if (error || !createdItem) {
     console.error("QUOTATION ITEM CREATE ERROR", error.message);
     redirectWithMessage(redirectPath, "Line item could not be created.");
   }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation_item",
+    entityId: createdItem.id,
+    parentEntityType: "quotation",
+    parentEntityId: payload.quotation_id,
+    action: "quotation_item_added",
+    title: "Product added to quotation",
+    description: quotationItemAuditLabel(createdItem.item_name_snapshot),
+    metadata: {
+      itemName: createdItem.item_name_snapshot,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   await recalculateQuotationTotals(payload.quotation_id);
   revalidatePath(`/quotations/${payload.quotation_id}`);
@@ -2213,7 +2375,7 @@ export async function createQuotationItem(formData: FormData) {
 }
 
 export async function addProductTemplateToQuotation(formData: FormData) {
-  const { user } = await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const quotationId = textValue(formData, "quotation_id");
   const sectionId = textValue(formData, "section_id");
   const templateId = textValue(formData, "template_id");
@@ -2850,12 +3012,32 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     created_by: user.id,
   };
 
-  const { error } = await supabase.from("quotation_items").insert(payload);
+  const { data: createdItem, error } = await supabase
+    .from("quotation_items")
+    .insert(payload)
+    .select("id,item_name_snapshot")
+    .single<{ id: string; item_name_snapshot: string | null }>();
 
-  if (error) {
-    console.error("PRODUCT TEMPLATE ADD ITEM ERROR", error.message);
+  if (error || !createdItem) {
+    console.error("PRODUCT TEMPLATE ADD ITEM ERROR", error?.message);
     redirectWithMessage(redirectPath, "Product could not be added to quotation.");
   }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation_item",
+    entityId: createdItem.id,
+    parentEntityType: "quotation",
+    parentEntityId: quotationId,
+    action: "quotation_item_added",
+    title: "Product added to quotation",
+    description: quotationItemAuditLabel(createdItem.item_name_snapshot),
+    metadata: {
+      itemName: createdItem.item_name_snapshot,
+      sourceTemplateId: template.id,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   await recalculateQuotationTotals(quotationId);
   revalidatePath(`/quotations/${quotationId}`);
@@ -2864,7 +3046,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
 }
 
 export async function updateQuotationItem(formData: FormData) {
-  const { user } = await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const payload = itemPayload(formData);
   const redirectPath = returnPath(formData, `/quotations/${payload.quotation_id}`);
@@ -2885,7 +3067,7 @@ export async function updateQuotationItem(formData: FormData) {
   const supabase = await createSupabaseClient();
   const { data: currentItem, error: readError } = await supabase
     .from("quotation_items")
-    .select("id,quotation_id,source_template_id,source_component_data,unit_price,currency,discount_value,net_price,net_total")
+    .select("id,quotation_id,source_template_id,source_component_data,item_name_snapshot,unit_price,currency,discount_value,net_price,net_total")
     .eq("id", id)
     .eq("quotation_id", payload.quotation_id)
     .single<QuotationItemPriceState>();
@@ -2912,6 +3094,7 @@ export async function updateQuotationItem(formData: FormData) {
   await insertQuotationItemPriceHistory({
     changeType: "manual",
     changedBy: user.id,
+    actorName: displayName,
     current: currentItem,
     newValues: nextPriceValues,
     note: "Updated row price manually.",
@@ -2925,7 +3108,7 @@ export async function updateQuotationItem(formData: FormData) {
 }
 
 export async function updateQuotationItemInline(formData: FormData) {
-  const { user } = await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}`);
@@ -2937,13 +3120,14 @@ export async function updateQuotationItemInline(formData: FormData) {
   const supabase = await createSupabaseClient();
   const { data: currentItem, error: readError } = await supabase
     .from("quotation_items")
-    .select("id,quotation_id,source_template_id,source_component_data,qty,unit_price,currency,discount_type,discount_value,net_price,net_total,cell_layout")
+    .select("id,quotation_id,source_template_id,source_component_data,item_name_snapshot,qty,unit_price,currency,discount_type,discount_value,net_price,net_total,cell_layout")
     .eq("id", id)
     .single<{
       id: string;
       quotation_id: string;
       source_template_id: string | null;
       source_component_data: unknown;
+      item_name_snapshot: string | null;
       qty: number;
       unit_price: number;
       currency: string;
@@ -3024,6 +3208,7 @@ export async function updateQuotationItemInline(formData: FormData) {
   await insertQuotationItemPriceHistory({
     changeType: "manual",
     changedBy: user.id,
+    actorName: displayName,
     current: currentItem,
     newValues: nextPriceValues,
     note: "Updated row price manually.",
@@ -3037,7 +3222,7 @@ export async function updateQuotationItemInline(formData: FormData) {
 }
 
 export async function useCurrentSourcePriceForQuotationItem(formData: FormData) {
-  const { user } = await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "quotation_item_id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
@@ -3060,7 +3245,7 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
 
   const { data: item, error: itemError } = await supabase
     .from("quotation_items")
-    .select("id,quotation_id,source_template_id,source_component_data,qty,unit_price,currency,discount_type,discount_value,net_price,net_total,is_active")
+    .select("id,quotation_id,source_template_id,source_component_data,item_name_snapshot,qty,unit_price,currency,discount_type,discount_value,net_price,net_total,is_active")
     .eq("id", id)
     .eq("quotation_id", quotationId)
     .maybeSingle<{
@@ -3068,6 +3253,7 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
       quotation_id: string;
       source_template_id: string | null;
       source_component_data: unknown;
+      item_name_snapshot: string | null;
       qty: number;
       unit_price: number;
       currency: string;
@@ -3154,6 +3340,7 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
   await insertQuotationItemPriceHistory({
     changeType: "use_current_source_price",
     changedBy: user.id,
+    actorName: displayName,
     current: item,
     newValues: nextPriceValues,
     note: "Updated row from current source price.",
@@ -3604,7 +3791,7 @@ export async function pasteCopiedQuotationItem(formData: FormData) {
 }
 
 export async function autosaveQuotationItemInline(formData: FormData) {
-  const { user } = await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
 
@@ -3615,7 +3802,7 @@ export async function autosaveQuotationItemInline(formData: FormData) {
   const supabase = await createSupabaseClient();
   const { data: currentItem, error: readError } = await supabase
     .from("quotation_items")
-    .select("id,quotation_id,source_template_id,source_component_data,qty,unit_price,currency,discount_type,discount_value,net_price,net_total,cell_layout")
+    .select("id,quotation_id,source_template_id,source_component_data,item_name_snapshot,qty,unit_price,currency,discount_type,discount_value,net_price,net_total,cell_layout")
     .eq("id", id)
     .eq("quotation_id", quotationId)
     .single<{
@@ -3623,6 +3810,7 @@ export async function autosaveQuotationItemInline(formData: FormData) {
       quotation_id: string;
       source_template_id: string | null;
       source_component_data: unknown;
+      item_name_snapshot: string | null;
       qty: number;
       unit_price: number;
       currency: string;
@@ -3714,6 +3902,7 @@ export async function autosaveQuotationItemInline(formData: FormData) {
   await insertQuotationItemPriceHistory({
     changeType: "manual",
     changedBy: user.id,
+    actorName: displayName,
     current: currentItem,
     newValues: nextPriceValues,
     note: "Updated row price manually.",
@@ -3811,7 +4000,7 @@ export async function moveQuotationItemDown(formData: FormData) {
 }
 
 export async function deactivateQuotationItem(formData: FormData) {
-  await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}`);
@@ -3821,6 +4010,18 @@ export async function deactivateQuotationItem(formData: FormData) {
   }
 
   const supabase = await createSupabaseClient();
+  const { data: currentItem, error: currentItemError } = await supabase
+    .from("quotation_items")
+    .select("id,item_name_snapshot")
+    .eq("id", id)
+    .eq("quotation_id", quotationId)
+    .maybeSingle<{ id: string; item_name_snapshot: string | null }>();
+
+  if (currentItemError || !currentItem) {
+    console.error("QUOTATION ITEM DEACTIVATE READ ERROR", currentItemError?.message);
+    redirectWithMessage(redirectPath, "Line item could not be deactivated.");
+  }
+
   const { error } = await supabase
     .from("quotation_items")
     .update({ is_active: false })
@@ -3830,6 +4031,18 @@ export async function deactivateQuotationItem(formData: FormData) {
     console.error("QUOTATION ITEM DEACTIVATE ERROR", error.message);
     redirectWithMessage(redirectPath, "Line item could not be deactivated.");
   }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation_item",
+    entityId: currentItem.id,
+    parentEntityType: "quotation",
+    parentEntityId: quotationId,
+    action: "deleted",
+    title: "Quotation row removed",
+    description: quotationItemAuditLabel(currentItem.item_name_snapshot),
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   await recalculateQuotationTotals(quotationId);
   revalidatePath(`/quotations/${quotationId}`);

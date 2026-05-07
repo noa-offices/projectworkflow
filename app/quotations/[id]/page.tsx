@@ -7,6 +7,7 @@ import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { profileDisplayName } from "@/lib/user-display";
 import {
   updateQuotation,
   updateQuotationExtraDiscount,
@@ -127,6 +128,30 @@ type QuotationItem = {
 
 type CellLayout = {
   mergeMode?: string;
+};
+
+type AuditActivityEntry = {
+  id: string;
+  entity_type: string;
+  entity_id: string | null;
+  parent_entity_type: string | null;
+  parent_entity_id: string | null;
+  action: string;
+  title: string;
+  description: string | null;
+  metadata: Record<string, unknown> | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+type GroupedActivityEntry = {
+  actorName: string;
+  action: string;
+  count: number;
+  dayKey: string;
+  entries: AuditActivityEntry[];
+  latestAt: string;
+  summary: string;
 };
 
 function Field({
@@ -256,6 +281,122 @@ function money(currency: string, value: number) {
   return formatQuotationMoney(currency, value);
 }
 
+function auditMetadataActorName(metadata: Record<string, unknown> | null | undefined) {
+  const actorName = metadata?.actorName;
+
+  return typeof actorName === "string" && actorName.trim() ? actorName : null;
+}
+
+function activityActorName(actorNameById: Map<string, string>, entry: AuditActivityEntry) {
+  if (entry.created_by) {
+    return actorNameById.get(entry.created_by) ?? auditMetadataActorName(entry.metadata) ?? "Unknown user";
+  }
+
+  return auditMetadataActorName(entry.metadata) ?? "Unknown user";
+}
+
+function activityDayKey(value: string) {
+  return new Date(value).toISOString().slice(0, 10);
+}
+
+function activityDayLabel(value: string) {
+  const date = new Date(value);
+  const today = new Date();
+
+  if (activityDayKey(date.toISOString()) === activityDayKey(today.toISOString())) {
+    return "Today";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+  }).format(date);
+}
+
+function groupedActivitySummary({
+  action,
+  actorName,
+  count,
+}: {
+  action: string;
+  actorName: string;
+  count: number;
+}) {
+  if (action === "row_price_updated" && count > 1) {
+    return `${actorName} updated ${count} row prices`;
+  }
+
+  if (action === "quotation_item_added" && count > 1) {
+    return `${actorName} added ${count} products to the quotation`;
+  }
+
+  if (action === "deleted" && count > 1) {
+    return `${actorName} removed ${count} quotation rows`;
+  }
+
+  return null;
+}
+
+function groupActivityEntries(
+  entries: AuditActivityEntry[],
+  actorNameById: Map<string, string>,
+) {
+  const groups = new Map<string, GroupedActivityEntry>();
+
+  for (const entry of entries) {
+    const actorName = activityActorName(actorNameById, entry);
+    const dayKey = activityDayKey(entry.created_at);
+    const canGroup =
+      entry.action === "row_price_updated" ||
+      entry.action === "quotation_item_added" ||
+      entry.action === "deleted";
+    const groupKey = canGroup
+      ? `${entry.action}:${actorName}:${dayKey}`
+      : `single:${entry.id}`;
+    const existingGroup = groups.get(groupKey);
+
+    if (existingGroup) {
+      existingGroup.count += 1;
+      existingGroup.entries.push(entry);
+      if (new Date(entry.created_at).getTime() > new Date(existingGroup.latestAt).getTime()) {
+        existingGroup.latestAt = entry.created_at;
+      }
+      existingGroup.summary = groupedActivitySummary({
+        action: existingGroup.action,
+        actorName: existingGroup.actorName,
+        count: existingGroup.count,
+      }) ?? `${entry.title} by ${actorName}`;
+      continue;
+    }
+
+    groups.set(groupKey, {
+      actorName,
+      action: entry.action,
+      count: 1,
+      dayKey,
+      entries: [entry],
+      latestAt: entry.created_at,
+      summary: `${entry.title} by ${actorName}`,
+    });
+  }
+
+  return Array.from(groups.values())
+    .sort((left, right) => new Date(right.latestAt).getTime() - new Date(left.latestAt).getTime());
+}
+
+function entriesByDay<T extends { created_at?: string; latestAt?: string }>(
+  entries: T[],
+  getDateValue: (entry: T) => string,
+) {
+  const groups = new Map<string, T[]>();
+
+  for (const entry of entries) {
+    const dayKey = activityDayKey(getDateValue(entry));
+    groups.set(dayKey, [...(groups.get(dayKey) ?? []), entry]);
+  }
+
+  return Array.from(groups.entries()).sort((left, right) => right[0].localeCompare(left[0]));
+}
+
 function isDirectImageUrl(value: string) {
   return /^(https?:|data:|\/)/i.test(value);
 }
@@ -334,6 +475,7 @@ function QuotationTermsForm({ quotation, mode }: { quotation: Quotation; mode: "
       <input type="hidden" name="client_id" value={quotation.client_id} />
       <input type="hidden" name="project_id" value={quotation.project_id} />
       <input type="hidden" name="is_active" value={quotation.is_active ? "on" : ""} />
+      <input type="hidden" name="audit_scope" value={isDetails ? "details" : "terms"} />
       {isDetails ? (
         <>
           <input type="hidden" name="currency" value={quotation.currency} />
@@ -470,8 +612,60 @@ export default async function QuotationDetailPage({
     .order("sort_order", { ascending: true })
     .returns<QuotationItem[]>();
 
+  const { data: quotationEvents, error: quotationEventsError } = await supabase
+    .from("audit_activity_log")
+    .select("id,entity_type,entity_id,parent_entity_type,parent_entity_id,action,title,description,metadata,created_by,created_at")
+    .eq("entity_type", "quotation")
+    .eq("entity_id", id)
+    .order("created_at", { ascending: false })
+    .limit(10)
+    .returns<AuditActivityEntry[]>();
+
+  const { data: quotationChildEvents, error: quotationChildEventsError } = await supabase
+    .from("audit_activity_log")
+    .select("id,entity_type,entity_id,parent_entity_type,parent_entity_id,action,title,description,metadata,created_by,created_at")
+    .eq("parent_entity_type", "quotation")
+    .eq("parent_entity_id", id)
+    .order("created_at", { ascending: false })
+    .limit(20)
+    .returns<AuditActivityEntry[]>();
+
   if (sectionsError) console.error("QUOTATION SECTIONS LIST ERROR", sectionsError.message);
   if (itemsError) console.error("QUOTATION ITEMS LIST ERROR", itemsError.message);
+  if (quotationEventsError) console.error("QUOTATION ACTIVITY LOG ERROR", quotationEventsError.message);
+  if (quotationChildEventsError) console.error("QUOTATION CHILD ACTIVITY LOG ERROR", quotationChildEventsError.message);
+
+  const activityEntries = Array.from(
+    new Map(
+      [...(quotationEvents ?? []), ...(quotationChildEvents ?? [])].map((entry) => [entry.id, entry]),
+    ).values(),
+  )
+    .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())
+    .slice(0, 20);
+  const activityActorIds = Array.from(new Set(
+    activityEntries.map((entry) => entry.created_by).filter((value): value is string => Boolean(value)),
+  ));
+  const activityActorNameById = new Map<string, string>();
+
+  if (activityActorIds.length) {
+    const { data: activityProfiles, error: activityProfilesError } = await supabase
+      .from("profiles")
+      .select("id,display_name,name,full_name,email")
+      .in("id", activityActorIds)
+      .returns<Array<{ id: string; display_name: string | null; name: string | null; full_name: string | null; email: string | null }>>();
+
+    if (activityProfilesError) {
+      console.error("QUOTATION ACTIVITY PROFILES ERROR", activityProfilesError.message);
+    } else {
+      for (const profile of activityProfiles ?? []) {
+        activityActorNameById.set(profile.id, profileDisplayName(profile));
+      }
+    }
+  }
+
+  const groupedActivityEntries = groupActivityEntries(activityEntries, activityActorNameById).slice(0, 5);
+  const groupedActivityByDay = entriesByDay(groupedActivityEntries, (entry) => entry.latestAt);
+  const fullActivityByDay = entriesByDay(activityEntries, (entry) => entry.created_at);
 
   const itemsBySection = new Map<string, QuotationItem[]>();
 
@@ -677,6 +871,73 @@ export default async function QuotationDetailPage({
               </details>
             ) : null}
           </section>
+
+          {canManageRecords ? (
+            <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-zinc-950">Quotation Activity</h2>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    Latest internal quotation history.
+                  </p>
+                </div>
+              </div>
+              {groupedActivityEntries.length ? (
+                <div className="mt-4 space-y-4">
+                  {groupedActivityByDay.map(([dayKey, entries]) => (
+                    <div key={dayKey}>
+                      <p className="text-xs font-semibold uppercase text-zinc-500">
+                        {activityDayLabel(entries[0].latestAt)}
+                      </p>
+                      <ul className="mt-2 space-y-2">
+                        {entries.map((entry) => (
+                          <li key={`${entry.action}-${entry.latestAt}`} className="text-sm text-zinc-700">
+                            <span className="mr-2 text-zinc-400">•</span>
+                            {entry.summary}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                  <details className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
+                    <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
+                      View full activity log
+                    </summary>
+                    <div className="mt-3 space-y-4">
+                      {fullActivityByDay.map(([dayKey, entries]) => (
+                        <div key={dayKey}>
+                          <p className="text-xs font-semibold uppercase text-zinc-500">
+                            {activityDayLabel(entries[0].created_at)}
+                          </p>
+                          <ul className="mt-2 space-y-2">
+                            {entries.map((entry) => (
+                              <li key={entry.id} className="text-sm text-zinc-700">
+                                <span className="mr-2 text-zinc-400">•</span>
+                                <span className="font-medium text-zinc-950">
+                                  {entry.title} by {activityActorName(activityActorNameById, entry)}
+                                </span>
+                                <span className="ml-2 text-xs text-zinc-500">
+                                  {new Intl.DateTimeFormat("en-US", {
+                                    dateStyle: "medium",
+                                    timeStyle: "short",
+                                  }).format(new Date(entry.created_at))}
+                                </span>
+                                {entry.description ? (
+                                  <span className="block pl-4 text-xs text-zinc-500">{entry.description}</span>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-zinc-500">No activity recorded yet.</p>
+              )}
+            </section>
+          ) : null}
 
           <section className="mt-6 space-y-5">
             <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
