@@ -134,6 +134,9 @@ type ProductTemplate = {
   default_unit_price: number;
   is_active: boolean;
   last_price_checked_at: string | null;
+  last_price_checked_by: string | null;
+  price_check_interval_days: number | null;
+  price_check_note: string | null;
   price_notes: string | null;
 };
 
@@ -1131,6 +1134,54 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function priceCheckState(template: ProductTemplate) {
+  const intervalDays = template.price_check_interval_days && template.price_check_interval_days > 0
+    ? template.price_check_interval_days
+    : 90;
+
+  if (!template.last_price_checked_at) {
+    return {
+      detail: "No check recorded",
+      tone: "warning" as const,
+      label: "Price not checked yet",
+    };
+  }
+
+  const checkedAt = new Date(template.last_price_checked_at);
+  const dueAt = checkedAt.getTime() + intervalDays * 24 * 60 * 60 * 1000;
+
+  if (!Number.isFinite(checkedAt.getTime()) || dueAt < Date.now()) {
+    return {
+      detail: `Last checked: ${formatDate(template.last_price_checked_at)}`,
+      tone: "warning" as const,
+      label: "Price check due",
+    };
+  }
+
+  return {
+    detail: `Price checked: ${formatDate(template.last_price_checked_at)}`,
+    tone: "ok" as const,
+    label: "Price checked",
+  };
+}
+
+function PriceCheckStatus({ template }: { template: ProductTemplate }) {
+  const status = priceCheckState(template);
+  const className = status.tone === "ok"
+    ? "inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-900"
+    : "inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900";
+
+  return (
+    <div className="mt-2 grid gap-1">
+      <span className={className}>{status.label}</span>
+      <p className="text-xs text-zinc-500">{status.detail}</p>
+      {template.price_check_note ? (
+        <p className="line-clamp-2 text-xs text-zinc-500">{template.price_check_note}</p>
+      ) : null}
+    </div>
+  );
+}
+
 export default async function TemplatesPage({ searchParams }: TemplatesPageProps) {
   const { user, displayName } = await requireSettingsManager();
   const params = (await searchParams) ?? {};
@@ -1163,7 +1214,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const { data: templates, error: templatesError } = await supabase
     .from("product_templates")
     .select(
-      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price,is_active,last_price_checked_at,price_notes",
+      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price,is_active,last_price_checked_at,last_price_checked_by,price_check_interval_days,price_check_note,price_notes",
     )
     .order("brand_id", { ascending: true })
     .order("template_name", { ascending: true })
@@ -1664,6 +1715,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                               template.default_unit_price,
                             )}
                           </p>
+                          <PriceCheckStatus template={template} />
                         </div>
                         <div className="flex flex-wrap gap-3 md:justify-end">
                           <Link
@@ -1805,11 +1857,10 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         <p className="mt-1 text-lg font-semibold text-zinc-950">
                           {formatMoney(template.currency, template.default_unit_price)}
                         </p>
-                        <p className="mt-1 text-zinc-500">
-                          Price checked: {formatDate(template.last_price_checked_at)}
-                        </p>
+                        <PriceCheckStatus template={template} />
                         <form action={markTemplatePriceChecked} className="mt-3">
                           <input type="hidden" name="id" value={template.id} />
+                          <input type="hidden" name="price_check_note" value="" />
                           <button
                             type="submit"
                             className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"

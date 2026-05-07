@@ -1245,22 +1245,23 @@ export async function deactivateProductComponentGroup(formData: FormData) {
   redirectWithMessage("Template option group deactivated.");
 }
 
-export async function markTemplatePriceChecked(formData: FormData) {
+export async function markProductTemplatePriceChecked(templateId: string, note?: string | null) {
   const { user } = await requireSettingsManager();
-  const id = textValue(formData, "id");
 
-  if (!id) {
+  if (!templateId) {
     redirectWithMessage("Template id is required.");
   }
 
+  const payload = {
+    last_price_checked_at: new Date().toISOString(),
+    last_price_checked_by: user.id,
+    ...(note?.trim() ? { price_check_note: note.trim() } : {}),
+  };
   const supabase = await createClient();
   const { error } = await supabase
     .from("product_templates")
-    .update({
-      last_price_checked_at: new Date().toISOString(),
-      last_price_checked_by: user.id,
-    })
-    .eq("id", id);
+    .update(payload)
+    .eq("id", templateId);
 
   if (error) {
     console.error("TEMPLATE PRICE CHECK ERROR", error.message);
@@ -1269,6 +1270,13 @@ export async function markTemplatePriceChecked(formData: FormData) {
 
   revalidatePath("/products/templates");
   redirectWithMessage("Template price check saved.");
+}
+
+export async function markTemplatePriceChecked(formData: FormData) {
+  await markProductTemplatePriceChecked(
+    textValue(formData, "id"),
+    optionalTextValue(formData, "price_check_note"),
+  );
 }
 
 export async function markComponentPriceChecked(formData: FormData) {
