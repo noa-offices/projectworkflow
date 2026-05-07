@@ -164,6 +164,22 @@ type QuotationItem = {
   created_at?: string;
 };
 
+type QuotationItemPriceHistoryEntry = {
+  id: string;
+  quotation_item_id: string;
+  change_type: string;
+  old_unit_price: number | null;
+  new_unit_price: number;
+  old_currency: string | null;
+  new_currency: string | null;
+  note: string | null;
+  source_price_type: string | null;
+  source_price_label: string | null;
+  changed_by: string | null;
+  changed_at: string;
+  changed_by_name?: string | null;
+};
+
 type FinishSelection = {
   id?: string;
   source_type?: string;
@@ -999,6 +1015,57 @@ function SourcePriceWarning({
   );
 }
 
+function historyChangeTypeLabel(changeType: string) {
+  const labels: Record<string, string> = {
+    manual: "Manual price update",
+    other: "Price update",
+    revision_adjustment: "Revision adjustment",
+    use_current_source_price: "Use current source price",
+  };
+
+  return labels[changeType] ?? changeType.replaceAll("_", " ");
+}
+
+function PriceChangeHistory({
+  history,
+}: {
+  history: QuotationItemPriceHistoryEntry[];
+}) {
+  return (
+    <fieldset className="border border-zinc-300 bg-zinc-50 p-3">
+      <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Price Change History</legend>
+      {history.length ? (
+        <div className="grid gap-2">
+          {history.slice(0, 5).map((entry) => (
+            <div key={entry.id} className="border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-800">
+              <p className="font-semibold text-zinc-900">
+                {new Intl.DateTimeFormat("en-US", {
+                  dateStyle: "medium",
+                }).format(new Date(entry.changed_at))}{" "}
+                - {historyChangeTypeLabel(entry.change_type)}
+              </p>
+              <p className="mt-1 text-zinc-700">
+                {entry.old_unit_price !== null
+                  ? formatQuotationMoney(
+                      normalizeCurrency(entry.old_currency ?? entry.new_currency ?? defaultCurrency),
+                      entry.old_unit_price,
+                    )
+                  : "-"}{" "}
+                -&gt; {formatQuotationMoney(normalizeCurrency(entry.new_currency ?? entry.old_currency ?? defaultCurrency), entry.new_unit_price)}
+              </p>
+              <p className="mt-1 text-zinc-500">
+                By: {entry.changed_by_name || "Unknown user"}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-zinc-500">No price changes recorded for this row.</p>
+      )}
+    </fieldset>
+  );
+}
+
 function isSectionTotalLine(item: QuotationItem) {
   return (
     !item.is_rate_only &&
@@ -1566,6 +1633,7 @@ function MaterialsFinishesEditor({
 function LineForm({
   brands,
   components,
+  priceHistory,
   quotation,
   returnTo,
   sectionId,
@@ -1579,6 +1647,7 @@ function LineForm({
 }: {
   brands: FinishMaterialBrand[];
   components: ProductLibraryComponent[];
+  priceHistory: QuotationItemPriceHistoryEntry[];
   quotation: Quotation;
   returnTo: string;
   sectionId?: string | null;
@@ -1662,6 +1731,8 @@ function LineForm({
         item={item}
         productTemplates={productTemplates}
       />
+
+      {showInternal ? <PriceChangeHistory history={priceHistory} /> : null}
 
       <fieldset className="border border-zinc-300 bg-white p-3">
         <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Specification</legend>
@@ -1830,6 +1901,7 @@ function RowActionPanel({
             <LineForm
               brands={brands}
               components={components}
+              priceHistory={[]}
               materialGroups={materialGroups}
               materials={materials}
               productTemplates={productTemplates}
@@ -2607,6 +2679,7 @@ function InlineRowActions({
   components,
   materialGroups,
   materials,
+  priceHistoryByItem,
   productTemplates,
   quotation,
   returnTo,
@@ -2620,6 +2693,7 @@ function InlineRowActions({
   components: ProductLibraryComponent[];
   materialGroups: FinishMaterialGroup[];
   materials: FinishMaterial[];
+  priceHistoryByItem: Map<string, QuotationItemPriceHistoryEntry[]>;
   productTemplates: ProductLibraryTemplate[];
   quotation: Quotation;
   returnTo: string;
@@ -2690,6 +2764,7 @@ function InlineRowActions({
                     brands={brands}
                     components={components}
                     item={item}
+                    priceHistory={priceHistoryByItem.get(item.id) ?? []}
                     materialGroups={materialGroups}
                     materials={materials}
                     productTemplates={productTemplates}
@@ -2715,6 +2790,7 @@ function InlineRowEditCell({
   components,
   materialGroups,
   materials,
+  priceHistoryByItem,
   productTemplates,
   quotation,
   returnTo,
@@ -2728,6 +2804,7 @@ function InlineRowEditCell({
   components: ProductLibraryComponent[];
   materialGroups: FinishMaterialGroup[];
   materials: FinishMaterial[];
+  priceHistoryByItem: Map<string, QuotationItemPriceHistoryEntry[]>;
   productTemplates: ProductLibraryTemplate[];
   quotation: Quotation;
   returnTo: string;
@@ -2744,6 +2821,7 @@ function InlineRowEditCell({
         components={components}
         materialGroups={materialGroups}
         materials={materials}
+        priceHistoryByItem={priceHistoryByItem}
         productTemplates={productTemplates}
         quotation={quotation}
         returnTo={returnTo}
@@ -2975,8 +3053,16 @@ export default async function QuotationBuilderPage({
     .order("id", { ascending: true })
     .returns<QuotationItem[]>();
 
+  const { data: priceHistory, error: priceHistoryError } = await supabase
+    .from("quotation_item_price_history")
+    .select("id,quotation_item_id,change_type,old_unit_price,new_unit_price,old_currency,new_currency,note,source_price_type,source_price_label,changed_by,changed_at")
+    .eq("quotation_id", id)
+    .order("changed_at", { ascending: false })
+    .returns<QuotationItemPriceHistoryEntry[]>();
+
   if (sectionsError) console.error("QUOTATION BUILDER SECTIONS ERROR", sectionsError.message);
   if (itemsError) console.error("QUOTATION BUILDER ITEMS ERROR", itemsError.message);
+  if (priceHistoryError) console.error("QUOTATION ITEM PRICE HISTORY ERROR", priceHistoryError.message);
   if (productBrandsError) console.error("PRODUCT SELECTOR BRANDS ERROR", productBrandsError.message);
   if (productCategoriesError) console.error("PRODUCT SELECTOR CATEGORIES ERROR", productCategoriesError.message);
   if (productTemplatesError) console.error("PRODUCT SELECTOR TEMPLATES ERROR", productTemplatesError.message);
@@ -3019,6 +3105,39 @@ export default async function QuotationBuilderPage({
   }
 
   const itemsBySection = new Map<string, QuotationItem[]>();
+  const changedByIds = Array.from(
+    new Set((priceHistory ?? []).map((entry) => entry.changed_by).filter(Boolean)),
+  );
+  const changedByNameById = new Map<string, string>();
+
+  if (changedByIds.length) {
+    const { data: profiles, error: profilesError } = await supabase
+      .from("profiles")
+      .select("id,full_name,email")
+      .in("id", changedByIds)
+      .returns<Array<{ id: string; full_name: string | null; email: string | null }>>();
+
+    if (profilesError) {
+      console.error("QUOTATION ITEM PRICE HISTORY PROFILES ERROR", profilesError.message);
+    } else {
+      for (const profile of profiles ?? []) {
+        changedByNameById.set(profile.id, profile.full_name ?? profile.email ?? "User");
+      }
+    }
+  }
+
+  const priceHistoryByItem = new Map<string, QuotationItemPriceHistoryEntry[]>();
+
+  for (const entry of priceHistory ?? []) {
+    const historyEntry = {
+      ...entry,
+      changed_by_name: entry.changed_by ? changedByNameById.get(entry.changed_by) ?? null : null,
+    };
+    priceHistoryByItem.set(entry.quotation_item_id, [
+      ...(priceHistoryByItem.get(entry.quotation_item_id) ?? []),
+      historyEntry,
+    ]);
+  }
 
   for (const item of items ?? []) {
     const key = item.section_id ?? "unsectioned";
@@ -3510,6 +3629,7 @@ export default async function QuotationBuilderPage({
                                     components={productComponents ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
+                                    priceHistoryByItem={priceHistoryByItem}
                                     productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
                                     returnTo={builderPath}
@@ -3570,6 +3690,7 @@ export default async function QuotationBuilderPage({
                                     components={productComponents ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
+                                    priceHistoryByItem={priceHistoryByItem}
                                     productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
                                     returnTo={builderPath}
@@ -3632,6 +3753,7 @@ export default async function QuotationBuilderPage({
                                     components={productComponents ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
+                                    priceHistoryByItem={priceHistoryByItem}
                                     productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
                                     returnTo={builderPath}
@@ -3659,6 +3781,7 @@ export default async function QuotationBuilderPage({
                                     components={productComponents ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
+                                    priceHistoryByItem={priceHistoryByItem}
                                     productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
                                     returnTo={builderPath}
@@ -3723,6 +3846,7 @@ export default async function QuotationBuilderPage({
                                   components={productComponents ?? []}
                                   materialGroups={materialGroups ?? []}
                                   materials={materials ?? []}
+                                  priceHistoryByItem={priceHistoryByItem}
                                   productTemplates={productTemplatesWithPriceChecks}
                                   quotation={quotation}
                                   returnTo={builderPath}

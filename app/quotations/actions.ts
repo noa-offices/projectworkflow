@@ -993,6 +993,86 @@ function currentSourcePriceFromSnapshot({
   };
 }
 
+type QuotationItemPriceState = {
+  id: string;
+  currency: string;
+  discount_value: number;
+  net_price: number;
+  net_total: number;
+  quotation_id: string;
+  source_component_data?: unknown;
+  source_template_id: string | null;
+  unit_price: number;
+};
+
+function quotationItemPriceChanged(
+  current: QuotationItemPriceState,
+  next: Pick<QuotationItemPriceState, "currency" | "discount_value" | "net_price" | "net_total" | "unit_price">,
+) {
+  return (
+    Math.abs(quotationMoneyValue(current.unit_price) - quotationMoneyValue(next.unit_price)) >= 0.01 ||
+    normalizeCurrency(current.currency) !== normalizeCurrency(next.currency) ||
+    Math.abs(quotationMoneyValue(current.discount_value) - quotationMoneyValue(next.discount_value)) >= 0.01 ||
+    Math.abs(quotationMoneyValue(current.net_price) - quotationMoneyValue(next.net_price)) >= 0.01 ||
+    Math.abs(quotationMoneyValue(current.net_total) - quotationMoneyValue(next.net_total)) >= 0.01
+  );
+}
+
+function sourceReferenceMetadata(sourceData: unknown) {
+  const reference = recordValue(recordValue(sourceData)?.source_price_reference);
+
+  return {
+    sourcePriceLabel: stringRecordValue(reference?.source_price_label),
+    sourcePriceType: stringRecordValue(reference?.source_price_type),
+  };
+}
+
+async function insertQuotationItemPriceHistory({
+  changeType,
+  changedBy,
+  current,
+  newValues,
+  note,
+  supabase,
+}: {
+  changeType: "manual" | "use_current_source_price" | "revision_adjustment" | "other";
+  changedBy: string;
+  current: QuotationItemPriceState;
+  newValues: Pick<QuotationItemPriceState, "currency" | "discount_value" | "net_price" | "net_total" | "unit_price">;
+  note: string | null;
+  supabase: Awaited<ReturnType<typeof createSupabaseClient>>;
+}) {
+  if (!quotationItemPriceChanged(current, newValues)) {
+    return;
+  }
+
+  const { sourcePriceLabel, sourcePriceType } = sourceReferenceMetadata(current.source_component_data);
+  const { error } = await supabase.from("quotation_item_price_history").insert({
+    change_type: changeType,
+    changed_by: changedBy,
+    new_currency: normalizeCurrency(newValues.currency),
+    new_discount_value: quotationMoneyValue(newValues.discount_value),
+    new_net_price: quotationMoneyValue(newValues.net_price),
+    new_net_total: quotationMoneyValue(newValues.net_total),
+    new_unit_price: quotationMoneyValue(newValues.unit_price),
+    note,
+    old_currency: normalizeCurrency(current.currency),
+    old_discount_value: quotationMoneyValue(current.discount_value),
+    old_net_price: quotationMoneyValue(current.net_price),
+    old_net_total: quotationMoneyValue(current.net_total),
+    old_unit_price: quotationMoneyValue(current.unit_price),
+    quotation_id: current.quotation_id,
+    quotation_item_id: current.id,
+    source_price_label: sourcePriceLabel,
+    source_price_type: sourcePriceType,
+    source_template_id: current.source_template_id,
+  });
+
+  if (error) {
+    console.error("QUOTATION ITEM PRICE HISTORY INSERT ERROR", error.message);
+  }
+}
+
 const quotationCopySelect =
   "id,client_id,project_id,quotation_no,revision_no,title,quotation_date,currency,vat_percent,payment_terms,validity,delivery_terms,warranty_terms,notes,layout_mode,layout_settings,overall_discount_type,overall_discount_value";
 
@@ -2784,7 +2864,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
 }
 
 export async function updateQuotationItem(formData: FormData) {
-  await requireRecordsManager();
+  const { user } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const payload = itemPayload(formData);
   const redirectPath = returnPath(formData, `/quotations/${payload.quotation_id}`);
@@ -2803,12 +2883,40 @@ export async function updateQuotationItem(formData: FormData) {
   }
 
   const supabase = await createSupabaseClient();
+  const { data: currentItem, error: readError } = await supabase
+    .from("quotation_items")
+    .select("id,quotation_id,source_template_id,source_component_data,unit_price,currency,discount_value,net_price,net_total")
+    .eq("id", id)
+    .eq("quotation_id", payload.quotation_id)
+    .single<QuotationItemPriceState>();
+
+  if (readError || !currentItem) {
+    console.error("QUOTATION ITEM UPDATE READ ERROR", readError?.message);
+    redirectWithMessage(redirectPath, "Line item could not be loaded.");
+  }
+
+  const nextPriceValues = {
+    currency: payload.currency,
+    discount_value: payload.discount_value,
+    net_price: payload.net_price,
+    net_total: payload.net_total,
+    unit_price: payload.unit_price,
+  };
   const { error } = await supabase.from("quotation_items").update(payload).eq("id", id);
 
   if (error) {
     console.error("QUOTATION ITEM UPDATE ERROR", error.message);
     redirectWithMessage(redirectPath, "Line item could not be updated.");
   }
+
+  await insertQuotationItemPriceHistory({
+    changeType: "manual",
+    changedBy: user.id,
+    current: currentItem,
+    newValues: nextPriceValues,
+    note: "Updated row price manually.",
+    supabase,
+  });
 
   await recalculateQuotationTotals(payload.quotation_id);
   revalidatePath(`/quotations/${payload.quotation_id}`);
@@ -2817,7 +2925,7 @@ export async function updateQuotationItem(formData: FormData) {
 }
 
 export async function updateQuotationItemInline(formData: FormData) {
-  await requireRecordsManager();
+  const { user } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}`);
@@ -2829,13 +2937,20 @@ export async function updateQuotationItemInline(formData: FormData) {
   const supabase = await createSupabaseClient();
   const { data: currentItem, error: readError } = await supabase
     .from("quotation_items")
-    .select("qty,unit_price,discount_type,discount_value,cell_layout")
+    .select("id,quotation_id,source_template_id,source_component_data,qty,unit_price,currency,discount_type,discount_value,net_price,net_total,cell_layout")
     .eq("id", id)
     .single<{
+      id: string;
+      quotation_id: string;
+      source_template_id: string | null;
+      source_component_data: unknown;
       qty: number;
       unit_price: number;
+      currency: string;
       discount_type: string;
       discount_value: number;
+      net_price: number;
+      net_total: number;
       cell_layout: CellLayoutPayload | null;
     }>();
 
@@ -2891,12 +3006,29 @@ export async function updateQuotationItemInline(formData: FormData) {
   payload.net_price = linePricing.netPrice;
   payload.net_total = linePricing.netTotal;
 
+  const nextPriceValues = {
+    currency: currentItem.currency,
+    discount_value: linePricing.discountValue,
+    net_price: linePricing.netPrice,
+    net_total: linePricing.netTotal,
+    unit_price: linePricing.unitPrice,
+  };
+
   const { error } = await supabase.from("quotation_items").update(payload).eq("id", id);
 
   if (error) {
     console.error("QUOTATION ITEM INLINE UPDATE ERROR", error.message);
     redirectWithMessage(redirectPath, "Line item could not be updated.");
   }
+
+  await insertQuotationItemPriceHistory({
+    changeType: "manual",
+    changedBy: user.id,
+    current: currentItem,
+    newValues: nextPriceValues,
+    note: "Updated row price manually.",
+    supabase,
+  });
 
   await recalculateQuotationTotals(quotationId);
   revalidatePath(`/quotations/${quotationId}`);
@@ -2905,7 +3037,7 @@ export async function updateQuotationItemInline(formData: FormData) {
 }
 
 export async function useCurrentSourcePriceForQuotationItem(formData: FormData) {
-  await requireRecordsManager();
+  const { user } = await requireRecordsManager();
   const id = textValue(formData, "quotation_item_id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
@@ -2928,7 +3060,7 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
 
   const { data: item, error: itemError } = await supabase
     .from("quotation_items")
-    .select("id,quotation_id,source_template_id,source_component_data,qty,discount_type,discount_value,is_active")
+    .select("id,quotation_id,source_template_id,source_component_data,qty,unit_price,currency,discount_type,discount_value,net_price,net_total,is_active")
     .eq("id", id)
     .eq("quotation_id", quotationId)
     .maybeSingle<{
@@ -2937,8 +3069,12 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
       source_template_id: string | null;
       source_component_data: unknown;
       qty: number;
+      unit_price: number;
+      currency: string;
       discount_type: string;
       discount_value: number;
+      net_price: number;
+      net_total: number;
       is_active: boolean;
     }>();
 
@@ -2990,11 +3126,19 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
     item.discount_value,
     item.qty,
   );
+  const updatedCurrency = normalizeCurrency(currentSourcePrice.currency || defaultCurrency);
+  const nextPriceValues = {
+    currency: updatedCurrency,
+    discount_value: linePricing.discountValue,
+    net_price: linePricing.netPrice,
+    net_total: linePricing.netTotal,
+    unit_price: linePricing.unitPrice,
+  };
   const { error: updateError } = await supabase
     .from("quotation_items")
     .update({
       unit_price: linePricing.unitPrice,
-      currency: normalizeCurrency(currentSourcePrice.currency || defaultCurrency),
+      currency: updatedCurrency,
       discount_value: linePricing.discountValue,
       net_price: linePricing.netPrice,
       net_total: linePricing.netTotal,
@@ -3006,6 +3150,15 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
     console.error("USE SOURCE PRICE ITEM UPDATE ERROR", updateError.message);
     redirectWithMessage(redirectPath, "Line item source price could not be applied.");
   }
+
+  await insertQuotationItemPriceHistory({
+    changeType: "use_current_source_price",
+    changedBy: user.id,
+    current: item,
+    newValues: nextPriceValues,
+    note: "Updated row from current source price.",
+    supabase,
+  });
 
   await recalculateQuotationTotals(quotationId);
   revalidatePath(`/quotations/${quotationId}`);
@@ -3451,7 +3604,7 @@ export async function pasteCopiedQuotationItem(formData: FormData) {
 }
 
 export async function autosaveQuotationItemInline(formData: FormData) {
-  await requireRecordsManager();
+  const { user } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
 
@@ -3462,14 +3615,21 @@ export async function autosaveQuotationItemInline(formData: FormData) {
   const supabase = await createSupabaseClient();
   const { data: currentItem, error: readError } = await supabase
     .from("quotation_items")
-    .select("qty,unit_price,discount_type,discount_value,cell_layout")
+    .select("id,quotation_id,source_template_id,source_component_data,qty,unit_price,currency,discount_type,discount_value,net_price,net_total,cell_layout")
     .eq("id", id)
     .eq("quotation_id", quotationId)
     .single<{
+      id: string;
+      quotation_id: string;
+      source_template_id: string | null;
+      source_component_data: unknown;
       qty: number;
       unit_price: number;
+      currency: string;
       discount_type: string;
       discount_value: number;
+      net_price: number;
+      net_total: number;
       cell_layout: CellLayoutPayload | null;
     }>();
 
@@ -3532,6 +3692,14 @@ export async function autosaveQuotationItemInline(formData: FormData) {
   payload.net_price = linePricing.netPrice;
   payload.net_total = linePricing.netTotal;
 
+  const nextPriceValues = {
+    currency: currentItem.currency,
+    discount_value: linePricing.discountValue,
+    net_price: linePricing.netPrice,
+    net_total: linePricing.netTotal,
+    unit_price: linePricing.unitPrice,
+  };
+
   const { error } = await supabase
     .from("quotation_items")
     .update(payload)
@@ -3542,6 +3710,15 @@ export async function autosaveQuotationItemInline(formData: FormData) {
     console.error("QUOTATION ITEM AUTOSAVE ERROR", error.message);
     return { ok: false, message: "Save failed." };
   }
+
+  await insertQuotationItemPriceHistory({
+    changeType: "manual",
+    changedBy: user.id,
+    current: currentItem,
+    newValues: nextPriceValues,
+    note: "Updated row price manually.",
+    supabase,
+  });
 
   await recalculateQuotationTotals(quotationId);
   revalidatePath(`/quotations/${quotationId}`);
