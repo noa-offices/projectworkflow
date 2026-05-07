@@ -80,7 +80,7 @@ function brandsHref(
   ] as const) {
     const updatedValue = updates[key];
     const value =
-      updatedValue === undefined ? stringParam(params[key]) : updatedValue;
+      updatedValue === undefined ? stringParam(params[key]) : updates[key];
 
     if (value) {
       next.set(key, value);
@@ -180,6 +180,17 @@ function SubmitButton({ label }: { label: string }) {
   );
 }
 
+function PrimaryLink({ href, label }: { href: string; label: string }) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+    >
+      {label}
+    </Link>
+  );
+}
+
 function SecondaryLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
@@ -191,31 +202,42 @@ function SecondaryLink({ href, label }: { href: string; label: string }) {
   );
 }
 
+function ActionLink({
+  href,
+  label,
+  tone = "default",
+}: {
+  href: string;
+  label: string;
+  tone?: "default" | "primary";
+}) {
+  return (
+    <Link
+      href={href}
+      className={`inline-flex h-8 items-center justify-center rounded-md border px-3 text-xs font-semibold transition ${
+        tone === "primary"
+          ? "border-emerald-200 bg-emerald-50 text-emerald-900 hover:border-emerald-300 hover:bg-emerald-100"
+          : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50"
+      }`}
+    >
+      {label}
+    </Link>
+  );
+}
+
 function BrandForm({ brand, cancelHref }: { brand?: Brand; cancelHref?: string }) {
   return (
-    <form
-      action={brand ? updateBrand : createBrand}
-      className="grid gap-3 md:grid-cols-2"
-    >
+    <form action={brand ? updateBrand : createBrand} className="grid gap-3 md:grid-cols-2">
       {brand ? <input type="hidden" name="id" value={brand.id} /> : null}
-      <TextInput
-        name="name"
-        label="Brand name"
-        defaultValue={brand?.name}
-        required
-      />
+      <TextInput name="name" label="Brand name" defaultValue={brand?.name} required />
+      <TextInput name="code" label="Code" defaultValue={brand?.code} />
       <TextInput
         name="origin"
         label="Origin / Country"
         defaultValue={brand?.origin}
       />
-      <TextInput name="code" label="Code" defaultValue={brand?.code} />
       <TextInput name="website" label="Website" defaultValue={brand?.website} />
-      <TextInput
-        name="logo_url"
-        label="Logo URL"
-        defaultValue={brand?.logo_url}
-      />
+      <TextInput name="logo_url" label="Logo URL" defaultValue={brand?.logo_url} />
       <TextArea
         name="description"
         label="Description"
@@ -225,7 +247,7 @@ function BrandForm({ brand, cancelHref }: { brand?: Brand; cancelHref?: string }
         <ActiveToggle defaultChecked={brand?.is_active ?? true} />
         <div className="flex gap-2">
           {cancelHref ? <SecondaryLink href={cancelHref} label="Cancel" /> : null}
-          <SubmitButton label={brand ? "Save" : "Save"} />
+          <SubmitButton label="Save" />
         </div>
       </div>
     </form>
@@ -244,19 +266,11 @@ function CategoryForm({
   submitLabel: string;
 }) {
   return (
-    <form
-      action={category ? updateCategory : createCategory}
-      className="grid gap-3 md:grid-cols-2"
-    >
+    <form action={category ? updateCategory : createCategory} className="grid gap-3 md:grid-cols-2">
       {category ? <input type="hidden" name="id" value={category.id} /> : null}
       <input type="hidden" name="brand_id" value={brandId} />
       <input type="hidden" name="parent_id" value={parentId ?? ""} />
-      <TextInput
-        name="name"
-        label="Category name"
-        defaultValue={category?.name}
-        required
-      />
+      <TextInput name="name" label="Category name" defaultValue={category?.name} required />
       <TextInput name="code" label="Code" defaultValue={category?.code} />
       <TextInput
         name="sort_order"
@@ -278,13 +292,82 @@ function CategoryForm({
   );
 }
 
-function categoryCountLabel(count: number) {
-  return `${count} ${count === 1 ? "category" : "categories"}`;
-}
-
 function subcategoryCountLabel(count: number) {
   return `${count} ${count === 1 ? "subcategory" : "subcategories"}`;
 }
+
+function BrandListCard({
+  archiveHrefId,
+  brand,
+  isSelected,
+  mainCount,
+  openHref,
+  editHref,
+  subCount,
+}: {
+  archiveHrefId: string;
+  brand: Brand;
+  isSelected: boolean;
+  mainCount: number;
+  openHref: string;
+  editHref: string;
+  subCount: number;
+}) {
+  return (
+    <article
+      className={`rounded-lg border p-4 shadow-sm transition ${
+        isSelected
+          ? "border-emerald-200 bg-emerald-50/70"
+          : "border-zinc-200 bg-white"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold text-zinc-950">
+              {brand.name}
+            </h3>
+            {brand.code ? (
+              <span className="rounded border border-zinc-200 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">
+                Code: {brand.code}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-2 text-sm text-zinc-500">
+            Origin: {brand.origin ?? "-"}
+          </p>
+          <p className="mt-1 text-sm text-zinc-500">
+            {mainCount} categories · {subCount} subcategories
+          </p>
+        </div>
+        <div className="shrink-0 pt-0.5">
+          <StatusBadge active={brand.is_active} />
+        </div>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <ActionLink href={openHref} label="Open" tone="primary" />
+        <ActionLink href={editHref} label="Edit" />
+        <form action={archiveBrand}>
+          <input type="hidden" name="id" value={archiveHrefId} />
+          <ConfirmSubmitButton
+            message="This will move the brand to Archive. You can restore it later."
+            className="inline-flex h-8 items-center justify-center rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
+          >
+            Archive
+          </ConfirmSubmitButton>
+        </form>
+      </div>
+    </article>
+  );
+}
+
+type ArchiveItem = {
+  id: string;
+  label: string;
+  meta: string;
+  restoreAction: (formData: FormData) => Promise<void>;
+  deleteAction: (formData: FormData) => Promise<void>;
+};
 
 export default async function BrandsPage({ searchParams }: BrandsPageProps) {
   const { user, displayName } = await requireSettingsManager();
@@ -377,50 +460,82 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
     return matchesSearch && matchesStatus;
   });
 
-  const selectedBrand =
-    activeBrandList.find((brand) => brand.id === selectedBrandId) ?? null;
+  const selectedBrand = brandList.find((brand) => brand.id === selectedBrandId) ?? null;
   const selectedMainCategories = selectedBrand
     ? mainCategoriesByBrand.get(selectedBrand.id) ?? []
     : [];
   const selectedCategory =
-    selectedMainCategories.find(
-      (category) => category.id === selectedCategoryId,
-    ) ??
-    null;
+    selectedMainCategories.find((category) => category.id === selectedCategoryId) ?? null;
   const selectedSubCategories = selectedCategory
     ? subCategoriesByParent.get(selectedCategory.id) ?? []
     : [];
+
+  const archiveItems: ArchiveItem[] = [
+    ...archivedBrandList.map((item) => ({
+      id: item.id,
+      label: item.name,
+      meta: "Brand",
+      restoreAction: restoreBrand,
+      deleteAction: permanentlyDeleteBrand,
+    })),
+    ...archivedMainCategories.map((item) => ({
+      id: item.id,
+      label: item.name,
+      meta: `Main Category / ${brandList.find((brand) => brand.id === item.brand_id)?.name ?? "Unknown brand"}`,
+      restoreAction: restoreCategory,
+      deleteAction: permanentlyDeleteCategory,
+    })),
+    ...archivedSubCategories.map((item) => ({
+      id: item.id,
+      label: item.name,
+      meta: `Sub Category / ${brandList.find((brand) => brand.id === item.brand_id)?.name ?? "Unknown brand"}`,
+      restoreAction: restoreCategory,
+      deleteAction: permanentlyDeleteCategory,
+    })),
+  ];
 
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
       <AppSidebar />
       <div className="flex-1">
         <TopBar
-          title="Brands & Categories"
-          description="Manage product brands, main categories, and sub categories."
+          title="Brands"
+          description="Manage brands, origins, categories, and subcategories used by products and materials."
           userDisplayName={displayName}
           userEmail={user.email}
         />
         <main className="px-5 py-6 sm:px-8">
-          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <Link
-              href="/products"
-              className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
-            >
-              Back to products
-            </Link>
+          <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">
+                  Brands
+                </h1>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
+                  Manage brands, origins, categories, and subcategories used by
+                  products and materials.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <SecondaryLink href="/products" label="Back to products" />
+                <PrimaryLink
+                  href={brandsHref(params, { addBrand: "1", editBrand: null })}
+                  label="+ Add Brand"
+                />
+              </div>
+            </div>
             {message ? (
-              <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
+              <p className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
                 {message}
               </p>
             ) : null}
-          </div>
+          </section>
 
-          <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <section className="mt-5 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
               <form
                 action="/products/brands"
-                className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_160px_auto] xl:min-w-[680px]"
+                className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px_auto] xl:min-w-[720px]"
               >
                 <input
                   name="q"
@@ -444,200 +559,98 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                   Search
                 </button>
               </form>
-
-              <Link
-                href={brandsHref(params, { addBrand: "1" })}
-                className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-              >
-                + Add Brand
-              </Link>
+              {!showAddBrand ? (
+                <PrimaryLink
+                  href={brandsHref(params, { addBrand: "1", editBrand: null })}
+                  label="+ Add Brand"
+                />
+              ) : null}
             </div>
 
             {showAddBrand ? (
-              <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 p-5">
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
-                    <h2 className="font-semibold text-zinc-950">Add brand</h2>
+                    <h2 className="font-semibold text-zinc-950">Add Brand</h2>
                     <p className="mt-1 text-sm text-zinc-500">
-                      Create the brand, then open it to manage categories.
+                      Create the brand, then open it to manage categories and
+                      subcategories.
                     </p>
                   </div>
                   <SecondaryLink
-                    href={brandsHref(params, { addBrand: null })}
+                    href={brandsHref(params, { addBrand: null, editBrand: null })}
                     label="Cancel"
                   />
                 </div>
-                <BrandForm cancelHref={brandsHref(params, { addBrand: null })} />
+                <BrandForm
+                  cancelHref={brandsHref(params, {
+                    addBrand: null,
+                    editBrand: null,
+                  })}
+                />
               </div>
             ) : null}
           </section>
 
-          <section className="mt-6 grid gap-6 2xl:grid-cols-[minmax(420px,520px)_1fr]">
-            <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
-              <div className="border-b border-zinc-200 p-4">
-                <h2 className="font-semibold text-zinc-950">Brands</h2>
+          <section className="mt-6 grid gap-6 2xl:grid-cols-[minmax(420px,540px)_1fr]">
+            <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+              <div className="border-b border-zinc-200 px-5 py-4">
+                <h2 className="font-semibold text-zinc-950">Brand list</h2>
                 <p className="mt-1 text-sm text-zinc-500">
                   {filteredBrands.length} of {brandList.length} shown
                 </p>
               </div>
 
-              <div className="hidden md:block">
-                <table className="w-full text-left text-sm">
-                  <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase text-zinc-500">
-                    <tr>
-                      <th className="px-4 py-3 font-semibold">Brand</th>
-                      <th className="px-4 py-3 font-semibold">Origin</th>
-                      <th className="px-4 py-3 font-semibold">Structure</th>
-                      <th className="px-4 py-3 font-semibold">Status</th>
-                      <th className="px-4 py-3 text-right font-semibold">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100">
-                    {filteredBrands.map((brand) => {
-                      const mainCount =
-                        mainCategoriesByBrand.get(brand.id)?.length ?? 0;
-                      const subCount = subcategoryCountByBrand.get(brand.id) ?? 0;
-                      const isSelected = brand.id === selectedBrand?.id;
-
-                      return (
-                        <tr
-                          key={brand.id}
-                          className={isSelected ? "bg-emerald-50/60" : ""}
-                        >
-                          <td className="px-4 py-3 font-semibold text-zinc-950">
-                            {brand.name}
-                            {brand.code ? (
-                              <span className="ml-2 text-xs font-medium text-zinc-400">
-                                {brand.code}
-                              </span>
-                            ) : null}
-                          </td>
-                          <td className="px-4 py-3 text-zinc-600">
-                            {brand.origin ?? "-"}
-                          </td>
-                          <td className="px-4 py-3 text-zinc-600">
-                            {categoryCountLabel(mainCount)} /{" "}
-                            {subcategoryCountLabel(subCount)}
-                          </td>
-                          <td className="px-4 py-3">
-                            <StatusBadge active={brand.is_active} />
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex justify-end gap-2">
-                              <Link
-                                href={brandsHref(params, {
-                                  brand: brand.id,
-                                  category: null,
-                                  addBrand: null,
-                                  editBrand: null,
-                                })}
-                                className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
-                              >
-                                Open
-                              </Link>
-                              <Link
-                                href={brandsHref(params, {
-                                  brand: brand.id,
-                                  category: null,
-                                  addBrand: null,
-                                  editBrand: brand.id,
-                                })}
-                                className="text-sm font-semibold text-zinc-600 transition hover:text-zinc-950"
-                              >
-                                Edit
-                              </Link>
-                              <form action={archiveBrand}>
-                                <input type="hidden" name="id" value={brand.id} />
-                                <ConfirmSubmitButton
-                                  message="This will move the brand to Archive. You can restore it later."
-                                  className="text-sm font-semibold text-red-700 transition hover:text-red-800"
-                                >
-                                  Delete
-                                </ConfirmSubmitButton>
-                              </form>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="space-y-3 p-4 md:hidden">
+              <div className="grid gap-4 p-4 xl:grid-cols-2">
                 {filteredBrands.map((brand) => {
                   const mainCount = mainCategoriesByBrand.get(brand.id)?.length ?? 0;
                   const subCount = subcategoryCountByBrand.get(brand.id) ?? 0;
                   const isSelected = brand.id === selectedBrand?.id;
 
                   return (
-                    <article
+                    <BrandListCard
                       key={brand.id}
-                      className={`rounded-md border p-3 ${
-                        isSelected
-                          ? "border-emerald-200 bg-emerald-50"
-                          : "border-zinc-200"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <h3 className="font-semibold text-zinc-950">
-                            {brand.name}
-                          </h3>
-                          <p className="mt-1 text-sm text-zinc-500">
-                            {brand.origin ?? "No origin"} /{" "}
-                            {categoryCountLabel(mainCount)} /{" "}
-                            {subcategoryCountLabel(subCount)}
-                          </p>
-                        </div>
-                        <StatusBadge active={brand.is_active} />
-                      </div>
-                      <div className="mt-3 flex gap-3">
-                        <Link
-                          href={brandsHref(params, {
-                            brand: brand.id,
-                            category: null,
-                            addBrand: null,
-                            editBrand: null,
-                          })}
-                          className="text-sm font-semibold text-emerald-900"
-                        >
-                          Open
-                        </Link>
-                        <Link
-                          href={brandsHref(params, {
-                            brand: brand.id,
-                            category: null,
-                            addBrand: null,
-                            editBrand: brand.id,
-                          })}
-                          className="text-sm font-semibold text-zinc-600"
-                        >
-                          Edit
-                        </Link>
-                        <form action={archiveBrand}>
-                          <input type="hidden" name="id" value={brand.id} />
-                          <ConfirmSubmitButton
-                            message="This will move the brand to Archive. You can restore it later."
-                            className="text-sm font-semibold text-red-700"
-                          >
-                            Delete
-                          </ConfirmSubmitButton>
-                        </form>
-                      </div>
-                    </article>
+                      archiveHrefId={brand.id}
+                      brand={brand}
+                      editHref={brandsHref(params, {
+                        brand: brand.id,
+                        category: null,
+                        addBrand: null,
+                        editBrand: brand.id,
+                      })}
+                      isSelected={isSelected}
+                      mainCount={mainCount}
+                      openHref={brandsHref(params, {
+                        brand: brand.id,
+                        category: null,
+                        addBrand: null,
+                        editBrand: null,
+                      })}
+                      subCount={subCount}
+                    />
                   );
                 })}
               </div>
 
               {!filteredBrands.length ? (
                 <div className="p-8 text-center text-sm text-zinc-500">
-                  No brands match the current search.
+                  <p>{brandList.length ? "No brands match the current search." : "No brands yet."}</p>
+                  {!brandList.length ? (
+                    <>
+                      <p className="mt-2">
+                        Create a brand to start adding product templates, material groups, and finishes.
+                      </p>
+                      <div className="mt-4">
+                        <PrimaryLink
+                          href={brandsHref(params, { addBrand: "1", editBrand: null })}
+                          label="+ Add Brand"
+                        />
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               ) : null}
-            </div>
+            </section>
 
             <div className="space-y-5">
               {selectedBrand ? (
@@ -652,6 +665,12 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                           <StatusBadge active={selectedBrand.is_active} />
                         </div>
                         <dl className="mt-3 grid gap-3 text-sm text-zinc-600 sm:grid-cols-3">
+                          <div>
+                            <dt className="text-xs font-semibold uppercase text-zinc-400">
+                              Code
+                            </dt>
+                            <dd>{selectedBrand.code ?? "-"}</dd>
+                          </div>
                           <div>
                             <dt className="text-xs font-semibold uppercase text-zinc-400">
                               Origin
@@ -677,12 +696,6 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                               )}
                             </dd>
                           </div>
-                          <div>
-                            <dt className="text-xs font-semibold uppercase text-zinc-400">
-                              Code
-                            </dt>
-                            <dd>{selectedBrand.code ?? "-"}</dd>
-                          </div>
                         </dl>
                         {selectedBrand.description ? (
                           <p className="mt-3 text-sm text-zinc-500">
@@ -692,8 +705,8 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                       </div>
                     </div>
 
-                    <details className="mt-4" open={editBrandId === selectedBrand.id}>
-                      <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
+                    <details className="mt-5" open={editBrandId === selectedBrand.id}>
+                      <summary className="inline-flex cursor-pointer rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
                         Edit Brand
                       </summary>
                       <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
@@ -705,9 +718,7 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                   <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
                     <div className="flex flex-col gap-3 border-b border-zinc-200 p-4 sm:flex-row sm:items-center sm:justify-between">
                       <div>
-                        <h2 className="font-semibold text-zinc-950">
-                          Main Categories
-                        </h2>
+                        <h2 className="font-semibold text-zinc-950">Main Categories</h2>
                         <p className="mt-1 text-sm text-zinc-500">
                           Open a category to manage its subcategories.
                         </p>
@@ -717,10 +728,7 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                           + Add Main Category
                         </summary>
                         <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                          <CategoryForm
-                            brandId={selectedBrand.id}
-                            submitLabel="Save"
-                          />
+                          <CategoryForm brandId={selectedBrand.id} submitLabel="Save" />
                         </div>
                       </details>
                     </div>
@@ -731,13 +739,9 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                           <tr>
                             <th className="px-4 py-3 font-semibold">Category</th>
                             <th className="px-4 py-3 font-semibold">Code</th>
-                            <th className="px-4 py-3 font-semibold">
-                              Subcategories
-                            </th>
+                            <th className="px-4 py-3 font-semibold">Subcategories</th>
                             <th className="px-4 py-3 font-semibold">Status</th>
-                            <th className="px-4 py-3 text-right font-semibold">
-                              Actions
-                            </th>
+                            <th className="px-4 py-3 text-right font-semibold">Actions</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-zinc-100">
@@ -764,29 +768,26 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                                   <StatusBadge active={category.is_active} />
                                 </td>
                                 <td className="px-4 py-3">
-                                  <div className="flex justify-end gap-3">
-                                    <Link
+                                  <div className="flex justify-end gap-2">
+                                    <ActionLink
                                       href={brandsHref(params, {
                                         brand: selectedBrand.id,
                                         category: category.id,
                                         editBrand: null,
                                       })}
-                                      className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
-                                    >
-                                      Open
-                                    </Link>
-                                    <Link
+                                      label="Open"
+                                      tone="primary"
+                                    />
+                                    <ActionLink
                                       href={brandsHref(params, {
                                         brand: selectedBrand.id,
                                         category: category.id,
                                         editBrand: null,
                                       })}
-                                      className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
-                                    >
-                                      + Subcategory
-                                    </Link>
+                                      label="+ Subcategory"
+                                    />
                                     <details>
-                                      <summary className="cursor-pointer list-none text-sm font-semibold text-zinc-600 transition hover:text-zinc-950">
+                                      <summary className="inline-flex h-8 cursor-pointer list-none items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
                                         Edit
                                       </summary>
                                       <div className="absolute right-8 z-10 mt-2 w-[min(560px,calc(100vw-3rem))] rounded-md border border-zinc-200 bg-white p-4 text-left shadow-lg">
@@ -801,9 +802,9 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                                       <input type="hidden" name="id" value={category.id} />
                                       <ConfirmSubmitButton
                                         message="This will move the category to Archive. You can restore it later."
-                                        className="text-sm font-semibold text-red-700 transition hover:text-red-800"
+                                        className="inline-flex h-8 items-center justify-center rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
                                       >
-                                        Delete
+                                        Archive
                                       </ConfirmSubmitButton>
                                     </form>
                                   </div>
@@ -868,9 +869,9 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                               {subCategory.code ?? "-"}
                             </p>
                             <StatusBadge active={subCategory.is_active} />
-                            <div className="flex gap-3 justify-self-start md:justify-self-end">
+                            <div className="flex gap-2 justify-self-start md:justify-self-end">
                               <details>
-                                <summary className="cursor-pointer text-sm font-semibold text-zinc-600 transition hover:text-zinc-950">
+                                <summary className="inline-flex h-8 cursor-pointer items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
                                   Edit
                                 </summary>
                                 <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-4 md:w-[560px]">
@@ -886,9 +887,9 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                                 <input type="hidden" name="id" value={subCategory.id} />
                                 <ConfirmSubmitButton
                                   message="This will move the subcategory to Archive. You can restore it later."
-                                  className="text-sm font-semibold text-red-700 transition hover:text-red-800"
+                                  className="inline-flex h-8 items-center justify-center rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
                                 >
-                                  Delete
+                                  Archive
                                 </ConfirmSubmitButton>
                               </form>
                             </div>
@@ -906,80 +907,63 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                 </>
               ) : (
                 <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
-                  Open a brand to manage its details, categories, and
-                  subcategories.
+                  <h2 className="text-base font-semibold text-zinc-900">
+                    Open a brand to manage its details
+                  </h2>
+                  <p className="mt-2">
+                    Select a brand to review metadata, edit its details, and
+                    manage categories and subcategories.
+                  </p>
                 </section>
               )}
-              <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
-                <div className="border-b border-zinc-200 p-4">
-                  <h2 className="font-semibold text-zinc-950">Archive</h2>
-                  <p className="mt-1 text-sm text-zinc-500">
-                    Restore archived brands and categories, or permanently delete unused records.
-                  </p>
+            </div>
+          </section>
+
+          <section className="mt-6 rounded-lg border border-zinc-200 bg-white shadow-sm">
+            <div className="border-b border-zinc-200 p-4">
+              <h2 className="font-semibold text-zinc-950">Archive</h2>
+              <p className="mt-1 text-sm text-zinc-500">
+                Restore archived brands and categories, or permanently delete
+                unused records.
+              </p>
+            </div>
+            <div className="divide-y divide-zinc-100">
+              {archiveItems.map((item) => (
+                <div
+                  key={`${item.meta}-${item.id}`}
+                  className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"
+                >
+                  <div>
+                    <h3 className="font-semibold text-zinc-950">{item.label}</h3>
+                    <p className="mt-1 text-sm text-zinc-500">{item.meta}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 md:justify-end">
+                    <form action={item.restoreAction}>
+                      <input type="hidden" name="id" value={item.id} />
+                      <button
+                        type="submit"
+                        className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                      >
+                        Restore
+                      </button>
+                    </form>
+                    <form action={item.deleteAction}>
+                      <input type="hidden" name="id" value={item.id} />
+                      <ConfirmSubmitButton
+                        message="Permanently delete this item? This cannot be undone."
+                        className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
+                      >
+                        Delete permanently
+                      </ConfirmSubmitButton>
+                    </form>
+                  </div>
                 </div>
-                <div className="divide-y divide-zinc-100">
-                  {[
-                    ...archivedBrandList.map((item) => ({
-                      id: item.id,
-                      label: item.name,
-                      meta: "Brand",
-                      restoreAction: restoreBrand,
-                      deleteAction: permanentlyDeleteBrand,
-                    })),
-                    ...archivedMainCategories.map((item) => ({
-                      id: item.id,
-                      label: item.name,
-                      meta: `Main Category / ${brandList.find((brand) => brand.id === item.brand_id)?.name ?? "Unknown brand"}`,
-                      restoreAction: restoreCategory,
-                      deleteAction: permanentlyDeleteCategory,
-                    })),
-                    ...archivedSubCategories.map((item) => ({
-                      id: item.id,
-                      label: item.name,
-                      meta: `Sub Category / ${brandList.find((brand) => brand.id === item.brand_id)?.name ?? "Unknown brand"}`,
-                      restoreAction: restoreCategory,
-                      deleteAction: permanentlyDeleteCategory,
-                    })),
-                  ].map((item) => (
-                    <div
-                      key={`${item.meta}-${item.id}`}
-                      className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"
-                    >
-                      <div>
-                        <h3 className="font-semibold text-zinc-950">{item.label}</h3>
-                        <p className="mt-1 text-sm text-zinc-500">{item.meta}</p>
-                      </div>
-                      <div className="flex flex-wrap gap-2 md:justify-end">
-                        <form action={item.restoreAction}>
-                          <input type="hidden" name="id" value={item.id} />
-                          <button
-                            type="submit"
-                            className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                          >
-                            Restore
-                          </button>
-                        </form>
-                        <form action={item.deleteAction}>
-                          <input type="hidden" name="id" value={item.id} />
-                          <ConfirmSubmitButton
-                            message="Permanently delete this item? This cannot be undone."
-                            className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
-                          >
-                            Delete permanently
-                          </ConfirmSubmitButton>
-                        </form>
-                      </div>
-                    </div>
-                  ))}
-                  {!archivedBrandList.length &&
-                  !archivedMainCategories.length &&
-                  !archivedSubCategories.length ? (
-                    <p className="p-6 text-sm text-zinc-500">
-                      No archived brands or categories.
-                    </p>
-                  ) : null}
-                </div>
-              </section>
+              ))}
+              {!archiveItems.length ? (
+                <p className="p-6 text-sm text-zinc-500">
+                  No archived brands or categories.
+                </p>
+              ) : null}
             </div>
           </section>
         </main>

@@ -601,6 +601,7 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
     .filter((group) => (materialsByGroup.get(group.id)?.length ?? 0) > 0 || !searchQuery && !selectedCategory);
   const activeGroupCount = rawGroups.filter((group) => group.is_active).length;
   const activeMaterialCount = rawMaterials.filter((material) => material.is_active).length;
+  const addBrandHref = "/products/brands?addBrand=1";
 
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
@@ -614,14 +615,24 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
         />
         <main className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <Link href="/products" className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800">
-              Back to products
-            </Link>
-            {message ? (
-              <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
-                {message}
-              </p>
-            ) : null}
+            <div className="flex flex-wrap items-center gap-3">
+              <Link href="/products" className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800">
+                Back to products
+              </Link>
+              <Link
+                href={addBrandHref}
+                className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+              >
+                + Add Brand
+              </Link>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              {message ? (
+                <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
+                  {message}
+                </p>
+              ) : null}
+            </div>
           </div>
 
           <section className="sticky top-0 z-20 border border-zinc-200 bg-white p-4 shadow-sm">
@@ -638,6 +649,9 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
               <label className="block">
                 <span className="text-xs font-semibold uppercase text-zinc-500">Brand</span>
                 <select name="brand" defaultValue={selectedBrand?.id ?? ""} className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10">
+                  {!brandList.length ? (
+                    <option value="">No brands yet</option>
+                  ) : null}
                   {brandList.map((brand) => (
                     <option key={brand.id} value={brand.id}>
                       {brand.name}{brand.code ? ` / ${brand.code}` : ""}{brand.is_active ? "" : " / inactive"}
@@ -715,6 +729,12 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
                     <GroupForm brandId={selectedBrand.id} returnTo={returnTo} />
                   </div>
                 </details>
+                <p className="mt-3 text-xs text-zinc-500">
+                  Need another brand?{" "}
+                  <Link href={addBrandHref} className="font-semibold text-emerald-900 transition hover:text-emerald-800">
+                    Add Brand
+                  </Link>
+                </p>
 
                 <nav className="mt-5 border-t border-zinc-200 pt-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
@@ -857,14 +877,36 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
 
                 {!visibleGroups.length ? (
                   <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
-                    No material groups or materials match the current filters.
+                    <p>No material groups or materials match the current filters.</p>
+                    <p className="mt-2">
+                      Create a brand first, then add material groups and finishes.
+                    </p>
+                    <div className="mt-4">
+                      <Link
+                        href={addBrandHref}
+                        className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                      >
+                        + Add Brand
+                      </Link>
+                    </div>
                   </section>
                 ) : null}
               </div>
             </section>
           ) : (
             <section className="mt-6 rounded-lg border border-dashed border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
-              Create a brand before adding material groups.
+              <p>No material groups or materials match the current filters.</p>
+              <p className="mt-2">
+                Create a brand first, then add material groups and finishes.
+              </p>
+              <div className="mt-4">
+                <Link
+                  href={addBrandHref}
+                  className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                >
+                  + Add Brand
+                </Link>
+              </div>
             </section>
           )}
         </main>

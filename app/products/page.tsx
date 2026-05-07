@@ -17,10 +17,10 @@ const productCards = [
     action: "Manage",
   },
   {
-    title: "Brands & Categories",
-    description: "Maintain supporting brand records and category structure for the product library.",
+    title: "Brands",
+    description: "Manage product brands, origins, suppliers, and brand-level price settings.",
     href: "/products/brands",
-    action: "Manage",
+    action: "Manage Brands",
   },
   {
     title: "Price Updates",
