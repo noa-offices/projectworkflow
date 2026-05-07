@@ -3,6 +3,11 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
+import { formatQuotationDisplayNo, quotationRootBaseNo } from "@/lib/quotation-options";
+import {
+  quotationStatusBadgeClassName,
+  quotationStatusLabel,
+} from "@/lib/quotation-status";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
   createClient as createClientRecord,
@@ -75,7 +80,9 @@ type ProjectQuotation = {
   id: string;
   project_id: string;
   quotation_no: string | null;
+  option_no: number | null;
   revision_no: number | null;
+  status: string;
   title: string;
   quotation_date: string | null;
   created_at: string;
@@ -110,6 +117,16 @@ function ProjectStatusBadge({ status }: { status: string }) {
   return (
     <span className="inline-flex rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-600">
       {projectStatusLabels.get(status) ?? status}
+    </span>
+  );
+}
+
+function QuotationStatusBadge({ status }: { status: string }) {
+  return (
+    <span
+      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${quotationStatusBadgeClassName(status)}`}
+    >
+      {quotationStatusLabel(status)}
     </span>
   );
 }
@@ -183,14 +200,7 @@ function quoteNoLabel(quotation?: ProjectQuotation) {
     return "-";
   }
 
-  const quotationNo = quotation.quotation_no || quotation.title;
-  const revisionNo = quotation.revision_no ?? 0;
-
-  if (!revisionNo || /-R\d+$/i.test(quotationNo)) {
-    return quotationNo;
-  }
-
-  return `${quotationNo}-R${revisionNo}`;
+  return quotation.quotation_no || quotation.title;
 }
 
 // TODO: Future phase: auto-generate project numbers by year/company sequence.
@@ -507,7 +517,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
 
   const { data: quotations, error: quotationsError } = await supabase
     .from("quotations")
-    .select("id,project_id,quotation_no,revision_no,title,quotation_date,created_at")
+    .select("id,project_id,quotation_no,option_no,revision_no,status,title,quotation_date,created_at")
     .eq("is_active", true)
     .order("quotation_date", { ascending: false })
     .order("created_at", { ascending: false })
@@ -541,6 +551,17 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
     const projectQuotations = quotationsByProject.get(quotation.project_id) ?? [];
     projectQuotations.push(quotation);
     quotationsByProject.set(quotation.project_id, projectQuotations);
+  }
+  const optionCountByProjectRoot = new Map<string, number>();
+  for (const quotation of quotationList) {
+    const rootBase = quotationRootBaseNo(quotation.quotation_no);
+    if (!rootBase) continue;
+
+    const projectRootKey = `${quotation.project_id}:${rootBase}`;
+    optionCountByProjectRoot.set(
+      projectRootKey,
+      Math.max(optionCountByProjectRoot.get(projectRootKey) ?? 0, quotation.option_no ?? 1),
+    );
   }
   const projectYears = Array.from(
     new Set(
@@ -1090,18 +1111,39 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                         Linked quotations
                       </h3>
                       <div className="mt-2 grid gap-2">
-                        {selectedProjectQuotations.map((quotation) => (
-                          <Link
-                            key={quotation.id}
-                            href={`/quotations/${quotation.id}`}
-                            className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 transition hover:border-emerald-900/25 hover:text-emerald-900"
-                          >
-                            <span className="font-semibold text-zinc-950">
-                              {quoteNoLabel(quotation)}
-                            </span>
-                            <span className="ml-2">{quotation.title}</span>
-                          </Link>
-                        ))}
+                        {selectedProjectQuotations.map((quotation) => {
+                          const rootBase = quotationRootBaseNo(quotation.quotation_no);
+                          const showOptionNumber = Boolean(
+                            rootBase &&
+                              (optionCountByProjectRoot.get(
+                                `${quotation.project_id}:${rootBase}`,
+                              ) ?? 1) > 1,
+                          );
+                          const displayQuotationNo =
+                            formatQuotationDisplayNo({
+                              optionNo: quotation.option_no,
+                              quotationNo: quotation.quotation_no,
+                              showOptionNumber,
+                            }) ?? quoteNoLabel(quotation);
+
+                          return (
+                            <Link
+                              key={quotation.id}
+                              href={`/quotations/${quotation.id}`}
+                              className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 transition hover:border-emerald-900/25 hover:text-emerald-900"
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <span className="font-semibold text-zinc-950">
+                                    {displayQuotationNo}
+                                  </span>
+                                  <span className="ml-2">{quotation.title}</span>
+                                </div>
+                                <QuotationStatusBadge status={quotation.status} />
+                              </div>
+                            </Link>
+                          );
+                        })}
                         {!selectedProjectQuotations.length ? (
                           <p className="text-sm text-zinc-500">
                             No linked quotations yet.
