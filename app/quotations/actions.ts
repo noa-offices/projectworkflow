@@ -1428,6 +1428,93 @@ function baseRevisionTitle(title: string) {
   return title.replace(/(?:\s+Rev\s+\d+)+$/i, "");
 }
 
+type QuotationRevisionChainMember = {
+  id: string;
+  quotation_no: string | null;
+  revision_no: number;
+  title: string;
+  is_active?: boolean;
+};
+
+function quotationRevisionLabel(revisionNo: number) {
+  return revisionNo > 0 ? `R${revisionNo}` : "Original";
+}
+
+function quotationBelongsToRevisionChain(
+  quotation: Pick<QuotationRevisionChainMember, "quotation_no">,
+  baseNo: string,
+) {
+  return baseQuotationNo(quotation.quotation_no) === baseNo;
+}
+
+async function quotationRevisionChain({
+  clientId,
+  projectId,
+  quotationId,
+  supabase,
+}: {
+  clientId: string;
+  projectId: string;
+  quotationId: string;
+  supabase: Awaited<ReturnType<typeof createSupabaseClient>>;
+}) {
+  const { data: sourceQuotation, error: sourceQuotationError } = await supabase
+    .from("quotations")
+    .select("id,client_id,project_id,quotation_no,revision_no,title,is_active")
+    .eq("id", quotationId)
+    .eq("client_id", clientId)
+    .eq("project_id", projectId)
+    .maybeSingle<QuotationRevisionChainMember & { client_id: string; project_id: string }>();
+
+  if (sourceQuotationError || !sourceQuotation) {
+    return {
+      errorMessage: "Quotation could not be loaded.",
+      sourceQuotation: null,
+    };
+  }
+
+  const baseNo = baseQuotationNo(sourceQuotation.quotation_no);
+
+  if (!baseNo) {
+    return {
+      errorMessage: "Add a quotation number before creating revisions.",
+      sourceQuotation,
+    };
+  }
+
+  const { data: siblingQuotations, error: siblingQuotationsError } = await supabase
+    .from("quotations")
+    .select("id,quotation_no,revision_no,title,is_active")
+    .eq("client_id", clientId)
+    .eq("project_id", projectId)
+    .returns<QuotationRevisionChainMember[]>();
+
+  if (siblingQuotationsError) {
+    return {
+      errorMessage: "Revision history could not be loaded.",
+      sourceQuotation,
+    };
+  }
+
+  const chain = (siblingQuotations ?? [])
+    .filter((quotation) => quotationBelongsToRevisionChain(quotation, baseNo))
+    .sort((left, right) => {
+      const revisionCompare = (left.revision_no ?? 0) - (right.revision_no ?? 0);
+      if (revisionCompare !== 0) return revisionCompare;
+
+      return (left.quotation_no ?? "").localeCompare(right.quotation_no ?? "");
+    });
+  const latestQuotation = chain[chain.length - 1] ?? sourceQuotation;
+
+  return {
+    baseNo,
+    chain,
+    errorMessage: null,
+    latestQuotation,
+    sourceQuotation,
+  };
+}
+
 async function copyQuotation(
   formData: FormData,
   mode: QuotationCopyMode,
@@ -1458,34 +1545,34 @@ async function copyQuotation(
   let revisionNo = 0;
 
   if (mode === "revision") {
-    const baseNo = baseQuotationNo(source.quotation_no);
-    let highestRevisionNo = source.revision_no ?? 0;
+    const chainInfo = await quotationRevisionChain({
+      clientId: source.client_id,
+      projectId: source.project_id,
+      quotationId: source.id,
+      supabase,
+    });
 
-    if (baseNo) {
-      const { data: siblingRevisions, error: siblingError } = await supabase
-        .from("quotations")
-        .select("quotation_no,revision_no")
-        .eq("client_id", source.client_id)
-        .eq("project_id", source.project_id)
-        .eq("is_active", true)
-        .returns<Array<{ quotation_no: string | null; revision_no: number }>>();
+    if (chainInfo.errorMessage || !chainInfo.sourceQuotation || !chainInfo.baseNo || !chainInfo.latestQuotation) {
+      console.error("QUOTATION REVISION CHAIN ERROR", chainInfo.errorMessage ?? "Missing revision chain.");
+      redirectWithMessage(redirectPath, chainInfo.errorMessage ?? "Revision could not be created.");
+    }
 
-      if (siblingError) {
-        console.error("QUOTATION REVISION LIST ERROR", siblingError.message);
-        redirectWithMessage(redirectPath, "Revision could not be created.");
-      }
-
-      highestRevisionNo = Math.max(
-        0,
-        ...(siblingRevisions ?? [])
-          .map((quotation) => revisionNoFromQuotationNo(quotation.quotation_no, baseNo))
-          .filter((value): value is number => value !== null && Number.isFinite(value)),
+    if (chainInfo.latestQuotation.id !== source.id) {
+      redirectWithMessage(
+        redirectPath,
+        `Please create revisions from the latest revision (${quotationRevisionLabel(chainInfo.latestQuotation.revision_no ?? 0)}).`,
       );
     }
 
+    const highestRevisionNo = Math.max(
+      0,
+      ...chainInfo.chain
+        .map((quotation) => quotation.revision_no ?? revisionNoFromQuotationNo(quotation.quotation_no, chainInfo.baseNo))
+        .filter((value): value is number => value !== null && Number.isFinite(value)),
+    );
     const nextRevisionNo = highestRevisionNo + 1;
     title = `${baseRevisionTitle(source.title)} Rev ${nextRevisionNo}`;
-    quotationNo = baseNo ? `${baseNo}-R${nextRevisionNo}` : null;
+    quotationNo = `${chainInfo.baseNo}-R${nextRevisionNo}`;
     revisionNo = nextRevisionNo;
   }
 
@@ -1653,8 +1740,10 @@ async function copyQuotation(
     metadata: {
       mode,
       quotationLabel: quotationLabel(title, quotationNo),
+      newRevisionNo: revisionNo,
       sourceQuotationId: source.id,
       sourceQuotationNo: source.quotation_no,
+      sourceRevisionNo: source.revision_no,
       sourceTitle: source.title,
     },
     actorName: displayName,

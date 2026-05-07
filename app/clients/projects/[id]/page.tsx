@@ -165,6 +165,10 @@ function baseQuotationNo(quotationNo: string | null) {
   return quotationNo?.replace(/(?:-R\d+)+$/i, "") ?? "";
 }
 
+function quotationRevisionLabel(revisionNo: number | null | undefined) {
+  return (revisionNo ?? 0) > 0 ? `R${revisionNo}` : "Original";
+}
+
 function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
   return (
     <label className="block">
@@ -322,6 +326,17 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
   });
   const quotationList = allQuotationList.filter((quotation) => quotation.is_active);
   const archivedQuotationList = allQuotationList.filter((quotation) => !quotation.is_active);
+  const latestRevisionByBaseNo = new Map<string, Quotation>();
+
+  for (const quotation of allQuotationList) {
+    const baseNo = baseQuotationNo(quotation.quotation_no);
+    if (!baseNo) continue;
+
+    const currentLatest = latestRevisionByBaseNo.get(baseNo);
+    if (!currentLatest || (quotation.revision_no ?? 0) > (currentLatest.revision_no ?? 0)) {
+      latestRevisionByBaseNo.set(baseNo, quotation);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
@@ -439,9 +454,29 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                 </thead>
                 <tbody>
                   {quotationList.map((quotation) => (
+                    (() => {
+                      const baseNo = baseQuotationNo(quotation.quotation_no);
+                      const latestRevision = baseNo ? latestRevisionByBaseNo.get(baseNo) : null;
+                      const isLatestRevision = latestRevision ? latestRevision.id === quotation.id : false;
+
+                      return (
                     <tr key={quotation.id} className="border-b border-zinc-100 align-top">
                       <td className="py-3 pr-4 text-zinc-600">{quotation.quotation_no ?? "-"}</td>
-                      <td className="py-3 pr-4 font-medium text-zinc-950">{quotation.title}</td>
+                      <td className="py-3 pr-4 font-medium text-zinc-950">
+                        <div className="flex flex-col gap-1">
+                          <span>{quotation.title}</span>
+                          {baseNo ? (
+                            <span className="text-xs font-medium text-zinc-500">
+                              {quotationRevisionLabel(quotation.revision_no)}
+                              {isLatestRevision ? " - Latest revision" : ` - Older revision${latestRevision ? `, latest is ${quotationRevisionLabel(latestRevision.revision_no)}` : ""}`}
+                            </span>
+                          ) : (
+                            <span className="text-xs font-medium text-amber-700">
+                              Add quotation number before creating revisions
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-3 pr-4 text-zinc-600">{quotation.quotation_date}</td>
                       <td className="py-3 pr-4">
                         <StatusBadge label={quotationStatuses.get(quotation.status) ?? quotation.status} />
@@ -490,12 +525,20 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                                 quotationId={quotation.id}
                                 projectId={project.id}
                               />
-                              <QuotationActionForm
-                                action={createQuotationRevision}
-                                label="Create Revision"
-                                quotationId={quotation.id}
-                                projectId={project.id}
-                              />
+                              {baseNo && isLatestRevision ? (
+                                <QuotationActionForm
+                                  action={createQuotationRevision}
+                                  label={`Create Revision (${quotationRevisionLabel((quotation.revision_no ?? 0) + 1)} next)`}
+                                  quotationId={quotation.id}
+                                  projectId={project.id}
+                                />
+                              ) : (
+                                <div className="rounded-md px-3 py-2 text-sm font-semibold text-zinc-400">
+                                  {baseNo
+                                    ? `Create Revision disabled - latest is ${quotationRevisionLabel(latestRevision?.revision_no)}`
+                                    : "Create Revision disabled - add quotation number first"}
+                                </div>
+                              )}
                               <QuotationActionForm
                                 action={createQuotationOption}
                                 label="Create Option"
@@ -523,6 +566,8 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                         </td>
                       ) : null}
                     </tr>
+                      );
+                    })()
                   ))}
                 </tbody>
               </table>
