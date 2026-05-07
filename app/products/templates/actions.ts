@@ -27,6 +27,22 @@ const deskingRoles = new Set([
   "accessory",
 ]);
 const priceListUpdateStatuses = new Set(["draft", "active", "archived"]);
+const detailPriceFieldsBySource = {
+  product_components: new Set(["unit_price"]),
+  "product_templates.desking_size_pricing": new Set(["default_price", "additional_price"]),
+  "product_templates.variant_pricing": new Set(["price"]),
+  "product_templates.category_pricing": new Set(["prices.Cat A", "prices.Cat B", "prices.Cat C", "prices.Cat D"]),
+  "product_templates.accessory_pricing": new Set(["price"]),
+} as const;
+
+type DetailPriceSourceTable = keyof typeof detailPriceFieldsBySource;
+
+type JsonPriceRow = Record<string, unknown> & {
+  id?: string;
+  currency?: string;
+  items?: JsonPriceRow[];
+  prices?: Record<string, unknown>;
+};
 
 function textValue(formData: FormData, name: string) {
   const value = formData.get(name);
@@ -72,6 +88,79 @@ function priceListUpdateStatusValue(formData: FormData) {
   const status = textValue(formData, "status") || "draft";
 
   return priceListUpdateStatuses.has(status) ? status : "draft";
+}
+
+function detailPriceSourceValue(value: string): DetailPriceSourceTable | null {
+  return value in detailPriceFieldsBySource ? value as DetailPriceSourceTable : null;
+}
+
+function detailPriceFieldIsAllowed(sourceTable: DetailPriceSourceTable, priceField: string) {
+  return detailPriceFieldsBySource[sourceTable].has(priceField);
+}
+
+function jsonArrayValue(value: unknown): JsonPriceRow[] {
+  return Array.isArray(value) ? value.filter((row): row is JsonPriceRow => Boolean(row && typeof row === "object")) : [];
+}
+
+function moneyNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function updateJsonPriceRows({
+  currency,
+  priceField,
+  rows,
+  sourceRecordId,
+  sourceTable,
+  newPrice,
+}: {
+  currency: string | null;
+  priceField: string;
+  rows: JsonPriceRow[];
+  sourceRecordId: string;
+  sourceTable: DetailPriceSourceTable;
+  newPrice: number;
+}) {
+  let oldPrice: number | null = null;
+  let matched = false;
+
+  const updateRow = (row: JsonPriceRow): JsonPriceRow => {
+    if (row.id !== sourceRecordId) {
+      return row;
+    }
+
+    matched = true;
+    const nextRow = { ...row };
+
+    if (sourceTable === "product_templates.category_pricing") {
+      const category = priceField.replace("prices.", "");
+      const prices = typeof row.prices === "object" && row.prices !== null ? row.prices : {};
+      oldPrice = moneyNumber(prices[category]);
+      nextRow.prices = { ...prices, [category]: newPrice };
+    } else {
+      oldPrice = moneyNumber(row[priceField]);
+      nextRow[priceField] = newPrice;
+    }
+
+    if (currency) {
+      nextRow.currency = currency;
+    }
+
+    return nextRow;
+  };
+
+  if (sourceTable === "product_templates.accessory_pricing") {
+    const nextRows = rows.map((group) => ({
+      ...group,
+      items: jsonArrayValue(group.items).map(updateRow),
+    }));
+
+    return { matched, oldPrice, rows: nextRows };
+  }
+
+  const nextRows = rows.map(updateRow);
+  return { matched, oldPrice, rows: nextRows };
 }
 
 function numberInRange(formData: FormData, name: string, fallback: number, min: number, max: number) {
@@ -610,6 +699,241 @@ export async function updateProductTemplate(formData: FormData) {
 
   revalidatePath("/products/templates");
   redirectWithMessage("Product template updated.");
+}
+
+export async function updateProductTemplateDefaultPrice(formData: FormData) {
+  const { user } = await requireSettingsManager();
+  const productTemplateId = textValue(formData, "product_template_id");
+  const newDefaultUnitPrice = numberValue(formData, "new_default_unit_price", Number.NaN);
+  const currency = normalizeCurrency(textValue(formData, "currency") || defaultCurrency);
+  const brandPriceListUpdateId = optionalTextValue(formData, "brand_price_list_update_id");
+  const effectiveFrom = optionalTextValue(formData, "effective_from");
+  const note = optionalTextValue(formData, "note");
+
+  if (!productTemplateId || !Number.isFinite(newDefaultUnitPrice) || newDefaultUnitPrice < 0) {
+    redirectWithMessage("Template and valid new price are required.");
+  }
+
+  const supabase = await createClient();
+  const { data: template, error: templateError } = await supabase
+    .from("product_templates")
+    .select("id,brand_id,default_unit_price,currency")
+    .eq("id", productTemplateId)
+    .single<{
+      id: string;
+      brand_id: string;
+      default_unit_price: number;
+      currency: string;
+    }>();
+
+  if (templateError || !template) {
+    console.error("PRODUCT TEMPLATE PRICE UPDATE READ ERROR", templateError?.message);
+    redirectWithMessage("Product template could not be loaded.");
+  }
+
+  if (brandPriceListUpdateId) {
+    const { data: priceListUpdate, error: priceListError } = await supabase
+      .from("brand_price_list_updates")
+      .select("id")
+      .eq("id", brandPriceListUpdateId)
+      .eq("brand_id", template.brand_id)
+      .maybeSingle<{ id: string }>();
+
+    if (priceListError || !priceListUpdate) {
+      console.error("PRODUCT TEMPLATE PRICE LIST UPDATE LOOKUP ERROR", priceListError?.message);
+      redirectWithMessage("Selected brand price list update could not be loaded.");
+    }
+  }
+
+  const { error: historyError } = await supabase.from("product_template_price_history").insert({
+    product_template_id: template.id,
+    brand_id: template.brand_id,
+    brand_price_list_update_id: brandPriceListUpdateId,
+    old_default_unit_price: template.default_unit_price,
+    new_default_unit_price: newDefaultUnitPrice,
+    currency,
+    effective_from: effectiveFrom,
+    note,
+    changed_by: user.id,
+  });
+
+  if (historyError) {
+    console.error("PRODUCT TEMPLATE PRICE HISTORY ERROR", historyError.message);
+    redirectWithMessage("Product template price history could not be saved.");
+  }
+
+  const { error: updateError } = await supabase
+    .from("product_templates")
+    .update({
+      default_unit_price: newDefaultUnitPrice,
+      currency,
+      last_price_checked_at: new Date().toISOString(),
+      last_price_checked_by: user.id,
+      ...(note ? { price_check_note: note } : {}),
+    })
+    .eq("id", template.id);
+
+  if (updateError) {
+    console.error("PRODUCT TEMPLATE PRICE UPDATE ERROR", updateError.message);
+    redirectWithMessage("Product template source price could not be updated.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Product template source price updated.");
+}
+
+export async function updateProductTemplateDetailPrice(formData: FormData) {
+  const { user } = await requireSettingsManager();
+  const productTemplateId = textValue(formData, "product_template_id");
+  const sourceTable = detailPriceSourceValue(textValue(formData, "source_table"));
+  const sourceRecordId = textValue(formData, "source_record_id");
+  const priceField = textValue(formData, "price_field");
+  const newPrice = numberValue(formData, "new_price", Number.NaN);
+  const currency = optionalTextValue(formData, "currency");
+  const brandPriceListUpdateId = optionalTextValue(formData, "brand_price_list_update_id");
+  const effectiveFrom = optionalTextValue(formData, "effective_from");
+  const note = optionalTextValue(formData, "note");
+
+  if (
+    !productTemplateId ||
+    !sourceTable ||
+    !sourceRecordId ||
+    !detailPriceFieldIsAllowed(sourceTable, priceField) ||
+    !Number.isFinite(newPrice) ||
+    newPrice < 0
+  ) {
+    redirectWithMessage("Template, source row, price field, and valid new price are required.");
+  }
+
+  const normalizedCurrency = currency ? normalizeCurrency(currency) : null;
+  const supabase = await createClient();
+  const { data: template, error: templateError } = await supabase
+    .from("product_templates")
+    .select("id,brand_id,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing")
+    .eq("id", productTemplateId)
+    .single<{
+      id: string;
+      brand_id: string;
+      desking_size_pricing: JsonPriceRow[] | null;
+      variant_pricing: JsonPriceRow[] | null;
+      category_pricing: JsonPriceRow[] | null;
+      accessory_pricing: JsonPriceRow[] | null;
+    }>();
+
+  if (templateError || !template) {
+    console.error("DETAIL PRICE TEMPLATE READ ERROR", templateError?.message);
+    redirectWithMessage("Product template could not be loaded.");
+  }
+
+  if (brandPriceListUpdateId) {
+    const { data: priceListUpdate, error: priceListError } = await supabase
+      .from("brand_price_list_updates")
+      .select("id")
+      .eq("id", brandPriceListUpdateId)
+      .eq("brand_id", template.brand_id)
+      .neq("status", "archived")
+      .maybeSingle<{ id: string }>();
+
+    if (priceListError || !priceListUpdate) {
+      console.error("DETAIL PRICE LIST UPDATE LOOKUP ERROR", priceListError?.message);
+      redirectWithMessage("Selected brand price list update could not be loaded.");
+    }
+  }
+
+  let oldPrice: number | null = null;
+  let updatePayload: Record<string, unknown> = {};
+  let componentSourceId: string | null = null;
+
+  if (sourceTable === "product_components") {
+    const { data: component, error: componentError } = await supabase
+      .from("product_components")
+      .select("id,template_id,unit_price,currency")
+      .eq("id", sourceRecordId)
+      .single<{
+        id: string;
+        template_id: string;
+        unit_price: number;
+        currency: string;
+      }>();
+
+    if (componentError || !component || component.template_id !== template.id) {
+      console.error("DETAIL PRICE COMPONENT READ ERROR", componentError?.message);
+      redirectWithMessage("Component price source could not be loaded.");
+    }
+
+    oldPrice = component.unit_price;
+    componentSourceId = component.id;
+    updatePayload = {
+      unit_price: newPrice,
+      ...(normalizedCurrency ? { currency: normalizedCurrency } : {}),
+    };
+  } else {
+    const jsonColumn = sourceTable.replace("product_templates.", "") as
+      | "desking_size_pricing"
+      | "variant_pricing"
+      | "category_pricing"
+      | "accessory_pricing";
+    const updated = updateJsonPriceRows({
+      currency: normalizedCurrency,
+      priceField,
+      rows: jsonArrayValue(template[jsonColumn]),
+      sourceRecordId,
+      sourceTable,
+      newPrice,
+    });
+
+    if (!updated.matched) {
+      redirectWithMessage("Template price row could not be found.");
+    }
+
+    oldPrice = updated.oldPrice;
+    updatePayload = { [jsonColumn]: updated.rows };
+  }
+
+  const { error: historyError } = await supabase.from("product_template_detail_price_history").insert({
+    product_template_id: template.id,
+    brand_id: template.brand_id,
+    brand_price_list_update_id: brandPriceListUpdateId,
+    source_table: sourceTable,
+    source_record_id: sourceRecordId,
+    price_field: priceField,
+    old_price: oldPrice,
+    new_price: newPrice,
+    currency: normalizedCurrency,
+    effective_from: effectiveFrom,
+    note,
+    changed_by: user.id,
+  });
+
+  if (historyError) {
+    console.error("DETAIL PRICE HISTORY ERROR", historyError.message);
+    redirectWithMessage("Detail price history could not be saved.");
+  }
+
+  if (sourceTable === "product_components") {
+    const { error: componentUpdateError } = await supabase
+      .from("product_components")
+      .update(updatePayload)
+      .eq("id", componentSourceId);
+
+    if (componentUpdateError) {
+      console.error("DETAIL PRICE COMPONENT UPDATE ERROR", componentUpdateError.message);
+      redirectWithMessage("Component source price could not be updated.");
+    }
+  } else {
+    const { error: jsonUpdateError } = await supabase
+      .from("product_templates")
+      .update(updatePayload)
+      .eq("id", template.id);
+
+    if (jsonUpdateError) {
+      console.error("DETAIL PRICE JSON UPDATE ERROR", jsonUpdateError.message);
+      redirectWithMessage("Template detail source price could not be updated.");
+    }
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Detail source price updated.");
 }
 
 export async function deactivateProductTemplate(formData: FormData) {

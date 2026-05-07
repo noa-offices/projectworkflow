@@ -12,6 +12,7 @@ import {
   type ProductLibraryComponent,
   type ProductLibraryTemplate,
 } from "@/components/quotations/product-library-selector";
+import { latestBrandPriceListUpdate } from "@/lib/product-price-check";
 import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
 import {
   FinishImagePreview,
@@ -2365,6 +2366,23 @@ export default async function QuotationBuilderPage({
     .order("template_name", { ascending: true })
     .returns<ProductLibraryTemplate[]>();
 
+  const { data: brandPriceListUpdates, error: brandPriceListUpdatesError } = await supabase
+    .from("brand_price_list_updates")
+    .select("id,brand_id,title,effective_from,received_at,status,created_at")
+    .in("status", ["draft", "active"])
+    .order("brand_id", { ascending: true })
+    .order("effective_from", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .returns<Array<{
+      id: string;
+      brand_id: string;
+      title: string | null;
+      effective_from: string | null;
+      received_at: string | null;
+      status: string;
+      created_at: string | null;
+    }>>();
+
   const { data: productComponents, error: productComponentsError } = await supabase
     .from("product_components")
     .select("id,template_id,option_type,component_group,component_code,component_name,description,qty,unit_label,unit_price,currency,is_optional,is_default_selected,sort_order,calculation_data")
@@ -2446,12 +2464,32 @@ export default async function QuotationBuilderPage({
   if (productBrandsError) console.error("PRODUCT SELECTOR BRANDS ERROR", productBrandsError.message);
   if (productCategoriesError) console.error("PRODUCT SELECTOR CATEGORIES ERROR", productCategoriesError.message);
   if (productTemplatesError) console.error("PRODUCT SELECTOR TEMPLATES ERROR", productTemplatesError.message);
+  if (brandPriceListUpdatesError) console.error("PRODUCT SELECTOR PRICE LIST UPDATES ERROR", brandPriceListUpdatesError.message);
   if (productComponentsError) console.error("PRODUCT SELECTOR OPTIONS ERROR", productComponentsError.message);
   if (linkedFamiliesError) console.error("PRODUCT SELECTOR LINKED FAMILIES ERROR", linkedFamiliesError.message);
   if (materialGroupsError) console.error("QUOTATION MATERIAL GROUPS ERROR", materialGroupsError.message);
   if (materialsError) console.error("QUOTATION MATERIALS ERROR", materialsError.message);
   if (templateMaterialGroupsError) console.error("QUOTATION TEMPLATE MATERIAL GROUPS ERROR", templateMaterialGroupsError.message);
   if (templateMaterialGroupItemsError) console.error("QUOTATION TEMPLATE MATERIAL GROUP ITEMS ERROR", templateMaterialGroupItemsError.message);
+
+  const priceListUpdatesByBrand = new Map<string, NonNullable<typeof brandPriceListUpdates>>();
+
+  for (const update of brandPriceListUpdates ?? []) {
+    priceListUpdatesByBrand.set(update.brand_id, [
+      ...(priceListUpdatesByBrand.get(update.brand_id) ?? []),
+      update,
+    ]);
+  }
+
+  const latestPriceListUpdateByBrand = new Map(
+    Array.from(priceListUpdatesByBrand.entries())
+      .map(([brandId, updates]) => [brandId, latestBrandPriceListUpdate(updates)] as const)
+      .filter((entry): entry is readonly [string, NonNullable<(typeof entry)[1]>] => Boolean(entry[1])),
+  );
+  const productTemplatesWithPriceChecks = (productTemplates ?? []).map((template) => ({
+    ...template,
+    latest_brand_price_list_update: latestPriceListUpdateByBrand.get(template.brand_id) ?? null,
+  }));
 
   const itemsBySection = new Map<string, QuotationItem[]>();
 
@@ -2944,7 +2982,7 @@ export default async function QuotationBuilderPage({
                                     brands={productBrands ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
-                                    productTemplates={productTemplates ?? []}
+                                    productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
                                     returnTo={builderPath}
                                     inlineFormId={inlineFormId}
@@ -2993,7 +3031,7 @@ export default async function QuotationBuilderPage({
                                     brands={productBrands ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
-                                    productTemplates={productTemplates ?? []}
+                                    productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
                                     returnTo={builderPath}
                                     inlineFormId={inlineFormId}
@@ -3054,7 +3092,7 @@ export default async function QuotationBuilderPage({
                                     brands={productBrands ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
-                                    productTemplates={productTemplates ?? []}
+                                    productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
                                     returnTo={builderPath}
                                     inlineFormId={inlineFormId}
@@ -3080,7 +3118,7 @@ export default async function QuotationBuilderPage({
                                     brands={productBrands ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
-                                    productTemplates={productTemplates ?? []}
+                                    productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
                                     returnTo={builderPath}
                                     inlineFormId={inlineFormId}
@@ -3143,7 +3181,7 @@ export default async function QuotationBuilderPage({
                                   brands={productBrands ?? []}
                                   materialGroups={materialGroups ?? []}
                                   materials={materials ?? []}
-                                  productTemplates={productTemplates ?? []}
+                                  productTemplates={productTemplatesWithPriceChecks}
                                   quotation={quotation}
                                   returnTo={builderPath}
                                   inlineFormId={inlineFormId}
@@ -3174,7 +3212,7 @@ export default async function QuotationBuilderPage({
                               linkedFamilies={linkedFamilies ?? []}
                               materialGroups={materialGroups ?? []}
                               materials={materials ?? []}
-                              productTemplates={productTemplates ?? []}
+                              productTemplates={productTemplatesWithPriceChecks}
                               quotation={quotation}
                               returnTo={builderPath}
                               sectionId={section.id}

@@ -27,6 +27,10 @@ import {
   normalizeCurrency,
   supportedCurrencies,
 } from "@/lib/currencies";
+import {
+  latestBrandPriceListUpdate,
+  productTemplatePriceCheckState,
+} from "@/lib/product-price-check";
 import { createClient } from "@/lib/supabase/server";
 import {
   createProductComponent,
@@ -52,6 +56,8 @@ import {
   updateLinkedProductFamily,
   updateBrandPriceListUpdate,
   updateProductComponent,
+  updateProductTemplateDefaultPrice,
+  updateProductTemplateDetailPrice,
   updateProductTemplateMaterialGroup,
   updateProductTemplate,
 } from "./actions";
@@ -95,6 +101,33 @@ type BrandPriceListUpdate = {
   notes: string | null;
   attachment_url: string | null;
   created_at: string;
+};
+
+type ProductTemplatePriceHistory = {
+  id: string;
+  product_template_id: string;
+  brand_price_list_update_id: string | null;
+  old_default_unit_price: number | null;
+  new_default_unit_price: number | null;
+  currency: string | null;
+  effective_from: string | null;
+  note: string | null;
+  changed_at: string;
+};
+
+type ProductTemplateDetailPriceHistory = {
+  id: string;
+  product_template_id: string;
+  brand_price_list_update_id: string | null;
+  source_table: string;
+  source_record_id: string;
+  price_field: string;
+  old_price: number | null;
+  new_price: number;
+  currency: string | null;
+  effective_from: string | null;
+  note: string | null;
+  changed_at: string;
 };
 
 type Category = {
@@ -1169,44 +1202,33 @@ function formatShortDate(value: string | null) {
   }).format(new Date(value));
 }
 
-function priceCheckState(template: ProductTemplate) {
-  const intervalDays = template.price_check_interval_days && template.price_check_interval_days > 0
-    ? template.price_check_interval_days
-    : 90;
-
-  if (!template.last_price_checked_at) {
-    return {
-      detail: "No check recorded",
-      key: "not_checked" as const,
-      tone: "warning" as const,
-      label: "Price not checked yet",
-    };
-  }
-
-  const checkedAt = new Date(template.last_price_checked_at);
-  const dueAt = checkedAt.getTime() + intervalDays * 24 * 60 * 60 * 1000;
-
-  if (!Number.isFinite(checkedAt.getTime()) || dueAt < Date.now()) {
-    return {
-      detail: `Last checked: ${formatDate(template.last_price_checked_at)}`,
-      key: "due" as const,
-      tone: "warning" as const,
-      label: "Price check due",
-    };
-  }
-
-  return {
-    detail: `Price checked: ${formatDate(template.last_price_checked_at)}`,
-    key: "checked" as const,
-    tone: "ok" as const,
-    label: "Price checked",
-  };
+function priceCheckState(
+  template: ProductTemplate,
+  latestBrandUpdate?: BrandPriceListUpdate | null,
+  brandName?: string | null,
+) {
+  return productTemplatePriceCheckState({
+    brandName,
+    formatDate,
+    latestBrandPriceListUpdate: latestBrandUpdate,
+    template,
+  });
 }
 
-function PriceCheckStatus({ template }: { template: ProductTemplate }) {
-  const status = priceCheckState(template);
+function PriceCheckStatus({
+  brandName,
+  latestBrandUpdate,
+  template,
+}: {
+  brandName?: string | null;
+  latestBrandUpdate?: BrandPriceListUpdate | null;
+  template: ProductTemplate;
+}) {
+  const status = priceCheckState(template, latestBrandUpdate, brandName);
   const className = status.tone === "ok"
     ? "inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-900"
+    : status.tone === "notice"
+      ? "inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-900"
     : "inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900";
 
   return (
@@ -1313,6 +1335,157 @@ function BrandPriceListUpdateForm({
   );
 }
 
+function ProductTemplatePriceUpdateForm({
+  priceListUpdates,
+  template,
+}: {
+  priceListUpdates: BrandPriceListUpdate[];
+  template: ProductTemplate;
+}) {
+  const activeUpdates = priceListUpdates.filter((update) => update.status === "active");
+
+  return (
+    <form action={updateProductTemplateDefaultPrice} className="grid gap-2">
+      <input type="hidden" name="product_template_id" value={template.id} />
+      <div className="rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-600">
+        Current price: <span className="font-semibold text-zinc-950">{formatMoney(template.currency, template.default_unit_price)}</span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Field name="new_default_unit_price" label="New price" type="number" defaultValue={template.default_unit_price} required />
+        <CurrencySelect defaultValue={template.currency} />
+      </div>
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Price list update</span>
+        <select
+          name="brand_price_list_update_id"
+          defaultValue=""
+          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+        >
+          <option value="">No linked price list</option>
+          {activeUpdates.map((update) => (
+            <option key={update.id} value={update.id}>
+              {update.title}{update.effective_from ? ` (${formatShortDate(update.effective_from)})` : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      <Field name="effective_from" label="Effective from" type="date" />
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Note</span>
+        <textarea
+          name="note"
+          rows={3}
+          className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+        />
+      </label>
+      <ConfirmSubmitButton
+        message="This updates the product template source price for future quotations only. Existing quotations will not change. Continue?"
+        className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
+      >
+        Update source price
+      </ConfirmSubmitButton>
+    </form>
+  );
+}
+
+function DetailPriceUpdateForm({
+  currency,
+  label,
+  priceField,
+  priceListUpdates,
+  productTemplateId,
+  sourceRecordId,
+  sourceTable,
+  value,
+}: {
+  currency?: string | null;
+  label: string;
+  priceField: string;
+  priceListUpdates: BrandPriceListUpdate[];
+  productTemplateId: string;
+  sourceRecordId?: string | null;
+  sourceTable: string;
+  value: number;
+}) {
+  const selectableUpdates = priceListUpdates.filter((update) => update.status !== "archived");
+
+  if (!sourceRecordId) {
+    return (
+      <p className="rounded-md border border-dashed border-zinc-200 bg-white p-2 text-xs text-zinc-500">
+        Save this template once before updating this source price with history.
+      </p>
+    );
+  }
+
+  return (
+    <details className="mt-2">
+      <summary className="inline-flex cursor-pointer rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">
+        Update price
+      </summary>
+      <form action={updateProductTemplateDetailPrice} className="mt-2 grid gap-2 rounded-md border border-zinc-200 bg-white p-3">
+        <input type="hidden" name="product_template_id" value={productTemplateId} />
+        <input type="hidden" name="source_table" value={sourceTable} />
+        <input type="hidden" name="source_record_id" value={sourceRecordId} />
+        <input type="hidden" name="price_field" value={priceField} />
+        <p className="text-xs text-zinc-500">
+          {label}: <span className="font-semibold text-zinc-950">{formatMoney(currency ?? defaultCurrency, value)}</span>
+        </p>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Field name="new_price" label="New price" type="number" defaultValue={value} required />
+          <CurrencySelect defaultValue={currency} />
+        </div>
+        <label className="block">
+          <span className="text-xs font-semibold uppercase text-zinc-500">Price list update</span>
+          <select
+            name="brand_price_list_update_id"
+            defaultValue=""
+            className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+          >
+            <option value="">No linked price list</option>
+            {selectableUpdates.map((update) => (
+              <option key={update.id} value={update.id}>
+                {update.title}{update.effective_from ? ` (${formatShortDate(update.effective_from)})` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Field name="effective_from" label="Effective from" type="date" />
+        <label className="block">
+          <span className="text-xs font-semibold uppercase text-zinc-500">Note</span>
+          <textarea
+            name="note"
+            rows={2}
+            className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+          />
+        </label>
+        <ConfirmSubmitButton
+          message="This updates source pricing for future quotations only. Existing quotations will not change. Continue?"
+          className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
+        >
+          Save source price
+        </ConfirmSubmitButton>
+      </form>
+    </details>
+  );
+}
+
+function DetailPriceRow({
+  children,
+  form,
+}: {
+  children: ReactNode;
+  form: ReactNode;
+}) {
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="text-sm text-zinc-600">{children}</div>
+        <div className="sm:w-80">{form}</div>
+      </div>
+    </div>
+  );
+}
+
 export default async function TemplatesPage({ searchParams }: TemplatesPageProps) {
   const { user, displayName } = await requireSettingsManager();
   const params = (await searchParams) ?? {};
@@ -1411,6 +1584,20 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     .order("created_at", { ascending: false })
     .returns<BrandPriceListUpdate[]>();
 
+  const { data: templatePriceHistory, error: templatePriceHistoryError } = await supabase
+    .from("product_template_price_history")
+    .select("id,product_template_id,brand_price_list_update_id,old_default_unit_price,new_default_unit_price,currency,effective_from,note,changed_at")
+    .order("product_template_id", { ascending: true })
+    .order("changed_at", { ascending: false })
+    .returns<ProductTemplatePriceHistory[]>();
+
+  const { data: templateDetailPriceHistory, error: templateDetailPriceHistoryError } = await supabase
+    .from("product_template_detail_price_history")
+    .select("id,product_template_id,brand_price_list_update_id,source_table,source_record_id,price_field,old_price,new_price,currency,effective_from,note,changed_at")
+    .order("product_template_id", { ascending: true })
+    .order("changed_at", { ascending: false })
+    .returns<ProductTemplateDetailPriceHistory[]>();
+
   if (brandsError) console.error("TEMPLATE BRANDS LIST ERROR", brandsError.message);
   if (categoriesError) console.error("TEMPLATE CATEGORIES LIST ERROR", categoriesError.message);
   if (templatesError) console.error("PRODUCT TEMPLATES LIST ERROR", templatesError.message);
@@ -1421,6 +1608,8 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   if (templateMaterialGroupsError) console.error("TEMPLATE MATERIAL GROUPS LIST ERROR", templateMaterialGroupsError.message);
   if (templateMaterialGroupItemsError) console.error("TEMPLATE MATERIAL GROUP ITEMS LIST ERROR", templateMaterialGroupItemsError.message);
   if (brandPriceListUpdatesError) console.error("BRAND PRICE LIST UPDATES ERROR", brandPriceListUpdatesError.message);
+  if (templatePriceHistoryError) console.error("TEMPLATE PRICE HISTORY ERROR", templatePriceHistoryError.message);
+  if (templateDetailPriceHistoryError) console.error("TEMPLATE DETAIL PRICE HISTORY ERROR", templateDetailPriceHistoryError.message);
 
   const brandList = brands ?? [];
   const categoryList = categories ?? [];
@@ -1433,6 +1622,8 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const activeTemplateMaterialGroupList = (templateMaterialGroups ?? []).filter((link) => link.is_active);
   const materialGroupItemList = templateMaterialGroupItems ?? [];
   const brandPriceListUpdateList = brandPriceListUpdates ?? [];
+  const templatePriceHistoryList = templatePriceHistory ?? [];
+  const templateDetailPriceHistoryList = templateDetailPriceHistory ?? [];
   const brandMap = new Map(brandList.map((brand) => [brand.id, brand.name]));
   const categoryMap = new Map(
     categoryList.map((category) => [category.id, category.name]),
@@ -1455,6 +1646,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const materialGroupsByTemplate = new Map<string, ProductTemplateMaterialGroup[]>();
   const materialGroupItemsByLink = new Map<string, ProductTemplateMaterialGroupItem[]>();
   const priceListUpdatesByBrand = new Map<string, BrandPriceListUpdate[]>();
+  const latestPriceListUpdateByBrand = new Map<string, BrandPriceListUpdate>();
+  const priceHistoryByTemplate = new Map<string, ProductTemplatePriceHistory[]>();
+  const detailPriceHistoryByTemplate = new Map<string, ProductTemplateDetailPriceHistory[]>();
 
   for (const component of components ?? []) {
     const templateComponents = componentsByTemplate.get(component.template_id) ?? [];
@@ -1488,6 +1682,28 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     ]);
   }
 
+  for (const [brandId, updates] of priceListUpdatesByBrand.entries()) {
+    const latestUpdate = latestBrandPriceListUpdate(updates);
+
+    if (latestUpdate) {
+      latestPriceListUpdateByBrand.set(brandId, latestUpdate);
+    }
+  }
+
+  for (const history of templatePriceHistoryList) {
+    priceHistoryByTemplate.set(history.product_template_id, [
+      ...(priceHistoryByTemplate.get(history.product_template_id) ?? []),
+      history,
+    ]);
+  }
+
+  for (const history of templateDetailPriceHistoryList) {
+    detailPriceHistoryByTemplate.set(history.product_template_id, [
+      ...(detailPriceHistoryByTemplate.get(history.product_template_id) ?? []),
+      history,
+    ]);
+  }
+
   const normalizedSearch = searchQuery.toLowerCase();
   const templatesMatchingStructure = activeTemplateList.filter((template) => {
     const matchesSearch =
@@ -1506,7 +1722,11 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   });
   const priceCheckSummary = templatesMatchingStructure.reduce(
     (summary, template) => {
-      const key = priceCheckState(template).key;
+      const key = priceCheckState(
+        template,
+        latestPriceListUpdateByBrand.get(template.brand_id),
+        brandMap.get(template.brand_id),
+      ).key;
 
       return {
         ...summary,
@@ -1514,13 +1734,17 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
         total: summary.total + 1,
       };
     },
-    { checked: 0, due: 0, not_checked: 0, total: 0 },
+    { checked: 0, due: 0, not_checked: 0, scheduled: 0, total: 0 },
   );
-  const priceStatusOptions = new Set(["not_checked", "due", "checked"]);
+  const priceStatusOptions = new Set(["not_checked", "due", "checked", "scheduled"]);
   const filteredTemplates = templatesMatchingStructure.filter((template) => {
     if (!priceStatusOptions.has(selectedPriceStatusFilter)) return true;
 
-    return priceCheckState(template).key === selectedPriceStatusFilter;
+    return priceCheckState(
+      template,
+      latestPriceListUpdateByBrand.get(template.brand_id),
+      brandMap.get(template.brand_id),
+    ).key === selectedPriceStatusFilter;
   });
   const selectedTemplate =
     activeTemplateList.find((template) => template.id === openTemplateId) ?? null;
@@ -1606,6 +1830,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   <option value="">All price statuses</option>
                   <option value="not_checked">Price not checked yet</option>
                   <option value="due">Price check due</option>
+                  <option value="scheduled">New price list scheduled</option>
                   <option value="checked">Price checked</option>
                 </select>
                 <div className="flex gap-2">
@@ -1663,6 +1888,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-zinc-700">Total: {priceCheckSummary.total}</span>
                   <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">Not checked: {priceCheckSummary.not_checked}</span>
                   <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">Due: {priceCheckSummary.due}</span>
+                  <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-sky-900">Scheduled: {priceCheckSummary.scheduled}</span>
                   <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-900">Checked: {priceCheckSummary.checked}</span>
                 </div>
               </div>
@@ -1700,7 +1926,11 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                     );
                     const brandPriceSummary = activeBrandTemplates.reduce(
                       (summary, template) => {
-                        const key = priceCheckState(template).key;
+                        const key = priceCheckState(
+                          template,
+                          latestPriceListUpdateByBrand.get(template.brand_id),
+                          brand.name,
+                        ).key;
 
                         return {
                           ...summary,
@@ -1708,7 +1938,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           total: summary.total + 1,
                         };
                       },
-                      { checked: 0, due: 0, not_checked: 0, total: 0 },
+                      { checked: 0, due: 0, not_checked: 0, scheduled: 0, total: 0 },
                     );
                     const brandMainCategories = mainCategories.filter(
                       (category) => category.brand_id === brand.id,
@@ -1716,8 +1946,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                     const uncategorizedCount = brandTemplates.filter(
                       (template) => !template.main_category_id,
                     ).length;
-                    const brandPriceListUpdatesForBrand = priceListUpdatesByBrand.get(brand.id) ?? [];
-                    const latestPriceListUpdate = brandPriceListUpdatesForBrand[0] ?? null;
+                    const latestPriceListUpdate = latestPriceListUpdateByBrand.get(brand.id) ?? null;
 
                     return (
                       <details
@@ -1754,6 +1983,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                               <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-zinc-600">Templates: {brandPriceSummary.total}</span>
                               <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-900">Not checked: {brandPriceSummary.not_checked}</span>
                               <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-900">Due: {brandPriceSummary.due}</span>
+                              <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-900">Scheduled: {brandPriceSummary.scheduled}</span>
                               <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-900">Checked: {brandPriceSummary.checked}</span>
                             </div>
                             <div className="mt-3 flex flex-wrap gap-2">
@@ -2014,7 +2244,11 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                               template.default_unit_price,
                             )}
                           </p>
-                          <PriceCheckStatus template={template} />
+                          <PriceCheckStatus
+                            brandName={brandMap.get(template.brand_id)}
+                            latestBrandUpdate={latestPriceListUpdateByBrand.get(template.brand_id)}
+                            template={template}
+                          />
                         </div>
                         <div className="flex flex-wrap gap-3 md:justify-end">
                           <Link
@@ -2075,6 +2309,10 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
             {(selectedTemplate ? [selectedTemplate] : []).map((template) => {
               const templateComponents = componentsByTemplate.get(template.id) ?? [];
+              const templatePriceHistoryRows = priceHistoryByTemplate.get(template.id) ?? [];
+              const templateDetailPriceHistoryRows = detailPriceHistoryByTemplate.get(template.id) ?? [];
+              const templateBrandPriceListUpdates = priceListUpdatesByBrand.get(template.brand_id) ?? [];
+              const priceListUpdateById = new Map(templateBrandPriceListUpdates.map((update) => [update.id, update]));
               const groups = new Map<string, ProductComponent[]>();
               const hasWorkstationSizePricing = Boolean(
                 template.desking_size_pricing?.some((row) => row.is_active !== false),
@@ -2156,7 +2394,11 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         <p className="mt-1 text-lg font-semibold text-zinc-950">
                           {formatMoney(template.currency, template.default_unit_price)}
                         </p>
-                        <PriceCheckStatus template={template} />
+                        <PriceCheckStatus
+                          brandName={brandMap.get(template.brand_id)}
+                          latestBrandUpdate={latestPriceListUpdateByBrand.get(template.brand_id)}
+                          template={template}
+                        />
                         <form action={markTemplatePriceChecked} className="mt-3">
                           <input type="hidden" name="id" value={template.id} />
                           <input type="hidden" name="price_check_note" value="" />
@@ -2167,6 +2409,36 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             Mark checked now
                           </button>
                         </form>
+                        <details className="mt-3">
+                          <summary className="cursor-pointer text-xs font-semibold text-emerald-900">
+                            Update source price
+                          </summary>
+                          <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                            <ProductTemplatePriceUpdateForm
+                              priceListUpdates={templateBrandPriceListUpdates}
+                              template={template}
+                            />
+                          </div>
+                        </details>
+                        {templatePriceHistoryRows.length ? (
+                          <div className="mt-4 border-t border-zinc-200 pt-3">
+                            <p className="text-xs font-semibold uppercase text-zinc-500">Recent price history</p>
+                            <div className="mt-2 grid gap-1.5">
+                              {templatePriceHistoryRows.slice(0, 3).map((history) => {
+                                const priceListUpdate = history.brand_price_list_update_id
+                                  ? priceListUpdateById.get(history.brand_price_list_update_id)
+                                  : null;
+
+                                return (
+                                  <p key={history.id} className="text-xs leading-5 text-zinc-500">
+                                    {formatShortDate(history.changed_at)} - {formatMoney(history.currency ?? template.currency, Number(history.old_default_unit_price ?? 0))} {"->"} {formatMoney(history.currency ?? template.currency, Number(history.new_default_unit_price ?? 0))}
+                                    {priceListUpdate ? ` - ${priceListUpdate.title}` : ""}
+                                  </p>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
 
@@ -2186,6 +2458,224 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                       </div>
                     </details>
                   </div>
+
+                  {(activeTemplateComponents.length ||
+                    template.desking_size_pricing?.length ||
+                    template.variant_pricing?.length ||
+                    template.category_pricing?.length ||
+                    template.accessory_pricing?.length ||
+                    templateDetailPriceHistoryRows.length) ? (
+                    <div className="border-t border-zinc-200 p-5">
+                      <details>
+                        <summary className="cursor-pointer list-none rounded-lg border border-zinc-200 bg-zinc-50 p-4 transition hover:border-emerald-900">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <h3 className="text-sm font-semibold uppercase text-zinc-500">
+                                Detailed Price Updates
+                              </h3>
+                              <p className="mt-1 text-sm leading-6 text-zinc-500">
+                                Manual source price changes for components, options, and pricing rows. Future quotations use these source values.
+                              </p>
+                            </div>
+                            <span className="rounded-md bg-emerald-900 px-3 py-2 text-xs font-semibold text-white">
+                              Show Price Rows
+                            </span>
+                          </div>
+                        </summary>
+                        <div className="mt-4 space-y-5">
+                          {activeTemplateComponents.length ? (
+                            <section>
+                              <h4 className="text-xs font-bold uppercase text-zinc-500">Components / Options</h4>
+                              <div className="mt-2 grid gap-3">
+                                {activeTemplateComponents.map((component) => (
+                                  <DetailPriceRow
+                                    key={component.id}
+                                    form={
+                                      <DetailPriceUpdateForm
+                                        currency={component.currency}
+                                        label={component.component_name}
+                                        priceField="unit_price"
+                                        priceListUpdates={templateBrandPriceListUpdates}
+                                        productTemplateId={template.id}
+                                        sourceRecordId={component.id}
+                                        sourceTable="product_components"
+                                        value={component.unit_price}
+                                      />
+                                    }
+                                  >
+                                    <p className="font-semibold text-zinc-950">{component.component_name}</p>
+                                    <p className="mt-1 text-xs">
+                                      {component.component_group} / {optionTypeLabels.get(component.option_type) ?? "Other"} / {formatMoney(component.currency, component.unit_price)}
+                                    </p>
+                                  </DetailPriceRow>
+                                ))}
+                              </div>
+                            </section>
+                          ) : null}
+
+                          {template.desking_size_pricing?.length ? (
+                            <section>
+                              <h4 className="text-xs font-bold uppercase text-zinc-500">Desking / Size Pricing</h4>
+                              <div className="mt-2 grid gap-3">
+                                {template.desking_size_pricing.filter((row) => row.is_active !== false).map((row, index) => (
+                                  <DetailPriceRow
+                                    key={row.id ?? `desking-${index}`}
+                                    form={
+                                      <div className="grid gap-2">
+                                        <DetailPriceUpdateForm
+                                          currency={row.currency}
+                                          label="Default price"
+                                          priceField="default_price"
+                                          priceListUpdates={templateBrandPriceListUpdates}
+                                          productTemplateId={template.id}
+                                          sourceRecordId={row.id}
+                                          sourceTable="product_templates.desking_size_pricing"
+                                          value={Number(row.default_price ?? 0)}
+                                        />
+                                        <DetailPriceUpdateForm
+                                          currency={row.currency}
+                                          label="Additional price"
+                                          priceField="additional_price"
+                                          priceListUpdates={templateBrandPriceListUpdates}
+                                          productTemplateId={template.id}
+                                          sourceRecordId={row.id}
+                                          sourceTable="product_templates.desking_size_pricing"
+                                          value={Number(row.additional_price ?? 0)}
+                                        />
+                                      </div>
+                                    }
+                                  >
+                                    <p className="font-semibold text-zinc-950">{row.label || `${row.length ?? ""} x ${row.depth ?? ""} x ${row.height ?? ""}`}</p>
+                                    <p className="mt-1 text-xs">
+                                      Default {formatMoney(row.currency, Number(row.default_price ?? 0))} / Additional {formatMoney(row.currency, Number(row.additional_price ?? 0))}
+                                    </p>
+                                  </DetailPriceRow>
+                                ))}
+                              </div>
+                            </section>
+                          ) : null}
+
+                          {template.variant_pricing?.length ? (
+                            <section>
+                              <h4 className="text-xs font-bold uppercase text-zinc-500">Size / Model Variants</h4>
+                              <div className="mt-2 grid gap-3">
+                                {template.variant_pricing.filter((row) => row.is_active !== false).map((row, index) => (
+                                  <DetailPriceRow
+                                    key={row.id ?? `variant-${index}`}
+                                    form={
+                                      <DetailPriceUpdateForm
+                                        currency={row.currency}
+                                        label={row.variant_name || "Variant price"}
+                                        priceField="price"
+                                        priceListUpdates={templateBrandPriceListUpdates}
+                                        productTemplateId={template.id}
+                                        sourceRecordId={row.id}
+                                        sourceTable="product_templates.variant_pricing"
+                                        value={Number(row.price ?? 0)}
+                                      />
+                                    }
+                                  >
+                                    <p className="font-semibold text-zinc-950">{row.variant_name || "Variant"}</p>
+                                    <p className="mt-1 text-xs">
+                                      {row.dimension || "No dimension"} / {formatMoney(row.currency, Number(row.price ?? 0))}
+                                    </p>
+                                  </DetailPriceRow>
+                                ))}
+                              </div>
+                            </section>
+                          ) : null}
+
+                          {template.category_pricing?.length ? (
+                            <section>
+                              <h4 className="text-xs font-bold uppercase text-zinc-500">Fabric / Leather Categories</h4>
+                              <div className="mt-2 grid gap-3">
+                                {template.category_pricing.filter((row) => row.is_active !== false).map((row, index) => (
+                                  <DetailPriceRow
+                                    key={row.id ?? `category-${index}`}
+                                    form={
+                                      <div className="grid gap-2">
+                                        {["Cat A", "Cat B", "Cat C", "Cat D"].map((category) => (
+                                          <DetailPriceUpdateForm
+                                            key={category}
+                                            currency={row.currency}
+                                            label={category}
+                                            priceField={`prices.${category}`}
+                                            priceListUpdates={templateBrandPriceListUpdates}
+                                            productTemplateId={template.id}
+                                            sourceRecordId={row.id}
+                                            sourceTable="product_templates.category_pricing"
+                                            value={Number(row.prices?.[category] ?? 0)}
+                                          />
+                                        ))}
+                                      </div>
+                                    }
+                                  >
+                                    <p className="font-semibold text-zinc-950">{row.variant_name || "Category row"}</p>
+                                    <p className="mt-1 text-xs">{row.dimension || "No dimension"}</p>
+                                  </DetailPriceRow>
+                                ))}
+                              </div>
+                            </section>
+                          ) : null}
+
+                          {template.accessory_pricing?.length ? (
+                            <section>
+                              <h4 className="text-xs font-bold uppercase text-zinc-500">Options / Add-ons</h4>
+                              <div className="mt-2 grid gap-3">
+                                {template.accessory_pricing
+                                  .filter((group) => group.is_active !== false)
+                                  .flatMap((group, groupIndex) =>
+                                    (group.items ?? []).filter((item) => item.is_active !== false).map((item, itemIndex) => (
+                                      <DetailPriceRow
+                                        key={item.id ?? `accessory-${groupIndex}-${itemIndex}`}
+                                        form={
+                                          <DetailPriceUpdateForm
+                                            currency={item.currency}
+                                            label={item.item_name || "Add-on"}
+                                            priceField="price"
+                                            priceListUpdates={templateBrandPriceListUpdates}
+                                            productTemplateId={template.id}
+                                            sourceRecordId={item.id}
+                                            sourceTable="product_templates.accessory_pricing"
+                                            value={Number(item.price ?? 0)}
+                                          />
+                                        }
+                                      >
+                                        <p className="font-semibold text-zinc-950">{item.item_name || "Add-on"}</p>
+                                        <p className="mt-1 text-xs">
+                                          {group.group_name || "Accessories"} / {formatMoney(item.currency, Number(item.price ?? 0))}
+                                        </p>
+                                      </DetailPriceRow>
+                                    )),
+                                  )}
+                              </div>
+                            </section>
+                          ) : null}
+
+                          {templateDetailPriceHistoryRows.length ? (
+                            <section className="border-t border-zinc-200 pt-4">
+                              <h4 className="text-xs font-bold uppercase text-zinc-500">Recent Detail Price History</h4>
+                              <div className="mt-2 grid gap-1.5">
+                                {templateDetailPriceHistoryRows.slice(0, 5).map((history) => {
+                                  const priceListUpdate = history.brand_price_list_update_id
+                                    ? priceListUpdateById.get(history.brand_price_list_update_id)
+                                    : null;
+                                  const sourceLabel = history.source_table.replace("product_templates.", "").replaceAll("_", " ");
+
+                                  return (
+                                    <p key={history.id} className="text-xs leading-5 text-zinc-500">
+                                      {formatShortDate(history.changed_at)} - {sourceLabel}: {history.price_field} - {formatMoney(history.currency ?? template.currency, Number(history.old_price ?? 0))} {"->"} {formatMoney(history.currency ?? template.currency, history.new_price)}
+                                      {priceListUpdate ? ` - ${priceListUpdate.title}` : ""}
+                                    </p>
+                                  );
+                                })}
+                              </div>
+                            </section>
+                          ) : null}
+                        </div>
+                      </details>
+                    </div>
+                  ) : null}
 
                   <div className="border-t border-zinc-200 p-5">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

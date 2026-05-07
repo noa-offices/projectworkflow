@@ -11,6 +11,7 @@ import {
   type ProductTemplateMaterialGroupLink,
 } from "@/components/quotations/finish-selections-editor";
 import { formatMoney, normalizeCurrency } from "@/lib/currencies";
+import { productTemplatePriceCheckState } from "@/lib/product-price-check";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 import { createClient } from "@/lib/supabase/client";
 
@@ -52,6 +53,13 @@ export type ProductLibraryTemplate = {
   last_price_checked_at: string | null;
   price_check_interval_days: number | null;
   price_check_note?: string | null;
+  latest_brand_price_list_update?: {
+    title?: string | null;
+    effective_from: string | null;
+    received_at: string | null;
+    created_at: string | null;
+    status: string;
+  } | null;
 };
 
 type DeskingSizePricingRow = {
@@ -191,41 +199,29 @@ function formatPriceCheckDate(value: string | null) {
   }).format(new Date(value));
 }
 
-function priceCheckState(template: ProductLibraryTemplate) {
-  const intervalDays = template.price_check_interval_days && template.price_check_interval_days > 0
-    ? template.price_check_interval_days
-    : 90;
-
-  if (!template.last_price_checked_at) {
-    return {
-      detail: "No check recorded",
-      tone: "warning" as const,
-      label: "Price not checked yet",
-    };
-  }
-
-  const checkedAt = new Date(template.last_price_checked_at);
-  const dueAt = checkedAt.getTime() + intervalDays * 24 * 60 * 60 * 1000;
-
-  if (!Number.isFinite(checkedAt.getTime()) || dueAt < Date.now()) {
-    return {
-      detail: `Last checked: ${formatPriceCheckDate(template.last_price_checked_at)}`,
-      tone: "warning" as const,
-      label: "Price check due",
-    };
-  }
-
-  return {
-    detail: `Price checked: ${formatPriceCheckDate(template.last_price_checked_at)}`,
-    tone: "ok" as const,
-    label: "Price checked",
-  };
+function priceCheckState(template: ProductLibraryTemplate, brandName?: string | null) {
+  return productTemplatePriceCheckState({
+    brandName,
+    formatDate: formatPriceCheckDate,
+    latestBrandPriceListUpdate: template.latest_brand_price_list_update,
+    template,
+  });
 }
 
-function PriceCheckBadge({ compact = false, template }: { compact?: boolean; template: ProductLibraryTemplate }) {
-  const status = priceCheckState(template);
+function PriceCheckBadge({
+  brandName,
+  compact = false,
+  template,
+}: {
+  brandName?: string | null;
+  compact?: boolean;
+  template: ProductLibraryTemplate;
+}) {
+  const status = priceCheckState(template, brandName);
   const badgeClass = status.tone === "ok"
     ? "inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-900"
+    : status.tone === "notice"
+      ? "inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-900"
     : "inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-900";
 
   return (
@@ -819,7 +815,7 @@ export function ProductLibrarySelector({
                           <span className="mt-1 block text-[11px] font-semibold text-zinc-500">
                             {template.item_code ?? template.template_code ?? "No code"}
                           </span>
-                          <PriceCheckBadge compact template={template} />
+                          <PriceCheckBadge compact brandName={brandNameById.get(template.brand_id)} template={template} />
                         </span>
                         <span className="shrink-0 text-right text-xs font-bold text-zinc-700">
                           {formatMoney(template.currency, numberValue(template.default_unit_price))}
@@ -1617,8 +1613,8 @@ export function ProductLibrarySelector({
                           <p className="text-sm font-semibold text-zinc-950">
                             {formatQuotationMoney(previewCurrency, previewUnitPriceWithConversion)}
                           </p>
-                          <PriceCheckBadge template={template} />
-                          {priceCheckState(template).tone === "warning" ? (
+                          <PriceCheckBadge brandName={brandNameById.get(template.brand_id)} template={template} />
+                          {priceCheckState(template, brandNameById.get(template.brand_id)).tone === "warning" ? (
                             <p className="max-w-52 text-[11px] leading-4 text-amber-700">
                               Please verify source price before finalizing quotation.
                             </p>
