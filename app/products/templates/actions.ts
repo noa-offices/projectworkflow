@@ -1279,6 +1279,37 @@ export async function markTemplatePriceChecked(formData: FormData) {
   );
 }
 
+export async function markVisibleProductTemplatesPriceChecked(formData: FormData) {
+  const { user } = await requireSettingsManager();
+  const ids = Array.from(new Set(
+    formData
+      .getAll("template_id[]")
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean),
+  ));
+
+  if (!ids.length) {
+    redirectWithMessage("No visible templates selected for price check.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_templates")
+    .update({
+      last_price_checked_at: new Date().toISOString(),
+      last_price_checked_by: user.id,
+    })
+    .in("id", ids);
+
+  if (error) {
+    console.error("VISIBLE TEMPLATE PRICE CHECK ERROR", error.message);
+    redirectWithMessage("Visible template price checks could not be saved.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Visible templates marked as price checked.");
+}
+
 export async function markComponentPriceChecked(formData: FormData) {
   const { user } = await requireSettingsManager();
   const id = textValue(formData, "id");

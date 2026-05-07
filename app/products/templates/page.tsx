@@ -40,6 +40,7 @@ import {
   deactivateProductTemplate,
   markComponentPriceChecked,
   markTemplatePriceChecked,
+  markVisibleProductTemplatesPriceChecked,
   permanentlyDeleteLinkedProductFamily,
   permanentlyDeleteProductTemplate,
   restoreLinkedProductFamily,
@@ -58,6 +59,7 @@ type TemplatesSearchParams = {
   brand?: string | string[];
   main?: string | string[];
   sub?: string | string[];
+  priceStatus?: string | string[];
   template?: string | string[];
   addTemplate?: string | string[];
   editTemplate?: string | string[];
@@ -266,6 +268,7 @@ function templatesHref(
       | "brand"
       | "main"
       | "sub"
+      | "priceStatus"
       | "template"
       | "addTemplate"
       | "editTemplate",
@@ -280,6 +283,7 @@ function templatesHref(
     "brand",
     "main",
     "sub",
+    "priceStatus",
     "template",
     "addTemplate",
     "editTemplate",
@@ -1142,6 +1146,7 @@ function priceCheckState(template: ProductTemplate) {
   if (!template.last_price_checked_at) {
     return {
       detail: "No check recorded",
+      key: "not_checked" as const,
       tone: "warning" as const,
       label: "Price not checked yet",
     };
@@ -1153,6 +1158,7 @@ function priceCheckState(template: ProductTemplate) {
   if (!Number.isFinite(checkedAt.getTime()) || dueAt < Date.now()) {
     return {
       detail: `Last checked: ${formatDate(template.last_price_checked_at)}`,
+      key: "due" as const,
       tone: "warning" as const,
       label: "Price check due",
     };
@@ -1160,6 +1166,7 @@ function priceCheckState(template: ProductTemplate) {
 
   return {
     detail: `Price checked: ${formatDate(template.last_price_checked_at)}`,
+    key: "checked" as const,
     tone: "ok" as const,
     label: "Price checked",
   };
@@ -1190,6 +1197,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const selectedBrandFilter = stringParam(params.brand);
   const selectedMainFilter = stringParam(params.main);
   const selectedSubFilter = stringParam(params.sub);
+  const selectedPriceStatusFilter = stringParam(params.priceStatus);
   const openTemplateId = stringParam(params.template);
   const showAddTemplate = stringParam(params.addTemplate) === "1";
   const editTemplateId = stringParam(params.editTemplate);
@@ -1339,7 +1347,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   }
 
   const normalizedSearch = searchQuery.toLowerCase();
-  const filteredTemplates = activeTemplateList.filter((template) => {
+  const templatesMatchingStructure = activeTemplateList.filter((template) => {
     const matchesSearch =
       !normalizedSearch ||
       template.template_name.toLowerCase().includes(normalizedSearch) ||
@@ -1353,6 +1361,24 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
       !selectedSubFilter || template.sub_category_id === selectedSubFilter;
 
     return matchesSearch && matchesBrand && matchesMain && matchesSub;
+  });
+  const priceCheckSummary = templatesMatchingStructure.reduce(
+    (summary, template) => {
+      const key = priceCheckState(template).key;
+
+      return {
+        ...summary,
+        [key]: summary[key] + 1,
+        total: summary.total + 1,
+      };
+    },
+    { checked: 0, due: 0, not_checked: 0, total: 0 },
+  );
+  const priceStatusOptions = new Set(["not_checked", "due", "checked"]);
+  const filteredTemplates = templatesMatchingStructure.filter((template) => {
+    if (!priceStatusOptions.has(selectedPriceStatusFilter)) return true;
+
+    return priceCheckState(template).key === selectedPriceStatusFilter;
   });
   const selectedTemplate =
     activeTemplateList.find((template) => template.id === openTemplateId) ?? null;
@@ -1386,7 +1412,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
             <div className="flex flex-col gap-3">
               <form
                 action="/products/templates"
-                className="grid gap-3 lg:grid-cols-[minmax(180px,1fr)_180px_190px_190px_auto]"
+                className="grid gap-3 xl:grid-cols-[minmax(180px,1fr)_170px_180px_180px_190px_auto]"
               >
                 <input
                   name="q"
@@ -1429,6 +1455,16 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                       {category.name}
                     </option>
                   ))}
+                </select>
+                <select
+                  name="priceStatus"
+                  defaultValue={selectedPriceStatusFilter}
+                  className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+                >
+                  <option value="">All price statuses</option>
+                  <option value="not_checked">Price not checked yet</option>
+                  <option value="due">Price check due</option>
+                  <option value="checked">Price checked</option>
                 </select>
                 <div className="flex gap-2">
                   <button
@@ -1473,6 +1509,33 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                     defaultSubCategoryId={selectedSubFilter}
                   />
                 </div>
+              ) : null}
+            </div>
+          </section>
+
+          <section className="mt-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold uppercase text-zinc-500">Price check summary</h2>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold">
+                  <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-zinc-700">Total: {priceCheckSummary.total}</span>
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">Not checked: {priceCheckSummary.not_checked}</span>
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">Due: {priceCheckSummary.due}</span>
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-900">Checked: {priceCheckSummary.checked}</span>
+                </div>
+              </div>
+              {filteredTemplates.length ? (
+                <form action={markVisibleProductTemplatesPriceChecked}>
+                  {filteredTemplates.map((template) => (
+                    <input key={template.id} type="hidden" name="template_id[]" value={template.id} />
+                  ))}
+                  <ConfirmSubmitButton
+                    message="Mark all visible templates as price checked now?"
+                    className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
+                  >
+                    Mark visible templates checked now
+                  </ConfirmSubmitButton>
+                </form>
               ) : null}
             </div>
           </section>
