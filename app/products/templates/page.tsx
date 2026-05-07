@@ -193,15 +193,35 @@ type BrandMaterialGroup = {
   is_active: boolean;
 };
 
+type BrandMaterial = {
+  id: string;
+  brand_id: string;
+  material_group_id: string;
+  material_category: string | null;
+  material_code: string | null;
+  material_name: string;
+  sort_order: number;
+  is_active: boolean;
+};
+
 type ProductTemplateMaterialGroup = {
   id: string;
   product_template_id: string;
   material_group_id: string;
+  selection_mode: "full_group" | "selected_items";
   label_override: string | null;
   is_required: boolean;
   allow_multiple: boolean;
   show_in_specification: boolean;
   show_in_quotation: boolean;
+  sort_order: number;
+  is_active: boolean;
+};
+
+type ProductTemplateMaterialGroupItem = {
+  id: string;
+  product_template_material_group_id: string;
+  brand_material_id: string;
   sort_order: number;
   is_active: boolean;
 };
@@ -944,14 +964,36 @@ function LinkedProductFamilyForm({
 
 function TemplateMaterialGroupForm({
   link,
+  linkedItemIds = new Set<string>(),
+  materials,
   materialGroups,
   template,
 }: {
   link?: ProductTemplateMaterialGroup;
+  linkedItemIds?: Set<string>;
+  materials: BrandMaterial[];
   materialGroups: BrandMaterialGroup[];
   template: ProductTemplate;
 }) {
   const linkedGroupOptions = materialGroups.filter((group) => group.brand_id === template.brand_id);
+  const formMaterials = materials
+    .filter((material) => material.brand_id === template.brand_id)
+    .filter((material) => (link ? material.material_group_id === link.material_group_id : true))
+    .sort((left, right) =>
+      left.material_group_id.localeCompare(right.material_group_id) ||
+      (left.material_category ?? "").localeCompare(right.material_category ?? "") ||
+      left.sort_order - right.sort_order ||
+      (left.material_code ?? "").localeCompare(right.material_code ?? "") ||
+      left.material_name.localeCompare(right.material_name),
+    );
+  const materialsByGroup = new Map<string, BrandMaterial[]>();
+
+  for (const material of formMaterials) {
+    materialsByGroup.set(material.material_group_id, [
+      ...(materialsByGroup.get(material.material_group_id) ?? []),
+      material,
+    ]);
+  }
 
   return (
     <form action={link ? updateProductTemplateMaterialGroup : createProductTemplateMaterialGroup} className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -976,6 +1018,66 @@ function TemplateMaterialGroupForm({
       ) : null}
       <Field name="label_override" label="Label override" defaultValue={link?.label_override} />
       <Field name="sort_order" label="Sort order" type="number" defaultValue={link?.sort_order ?? 0} />
+      <fieldset className="grid gap-2 rounded-md border border-zinc-200 bg-white p-3 md:col-span-2 xl:col-span-4">
+        <legend className="px-1 text-xs font-semibold uppercase text-zinc-500">Selection mode</legend>
+        <label className="flex items-center gap-2 text-sm font-medium text-zinc-700">
+          <input
+            type="radio"
+            name="selection_mode"
+            value="full_group"
+            defaultChecked={(link?.selection_mode ?? "full_group") === "full_group"}
+            className="h-4 w-4 accent-emerald-900"
+          />
+          Full group
+        </label>
+        <label className="flex items-center gap-2 text-sm font-medium text-zinc-700">
+          <input
+            type="radio"
+            name="selection_mode"
+            value="selected_items"
+            defaultChecked={link?.selection_mode === "selected_items"}
+            className="h-4 w-4 accent-emerald-900"
+          />
+          Selected finishes only
+        </label>
+        <div className="mt-2 grid max-h-72 gap-3 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2">
+          {Array.from(materialsByGroup.entries()).map(([groupId, groupMaterials]) => {
+            const group = materialGroups.find((candidate) => candidate.id === groupId);
+
+            return (
+              <div key={groupId} className="grid gap-2">
+                {!link ? (
+                  <p className="text-[11px] font-bold uppercase text-zinc-500">{group?.group_name ?? "Material group"}</p>
+                ) : null}
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  {groupMaterials.map((material) => (
+                    <label key={material.id} className="flex min-w-0 items-start gap-2 rounded border border-zinc-200 bg-white p-2 text-xs text-zinc-700">
+                      <input
+                        type="checkbox"
+                        name="brand_material_id[]"
+                        value={material.id}
+                        defaultChecked={linkedItemIds.has(material.id)}
+                        className="mt-0.5 h-4 w-4 shrink-0 accent-emerald-900"
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate font-semibold text-zinc-900">
+                          {[material.material_code, material.material_name].filter(Boolean).join(" - ") || material.material_name}
+                        </span>
+                        {material.material_category ? (
+                          <span className="block truncate text-[11px] text-zinc-500">{material.material_category}</span>
+                        ) : null}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {!formMaterials.length ? (
+            <p className="text-xs text-zinc-500">No active finishes found for this brand group yet.</p>
+          ) : null}
+        </div>
+      </fieldset>
       <div className="flex flex-wrap items-end gap-4 md:col-span-2 xl:col-span-4">
         <Checkbox name="is_required" label="Required" defaultChecked={link?.is_required ?? false} />
         <Checkbox name="allow_multiple" label="Allow multiple" defaultChecked={link?.allow_multiple ?? false} />
@@ -1092,12 +1194,31 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     .order("group_name", { ascending: true })
     .returns<BrandMaterialGroup[]>();
 
+  const { data: materials, error: materialsError } = await supabase
+    .from("brand_materials")
+    .select("id,brand_id,material_group_id,material_category,material_code,material_name,sort_order,is_active")
+    .eq("is_active", true)
+    .order("brand_id", { ascending: true })
+    .order("material_group_id", { ascending: true })
+    .order("material_category", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .order("material_code", { ascending: true })
+    .returns<BrandMaterial[]>();
+
   const { data: templateMaterialGroups, error: templateMaterialGroupsError } = await supabase
     .from("product_template_material_groups")
-    .select("id,product_template_id,material_group_id,label_override,is_required,allow_multiple,show_in_specification,show_in_quotation,sort_order,is_active")
+    .select("id,product_template_id,material_group_id,selection_mode,label_override,is_required,allow_multiple,show_in_specification,show_in_quotation,sort_order,is_active")
     .order("product_template_id", { ascending: true })
     .order("sort_order", { ascending: true })
     .returns<ProductTemplateMaterialGroup[]>();
+
+  const { data: templateMaterialGroupItems, error: templateMaterialGroupItemsError } = await supabase
+    .from("product_template_material_group_items")
+    .select("id,product_template_material_group_id,brand_material_id,sort_order,is_active")
+    .eq("is_active", true)
+    .order("product_template_material_group_id", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .returns<ProductTemplateMaterialGroupItem[]>();
 
   if (brandsError) console.error("TEMPLATE BRANDS LIST ERROR", brandsError.message);
   if (categoriesError) console.error("TEMPLATE CATEGORIES LIST ERROR", categoriesError.message);
@@ -1105,7 +1226,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   if (componentsError) console.error("PRODUCT COMPONENTS LIST ERROR", componentsError.message);
   if (linkedFamiliesError) console.error("LINKED PRODUCT FAMILIES LIST ERROR", linkedFamiliesError.message);
   if (materialGroupsError) console.error("BRAND MATERIAL GROUPS LIST ERROR", materialGroupsError.message);
+  if (materialsError) console.error("BRAND MATERIALS LIST ERROR", materialsError.message);
   if (templateMaterialGroupsError) console.error("TEMPLATE MATERIAL GROUPS LIST ERROR", templateMaterialGroupsError.message);
+  if (templateMaterialGroupItemsError) console.error("TEMPLATE MATERIAL GROUP ITEMS LIST ERROR", templateMaterialGroupItemsError.message);
 
   const brandList = brands ?? [];
   const categoryList = categories ?? [];
@@ -1114,7 +1237,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const archivedTemplateList = templateList.filter((template) => !template.is_active);
   const archivedLinkedFamilyList = (linkedFamilies ?? []).filter((link) => !link.is_active);
   const materialGroupList = materialGroups ?? [];
+  const materialList = materials ?? [];
   const activeTemplateMaterialGroupList = (templateMaterialGroups ?? []).filter((link) => link.is_active);
+  const materialGroupItemList = templateMaterialGroupItems ?? [];
   const brandMap = new Map(brandList.map((brand) => [brand.id, brand.name]));
   const categoryMap = new Map(
     categoryList.map((category) => [category.id, category.name]),
@@ -1135,6 +1260,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const componentsByTemplate = new Map<string, ProductComponent[]>();
   const linkedFamiliesByTemplate = new Map<string, LinkedProductFamily[]>();
   const materialGroupsByTemplate = new Map<string, ProductTemplateMaterialGroup[]>();
+  const materialGroupItemsByLink = new Map<string, ProductTemplateMaterialGroupItem[]>();
 
   for (const component of components ?? []) {
     const templateComponents = componentsByTemplate.get(component.template_id) ?? [];
@@ -1152,6 +1278,13 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     const templateLinks = materialGroupsByTemplate.get(link.product_template_id) ?? [];
     templateLinks.push(link);
     materialGroupsByTemplate.set(link.product_template_id, templateLinks);
+  }
+
+  for (const item of materialGroupItemList.filter((entry) => entry.is_active)) {
+    materialGroupItemsByLink.set(item.product_template_material_group_id, [
+      ...(materialGroupItemsByLink.get(item.product_template_material_group_id) ?? []),
+      item,
+    ]);
   }
 
   const normalizedSearch = searchQuery.toLowerCase();
@@ -1720,6 +1853,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         </summary>
                         <div className="mt-3 w-[min(960px,calc(100vw-4rem))] rounded-lg border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
                           <TemplateMaterialGroupForm
+                            materials={materialList}
                             materialGroups={materialGroupList}
                             template={template}
                           />
@@ -1731,6 +1865,10 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         const materialGroup = materialGroupList.find(
                           (candidate) => candidate.id === link.material_group_id,
                         );
+                        const selectedCount = materialGroupItemsByLink.get(link.id)?.length ?? 0;
+                        const modeLabel = link.selection_mode === "selected_items"
+                          ? `Selected finishes only · ${selectedCount} selected`
+                          : "Full group";
 
                         return (
                           <div key={link.id} className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
@@ -1740,7 +1878,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                   {link.label_override || materialGroup?.group_name || "Material group"}
                                 </p>
                                 <p className="mt-1 text-xs leading-5 text-zinc-500">
-                                  {link.is_required ? "Required" : "Optional"}. {link.allow_multiple ? "Allows multiple" : "Single selection"}. {link.show_in_specification ? "Shows in specification" : "Hidden from specification"}. {link.show_in_quotation ? "Shows in quotation" : "Hidden from quotation"}.
+                                  {modeLabel}. {link.is_required ? "Required" : "Optional"}. {link.allow_multiple ? "Allows multiple" : "Single selection"}. {link.show_in_specification ? "Shows in specification" : "Hidden from specification"}. {link.show_in_quotation ? "Shows in quotation" : "Hidden from quotation"}.
                                 </p>
                               </div>
                               <DeactivateTemplateMaterialGroupForm id={link.id} />
@@ -1752,6 +1890,8 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                               <div className="mt-3">
                                 <TemplateMaterialGroupForm
                                   link={link}
+                                  linkedItemIds={new Set((materialGroupItemsByLink.get(link.id) ?? []).map((item) => item.brand_material_id))}
+                                  materials={materialList}
                                   materialGroups={materialGroupList}
                                   template={template}
                                 />

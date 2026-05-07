@@ -14,6 +14,7 @@ export type FinishSelectionEditorRow = {
   product_template_material_group_id?: string;
   brand_name?: string;
   group_label?: string;
+  group_sort_order?: number;
   material_category?: string;
   finish_code?: string;
   finish_name?: string;
@@ -22,6 +23,13 @@ export type FinishSelectionEditorRow = {
   show_in_quotation?: boolean;
   show_in_specification?: boolean;
   sort_order?: number;
+};
+
+type SpecificationFitSummary = {
+  groupCount: number;
+  hasLargeGroup: boolean;
+  specFinishCount: number;
+  shouldWarn: boolean;
 };
 
 export type FinishMaterialBrand = {
@@ -53,12 +61,21 @@ export type ProductTemplateMaterialGroupLink = {
   id: string;
   product_template_id: string;
   material_group_id: string;
+  selection_mode?: "full_group" | "selected_items";
   label_override: string | null;
   is_required: boolean;
   allow_multiple: boolean;
   show_in_specification: boolean;
   show_in_quotation: boolean;
   sort_order: number;
+};
+
+export type ProductTemplateMaterialGroupItemLink = {
+  id: string;
+  product_template_material_group_id: string;
+  brand_material_id: string;
+  sort_order: number;
+  is_active: boolean;
 };
 
 const finishGroupSuggestions = [
@@ -101,6 +118,17 @@ type DraftFinish = Required<
 
 type UploadStatus = "idle" | "uploading" | "failed";
 
+type GroupedSelectedFinish = {
+  groupLabel: string;
+  firstIndex: number;
+  groupSortOrder: number;
+  items: Array<{
+    finish: DraftFinish;
+    index: number;
+    itemSortOrder: number;
+  }>;
+};
+
 function normalizeFinish(row: FinishSelectionEditorRow, index: number): DraftFinish {
   return {
     id: row.id || `finish-${Date.now()}-${index}`,
@@ -111,6 +139,7 @@ function normalizeFinish(row: FinishSelectionEditorRow, index: number): DraftFin
     product_template_material_group_id: row.product_template_material_group_id ?? "",
     brand_name: row.brand_name ?? "",
     group_label: row.group_label ?? "",
+    group_sort_order: row.group_sort_order,
     material_category: row.material_category ?? "",
     finish_code: row.finish_code ?? "",
     finish_name: row.finish_name ?? "",
@@ -131,6 +160,7 @@ function emptyDraft(): DraftFinish {
     product_template_material_group_id: "",
     brand_name: "",
     group_label: "",
+    group_sort_order: undefined,
     material_category: "",
     finish_code: "",
     finish_name: "",
@@ -170,6 +200,64 @@ function finishHasContent(finish: DraftFinish) {
     finish.finish_description.trim() ||
     finish.finish_image_url.trim(),
   );
+}
+
+function selectedFinishGroups(finishes: DraftFinish[]): GroupedSelectedFinish[] {
+  const groups = new Map<string, GroupedSelectedFinish>();
+
+  finishes.forEach((finish, index) => {
+    const groupLabel = finish.group_label.trim() || "Other Finishes";
+    const itemSortOrder = Number.isFinite(finish.sort_order) ? Number(finish.sort_order) : index;
+    const existing = groups.get(groupLabel);
+
+    if (existing) {
+      existing.groupSortOrder = Math.min(existing.groupSortOrder, itemSortOrder);
+      existing.items.push({ finish, index, itemSortOrder });
+      return;
+    }
+
+    groups.set(groupLabel, {
+      groupLabel,
+      firstIndex: index,
+      groupSortOrder: itemSortOrder,
+      items: [{ finish, index, itemSortOrder }],
+    });
+  });
+
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      items: [...group.items].sort(
+        (left, right) =>
+          left.itemSortOrder - right.itemSortOrder ||
+          (left.finish.finish_code ?? "").localeCompare(right.finish.finish_code ?? "") ||
+          left.finish.finish_name.localeCompare(right.finish.finish_name),
+      ),
+    }))
+    .sort(
+      (left, right) =>
+        left.groupSortOrder - right.groupSortOrder ||
+        left.firstIndex - right.firstIndex ||
+        left.groupLabel.localeCompare(right.groupLabel),
+    );
+}
+
+function specificationFitSummary(groups: GroupedSelectedFinish[]): SpecificationFitSummary {
+  const specGroups = groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter(({ finish }) => finish.show_in_specification),
+    }))
+    .filter((group) => group.items.length > 0);
+  const specFinishCount = specGroups.reduce((total, group) => total + group.items.length, 0);
+  const hasLargeGroup = specGroups.some((group) => group.items.length > 6);
+
+  return {
+    groupCount: specGroups.length,
+    hasLargeGroup,
+    specFinishCount,
+    shouldWarn: specFinishCount > 8 || specGroups.length > 3 || hasLargeGroup,
+  };
 }
 
 function filenameForClipboardImage(type: string) {
@@ -233,6 +321,7 @@ function HiddenFinishFields({ finish, index }: { finish: DraftFinish; index: num
       <input type="hidden" name="finish_product_template_material_group_id[]" value={finish.product_template_material_group_id ?? ""} />
       <input type="hidden" name="finish_brand_name[]" value={finish.brand_name ?? ""} />
       <input type="hidden" name="finish_group_label[]" value={finish.group_label} />
+      <input type="hidden" name="finish_group_sort_order[]" value={finish.group_sort_order ?? ""} />
       <input type="hidden" name="finish_material_category[]" value={finish.material_category ?? ""} />
       <input type="hidden" name="finish_code[]" value={finish.finish_code} />
       <input type="hidden" name="finish_name[]" value={finish.finish_name} />
@@ -454,21 +543,25 @@ function SwatchEditor({
 }
 
 export function FinishSelectionsEditor({
+  allowMaterialContinuationPage = false,
   brands,
   initialBrandId,
   initialFinishes,
   itemId,
   materialGroups,
   materials,
+  templateMaterialGroupItems,
   templateMaterialGroups,
   quotationId,
 }: {
+  allowMaterialContinuationPage?: boolean;
   brands?: FinishMaterialBrand[];
   initialBrandId?: string | null;
   initialFinishes: FinishSelectionEditorRow[];
   itemId?: string | null;
   materialGroups?: FinishMaterialGroup[];
   materials?: FinishMaterial[];
+  templateMaterialGroupItems?: ProductTemplateMaterialGroupItemLink[];
   templateMaterialGroups?: ProductTemplateMaterialGroupLink[];
   quotationId: string;
 }) {
@@ -485,8 +578,19 @@ export function FinishSelectionsEditor({
   const brandsById = new Map((brands ?? []).map((brand) => [brand.id, brand]));
   const groupsById = new Map((materialGroups ?? []).map((group) => [group.id, group]));
   const linkedGroups = [...(templateMaterialGroups ?? [])].sort((left, right) => left.sort_order - right.sort_order);
+  const linkedItemIdsByGroupLink = new Map<string, Set<string>>();
+
+  for (const item of templateMaterialGroupItems ?? []) {
+    if (item.is_active === false) continue;
+    const ids = linkedItemIdsByGroupLink.get(item.product_template_material_group_id) ?? new Set<string>();
+    ids.add(item.brand_material_id);
+    linkedItemIdsByGroupLink.set(item.product_template_material_group_id, ids);
+  }
+
   const availableMaterials = materials ?? [];
   const visibleMaterials = availableMaterials.filter((material) => !activeOnly || material.is_active !== false);
+  const groupedFinishes = selectedFinishGroups(finishes);
+  const fitSummary = specificationFitSummary(groupedFinishes);
   const categoryOptions = Array.from(
     new Set(
       visibleMaterials
@@ -566,6 +670,7 @@ export function FinishSelectionsEditor({
       product_template_material_group_id: link?.id ?? "",
       brand_name: brand?.name ?? "",
       group_label: groupLabel,
+      group_sort_order: link?.sort_order,
       material_category: material.material_category ?? "",
       finish_code: material.material_code ?? "",
       finish_name: material.material_name,
@@ -595,13 +700,16 @@ export function FinishSelectionsEditor({
       }
 
       const next = materialDraft({ link, material, rowIndex: current.length, sourceScope: "linked" });
+      const hasDuplicateMaterial = current.some((finish) => finish.brand_material_id === material.id);
+      if (link.allow_multiple && hasDuplicateMaterial) return current;
       if (link.allow_multiple) return [...current, next];
 
       return [
         ...current.filter(
           (finish) =>
             finish.product_template_material_group_id !== link.id &&
-            !(finish.source_scope === "linked" && finish.material_group_id === link.material_group_id),
+            finish.material_group_id !== link.material_group_id &&
+            finish.brand_material_id !== material.id,
         ),
         next,
       ];
@@ -636,6 +744,28 @@ export function FinishSelectionsEditor({
         <HiddenFinishFields key={`hidden-${finish.id}-${index}`} finish={finish} index={index} />
       ))}
 
+      <div className="mt-3 grid gap-2 border border-zinc-200 bg-zinc-50 p-2">
+        {fitSummary.shouldWarn ? (
+          <p className="border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium leading-5 text-amber-900">
+            Too many materials selected. Specification page may not fit cleanly. Reduce selected finishes or allow a continuation page for this item.
+          </p>
+        ) : null}
+        <label className="flex items-center gap-2 text-xs font-semibold text-zinc-700">
+          <input
+            type="checkbox"
+            name="allow_material_continuation_page"
+            defaultChecked={allowMaterialContinuationPage}
+            className="h-4 w-4 accent-emerald-900"
+          />
+          Allow materials continuation page if needed
+        </label>
+        {fitSummary.specFinishCount ? (
+          <p className="text-[11px] text-zinc-500">
+            {fitSummary.specFinishCount} specification finishes across {fitSummary.groupCount} groups.
+          </p>
+        ) : null}
+      </div>
+
       <div className="mt-3 grid gap-2">
         {!finishes.length ? (
           <div className="border border-dashed border-zinc-300 bg-zinc-50 px-3 py-4 text-center">
@@ -644,41 +774,52 @@ export function FinishSelectionsEditor({
           </div>
         ) : null}
 
-        {finishes.map((finish, index) => {
-          const codeName = [finish.finish_code, finish.finish_name].filter(Boolean).join(" - ");
-
-          return (
-            <div key={`${finish.id}-${index}`} className="grid gap-3 border border-zinc-200 bg-zinc-50 p-2 md:grid-cols-[48px_minmax(0,1fr)_auto]">
-              <FinishImagePreview
-                alt={finish.finish_name || finish.group_label || "Finish swatch"}
-                className="h-12 w-12"
-                value={finish.finish_image_url}
-              />
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-zinc-900">{finish.group_label || "Finish"}</p>
-                {codeName ? <p className="text-xs font-medium text-zinc-700">{codeName}</p> : null}
-                {finish.finish_description ? <p className="mt-0.5 line-clamp-2 text-xs text-zinc-500">{finish.finish_description}</p> : null}
-                <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] font-bold uppercase">
-                  <span className="border border-zinc-200 bg-white px-1.5 py-0.5 text-zinc-500">{sourceLabel(finish)}</span>
-                  <span className={finish.show_in_specification ? "border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-emerald-800" : "border border-zinc-200 bg-white px-1.5 py-0.5 text-zinc-400"}>
-                    Spec: {finish.show_in_specification ? "Yes" : "No"}
-                  </span>
-                  <span className={finish.show_in_quotation ? "border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-emerald-800" : "border border-zinc-200 bg-white px-1.5 py-0.5 text-zinc-400"}>
-                    Quote: {finish.show_in_quotation ? "Yes" : "No"}
-                  </span>
-                </div>
-              </div>
-              <div className="flex items-start gap-2 md:justify-end">
-                <button type="button" onClick={() => startEdit(index)} className="text-xs font-semibold text-emerald-900 hover:text-emerald-700">
-                  Edit
-                </button>
-                <button type="button" onClick={() => removeFinish(index)} className="text-xs font-semibold text-red-700 hover:text-red-600">
-                  Remove
-                </button>
-              </div>
+        {groupedFinishes.map((group) => (
+          <section key={`${group.groupLabel}-${group.firstIndex}`} className="border border-zinc-200 bg-zinc-50 p-2">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 pb-1.5">
+              <h4 className="text-[11px] font-bold uppercase text-zinc-700">{group.groupLabel}</h4>
+              <span className="border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] font-bold uppercase text-zinc-500">
+                {group.items.length} selected
+              </span>
             </div>
-          );
-        })}
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {group.items.map(({ finish, index }) => {
+                const codeName = [finish.finish_code, finish.finish_name].filter(Boolean).join(" | ");
+
+                return (
+                  <div key={`${finish.id}-${index}`} className="grid min-w-0 grid-cols-[40px_minmax(0,1fr)] gap-2 border border-zinc-200 bg-white p-2">
+                    <FinishImagePreview
+                      alt={finish.finish_name || finish.group_label || "Finish swatch"}
+                      className="h-10 w-10"
+                      value={finish.finish_image_url}
+                    />
+                    <div className="min-w-0">
+                      {codeName ? <p className="truncate text-xs font-bold text-zinc-900">{codeName}</p> : null}
+                      {finish.finish_description ? <p className="mt-0.5 line-clamp-1 text-[11px] text-zinc-500">{finish.finish_description}</p> : null}
+                      <div className="mt-1 flex flex-wrap gap-1 text-[10px] font-bold uppercase">
+                        <span className="border border-zinc-200 bg-zinc-50 px-1 py-0.5 text-zinc-500">{sourceLabel(finish)}</span>
+                        <span className={finish.show_in_specification ? "border border-emerald-200 bg-emerald-50 px-1 py-0.5 text-emerald-800" : "border border-zinc-200 bg-white px-1 py-0.5 text-zinc-400"}>
+                          Spec {finish.show_in_specification ? "Yes" : "No"}
+                        </span>
+                        <span className={finish.show_in_quotation ? "border border-emerald-200 bg-emerald-50 px-1 py-0.5 text-emerald-800" : "border border-zinc-200 bg-white px-1 py-0.5 text-zinc-400"}>
+                          Quote {finish.show_in_quotation ? "Yes" : "No"}
+                        </span>
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <button type="button" onClick={() => startEdit(index)} className="text-[11px] font-semibold text-emerald-900 hover:text-emerald-700">
+                          Edit
+                        </button>
+                        <button type="button" onClick={() => removeFinish(index)} className="text-[11px] font-semibold text-red-700 hover:text-red-600">
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ))}
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1 border-b border-zinc-200">
@@ -711,7 +852,10 @@ export function FinishSelectionsEditor({
           ) : null}
           {linkedGroups.map((link) => {
             const group = groupsById.get(link.material_group_id);
-            const groupMaterials = visibleMaterials.filter((material) => material.material_group_id === link.material_group_id);
+            const linkedItemIds = linkedItemIdsByGroupLink.get(link.id) ?? new Set<string>();
+            const groupMaterials = visibleMaterials
+              .filter((material) => material.material_group_id === link.material_group_id)
+              .filter((material) => link.selection_mode !== "selected_items" || linkedItemIds.has(material.id));
             const label = link.label_override?.trim() || group?.group_name || "Material group";
             const selectedMaterialIds = new Set(
               finishes

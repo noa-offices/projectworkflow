@@ -80,6 +80,7 @@ type QuotationItem = {
   warranty_snapshot: string | null;
   supplier_name_snapshot: string | null;
   supplier_notes_snapshot: string | null;
+  allow_material_continuation_page: boolean;
   sort_order: number;
   line_style: string;
   is_active: boolean;
@@ -121,6 +122,7 @@ type SpecDocumentPage =
       pageNumber: number;
       section: QuotationSection;
       selectedStart?: number;
+      serial: number;
     };
 
 type SelectedFinish = {
@@ -131,6 +133,7 @@ type SelectedFinish = {
   description: string | null;
   groupSortOrder: number;
   imageUrl: string | null;
+  firstIndex: number;
   sortOrder: number;
 };
 
@@ -155,8 +158,11 @@ type MaterialChart = {
 type SelectedFinishGroup = {
   label: string;
   finishes: SelectedFinish[];
+  firstIndex: number;
   sortOrder: number;
 };
+
+type SelectedFinishLayoutMode = "few" | "compact" | "dense";
 
 const selectedFinishesPerProductPage = 6;
 const chartSwatchesPerProductPage = 15;
@@ -333,6 +339,7 @@ function materialContent(
         description,
         groupSortOrder: typeof linkedGroupSortOrder === "number" ? linkedGroupSortOrder : Number.MAX_SAFE_INTEGER,
         imageUrl: finishImageUrlById.get(id) ?? null,
+        firstIndex: index,
         sortOrder: typeof sortOrderValue === "number" && Number.isFinite(sortOrderValue) ? sortOrderValue : index,
       }];
     })
@@ -340,7 +347,6 @@ function materialContent(
     .sort(
       (left, right) =>
         left.groupSortOrder - right.groupSortOrder ||
-        left.label.localeCompare(right.label) ||
         left.sortOrder - right.sortOrder,
     );
   const charts = materialEntries(item)
@@ -525,12 +531,33 @@ function TextBlockPage({
   );
 }
 
-function SelectedFinishCard({ finish }: { finish: SelectedFinish }) {
+function SelectedFinishCard({
+  finish,
+  mode,
+}: {
+  finish: SelectedFinish;
+  mode: SelectedFinishLayoutMode;
+}) {
   const codeName = [finish.code, finish.value].filter(Boolean).join(" | ") || finish.description || "Finish";
+  const swatchClass = mode === "few"
+    ? "flex h-[52px] w-[52px] items-center justify-center bg-white"
+    : mode === "dense"
+      ? "mx-auto flex h-8 w-8 items-center justify-center bg-white"
+      : "flex h-9 w-9 items-center justify-center bg-white";
+  const cardClass = mode === "few"
+    ? "grid min-w-0 grid-cols-[52px_minmax(0,1fr)] items-center gap-3"
+    : mode === "dense"
+      ? "min-w-0 bg-white text-center"
+      : "grid min-w-0 grid-cols-[36px_minmax(0,1fr)] items-center gap-2 bg-white";
+  const titleClass = mode === "few"
+    ? "text-[12px] font-semibold leading-4 text-zinc-950"
+    : mode === "dense"
+      ? "mt-1 line-clamp-2 text-[8.5px] font-semibold leading-3 text-zinc-900"
+      : "truncate text-[9px] font-semibold leading-3 text-zinc-900";
 
   return (
-    <div className="flex w-24 flex-col items-center bg-white text-center">
-      <div className="flex h-12 w-12 items-center justify-center bg-white">
+    <div className={cardClass}>
+      <div className={swatchClass}>
         {finish.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={finish.imageUrl} alt={finish.value || finish.label} className="max-h-full max-w-full object-contain" />
@@ -538,10 +565,10 @@ function SelectedFinishCard({ finish }: { finish: SelectedFinish }) {
           <span className="text-[9px] uppercase text-zinc-400">Finish</span>
         )}
       </div>
-      <div className="mt-1 min-w-0">
-        <p className="truncate text-[10px] font-semibold leading-4 text-zinc-900">{codeName}</p>
-        {finish.description && (finish.code || finish.value) ? (
-          <p className="mt-0.5 line-clamp-2 whitespace-pre-wrap text-[9px] leading-3 text-zinc-500">{finish.description}</p>
+      <div className={mode === "dense" ? "min-w-0 px-0.5" : "min-w-0"}>
+        <p className={titleClass}>{codeName}</p>
+        {mode !== "dense" && finish.description && (finish.code || finish.value) ? (
+          <p className={mode === "few" ? "mt-1 line-clamp-2 whitespace-pre-wrap text-[10px] leading-4 text-zinc-500" : "mt-0.5 line-clamp-1 whitespace-pre-wrap text-[8px] leading-3 text-zinc-500"}>{finish.description}</p>
         ) : null}
       </div>
     </div>
@@ -559,10 +586,16 @@ function selectedFinishGroups(finishes: SelectedFinish[]): SelectedFinishGroup[]
     if (existingGroup) {
       existingGroup.finishes.push(finish);
       existingGroup.sortOrder = Math.min(existingGroup.sortOrder, finish.groupSortOrder);
+      existingGroup.firstIndex = Math.min(existingGroup.firstIndex, finish.firstIndex);
       continue;
     }
 
-    const group = { label, finishes: [finish], sortOrder: finish.groupSortOrder };
+    const group = {
+      label,
+      finishes: [finish],
+      firstIndex: finish.firstIndex,
+      sortOrder: finish.groupSortOrder,
+    };
     groups.push(group);
     groupByLabel.set(label, group);
   }
@@ -570,29 +603,60 @@ function selectedFinishGroups(finishes: SelectedFinish[]): SelectedFinishGroup[]
   return groups
     .map((group) => ({
       ...group,
-      finishes: [...group.finishes].sort((left, right) => left.sortOrder - right.sortOrder),
+      finishes: [...group.finishes].sort(
+        (left, right) =>
+          left.sortOrder - right.sortOrder ||
+          (left.code ?? "").localeCompare(right.code ?? "") ||
+          left.value.localeCompare(right.value),
+      ),
     }))
     .sort(
       (left, right) =>
         left.sortOrder - right.sortOrder ||
+        left.firstIndex - right.firstIndex ||
         left.label.localeCompare(right.label),
     );
 }
 
+function selectedFinishLayoutMode(groups: SelectedFinishGroup[], totalCount: number): SelectedFinishLayoutMode {
+  const largestGroupCount = Math.max(0, ...groups.map((group) => group.finishes.length));
+  const fewFinishes = totalCount <= 4 || (groups.length <= 2 && groups.every((group) => group.finishes.length <= 2));
+
+  if (totalCount > 12 || largestGroupCount > 8) return "dense";
+  if (fewFinishes) return "few";
+  return "compact";
+}
+
 function SelectedFinishGroups({ finishes }: { finishes: SelectedFinish[] }) {
   const groups = selectedFinishGroups(finishes);
+  const totalCount = groups.reduce((total, group) => total + group.finishes.length, 0);
+  const mode = selectedFinishLayoutMode(groups, totalCount);
+
+  if (mode === "few") {
+    return (
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        {groups.map((group) => (
+          <div key={group.label} className="min-w-0 border border-zinc-200 bg-white p-3">
+            <h4 className="mb-3 text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-700">{group.label}</h4>
+            <div className="grid gap-3">
+              {group.finishes.map((finish) => (
+                <SelectedFinishCard key={finish.id} finish={finish} mode={mode} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
-    <div className="mt-3 grid gap-4">
+    <div className={mode === "dense" ? "mt-2 grid gap-2" : "mt-3 grid gap-3"}>
       {groups.map((group) => (
-        <div key={group.label} className="border-t border-zinc-200 pt-2 first:border-t-0 first:pt-0">
-          <div className="flex items-center gap-2">
-            <h4 className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-700">{group.label}</h4>
-            <span className="h-px flex-1 bg-zinc-200" />
-          </div>
-          <div className="mt-2 flex flex-wrap gap-3">
+        <div key={group.label} className={mode === "dense" ? "border-t border-zinc-200 pt-1.5 first:border-t-0 first:pt-0" : "border border-zinc-200 bg-white p-2.5"}>
+          <h4 className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-700">{group.label}</h4>
+          <div className={mode === "dense" ? "mt-1.5 grid grid-cols-5 gap-x-2 gap-y-2 md:grid-cols-7" : "mt-2 grid grid-cols-3 gap-2 md:grid-cols-5"}>
             {group.finishes.map((finish) => (
-              <SelectedFinishCard key={finish.id} finish={finish} />
+              <SelectedFinishCard key={finish.id} finish={finish} mode={mode} />
             ))}
           </div>
         </div>
@@ -604,13 +668,15 @@ function SelectedFinishGroups({ finishes }: { finishes: SelectedFinish[] }) {
 function MaterialChartBlock({
   chart,
   hasMore,
+  limitSwatches = true,
   start = 0,
 }: {
   chart: MaterialChart;
   hasMore?: boolean;
+  limitSwatches?: boolean;
   start?: number;
 }) {
-  const swatches = chart.swatches.slice(start, start + chartSwatchesPerProductPage);
+  const swatches = limitSwatches ? chart.swatches.slice(start, start + chartSwatchesPerProductPage) : chart.swatches.slice(start);
 
   if (!swatches.length) return null;
 
@@ -641,14 +707,16 @@ function MaterialChartBlock({
 }
 
 function MaterialsFinishesArea({
+  allowContinuation,
   charts,
   selectedFinishes,
 }: {
+  allowContinuation: boolean;
   charts: MaterialChart[];
   selectedFinishes: SelectedFinish[];
 }) {
-  const visibleSelected = selectedFinishes.slice(0, selectedFinishesPerProductPage);
-  const hasMoreSelected = selectedFinishes.length > selectedFinishesPerProductPage;
+  const visibleSelected = allowContinuation ? selectedFinishes.slice(0, selectedFinishesPerProductPage) : selectedFinishes;
+  const hasMoreSelected = allowContinuation && selectedFinishes.length > selectedFinishesPerProductPage;
   const visibleCharts = charts.filter((chart) => chart.swatches.length);
   const hasContent = visibleSelected.length || visibleCharts.length;
 
@@ -669,7 +737,8 @@ function MaterialsFinishesArea({
             <MaterialChartBlock
               key={chart.id}
               chart={chart}
-              hasMore={chart.swatches.length > chartSwatchesPerProductPage}
+              hasMore={allowContinuation && chart.swatches.length > chartSwatchesPerProductPage}
+              limitSwatches={allowContinuation}
             />
           ))}
         </>
@@ -710,7 +779,10 @@ function MaterialsContinuationPage({
           {[page.mainSection?.section_title, page.section.section_title].filter(Boolean).join(" / ") || "Specification"}
         </p>
         <h2 className="mt-2 text-3xl font-bold leading-tight text-zinc-950">{title}</h2>
-        <p className="mt-1 text-sm text-zinc-500">Materials & Finishes continuation</p>
+        <div className="mt-1 flex items-center justify-between gap-4">
+          <p className="text-sm text-zinc-500">Materials & Finishes continuation</p>
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">Item No. {page.serial || "-"}</p>
+        </div>
       </div>
 
       <section className="mt-6">
@@ -822,7 +894,11 @@ function ProductSpecPage({
 
         </div>
       </div>
-      <MaterialsFinishesArea charts={charts} selectedFinishes={selectedFinishes} />
+      <MaterialsFinishesArea
+        allowContinuation={item.allow_material_continuation_page}
+        charts={charts}
+        selectedFinishes={selectedFinishes}
+      />
       <PageFooter pageNumber={pageNumber} totalPages={totalPages} />
     </section>
   );
@@ -871,7 +947,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
         .returns<QuotationSection[]>(),
       supabase
         .from("quotation_items")
-        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,sort_order,line_style,is_active,cell_layout,notes")
+        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,allow_material_continuation_page,sort_order,line_style,is_active,cell_layout,notes")
         .eq("quotation_id", id)
         .eq("is_active", true)
         .order("sort_order", { ascending: true })
@@ -1027,44 +1103,48 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
       });
       nextPageNumber += 1;
 
-      const selectedCount = selectedFinishEntries(item).length;
-      for (
-        let selectedStart = selectedFinishesPerProductPage;
-        selectedStart < selectedCount;
-        selectedStart += selectedFinishesPerProductPage
-      ) {
-        documentPages.push({
-          type: "materials_continuation",
-          item,
-          mainSection,
-          pageNumber: nextPageNumber,
-          section,
-          selectedStart,
-        });
-        nextPageNumber += 1;
-      }
-
-      for (const [chartIndex, chart] of materialEntries(item).entries()) {
-        if (stringFromRecord(chart, ["type"]) !== "material_group_chart") continue;
-
-        const chartId = stringFromRecord(chart, ["id"]) || `finish-${chartIndex + 1}`;
-        const swatchCount = swatchRecords(chart).length;
-
+      if (item.allow_material_continuation_page) {
+        const selectedCount = selectedFinishEntries(item).length;
         for (
-          let chartStart = chartSwatchesPerProductPage;
-          chartStart < swatchCount;
-          chartStart += chartSwatchesPerProductPage
+          let selectedStart = selectedFinishesPerProductPage;
+          selectedStart < selectedCount;
+          selectedStart += selectedFinishesPerProductPage
         ) {
           documentPages.push({
             type: "materials_continuation",
-            chartId,
-            chartStart,
             item,
             mainSection,
             pageNumber: nextPageNumber,
             section,
+            selectedStart,
+            serial: rowSerial,
           });
           nextPageNumber += 1;
+        }
+
+        for (const [chartIndex, chart] of materialEntries(item).entries()) {
+          if (stringFromRecord(chart, ["type"]) !== "material_group_chart") continue;
+
+          const chartId = stringFromRecord(chart, ["id"]) || `finish-${chartIndex + 1}`;
+          const swatchCount = swatchRecords(chart).length;
+
+          for (
+            let chartStart = chartSwatchesPerProductPage;
+            chartStart < swatchCount;
+            chartStart += chartSwatchesPerProductPage
+          ) {
+            documentPages.push({
+              type: "materials_continuation",
+              chartId,
+              chartStart,
+              item,
+              mainSection,
+              pageNumber: nextPageNumber,
+              section,
+              serial: rowSerial,
+            });
+            nextPageNumber += 1;
+          }
         }
       }
     }
@@ -1079,10 +1159,11 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
         @page { size: A4 portrait; margin: 0; }
         .spec-page + .spec-page { margin-top: 24px; }
         @media print {
-          html, body { margin: 0 !important; padding: 0 !important; width: 210mm !important; background: #fff !important; }
+          html, body { margin: 0 !important; padding: 0 !important; width: 210mm !important; background: #fff !important; print-color-adjust: exact !important; -webkit-print-color-adjust: exact !important; }
+          img { break-inside: avoid; page-break-inside: avoid; }
           .no-print { display: none !important; }
-          .spec-sheet { box-shadow: none !important; width: 210mm !important; max-width: 210mm !important; margin: 0 !important; }
-          .spec-page { box-shadow: none !important; box-sizing: border-box !important; width: 210mm !important; height: 297mm !important; min-height: 297mm !important; overflow: hidden !important; break-after: page; page-break-after: always; margin: 0 !important; }
+          .spec-sheet { box-shadow: none !important; display: block !important; width: 210mm !important; max-width: 210mm !important; margin: 0 !important; }
+          .spec-page { box-shadow: none !important; box-sizing: border-box !important; width: 210mm !important; height: 297mm !important; min-height: 297mm !important; overflow: hidden !important; break-after: page; break-inside: avoid; page-break-after: always; page-break-inside: avoid; margin: 0 !important; print-color-adjust: exact !important; -webkit-print-color-adjust: exact !important; }
           .spec-page + .spec-page { margin-top: 0 !important; }
           .spec-page:last-child { break-after: auto; page-break-after: auto; }
           .avoid-break, .spec-heading, .spec-page-header { break-inside: avoid; page-break-inside: avoid; }
@@ -1097,55 +1178,59 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
       </div>
 
       <div className="spec-sheet mx-auto box-border w-[210mm] max-w-full">
-        <section className="spec-page flex min-h-[277mm] flex-col bg-white p-12 shadow-sm ring-1 ring-zinc-200">
-          <header className="spec-page-header border-b border-zinc-300 pb-5">
-            <div className="grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-6">
+        <section className="spec-page flex min-h-[277mm] flex-col bg-white px-12 py-11 shadow-sm ring-1 ring-zinc-200">
+          <header className="spec-page-header border-b border-zinc-300 pb-6">
+            <div className="grid w-full grid-cols-[240px_minmax(0,1fr)_220px] items-start gap-6">
               <div className="min-w-0">
                 {hasLogo ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={COMPANY_PROFILE.logoPath} alt={COMPANY_PROFILE.name} className="h-[60px] w-[180px] object-contain" />
+                  <img src={COMPANY_PROFILE.logoPath} alt={COMPANY_PROFILE.name} className="h-[54px] w-[168px] object-contain" />
                 ) : (
-                  <div className="flex h-[60px] w-[180px] items-center justify-center border-2 border-zinc-900 px-4 text-center text-base font-black leading-tight tracking-tight">
+                  <div className="flex h-[54px] w-[168px] items-center justify-center border-2 border-zinc-900 px-4 text-center text-sm font-black leading-tight tracking-tight">
                     NOA Office Solutions
                   </div>
                 )}
-                <div className="mt-1.5">
-                  <p className="text-sm font-bold leading-tight text-zinc-950">{COMPANY_PROFILE.name}</p>
-                  <p className="mt-0.5 text-xs text-zinc-600">
+                <div className="mt-2">
+                  <p className="text-[13px] font-bold leading-tight text-zinc-950">{COMPANY_PROFILE.name}</p>
+                  <p className="mt-1 text-[11px] leading-4 text-zinc-600">
                     {COMPANY_PROFILE.offices.map((office) => office.location).join(" / ")}
                   </p>
-                  <p className="text-xs text-zinc-600">TRN: {COMPANY_PROFILE.trn}</p>
+                  <p className="text-[11px] leading-4 text-zinc-600">TRN: {COMPANY_PROFILE.trn}</p>
                 </div>
               </div>
-              <div className="pt-1 text-center">
-                <p className="text-[22px] font-bold tracking-[0.08em] text-zinc-950">SPECIFICATION SHEET</p>
+              <div className="justify-self-center pt-2 text-center">
+                <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-zinc-400">Document</p>
+                <p className="mt-2 text-[24px] font-bold leading-none tracking-[0.08em] text-zinc-950">SPECIFICATION SHEET</p>
               </div>
-              <div className="flex justify-end text-right">
-                <dl className="grid w-full max-w-[240px] grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+              <div className="flex justify-end pt-1 text-right">
+                <dl className="grid w-full max-w-[230px] grid-cols-[70px_minmax(0,1fr)] gap-x-4 gap-y-2 border-l border-zinc-200 pl-5">
                   <MetaLine label="Ref No." value={quotation.quotation_no ?? "Draft"} />
                   <MetaLine label="Date" value={quotation.quotation_date} />
-                  {quotation.revision_no ? <MetaLine label="Revision" value={`Rev ${quotation.revision_no}`} /> : null}
                   <MetaLine label="Status" value={quotation.status} />
                 </dl>
               </div>
             </div>
           </header>
 
-          <section className="flex flex-1 items-center py-16">
-            <div className="w-full">
-              <p className="text-xs font-bold uppercase tracking-[0.24em] text-zinc-400">Project Summary</p>
-              <h1 className="mt-5 max-w-[620px] text-5xl font-bold leading-tight tracking-tight text-zinc-950">
+          <section className="flex flex-1 items-center justify-center py-10">
+            <div className="w-full max-w-[680px]">
+              <p className="text-xs font-bold uppercase tracking-[0.26em] text-zinc-400">Project Summary</p>
+              <h1 className="mt-4 text-[46px] font-bold leading-[1.05] tracking-tight text-zinc-950">
                 {project?.project_name ?? quotation.title}
               </h1>
-              <div className="mt-12 h-px w-24 bg-zinc-300" />
-              <dl className="mt-12 grid gap-x-12 gap-y-8 md:grid-cols-2">
-                <InfoLine label="Client" value={client?.company_name ?? "Unknown client"} />
-                <InfoLine label="Project" value={project?.project_name ?? "Unknown project"} />
-                <InfoLine label="Location" value={project?.location} />
-                <InfoLine label="Project No. / Year" value={[project?.project_code, project?.project_year].filter(Boolean).join(" / ")} />
-                <InfoLine label="Attention / Contact" value={projectContactLine(project)} />
-                <InfoLine label="Project Address" value={project?.project_address} />
-              </dl>
+              <div className="mt-8 h-px w-28 bg-zinc-300" />
+              <div className="mt-10 grid gap-x-14 gap-y-8 md:grid-cols-2">
+                <dl className="grid content-start gap-7">
+                  <InfoLine label="Client" value={client?.company_name ?? "Unknown client"} />
+                  <InfoLine label="Location" value={project?.location} />
+                  <InfoLine label="Attention / Contact" value={projectContactLine(project)} />
+                </dl>
+                <dl className="grid content-start gap-7">
+                  <InfoLine label="Project" value={project?.project_name ?? "Unknown project"} />
+                  <InfoLine label="Project No. / Year" value={[project?.project_code, project?.project_year].filter(Boolean).join(" / ")} />
+                  <InfoLine label="Project Address" value={project?.project_address} />
+                </dl>
+              </div>
             </div>
           </section>
 

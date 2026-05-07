@@ -21,6 +21,7 @@ import {
   type FinishMaterial,
   type FinishMaterialBrand,
   type FinishMaterialGroup,
+  type ProductTemplateMaterialGroupItemLink,
   type ProductTemplateMaterialGroupLink,
 } from "@/components/quotations/finish-selections-editor";
 import { QuotationImageCell } from "@/components/quotations/quotation-image-cell";
@@ -137,6 +138,7 @@ type QuotationItem = {
   warranty_snapshot: string | null;
   supplier_name_snapshot: string | null;
   supplier_notes_snapshot: string | null;
+  allow_material_continuation_page: boolean;
   qty: number;
   unit_label: string;
   unit_price: number;
@@ -168,6 +170,7 @@ type FinishSelection = {
   product_template_material_group_id?: string;
   brand_name?: string;
   group_label?: string;
+  group_sort_order?: number;
   material_category?: string;
   finish_code?: string;
   finish_name?: string;
@@ -1024,6 +1027,7 @@ function MaterialsFinishesEditor({
   materials,
   productTemplates,
   quotationId,
+  templateMaterialGroupItems,
   templateMaterialGroups,
 }: {
   brands: FinishMaterialBrand[];
@@ -1032,20 +1036,25 @@ function MaterialsFinishesEditor({
   materials: FinishMaterial[];
   productTemplates: ProductLibraryTemplate[];
   quotationId: string;
+  templateMaterialGroupItems: ProductTemplateMaterialGroupItemLink[];
   templateMaterialGroups: ProductTemplateMaterialGroupLink[];
 }) {
   const rows = finishSelections(item?.finish_selections_snapshot);
   const template = productTemplates.find((entry) => entry.id === item?.source_template_id);
   const linkedGroups = templateMaterialGroups.filter((link) => link.product_template_id === item?.source_template_id);
+  const linkedGroupIds = new Set(linkedGroups.map((link) => link.id));
+  const linkedItems = templateMaterialGroupItems.filter((itemLink) => linkedGroupIds.has(itemLink.product_template_material_group_id));
 
   return (
     <FinishSelectionsEditor
       brands={brands}
+      allowMaterialContinuationPage={item?.allow_material_continuation_page ?? false}
       initialBrandId={template?.brand_id ?? null}
       initialFinishes={rows}
       itemId={item?.id}
       materialGroups={materialGroups}
       materials={materials}
+      templateMaterialGroupItems={linkedItems}
       templateMaterialGroups={linkedGroups}
       quotationId={quotationId}
     />
@@ -1062,6 +1071,7 @@ function LineForm({
   materials,
   productTemplates,
   showInternal,
+  templateMaterialGroupItems,
   templateMaterialGroups,
 }: {
   brands: FinishMaterialBrand[];
@@ -1073,6 +1083,7 @@ function LineForm({
   materials: FinishMaterial[];
   productTemplates: ProductLibraryTemplate[];
   showInternal: boolean;
+  templateMaterialGroupItems: ProductTemplateMaterialGroupItemLink[];
   templateMaterialGroups: ProductTemplateMaterialGroupLink[];
 }) {
   return (
@@ -1180,6 +1191,7 @@ function LineForm({
         materials={materials}
         productTemplates={productTemplates}
         quotationId={quotation.id}
+        templateMaterialGroupItems={templateMaterialGroupItems}
         templateMaterialGroups={templateMaterialGroups}
       />
 
@@ -1265,6 +1277,7 @@ function RowActionPanel({
   returnTo,
   sectionId,
   showInternal,
+  templateMaterialGroupItems,
   templateMaterialGroups,
 }: {
   brands: ProductLibraryBrand[];
@@ -1278,6 +1291,7 @@ function RowActionPanel({
   returnTo: string;
   sectionId: string;
   showInternal: boolean;
+  templateMaterialGroupItems: ProductTemplateMaterialGroupItemLink[];
   templateMaterialGroups: ProductTemplateMaterialGroupLink[];
 }) {
   const summaryClass =
@@ -1291,9 +1305,13 @@ function RowActionPanel({
           categories={categories}
           components={components}
           linkedFamilies={linkedFamilies}
+          materialGroups={materialGroups}
+          materials={materials}
           quotationId={quotation.id}
           returnTo={returnTo}
           sectionId={sectionId}
+          templateMaterialGroupItems={templateMaterialGroupItems}
+          templateMaterialGroups={templateMaterialGroups}
           templates={productTemplates}
         />
         <details>
@@ -1308,6 +1326,7 @@ function RowActionPanel({
               returnTo={returnTo}
               sectionId={sectionId}
               showInternal={showInternal}
+              templateMaterialGroupItems={templateMaterialGroupItems}
               templateMaterialGroups={templateMaterialGroups}
             />
           </div>
@@ -2039,6 +2058,7 @@ function rowClipboardPayload({
       proposed_image_url_snapshot: item.proposed_image_url_snapshot,
       specification_snapshot: item.specification_snapshot,
       finish_selections_snapshot: item.finish_selections_snapshot,
+      allow_material_continuation_page: item.allow_material_continuation_page,
       selected_options_snapshot: item.selected_options_snapshot,
       internal_components_snapshot: item.internal_components_snapshot,
       room_name_snapshot: item.room_name_snapshot,
@@ -2080,6 +2100,7 @@ function InlineRowActions({
   returnTo,
   inlineFormId,
   showInternal,
+  templateMaterialGroupItems,
   templateMaterialGroups,
 }: {
   item: QuotationItem;
@@ -2091,6 +2112,7 @@ function InlineRowActions({
   returnTo: string;
   inlineFormId: string;
   showInternal: boolean;
+  templateMaterialGroupItems: ProductTemplateMaterialGroupItemLink[];
   templateMaterialGroups: ProductTemplateMaterialGroupLink[];
 }) {
   return (
@@ -2160,6 +2182,7 @@ function InlineRowActions({
                     quotation={quotation}
                     returnTo={returnTo}
                     showInternal={showInternal}
+                    templateMaterialGroupItems={templateMaterialGroupItems}
                     templateMaterialGroups={templateMaterialGroups}
                   />
                 </div>
@@ -2182,6 +2205,7 @@ function InlineRowEditCell({
   returnTo,
   inlineFormId,
   showInternal,
+  templateMaterialGroupItems,
   templateMaterialGroups,
 }: {
   item: QuotationItem;
@@ -2193,6 +2217,7 @@ function InlineRowEditCell({
   returnTo: string;
   inlineFormId: string;
   showInternal: boolean;
+  templateMaterialGroupItems: ProductTemplateMaterialGroupItemLink[];
   templateMaterialGroups: ProductTemplateMaterialGroupLink[];
 }) {
   return (
@@ -2207,6 +2232,7 @@ function InlineRowEditCell({
         returnTo={returnTo}
         inlineFormId={inlineFormId}
         showInternal={showInternal}
+        templateMaterialGroupItems={templateMaterialGroupItems}
         templateMaterialGroups={templateMaterialGroups}
       />
     </td>
@@ -2380,11 +2406,19 @@ export default async function QuotationBuilderPage({
 
   const { data: templateMaterialGroups, error: templateMaterialGroupsError } = await supabase
     .from("product_template_material_groups")
-    .select("id,product_template_id,material_group_id,label_override,is_required,allow_multiple,show_in_specification,show_in_quotation,sort_order")
+    .select("id,product_template_id,material_group_id,selection_mode,label_override,is_required,allow_multiple,show_in_specification,show_in_quotation,sort_order")
     .eq("is_active", true)
     .order("product_template_id", { ascending: true })
     .order("sort_order", { ascending: true })
     .returns<ProductTemplateMaterialGroupLink[]>();
+
+  const { data: templateMaterialGroupItems, error: templateMaterialGroupItemsError } = await supabase
+    .from("product_template_material_group_items")
+    .select("id,product_template_material_group_id,brand_material_id,sort_order,is_active")
+    .eq("is_active", true)
+    .order("product_template_material_group_id", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .returns<ProductTemplateMaterialGroupItemLink[]>();
 
   const { data: sections, error: sectionsError } = await supabase
     .from("quotation_sections")
@@ -2398,7 +2432,7 @@ export default async function QuotationBuilderPage({
   const { data: items, error: itemsError } = await supabase
     .from("quotation_items")
     .select(
-      "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,is_active,notes,created_at",
+      "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,allow_material_continuation_page,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,is_active,notes,created_at",
     )
     .eq("quotation_id", id)
     .eq("is_active", true)
@@ -2417,6 +2451,7 @@ export default async function QuotationBuilderPage({
   if (materialGroupsError) console.error("QUOTATION MATERIAL GROUPS ERROR", materialGroupsError.message);
   if (materialsError) console.error("QUOTATION MATERIALS ERROR", materialsError.message);
   if (templateMaterialGroupsError) console.error("QUOTATION TEMPLATE MATERIAL GROUPS ERROR", templateMaterialGroupsError.message);
+  if (templateMaterialGroupItemsError) console.error("QUOTATION TEMPLATE MATERIAL GROUP ITEMS ERROR", templateMaterialGroupItemsError.message);
 
   const itemsBySection = new Map<string, QuotationItem[]>();
 
@@ -2914,6 +2949,7 @@ export default async function QuotationBuilderPage({
                                     returnTo={builderPath}
                                     inlineFormId={inlineFormId}
                                     showInternal={showInternal}
+                                    templateMaterialGroupItems={templateMaterialGroupItems ?? []}
                                     templateMaterialGroups={templateMaterialGroups ?? []}
                                   />
                                 ) : null}
@@ -2962,6 +2998,7 @@ export default async function QuotationBuilderPage({
                                     returnTo={builderPath}
                                     inlineFormId={inlineFormId}
                                     showInternal={showInternal}
+                                    templateMaterialGroupItems={templateMaterialGroupItems ?? []}
                                     templateMaterialGroups={templateMaterialGroups ?? []}
                                   />
                                 ) : null}
@@ -3022,6 +3059,7 @@ export default async function QuotationBuilderPage({
                                     returnTo={builderPath}
                                     inlineFormId={inlineFormId}
                                     showInternal={showInternal}
+                                    templateMaterialGroupItems={templateMaterialGroupItems ?? []}
                                     templateMaterialGroups={templateMaterialGroups ?? []}
                                   />
                                 ) : null}
@@ -3047,6 +3085,7 @@ export default async function QuotationBuilderPage({
                                     returnTo={builderPath}
                                     inlineFormId={inlineFormId}
                                     showInternal={showInternal}
+                                    templateMaterialGroupItems={templateMaterialGroupItems ?? []}
                                     templateMaterialGroups={templateMaterialGroups ?? []}
                                   />
                                 ) : null}
@@ -3109,6 +3148,7 @@ export default async function QuotationBuilderPage({
                                   returnTo={builderPath}
                                   inlineFormId={inlineFormId}
                                   showInternal={showInternal}
+                                  templateMaterialGroupItems={templateMaterialGroupItems ?? []}
                                   templateMaterialGroups={templateMaterialGroups ?? []}
                                 />
                               ) : null}
@@ -3139,6 +3179,7 @@ export default async function QuotationBuilderPage({
                               returnTo={builderPath}
                               sectionId={section.id}
                               showInternal={showInternal}
+                              templateMaterialGroupItems={templateMaterialGroupItems ?? []}
                               templateMaterialGroups={templateMaterialGroups ?? []}
                             />
                             <PasteQuotationRowControls

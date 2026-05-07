@@ -817,7 +817,7 @@ const sectionCopySelect =
   "id,section_title,section_notes,section_type,parent_section_id,section_kind,title_align,title_bold,title_bg,title_size,row_height,sort_order";
 
 const itemCopySelect =
-  "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,notes";
+  "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,allow_material_continuation_page,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,notes";
 
 function finishSelectionsValue(formData: FormData) {
   const labels = formData.getAll("finish_group_label[]");
@@ -827,6 +827,7 @@ function finishSelectionsValue(formData: FormData) {
   const materialGroupIds = formData.getAll("finish_material_group_id[]");
   const templateMaterialGroupIds = formData.getAll("finish_product_template_material_group_id[]");
   const brandNames = formData.getAll("finish_brand_name[]");
+  const groupSortOrders = formData.getAll("finish_group_sort_order[]");
   const materialCategories = formData.getAll("finish_material_category[]");
   const codes = formData.getAll("finish_code[]");
   const names = formData.getAll("finish_name[]");
@@ -847,6 +848,7 @@ function finishSelectionsValue(formData: FormData) {
     materialGroupIds.length,
     templateMaterialGroupIds.length,
     brandNames.length,
+    groupSortOrders.length,
     materialCategories.length,
     codes.length,
     names.length,
@@ -865,6 +867,7 @@ function finishSelectionsValue(formData: FormData) {
       const materialGroupId = String(materialGroupIds[index] ?? "").trim();
       const templateMaterialGroupId = String(templateMaterialGroupIds[index] ?? "").trim();
       const brandName = String(brandNames[index] ?? "").trim();
+      const groupSortOrder = Number.parseInt(String(groupSortOrders[index] ?? ""), 10);
       const materialCategory = String(materialCategories[index] ?? "").trim();
       const finishCode = String(codes[index] ?? "").trim();
       const finishName = String(names[index] ?? "").trim();
@@ -882,6 +885,7 @@ function finishSelectionsValue(formData: FormData) {
         product_template_material_group_id: templateMaterialGroupId,
         brand_name: brandName,
         group_label: groupLabel,
+        group_sort_order: Number.isFinite(groupSortOrder) ? groupSortOrder : undefined,
         material_category: materialCategory,
         finish_code: finishCode,
         finish_name: finishName,
@@ -936,6 +940,7 @@ function itemPayload(formData: FormData, userId?: string) {
     warranty_snapshot: optionalTextValue(formData, "warranty_snapshot"),
     supplier_name_snapshot: optionalTextValue(formData, "supplier_name_snapshot"),
     supplier_notes_snapshot: optionalTextValue(formData, "supplier_notes_snapshot"),
+    allow_material_continuation_page: boolValue(formData, "allow_material_continuation_page"),
     qty,
     unit_label: textValue(formData, "unit_label") || "Pc",
     unit_price: linePricing.unitPrice,
@@ -2499,6 +2504,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     specified_image_url_snapshot: null,
     proposed_image_url_snapshot: proposedImagePath,
     specification_snapshot: specificationWithAccessories,
+    finish_selections_snapshot: finishSelectionsValue(formData),
     selected_options_snapshot: finalSelectedOptionsWithLinkedProducts,
     model_snapshot: derivedDesking
       ? `Cluster of ${derivedDesking.totalSeats}`
@@ -2516,6 +2522,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       null,
     origin_snapshot: originSnapshot,
     supplier_name_snapshot: supplierNameSnapshot,
+    allow_material_continuation_page: boolValue(formData, "allow_material_continuation_page"),
     qty: 1,
     unit_label: template.unit_label || "Pc",
     unit_price: unitPrice,
@@ -3041,6 +3048,7 @@ function sanitizeCopiedRowSnapshot(value: unknown) {
     warranty_snapshot: stringOrNull(source.warranty_snapshot),
     supplier_name_snapshot: stringOrNull(source.supplier_name_snapshot),
     supplier_notes_snapshot: stringOrNull(source.supplier_notes_snapshot),
+    allow_material_continuation_page: booleanOr(source.allow_material_continuation_page, false),
     qty,
     unit_label: stringOrNull(source.unit_label) ?? "Pc",
     unit_price: linePricing.unitPrice,

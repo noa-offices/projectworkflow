@@ -55,7 +55,7 @@ async function waitForFontsAndImages(page: Page) {
     const images = Array.from(document.images);
     await Promise.all(
       images.map(async (image) => {
-        if (image.complete) return;
+        if (image.complete && image.naturalWidth > 0) return;
 
         await new Promise<void>((resolve) => {
           image.addEventListener("load", () => resolve(), { once: true });
@@ -75,6 +75,10 @@ async function waitForFontsAndImages(page: Page) {
         }
       }),
     );
+
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
   });
 }
 
@@ -105,14 +109,16 @@ export async function GET(request: NextRequest, { params }: DownloadSpecificatio
   try {
     const context = await browser.newContext({
       extraHTTPHeaders: cookieHeader ? { cookie: cookieHeader } : undefined,
+      deviceScaleFactor: 2,
       viewport: { width: 1280, height: 900 },
     });
     const page = await context.newPage();
     page.setDefaultTimeout(30_000);
     page.setDefaultNavigationTimeout(30_000);
+    await page.emulateMedia({ media: "print" });
 
     await page.goto(previewUrl.toString(), {
-      waitUntil: "domcontentloaded",
+      waitUntil: "networkidle",
       timeout: 30_000,
     });
     const renderedPath = new URL(page.url()).pathname;
@@ -121,7 +127,9 @@ export async function GET(request: NextRequest, { params }: DownloadSpecificatio
       throw new Error(`Specification preview loaded an auth page instead of content: ${renderedPath}`);
     }
 
-    await page.emulateMedia({ media: "print" });
+    await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch((error) => {
+      console.warn("SPECIFICATION PDF NETWORK IDLE WARNING", error);
+    });
     await withTimeout(
       waitForFontsAndImages(page),
       10_000,
@@ -129,6 +137,7 @@ export async function GET(request: NextRequest, { params }: DownloadSpecificatio
     ).catch((error) => {
       console.warn("SPECIFICATION PDF IMAGE WAIT WARNING", error);
     });
+    await page.waitForTimeout(250);
 
     const pdf = await withTimeout(
       page.pdf({

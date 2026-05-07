@@ -54,6 +54,19 @@ function optionalNumberValue(formData: FormData, name: string) {
   return Number.isFinite(value) ? value : undefined;
 }
 
+function selectionModeValue(formData: FormData) {
+  return textValue(formData, "selection_mode") === "selected_items" ? "selected_items" : "full_group";
+}
+
+function selectedMaterialIdsValue(formData: FormData) {
+  return Array.from(new Set(
+    formData
+      .getAll("brand_material_id[]")
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean),
+  ));
+}
+
 function numberInRange(formData: FormData, name: string, fallback: number, min: number, max: number) {
   const value = numberValue(formData, name, fallback);
 
@@ -822,9 +835,12 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
   await requireSettingsManager();
   const productTemplateId = textValue(formData, "product_template_id");
   const materialGroupId = textValue(formData, "material_group_id");
+  const selectionMode = selectionModeValue(formData);
+  const selectedMaterialIds = selectedMaterialIdsValue(formData);
   const payload = {
     product_template_id: productTemplateId,
     material_group_id: materialGroupId,
+    selection_mode: selectionMode,
     label_override: optionalTextValue(formData, "label_override"),
     is_required: boolValue(formData, "is_required"),
     allow_multiple: boolValue(formData, "allow_multiple"),
@@ -839,13 +855,68 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
+  if (selectionMode === "selected_items" && selectedMaterialIds.length === 0) {
+    redirectWithMessage("Select at least one finish for selected finishes only.");
+  }
+
+  const { data: link, error } = await supabase
     .from("product_template_material_groups")
-    .upsert(payload, { onConflict: "product_template_id,material_group_id" });
+    .upsert(payload, { onConflict: "product_template_id,material_group_id" })
+    .select("id")
+    .single();
 
   if (error) {
     console.error("TEMPLATE MATERIAL GROUP CREATE ERROR", error.message);
     redirectWithMessage("Material group could not be linked.");
+  }
+
+  if (link?.id) {
+    const { error: deleteError } = await supabase
+      .from("product_template_material_group_items")
+      .delete()
+      .eq("product_template_material_group_id", link.id);
+
+    if (deleteError) {
+      console.error("TEMPLATE MATERIAL GROUP ITEMS CLEAR ERROR", deleteError.message);
+      redirectWithMessage("Material group finishes could not be saved.");
+    }
+
+    if (selectionMode === "selected_items") {
+      const { data: allowedMaterials, error: materialsError } = await supabase
+        .from("brand_materials")
+        .select("id")
+        .eq("material_group_id", materialGroupId)
+        .eq("is_active", true)
+        .in("id", selectedMaterialIds);
+
+      if (materialsError) {
+        console.error("TEMPLATE MATERIAL GROUP ITEMS VALIDATE ERROR", materialsError.message);
+        redirectWithMessage("Selected finishes could not be validated.");
+      }
+
+      const allowedIds = new Set((allowedMaterials ?? []).map((material) => material.id as string));
+      const rows = selectedMaterialIds
+        .filter((id) => allowedIds.has(id))
+        .map((brandMaterialId, index) => ({
+          product_template_material_group_id: link.id,
+          brand_material_id: brandMaterialId,
+          sort_order: index,
+          is_active: true,
+        }));
+
+      if (!rows.length) {
+        redirectWithMessage("Select at least one active finish from the chosen group.");
+      }
+
+      const { error: itemsError } = await supabase
+        .from("product_template_material_group_items")
+        .insert(rows);
+
+      if (itemsError) {
+        console.error("TEMPLATE MATERIAL GROUP ITEMS CREATE ERROR", itemsError.message);
+        redirectWithMessage("Selected finishes could not be saved.");
+      }
+    }
   }
 
   revalidatePath("/products/templates");
@@ -855,7 +926,10 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
 export async function updateProductTemplateMaterialGroup(formData: FormData) {
   await requireSettingsManager();
   const id = textValue(formData, "id");
+  const selectionMode = selectionModeValue(formData);
+  const selectedMaterialIds = selectedMaterialIdsValue(formData);
   const payload = {
+    selection_mode: selectionMode,
     label_override: optionalTextValue(formData, "label_override"),
     is_required: boolValue(formData, "is_required"),
     allow_multiple: boolValue(formData, "allow_multiple"),
@@ -870,6 +944,21 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
   }
 
   const supabase = await createClient();
+  if (selectionMode === "selected_items" && selectedMaterialIds.length === 0) {
+    redirectWithMessage("Select at least one finish for selected finishes only.");
+  }
+
+  const { data: existingLink, error: linkError } = await supabase
+    .from("product_template_material_groups")
+    .select("material_group_id")
+    .eq("id", id)
+    .single();
+
+  if (linkError || !existingLink) {
+    console.error("TEMPLATE MATERIAL GROUP LOOKUP ERROR", linkError?.message ?? "Missing material group link.");
+    redirectWithMessage("Material group link could not be loaded.");
+  }
+
   const { error } = await supabase
     .from("product_template_material_groups")
     .update(payload)
@@ -878,6 +967,53 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
   if (error) {
     console.error("TEMPLATE MATERIAL GROUP UPDATE ERROR", error.message);
     redirectWithMessage("Material group link could not be updated.");
+  }
+
+  const { error: deleteError } = await supabase
+    .from("product_template_material_group_items")
+    .delete()
+    .eq("product_template_material_group_id", id);
+
+  if (deleteError) {
+    console.error("TEMPLATE MATERIAL GROUP ITEMS CLEAR ERROR", deleteError.message);
+    redirectWithMessage("Material group finishes could not be saved.");
+  }
+
+  if (selectionMode === "selected_items") {
+    const { data: allowedMaterials, error: materialsError } = await supabase
+      .from("brand_materials")
+      .select("id")
+      .eq("material_group_id", existingLink.material_group_id)
+      .eq("is_active", true)
+      .in("id", selectedMaterialIds);
+
+    if (materialsError) {
+      console.error("TEMPLATE MATERIAL GROUP ITEMS VALIDATE ERROR", materialsError.message);
+      redirectWithMessage("Selected finishes could not be validated.");
+    }
+
+    const allowedIds = new Set((allowedMaterials ?? []).map((material) => material.id as string));
+    const rows = selectedMaterialIds
+      .filter((brandMaterialId) => allowedIds.has(brandMaterialId))
+      .map((brandMaterialId, index) => ({
+        product_template_material_group_id: id,
+        brand_material_id: brandMaterialId,
+        sort_order: index,
+        is_active: true,
+      }));
+
+    if (!rows.length) {
+      redirectWithMessage("Select at least one active finish from this group.");
+    }
+
+    const { error: itemsError } = await supabase
+      .from("product_template_material_group_items")
+      .insert(rows);
+
+    if (itemsError) {
+      console.error("TEMPLATE MATERIAL GROUP ITEMS UPDATE ERROR", itemsError.message);
+      redirectWithMessage("Selected finishes could not be saved.");
+    }
   }
 
   revalidatePath("/products/templates");

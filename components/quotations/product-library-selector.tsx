@@ -2,6 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
+import {
+  FinishSelectionsEditor,
+  type FinishMaterial,
+  type FinishMaterialBrand,
+  type FinishMaterialGroup,
+  type ProductTemplateMaterialGroupItemLink,
+  type ProductTemplateMaterialGroupLink,
+} from "@/components/quotations/finish-selections-editor";
 import { formatMoney, normalizeCurrency } from "@/lib/currencies";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 import { createClient } from "@/lib/supabase/client";
@@ -396,18 +404,26 @@ export function ProductLibrarySelector({
   categories,
   components,
   linkedFamilies,
+  materialGroups,
+  materials,
   quotationId,
   returnTo,
   sectionId,
+  templateMaterialGroupItems,
+  templateMaterialGroups,
   templates,
 }: {
   brands: ProductLibraryBrand[];
   categories: ProductLibraryCategory[];
   components: ProductLibraryComponent[];
   linkedFamilies: ProductLibraryLinkedFamily[];
+  materialGroups: FinishMaterialGroup[];
+  materials: FinishMaterial[];
   quotationId: string;
   returnTo: string;
   sectionId: string;
+  templateMaterialGroupItems: ProductTemplateMaterialGroupItemLink[];
+  templateMaterialGroups: ProductTemplateMaterialGroupLink[];
   templates: ProductLibraryTemplate[];
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -506,6 +522,7 @@ export function ProductLibrarySelector({
   const selectedTemplate = selectedTemplateId
     ? filteredTemplates.find((template) => template.id === selectedTemplateId) ?? null
     : null;
+  const finishBrands: FinishMaterialBrand[] = brands;
   const productCountByBrand = useMemo(() => {
     const map = new Map<string, number>();
 
@@ -973,6 +990,11 @@ export function ProductLibrarySelector({
                     proposedImages.includes(selectedImages[template.id])
                       ? selectedImages[template.id]
                       : proposedImages[0] ?? "";
+                  const templateMaterialLinks = templateMaterialGroups.filter((link) => link.product_template_id === template.id);
+                  const templateMaterialLinkIds = new Set(templateMaterialLinks.map((link) => link.id));
+                  const templateMaterialItems = templateMaterialGroupItems.filter((item) =>
+                    templateMaterialLinkIds.has(item.product_template_material_group_id),
+                  );
 
                   for (const component of templateComponents) {
                     const groupKey = `${component.option_type}:${component.component_group}`;
@@ -1702,7 +1724,7 @@ export function ProductLibrarySelector({
                           <p>Net Price: {formatQuotationMoney(previewCurrency, netPricePreview)}</p>
                           <p>Net Total: {formatQuotationMoney(previewCurrency, netTotalPreview)}</p>
                         </div>
-                        <form action={addProductTemplateToQuotation} className="sticky bottom-0 -mx-3 border-t border-zinc-200 bg-white px-3 py-3 text-right">
+                        <form action={addProductTemplateToQuotation} className="mt-3 -mx-3 border-t border-zinc-200 bg-white px-3 py-3">
                           <input type="hidden" name="quotation_id" value={quotationId} />
                           <input type="hidden" name="section_id" value={sectionId} />
                           <input type="hidden" name="template_id" value={template.id} />
@@ -1795,13 +1817,27 @@ export function ProductLibrarySelector({
                               />
                             ) : null,
                           )}
-                          <button
-                            type="submit"
-                            disabled={missingExchangeRate}
-                            className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
-                          >
-                            Add
-                          </button>
+                          <div className="text-left">
+                            <FinishSelectionsEditor
+                              brands={finishBrands}
+                              initialBrandId={template.brand_id}
+                              initialFinishes={[]}
+                              materialGroups={materialGroups}
+                              materials={materials}
+                              quotationId={quotationId}
+                              templateMaterialGroupItems={templateMaterialItems}
+                              templateMaterialGroups={templateMaterialLinks}
+                            />
+                          </div>
+                          <div className="sticky bottom-0 -mx-3 mt-3 border-t border-zinc-200 bg-white px-3 py-3 text-right">
+                            <button
+                              type="submit"
+                              disabled={missingExchangeRate}
+                              className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                            >
+                              Add
+                            </button>
+                          </div>
                         </form>
                       </div>
                     </article>
