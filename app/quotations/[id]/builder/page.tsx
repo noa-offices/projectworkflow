@@ -577,7 +577,12 @@ function currentComponentOptionsTotal({
 
   for (const option of arrayValue(selectedOptions).map(recordValue).filter(isRecord)) {
     const optionId = stringValue(option.id);
-    if (!optionId || ["variant_pricing", "category_pricing", "desking_size"].includes(String(option.item_type))) {
+    const isAccessorySnapshot = Boolean(option.group_name && option.item_name && option.price !== undefined);
+    if (
+      !optionId ||
+      isAccessorySnapshot ||
+      ["variant_pricing", "category_pricing", "desking_size"].includes(String(option.item_type))
+    ) {
       continue;
     }
 
@@ -671,11 +676,240 @@ function currentSourcePriceForItem({
   if (accessoryTotal === null) return null;
 
   return {
-    canApplyDefaultSourcePrice: sourceKind === "default" && componentOptionsTotal === 0 && accessoryTotal === 0,
+    canApplyCurrentSourcePrice: true,
     sourceCurrency,
     sourceKind,
     sourcePrice: quotationMoneyValue(sourcePrice + componentOptionsTotal + accessoryTotal),
   };
+}
+
+function optionalNumericValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function sourceTypeLabel(sourceType: string | null) {
+  const labels: Record<string, string> = {
+    add_ons: "Add-ons",
+    category: "Category Pricing",
+    category_pricing: "Category Pricing",
+    component_options: "Product Components",
+    default: "Template Default",
+    desking: "Desking / Size Pricing",
+    desking_size_pricing: "Desking / Size Pricing",
+    template_default: "Template Default",
+    variant: "Size / Model Variant",
+    variant_pricing: "Size / Model Variant",
+  };
+
+  return sourceType ? labels[sourceType] ?? sourceType : null;
+}
+
+function sourceLabelFromReference(reference: Record<string, unknown>) {
+  return [
+    stringValue(reference.source_price_label),
+    stringValue(reference.source_price_key),
+  ].filter(Boolean).join(" / ") || null;
+}
+
+function singleOriginalCurrencyTotal(conversionData: Record<string, unknown> | null | undefined) {
+  const totals = recordValue(conversionData?.original_totals);
+  if (!totals) return null;
+
+  const entries = Object.entries(totals)
+    .map(([currency, amount]) => [normalizeCurrency(currency), optionalNumericValue(amount)] as const)
+    .filter((entry): entry is readonly [string, number] => entry[1] !== null && entry[1] > 0);
+
+  if (entries.length !== 1) return null;
+
+  return {
+    currency: entries[0][0],
+    price: quotationMoneyValue(entries[0][1]),
+  };
+}
+
+function sourcePriceReferenceForItem({
+  components,
+  item,
+  template,
+}: {
+  components: ProductLibraryComponent[];
+  item: QuotationItem;
+  template: ProductLibraryTemplate | null;
+}) {
+  const sourceData = recordValue(item.source_component_data);
+  const storedReference = recordValue(sourceData?.source_price_reference);
+  const conversionData = recordValue(sourceData?.currency_conversion);
+  const sourceName = [
+    item.brand_name_snapshot ?? stringValue(sourceData?.brand_name),
+    template?.template_name ?? stringValue(sourceData?.template_name) ?? item.item_name_snapshot,
+    item.model_snapshot,
+    item.size_snapshot,
+  ].filter(Boolean).join(" / ");
+  const quotationCurrency = normalizeCurrency(item.currency);
+  const reference = {
+    convertedPrice: optionalNumericValue(storedReference?.converted_quotation_price),
+    convertedCurrency: normalizeCurrency(stringValue(storedReference?.quotation_currency) ?? quotationCurrency),
+    currentSourceCurrency: null as string | null,
+    currentSourcePrice: null as number | null,
+    originalCurrency: null as string | null,
+    originalPrice: null as number | null,
+    sourceLabel: storedReference ? sourceLabelFromReference(storedReference) : null,
+    sourceName,
+    sourceType: sourceTypeLabel(stringValue(storedReference?.source_price_type)),
+  };
+
+  if (storedReference) {
+    const originalPrice = optionalNumericValue(storedReference.original_source_price);
+    const originalCurrency = stringValue(storedReference.original_source_currency);
+
+    if (originalPrice !== null && originalCurrency) {
+      reference.originalPrice = quotationMoneyValue(originalPrice);
+      reference.originalCurrency = normalizeCurrency(originalCurrency);
+    }
+  }
+
+  if (reference.originalPrice === null) {
+    const singleTotal = singleOriginalCurrencyTotal(conversionData);
+    if (singleTotal) {
+      reference.originalPrice = singleTotal.price;
+      reference.originalCurrency = singleTotal.currency;
+    }
+  }
+
+  const variantData = recordValue(sourceData?.variant_pricing);
+  if (reference.originalPrice === null && variantData) {
+    const price = optionalNumericValue(variantData.price);
+    if (price !== null) {
+      reference.originalPrice = quotationMoneyValue(price);
+      reference.originalCurrency = normalizeCurrency(stringValue(variantData.currency) ?? template?.currency ?? quotationCurrency);
+      reference.sourceType = reference.sourceType ?? sourceTypeLabel("variant_pricing");
+      reference.sourceLabel = reference.sourceLabel ?? [
+        stringValue(variantData.variant_name),
+        stringValue(variantData.dimension),
+      ].filter(Boolean).join(" / ");
+    }
+  }
+
+  const categoryData = recordValue(sourceData?.category_pricing);
+  const categoryRow = recordValue(categoryData?.selected_row);
+  if (reference.originalPrice === null && categoryData && categoryRow) {
+    const price = optionalNumericValue(categoryData.selected_price);
+    if (price !== null) {
+      reference.originalPrice = quotationMoneyValue(price);
+      reference.originalCurrency = normalizeCurrency(stringValue(categoryRow.currency) ?? template?.currency ?? quotationCurrency);
+      reference.sourceType = reference.sourceType ?? sourceTypeLabel("category_pricing");
+      reference.sourceLabel = reference.sourceLabel ?? [
+        stringValue(categoryRow.variant_name),
+        stringValue(categoryData.selected_category),
+      ].filter(Boolean).join(" / ");
+    }
+  }
+
+  const deskingData = recordValue(sourceData?.desking);
+  if (reference.originalPrice === null && deskingData && !conversionData) {
+    const price = optionalNumericValue(deskingData.final_price);
+    if (price !== null) {
+      reference.originalPrice = quotationMoneyValue(price);
+      reference.originalCurrency = quotationCurrency;
+      reference.sourceType = reference.sourceType ?? sourceTypeLabel("desking_size_pricing");
+      reference.sourceLabel = reference.sourceLabel ?? [
+        stringValue(deskingData.size_label),
+        stringValue(deskingData.cluster_label),
+      ].filter(Boolean).join(" / ");
+    }
+  }
+
+  if (template) {
+    const currentSource = currentSourcePriceForItem({ components, item, template });
+    if (currentSource) {
+      reference.currentSourceCurrency = currentSource.sourceCurrency;
+      reference.currentSourcePrice = currentSource.sourcePrice;
+      reference.sourceType = reference.sourceType ?? sourceTypeLabel(currentSource.sourceKind);
+    }
+  }
+
+  return reference;
+}
+
+function SourceLibraryPriceReference({
+  components,
+  item,
+  productTemplates,
+}: {
+  components: ProductLibraryComponent[];
+  item?: QuotationItem;
+  productTemplates: ProductLibraryTemplate[];
+}) {
+  if (!item) return null;
+
+  const template = item.source_template_id
+    ? productTemplates.find((entry) => entry.id === item.source_template_id) ?? null
+    : null;
+  const reference = sourcePriceReferenceForItem({
+    components: template ? components.filter((component) => component.template_id === template.id) : [],
+    item,
+    template,
+  });
+  const hasSourceReference =
+    reference.originalPrice !== null ||
+    reference.currentSourcePrice !== null ||
+    Boolean(reference.sourceName || reference.sourceType || reference.sourceLabel);
+
+  return (
+    <fieldset className="border border-zinc-300 bg-zinc-50 p-3">
+      <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Source / Library Price</legend>
+      {hasSourceReference ? (
+        <div className="grid gap-2 text-xs md:grid-cols-2 xl:grid-cols-3">
+          <div>
+            <p className="text-[10px] font-semibold uppercase text-zinc-500">Original library price</p>
+            <p className="font-semibold text-zinc-900">
+              {reference.originalPrice !== null && reference.originalCurrency
+                ? formatQuotationMoney(reference.originalCurrency, reference.originalPrice)
+                : "Not available for this row"}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase text-zinc-500">Current source price</p>
+            <p className="font-semibold text-zinc-900">
+              {reference.currentSourcePrice !== null && reference.currentSourceCurrency
+                ? formatQuotationMoney(reference.currentSourceCurrency, reference.currentSourcePrice)
+                : "Not safely resolved"}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase text-zinc-500">Quotation row price</p>
+            <p className="font-semibold text-zinc-900">
+              {formatQuotationMoney(normalizeCurrency(item.currency), item.unit_price)}
+            </p>
+          </div>
+          <div className="md:col-span-2">
+            <p className="text-[10px] font-semibold uppercase text-zinc-500">Source</p>
+            <p className="text-zinc-800">{reference.sourceName || "Source template not available"}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase text-zinc-500">Source type</p>
+            <p className="text-zinc-800">{[reference.sourceType, reference.sourceLabel].filter(Boolean).join(" / ") || "-"}</p>
+          </div>
+          {reference.convertedPrice !== null ? (
+            <div>
+              <p className="text-[10px] font-semibold uppercase text-zinc-500">Converted quotation price</p>
+              <p className="text-zinc-800">
+                {formatQuotationMoney(reference.convertedCurrency, reference.convertedPrice)}
+              </p>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <p className="text-xs text-zinc-500">Original source price not available for this row.</p>
+      )}
+    </fieldset>
+  );
 }
 
 function sourcePriceWarning(
@@ -707,7 +941,7 @@ function sourcePriceWarning(
   return {
     quotedCurrency,
     quotedPrice,
-    canApplyDefaultSourcePrice: currentSource.canApplyDefaultSourcePrice,
+    canApplyCurrentSourcePrice: currentSource.canApplyCurrentSourcePrice,
     sourceCurrency,
     sourceKind: currentSource.sourceKind,
     sourcePrice,
@@ -744,13 +978,13 @@ function SourcePriceWarning({
             </span>
             <span>Existing quotation price is unchanged.</span>
           </div>
-          {warning.canApplyDefaultSourcePrice ? (
+          {warning.canApplyCurrentSourcePrice ? (
             <form action={useCurrentSourcePriceForQuotationItem} className="shrink-0">
               <input type="hidden" name="quotation_id" value={quotationId} />
               <input type="hidden" name="quotation_item_id" value={item.id} />
               <input type="hidden" name="return_to" value={returnTo} />
               <ConfirmSubmitButton
-                message="This will update only this quotation row to the current source price. Existing quotation snapshots and other rows will not change. Continue?"
+                message="This will update only this quotation row to the current source price. Other rows and old quotation snapshots will not change. Continue?"
                 className="h-7 border border-amber-300 bg-white px-2.5 text-[11px] font-semibold text-amber-900 transition hover:border-amber-500"
               >
                 Use current source price
@@ -1329,6 +1563,7 @@ function MaterialsFinishesEditor({
 
 function LineForm({
   brands,
+  components,
   quotation,
   returnTo,
   sectionId,
@@ -1341,6 +1576,7 @@ function LineForm({
   templateMaterialGroups,
 }: {
   brands: FinishMaterialBrand[];
+  components: ProductLibraryComponent[];
   quotation: Quotation;
   returnTo: string;
   sectionId?: string | null;
@@ -1418,6 +1654,12 @@ function LineForm({
           </label>
         </div>
       </fieldset>
+
+      <SourceLibraryPriceReference
+        components={components}
+        item={item}
+        productTemplates={productTemplates}
+      />
 
       <fieldset className="border border-zinc-300 bg-white p-3">
         <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Specification</legend>
@@ -1585,6 +1827,7 @@ function RowActionPanel({
           <div className="mt-3 w-[min(1080px,calc(100vw-4rem))] border border-zinc-300 bg-white p-3">
             <LineForm
               brands={brands}
+              components={components}
               materialGroups={materialGroups}
               materials={materials}
               productTemplates={productTemplates}
@@ -2359,6 +2602,7 @@ function rowClipboardPayload({
 function InlineRowActions({
   item,
   brands,
+  components,
   materialGroups,
   materials,
   productTemplates,
@@ -2371,6 +2615,7 @@ function InlineRowActions({
 }: {
   item: QuotationItem;
   brands: FinishMaterialBrand[];
+  components: ProductLibraryComponent[];
   materialGroups: FinishMaterialGroup[];
   materials: FinishMaterial[];
   productTemplates: ProductLibraryTemplate[];
@@ -2441,6 +2686,7 @@ function InlineRowActions({
                 <div className="absolute right-0 top-full z-40 mt-2 w-[1080px] max-w-[calc(100vw-3rem)] border border-zinc-300 bg-zinc-50 p-3 shadow-lg">
                   <LineForm
                     brands={brands}
+                    components={components}
                     item={item}
                     materialGroups={materialGroups}
                     materials={materials}
@@ -2464,6 +2710,7 @@ function InlineRowActions({
 function InlineRowEditCell({
   item,
   brands,
+  components,
   materialGroups,
   materials,
   productTemplates,
@@ -2476,6 +2723,7 @@ function InlineRowEditCell({
 }: {
   item: QuotationItem;
   brands: FinishMaterialBrand[];
+  components: ProductLibraryComponent[];
   materialGroups: FinishMaterialGroup[];
   materials: FinishMaterial[];
   productTemplates: ProductLibraryTemplate[];
@@ -2491,6 +2739,7 @@ function InlineRowEditCell({
       <InlineRowActions
         item={item}
         brands={brands}
+        components={components}
         materialGroups={materialGroups}
         materials={materials}
         productTemplates={productTemplates}
@@ -3256,6 +3505,7 @@ export default async function QuotationBuilderPage({
                                   <InlineRowEditCell
                                     item={item}
                                     brands={productBrands ?? []}
+                                    components={productComponents ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
                                     productTemplates={productTemplatesWithPriceChecks}
@@ -3315,6 +3565,7 @@ export default async function QuotationBuilderPage({
                                   <InlineRowEditCell
                                     item={item}
                                     brands={productBrands ?? []}
+                                    components={productComponents ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
                                     productTemplates={productTemplatesWithPriceChecks}
@@ -3376,6 +3627,7 @@ export default async function QuotationBuilderPage({
                                   <InlineRowEditCell
                                     item={item}
                                     brands={productBrands ?? []}
+                                    components={productComponents ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
                                     productTemplates={productTemplatesWithPriceChecks}
@@ -3402,6 +3654,7 @@ export default async function QuotationBuilderPage({
                                   <InlineRowEditCell
                                     item={item}
                                     brands={productBrands ?? []}
+                                    components={productComponents ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
                                     productTemplates={productTemplatesWithPriceChecks}
@@ -3465,6 +3718,7 @@ export default async function QuotationBuilderPage({
                                 <InlineRowEditCell
                                   item={item}
                                   brands={productBrands ?? []}
+                                  components={productComponents ?? []}
                                   materialGroups={materialGroups ?? []}
                                   materials={materials ?? []}
                                   productTemplates={productTemplatesWithPriceChecks}

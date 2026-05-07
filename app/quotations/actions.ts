@@ -810,6 +810,189 @@ type ProductComponentSnapshotSource = {
   } | null;
 };
 
+type SourcePriceTemplate = {
+  id: string;
+  desking_size_pricing: DeskingSizePricingRow[] | null;
+  variant_pricing: VariantPricingRow[] | null;
+  category_pricing: CategoryPricingRow[] | null;
+  accessory_pricing: AccessoryPricingRow[] | null;
+  currency: string;
+  default_unit_price: number;
+};
+
+function recordValue(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function isRecord(value: Record<string, unknown> | null): value is Record<string, unknown> {
+  return Boolean(value);
+}
+
+function arrayValue(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
+function stringRecordValue(value: unknown) {
+  return typeof value === "string" && value ? value : null;
+}
+
+function findRecordById(rows: unknown, id: string | null) {
+  if (!id) return null;
+
+  return arrayValue(rows)
+    .map(recordValue)
+    .find((row) => row?.id === id) ?? null;
+}
+
+function currentAccessorySourceTotal({
+  baseCurrency,
+  selectedAddOns,
+  template,
+}: {
+  baseCurrency: string;
+  selectedAddOns: Record<string, unknown>;
+  template: SourcePriceTemplate;
+}) {
+  let total = 0;
+
+  for (const group of arrayValue(selectedAddOns.groups).map(recordValue).filter(isRecord)) {
+    for (const item of arrayValue(group.items).map(recordValue).filter(isRecord)) {
+      const selectedId = stringRecordValue(item.id);
+      if (!selectedId) return null;
+
+      const currentItem = arrayValue(template.accessory_pricing)
+        .map(recordValue)
+        .flatMap((accessoryGroup) => arrayValue(accessoryGroup?.items).map(recordValue))
+        .find((candidate) => candidate?.id === selectedId);
+
+      if (!currentItem) return null;
+
+      const currency = normalizeCurrency(stringRecordValue(currentItem.currency) ?? baseCurrency);
+      if (currency !== baseCurrency) return null;
+
+      total += calculationNumber(item.qty, 1) * quotationMoneyValue(calculationNumber(currentItem.price));
+    }
+  }
+
+  return quotationMoneyValue(total);
+}
+
+function currentComponentSourceTotal({
+  baseCurrency,
+  components,
+  selectedOptions,
+}: {
+  baseCurrency: string;
+  components: ProductComponentSnapshotSource[];
+  selectedOptions: unknown;
+}) {
+  let total = 0;
+
+  for (const option of arrayValue(selectedOptions).map(recordValue).filter(isRecord)) {
+    const optionId = stringRecordValue(option.id);
+    const isAccessorySnapshot = Boolean(option.group_name && option.item_name && option.price !== undefined);
+    if (
+      !optionId ||
+      isAccessorySnapshot ||
+      ["variant_pricing", "category_pricing", "desking_size"].includes(String(option.item_type))
+    ) {
+      continue;
+    }
+
+    const component = components.find((candidate) => candidate.id === optionId);
+    if (!component) return null;
+
+    const currency = normalizeCurrency(component.currency);
+    if (currency !== baseCurrency) return null;
+
+    total += quotationMoneyValue(component.unit_price);
+  }
+
+  return quotationMoneyValue(total);
+}
+
+function currentSourcePriceFromSnapshot({
+  components,
+  sourceData,
+  template,
+}: {
+  components: ProductComponentSnapshotSource[];
+  sourceData: unknown;
+  template: SourcePriceTemplate;
+}) {
+  const data = recordValue(sourceData);
+  if (data?.currency_conversion || data?.linked_products) return null;
+
+  let sourcePrice = quotationMoneyValue(template.default_unit_price);
+  let sourceCurrency = normalizeCurrency(template.currency);
+
+  const variantData = recordValue(data?.variant_pricing);
+  const variantId = stringRecordValue(variantData?.id);
+  if (variantId) {
+    const currentVariant = findRecordById(template.variant_pricing, variantId);
+    if (!currentVariant) return null;
+
+    sourcePrice = quotationMoneyValue(calculationNumber(currentVariant.price));
+    sourceCurrency = normalizeCurrency(stringRecordValue(currentVariant.currency) ?? template.currency);
+  }
+
+  const categoryData = recordValue(data?.category_pricing);
+  const categoryRow = recordValue(categoryData?.selected_row);
+  const categoryId = stringRecordValue(categoryRow?.id);
+  const selectedCategory = stringRecordValue(categoryData?.selected_category);
+  if (categoryId && selectedCategory) {
+    const currentCategory = findRecordById(template.category_pricing, categoryId);
+    const prices = recordValue(currentCategory?.prices);
+    if (!currentCategory || !prices) return null;
+
+    sourcePrice = quotationMoneyValue(calculationNumber(prices[selectedCategory]));
+    sourceCurrency = normalizeCurrency(stringRecordValue(currentCategory.currency) ?? template.currency);
+  }
+
+  const deskingData = recordValue(data?.desking);
+  const deskingLabel = stringRecordValue(deskingData?.size_label);
+  if (deskingLabel) {
+    if (calculationNumber(deskingData?.accessory_price) > 0) return null;
+
+    const matches = arrayValue(template.desking_size_pricing)
+      .map(recordValue)
+      .filter(isRecord)
+      .filter((row) => row.label === deskingLabel);
+
+    if (matches.length !== 1) return null;
+
+    const currentSize = matches[0];
+    sourceCurrency = normalizeCurrency(stringRecordValue(currentSize.currency) ?? template.currency);
+    sourcePrice = quotationMoneyValue(
+      calculationNumber(currentSize.default_price) +
+      calculationNumber(currentSize.additional_price) * calculationNumber(deskingData?.additional_qty),
+    );
+  }
+
+  const componentTotal = currentComponentSourceTotal({
+    baseCurrency: sourceCurrency,
+    components,
+    selectedOptions: data?.selected_options,
+  });
+  if (componentTotal === null) return null;
+
+  const accessoryTotal = data?.add_ons
+    ? currentAccessorySourceTotal({
+        baseCurrency: sourceCurrency,
+        selectedAddOns: recordValue(data.add_ons) ?? {},
+        template,
+      })
+    : 0;
+  if (accessoryTotal === null) return null;
+
+  return {
+    currency: sourceCurrency,
+    price: quotationMoneyValue(sourcePrice + componentTotal + accessoryTotal),
+  };
+}
+
 const quotationCopySelect =
   "id,client_id,project_id,quotation_no,revision_no,title,quotation_date,currency,vat_percent,payment_terms,validity,delivery_terms,warranty_terms,notes,layout_mode,layout_settings,overall_discount_type,overall_discount_value";
 
@@ -2427,6 +2610,47 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         final_price: derivedDesking.unitPrice,
       }
     : null;
+  const originalSourceTotals = Array.from(originalCurrencyTotals.entries())
+    .map(([currency, amount]) => [normalizeCurrency(currency), money(amount)] as const)
+    .filter(([, amount]) => amount > 0);
+  const singleOriginalSourceTotal = originalSourceTotals.length === 1 ? originalSourceTotals[0] : null;
+  const baseSourcePriceType = derivedDesking
+    ? "desking_size_pricing"
+    : selectedCategoryPricingRow
+      ? "category_pricing"
+      : selectedVariantPricingRow
+        ? "variant_pricing"
+        : selectedOptions.length
+          ? "component_options"
+          : "template_default";
+  const sourcePriceLabel = derivedDesking
+    ? [derivedDesking.sizeLabel, derivedDesking.clusterLabel].filter(Boolean).join(" / ")
+    : selectedCategoryPricingRow
+      ? [selectedCategoryPricingRow.variant_name, selectedCategory].filter(Boolean).join(" / ")
+      : selectedVariantPricingRow
+        ? [selectedVariantPricingRow.variant_name, selectedVariantPricingRow.dimension].filter(Boolean).join(" / ")
+        : selectedOptions.length
+          ? selectedOptionNames.join(", ")
+          : template.template_name;
+  const sourcePriceKey = derivedDesking
+    ? derivedDesking.sizeLabel
+    : selectedCategoryPricingRow
+      ? [selectedCategoryPricingRow.id, selectedCategory].filter(Boolean).join(":")
+      : selectedVariantPricingRow
+        ? selectedVariantPricingRow.id
+        : selectedOptions.length
+          ? selectedOptions.map((option) => option.id).filter(Boolean).join(",")
+          : template.id;
+  const sourcePriceReference = {
+    original_source_price: singleOriginalSourceTotal?.[1] ?? null,
+    original_source_currency: singleOriginalSourceTotal?.[0] ?? null,
+    original_source_totals: Object.fromEntries(originalSourceTotals),
+    source_price_type: baseSourcePriceType,
+    source_price_label: sourcePriceLabel || null,
+    source_price_key: sourcePriceKey || null,
+    converted_quotation_price: unitPrice,
+    quotation_currency: rowOutputCurrency,
+  };
   const payload = {
     quotation_id: quotationId,
     section_id: sectionId,
@@ -2455,6 +2679,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       selected_proposed_image_url: selectedProposedImage,
       selected_options: finalSelectedOptionsWithLinkedProducts,
       selected_options_price: sourceSelectedOptionsPrice,
+      source_price_reference: sourcePriceReference,
       ...(deskingSourceData ? { desking: deskingSourceData } : {}),
       ...(selectedVariantPricingRow ? { variant_pricing: selectedVariantPricingRow } : {}),
       ...(selectedCategoryPricingRow
@@ -2703,13 +2928,14 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
 
   const { data: item, error: itemError } = await supabase
     .from("quotation_items")
-    .select("id,quotation_id,source_template_id,qty,discount_type,discount_value,is_active")
+    .select("id,quotation_id,source_template_id,source_component_data,qty,discount_type,discount_value,is_active")
     .eq("id", id)
     .eq("quotation_id", quotationId)
     .maybeSingle<{
       id: string;
       quotation_id: string;
       source_template_id: string | null;
+      source_component_data: unknown;
       qty: number;
       discount_type: string;
       discount_value: number;
@@ -2727,21 +2953,39 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
 
   const { data: template, error: templateError } = await supabase
     .from("product_templates")
-    .select("id,default_unit_price,currency")
+    .select("id,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,default_unit_price,currency")
     .eq("id", item.source_template_id)
-    .maybeSingle<{
-      id: string;
-      default_unit_price: number;
-      currency: string;
-    }>();
+    .maybeSingle<SourcePriceTemplate>();
 
   if (templateError || !template) {
     console.error("USE SOURCE PRICE TEMPLATE READ ERROR", templateError?.message);
     redirectWithMessage(redirectPath, "Current source template price could not be loaded.");
   }
 
+  const { data: components, error: componentsError } = await supabase
+    .from("product_components")
+    .select("id,template_id,option_type,component_group,component_code,component_name,description,qty,unit_label,unit_price,currency,calculation_data")
+    .eq("template_id", template.id)
+    .eq("is_active", true)
+    .returns<ProductComponentSnapshotSource[]>();
+
+  if (componentsError) {
+    console.error("USE SOURCE PRICE COMPONENTS READ ERROR", componentsError.message);
+    redirectWithMessage(redirectPath, "Current source component prices could not be loaded.");
+  }
+
+  const currentSourcePrice = currentSourcePriceFromSnapshot({
+    components: components ?? [],
+    sourceData: item.source_component_data,
+    template,
+  });
+
+  if (!currentSourcePrice) {
+    redirectWithMessage(redirectPath, "Current source price could not be resolved safely.");
+  }
+
   const linePricing = roundedLinePricing(
-    template.default_unit_price,
+    currentSourcePrice.price,
     item.discount_type,
     item.discount_value,
     item.qty,
@@ -2750,7 +2994,7 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
     .from("quotation_items")
     .update({
       unit_price: linePricing.unitPrice,
-      currency: normalizeCurrency(template.currency || defaultCurrency),
+      currency: normalizeCurrency(currentSourcePrice.currency || defaultCurrency),
       discount_value: linePricing.discountValue,
       net_price: linePricing.netPrice,
       net_total: linePricing.netTotal,
