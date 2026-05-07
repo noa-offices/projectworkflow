@@ -26,6 +26,7 @@ const deskingRoles = new Set([
   "cluster_type",
   "accessory",
 ]);
+const priceListUpdateStatuses = new Set(["draft", "active", "archived"]);
 
 function textValue(formData: FormData, name: string) {
   const value = formData.get(name);
@@ -65,6 +66,12 @@ function selectedMaterialIdsValue(formData: FormData) {
       .map((value) => (typeof value === "string" ? value.trim() : ""))
       .filter(Boolean),
   ));
+}
+
+function priceListUpdateStatusValue(formData: FormData) {
+  const status = textValue(formData, "status") || "draft";
+
+  return priceListUpdateStatuses.has(status) ? status : "draft";
 }
 
 function numberInRange(formData: FormData, name: string, fallback: number, min: number, max: number) {
@@ -1308,6 +1315,167 @@ export async function markVisibleProductTemplatesPriceChecked(formData: FormData
 
   revalidatePath("/products/templates");
   redirectWithMessage("Visible templates marked as price checked.");
+}
+
+export async function markBrandPriceListChecked(brandId: string, note?: string | null) {
+  const { user } = await requireSettingsManager();
+
+  if (!brandId) {
+    redirectWithMessage("Brand id is required.");
+  }
+
+  const payload = {
+    last_price_list_checked_at: new Date().toISOString(),
+    last_price_list_checked_by: user.id,
+    ...(note?.trim() ? { price_list_check_note: note.trim() } : {}),
+  };
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("brands")
+    .update(payload)
+    .eq("id", brandId);
+
+  if (error) {
+    console.error("BRAND PRICE LIST CHECK ERROR", error.message);
+    redirectWithMessage("Brand price list check could not be saved.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Brand price list check saved.");
+}
+
+export async function markBrandPriceListCheckedAction(formData: FormData) {
+  await markBrandPriceListChecked(
+    textValue(formData, "brand_id"),
+    optionalTextValue(formData, "price_list_check_note"),
+  );
+}
+
+export async function markBrandTemplatesPriceChecked(formData: FormData) {
+  const { user } = await requireSettingsManager();
+  const brandId = textValue(formData, "brand_id");
+
+  if (!brandId) {
+    redirectWithMessage("Brand id is required.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("product_templates")
+    .update({
+      last_price_checked_at: new Date().toISOString(),
+      last_price_checked_by: user.id,
+    })
+    .eq("brand_id", brandId)
+    .eq("is_active", true);
+
+  if (error) {
+    console.error("BRAND TEMPLATE PRICE CHECK ERROR", error.message);
+    redirectWithMessage("Brand templates could not be marked as checked.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Brand templates marked as price checked.");
+}
+
+export async function createBrandPriceListUpdate(formData: FormData) {
+  const { user } = await requireSettingsManager();
+  const brandId = textValue(formData, "brand_id");
+  const title = textValue(formData, "title");
+
+  if (!brandId || !title) {
+    redirectWithMessage("Brand and price list title are required.");
+  }
+
+  const supabase = await createClient();
+  const { data: brand, error: brandError } = await supabase
+    .from("brands")
+    .select("id")
+    .eq("id", brandId)
+    .eq("is_active", true)
+    .maybeSingle<{ id: string }>();
+
+  if (brandError || !brand) {
+    console.error("BRAND PRICE LIST BRAND LOOKUP ERROR", brandError?.message);
+    redirectWithMessage("Brand could not be loaded.");
+  }
+
+  const { error } = await supabase.from("brand_price_list_updates").insert({
+    brand_id: brandId,
+    title,
+    reference_no: optionalTextValue(formData, "reference_no"),
+    currency: optionalTextValue(formData, "currency"),
+    effective_from: optionalTextValue(formData, "effective_from"),
+    received_at: optionalTextValue(formData, "received_at"),
+    status: priceListUpdateStatusValue(formData),
+    notes: optionalTextValue(formData, "notes"),
+    attachment_url: optionalTextValue(formData, "attachment_url"),
+    created_by: user.id,
+  });
+
+  if (error) {
+    console.error("BRAND PRICE LIST UPDATE CREATE ERROR", error.message);
+    redirectWithMessage("Brand price list update could not be saved.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Brand price list update saved.");
+}
+
+export async function updateBrandPriceListUpdate(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+  const title = textValue(formData, "title");
+
+  if (!id || !title) {
+    redirectWithMessage("Price list update id and title are required.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("brand_price_list_updates")
+    .update({
+      title,
+      reference_no: optionalTextValue(formData, "reference_no"),
+      currency: optionalTextValue(formData, "currency"),
+      effective_from: optionalTextValue(formData, "effective_from"),
+      received_at: optionalTextValue(formData, "received_at"),
+      status: priceListUpdateStatusValue(formData),
+      notes: optionalTextValue(formData, "notes"),
+      attachment_url: optionalTextValue(formData, "attachment_url"),
+    })
+    .eq("id", id);
+
+  if (error) {
+    console.error("BRAND PRICE LIST UPDATE UPDATE ERROR", error.message);
+    redirectWithMessage("Brand price list update could not be updated.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Brand price list update updated.");
+}
+
+export async function archiveBrandPriceListUpdate(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectWithMessage("Price list update id is required.");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("brand_price_list_updates")
+    .update({ status: "archived" })
+    .eq("id", id);
+
+  if (error) {
+    console.error("BRAND PRICE LIST UPDATE ARCHIVE ERROR", error.message);
+    redirectWithMessage("Brand price list update could not be archived.");
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Brand price list update archived.");
 }
 
 export async function markComponentPriceChecked(formData: FormData) {

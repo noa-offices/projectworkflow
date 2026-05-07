@@ -31,6 +31,8 @@ import { createClient } from "@/lib/supabase/server";
 import {
   createProductComponent,
   createLinkedProductFamily,
+  archiveBrandPriceListUpdate,
+  createBrandPriceListUpdate,
   createMainCategoryFromTemplates,
   createProductTemplateMaterialGroup,
   createProductTemplate,
@@ -39,6 +41,8 @@ import {
   deactivateProductTemplateMaterialGroup,
   deactivateProductTemplate,
   markComponentPriceChecked,
+  markBrandPriceListCheckedAction,
+  markBrandTemplatesPriceChecked,
   markTemplatePriceChecked,
   markVisibleProductTemplatesPriceChecked,
   permanentlyDeleteLinkedProductFamily,
@@ -46,6 +50,7 @@ import {
   restoreLinkedProductFamily,
   restoreProductTemplate,
   updateLinkedProductFamily,
+  updateBrandPriceListUpdate,
   updateProductComponent,
   updateProductTemplateMaterialGroup,
   updateProductTemplate,
@@ -72,6 +77,24 @@ type TemplatesPageProps = {
 type Brand = {
   id: string;
   name: string;
+  last_price_list_checked_at: string | null;
+  last_price_list_checked_by: string | null;
+  price_list_check_interval_days: number | null;
+  price_list_check_note: string | null;
+};
+
+type BrandPriceListUpdate = {
+  id: string;
+  brand_id: string;
+  title: string;
+  reference_no: string | null;
+  currency: string | null;
+  effective_from: string | null;
+  received_at: string | null;
+  status: "draft" | "active" | "archived";
+  notes: string | null;
+  attachment_url: string | null;
+  created_at: string;
 };
 
 type Category = {
@@ -1138,6 +1161,14 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function formatShortDate(value: string | null) {
+  if (!value) return "Not set";
+
+  return new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+  }).format(new Date(value));
+}
+
 function priceCheckState(template: ProductTemplate) {
   const intervalDays = template.price_check_interval_days && template.price_check_interval_days > 0
     ? template.price_check_interval_days
@@ -1189,6 +1220,99 @@ function PriceCheckStatus({ template }: { template: ProductTemplate }) {
   );
 }
 
+function brandPriceCheckState(brand: Brand) {
+  const intervalDays = brand.price_list_check_interval_days && brand.price_list_check_interval_days > 0
+    ? brand.price_list_check_interval_days
+    : 90;
+
+  if (!brand.last_price_list_checked_at) {
+    return {
+      detail: "No brand price-list check recorded",
+      tone: "warning" as const,
+      label: "Brand price list not checked yet",
+    };
+  }
+
+  const checkedAt = new Date(brand.last_price_list_checked_at);
+  const dueAt = checkedAt.getTime() + intervalDays * 24 * 60 * 60 * 1000;
+
+  if (!Number.isFinite(checkedAt.getTime()) || dueAt < Date.now()) {
+    return {
+      detail: `Last checked: ${formatDate(brand.last_price_list_checked_at)}`,
+      tone: "warning" as const,
+      label: "Brand price list due",
+    };
+  }
+
+  return {
+    detail: `Brand price list checked: ${formatDate(brand.last_price_list_checked_at)}`,
+    tone: "ok" as const,
+    label: "Brand price list checked",
+  };
+}
+
+function BrandPriceCheckStatus({ brand }: { brand: Brand }) {
+  const status = brandPriceCheckState(brand);
+  const className = status.tone === "ok"
+    ? "inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-900"
+    : "inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900";
+
+  return (
+    <div className="grid gap-1">
+      <span className={className}>{status.label}</span>
+      <p className="text-xs text-zinc-500">{status.detail}</p>
+      {brand.price_list_check_note ? (
+        <p className="line-clamp-2 text-xs text-zinc-500">{brand.price_list_check_note}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function BrandPriceListUpdateForm({
+  brandId,
+  update,
+}: {
+  brandId: string;
+  update?: BrandPriceListUpdate;
+}) {
+  return (
+    <form action={update ? updateBrandPriceListUpdate : createBrandPriceListUpdate} className="grid gap-2">
+      {update ? <input type="hidden" name="id" value={update.id} /> : null}
+      <input type="hidden" name="brand_id" value={brandId} />
+      <Field name="title" label="Title" defaultValue={update?.title} required />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Field name="reference_no" label="Reference No." defaultValue={update?.reference_no} />
+        <Field name="currency" label="Currency" defaultValue={update?.currency} />
+        <Field name="effective_from" label="Effective from" type="date" defaultValue={update?.effective_from} />
+        <Field name="received_at" label="Received date" type="date" defaultValue={update?.received_at} />
+      </div>
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Status</span>
+        <select
+          name="status"
+          defaultValue={update?.status ?? "draft"}
+          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+        >
+          <option value="draft">Draft</option>
+          <option value="active">Active</option>
+          <option value="archived">Archived</option>
+        </select>
+      </label>
+      <Field name="attachment_url" label="Attachment URL" defaultValue={update?.attachment_url} />
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Notes</span>
+        <textarea
+          name="notes"
+          defaultValue={update?.notes ?? ""}
+          rows={3}
+          className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+        />
+      </label>
+      <SubmitButton label={update ? "Save price list update" : "Add price list update"} />
+    </form>
+  );
+}
+
 export default async function TemplatesPage({ searchParams }: TemplatesPageProps) {
   const { user, displayName } = await requireSettingsManager();
   const params = (await searchParams) ?? {};
@@ -1205,7 +1329,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
   const { data: brands, error: brandsError } = await supabase
     .from("brands")
-    .select("id,name")
+    .select("id,name,last_price_list_checked_at,last_price_list_checked_by,price_list_check_interval_days,price_list_check_note")
     .eq("is_active", true)
     .order("name", { ascending: true })
     .returns<Brand[]>();
@@ -1279,6 +1403,14 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     .order("sort_order", { ascending: true })
     .returns<ProductTemplateMaterialGroupItem[]>();
 
+  const { data: brandPriceListUpdates, error: brandPriceListUpdatesError } = await supabase
+    .from("brand_price_list_updates")
+    .select("id,brand_id,title,reference_no,currency,effective_from,received_at,status,notes,attachment_url,created_at")
+    .order("brand_id", { ascending: true })
+    .order("effective_from", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .returns<BrandPriceListUpdate[]>();
+
   if (brandsError) console.error("TEMPLATE BRANDS LIST ERROR", brandsError.message);
   if (categoriesError) console.error("TEMPLATE CATEGORIES LIST ERROR", categoriesError.message);
   if (templatesError) console.error("PRODUCT TEMPLATES LIST ERROR", templatesError.message);
@@ -1288,6 +1420,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   if (materialsError) console.error("BRAND MATERIALS LIST ERROR", materialsError.message);
   if (templateMaterialGroupsError) console.error("TEMPLATE MATERIAL GROUPS LIST ERROR", templateMaterialGroupsError.message);
   if (templateMaterialGroupItemsError) console.error("TEMPLATE MATERIAL GROUP ITEMS LIST ERROR", templateMaterialGroupItemsError.message);
+  if (brandPriceListUpdatesError) console.error("BRAND PRICE LIST UPDATES ERROR", brandPriceListUpdatesError.message);
 
   const brandList = brands ?? [];
   const categoryList = categories ?? [];
@@ -1299,6 +1432,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const materialList = materials ?? [];
   const activeTemplateMaterialGroupList = (templateMaterialGroups ?? []).filter((link) => link.is_active);
   const materialGroupItemList = templateMaterialGroupItems ?? [];
+  const brandPriceListUpdateList = brandPriceListUpdates ?? [];
   const brandMap = new Map(brandList.map((brand) => [brand.id, brand.name]));
   const categoryMap = new Map(
     categoryList.map((category) => [category.id, category.name]),
@@ -1320,6 +1454,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const linkedFamiliesByTemplate = new Map<string, LinkedProductFamily[]>();
   const materialGroupsByTemplate = new Map<string, ProductTemplateMaterialGroup[]>();
   const materialGroupItemsByLink = new Map<string, ProductTemplateMaterialGroupItem[]>();
+  const priceListUpdatesByBrand = new Map<string, BrandPriceListUpdate[]>();
 
   for (const component of components ?? []) {
     const templateComponents = componentsByTemplate.get(component.template_id) ?? [];
@@ -1343,6 +1478,13 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     materialGroupItemsByLink.set(item.product_template_material_group_id, [
       ...(materialGroupItemsByLink.get(item.product_template_material_group_id) ?? []),
       item,
+    ]);
+  }
+
+  for (const update of brandPriceListUpdateList) {
+    priceListUpdatesByBrand.set(update.brand_id, [
+      ...(priceListUpdatesByBrand.get(update.brand_id) ?? []),
+      update,
     ]);
   }
 
@@ -1553,12 +1695,29 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                     const brandTemplates = filteredTemplates.filter(
                       (template) => template.brand_id === brand.id,
                     );
+                    const activeBrandTemplates = activeTemplateList.filter(
+                      (template) => template.brand_id === brand.id,
+                    );
+                    const brandPriceSummary = activeBrandTemplates.reduce(
+                      (summary, template) => {
+                        const key = priceCheckState(template).key;
+
+                        return {
+                          ...summary,
+                          [key]: summary[key] + 1,
+                          total: summary.total + 1,
+                        };
+                      },
+                      { checked: 0, due: 0, not_checked: 0, total: 0 },
+                    );
                     const brandMainCategories = mainCategories.filter(
                       (category) => category.brand_id === brand.id,
                     );
                     const uncategorizedCount = brandTemplates.filter(
                       (template) => !template.main_category_id,
                     ).length;
+                    const brandPriceListUpdatesForBrand = priceListUpdatesByBrand.get(brand.id) ?? [];
+                    const latestPriceListUpdate = brandPriceListUpdatesForBrand[0] ?? null;
 
                     return (
                       <details
@@ -1589,6 +1748,83 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           </span>
                         </summary>
                         <div className="space-y-2 p-3">
+                          <div className="rounded-md border border-zinc-200 bg-white p-3">
+                            <BrandPriceCheckStatus brand={brand} />
+                            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-semibold">
+                              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-zinc-600">Templates: {brandPriceSummary.total}</span>
+                              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-900">Not checked: {brandPriceSummary.not_checked}</span>
+                              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-900">Due: {brandPriceSummary.due}</span>
+                              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-900">Checked: {brandPriceSummary.checked}</span>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <form action={markBrandPriceListCheckedAction}>
+                                <input type="hidden" name="brand_id" value={brand.id} />
+                                <button
+                                  type="submit"
+                                  className="rounded-md border border-emerald-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-emerald-900 transition hover:border-emerald-700"
+                                >
+                                  Mark brand price list checked
+                                </button>
+                              </form>
+                              {activeBrandTemplates.length ? (
+                                <form action={markBrandTemplatesPriceChecked}>
+                                  <input type="hidden" name="brand_id" value={brand.id} />
+                                  <ConfirmSubmitButton
+                                    message={`Mark all active templates under ${brand.name} as price checked now?`}
+                                    className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400"
+                                  >
+                                    Mark all templates checked
+                                  </ConfirmSubmitButton>
+                                </form>
+                              ) : null}
+                            </div>
+                          </div>
+                          <div className="rounded-md border border-zinc-200 bg-white p-3">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                              <div>
+                                <p className="text-xs font-semibold uppercase text-zinc-500">Latest price list</p>
+                                {latestPriceListUpdate ? (
+                                  <div className="mt-1 text-xs leading-5 text-zinc-600">
+                                    <p className="font-semibold text-zinc-950">{latestPriceListUpdate.title}</p>
+                                    <p>Effective from: {formatShortDate(latestPriceListUpdate.effective_from)}</p>
+                                    <p>Status: {latestPriceListUpdate.status}</p>
+                                    {latestPriceListUpdate.reference_no ? <p>Ref: {latestPriceListUpdate.reference_no}</p> : null}
+                                  </div>
+                                ) : (
+                                  <p className="mt-1 text-xs text-zinc-500">No price list updates recorded.</p>
+                                )}
+                              </div>
+                              {latestPriceListUpdate && latestPriceListUpdate.status !== "archived" ? (
+                                <form action={archiveBrandPriceListUpdate}>
+                                  <input type="hidden" name="id" value={latestPriceListUpdate.id} />
+                                  <ConfirmSubmitButton
+                                    message="Archive this price list update?"
+                                    className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400"
+                                  >
+                                    Archive
+                                  </ConfirmSubmitButton>
+                                </form>
+                              ) : null}
+                            </div>
+                            <details className="mt-3">
+                              <summary className="cursor-pointer text-xs font-semibold text-emerald-900">
+                                + Add price list update
+                              </summary>
+                              <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                                <BrandPriceListUpdateForm brandId={brand.id} />
+                              </div>
+                            </details>
+                            {latestPriceListUpdate ? (
+                              <details className="mt-2">
+                                <summary className="cursor-pointer text-xs font-semibold text-zinc-600">
+                                  Edit latest price list update
+                                </summary>
+                                <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                                  <BrandPriceListUpdateForm brandId={brand.id} update={latestPriceListUpdate} />
+                                </div>
+                              </details>
+                            ) : null}
+                          </div>
                           <details>
                             <summary className="cursor-pointer text-xs font-semibold text-emerald-900">
                               + Main Category
