@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { requireActiveUser } from "@/lib/auth";
-import { COMPANY_PROFILE } from "@/lib/company-profile";
+import { getCompanyProfile, isRemoteOrAppLogo } from "@/lib/company-profile";
 import {
   imageDisplayStyle,
   normalizeImageDisplaySettings,
@@ -45,7 +45,6 @@ type Quotation = {
   revision_no: number;
   title: string;
   quotation_date: string;
-  status: string;
 };
 
 type QuotationSection = {
@@ -166,6 +165,13 @@ type SelectedFinishLayoutMode = "few" | "compact" | "dense";
 
 const selectedFinishesPerProductPage = 6;
 const chartSwatchesPerProductPage = 15;
+
+function hasUsableCompanyLogo(logoUrl: string | null) {
+  if (!logoUrl) return false;
+  if (!isRemoteOrAppLogo(logoUrl)) return false;
+  if (!logoUrl.startsWith("/")) return true;
+  return existsSync(join(process.cwd(), "public", logoUrl.replace(/^\//, "")));
+}
 
 function specificationDocumentTitle(quotation?: Pick<Quotation, "quotation_no" | "title"> | null) {
   const quotationNo = quotation?.quotation_no ?? "Draft";
@@ -418,22 +424,32 @@ function SpecImage({
   );
 }
 
-function PageFooter({ pageNumber, totalPages }: { pageNumber: number; totalPages: number }) {
+function PageFooter({
+  companyName,
+  pageNumber,
+  totalPages,
+}: {
+  companyName: string;
+  pageNumber: number;
+  totalPages: number;
+}) {
   return (
     <footer className="mt-auto flex items-center justify-between border-t border-zinc-200 pt-4 text-[10px] uppercase tracking-wide text-zinc-400">
-      <span>{COMPANY_PROFILE.name}</span>
+      <span>{companyName}</span>
       <span>Page {pageNumber} of {totalPages}</span>
     </footer>
   );
 }
 
 function ProductPageHeader({
+  companyProfile,
   hasLogo,
   pageNumber,
   project,
   quotation,
   totalPages,
 }: {
+  companyProfile: Awaited<ReturnType<typeof getCompanyProfile>>;
   hasLogo: boolean;
   pageNumber: number;
   project?: Project | null;
@@ -445,9 +461,9 @@ function ProductPageHeader({
       <div className="min-w-0">
         {hasLogo ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={COMPANY_PROFILE.logoPath} alt={COMPANY_PROFILE.name} className="h-10 w-32 object-contain" />
+          <img src={companyProfile.logoPath ?? ""} alt={companyProfile.displayName} className="h-10 w-32 object-contain" />
         ) : (
-          <div className="text-sm font-black uppercase tracking-tight text-zinc-950">NOA Office Solutions</div>
+          <div className="text-sm font-black uppercase tracking-tight text-zinc-950">{companyProfile.displayName}</div>
         )}
         <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-500">Specification Sheet</p>
       </div>
@@ -462,12 +478,14 @@ function ProductPageHeader({
 }
 
 function DividerPage({
+  companyProfile,
   client,
   page,
   project,
   quotation,
   totalPages,
 }: {
+  companyProfile: Awaited<ReturnType<typeof getCompanyProfile>>;
   client?: Client | null;
   page: Extract<SpecDocumentPage, { type: "divider" }>;
   project?: Project | null;
@@ -491,18 +509,20 @@ function DividerPage({
           ) : null}
         </div>
       </div>
-      <PageFooter pageNumber={page.pageNumber} totalPages={totalPages} />
+      <PageFooter companyName={companyProfile.companyName} pageNumber={page.pageNumber} totalPages={totalPages} />
     </section>
   );
 }
 
 function TextBlockPage({
+  companyProfile,
   hasLogo,
   page,
   project,
   quotation,
   totalPages,
 }: {
+  companyProfile: Awaited<ReturnType<typeof getCompanyProfile>>;
   hasLogo: boolean;
   page: Extract<SpecDocumentPage, { type: "text" }>;
   project?: Project | null;
@@ -513,7 +533,7 @@ function TextBlockPage({
 
   return (
     <section className="spec-page flex min-h-[277mm] flex-col bg-white p-10 shadow-sm ring-1 ring-zinc-200">
-      <ProductPageHeader hasLogo={hasLogo} pageNumber={page.pageNumber} project={project} quotation={quotation} totalPages={totalPages} />
+      <ProductPageHeader companyProfile={companyProfile} hasLogo={hasLogo} pageNumber={page.pageNumber} project={project} quotation={quotation} totalPages={totalPages} />
       <div className="mt-10">
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-400">
           {[page.mainSection?.section_title, page.section.section_title].filter(Boolean).join(" / ") || "Specification note"}
@@ -526,7 +546,7 @@ function TextBlockPage({
           )}
         </div>
       </div>
-      <PageFooter pageNumber={page.pageNumber} totalPages={totalPages} />
+      <PageFooter companyName={companyProfile.companyName} pageNumber={page.pageNumber} totalPages={totalPages} />
     </section>
   );
 }
@@ -748,6 +768,7 @@ function MaterialsFinishesArea({
 }
 
 function MaterialsContinuationPage({
+  companyProfile,
   finishImageUrlById,
   hasLogo,
   materialGroupSortOrderByLinkId,
@@ -756,6 +777,7 @@ function MaterialsContinuationPage({
   quotation,
   totalPages,
 }: {
+  companyProfile: Awaited<ReturnType<typeof getCompanyProfile>>;
   finishImageUrlById: Map<string, string | null>;
   hasLogo: boolean;
   materialGroupSortOrderByLinkId: Map<string, number>;
@@ -773,7 +795,7 @@ function MaterialsContinuationPage({
 
   return (
     <section className="spec-page flex min-h-[277mm] flex-col bg-white p-10 shadow-sm ring-1 ring-zinc-200">
-      <ProductPageHeader hasLogo={hasLogo} pageNumber={page.pageNumber} project={project} quotation={quotation} totalPages={totalPages} />
+      <ProductPageHeader companyProfile={companyProfile} hasLogo={hasLogo} pageNumber={page.pageNumber} project={project} quotation={quotation} totalPages={totalPages} />
       <div className="mt-8 border-b border-zinc-200 pb-4">
         <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">
           {[page.mainSection?.section_title, page.section.section_title].filter(Boolean).join(" / ") || "Specification"}
@@ -798,12 +820,13 @@ function MaterialsContinuationPage({
           />
         ) : null}
       </section>
-      <PageFooter pageNumber={page.pageNumber} totalPages={totalPages} />
+      <PageFooter companyName={companyProfile.companyName} pageNumber={page.pageNumber} totalPages={totalPages} />
     </section>
   );
 }
 
 function ProductSpecPage({
+  companyProfile,
   hasLogo,
   item,
   finishImageUrlById,
@@ -818,6 +841,7 @@ function ProductSpecPage({
   serial,
   totalPages,
 }: {
+  companyProfile: Awaited<ReturnType<typeof getCompanyProfile>>;
   hasLogo: boolean;
   item: QuotationItem;
   finishImageUrlById: Map<string, string | null>;
@@ -838,7 +862,7 @@ function ProductSpecPage({
 
   return (
     <section className="spec-page flex min-h-[277mm] flex-col bg-white p-10 shadow-sm ring-1 ring-zinc-200">
-      <ProductPageHeader hasLogo={hasLogo} pageNumber={pageNumber} project={project} quotation={quotation} totalPages={totalPages} />
+      <ProductPageHeader companyProfile={companyProfile} hasLogo={hasLogo} pageNumber={pageNumber} project={project} quotation={quotation} totalPages={totalPages} />
 
       <div className="mt-6 flex items-center justify-between gap-6 border-b border-zinc-200 pb-4">
         <div>
@@ -899,7 +923,7 @@ function ProductSpecPage({
         charts={charts}
         selectedFinishes={selectedFinishes}
       />
-      <PageFooter pageNumber={pageNumber} totalPages={totalPages} />
+      <PageFooter companyName={companyProfile.companyName} pageNumber={pageNumber} totalPages={totalPages} />
     </section>
   );
 }
@@ -911,7 +935,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
 
   const { data: quotation, error: quotationError } = await supabase
     .from("quotations")
-    .select("id,client_id,project_id,quotation_no,revision_no,title,quotation_date,status")
+    .select("id,client_id,project_id,quotation_no,revision_no,title,quotation_date")
     .eq("id", id)
     .single<Quotation>();
 
@@ -1151,7 +1175,8 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
   }
 
   const totalPages = Math.max(nextPageNumber - 1, 1);
-  const hasLogo = existsSync(join(process.cwd(), "public", COMPANY_PROFILE.logoPath.replace(/^\//, "")));
+  const COMPANY_PROFILE = await getCompanyProfile();
+  const hasLogo = hasUsableCompanyLogo(COMPANY_PROFILE.logoPath);
 
   return (
     <main className="min-h-screen bg-zinc-100 px-4 py-5 font-sans text-zinc-950 print:bg-white print:p-0">
@@ -1184,10 +1209,10 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
               <div className="min-w-0">
                 {hasLogo ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={COMPANY_PROFILE.logoPath} alt={COMPANY_PROFILE.name} className="h-[54px] w-[168px] object-contain" />
+                  <img src={COMPANY_PROFILE.logoPath ?? ""} alt={COMPANY_PROFILE.name} className="h-[54px] w-[168px] object-contain" />
                 ) : (
                   <div className="flex h-[54px] w-[168px] items-center justify-center border-2 border-zinc-900 px-4 text-center text-sm font-black leading-tight tracking-tight">
-                    NOA Office Solutions
+                    {COMPANY_PROFILE.displayName}
                   </div>
                 )}
                 <div className="mt-2">
@@ -1233,13 +1258,14 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
             </div>
           </section>
 
-          <PageFooter pageNumber={1} totalPages={totalPages} />
+          <PageFooter companyName={COMPANY_PROFILE.companyName} pageNumber={1} totalPages={totalPages} />
         </section>
 
         {documentPages.map((page) => {
           if (page.type === "divider") {
             return (
               <DividerPage
+                companyProfile={COMPANY_PROFILE}
                 key={`divider-${page.section.id}-${page.pageNumber}`}
                 client={client}
                 page={page}
@@ -1253,6 +1279,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
           if (page.type === "text") {
             return (
               <TextBlockPage
+                companyProfile={COMPANY_PROFILE}
                 key={`text-${page.item.id}-${page.pageNumber}`}
                 hasLogo={hasLogo}
                 page={page}
@@ -1266,6 +1293,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
           if (page.type === "materials_continuation") {
             return (
               <MaterialsContinuationPage
+                companyProfile={COMPANY_PROFILE}
                 key={`materials-${page.item.id}-${page.pageNumber}`}
                 finishImageUrlById={new Map(
                   materialEntries(page.item).flatMap((finish, index) => {
@@ -1292,6 +1320,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
 
           return (
             <ProductSpecPage
+              companyProfile={COMPANY_PROFILE}
               key={`product-${page.item.id}`}
               finishImageUrlById={new Map(
                 materialEntries(page.item).flatMap((finish, index) => {

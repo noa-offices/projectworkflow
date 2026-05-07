@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { PrintActions } from "@/components/quotations/print-actions";
 import { requireActiveUser } from "@/lib/auth";
-import { COMPANY_PROFILE } from "@/lib/company-profile";
+import { getCompanyProfile, isRemoteOrAppLogo } from "@/lib/company-profile";
 import {
   imageDisplayStyle,
   normalizeImageDisplaySettings,
@@ -167,6 +167,13 @@ export async function generateMetadata({ params }: QuotationPdfPageProps): Promi
 
 function isDirectImageUrl(value: string) {
   return /^(https?:|data:|\/)/i.test(value);
+}
+
+function hasUsableCompanyLogo(logoUrl: string | null) {
+  if (!logoUrl) return false;
+  if (!isRemoteOrAppLogo(logoUrl)) return false;
+  if (!logoUrl.startsWith("/")) return true;
+  return existsSync(join(process.cwd(), "public", logoUrl.replace(/^\//, "")));
 }
 
 async function signedImageUrl(value: string | null, supabase: Awaited<ReturnType<typeof createSupabaseClient>>) {
@@ -821,7 +828,8 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
 
     printableSections.push(section);
   }
-  const hasLogo = existsSync(join(process.cwd(), "public", COMPANY_PROFILE.logoPath.replace(/^\//, "")));
+  const COMPANY_PROFILE = await getCompanyProfile();
+  const hasLogo = hasUsableCompanyLogo(COMPANY_PROFILE.logoPath);
   let runningSerialNumber = 0;
 
   return (
@@ -854,10 +862,10 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
             <div className="min-w-0 justify-self-start">
               {hasLogo ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={COMPANY_PROFILE.logoPath} alt={COMPANY_PROFILE.name} className="h-[60px] w-[180px] object-contain" />
+                <img src={COMPANY_PROFILE.logoPath ?? ""} alt={COMPANY_PROFILE.name} className="h-[60px] w-[180px] object-contain" />
               ) : (
                 <div className="flex h-[60px] w-[180px] items-center justify-center border-2 border-zinc-900 px-4 text-center text-base font-black leading-tight tracking-tight">
-                  NOA Office Solutions
+                  {COMPANY_PROFILE.displayName}
                 </div>
               )}
               <div className="mt-1.5">
@@ -1077,7 +1085,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
             </div>
             <div className="mt-6 grid gap-8 md:grid-cols-2">
               <div className="min-h-[96px]">
-                <p className="text-xs font-bold uppercase tracking-wide text-zinc-500">NOA Office Solutions</p>
+                <p className="text-xs font-bold uppercase tracking-wide text-zinc-500">{COMPANY_PROFILE.displayName}</p>
                 <div className="mt-14 border-t border-zinc-400 pt-2 text-xs text-zinc-600">
                   Prepared by
                 </div>

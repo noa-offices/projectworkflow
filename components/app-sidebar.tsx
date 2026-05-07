@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { APP_NAME, APP_PHASE_LABEL } from "@/lib/app-meta";
+import { APP_LABEL, APP_NAME } from "@/lib/app-meta";
 
 const navigationItems = [
   { href: "/dashboard", label: "Dashboard" },
@@ -12,12 +12,14 @@ export function AppSidebar() {
   return (
     <aside className="border-b border-zinc-200 bg-white lg:min-h-screen lg:w-64 lg:border-b-0 lg:border-r">
       <div className="flex items-center justify-between px-5 py-4 lg:block lg:px-6 lg:py-6">
-        <Link href="/" className="text-lg font-semibold tracking-tight text-zinc-950">
-          {APP_NAME}
-        </Link>
-        <span className="hidden rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-900 lg:inline-flex">
-          {APP_PHASE_LABEL}
-        </span>
+        <div>
+          <Link href="/" className="text-lg font-semibold tracking-tight text-zinc-950">
+            {APP_NAME}
+          </Link>
+          <p className="hidden pt-1 text-xs font-medium text-zinc-500 lg:block">
+            {APP_LABEL}
+          </p>
+        </div>
       </div>
       <nav className="flex gap-2 overflow-x-auto px-4 pb-4 lg:flex-col lg:px-4">
         {navigationItems.map((item) => (
