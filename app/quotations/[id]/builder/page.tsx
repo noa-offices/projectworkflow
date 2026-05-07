@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Fragment, type CSSProperties, type ReactNode } from "react";
+import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { ContextBackLink } from "@/components/navigation/context-back-link";
 import { InlineRowAutosave } from "@/components/quotations/inline-row-autosave";
 import { CellFormattingToolbar } from "@/components/quotations/cell-formatting-toolbar";
@@ -48,6 +49,7 @@ import {
   updateQuotationItemInline,
   updateQuotationItem,
   updateQuotationSection,
+  useCurrentSourcePriceForQuotationItem,
 } from "../../actions";
 
 export const dynamic = "force-dynamic";
@@ -504,39 +506,199 @@ function recordValue(value: unknown) {
     : null;
 }
 
-function hasMeaningfulSourcePriceOverride(item: QuotationItem) {
-  const sourceData = recordValue(item.source_component_data);
-  if (!sourceData) return false;
+function isRecord(value: Record<string, unknown> | null): value is Record<string, unknown> {
+  return Boolean(value);
+}
 
-  if (
-    sourceData.desking ||
-    sourceData.variant_pricing ||
-    sourceData.category_pricing ||
-    sourceData.add_ons ||
-    sourceData.linked_products ||
-    sourceData.pricing_adjustment
-  ) {
-    return true;
+function arrayValue(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
+function numericValue(value: unknown, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value ? value : null;
+}
+
+function findById(rows: unknown, id: string | null) {
+  if (!id) return null;
+
+  return arrayValue(rows)
+    .map(recordValue)
+    .find((row) => row?.id === id) ?? null;
+}
+
+function currentAccessoryTotal({
+  baseCurrency,
+  selectedAddOns,
+  template,
+}: {
+  baseCurrency: string;
+  selectedAddOns: Record<string, unknown>;
+  template: ProductLibraryTemplate;
+}) {
+  let total = 0;
+
+  for (const group of arrayValue(selectedAddOns.groups).map(recordValue).filter(isRecord)) {
+    for (const item of arrayValue(group.items).map(recordValue).filter(isRecord)) {
+      const selectedId = stringValue(item.id);
+      if (!selectedId) return null;
+
+      const currentItem = arrayValue(template.accessory_pricing)
+        .map(recordValue)
+        .flatMap((accessoryGroup) => arrayValue(accessoryGroup?.items).map(recordValue))
+        .find((candidate) => candidate?.id === selectedId);
+
+      if (!currentItem) return null;
+
+      const currency = normalizeCurrency(stringValue(currentItem.currency) ?? baseCurrency);
+      if (currency !== baseCurrency) return null;
+
+      total += numericValue(item.qty, 1) * quotationMoneyValue(numericValue(currentItem.price));
+    }
   }
 
-  return Number(sourceData.selected_options_price ?? 0) > 0;
+  return quotationMoneyValue(total);
+}
+
+function currentComponentOptionsTotal({
+  baseCurrency,
+  components,
+  selectedOptions,
+}: {
+  baseCurrency: string;
+  components: ProductLibraryComponent[];
+  selectedOptions: unknown;
+}) {
+  let total = 0;
+
+  for (const option of arrayValue(selectedOptions).map(recordValue).filter(isRecord)) {
+    const optionId = stringValue(option.id);
+    if (!optionId || ["variant_pricing", "category_pricing", "desking_size"].includes(String(option.item_type))) {
+      continue;
+    }
+
+    const component = components.find((candidate) => candidate.id === optionId);
+    if (!component) return null;
+
+    const currency = normalizeCurrency(component.currency);
+    if (currency !== baseCurrency) return null;
+
+    total += quotationMoneyValue(component.unit_price);
+  }
+
+  return quotationMoneyValue(total);
+}
+
+function currentSourcePriceForItem({
+  components,
+  item,
+  template,
+}: {
+  components: ProductLibraryComponent[];
+  item: QuotationItem;
+  template: ProductLibraryTemplate;
+}) {
+  const sourceData = recordValue(item.source_component_data);
+  if (sourceData?.currency_conversion || sourceData?.linked_products) return null;
+
+  let sourcePrice = quotationMoneyValue(template.default_unit_price);
+  let sourceCurrency = normalizeCurrency(template.currency);
+  let sourceKind = "default";
+
+  const variantData = recordValue(sourceData?.variant_pricing);
+  const variantId = stringValue(variantData?.id);
+  if (variantId) {
+    const currentVariant = findById(template.variant_pricing, variantId);
+    if (!currentVariant) return null;
+
+    sourcePrice = quotationMoneyValue(numericValue(currentVariant.price));
+    sourceCurrency = normalizeCurrency(stringValue(currentVariant.currency) ?? template.currency);
+    sourceKind = "variant";
+  }
+
+  const categoryData = recordValue(sourceData?.category_pricing);
+  const categoryRow = recordValue(categoryData?.selected_row);
+  const categoryId = stringValue(categoryRow?.id);
+  const selectedCategory = stringValue(categoryData?.selected_category);
+  if (categoryId && selectedCategory) {
+    const currentCategory = findById(template.category_pricing, categoryId);
+    const prices = recordValue(currentCategory?.prices);
+    if (!currentCategory || !prices) return null;
+
+    sourcePrice = quotationMoneyValue(numericValue(prices[selectedCategory]));
+    sourceCurrency = normalizeCurrency(stringValue(currentCategory.currency) ?? template.currency);
+    sourceKind = "category";
+  }
+
+  const deskingData = recordValue(sourceData?.desking);
+  const deskingLabel = stringValue(deskingData?.size_label);
+  if (deskingLabel) {
+    if (numericValue(deskingData?.accessory_price) > 0) return null;
+
+    const matches = arrayValue(template.desking_size_pricing)
+      .map(recordValue)
+      .filter(isRecord)
+      .filter((row) => row?.label === deskingLabel);
+    if (matches.length !== 1) return null;
+
+    const currentSize = matches[0];
+    sourceCurrency = normalizeCurrency(stringValue(currentSize.currency) ?? template.currency);
+    sourcePrice = quotationMoneyValue(
+      numericValue(currentSize.default_price) +
+      numericValue(currentSize.additional_price) * numericValue(deskingData?.additional_qty),
+    );
+    sourceKind = "desking";
+  }
+
+  const componentOptionsTotal = currentComponentOptionsTotal({
+    baseCurrency: sourceCurrency,
+    components,
+    selectedOptions: sourceData?.selected_options,
+  });
+  if (componentOptionsTotal === null) return null;
+
+  const accessoryTotal = sourceData?.add_ons
+    ? currentAccessoryTotal({
+        baseCurrency: sourceCurrency,
+        selectedAddOns: recordValue(sourceData.add_ons) ?? {},
+        template,
+      })
+    : 0;
+  if (accessoryTotal === null) return null;
+
+  return {
+    canApplyDefaultSourcePrice: sourceKind === "default" && componentOptionsTotal === 0 && accessoryTotal === 0,
+    sourceCurrency,
+    sourceKind,
+    sourcePrice: quotationMoneyValue(sourcePrice + componentOptionsTotal + accessoryTotal),
+  };
 }
 
 function sourcePriceWarning(
   item: QuotationItem,
   productTemplateById: Map<string, ProductLibraryTemplate>,
+  componentsByTemplate: Map<string, ProductLibraryComponent[]>,
 ) {
-  if (!item.source_template_id || isPriceHiddenLine(item) || hasMeaningfulSourcePriceOverride(item)) {
-    return null;
-  }
+  if (!item.source_template_id || isPriceHiddenLine(item)) return null;
 
   const template = productTemplateById.get(item.source_template_id);
   if (!template) return null;
 
+  const currentSource = currentSourcePriceForItem({
+    components: componentsByTemplate.get(template.id) ?? [],
+    item,
+    template,
+  });
+  if (!currentSource) return null;
+
   const quotedPrice = quotationMoneyValue(item.unit_price);
-  const sourcePrice = quotationMoneyValue(template.default_unit_price);
+  const sourcePrice = quotationMoneyValue(currentSource.sourcePrice);
   const quotedCurrency = normalizeCurrency(item.currency);
-  const sourceCurrency = normalizeCurrency(template.currency);
+  const sourceCurrency = normalizeCurrency(currentSource.sourceCurrency);
   const priceChanged = Math.abs(quotedPrice - sourcePrice) >= 0.01;
   const currencyChanged = quotedCurrency !== sourceCurrency;
 
@@ -545,33 +707,56 @@ function sourcePriceWarning(
   return {
     quotedCurrency,
     quotedPrice,
+    canApplyDefaultSourcePrice: currentSource.canApplyDefaultSourcePrice,
     sourceCurrency,
+    sourceKind: currentSource.sourceKind,
     sourcePrice,
     templateName: template.template_name,
   };
 }
 
 function SourcePriceWarning({
+  componentsByTemplate,
   item,
   productTemplateById,
+  quotationId,
+  returnTo,
   totalColumns,
 }: {
+  componentsByTemplate: Map<string, ProductLibraryComponent[]>;
   item: QuotationItem;
   productTemplateById: Map<string, ProductLibraryTemplate>;
+  quotationId: string;
+  returnTo: string;
   totalColumns: number;
 }) {
-  const warning = sourcePriceWarning(item, productTemplateById);
+  const warning = sourcePriceWarning(item, productTemplateById, componentsByTemplate);
   if (!warning) return null;
 
   return (
     <tr>
       <td colSpan={totalColumns} className="border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <span className="font-semibold">Source price changed</span>
-          <span>
-            Quoted: {formatQuotationMoney(warning.quotedCurrency, warning.quotedPrice)} / Current source: {formatQuotationMoney(warning.sourceCurrency, warning.sourcePrice)}
-          </span>
-          <span>Existing quotation price is unchanged.</span>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+            <span className="font-semibold">Source price changed</span>
+            <span>
+              Quoted: {formatQuotationMoney(warning.quotedCurrency, warning.quotedPrice)} / Current source: {formatQuotationMoney(warning.sourceCurrency, warning.sourcePrice)}
+            </span>
+            <span>Existing quotation price is unchanged.</span>
+          </div>
+          {warning.canApplyDefaultSourcePrice ? (
+            <form action={useCurrentSourcePriceForQuotationItem} className="shrink-0">
+              <input type="hidden" name="quotation_id" value={quotationId} />
+              <input type="hidden" name="quotation_item_id" value={item.id} />
+              <input type="hidden" name="return_to" value={returnTo} />
+              <ConfirmSubmitButton
+                message="This will update only this quotation row to the current source price. Existing quotation snapshots and other rows will not change. Continue?"
+                className="h-7 border border-amber-300 bg-white px-2.5 text-[11px] font-semibold text-amber-900 transition hover:border-amber-500"
+              >
+                Use current source price
+              </ConfirmSubmitButton>
+            </form>
+          ) : null}
         </div>
       </td>
     </tr>
@@ -2573,6 +2758,14 @@ export default async function QuotationBuilderPage({
   const productTemplateById = new Map(
     productTemplatesWithPriceChecks.map((template) => [template.id, template]),
   );
+  const componentsByTemplate = new Map<string, ProductLibraryComponent[]>();
+
+  for (const component of productComponents ?? []) {
+    componentsByTemplate.set(component.template_id, [
+      ...(componentsByTemplate.get(component.template_id) ?? []),
+      component,
+    ]);
+  }
 
   const itemsBySection = new Map<string, QuotationItem[]>();
 
@@ -3075,11 +3268,16 @@ export default async function QuotationBuilderPage({
                                   />
                                 ) : null}
                               </tr>
-                              <SourcePriceWarning
-                                item={item}
-                                productTemplateById={productTemplateById}
-                                totalColumns={totalColumns}
-                              />
+                              {showInternal ? (
+                                <SourcePriceWarning
+                                  componentsByTemplate={componentsByTemplate}
+                                  item={item}
+                                  productTemplateById={productTemplateById}
+                                  quotationId={quotation.id}
+                                  returnTo={builderPath}
+                                  totalColumns={totalColumns}
+                                />
+                              ) : null}
                               <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
                             </Fragment>
                           );
@@ -3279,11 +3477,16 @@ export default async function QuotationBuilderPage({
                                 />
                               ) : null}
                             </tr>
-                            <SourcePriceWarning
-                              item={item}
-                              productTemplateById={productTemplateById}
-                              totalColumns={totalColumns}
-                            />
+                            {showInternal ? (
+                              <SourcePriceWarning
+                                componentsByTemplate={componentsByTemplate}
+                                item={item}
+                                productTemplateById={productTemplateById}
+                                quotationId={quotation.id}
+                                returnTo={builderPath}
+                                totalColumns={totalColumns}
+                              />
+                            ) : null}
                             <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
                           </Fragment>
                         );

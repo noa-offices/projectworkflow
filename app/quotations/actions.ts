@@ -2679,6 +2679,96 @@ export async function updateQuotationItemInline(formData: FormData) {
   redirectWithMessage(redirectPath, "Row saved.");
 }
 
+export async function useCurrentSourcePriceForQuotationItem(formData: FormData) {
+  await requireRecordsManager();
+  const id = textValue(formData, "quotation_item_id");
+  const quotationId = textValue(formData, "quotation_id");
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
+
+  if (!id || !quotationId) {
+    redirectWithMessage("/quotations", "Line item and quotation are required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: quotation, error: quotationError } = await supabase
+    .from("quotations")
+    .select("id,is_active")
+    .eq("id", quotationId)
+    .maybeSingle<{ id: string; is_active: boolean }>();
+
+  if (quotationError || !quotation || !quotation.is_active) {
+    console.error("USE SOURCE PRICE QUOTATION READ ERROR", quotationError?.message);
+    redirectWithMessage(redirectPath, "Quotation could not be loaded.");
+  }
+
+  const { data: item, error: itemError } = await supabase
+    .from("quotation_items")
+    .select("id,quotation_id,source_template_id,qty,discount_type,discount_value,is_active")
+    .eq("id", id)
+    .eq("quotation_id", quotationId)
+    .maybeSingle<{
+      id: string;
+      quotation_id: string;
+      source_template_id: string | null;
+      qty: number;
+      discount_type: string;
+      discount_value: number;
+      is_active: boolean;
+    }>();
+
+  if (itemError || !item || !item.is_active) {
+    console.error("USE SOURCE PRICE ITEM READ ERROR", itemError?.message);
+    redirectWithMessage(redirectPath, "Line item could not be loaded.");
+  }
+
+  if (!item.source_template_id) {
+    redirectWithMessage(redirectPath, "Line item has no linked source template.");
+  }
+
+  const { data: template, error: templateError } = await supabase
+    .from("product_templates")
+    .select("id,default_unit_price,currency")
+    .eq("id", item.source_template_id)
+    .maybeSingle<{
+      id: string;
+      default_unit_price: number;
+      currency: string;
+    }>();
+
+  if (templateError || !template) {
+    console.error("USE SOURCE PRICE TEMPLATE READ ERROR", templateError?.message);
+    redirectWithMessage(redirectPath, "Current source template price could not be loaded.");
+  }
+
+  const linePricing = roundedLinePricing(
+    template.default_unit_price,
+    item.discount_type,
+    item.discount_value,
+    item.qty,
+  );
+  const { error: updateError } = await supabase
+    .from("quotation_items")
+    .update({
+      unit_price: linePricing.unitPrice,
+      currency: normalizeCurrency(template.currency || defaultCurrency),
+      discount_value: linePricing.discountValue,
+      net_price: linePricing.netPrice,
+      net_total: linePricing.netTotal,
+    })
+    .eq("id", item.id)
+    .eq("quotation_id", quotationId);
+
+  if (updateError) {
+    console.error("USE SOURCE PRICE ITEM UPDATE ERROR", updateError.message);
+    redirectWithMessage(redirectPath, "Line item source price could not be applied.");
+  }
+
+  await recalculateQuotationTotals(quotationId);
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(redirectPath);
+  redirectWithMessage(redirectPath, "Current source price applied to this row.");
+}
+
 export async function copyQuotationItem(formData: FormData) {
   const { user } = await requireRecordsManager();
   const id = textValue(formData, "id");
