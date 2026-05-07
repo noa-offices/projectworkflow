@@ -5,39 +5,39 @@ import { requireActiveUser } from "@/lib/auth";
 
 const modules = [
   {
-    title: "Products & Templates",
-    description:
-      "Organize reusable product details, standard options, and quotation building blocks.",
-    href: "/products",
-  },
-  {
     title: "Clients & Projects",
     description:
-      "Keep client records and project context ready for quotations and specifications.",
+      "Manage clients, projects, and project quotations from one working area.",
     href: "/clients",
   },
   {
-    title: "Quotations",
+    title: "Product Library",
     description:
-      "Prepare clear commercial offers with project scope, quantities, and pricing.",
-    href: "/quotations",
+      "Manage product templates, source pricing, images, and configurable options.",
+    href: "/products/templates",
   },
   {
-    title: "Specification Sheets",
+    title: "Brand Material Library",
     description:
-      "Create structured product specifications for approvals, procurement, and delivery.",
-    href: "/products",
+      "Manage finishes, swatches, material groups, and brand-specific selections.",
+    href: "/products/materials",
   },
   {
     title: "Price Updates",
     description:
-      "Review product cost changes before they flow into future quotation work.",
-    href: "/products",
+      "Review overdue template price checks, brand price lists, and source price follow-up work.",
+    href: "/products/templates?priceStatus=due",
+  },
+  {
+    title: "Specification Sheets",
+    description:
+      "Open a client project quotation to preview or download specification sheets.",
+    href: "/clients",
   },
   {
     title: "Settings",
     description:
-      "Manage workspace preferences, document defaults, and future team options.",
+      "Manage company profile, users, and system configuration areas.",
     href: "/settings",
   },
 ];
@@ -51,7 +51,7 @@ export default async function DashboardPage() {
       <div className="flex-1">
         <TopBar
           title="Dashboard"
-          description="A calm starting point for quotations, specifications, clients, and project order workflow."
+          description="A practical starting point for client quotations, specifications, product setup, and price-control work."
           userDisplayName={displayName}
           userEmail={user.email}
         />

@@ -5,14 +5,8 @@ import { requireActiveUser } from "@/lib/auth";
 
 const productCards = [
   {
-    title: "Brands & Categories",
-    description: "Manage brand records, main categories, and nested sub categories.",
-    href: "/products/brands",
-    action: "Manage",
-  },
-  {
     title: "Product Templates",
-    description: "Reusable product structures and specification fields.",
+    description: "Manage reusable product templates, source pricing, images, and template options.",
     href: "/products/templates",
     action: "Manage",
   },
@@ -23,10 +17,16 @@ const productCards = [
     action: "Manage",
   },
   {
-    title: "Template Options",
-    description: "Option groups are managed inside each product template for now.",
-    href: "#",
-    action: "Open a template",
+    title: "Brands & Categories",
+    description: "Maintain supporting brand records and category structure for the product library.",
+    href: "/products/brands",
+    action: "Manage",
+  },
+  {
+    title: "Price Updates",
+    description: "Review templates with due price checks and follow up on source price updates.",
+    href: "/products/templates?priceStatus=due",
+    action: "Review due items",
   },
 ];
 
@@ -39,51 +39,29 @@ export default async function ProductsPage() {
       <div className="flex-1">
         <TopBar
           title="Products & Templates"
-          description="Manage product foundations before templates, pricing, and quotation logic are added."
+          description="Maintain the product library, materials, categories, and price-control workflows used by quotations."
           userDisplayName={displayName}
           userEmail={user.email}
         />
         <main className="px-5 py-6 sm:px-8">
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {productCards.map((card) => {
-              const isReady = card.href !== "#";
-              const className =
-                "rounded-lg border border-zinc-200 bg-white p-5 shadow-sm transition";
-
-              if (!isReady) {
-                return (
-                  <div key={card.title} className={`${className} opacity-75`}>
-                    <h2 className="text-base font-semibold text-zinc-950">
-                      {card.title}
-                    </h2>
-                    <p className="mt-2 text-sm leading-6 text-zinc-500">
-                      {card.description}
-                    </p>
-                    <p className="mt-6 text-sm font-semibold text-zinc-500">
-                      {card.action}
-                    </p>
-                  </div>
-                );
-              }
-
-              return (
-                <Link
-                  key={card.title}
-                  href={card.href}
-                  className={`${className} hover:border-emerald-900/25 hover:shadow-md`}
-                >
-                  <h2 className="text-base font-semibold text-zinc-950">
-                    {card.title}
-                  </h2>
-                  <p className="mt-2 text-sm leading-6 text-zinc-500">
-                    {card.description}
-                  </p>
-                  <p className="mt-6 text-sm font-semibold text-emerald-900">
-                    {card.action}
-                  </p>
-                </Link>
-              );
-            })}
+            {productCards.map((card) => (
+              <Link
+                key={card.title}
+                href={card.href}
+                className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-emerald-900/25 hover:shadow-md"
+              >
+                <h2 className="text-base font-semibold text-zinc-950">
+                  {card.title}
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-zinc-500">
+                  {card.description}
+                </p>
+                <p className="mt-6 text-sm font-semibold text-emerald-900">
+                  {card.action}
+                </p>
+              </Link>
+            ))}
           </section>
         </main>
       </div>

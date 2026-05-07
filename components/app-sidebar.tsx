@@ -3,8 +3,10 @@ import { APP_LABEL, APP_NAME } from "@/lib/app-meta";
 
 const navigationItems = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/products", label: "Products" },
   { href: "/clients", label: "Clients & Projects" },
+  { href: "/products/templates", label: "Product Library" },
+  { href: "/products/materials", label: "Brand Material Library" },
+  { href: "/products/templates?priceStatus=due", label: "Price Updates" },
   { href: "/settings", label: "Settings" },
 ];
 
