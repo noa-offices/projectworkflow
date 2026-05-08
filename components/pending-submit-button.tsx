@@ -27,20 +27,24 @@ function inferPendingLabel(children: ReactNode) {
   }
 
   if (normalized.startsWith("save")) return "Saving...";
+  if (normalized.startsWith("saving")) return "Saving...";
   if (
     normalized.startsWith("move to archive") ||
     normalized.startsWith("archive")
   ) {
     return "Archiving...";
   }
+  if (normalized.startsWith("discontinue")) return "Discontinuing...";
   if (normalized.startsWith("delete")) return "Deleting...";
   if (normalized.startsWith("restore")) return "Restoring...";
   if (normalized.startsWith("deactivate")) return "Deactivating...";
   if (normalized.startsWith("create")) return "Creating...";
+  if (normalized.startsWith("creating")) return "Creating...";
   if (normalized.startsWith("add")) return "Adding...";
   if (normalized.startsWith("update status")) return "Updating status...";
   if (normalized.startsWith("update")) return "Updating...";
   if (normalized.startsWith("mark checked")) return "Marking checked...";
+  if (normalized.startsWith("check ")) return "Checking...";
   if (normalized.startsWith("upload")) return "Uploading...";
   if (normalized.startsWith("download pdf")) return "Preparing PDF...";
   if (normalized.startsWith("download specification")) {

@@ -238,6 +238,28 @@ function safeBrandLabel(brandName: string | null | undefined) {
   return brandName?.trim() || "Brand";
 }
 
+function textValueFromNames(formData: FormData, names: string[]) {
+  for (const name of names) {
+    const value = textValue(formData, name);
+    if (value) return value;
+  }
+
+  return "";
+}
+
+function optionalTextValueFromNames(formData: FormData, names: string[]) {
+  for (const name of names) {
+    const value = optionalTextValue(formData, name);
+    if (value) return value;
+  }
+
+  return null;
+}
+
+function boolValueFromNames(formData: FormData, names: string[]) {
+  return names.some((name) => formData.get(name) === "on");
+}
+
 async function validateProductTemplateCategories({
   brandId,
   mainCategoryId,
@@ -344,9 +366,9 @@ async function duplicateCategoryExists({
 
 export async function createMainCategoryFromTemplates(formData: FormData) {
   const { user } = await requireSettingsManager();
-  const brandId = textValue(formData, "brand_id");
-  const name = textValue(formData, "name");
-  const returnMode = textValue(formData, "return_mode");
+  const brandId = textValueFromNames(formData, ["quick_brand_id", "brand_id"]);
+  const name = textValueFromNames(formData, ["quick_name", "name"]);
+  const returnMode = textValueFromNames(formData, ["quick_return_mode", "return_mode"]);
 
   if (!brandId || !name) {
     redirectToTemplates("Brand and category name are required.", {
@@ -369,9 +391,9 @@ export async function createMainCategoryFromTemplates(formData: FormData) {
       brand_id: brandId,
       parent_id: null,
       name,
-      code: optionalTextValue(formData, "code"),
-      description: optionalTextValue(formData, "description"),
-      is_active: boolValue(formData, "is_active"),
+      code: optionalTextValueFromNames(formData, ["quick_code", "code"]),
+      description: optionalTextValueFromNames(formData, ["quick_description", "description"]),
+      is_active: boolValueFromNames(formData, ["quick_is_active", "is_active"]),
       sort_order: 0,
       created_by: user.id,
     })
@@ -397,10 +419,10 @@ export async function createMainCategoryFromTemplates(formData: FormData) {
 
 export async function createSubCategoryFromTemplates(formData: FormData) {
   const { user } = await requireSettingsManager();
-  const brandId = textValue(formData, "brand_id");
-  const parentId = textValue(formData, "parent_id");
-  const name = textValue(formData, "name");
-  const returnMode = textValue(formData, "return_mode");
+  const brandId = textValueFromNames(formData, ["quick_brand_id", "brand_id"]);
+  const parentId = textValueFromNames(formData, ["quick_parent_id", "parent_id"]);
+  const name = textValueFromNames(formData, ["quick_name", "name"]);
+  const returnMode = textValueFromNames(formData, ["quick_return_mode", "return_mode"]);
 
   if (!brandId || !parentId || !name) {
     redirectToTemplates("Brand, main category, and subcategory name are required.", {
@@ -425,9 +447,9 @@ export async function createSubCategoryFromTemplates(formData: FormData) {
       brand_id: brandId,
       parent_id: parentId,
       name,
-      code: optionalTextValue(formData, "code"),
-      description: optionalTextValue(formData, "description"),
-      is_active: boolValue(formData, "is_active"),
+      code: optionalTextValueFromNames(formData, ["quick_code", "code"]),
+      description: optionalTextValueFromNames(formData, ["quick_description", "description"]),
+      is_active: boolValueFromNames(formData, ["quick_is_active", "is_active"]),
       sort_order: 0,
       created_by: user.id,
     })

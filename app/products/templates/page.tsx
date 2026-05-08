@@ -532,10 +532,11 @@ function CurrencySelect({
   );
 }
 
-function SubmitButton({ label }: { label: string }) {
+function SubmitButton({ label, pendingLabel }: { label: string; pendingLabel?: string }) {
   return (
     <PendingSubmitButton
       className="h-10 rounded-md bg-emerald-900 px-5 text-sm font-semibold text-white transition hover:bg-emerald-800"
+      pendingLabel={pendingLabel}
     >
       {label}
     </PendingSubmitButton>
@@ -757,7 +758,10 @@ function TemplateForm({
         >
           Cancel
         </Link>
-        <SubmitButton label={template ? "Save template" : "Add template"} />
+        <SubmitButton
+          label={template ? "Save template" : "Add template"}
+          pendingLabel={template ? "Saving product..." : "Creating product..."}
+        />
       </div>
     </form>
   );
@@ -1872,12 +1876,12 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   <option value="checked">Price checked</option>
                 </select>
                 <div className="flex gap-2">
-                  <button
-                    type="submit"
+                  <PendingSubmitButton
                     className="h-10 rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                    pendingLabel="Applying..."
                   >
                     Apply
-                  </button>
+                  </PendingSubmitButton>
                   <Link
                     href={manageBrandsHref}
                     className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
@@ -2048,12 +2052,12 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             <div className="mt-3 flex flex-wrap gap-2">
                               <form action={markBrandPriceListCheckedAction}>
                                 <input type="hidden" name="brand_id" value={brand.id} />
-                                <button
-                                  type="submit"
+                                <PendingSubmitButton
                                   className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50"
+                                  pendingLabel="Applying..."
                                 >
                                   Check brand prices
-                                </button>
+                                </PendingSubmitButton>
                               </form>
                               {activeBrandTemplates.length ? (
                                 <form action={markBrandTemplatesPriceChecked}>
@@ -2363,6 +2367,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             <ConfirmSubmitButton
                               message="This will move the product template to Archive. You can restore it later."
                               className="text-sm font-semibold text-zinc-700 transition hover:text-zinc-950"
+                              pendingLabel="Archiving..."
                             >
                               Archive
                             </ConfirmSubmitButton>
@@ -2372,6 +2377,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             <ConfirmSubmitButton
                               message="This will hide the product from active Product Library and future quotations. Existing quotations will not be affected."
                               className="text-sm font-semibold text-amber-700 transition hover:text-amber-800"
+                              pendingLabel="Discontinuing..."
                             >
                               Discontinue
                             </ConfirmSubmitButton>
@@ -3151,12 +3157,12 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                       <div className="flex flex-wrap gap-2 md:justify-end">
                         <form action={restoreProductTemplate}>
                           <input type="hidden" name="id" value={template.id} />
-                          <button
-                            type="submit"
+                          <PendingSubmitButton
                             className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                            pendingLabel="Restoring..."
                           >
                             Restore
-                          </button>
+                          </PendingSubmitButton>
                         </form>
                         {deleteBlocked ? (
                           <span className="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-xs font-semibold text-zinc-500">
@@ -3222,21 +3228,21 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             <div className="flex flex-wrap gap-2 md:justify-end">
                               <form action={restoreProductTemplate}>
                                 <input type="hidden" name="id" value={template.id} />
-                                <button
-                                  type="submit"
+                                <PendingSubmitButton
                                   className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                                  pendingLabel="Restoring..."
                                 >
                                   Reactivate
-                                </button>
+                                </PendingSubmitButton>
                               </form>
                               <form action={archiveProductTemplate}>
                                 <input type="hidden" name="id" value={template.id} />
-                                <button
-                                  type="submit"
+                                <PendingSubmitButton
                                   className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                                  pendingLabel="Archiving..."
                                 >
                                   Move to Archive
-                                </button>
+                                </PendingSubmitButton>
                               </form>
                               {deleteBlocked ? (
                                 <span className="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-xs font-semibold text-zinc-500">

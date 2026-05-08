@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { ProjectSelectByClient } from "@/components/quotations/project-select-by-client";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
@@ -172,9 +173,12 @@ function QuotationForm({ clients, projects }: { clients: Client[]; projects: Pro
       <input type="hidden" name="status" value="draft" />
       <input type="hidden" name="is_active" value="on" />
       <div className="flex justify-end md:col-span-2 xl:col-span-3">
-        <button type="submit" className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800">
+        <PendingSubmitButton
+          className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+          pendingLabel="Creating quotation..."
+        >
           Add quotation
-        </button>
+        </PendingSubmitButton>
       </div>
     </form>
   );

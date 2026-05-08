@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import {
   createMainCategoryFromTemplates,
   createSubCategoryFromTemplates,
@@ -17,6 +18,68 @@ type CategoryOption = {
   parent_id: string | null;
   name: string;
 };
+
+function InlineQuickCategoryFields({
+  brandId,
+  parentId,
+  returnMode = "library",
+}: {
+  brandId: string;
+  parentId?: string | null;
+  returnMode?: "add-template" | "library";
+}) {
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      <input type="hidden" name="quick_brand_id" value={brandId} />
+      <input type="hidden" name="quick_parent_id" value={parentId ?? ""} />
+      <input type="hidden" name="quick_return_mode" value={returnMode} />
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Name</span>
+        <input
+          name="quick_name"
+          required
+          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+        />
+      </label>
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Code</span>
+        <input
+          name="quick_code"
+          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+        />
+      </label>
+      <label className="block md:col-span-2">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Description</span>
+        <textarea
+          name="quick_description"
+          rows={4}
+          className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+        />
+      </label>
+      <div className="flex flex-col gap-3 md:col-span-2 sm:flex-row sm:items-center sm:justify-between">
+        <label className="flex h-10 items-center gap-2 text-sm font-medium text-zinc-700">
+          <input
+            name="quick_is_active"
+            type="checkbox"
+            defaultChecked
+            className="h-4 w-4 rounded border-zinc-300 text-emerald-900"
+          />
+          Active
+        </label>
+        <PendingSubmitButton
+          formAction={
+            parentId ? createSubCategoryFromTemplates : createMainCategoryFromTemplates
+          }
+          formNoValidate
+          className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+          pendingLabel={parentId ? "Saving subcategory..." : "Saving category..."}
+        >
+          Save
+        </PendingSubmitButton>
+      </div>
+    </div>
+  );
+}
 
 function CategorySelect({
   categories,
@@ -110,12 +173,12 @@ export function QuickCategoryForm({
           />
           Active
         </label>
-        <button
-          type="submit"
+        <PendingSubmitButton
           className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+          pendingLabel={parentId ? "Saving subcategory..." : "Saving category..."}
         >
           Save
-        </button>
+        </PendingSubmitButton>
       </div>
     </form>
   );
@@ -203,7 +266,7 @@ export function TemplateCategoryFields({
               + New Main Category
             </summary>
             <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-              <QuickCategoryForm
+              <InlineQuickCategoryFields
                 brandId={selectedBrandId}
                 returnMode="add-template"
               />
@@ -230,7 +293,7 @@ export function TemplateCategoryFields({
               + New Sub Category
             </summary>
             <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-              <QuickCategoryForm
+              <InlineQuickCategoryFields
                 brandId={selectedBrandId}
                 parentId={selectedMainCategoryId}
                 returnMode="add-template"

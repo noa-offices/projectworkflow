@@ -185,10 +185,11 @@ function ActiveToggle({ defaultChecked = true }: { defaultChecked?: boolean }) {
   );
 }
 
-function SubmitButton({ label }: { label: string }) {
+function SubmitButton({ label, pendingLabel }: { label: string; pendingLabel?: string }) {
   return (
     <PendingSubmitButton
       className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+      pendingLabel={pendingLabel}
     >
       {label}
     </PendingSubmitButton>
@@ -214,7 +215,10 @@ function GroupForm({
       <TextArea name="description" label="Description" defaultValue={group?.description} />
       <div className="flex flex-col gap-3 md:col-span-2 sm:flex-row sm:items-center sm:justify-between">
         <ActiveToggle defaultChecked={group?.is_active ?? true} />
-        <SubmitButton label={group ? "Save group" : "Add group"} />
+        <SubmitButton
+          label={group ? "Save group" : "Add group"}
+          pendingLabel={group ? "Saving group..." : "Creating group..."}
+        />
       </div>
     </form>
   );
@@ -252,7 +256,10 @@ function MaterialForm({
       <BrandMaterialSwatchInput brandId={brandId} groupId={group.id} defaultValue={material?.image_url} />
       <div className="flex flex-col gap-3 md:col-span-2 sm:flex-row sm:items-center sm:justify-between">
         <ActiveToggle defaultChecked={material?.is_active ?? true} />
-        <SubmitButton label={material ? "Save material" : "Add material"} />
+        <SubmitButton
+          label={material ? "Save material" : "Add material"}
+          pendingLabel={material ? "Saving material..." : "Creating material..."}
+        />
       </div>
     </form>
   );

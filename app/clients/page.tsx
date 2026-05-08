@@ -279,10 +279,11 @@ function ActiveToggle({ defaultChecked = true }: { defaultChecked?: boolean }) {
   );
 }
 
-function SubmitButton({ label }: { label: string }) {
+function SubmitButton({ label, pendingLabel }: { label: string; pendingLabel?: string }) {
   return (
     <PendingSubmitButton
       className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+      pendingLabel={pendingLabel}
     >
       {label}
     </PendingSubmitButton>
@@ -324,7 +325,10 @@ function ClientForm({ client }: { client?: Client }) {
       </div>
       <TextArea name="notes" label="Notes" defaultValue={client?.notes} />
       <div className="flex justify-end md:col-span-2">
-        <SubmitButton label={client ? "Save client" : "Add client"} />
+        <SubmitButton
+          label={client ? "Save client" : "Add client"}
+          pendingLabel={client ? "Saving client..." : "Creating client..."}
+        />
       </div>
     </form>
   );
@@ -468,7 +472,10 @@ function ProjectForm({
       />
       <TextArea name="notes" label="Notes" defaultValue={project?.notes} />
       <div className="flex justify-end md:col-span-2">
-        <SubmitButton label={project ? "Save project" : "Add project"} />
+        <SubmitButton
+          label={project ? "Save project" : "Add project"}
+          pendingLabel={project ? "Saving project..." : "Creating project..."}
+        />
       </div>
     </form>
   );

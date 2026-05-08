@@ -244,6 +244,7 @@ function NewQuotationForm({
       <div className="flex justify-end md:col-span-2 xl:col-span-3">
         <PendingSubmitButton
           className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+          pendingLabel="Creating quotation..."
         >
           Add quotation
         </PendingSubmitButton>
@@ -282,7 +283,18 @@ function QuotationActionForm({
           {label}
         </ConfirmSubmitButton>
       ) : (
-        <PendingSubmitButton className={className}>
+        <PendingSubmitButton
+          className={className}
+          pendingLabel={
+            label === "Create Option"
+              ? "Creating option..."
+              : label === "Create Revision"
+                ? "Creating revision..."
+                : label === "Duplicate"
+                  ? "Duplicating..."
+                  : undefined
+          }
+        >
           {label}
         </PendingSubmitButton>
       )}
