@@ -90,14 +90,14 @@ export function AppSidebar() {
                 href={item.href}
                 label={item.label}
                 pendingLabel="Loading..."
-                className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition hover:bg-zinc-50 hover:text-zinc-950 ${
+                className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition hover:bg-slate-50 hover:text-emerald-900 ${
                   isActive(item.href)
-                    ? "bg-emerald-50 text-emerald-950"
-                    : "text-zinc-600"
+                    ? "bg-emerald-50 text-emerald-900"
+                    : "text-slate-800"
                 } ${
                   group.label ? "lg:ml-3" : ""
                 }`}
-                pendingClassName="pointer-events-none opacity-80"
+                pendingClassName="pointer-events-none"
               />
             ))}
           </div>
