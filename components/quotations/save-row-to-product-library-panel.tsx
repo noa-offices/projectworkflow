@@ -8,6 +8,7 @@ import {
   createBrandSubcategoryFromQuoteForm,
   saveQuotationItemToProductLibrary,
 } from "@/app/quotations/actions";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import type {
   ProductLibraryBrand,
   ProductLibraryCategory,
@@ -86,12 +87,11 @@ function TextArea({
 
 function SubmitButton({ label }: { label: string }) {
   return (
-    <button
-      type="submit"
+    <PendingSubmitButton
       className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
     >
       {label}
-    </button>
+    </PendingSubmitButton>
   );
 }
 

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
 import { formatQuotationDisplayNo, quotationRootBaseNo } from "@/lib/quotation-options";
@@ -280,12 +281,11 @@ function ActiveToggle({ defaultChecked = true }: { defaultChecked?: boolean }) {
 
 function SubmitButton({ label }: { label: string }) {
   return (
-    <button
-      type="submit"
+    <PendingSubmitButton
       className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
     >
       {label}
-    </button>
+    </PendingSubmitButton>
   );
 }
 
@@ -1357,12 +1357,11 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                         <div className="flex flex-wrap gap-2 md:justify-end">
                           <form action={restoreProject}>
                             <input type="hidden" name="id" value={project.id} />
-                            <button
-                              type="submit"
+                            <PendingSubmitButton
                               className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
                             >
                               Restore
-                            </button>
+                            </PendingSubmitButton>
                           </form>
                           <form action={permanentlyDeleteProject}>
                             <input type="hidden" name="id" value={project.id} />
@@ -1408,12 +1407,11 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                         <div className="flex flex-wrap gap-2 md:justify-end">
                           <form action={restoreClient}>
                             <input type="hidden" name="id" value={client.id} />
-                            <button
-                              type="submit"
+                            <PendingSubmitButton
                               className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
                             >
                               Restore
-                            </button>
+                            </PendingSubmitButton>
                           </form>
                           <form action={permanentlyDeleteClient}>
                             <input type="hidden" name="id" value={client.id} />

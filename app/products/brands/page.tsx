@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { TopBar } from "@/components/top-bar";
 import { requireSettingsManager } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -171,12 +172,11 @@ function ActiveToggle({ defaultChecked = true }: { defaultChecked?: boolean }) {
 
 function SubmitButton({ label }: { label: string }) {
   return (
-    <button
-      type="submit"
+    <PendingSubmitButton
       className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
     >
       {label}
-    </button>
+    </PendingSubmitButton>
   );
 }
 

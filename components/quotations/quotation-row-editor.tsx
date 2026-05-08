@@ -326,6 +326,7 @@ export function QuotationRowComputedValue({
 export function QuotationRowSaveControls() {
   const context = useContext(RowEditorContext);
   const status = context?.status ?? "saved";
+  const isSaving = status === "saving";
 
   return (
     <>
@@ -341,9 +342,10 @@ export function QuotationRowSaveControls() {
         <button
           type="button"
           onClick={() => context?.saveNow()}
+          disabled={isSaving}
           className="h-6 border border-emerald-900 bg-emerald-900 px-2 text-[11px] font-semibold text-white transition hover:bg-emerald-800"
         >
-          Save
+          {isSaving ? "Saving..." : "Save"}
         </button>
       )}
       <span

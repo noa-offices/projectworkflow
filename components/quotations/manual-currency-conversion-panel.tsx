@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { applyManualCurrencyConversion } from "@/app/quotations/actions";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { quotationMoneyValue } from "@/lib/quotation-pricing";
@@ -118,12 +119,12 @@ export function ManualCurrencyConversionPanel({
             <p>Converted AED: {formatPreviewMoney(convertedPrice)}</p>
           </div>
           <div className="flex items-end justify-end md:col-span-1">
-            <button
-              type="submit"
+            <PendingSubmitButton
               className="h-8 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
+              pendingLabel="Applying converted AED price..."
             >
               Apply converted AED price
-            </button>
+            </PendingSubmitButton>
           </div>
         </form>
       </div>

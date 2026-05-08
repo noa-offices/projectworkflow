@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { TopBar } from "@/components/top-bar";
 import {
   createQuotation,
@@ -241,12 +242,11 @@ function NewQuotationForm({
       <Field name="warranty_terms" label="Warranty terms" />
       <TextArea name="notes" label="Terms / Notes" />
       <div className="flex justify-end md:col-span-2 xl:col-span-3">
-        <button
-          type="submit"
+        <PendingSubmitButton
           className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
         >
           Add quotation
-        </button>
+        </PendingSubmitButton>
       </div>
     </form>
   );
@@ -282,9 +282,9 @@ function QuotationActionForm({
           {label}
         </ConfirmSubmitButton>
       ) : (
-        <button type="submit" className={className}>
+        <PendingSubmitButton className={className}>
           {label}
-        </button>
+        </PendingSubmitButton>
       )}
     </form>
   );

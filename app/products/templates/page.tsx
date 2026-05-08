@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import type { ReactNode } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import {
   DeskingSizePricingTable,
   type DeskingSizePricingRow,
@@ -501,12 +502,11 @@ function CurrencySelect({
 
 function SubmitButton({ label }: { label: string }) {
   return (
-    <button
-      type="submit"
+    <PendingSubmitButton
       className="h-10 rounded-md bg-emerald-900 px-5 text-sm font-semibold text-white transition hover:bg-emerald-800"
     >
       {label}
-    </button>
+    </PendingSubmitButton>
   );
 }
 
@@ -1420,6 +1420,7 @@ function ProductTemplatePriceUpdateForm({
       <ConfirmSubmitButton
         message="This updates the product template source price for future quotations only. Existing quotations will not change. Continue?"
         className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
+        pendingLabel="Updating source price..."
       >
         Update source price
       </ConfirmSubmitButton>
@@ -1506,6 +1507,7 @@ function DetailPriceUpdateForm({
         <ConfirmSubmitButton
           message="This updates source pricing for future quotations only. Existing quotations will not change. Continue?"
           className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
+          pendingLabel="Saving source price..."
         >
           Save source price
         </ConfirmSubmitButton>
@@ -2037,6 +2039,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   <ConfirmSubmitButton
                     message="Mark all visible templates as price checked now?"
                     className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
+                    pendingLabel="Marking checked..."
                   >
                     Mark visible templates checked now
                   </ConfirmSubmitButton>
@@ -2153,6 +2156,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                   <ConfirmSubmitButton
                                     message={`Mark all active templates under ${brand.name} as price checked now?`}
                                     className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50"
+                                    pendingLabel="Marking checked..."
                                   >
                                     Mark templates checked
                                   </ConfirmSubmitButton>
@@ -2444,12 +2448,12 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           </Link>
                           <form action={markTemplatePriceChecked}>
                             <input type="hidden" name="id" value={template.id} />
-                            <button
-                              type="submit"
-                              className="text-sm font-semibold text-zinc-600 transition hover:text-zinc-950"
-                            >
-                              Mark checked now
-                            </button>
+                          <PendingSubmitButton
+                            className="text-sm font-semibold text-zinc-600 transition hover:text-zinc-950"
+                            pendingLabel="Marking checked..."
+                          >
+                            Mark checked now
+                          </PendingSubmitButton>
                           </form>
                           <form action={deactivateProductTemplate}>
                             <input type="hidden" name="id" value={template.id} />
@@ -2589,12 +2593,12 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           <input type="hidden" name="id" value={template.id} />
                           <input type="hidden" name="price_check_note" value="" />
                           <input type="hidden" name="return_to" value={withHash(templateBaseReturnTo, `template-${template.id}`)} />
-                          <button
-                            type="submit"
+                          <PendingSubmitButton
                             className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
+                            pendingLabel="Marking checked..."
                           >
                             Mark checked now
-                          </button>
+                          </PendingSubmitButton>
                         </form>
                         <details
                           className="mt-3"
@@ -3143,12 +3147,12 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                           name="id"
                                           value={component.id}
                                         />
-                                        <button
-                                          type="submit"
+                                        <PendingSubmitButton
                                           className="rounded-md border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
+                                          pendingLabel="Marking checked..."
                                         >
                                           Mark checked
-                                        </button>
+                                        </PendingSubmitButton>
                                       </form>
                                       <DeactivateOptionForm id={component.id} />
                                     </div>

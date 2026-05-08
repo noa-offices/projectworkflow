@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { TopBar } from "@/components/top-bar";
 import { updateCompanySettings } from "@/app/settings/actions";
 import { requireActiveUser } from "@/lib/auth";
@@ -118,12 +119,12 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                       Last updated: {formatDateTime(companySettings?.updated_at)}
                       {companySettings?.updated_at ? ` by ${lastUpdatedBy}` : ""}
                     </span>
-                    <button
-                      type="submit"
+                    <PendingSubmitButton
                       className="rounded-md bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                      pendingLabel="Saving company profile..."
                     >
                       Save company profile
-                    </button>
+                    </PendingSubmitButton>
                   </div>
                 </form>
               ) : (

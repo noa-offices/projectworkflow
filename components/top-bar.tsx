@@ -1,4 +1,5 @@
 import { signOut } from "@/app/auth/actions";
+import { GlobalRefreshButton } from "@/components/global-refresh-button";
 
 type TopBarProps = {
   title: string;
@@ -28,7 +29,8 @@ export function TopBar({
           </div>
         </div>
         {userDisplayName ? (
-          <div className="flex items-center gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
+          <div className="flex flex-col items-stretch gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 sm:flex-row sm:items-center">
+            <GlobalRefreshButton />
             <div className="min-w-0 text-right">
               <p className="truncate text-sm font-medium text-zinc-950">
                 {userDisplayName}

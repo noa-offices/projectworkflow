@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { AppSidebar } from "@/components/app-sidebar";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { BrandMaterialSwatchInput } from "@/components/products/brand-material-swatch-input";
 import { TopBar } from "@/components/top-bar";
 import { requireRecordsManager } from "@/lib/auth";
@@ -186,12 +187,11 @@ function ActiveToggle({ defaultChecked = true }: { defaultChecked?: boolean }) {
 
 function SubmitButton({ label }: { label: string }) {
   return (
-    <button
-      type="submit"
+    <PendingSubmitButton
       className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
     >
       {label}
-    </button>
+    </PendingSubmitButton>
   );
 }
 

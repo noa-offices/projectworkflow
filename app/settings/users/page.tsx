@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { TopBar } from "@/components/top-bar";
 import { requireSystemOwner } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -129,12 +130,12 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
                               </option>
                             ))}
                           </select>
-                          <button
-                            type="submit"
+                          <PendingSubmitButton
                             className="h-10 rounded-md bg-emerald-900 px-3 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                            pendingLabel="Saving..."
                           >
                             Save
-                          </button>
+                          </PendingSubmitButton>
                         </form>
                       </td>
                       <td className="px-5 py-4">
@@ -159,12 +160,12 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
                                 </option>
                               ))}
                             </select>
-                            <button
-                              type="submit"
+                            <PendingSubmitButton
                               className="h-10 rounded-md bg-emerald-900 px-3 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                              pendingLabel="Saving..."
                             >
                               Save
-                            </button>
+                            </PendingSubmitButton>
                           </form>
                         </div>
                       </td>

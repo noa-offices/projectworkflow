@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ContextBackLink } from "@/components/navigation/context-back-link";
+import { PendingLinkButton } from "@/components/pending-link-button";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
@@ -225,12 +227,11 @@ function TextArea({
 
 function SubmitButton({ label }: { label: string }) {
   return (
-    <button
-      type="submit"
+    <PendingSubmitButton
       className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
     >
       {label}
-    </button>
+    </PendingSubmitButton>
   );
 }
 
@@ -828,24 +829,26 @@ export default async function QuotationDetailPage({
                   >
                     Preview PDF
                   </Link>
-                  <Link
+                  <PendingLinkButton
                     href={`/quotations/${quotation.id}/download-pdf`}
+                    pendingLabel="Preparing PDF..."
                     className="rounded-md border border-emerald-900 bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
                   >
                     Download PDF
-                  </Link>
+                  </PendingLinkButton>
                   <Link
                     href={`/quotations/${id}/specification`}
                     className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
                   >
                     Specification Sheet
                   </Link>
-                  <Link
+                  <PendingLinkButton
                     href={`/quotations/${quotation.id}/download-specification`}
+                    pendingLabel="Preparing Specification..."
                     className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
                   >
                     Download Specification
-                  </Link>
+                  </PendingLinkButton>
                   <Link
                     href={`/quotations/${quotation.id}/builder`}
                     className="rounded-md bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"

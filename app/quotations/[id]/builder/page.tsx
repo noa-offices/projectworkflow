@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { Fragment, type CSSProperties, type ReactNode } from "react";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { ContextBackLink } from "@/components/navigation/context-back-link";
+import { PendingLinkButton } from "@/components/pending-link-button";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import {
   OptimisticAddRowButton,
   OptimisticQuotationBuilderProvider,
@@ -1144,6 +1146,7 @@ function SourcePriceWarning({
               <ConfirmSubmitButton
                 message="This will update only this quotation row to the current source price. Other rows and old quotation snapshots will not change. Continue?"
                 className="h-7 border border-amber-300 bg-white px-2.5 text-[11px] font-semibold text-amber-900 transition hover:border-amber-500"
+                pendingLabel="Updating..."
               >
                 Use current source price
               </ConfirmSubmitButton>
@@ -1333,12 +1336,11 @@ function CurrencySelect({
 
 function SubmitButton({ label }: { label: string }) {
   return (
-    <button
-      type="submit"
+    <PendingSubmitButton
       className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
     >
       {label}
-    </button>
+    </PendingSubmitButton>
   );
 }
 
@@ -2845,12 +2847,12 @@ function RowMoveDeactivateActions({
         <input type="hidden" name="id" value={item.id} />
         <input type="hidden" name="quotation_id" value={quotationId} />
         <input type="hidden" name="return_to" value={returnTo} />
-        <button
-          type="submit"
+        <PendingSubmitButton
           className="h-7 border border-red-200 bg-white px-2 text-xs font-semibold text-red-700 transition hover:border-red-700"
+          pendingLabel="Deactivating..."
         >
           Deactivate
-        </button>
+        </PendingSubmitButton>
       </form>
     </div>
   );
@@ -2904,12 +2906,12 @@ function DeactivateRowAction({
       <input type="hidden" name="id" value={item.id} />
       <input type="hidden" name="quotation_id" value={quotationId} />
       <input type="hidden" name="return_to" value={returnTo} />
-      <button
-        type="submit"
+      <PendingSubmitButton
         className="h-7 border border-red-200 bg-white px-2 text-xs font-semibold text-red-700 transition hover:border-red-700"
+        pendingLabel="Deactivating..."
       >
         Deactivate
-      </button>
+      </PendingSubmitButton>
     </form>
   );
 }
@@ -3684,12 +3686,13 @@ export default async function QuotationBuilderPage({
             >
               Preview PDF
             </Link>
-            <Link
+            <PendingLinkButton
               href={`/quotations/${quotation.id}/download-pdf`}
+              pendingLabel="Preparing PDF..."
               className="bg-emerald-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800"
             >
               Download PDF
-            </Link>
+            </PendingLinkButton>
             <Link
               href={`/quotations/${id}/specification`}
               target="_blank"
@@ -3697,12 +3700,13 @@ export default async function QuotationBuilderPage({
             >
               Specification Sheet
             </Link>
-            <Link
+            <PendingLinkButton
               href={`/quotations/${quotation.id}/download-specification`}
+              pendingLabel="Preparing Specification..."
               className="border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
             >
               Download Specification
-            </Link>
+            </PendingLinkButton>
             <div className="flex border border-zinc-300 text-xs font-semibold">
               <Link
                 href={`/quotations/${quotation.id}/builder?view=client`}
