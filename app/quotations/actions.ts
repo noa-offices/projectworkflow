@@ -2,7 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireActiveUser, requireRecordsManager } from "@/lib/auth";
+import {
+  requireActiveUser,
+  requireRecordsManager,
+  requireSettingsManager,
+} from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit-log";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import {
@@ -37,6 +41,7 @@ const fontWeights = new Set(["400", "700"]);
 const fontStyles = new Set(["normal", "italic"]);
 const textDecorations = new Set(["none", "underline"]);
 const textAlignments = new Set(["left", "center", "right"]);
+const manualConversionCurrencies = new Set(["AED", "EUR", "USD"]);
 const lineStyles = new Set([
   "normal",
   "optional",
@@ -242,6 +247,14 @@ function isDirectImagePath(value: string) {
   return /^(https?:|blob:|data:|\/)/i.test(value);
 }
 
+function isQuoteStoragePath(value: string) {
+  return value.startsWith("quotation-items/") || value.startsWith("quotation-finishes/");
+}
+
+function isProductStoragePath(value: string) {
+  return value.startsWith("product-templates/") || value.startsWith("brand-materials/");
+}
+
 function productImageSnapshotPath(value: string | null) {
   if (!value || isDirectImagePath(value) || value.startsWith("product-images:")) {
     return value;
@@ -250,9 +263,117 @@ function productImageSnapshotPath(value: string | null) {
   return `product-images:${value}`;
 }
 
+type ProductLibraryImageReference =
+  | { kind: "empty"; value: null }
+  | { kind: "direct"; value: string }
+  | { kind: "product"; path: string }
+  | { kind: "quote"; path: string };
+
+function parseProductLibraryImageReference(value: string | null): ProductLibraryImageReference {
+  if (!value) {
+    return { kind: "empty", value: null };
+  }
+
+  if (isDirectImagePath(value)) {
+    return { kind: "direct", value };
+  }
+
+  if (value.startsWith("product-images:")) {
+    return { kind: "product", path: value.slice("product-images:".length) };
+  }
+
+  if (value.startsWith("quote-images:")) {
+    return { kind: "quote", path: value.slice("quote-images:".length) };
+  }
+
+  if (isQuoteStoragePath(value)) {
+    return { kind: "quote", path: value };
+  }
+
+  if (isProductStoragePath(value)) {
+    return { kind: "product", path: value };
+  }
+
+  return { kind: "product", path: value };
+}
+
+function safeStorageFilename(path: string) {
+  const rawFilename = path.split("/").at(-1) ?? "image";
+  const dotIndex = rawFilename.lastIndexOf(".");
+  const extension = dotIndex >= 0 ? rawFilename.slice(dotIndex + 1).toLowerCase() : "";
+  const basename = (dotIndex >= 0 ? rawFilename.slice(0, dotIndex) : rawFilename)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+
+  return extension ? `${basename || "image"}.${extension}` : basename || "image";
+}
+
+function contentTypeFromPath(path: string) {
+  const extension = path.split(".").pop()?.toLowerCase();
+
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "png") return "image/png";
+  if (extension === "webp") return "image/webp";
+
+  return undefined;
+}
+
+async function copyQuoteImageToProductImages({
+  sourcePath,
+  supabase,
+  templateId,
+}: {
+  sourcePath: string;
+  supabase: Awaited<ReturnType<typeof createSupabaseClient>>;
+  templateId: string;
+}) {
+  const { data, error } = await supabase.storage.from("quote-images").download(sourcePath);
+
+  if (error || !data) {
+    throw new Error(error?.message || "Source image could not be downloaded.");
+  }
+
+  const targetPath = `product-templates/${templateId}/${Date.now()}-${safeStorageFilename(sourcePath)}`;
+  const body = new Uint8Array(await data.arrayBuffer());
+  const contentType = data.type || contentTypeFromPath(sourcePath);
+  const { data: uploadData, error: uploadError } = await supabase.storage
+    .from("product-images")
+    .upload(targetPath, body, {
+      cacheControl: "3600",
+      contentType,
+      upsert: false,
+    });
+
+  if (uploadError || !uploadData?.path) {
+    throw new Error(uploadError?.message || "Image could not be uploaded.");
+  }
+
+  return uploadData.path;
+}
+
 function calculationNumber(value: unknown, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
+}
+
+function optionalNumericValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function preciseDecimalValue(value: unknown, precision = 4) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+
+  const factor = 10 ** precision;
+  return Math.round(number * factor) / factor;
 }
 
 function deskingRole(option: ProductComponentSnapshotSource) {
@@ -1083,6 +1204,82 @@ function sourceReferenceMetadata(sourceData: unknown) {
   };
 }
 
+function manualSourcePricingFromSourceData(sourceData: unknown) {
+  const data = recordValue(sourceData);
+  const reference = recordValue(data?.source_price_reference);
+  const manualSourcePrice =
+    optionalNumericValue(data?.manual_source_price) ??
+    optionalNumericValue(reference?.original_source_price);
+  const manualSourceCurrency = normalizeCurrency(
+    stringRecordValue(data?.manual_source_currency) ??
+    stringRecordValue(reference?.original_source_currency) ??
+    defaultCurrency,
+  );
+
+  if (manualSourcePrice === null) return null;
+
+  return {
+    currency: manualSourceCurrency,
+    price: preciseDecimalValue(manualSourcePrice, 2),
+  };
+}
+
+function manualConversionSourceComponentData({
+  convertedPrice,
+  conversionRate,
+  currentSourceData,
+  sourceCurrency,
+  sourcePrice,
+}: {
+  convertedPrice: number;
+  conversionRate: number;
+  currentSourceData: unknown;
+  sourceCurrency: string;
+  sourcePrice: number;
+}) {
+  const currentData = recordValue(currentSourceData);
+  const currentReference = recordValue(currentData?.source_price_reference);
+  const normalizedSourceCurrency = normalizeCurrency(sourceCurrency);
+  const normalizedSourcePrice = preciseDecimalValue(sourcePrice, 2);
+  const normalizedRate = preciseDecimalValue(conversionRate, 4);
+  const normalizedConvertedPrice = quotationMoneyValue(convertedPrice);
+
+  return {
+    ...(currentData ?? {}),
+    manual_source_price: normalizedSourcePrice,
+    manual_source_currency: normalizedSourceCurrency,
+    manual_conversion_rate: normalizedRate,
+    manual_converted_currency: "AED",
+    manual_converted_price: normalizedConvertedPrice,
+    source_price_reference: {
+      ...(currentReference ?? {}),
+      original_source_price: normalizedSourcePrice,
+      original_source_currency: normalizedSourceCurrency,
+      original_source_totals: {
+        [normalizedSourceCurrency]: normalizedSourcePrice,
+      },
+      source_price_type: "manual_currency_conversion",
+      source_price_label: "Manual currency conversion",
+      source_price_key: "manual_currency_conversion",
+      converted_quotation_price: normalizedConvertedPrice,
+      quotation_currency: "AED",
+    },
+    currency_conversion: {
+      target_currency: "AED",
+      original_totals: {
+        [normalizedSourceCurrency]: normalizedSourcePrice,
+      },
+      rates: normalizedSourceCurrency === "AED"
+        ? {}
+        : {
+            [normalizedSourceCurrency]: normalizedRate,
+          },
+      converted_total: normalizedConvertedPrice,
+      rounded_converted_total: normalizedConvertedPrice,
+    },
+  };
+}
+
 async function insertQuotationItemPriceHistory({
   changeType,
   changedBy,
@@ -1456,6 +1653,543 @@ export async function createQuotation(formData: FormData) {
   revalidatePath("/quotations");
   revalidatePath(redirectPath);
   redirectWithMessage(`/quotations/${data.id}`, "Quotation created.");
+}
+
+export async function saveQuotationItemToProductLibrary(formData: FormData) {
+  const { user, displayName } = await requireSettingsManager();
+  const quotationItemId = textValue(formData, "quotation_item_id");
+  const quotationId = textValue(formData, "quotation_id");
+  const redirectPath = returnPath(
+    formData,
+    `/quotations/${quotationId}/builder#item-${quotationItemId}`,
+  );
+  const saveMode =
+    textValue(formData, "save_mode") === "existing_family_variant"
+      ? "existing_family_variant"
+      : "new_family";
+  const templateName = textValue(formData, "template_name");
+  const brandId = textValue(formData, "brand_id");
+  const mainCategoryId = optionalTextValue(formData, "main_category_id");
+  const subCategoryId = optionalTextValue(formData, "sub_category_id");
+
+  if (!quotationItemId || !quotationId) {
+    redirectWithMessage(redirectPath, "Quotation row could not be identified.");
+  }
+
+  if (saveMode === "new_family" && (!templateName || !brandId)) {
+    redirectWithMessage(redirectPath, "Template name and brand are required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  if (saveMode === "new_family") {
+    const { data: brand, error: brandError } = await supabase
+      .from("brands")
+      .select("id")
+      .eq("id", brandId)
+      .eq("is_active", true)
+      .maybeSingle<{ id: string }>();
+
+    if (brandError || !brand) {
+      console.error("SAVE QUOTATION ITEM TO LIBRARY BRAND ERROR", brandError?.message);
+      redirectWithMessage(redirectPath, "Select a valid brand.");
+    }
+  }
+
+  const { data: quotationItem, error: quotationItemError } = await supabase
+    .from("quotation_items")
+    .select(
+      "id,quotation_id,source_template_id,source_component_data,item_type,item_code_snapshot,item_name_snapshot,specification_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,supplier_name_snapshot,qty,unit_label,unit_price,currency,specified_image_url_snapshot,proposed_image_url_snapshot,notes,is_active",
+    )
+    .eq("id", quotationItemId)
+    .eq("quotation_id", quotationId)
+    .maybeSingle<{
+      id: string;
+      quotation_id: string;
+      source_template_id: string | null;
+      source_component_data: unknown;
+      item_type: string;
+      item_code_snapshot: string | null;
+      item_name_snapshot: string | null;
+      specification_snapshot: string | null;
+      model_snapshot: string | null;
+      finish_snapshot: string | null;
+      size_snapshot: string | null;
+      origin_snapshot: string | null;
+      supplier_name_snapshot: string | null;
+      qty: number;
+      unit_label: string;
+      unit_price: number;
+      currency: string;
+      specified_image_url_snapshot: string | null;
+      proposed_image_url_snapshot: string | null;
+      notes: string | null;
+      is_active: boolean;
+    }>();
+
+  if (quotationItemError || !quotationItem || !quotationItem.is_active) {
+    console.error("SAVE QUOTATION ITEM TO LIBRARY READ ERROR", quotationItemError?.message);
+    redirectWithMessage(redirectPath, "Quotation row could not be loaded.");
+  }
+
+  if (quotationItem.source_template_id) {
+    redirectWithMessage(redirectPath, "This row is already linked to the Product Library.");
+  }
+
+  const { data: quotation, error: quotationError } = await supabase
+    .from("quotations")
+    .select("id,project_id,title,quotation_no")
+    .eq("id", quotationId)
+    .maybeSingle<{ id: string; project_id: string | null; title: string; quotation_no: string | null }>();
+
+  if (quotationError || !quotation) {
+    console.error("SAVE QUOTATION ITEM TO LIBRARY QUOTATION ERROR", quotationError?.message);
+    redirectWithMessage(redirectPath, "Quotation could not be loaded.");
+  }
+
+  if (mainCategoryId || subCategoryId) {
+    const categoryIds = [mainCategoryId, subCategoryId].filter(Boolean) as string[];
+    const { data: categories, error: categoriesError } = await supabase
+      .from("product_categories")
+      .select("id,brand_id,parent_id")
+      .in("id", categoryIds)
+      .returns<Array<{ id: string; brand_id: string; parent_id: string | null }>>();
+
+    if (categoriesError) {
+      console.error("SAVE QUOTATION ITEM TO LIBRARY CATEGORY ERROR", categoriesError.message);
+      redirectWithMessage(redirectPath, "Category selection could not be validated.");
+    }
+
+    const categoryMap = new Map((categories ?? []).map((category) => [category.id, category]));
+    if (mainCategoryId) {
+      const mainCategory = categoryMap.get(mainCategoryId);
+      if (!mainCategory || mainCategory.brand_id !== brandId || mainCategory.parent_id) {
+        redirectWithMessage(redirectPath, "Select a valid main category for the chosen brand.");
+      }
+    }
+    if (subCategoryId) {
+      const subCategory = categoryMap.get(subCategoryId);
+      if (!subCategory || subCategory.brand_id !== brandId || !subCategory.parent_id) {
+        redirectWithMessage(redirectPath, "Select a valid subcategory for the chosen brand.");
+      }
+      if (!mainCategoryId || subCategory.parent_id !== mainCategoryId) {
+        redirectWithMessage(redirectPath, "Selected subcategory does not belong to the chosen main category.");
+      }
+    }
+  }
+
+  if (saveMode === "existing_family_variant") {
+    const existingTemplateId = textValue(formData, "existing_template_id");
+    const variantName = textValue(formData, "variant_name");
+
+    if (!existingTemplateId || !variantName) {
+      redirectWithMessage(redirectPath, "Select a product family and variant label.");
+    }
+
+    const { data: existingTemplate, error: existingTemplateError } = await supabase
+      .from("product_templates")
+      .select("id,template_name,variant_pricing,is_active")
+      .eq("id", existingTemplateId)
+      .maybeSingle<{
+        id: string;
+        template_name: string;
+        variant_pricing: VariantPricingRow[] | null;
+        is_active: boolean;
+      }>();
+
+    if (existingTemplateError || !existingTemplate || !existingTemplate.is_active) {
+      console.error("SAVE QUOTATION ITEM TO EXISTING FAMILY READ ERROR", existingTemplateError?.message);
+      redirectWithMessage(redirectPath, "Selected product family could not be loaded.");
+    }
+
+    const dimension = optionalTextValue(formData, "dimension");
+    const variantRows = Array.isArray(existingTemplate.variant_pricing)
+      ? existingTemplate.variant_pricing
+      : [];
+    const duplicateVariant = variantRows.find((row) => {
+      const sameName =
+        (row.variant_name ?? "").trim().toLowerCase() === variantName.trim().toLowerCase();
+      const sameDimension =
+        (row.dimension ?? "").trim().toLowerCase() === (dimension ?? "").trim().toLowerCase();
+
+      return row.is_active !== false && sameName && sameDimension;
+    });
+
+    if (duplicateVariant) {
+      redirectWithMessage(
+        redirectPath,
+        "A similar variant already exists under the selected product family.",
+      );
+    }
+
+    const variantItemCode = optionalTextValue(formData, "variant_item_code");
+    const variantSpecification = [
+      optionalTextValue(formData, "variant_specification"),
+      variantItemCode ? `Item code: ${variantItemCode}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const manualSourcePricing = manualSourcePricingFromSourceData(quotationItem.source_component_data);
+    const nextVariantRows = [
+      ...variantRows,
+      {
+        id: `variant-${Date.now()}`,
+        variant_name: variantName,
+        dimension,
+        price: numberValue(formData, "variant_price", manualSourcePricing?.price ?? quotationItem.unit_price),
+        currency: normalizeCurrency(
+          textValue(formData, "variant_currency") || manualSourcePricing?.currency || quotationItem.currency || defaultCurrency,
+        ),
+        specification: variantSpecification || undefined,
+        sort_order: variantRows.length,
+        is_active: true,
+      },
+    ];
+
+    const { error: updateTemplateError } = await supabase
+      .from("product_templates")
+      .update({ variant_pricing: nextVariantRows })
+      .eq("id", existingTemplate.id);
+
+    if (updateTemplateError) {
+      console.error("SAVE QUOTATION ITEM TO EXISTING FAMILY UPDATE ERROR", updateTemplateError.message);
+      redirectWithMessage(redirectPath, "Product variant could not be saved to the Product Library.");
+    }
+
+    await createAuditLog(supabase, {
+      entityType: "product_template",
+      entityId: existingTemplate.id,
+      parentEntityType: "quotation",
+      parentEntityId: quotation.id,
+      action: "product_template_variant_created_from_quote",
+      title: "Product variant saved to library from quotation row",
+      description: `${existingTemplate.template_name} / ${variantName}`,
+      actorName: displayName,
+      createdBy: user.id,
+      metadata: {
+        quotationItemId: quotationItem.id,
+        quotationLabel: quotationLabel(quotation.title, quotation.quotation_no),
+      },
+    });
+
+    revalidatePath("/products/templates");
+    revalidatePath(`/quotations/${quotationId}`);
+    revalidatePath(`/quotations/${quotationId}/builder`);
+    redirect(
+      pathWithParams(redirectPath, {
+        message: "Item added under existing product family.",
+        saved_template_id: existingTemplate.id,
+        quote_library_brand_id: null,
+        quote_library_image_notice: null,
+        quote_library_item_id: quotationItem.id,
+        quote_library_main_category_id: null,
+        quote_library_saved_mode: "existing_family_variant",
+        quote_library_sub_category_id: null,
+      }),
+    );
+  }
+
+  const description = optionalTextValue(formData, "description");
+  const defaultSpecification = optionalTextValue(formData, "default_specification");
+  const manualSourcePricing = manualSourcePricingFromSourceData(quotationItem.source_component_data);
+  const requestedTemplateImage = parseProductLibraryImageReference(
+    optionalTextValue(formData, "template_image_url"),
+  );
+  const requestedReferenceImage = parseProductLibraryImageReference(
+    optionalTextValue(formData, "reference_image_url"),
+  );
+  const initialTemplateImageValue =
+    requestedTemplateImage.kind === "direct"
+      ? requestedTemplateImage.value
+      : requestedTemplateImage.kind === "product"
+        ? requestedTemplateImage.path
+        : null;
+  const initialReferenceImageValue =
+    requestedReferenceImage.kind === "direct"
+      ? requestedReferenceImage.value
+      : requestedReferenceImage.kind === "product"
+        ? requestedReferenceImage.path
+        : null;
+  const { data: productTemplate, error: productTemplateError } = await supabase
+    .from("product_templates")
+    .insert({
+      brand_id: brandId,
+      main_category_id: mainCategoryId,
+      sub_category_id: subCategoryId,
+      template_code: optionalTextValue(formData, "template_code"),
+      template_name: templateName,
+      item_code: optionalTextValue(formData, "item_code"),
+      description,
+      default_specification: defaultSpecification,
+      origin: optionalTextValue(formData, "origin"),
+      supplier_name: optionalTextValue(formData, "supplier_name"),
+      default_image_url: initialTemplateImageValue,
+      proposed_image_url_1: initialTemplateImageValue,
+      reference_image_url: initialReferenceImageValue,
+      unit_label: textValue(formData, "unit_label") || quotationItem.unit_label || "Pc",
+      currency: normalizeCurrency(
+        textValue(formData, "currency") || manualSourcePricing?.currency || quotationItem.currency || defaultCurrency,
+      ),
+      default_unit_price: numberValue(
+        formData,
+        "default_unit_price",
+        manualSourcePricing?.price ?? quotationItem.unit_price,
+      ),
+      is_active: true,
+      created_by: user.id,
+    })
+    .select("id,template_name")
+    .single<{ id: string; template_name: string }>();
+
+  if (productTemplateError || !productTemplate) {
+    console.error("SAVE QUOTATION ITEM TO LIBRARY INSERT ERROR", productTemplateError?.message);
+    redirectWithMessage(redirectPath, "Product could not be saved to the Product Library.");
+  }
+
+  let imageNotice: string | null = null;
+  const copiedImagePaths = new Map<string, string | null>();
+  const resolveProductTemplateImage = async (reference: ProductLibraryImageReference) => {
+    if (reference.kind === "empty") return null;
+    if (reference.kind === "direct") return reference.value;
+    if (reference.kind === "product") return reference.path;
+
+    if (copiedImagePaths.has(reference.path)) {
+      return copiedImagePaths.get(reference.path) ?? null;
+    }
+
+    try {
+      const copiedPath = await copyQuoteImageToProductImages({
+        sourcePath: reference.path,
+        supabase,
+        templateId: productTemplate.id,
+      });
+      copiedImagePaths.set(reference.path, copiedPath);
+      return copiedPath;
+    } catch (error) {
+      console.error(
+        "SAVE QUOTATION ITEM TO LIBRARY IMAGE COPY ERROR",
+        error instanceof Error ? error.message : error,
+      );
+      imageNotice = "Image was not copied; please upload product image in Product Library.";
+      copiedImagePaths.set(reference.path, null);
+      return null;
+    }
+  };
+
+  const finalTemplateImageValue = await resolveProductTemplateImage(requestedTemplateImage);
+  const finalReferenceImageValue = await resolveProductTemplateImage(requestedReferenceImage);
+  if (
+    finalTemplateImageValue !== initialTemplateImageValue ||
+    finalReferenceImageValue !== initialReferenceImageValue
+  ) {
+    const { error: imageUpdateError } = await supabase
+      .from("product_templates")
+      .update({
+        default_image_url: finalTemplateImageValue,
+        proposed_image_url_1: finalTemplateImageValue,
+        reference_image_url: finalReferenceImageValue,
+      })
+      .eq("id", productTemplate.id);
+
+    if (imageUpdateError) {
+      console.error("SAVE QUOTATION ITEM TO LIBRARY IMAGE UPDATE ERROR", imageUpdateError.message);
+      imageNotice = "Image was not copied; please upload product image in Product Library.";
+    }
+  }
+
+  await createAuditLog(supabase, {
+    entityType: "product_template",
+    entityId: productTemplate.id,
+    parentEntityType: "quotation",
+    parentEntityId: quotation.id,
+    action: "product_template_created_from_quote",
+    title: "Product saved to library from quotation row",
+    description: productTemplate.template_name,
+    actorName: displayName,
+    createdBy: user.id,
+    metadata: {
+      quotationItemId: quotationItem.id,
+      quotationLabel: quotationLabel(quotation.title, quotation.quotation_no),
+    },
+  });
+
+  revalidatePath("/products/templates");
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(`/quotations/${quotationId}/builder`);
+  redirect(
+    pathWithParams(redirectPath, {
+      message: "Item saved as new product family.",
+      saved_template_id: productTemplate.id,
+      quote_library_brand_id: null,
+      quote_library_image_notice: imageNotice,
+      quote_library_item_id: quotationItem.id,
+      quote_library_main_category_id: null,
+      quote_library_saved_mode: "new_family",
+      quote_library_sub_category_id: null,
+    }),
+  );
+}
+
+export async function createBrandMainCategoryFromQuoteForm(formData: FormData) {
+  const { user } = await requireSettingsManager();
+  const brandId = textValue(formData, "brand_id");
+  const quotationId = textValue(formData, "quotation_id");
+  const quotationItemId = textValue(formData, "quotation_item_id");
+  const name = textValue(formData, "name");
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${quotationItemId}`);
+
+  if (!brandId || !quotationId || !quotationItemId || !name) {
+    redirectWithMessage(redirectPath, "Brand and main category name are required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: brand, error: brandError } = await supabase
+    .from("brands")
+    .select("id")
+    .eq("id", brandId)
+    .eq("is_active", true)
+    .maybeSingle<{ id: string }>();
+
+  if (brandError || !brand) {
+    console.error("QUOTE FORM MAIN CATEGORY BRAND ERROR", brandError?.message);
+    redirectWithMessage(redirectPath, "Select a valid brand before creating a category.");
+  }
+
+  const { data: duplicate, error: duplicateError } = await supabase
+    .from("product_categories")
+    .select("id")
+    .eq("brand_id", brandId)
+    .is("parent_id", null)
+    .ilike("name", name)
+    .limit(1);
+
+  if (duplicateError) {
+    console.error("QUOTE FORM MAIN CATEGORY DUPLICATE ERROR", duplicateError.message);
+    redirectWithMessage(redirectPath, "Main category could not be validated.");
+  }
+
+  if (duplicate?.length) {
+    redirect(
+      pathWithParams(redirectPath, {
+        message: "A main category with that name already exists.",
+        quote_library_brand_id: brandId,
+        quote_library_item_id: quotationItemId,
+      }),
+    );
+  }
+
+  const { data: category, error: insertError } = await supabase
+    .from("product_categories")
+    .insert({
+      brand_id: brandId,
+      parent_id: null,
+      name,
+      is_active: true,
+      sort_order: integerValue(formData, "sort_order", 0),
+      created_by: user.id,
+    })
+    .select("id")
+    .single<{ id: string }>();
+
+  if (insertError || !category) {
+    console.error("QUOTE FORM MAIN CATEGORY CREATE ERROR", insertError?.message);
+    redirectWithMessage(redirectPath, "Main category could not be created.");
+  }
+
+  revalidatePath("/products/templates");
+  revalidatePath("/products/brands");
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(`/quotations/${quotationId}/builder`);
+  redirect(
+    pathWithParams(redirectPath, {
+      message: "Main category created.",
+      quote_library_brand_id: brandId,
+      quote_library_item_id: quotationItemId,
+      quote_library_main_category_id: category.id,
+      quote_library_sub_category_id: null,
+    }),
+  );
+}
+
+export async function createBrandSubcategoryFromQuoteForm(formData: FormData) {
+  const { user } = await requireSettingsManager();
+  const brandId = textValue(formData, "brand_id");
+  const parentId = textValue(formData, "parent_id");
+  const quotationId = textValue(formData, "quotation_id");
+  const quotationItemId = textValue(formData, "quotation_item_id");
+  const name = textValue(formData, "name");
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${quotationItemId}`);
+
+  if (!brandId || !parentId || !quotationId || !quotationItemId || !name) {
+    redirectWithMessage(redirectPath, "Brand, main category, and subcategory name are required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: parentCategory, error: parentError } = await supabase
+    .from("product_categories")
+    .select("id,brand_id,parent_id")
+    .eq("id", parentId)
+    .maybeSingle<{ id: string; brand_id: string; parent_id: string | null }>();
+
+  if (parentError || !parentCategory || parentCategory.brand_id !== brandId || parentCategory.parent_id) {
+    console.error("QUOTE FORM SUBCATEGORY PARENT ERROR", parentError?.message);
+    redirectWithMessage(redirectPath, "Select a valid main category before creating a subcategory.");
+  }
+
+  const { data: duplicate, error: duplicateError } = await supabase
+    .from("product_categories")
+    .select("id")
+    .eq("brand_id", brandId)
+    .eq("parent_id", parentId)
+    .ilike("name", name)
+    .limit(1);
+
+  if (duplicateError) {
+    console.error("QUOTE FORM SUBCATEGORY DUPLICATE ERROR", duplicateError.message);
+    redirectWithMessage(redirectPath, "Subcategory could not be validated.");
+  }
+
+  if (duplicate?.length) {
+    redirect(
+      pathWithParams(redirectPath, {
+        message: "A subcategory with that name already exists.",
+        quote_library_brand_id: brandId,
+        quote_library_item_id: quotationItemId,
+        quote_library_main_category_id: parentId,
+      }),
+    );
+  }
+
+  const { data: category, error: insertError } = await supabase
+    .from("product_categories")
+    .insert({
+      brand_id: brandId,
+      parent_id: parentId,
+      name,
+      is_active: true,
+      sort_order: integerValue(formData, "sort_order", 0),
+      created_by: user.id,
+    })
+    .select("id")
+    .single<{ id: string }>();
+
+  if (insertError || !category) {
+    console.error("QUOTE FORM SUBCATEGORY CREATE ERROR", insertError?.message);
+    redirectWithMessage(redirectPath, "Subcategory could not be created.");
+  }
+
+  revalidatePath("/products/templates");
+  revalidatePath("/products/brands");
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(`/quotations/${quotationId}/builder`);
+  redirect(
+    pathWithParams(redirectPath, {
+      message: "Subcategory created.",
+      quote_library_brand_id: brandId,
+      quote_library_item_id: quotationItemId,
+      quote_library_main_category_id: parentId,
+      quote_library_sub_category_id: category.id,
+    }),
+  );
 }
 
 function actionQuotationId(formData: FormData) {
@@ -2663,6 +3397,7 @@ export async function deactivateQuotationSection(formData: FormData) {
 export async function createQuotationItem(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
   const payload = itemPayload(formData, user.id);
+  payload.currency = "AED";
   const redirectPath = returnPath(formData, `/quotations/${payload.quotation_id}`);
 
   if (!payload.quotation_id) {
@@ -2709,6 +3444,99 @@ export async function createQuotationItem(formData: FormData) {
   revalidatePath(`/quotations/${payload.quotation_id}`);
   revalidatePath(redirectPath);
   redirectWithMessage(redirectPath, "Line item created.");
+}
+
+export async function createBlankQuotationItem(formData: FormData) {
+  const { user, displayName } = await requireRecordsManager();
+  const quotationId = textValue(formData, "quotation_id");
+  const sectionId = optionalTextValue(formData, "section_id");
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
+  const currency = "AED";
+
+  if (!quotationId) {
+    redirectWithMessage("/quotations", "Quotation is required.");
+  }
+
+  if (sectionId && !(await sectionBelongsToQuotation(sectionId, quotationId))) {
+    redirectWithMessage(redirectPath, "Destination section was not found.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const payload = {
+    quotation_id: quotationId,
+    section_id: sectionId,
+    item_type: "custom",
+    manual_serial: null,
+    item_code_snapshot: null,
+    item_name_snapshot: null,
+    specified_image_url_snapshot: null,
+    proposed_image_url_snapshot: null,
+    specification_snapshot: null,
+    finish_selections_snapshot: [],
+    room_name_snapshot: null,
+    model_snapshot: null,
+    finish_snapshot: null,
+    size_snapshot: null,
+    origin_snapshot: null,
+    warranty_snapshot: null,
+    supplier_name_snapshot: null,
+    supplier_notes_snapshot: null,
+    allow_material_continuation_page: false,
+    qty: 1,
+    unit_label: "Pc",
+    unit_price: 0,
+    discount_type: "amount",
+    discount_value: 0,
+    net_price: 0,
+    net_total: 0,
+    currency,
+    sort_order: await nextSortOrder(quotationId, sectionId),
+    is_optional: false,
+    internal_cost: 0,
+    margin_type: "amount",
+    margin_value: 0,
+    is_rate_only: false,
+    line_style: "normal",
+    row_height: null,
+    cell_layout: cellLayoutValue(formData),
+    is_active: true,
+    notes: null,
+    created_by: user.id,
+  };
+
+  const { data: createdItem, error } = await supabase
+    .from("quotation_items")
+    .insert(payload)
+    .select("id,item_name_snapshot")
+    .single<{ id: string; item_name_snapshot: string | null }>();
+
+  if (error || !createdItem) {
+    console.error("BLANK QUOTATION ITEM CREATE ERROR", error?.message);
+    redirectWithMessage(redirectPath, "Blank row could not be created.");
+  }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation_item",
+    entityId: createdItem.id,
+    parentEntityType: "quotation",
+    parentEntityId: quotationId,
+    action: "quotation_item_added",
+    title: "Product added to quotation",
+    description: quotationItemAuditLabel(createdItem.item_name_snapshot),
+    metadata: {
+      itemName: createdItem.item_name_snapshot,
+      source: "blank_manual_row",
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  await recalculateQuotationTotals(quotationId);
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(redirectPath);
+  redirect(pathWithParams(redirectPath, {
+    message: "Blank row added.",
+  }) + `#item-${createdItem.id}`);
 }
 
 export async function addProductTemplateToQuotation(formData: FormData) {
@@ -3414,6 +4242,10 @@ export async function updateQuotationItem(formData: FormData) {
     redirectWithMessage(redirectPath, "Line item could not be loaded.");
   }
 
+  if (!currentItem.source_template_id) {
+    payload.currency = "AED";
+  }
+
   const nextPriceValues = {
     currency: payload.currency,
     discount_value: payload.discount_value,
@@ -3442,6 +4274,139 @@ export async function updateQuotationItem(formData: FormData) {
   revalidatePath(`/quotations/${payload.quotation_id}`);
   revalidatePath(splitRelativePath(redirectPath).pathname);
   redirectWithMessage(redirectPath, "Line item updated.");
+}
+
+export async function applyManualCurrencyConversion(formData: FormData) {
+  const { user, displayName } = await requireRecordsManager();
+  const quotationId = textValue(formData, "quotation_id");
+  const quotationItemId = textValue(formData, "quotation_item_id");
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${quotationItemId}`);
+
+  if (!quotationId || !quotationItemId) {
+    redirectWithMessage("/quotations", "Quotation row is required.");
+  }
+
+  const sourceCurrency = normalizeCurrency(textValue(formData, "source_currency") || defaultCurrency);
+  const sourcePrice = Math.max(numberValue(formData, "source_price", 0), 0);
+  const requestedRate = Math.max(numberValue(formData, "conversion_rate", 0), 0);
+  const conversionRate = sourceCurrency === "AED" ? 1 : requestedRate;
+
+  if (!manualConversionCurrencies.has(sourceCurrency)) {
+    redirectWithMessage(redirectPath, "Select a valid source currency.");
+  }
+
+  if (sourcePrice <= 0) {
+    redirectWithMessage(redirectPath, "Enter a valid source price.");
+  }
+
+  if (sourceCurrency !== "AED" && conversionRate <= 0) {
+    redirectWithMessage(redirectPath, "Enter a valid conversion rate to AED.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: currentItem, error: readError } = await supabase
+    .from("quotation_items")
+    .select("id,quotation_id,item_type,source_template_id,source_component_data,item_name_snapshot,qty,unit_price,currency,discount_type,discount_value,net_price,net_total,is_active")
+    .eq("id", quotationItemId)
+    .eq("quotation_id", quotationId)
+    .single<{
+      id: string;
+      quotation_id: string;
+      item_type: string;
+      source_template_id: string | null;
+      source_component_data: unknown;
+      item_name_snapshot: string | null;
+      qty: number;
+      unit_price: number;
+      currency: string;
+      discount_type: string;
+      discount_value: number;
+      net_price: number;
+      net_total: number;
+      is_active: boolean;
+    }>();
+
+  if (readError || !currentItem || !currentItem.is_active) {
+    console.error("MANUAL CURRENCY CONVERSION READ ERROR", readError?.message);
+    redirectWithMessage(redirectPath, "Quotation row could not be loaded.");
+  }
+
+  if (currentItem.source_template_id || !["product", "custom"].includes(currentItem.item_type)) {
+    redirectWithMessage(redirectPath, "Manual currency conversion is available for manual quotation rows only.");
+  }
+
+  const convertedUnitPrice = quotationMoneyValue(sourcePrice * conversionRate);
+  const linePricing = roundedLinePricing(
+    convertedUnitPrice,
+    currentItem.discount_type,
+    currentItem.discount_value,
+    currentItem.qty,
+  );
+  const nextSourceComponentData = manualConversionSourceComponentData({
+    convertedPrice: linePricing.unitPrice,
+    conversionRate,
+    currentSourceData: currentItem.source_component_data,
+    sourceCurrency,
+    sourcePrice,
+  });
+  const nextPriceValues = {
+    currency: "AED",
+    discount_value: linePricing.discountValue,
+    net_price: linePricing.netPrice,
+    net_total: linePricing.netTotal,
+    unit_price: linePricing.unitPrice,
+  };
+
+  const { error: updateError } = await supabase
+    .from("quotation_items")
+    .update({
+      currency: "AED",
+      discount_value: linePricing.discountValue,
+      net_price: linePricing.netPrice,
+      net_total: linePricing.netTotal,
+      source_component_data: nextSourceComponentData,
+      unit_price: linePricing.unitPrice,
+    })
+    .eq("id", quotationItemId);
+
+  if (updateError) {
+    console.error("MANUAL CURRENCY CONVERSION UPDATE ERROR", updateError.message);
+    redirectWithMessage(redirectPath, "Manual currency conversion could not be applied.");
+  }
+
+  await insertQuotationItemPriceHistory({
+    changeType: "other",
+    changedBy: user.id,
+    actorName: displayName,
+    current: currentItem,
+    newValues: nextPriceValues,
+    note: `Converted manual source price ${sourceCurrency} ${preciseDecimalValue(sourcePrice, 2)} to AED using rate ${preciseDecimalValue(conversionRate, 4)}.`,
+    supabase,
+  });
+
+  await recalculateQuotationTotals(quotationId);
+  await createAuditLog(supabase, {
+    entityType: "quotation_item",
+    entityId: quotationItemId,
+    parentEntityType: "quotation",
+    parentEntityId: quotationId,
+    action: "manual_currency_converted",
+    title: "Manual row currency converted",
+    description: `${quotationItemAuditLabel(currentItem.item_name_snapshot)} - ${sourceCurrency} ${quotationMoneyValue(sourcePrice)} -> AED ${linePricing.unitPrice}`,
+    metadata: {
+      manual_conversion_rate: preciseDecimalValue(conversionRate, 4),
+      manual_converted_currency: "AED",
+      manual_converted_price: linePricing.unitPrice,
+      manual_source_currency: sourceCurrency,
+      manual_source_price: preciseDecimalValue(sourcePrice, 2),
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(splitRelativePath(redirectPath).pathname);
+  redirectWithMessage(redirectPath, "Manual currency conversion applied.");
 }
 
 export async function updateQuotationItemInline(formData: FormData) {

@@ -4,6 +4,11 @@ import { useEffect } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 
 type StoredUiState = {
+  activeElement: {
+    id: string;
+    name: string;
+    stateKey: string;
+  } | null;
   anchorId: string | null;
   openDetails: string[];
   scrollX: number;
@@ -51,6 +56,34 @@ function captureOpenDetails() {
   return Array.from(document.querySelectorAll<HTMLDetailsElement>("details[open]"))
     .map((element) => element.dataset.stateKey || element.id || null)
     .filter((value): value is string => Boolean(value));
+}
+
+function captureActiveElement() {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return null;
+
+  return {
+    id: active.id || "",
+    name: active.getAttribute("name") || "",
+    stateKey: active.dataset?.stateKey || "",
+  };
+}
+
+function sanitizeStoredUiState(state: StoredUiState): StoredUiState {
+  return {
+    activeElement: state.activeElement
+      ? {
+          id: String(state.activeElement.id || ""),
+          name: String(state.activeElement.name || ""),
+          stateKey: String(state.activeElement.stateKey || ""),
+        }
+      : null,
+    anchorId: state.anchorId ? String(state.anchorId) : null,
+    openDetails: state.openDetails.map((value) => String(value)),
+    savedAt: Number.isFinite(state.savedAt) ? state.savedAt : Date.now(),
+    scrollX: Number.isFinite(state.scrollX) ? state.scrollX : 0,
+    scrollY: Number.isFinite(state.scrollY) ? state.scrollY : 0,
+  };
 }
 
 function readStoredUiState(keys: string[]) {
@@ -162,6 +195,7 @@ export function PreserveUiState() {
       if (method === "get" || method === "dialog") return;
 
       const state: StoredUiState = {
+        activeElement: captureActiveElement(),
         anchorId: resolveAnchorId(submitter || form),
         openDetails: captureOpenDetails(),
         scrollX: window.scrollX,
@@ -171,9 +205,14 @@ export function PreserveUiState() {
 
       const exactKey = exactStorageKey(pathname, normalized);
       const pathKey = pathStorageKey(pathname);
+      const safeState = sanitizeStoredUiState(state);
 
-      sessionStorage.setItem(exactKey, JSON.stringify(state));
-      sessionStorage.setItem(pathKey, JSON.stringify(state));
+      try {
+        sessionStorage.setItem(exactKey, JSON.stringify(safeState));
+        sessionStorage.setItem(pathKey, JSON.stringify(safeState));
+      } catch (error) {
+        console.warn("Could not preserve UI state", error);
+      }
     };
 
     document.addEventListener("submit", handleSubmit, true);

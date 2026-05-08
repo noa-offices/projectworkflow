@@ -36,9 +36,11 @@ import {
   CopyQuotationRowButton,
   PasteQuotationRowControls,
 } from "@/components/quotations/quotation-row-clipboard";
+import { ManualCurrencyConversionPanel } from "@/components/quotations/manual-currency-conversion-panel";
+import { SaveRowToProductLibraryPanel as SaveRowToProductLibraryPanelClient } from "@/components/quotations/save-row-to-product-library-panel";
 import { RowHeightTextarea } from "@/components/quotations/row-height-textarea";
 import { requireActiveUser } from "@/lib/auth";
-import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import {
   formatQuotationDisplayNo,
   quotationOptionLabel,
@@ -47,6 +49,7 @@ import {
 import { formatQuotationMoney, quotationMoneyCell, quotationMoneyValue } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
+  createBlankQuotationItem,
   createQuotationItem,
   createQuotationSection,
   deactivateQuotationItem,
@@ -70,6 +73,7 @@ type BuilderPageProps = {
   params: Promise<{ id: string }>;
   searchParams?: Promise<{
     message?: string;
+    saved_template_id?: string;
     undo_item_id?: string;
     undo_kind?: string;
     undo_section_id?: string;
@@ -759,6 +763,22 @@ function optionalNumericValue(value: unknown) {
   return null;
 }
 
+function preciseDecimalValue(value: unknown, precision = 4) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+
+  const factor = 10 ** precision;
+  return Math.round(number * factor) / factor;
+}
+
+function formatSourceMoney(currency: string | null | undefined, value: unknown) {
+  const amount = preciseDecimalValue(value, 2);
+  return formatMoney(currency, amount, {
+    minimumFractionDigits: Number.isInteger(amount) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 function sourceTypeLabel(sourceType: string | null) {
   const labels: Record<string, string> = {
     add_ons: "Add-ons",
@@ -811,6 +831,11 @@ function sourcePriceReferenceForItem({
   const sourceData = recordValue(item.source_component_data);
   const storedReference = recordValue(sourceData?.source_price_reference);
   const conversionData = recordValue(sourceData?.currency_conversion);
+  const manualSourcePrice = optionalNumericValue(sourceData?.manual_source_price);
+  const manualSourceCurrency = stringValue(sourceData?.manual_source_currency);
+  const manualConversionRate = optionalNumericValue(sourceData?.manual_conversion_rate);
+  const manualConvertedPrice = optionalNumericValue(sourceData?.manual_converted_price);
+  const manualConvertedCurrency = stringValue(sourceData?.manual_converted_currency);
   const sourceName = [
     item.brand_name_snapshot ?? stringValue(sourceData?.brand_name),
     template?.template_name ?? stringValue(sourceData?.template_name) ?? item.item_name_snapshot,
@@ -823,6 +848,8 @@ function sourcePriceReferenceForItem({
     convertedCurrency: normalizeCurrency(stringValue(storedReference?.quotation_currency) ?? quotationCurrency),
     currentSourceCurrency: null as string | null,
     currentSourcePrice: null as number | null,
+    isManualConversion: false,
+    manualConversionRate: null as number | null,
     originalCurrency: null as string | null,
     originalPrice: null as number | null,
     sourceLabel: storedReference ? sourceLabelFromReference(storedReference) : null,
@@ -837,6 +864,19 @@ function sourcePriceReferenceForItem({
     if (originalPrice !== null && originalCurrency) {
       reference.originalPrice = quotationMoneyValue(originalPrice);
       reference.originalCurrency = normalizeCurrency(originalCurrency);
+    }
+  }
+
+  if (manualSourcePrice !== null && manualSourceCurrency) {
+    reference.isManualConversion = true;
+    reference.originalPrice = preciseDecimalValue(manualSourcePrice, 2);
+    reference.originalCurrency = normalizeCurrency(manualSourceCurrency);
+    reference.manualConversionRate = manualConversionRate !== null ? preciseDecimalValue(manualConversionRate, 4) : null;
+    reference.sourceType = "Manual currency conversion";
+    reference.sourceLabel = reference.sourceLabel ?? "Manual row";
+    if (manualConvertedPrice !== null) {
+      reference.convertedPrice = quotationMoneyValue(manualConvertedPrice);
+      reference.convertedCurrency = normalizeCurrency(manualConvertedCurrency ?? "AED");
     }
   }
 
@@ -903,6 +943,35 @@ function sourcePriceReferenceForItem({
   return reference;
 }
 
+function manualConversionDefaults(item?: QuotationItem) {
+  const sourceData = recordValue(item?.source_component_data);
+  const storedSourcePrice = optionalNumericValue(sourceData?.manual_source_price);
+  const storedSourceCurrency = stringValue(sourceData?.manual_source_currency);
+  const storedRate = optionalNumericValue(sourceData?.manual_conversion_rate);
+  const itemCurrency = normalizeCurrency(item?.currency ?? defaultCurrency);
+
+  return {
+    conversionRate: preciseDecimalValue(storedRate ?? (itemCurrency === "AED" ? 1 : 0), 4),
+    hasStoredConversion: storedSourcePrice !== null && Boolean(storedSourceCurrency),
+    sourceCurrency: normalizeCurrency(storedSourceCurrency ?? itemCurrency),
+    sourcePrice: preciseDecimalValue(storedSourcePrice ?? item?.unit_price ?? 0, 2),
+  };
+}
+
+function manualLibrarySourceDefaults(item?: QuotationItem) {
+  const manualDefaults = manualConversionDefaults(item);
+
+  return manualDefaults.hasStoredConversion
+    ? {
+        currency: manualDefaults.sourceCurrency,
+        price: manualDefaults.sourcePrice,
+      }
+    : {
+        currency: normalizeCurrency(item?.currency ?? defaultCurrency),
+        price: quotationMoneyValue(item?.unit_price ?? 0),
+      };
+}
+
 function SourceLibraryPriceReference({
   components,
   item,
@@ -925,6 +994,7 @@ function SourceLibraryPriceReference({
   const hasSourceReference =
     reference.originalPrice !== null ||
     reference.currentSourcePrice !== null ||
+    reference.manualConversionRate !== null ||
     Boolean(reference.sourceName || reference.sourceType || reference.sourceLabel);
 
   return (
@@ -933,21 +1003,34 @@ function SourceLibraryPriceReference({
       {hasSourceReference ? (
         <div className="grid gap-2 text-xs md:grid-cols-2 xl:grid-cols-3">
           <div>
-            <p className="text-[10px] font-semibold uppercase text-zinc-500">Original library price</p>
+            <p className="text-[10px] font-semibold uppercase text-zinc-500">
+              {reference.isManualConversion ? "Original manual source price" : "Original library price"}
+            </p>
             <p className="font-semibold text-zinc-900">
               {reference.originalPrice !== null && reference.originalCurrency
-                ? formatQuotationMoney(reference.originalCurrency, reference.originalPrice)
+                ? (reference.isManualConversion
+                    ? formatSourceMoney(reference.originalCurrency, reference.originalPrice)
+                    : formatQuotationMoney(reference.originalCurrency, reference.originalPrice))
                 : "Not available for this row"}
             </p>
           </div>
-          <div>
-            <p className="text-[10px] font-semibold uppercase text-zinc-500">Current source price</p>
-            <p className="font-semibold text-zinc-900">
-              {reference.currentSourcePrice !== null && reference.currentSourceCurrency
-                ? formatQuotationMoney(reference.currentSourceCurrency, reference.currentSourcePrice)
-                : "Not available for this row"}
-            </p>
-          </div>
+          {reference.isManualConversion ? (
+            <div>
+              <p className="text-[10px] font-semibold uppercase text-zinc-500">Conversion rate</p>
+              <p className="font-semibold text-zinc-900">
+                {reference.manualConversionRate !== null ? reference.manualConversionRate.toFixed(2) : "Not available for this row"}
+              </p>
+            </div>
+          ) : (
+            <div>
+              <p className="text-[10px] font-semibold uppercase text-zinc-500">Current source price</p>
+              <p className="font-semibold text-zinc-900">
+                {reference.currentSourcePrice !== null && reference.currentSourceCurrency
+                  ? formatQuotationMoney(reference.currentSourceCurrency, reference.currentSourcePrice)
+                  : "Not available for this row"}
+              </p>
+            </div>
+          )}
           <div>
             <p className="text-[10px] font-semibold uppercase text-zinc-500">Quotation row price</p>
             <p className="font-semibold text-zinc-900">
@@ -1212,16 +1295,26 @@ function TextArea({
   );
 }
 
-function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
+function CurrencySelect({
+  defaultValue,
+  label = "Currency",
+  name = "currency",
+  options = supportedCurrencies,
+}: {
+  defaultValue?: string | null;
+  label?: string;
+  name?: string;
+  options?: ReadonlyArray<{ code: string; label: string }>;
+}) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Currency</span>
+      <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">{label}</span>
       <select
-        name="currency"
+        name={name}
         defaultValue={normalizeCurrency(defaultValue ?? defaultCurrency)}
         className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20"
       >
-        {supportedCurrencies.map((currency) => (
+        {options.map((currency) => (
           <option key={currency.code} value={currency.code}>
             {currency.label}
           </option>
@@ -1674,9 +1767,100 @@ function MaterialsFinishesEditor({
   );
 }
 
+function manualRowLibraryDescription(item?: QuotationItem) {
+  return [
+    item?.model_snapshot,
+    item?.size_snapshot,
+    item?.finish_snapshot,
+    item?.notes,
+  ]
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function manualRowVariantSpecification(item?: QuotationItem) {
+  return [
+    item?.specification_snapshot,
+    item?.item_code_snapshot ? `Item code: ${item.item_code_snapshot}` : null,
+    item?.origin_snapshot ? `Origin: ${item.origin_snapshot}` : null,
+    item?.supplier_name_snapshot ? `Supplier: ${item.supplier_name_snapshot}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function canSaveRowToProductLibrary(item?: QuotationItem) {
+  if (!item) return false;
+  if (item.source_template_id) return false;
+  if (["note", "blank", "subtotal"].includes(item.item_type)) return false;
+  if (["heading", "note", "no_quote"].includes(item.line_style)) return false;
+
+  return true;
+}
+
+function SaveRowToProductLibraryPanel({
+  canManageProductLibrary,
+  item,
+  productBrands,
+  productCategories,
+  productTemplates,
+  quotationId,
+  returnTo,
+}: {
+  canManageProductLibrary: boolean;
+  item?: QuotationItem;
+  productBrands: ProductLibraryBrand[];
+  productCategories: ProductLibraryCategory[];
+  productTemplates: ProductLibraryTemplate[];
+  quotationId: string;
+  returnTo: string;
+}) {
+  if (!canSaveRowToProductLibrary(item)) return null;
+  if (!item) return null;
+
+  const matchingBrand = productBrands.find(
+    (brand) =>
+      brand.name.trim().toLowerCase() ===
+      (item?.brand_name_snapshot ?? "").trim().toLowerCase(),
+  );
+  const librarySourceDefaults = manualLibrarySourceDefaults(item);
+
+  return (
+    <SaveRowToProductLibraryPanelClient
+      canManageProductLibrary={canManageProductLibrary}
+      defaultBrandId={matchingBrand?.id ?? ""}
+      defaultCurrency={librarySourceDefaults.currency}
+      defaultPrice={librarySourceDefaults.price}
+      descriptionDefault={manualRowLibraryDescription(item)}
+      item={{
+        id: item.id,
+        item_code_snapshot: item.item_code_snapshot,
+        item_name_snapshot: item.item_name_snapshot,
+        model_snapshot: item.model_snapshot,
+        origin_snapshot: item.origin_snapshot,
+        proposed_image_url_snapshot: item.proposed_image_url_snapshot,
+        size_snapshot: item.size_snapshot,
+        specification_snapshot: item.specification_snapshot,
+        specified_image_url_snapshot: item.specified_image_url_snapshot,
+        supplier_name_snapshot: item.supplier_name_snapshot,
+        unit_label: item.unit_label,
+      }}
+      productBrands={productBrands}
+      productCategories={productCategories}
+      productTemplates={productTemplates}
+      quotationId={quotationId}
+      returnTo={returnTo}
+      variantSpecificationDefault={manualRowVariantSpecification(item)}
+    />
+  );
+}
+
 function LineForm({
   brands,
+  canManageProductLibrary,
   components,
+  productBrands,
+  productCategories,
   priceHistory,
   quotation,
   returnTo,
@@ -1690,7 +1874,10 @@ function LineForm({
   templateMaterialGroups,
 }: {
   brands: FinishMaterialBrand[];
+  canManageProductLibrary: boolean;
   components: ProductLibraryComponent[];
+  productBrands: ProductLibraryBrand[];
+  productCategories: ProductLibraryCategory[];
   priceHistory: QuotationItemPriceHistoryEntry[];
   quotation: Quotation;
   returnTo: string;
@@ -1703,146 +1890,197 @@ function LineForm({
   templateMaterialGroupItems: ProductTemplateMaterialGroupItemLink[];
   templateMaterialGroups: ProductTemplateMaterialGroupLink[];
 }) {
+  const manualConversion = manualConversionDefaults(item);
+  const isManualRow = Boolean(item && !item.source_template_id);
+  const manualItem = isManualRow ? item : undefined;
+
   return (
-    <form
-      action={item ? updateQuotationItem : createQuotationItem}
-      className="space-y-3"
-    >
-      {item ? <input type="hidden" name="id" value={item.id} /> : null}
-      <input type="hidden" name="quotation_id" value={quotation.id} />
-      <input type="hidden" name="section_id" value={sectionId ?? item?.section_id ?? ""} />
-      <input type="hidden" name="item_type" value={item?.item_type ?? "custom"} />
-      <input type="hidden" name="is_active" value="on" />
-      <input type="hidden" name="return_to" value={returnTo} />
-      {item ? (
-        <>
-          <CellStyleInputs item={item} cellKey="specification" />
-          <CellStyleInputs item={item} cellKey="full_row" fallbackAlign={item.line_style === "heading" ? "center" : "left"} />
-        </>
-      ) : null}
-      {item?.is_optional ? <input type="hidden" name="is_optional" value="on" /> : null}
-      {!showInternal && item ? (
-        <>
-          <input type="hidden" name="supplier_notes_snapshot" value={item.supplier_notes_snapshot ?? ""} />
-          <input type="hidden" name="internal_cost" value={item.internal_cost} />
-          <input type="hidden" name="margin_type" value={item.margin_type} />
-          <input type="hidden" name="margin_value" value={item.margin_value} />
-          <input type="hidden" name="notes" value={item.notes ?? ""} />
-        </>
+    <>
+      {manualItem ? (
+        <ManualCurrencyConversionPanel
+          hasStoredConversion={manualConversion.hasStoredConversion}
+          itemCurrency={manualItem.currency}
+          itemId={manualItem.id}
+          quotationId={quotation.id}
+          returnTo={returnTo}
+          sourceCurrencyDefault={manualConversion.sourceCurrency}
+          sourcePriceDefault={manualConversion.sourcePrice}
+          conversionRateDefault={manualConversion.conversionRate}
+        />
       ) : null}
 
-      <fieldset className="border border-zinc-300 bg-white p-3">
-        <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Basic</legend>
-        <div className="grid gap-2 md:grid-cols-6">
-          <Field name="manual_serial" label="Manual S.No." defaultValue={item?.manual_serial} />
-          <Field name="item_code_snapshot" label="Code" defaultValue={item?.item_code_snapshot} />
-          <Field name="item_name_snapshot" label="Item / Model Name" defaultValue={item?.item_name_snapshot} className="md:col-span-2" />
-          <Field name="qty" label="Qty" type="number" step="1" defaultValue={item?.qty ?? 1} />
-          <Field name="unit_label" label="Unit" defaultValue={item?.unit_label ?? "Pc"} />
-          <Field name="unit_price" label="U.Price" type="number" defaultValue={item?.unit_price ?? 0} />
-          <CurrencySelect defaultValue={item?.currency ?? quotation.currency} />
-          <label className="block">
-            <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Discount type</span>
-            <select name="discount_type" defaultValue={item?.discount_type ?? "amount"} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20">
-              <option value="amount">Amount</option>
-              <option value="percent">Percent</option>
-            </select>
-          </label>
-          <Field name="discount_value" label="Discount" type="number" defaultValue={item?.discount_value ?? 0} />
-          <label className="block">
-            <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Line style</span>
-            <select name="line_style" defaultValue={item?.line_style ?? "normal"} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20">
-              {lineStyles.map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
-          </label>
-          <Field name="sort_order" label="Sort" type="number" defaultValue={item?.sort_order ?? 0} />
-          <Field name="row_height" label="Row height" type="number" defaultValue={item?.row_height} />
-          <MergeModeSelect item={item} />
-          <p className="self-end pb-2 text-[11px] text-zinc-500 md:col-span-3">
-            Item / Model Name is the main visible title at the top of the Specification cell.
-          </p>
-          <label className="flex items-end gap-2 text-xs font-semibold text-zinc-600">
-            <input type="checkbox" name="is_rate_only" defaultChecked={item?.is_rate_only ?? false} className="mb-2 h-4 w-4 rounded border-zinc-300" />
-            <span className="pb-2">Rate only</span>
-          </label>
-        </div>
-      </fieldset>
+      <form
+        action={item ? updateQuotationItem : createQuotationItem}
+        className="space-y-3"
+      >
+        {item ? <input type="hidden" name="id" value={item.id} /> : null}
+        <input type="hidden" name="quotation_id" value={quotation.id} />
+        <input type="hidden" name="section_id" value={sectionId ?? item?.section_id ?? ""} />
+        <input type="hidden" name="item_type" value={item?.item_type ?? "custom"} />
+        <input type="hidden" name="is_active" value="on" />
+        <input type="hidden" name="return_to" value={returnTo} />
+        {item ? (
+          <>
+            <CellStyleInputs item={item} cellKey="specification" />
+            <CellStyleInputs item={item} cellKey="full_row" fallbackAlign={item.line_style === "heading" ? "center" : "left"} />
+          </>
+        ) : null}
+        {item?.is_optional ? <input type="hidden" name="is_optional" value="on" /> : null}
+        {!showInternal && item ? (
+          <>
+            <input type="hidden" name="supplier_notes_snapshot" value={item.supplier_notes_snapshot ?? ""} />
+            <input type="hidden" name="internal_cost" value={item.internal_cost} />
+            <input type="hidden" name="margin_type" value={item.margin_type} />
+            <input type="hidden" name="margin_value" value={item.margin_value} />
+            <input type="hidden" name="notes" value={item.notes ?? ""} />
+          </>
+        ) : null}
 
-      <SourceLibraryPriceReference
-        components={components}
-        item={item}
-        productTemplates={productTemplates}
-      />
-
-      {showInternal ? <PriceChangeHistory history={priceHistory} /> : null}
-
-      <fieldset className="border border-zinc-300 bg-white p-3">
-        <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Specification</legend>
-        <div className="grid gap-2 md:grid-cols-6">
-          <TextArea name="specification_snapshot" label="Specification" defaultValue={item?.specification_snapshot} className="md:col-span-6" />
-          <p className="text-[11px] text-zinc-500 md:col-span-6">
-            Description appears below the main title and keeps text wrapping in the row.
-          </p>
-        </div>
-      </fieldset>
-
-      <fieldset className="border border-zinc-300 bg-white p-3">
-        <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Product details</legend>
-        <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
-          <Field name="room_name_snapshot" label="Room" defaultValue={item?.room_name_snapshot} />
-          <Field name="model_snapshot" label="Model code / alternate model" defaultValue={item?.model_snapshot} />
-          <Field name="size_snapshot" label="Dimension" defaultValue={item?.size_snapshot} />
-          <Field name="finish_snapshot" label="Finish" defaultValue={item?.finish_snapshot} />
-          <Field name="origin_snapshot" label="Origin" defaultValue={item?.origin_snapshot} />
-          <Field name="warranty_snapshot" label="Warranty" defaultValue={item?.warranty_snapshot} />
-          <Field name="supplier_name_snapshot" label="Supplier" defaultValue={item?.supplier_name_snapshot} />
-        </div>
-      </fieldset>
-
-      <fieldset className="border border-zinc-300 bg-white p-3">
-        <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Images</legend>
-        <div className="grid gap-2 md:grid-cols-2">
-          <Field name="specified_image_url_snapshot" label="Specified Image URL" defaultValue={item?.specified_image_url_snapshot} />
-          <Field name="proposed_image_url_snapshot" label="Proposed / Reference Image URL" defaultValue={item?.proposed_image_url_snapshot} />
-        </div>
-      </fieldset>
-
-      <MaterialsFinishesEditor
-        brands={brands}
-        item={item}
-        materialGroups={materialGroups}
-        materials={materials}
-        productTemplates={productTemplates}
-        quotationId={quotation.id}
-        templateMaterialGroupItems={templateMaterialGroupItems}
-        templateMaterialGroups={templateMaterialGroups}
-      />
-
-      {showInternal ? (
         <fieldset className="border border-zinc-300 bg-white p-3">
-          <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Internal</legend>
-          <div className="grid gap-2 md:grid-cols-4">
-            <Field name="internal_cost" label="Internal Cost" type="number" defaultValue={item?.internal_cost ?? 0} />
+          <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Basic</legend>
+          <div className="grid gap-2 md:grid-cols-6">
+            <Field name="manual_serial" label="Manual S.No." defaultValue={item?.manual_serial} />
+            <Field name="item_code_snapshot" label="Code" defaultValue={item?.item_code_snapshot} />
+            <Field name="item_name_snapshot" label="Item / Model Name" defaultValue={item?.item_name_snapshot} className="md:col-span-2" />
+            <Field name="qty" label="Qty" type="number" step="1" defaultValue={item?.qty ?? 1} />
+            <Field name="unit_label" label="Unit" defaultValue={item?.unit_label ?? "Pc"} />
+            <Field
+              name="unit_price"
+              label={isManualRow ? "Quotation U.Price" : "U.Price"}
+              type="number"
+              defaultValue={item?.unit_price ?? 0}
+            />
+            {isManualRow ? (
+              <>
+                <input type="hidden" name="currency" value="AED" />
+                <CurrencySelect
+                  defaultValue="AED"
+                  label="Quotation Currency"
+                  options={[{ code: "AED", label: "AED" }]}
+                />
+              </>
+            ) : (
+              <CurrencySelect defaultValue={item?.currency ?? quotation.currency} />
+            )}
             <label className="block">
-              <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Margin type</span>
-              <select name="margin_type" defaultValue={item?.margin_type ?? "amount"} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20">
+              <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Discount type</span>
+              <select name="discount_type" defaultValue={item?.discount_type ?? "amount"} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20">
                 <option value="amount">Amount</option>
                 <option value="percent">Percent</option>
               </select>
             </label>
-            <Field name="margin_value" label="Margin" type="number" defaultValue={item?.margin_value ?? 0} />
-            <TextArea name="supplier_notes_snapshot" label="Supplier Notes" defaultValue={item?.supplier_notes_snapshot} className="md:col-span-2" />
-            <TextArea name="notes" label="Internal Notes" defaultValue={item?.notes} className="md:col-span-2" />
+            <Field name="discount_value" label="Discount" type="number" defaultValue={item?.discount_value ?? 0} />
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Line style</span>
+              <select name="line_style" defaultValue={item?.line_style ?? "normal"} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20">
+                {lineStyles.map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <Field name="sort_order" label="Sort" type="number" defaultValue={item?.sort_order ?? 0} />
+            <Field name="row_height" label="Row height" type="number" defaultValue={item?.row_height} />
+            <MergeModeSelect item={item} />
+            {isManualRow ? (
+              <p className="self-end pb-2 text-[11px] text-zinc-500 md:col-span-3">
+                Quotation pricing always uses AED for manual rows. Use the manual source price / conversion section for EUR or USD supplier pricing.
+              </p>
+            ) : (
+              <p className="self-end pb-2 text-[11px] text-zinc-500 md:col-span-3">
+                Item / Model Name is the main visible title at the top of the Specification cell.
+              </p>
+            )}
+            <label className="flex items-end gap-2 text-xs font-semibold text-zinc-600">
+              <input type="checkbox" name="is_rate_only" defaultChecked={item?.is_rate_only ?? false} className="mb-2 h-4 w-4 rounded border-zinc-300" />
+              <span className="pb-2">Rate only</span>
+            </label>
           </div>
         </fieldset>
-      ) : null}
 
-      <div className="flex justify-end">
-        <SubmitButton label={item ? "Save line" : "Add line"} />
-      </div>
-    </form>
+        <SourceLibraryPriceReference
+          components={components}
+          item={item}
+          productTemplates={productTemplates}
+        />
+
+        {showInternal ? <PriceChangeHistory history={priceHistory} /> : null}
+
+        <fieldset className="border border-zinc-300 bg-white p-3">
+          <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Specification</legend>
+          <div className="grid gap-2 md:grid-cols-6">
+            <TextArea name="specification_snapshot" label="Specification" defaultValue={item?.specification_snapshot} className="md:col-span-6" />
+            <p className="text-[11px] text-zinc-500 md:col-span-6">
+              Description appears below the main title and keeps text wrapping in the row.
+            </p>
+          </div>
+        </fieldset>
+
+        <fieldset className="border border-zinc-300 bg-white p-3">
+          <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Product details</legend>
+          <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+            <Field name="room_name_snapshot" label="Room" defaultValue={item?.room_name_snapshot} />
+            <Field name="model_snapshot" label="Model code / alternate model" defaultValue={item?.model_snapshot} />
+            <Field name="size_snapshot" label="Dimension" defaultValue={item?.size_snapshot} />
+            <Field name="finish_snapshot" label="Finish" defaultValue={item?.finish_snapshot} />
+            <Field name="origin_snapshot" label="Origin" defaultValue={item?.origin_snapshot} />
+            <Field name="warranty_snapshot" label="Warranty" defaultValue={item?.warranty_snapshot} />
+            <Field name="supplier_name_snapshot" label="Supplier" defaultValue={item?.supplier_name_snapshot} />
+          </div>
+        </fieldset>
+
+        <fieldset className="border border-zinc-300 bg-white p-3">
+          <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Images</legend>
+          <div className="grid gap-2 md:grid-cols-2">
+            <Field name="specified_image_url_snapshot" label="Specified Image URL" defaultValue={item?.specified_image_url_snapshot} />
+            <Field name="proposed_image_url_snapshot" label="Proposed / Reference Image URL" defaultValue={item?.proposed_image_url_snapshot} />
+          </div>
+        </fieldset>
+
+        <MaterialsFinishesEditor
+          brands={brands}
+          item={item}
+          materialGroups={materialGroups}
+          materials={materials}
+          productTemplates={productTemplates}
+          quotationId={quotation.id}
+          templateMaterialGroupItems={templateMaterialGroupItems}
+          templateMaterialGroups={templateMaterialGroups}
+        />
+
+        {showInternal ? (
+          <fieldset className="border border-zinc-300 bg-white p-3">
+            <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Internal</legend>
+            <div className="grid gap-2 md:grid-cols-4">
+              <Field name="internal_cost" label="Internal Cost" type="number" defaultValue={item?.internal_cost ?? 0} />
+              <label className="block">
+                <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Margin type</span>
+                <select name="margin_type" defaultValue={item?.margin_type ?? "amount"} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20">
+                  <option value="amount">Amount</option>
+                  <option value="percent">Percent</option>
+                </select>
+              </label>
+              <Field name="margin_value" label="Margin" type="number" defaultValue={item?.margin_value ?? 0} />
+              <TextArea name="supplier_notes_snapshot" label="Supplier Notes" defaultValue={item?.supplier_notes_snapshot} className="md:col-span-2" />
+              <TextArea name="notes" label="Internal Notes" defaultValue={item?.notes} className="md:col-span-2" />
+            </div>
+          </fieldset>
+        ) : null}
+
+        <div className="flex justify-end">
+          <SubmitButton label={item ? "Save line" : "Add line"} />
+        </div>
+      </form>
+
+      <SaveRowToProductLibraryPanel
+        canManageProductLibrary={canManageProductLibrary}
+        item={item}
+        productBrands={productBrands}
+        productCategories={productCategories}
+        productTemplates={productTemplates}
+        quotationId={quotation.id}
+        returnTo={returnTo}
+      />
+    </>
   );
 }
 
@@ -1901,7 +2139,6 @@ function RowActionPanel({
   quotation,
   returnTo,
   sectionId,
-  showInternal,
   templateMaterialGroupItems,
   templateMaterialGroups,
 }: {
@@ -1915,7 +2152,6 @@ function RowActionPanel({
   quotation: Quotation;
   returnTo: string;
   sectionId: string;
-  showInternal: boolean;
   templateMaterialGroupItems: ProductTemplateMaterialGroupItemLink[];
   templateMaterialGroups: ProductTemplateMaterialGroupLink[];
 }) {
@@ -1939,25 +2175,18 @@ function RowActionPanel({
           templateMaterialGroups={templateMaterialGroups}
           templates={productTemplates}
         />
-        <details>
-          <summary className={summaryClass}>+ Item Row</summary>
-          <div className="mt-3 w-[min(1080px,calc(100vw-4rem))] border border-zinc-300 bg-white p-3">
-            <LineForm
-              brands={brands}
-              components={components}
-              priceHistory={[]}
-              materialGroups={materialGroups}
-              materials={materials}
-              productTemplates={productTemplates}
-              quotation={quotation}
-              returnTo={returnTo}
-              sectionId={sectionId}
-              showInternal={showInternal}
-              templateMaterialGroupItems={templateMaterialGroupItems}
-              templateMaterialGroups={templateMaterialGroups}
-            />
-          </div>
-        </details>
+        <form action={createBlankQuotationItem}>
+          <input type="hidden" name="quotation_id" value={quotation.id} />
+          <input type="hidden" name="section_id" value={sectionId} />
+          <input type="hidden" name="currency" value={quotation.currency || defaultCurrency} />
+          <input type="hidden" name="return_to" value={returnTo} />
+          <button
+            type="submit"
+            className="border border-zinc-300 bg-white px-3 py-2 text-xs font-bold text-emerald-900 transition hover:bg-emerald-50"
+          >
+            + Item Row
+          </button>
+        </form>
         <details>
           <summary className={summaryClass}>+ Heading Row</summary>
           <div className="mt-3 w-[min(720px,calc(100vw-4rem))] border border-zinc-300 bg-white p-3">
@@ -2745,10 +2974,13 @@ function rowClipboardPayload({
 function InlineRowActions({
   item,
   brands,
+  canManageProductLibrary,
   components,
   materialGroups,
   materials,
   priceHistoryByItem,
+  productBrands,
+  productCategories,
   productTemplates,
   quotation,
   returnTo,
@@ -2759,10 +2991,13 @@ function InlineRowActions({
 }: {
   item: QuotationItem;
   brands: FinishMaterialBrand[];
+  canManageProductLibrary: boolean;
   components: ProductLibraryComponent[];
   materialGroups: FinishMaterialGroup[];
   materials: FinishMaterial[];
   priceHistoryByItem: Map<string, QuotationItemPriceHistoryEntry[]>;
+  productBrands: ProductLibraryBrand[];
+  productCategories: ProductLibraryCategory[];
   productTemplates: ProductLibraryTemplate[];
   quotation: Quotation;
   returnTo: string;
@@ -2827,8 +3062,11 @@ function InlineRowActions({
                 <div className="absolute right-0 top-full z-40 mt-2 w-[1080px] max-w-[calc(100vw-3rem)] border border-zinc-300 bg-zinc-50 p-3 shadow-lg">
                   <LineForm
                     brands={brands}
+                    canManageProductLibrary={canManageProductLibrary}
                     components={components}
                     item={item}
+                    productBrands={productBrands ?? []}
+                    productCategories={productCategories ?? []}
                     priceHistory={priceHistoryByItem.get(item.id) ?? []}
                     materialGroups={materialGroups}
                     materials={materials}
@@ -2852,10 +3090,13 @@ function InlineRowActions({
 function InlineRowEditCell({
   item,
   brands,
+  canManageProductLibrary,
   components,
   materialGroups,
   materials,
   priceHistoryByItem,
+  productBrands,
+  productCategories,
   productTemplates,
   quotation,
   returnTo,
@@ -2866,10 +3107,13 @@ function InlineRowEditCell({
 }: {
   item: QuotationItem;
   brands: FinishMaterialBrand[];
+  canManageProductLibrary: boolean;
   components: ProductLibraryComponent[];
   materialGroups: FinishMaterialGroup[];
   materials: FinishMaterial[];
   priceHistoryByItem: Map<string, QuotationItemPriceHistoryEntry[]>;
+  productBrands: ProductLibraryBrand[];
+  productCategories: ProductLibraryCategory[];
   productTemplates: ProductLibraryTemplate[];
   quotation: Quotation;
   returnTo: string;
@@ -2883,10 +3127,13 @@ function InlineRowEditCell({
       <InlineRowActions
         item={item}
         brands={brands}
+        canManageProductLibrary={canManageProductLibrary}
         components={components}
         materialGroups={materialGroups}
         materials={materials}
         priceHistoryByItem={priceHistoryByItem}
+        productBrands={productBrands}
+        productCategories={productCategories}
         productTemplates={productTemplates}
         quotation={quotation}
         returnTo={returnTo}
@@ -2978,6 +3225,8 @@ export default async function QuotationBuilderPage({
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
     profile?.role === "sales_designer";
+  const canManageProductLibrary =
+    profile?.role === "system_owner" || profile?.role === "admin_manager";
   const supabase = await createSupabaseClient();
 
   const { data: quotation, error: quotationError } = await supabase
@@ -3474,7 +3723,17 @@ export default async function QuotationBuilderPage({
       <main className="mx-auto max-w-[1900px] px-4 py-5">
         {query?.message ? (
           <div className="mb-4 flex flex-col gap-2 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950 sm:flex-row sm:items-center sm:justify-between">
-            <p>{query.message}</p>
+            <div className="flex flex-col gap-1">
+              <p>{query.message}</p>
+              {query.saved_template_id ? (
+                <Link
+                  href={`/products/templates?template=${query.saved_template_id}`}
+                  className="text-sm font-semibold text-emerald-900 underline underline-offset-2 transition hover:text-emerald-700"
+                >
+                  Open product template
+                </Link>
+              ) : null}
+            </div>
             {showInternal && canManageRecords && query.undo_kind === "item" && query.undo_item_id ? (
               <form action={restoreQuotationItem}>
                 <input type="hidden" name="quotation_id" value={quotation.id} />
@@ -3871,10 +4130,13 @@ export default async function QuotationBuilderPage({
                                   <InlineRowEditCell
                                     item={item}
                                     brands={productBrands ?? []}
+                                    canManageProductLibrary={canManageProductLibrary}
                                     components={productComponents ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
                                     priceHistoryByItem={priceHistoryByItem}
+                                    productBrands={productBrands ?? []}
+                                    productCategories={productCategories ?? []}
                                     productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
                                     returnTo={itemReturnTo}
@@ -3942,10 +4204,13 @@ export default async function QuotationBuilderPage({
                                   <InlineRowEditCell
                                     item={item}
                                     brands={productBrands ?? []}
+                                    canManageProductLibrary={canManageProductLibrary}
                                     components={productComponents ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
                                     priceHistoryByItem={priceHistoryByItem}
+                                    productBrands={productBrands ?? []}
+                                    productCategories={productCategories ?? []}
                                     productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
                                     returnTo={itemReturnTo}
@@ -4015,10 +4280,13 @@ export default async function QuotationBuilderPage({
                                   <InlineRowEditCell
                                     item={item}
                                     brands={productBrands ?? []}
+                                    canManageProductLibrary={canManageProductLibrary}
                                     components={productComponents ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
                                     priceHistoryByItem={priceHistoryByItem}
+                                    productBrands={productBrands ?? []}
+                                    productCategories={productCategories ?? []}
                                     productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
                                     returnTo={itemReturnTo}
@@ -4053,10 +4321,13 @@ export default async function QuotationBuilderPage({
                                   <InlineRowEditCell
                                     item={item}
                                     brands={productBrands ?? []}
+                                    canManageProductLibrary={canManageProductLibrary}
                                     components={productComponents ?? []}
                                     materialGroups={materialGroups ?? []}
                                     materials={materials ?? []}
                                     priceHistoryByItem={priceHistoryByItem}
+                                    productBrands={productBrands ?? []}
+                                    productCategories={productCategories ?? []}
                                     productTemplates={productTemplatesWithPriceChecks}
                                     quotation={quotation}
                                     returnTo={itemReturnTo}
@@ -4129,10 +4400,13 @@ export default async function QuotationBuilderPage({
                                 <InlineRowEditCell
                                   item={item}
                                   brands={productBrands ?? []}
+                                  canManageProductLibrary={canManageProductLibrary}
                                   components={productComponents ?? []}
                                   materialGroups={materialGroups ?? []}
                                   materials={materials ?? []}
                                   priceHistoryByItem={priceHistoryByItem}
+                                  productBrands={productBrands ?? []}
+                                  productCategories={productCategories ?? []}
                                   productTemplates={productTemplatesWithPriceChecks}
                                   quotation={quotation}
                                   returnTo={itemReturnTo}
@@ -4178,7 +4452,6 @@ export default async function QuotationBuilderPage({
                               quotation={quotation}
                               returnTo={sectionReturnTo}
                               sectionId={section.id}
-                              showInternal={showInternal}
                               templateMaterialGroupItems={templateMaterialGroupItems ?? []}
                               templateMaterialGroups={templateMaterialGroups ?? []}
                             />
