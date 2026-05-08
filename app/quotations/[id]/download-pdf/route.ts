@@ -1,5 +1,3 @@
-import serverlessChromium from "@sparticuz/chromium";
-import { chromium as playwrightChromium } from "playwright-core";
 import type { NextRequest } from "next/server";
 import { requireActiveUser } from "@/lib/auth";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
@@ -37,10 +35,33 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 
 async function launchPdfBrowser() {
   const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  console.log("chromium package loaded");
+
+  const chromium = (await import("@sparticuz/chromium")).default;
+  const { chromium: playwrightChromium } = await import("playwright-core");
+
+  if (!isServerless) {
+    return playwrightChromium.launch({
+      headless: true,
+    });
+  }
+
+  console.log("chromium executablePath start");
+  let executablePath: string;
+  try {
+    executablePath = await chromium.executablePath();
+  } catch (error) {
+    console.error("CHROMIUM EXECUTABLE PATH ERROR", {
+      cwd: process.cwd(),
+      message: error instanceof Error ? error.message : String(error),
+      vercel: process.env.VERCEL ?? null,
+    });
+    throw error;
+  }
 
   return playwrightChromium.launch({
-    args: isServerless ? serverlessChromium.args : undefined,
-    executablePath: isServerless ? await serverlessChromium.executablePath() : undefined,
+    args: chromium.args,
+    executablePath,
     headless: true,
   });
 }
@@ -67,9 +88,13 @@ export async function GET(request: NextRequest, { params }: DownloadPdfRouteCont
   const origin = new URL(request.url).origin;
   const previewUrl = new URL(`/quotations/${id}/pdf?download=1`, origin);
   const cookieHeader = request.headers.get("cookie") ?? "";
-  const browser = await launchPdfBrowser();
+  const fallbackUrl = new URL(`/quotations/${id}/pdf?print=1`, origin);
+  let browser:
+    | Awaited<ReturnType<typeof launchPdfBrowser>>
+    | null = null;
 
   try {
+    browser = await launchPdfBrowser();
     const context = await browser.newContext({
       extraHTTPHeaders: cookieHeader ? { cookie: cookieHeader } : undefined,
       viewport: { width: 1280, height: 900 },
@@ -125,9 +150,8 @@ export async function GET(request: NextRequest, { params }: DownloadPdfRouteCont
     });
   } catch (pdfError) {
     console.error("QUOTATION PDF DOWNLOAD ERROR", pdfError);
-
-    return new Response("PDF generation failed. Please use Preview PDF as a fallback.", { status: 500 });
+    return Response.redirect(fallbackUrl, 307);
   } finally {
-    await browser.close();
+    await browser?.close();
   }
 }
