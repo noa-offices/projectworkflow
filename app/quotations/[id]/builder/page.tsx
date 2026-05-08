@@ -3,7 +3,12 @@ import { notFound } from "next/navigation";
 import { Fragment, type CSSProperties, type ReactNode } from "react";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { ContextBackLink } from "@/components/navigation/context-back-link";
-import { OptimisticAddRowButton } from "@/components/quotations/optimistic-add-row-button";
+import {
+  OptimisticAddRowButton,
+  OptimisticQuotationBuilderProvider,
+  OptimisticSectionEmptyState,
+  OptimisticSectionRows,
+} from "@/components/quotations/optimistic-add-row-button";
 import { CellFormattingToolbar } from "@/components/quotations/cell-formatting-toolbar";
 import {
   QuotationRowComputedValue,
@@ -269,6 +274,8 @@ type Column = {
   defaultVisible?: boolean;
   render: (item: QuotationItem, serial: number, formId: string, canEdit: boolean) => ReactNode;
 };
+
+type OptimisticColumn = Pick<Column, "className" | "key">;
 
 type LayoutSettings = {
   columns?: Array<{
@@ -3539,6 +3546,10 @@ export default async function QuotationBuilderPage({
 
   const defaultColumns = getColumns(quotation.layout_mode, showInternal, quotation.layout_settings);
   const columns = configuredColumns(defaultColumns, quotation.layout_settings);
+  const optimisticColumns: OptimisticColumn[] = columns.map((column) => ({
+    className: column.className,
+    key: column.key,
+  }));
   const settingsMap = columnSettingsMap(quotation.layout_settings);
   const showEditColumn = canManageRecords;
   const editColumnWidth = settingsMap.get("edit")?.width ?? 132;
@@ -3714,6 +3725,7 @@ export default async function QuotationBuilderPage({
       </header>
 
       <main className="mx-auto max-w-[1900px] px-4 py-5">
+        <OptimisticQuotationBuilderProvider>
         {query?.message ? (
           <div className="mb-4 flex flex-col gap-2 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-col gap-1">
@@ -4037,16 +4049,20 @@ export default async function QuotationBuilderPage({
                         </tr>
                       ) : null}
 
-                      {!sectionItems.length ? (
-                        <tr>
-                          <td
-                            colSpan={totalColumns}
-                            className="border border-zinc-300 bg-white px-3 py-5 text-center text-sm text-zinc-500"
-                          >
-                            Add your first item row.
-                          </td>
-                        </tr>
-                      ) : null}
+                      <OptimisticSectionEmptyState
+                        isServerEmpty={!sectionItems.length}
+                        sectionId={section.id}
+                        totalColumns={totalColumns}
+                      />
+
+                      <OptimisticSectionRows
+                        columns={optimisticColumns}
+                        quotationId={quotation.id}
+                        realItemIds={sectionItems.map((item) => item.id)}
+                        returnTo={sectionReturnTo}
+                        sectionId={section.id}
+                        showEditColumn={showEditColumn}
+                      />
 
                       {sectionItems.map((item) => {
                         const mergedText = item.item_name_snapshot ?? item.specification_snapshot ?? "";
@@ -4564,6 +4580,7 @@ export default async function QuotationBuilderPage({
             </div>
           </div>
         </section>
+        </OptimisticQuotationBuilderProvider>
       </main>
     </div>
   );

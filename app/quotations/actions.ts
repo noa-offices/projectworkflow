@@ -3570,7 +3570,6 @@ export async function createBlankQuotationItemOptimistic(formData: FormData) {
   const { user, displayName } = await requireRecordsManager();
   const quotationId = textValue(formData, "quotation_id");
   const sectionId = optionalTextValue(formData, "section_id");
-  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
 
   if (!quotationId) {
     return { ok: false as const, message: "Quotation is required." };
@@ -3588,9 +3587,6 @@ export async function createBlankQuotationItemOptimistic(formData: FormData) {
     return result;
   }
 
-  await recalculateQuotationTotals(quotationId);
-  revalidatePath(`/quotations/${quotationId}`);
-  revalidatePath(redirectPath);
   return {
     ok: true as const,
     itemId: result.itemId,
