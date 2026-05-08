@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { PendingLinkButton } from "@/components/pending-link-button";
 
@@ -30,12 +31,13 @@ export function PendingNavLink({
 
   if (isCurrentRoute) {
     return (
-      <span
+      <Link
+        href={href}
         aria-current="page"
-        className={`${className} pointer-events-none`}
+        className={className}
       >
         {label}
-      </span>
+      </Link>
     );
   }
 
