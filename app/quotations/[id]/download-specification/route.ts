@@ -1,6 +1,6 @@
-import type { Page } from "playwright-core";
 import type { NextRequest } from "next/server";
 import { requireActiveUser } from "@/lib/auth";
+import { generatePdfBuffer } from "@/lib/server/generate-pdf-buffer";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -23,84 +23,15 @@ function specificationPdfFilename(quotation: QuotationFilenameData) {
   return `${quotationNo} - ${title} - Specification Sheet`.replace(/[\\/:*?"<>|]/g, "-");
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
-  let timeout: ReturnType<typeof setTimeout>;
+function requestOrigin(request: NextRequest) {
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  const host = request.headers.get("host");
 
-  return Promise.race([
-    promise.finally(() => clearTimeout(timeout)),
-    new Promise<never>((_resolve, reject) => {
-      timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
-    }),
-  ]);
-}
-
-async function launchPdfBrowser() {
-  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
-  console.log("chromium package loaded");
-
-  const chromium = (await import("@sparticuz/chromium")).default;
-  const { chromium: playwrightChromium } = await import("playwright-core");
-
-  if (!isServerless) {
-    return playwrightChromium.launch({
-      headless: true,
-    });
+  if (forwardedProto && host) {
+    return `${forwardedProto}://${host}`;
   }
 
-  console.log("chromium executablePath start");
-  let executablePath: string;
-  try {
-    executablePath = await chromium.executablePath();
-  } catch (error) {
-    console.error("CHROMIUM EXECUTABLE PATH ERROR", {
-      cwd: process.cwd(),
-      message: error instanceof Error ? error.message : String(error),
-      vercel: process.env.VERCEL ?? null,
-    });
-    throw error;
-  }
-
-  return playwrightChromium.launch({
-    args: chromium.args,
-    executablePath,
-    headless: true,
-  });
-}
-
-async function waitForFontsAndImages(page: Page) {
-  await page.evaluate(async () => {
-    if ("fonts" in document) {
-      await document.fonts.ready;
-    }
-
-    const images = Array.from(document.images);
-    await Promise.all(
-      images.map(async (image) => {
-        if (image.complete && image.naturalWidth > 0) return;
-
-        await new Promise<void>((resolve) => {
-          image.addEventListener("load", () => resolve(), { once: true });
-          image.addEventListener("error", () => resolve(), { once: true });
-        });
-      }),
-    );
-
-    await Promise.all(
-      images.map(async (image) => {
-        if (!image.complete || typeof image.decode !== "function") return;
-
-        try {
-          await image.decode();
-        } catch {
-          // Missing/failed images should not block PDF generation.
-        }
-      }),
-    );
-
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-    });
-  });
+  return new URL(request.url).origin;
 }
 
 export async function GET(request: NextRequest, { params }: DownloadSpecificationRouteContext) {
@@ -122,79 +53,43 @@ export async function GET(request: NextRequest, { params }: DownloadSpecificatio
     return new Response("Quotation not found.", { status: 404 });
   }
 
-  const origin = new URL(request.url).origin;
-  const previewUrl = new URL(`/quotations/${id}/specification?download=1`, origin);
-  const cookieHeader = request.headers.get("cookie") ?? "";
+  const origin = requestOrigin(request);
+  const sourceUrl = `${origin}/quotations/${id}/specification?print=1`;
   const fallbackUrl = new URL(`/quotations/${id}/specification?print=1`, origin);
-  let browser:
-    | Awaited<ReturnType<typeof launchPdfBrowser>>
-    | null = null;
+  const cookieHeader = request.headers.get("cookie") ?? "";
 
   try {
-    browser = await launchPdfBrowser();
-    const context = await browser.newContext({
-      extraHTTPHeaders: cookieHeader ? { cookie: cookieHeader } : undefined,
-      deviceScaleFactor: 2,
-      viewport: { width: 1280, height: 900 },
-    });
-    const page = await context.newPage();
-    page.setDefaultTimeout(30_000);
-    page.setDefaultNavigationTimeout(30_000);
-    await page.emulateMedia({ media: "print" });
-
-    await page.goto(previewUrl.toString(), {
-      waitUntil: "networkidle",
-      timeout: 30_000,
-    });
-    const renderedPath = new URL(page.url()).pathname;
-
-    if (renderedPath === "/login" || renderedPath === "/pending-approval") {
-      throw new Error(`Specification preview loaded an auth page instead of content: ${renderedPath}`);
-    }
-
-    await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch((error) => {
-      console.warn("SPECIFICATION PDF NETWORK IDLE WARNING", error);
-    });
-    await withTimeout(
-      waitForFontsAndImages(page),
-      10_000,
-      "PDF image readiness timed out.",
-    ).catch((error) => {
-      console.warn("SPECIFICATION PDF IMAGE WAIT WARNING", error);
-    });
-    await page.waitForTimeout(250);
-
-    const pdf = await withTimeout(
-      page.pdf({
+    const pdfBuffer = await generatePdfBuffer({
+      cookieHeader,
+      pdfOptions: {
+        displayHeaderFooter: false,
         format: "A4",
         landscape: false,
-        printBackground: true,
-        displayHeaderFooter: false,
         margin: {
           top: "0",
           right: "0",
           bottom: "0",
           left: "0",
         },
-        preferCSSPageSize: true,
-      }),
-      30_000,
-      "PDF rendering timed out.",
-    );
+      },
+      sourceUrl,
+      viewport: { width: 1280, height: 900, deviceScaleFactor: 2, hasTouch: false, isLandscape: false, isMobile: false },
+    });
     const filename = `${specificationPdfFilename(quotation)}.pdf`;
-    const pdfBody = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength) as ArrayBuffer;
+    const pdfBody = pdfBuffer.buffer.slice(
+      pdfBuffer.byteOffset,
+      pdfBuffer.byteOffset + pdfBuffer.byteLength,
+    ) as ArrayBuffer;
 
     return new Response(pdfBody, {
       headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
         "Cache-Control": "no-store",
+        "Content-Disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        "Content-Type": "application/pdf",
       },
     });
   } catch (pdfError) {
     console.error("SPECIFICATION PDF DOWNLOAD ERROR", pdfError);
     return Response.redirect(fallbackUrl, 307);
-  } finally {
-    await browser?.close();
   }
 }

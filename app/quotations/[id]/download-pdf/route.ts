@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireActiveUser } from "@/lib/auth";
+import { generatePdfBuffer } from "@/lib/server/generate-pdf-buffer";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -22,48 +23,15 @@ function quotationPdfFilename(quotation: QuotationFilenameData) {
   return `${quotationNo} - ${title}`.replace(/[\\/:*?"<>|]/g, "-");
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
-  let timeout: ReturnType<typeof setTimeout>;
+function requestOrigin(request: NextRequest) {
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  const host = request.headers.get("host");
 
-  return Promise.race([
-    promise.finally(() => clearTimeout(timeout)),
-    new Promise<never>((_resolve, reject) => {
-      timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
-    }),
-  ]);
-}
-
-async function launchPdfBrowser() {
-  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
-  console.log("chromium package loaded");
-
-  const chromium = (await import("@sparticuz/chromium")).default;
-  const { chromium: playwrightChromium } = await import("playwright-core");
-
-  if (!isServerless) {
-    return playwrightChromium.launch({
-      headless: true,
-    });
+  if (forwardedProto && host) {
+    return `${forwardedProto}://${host}`;
   }
 
-  console.log("chromium executablePath start");
-  let executablePath: string;
-  try {
-    executablePath = await chromium.executablePath();
-  } catch (error) {
-    console.error("CHROMIUM EXECUTABLE PATH ERROR", {
-      cwd: process.cwd(),
-      message: error instanceof Error ? error.message : String(error),
-      vercel: process.env.VERCEL ?? null,
-    });
-    throw error;
-  }
-
-  return playwrightChromium.launch({
-    args: chromium.args,
-    executablePath,
-    headless: true,
-  });
+  return new URL(request.url).origin;
 }
 
 export async function GET(request: NextRequest, { params }: DownloadPdfRouteContext) {
@@ -85,73 +53,49 @@ export async function GET(request: NextRequest, { params }: DownloadPdfRouteCont
     return new Response("Quotation not found.", { status: 404 });
   }
 
-  const origin = new URL(request.url).origin;
-  const previewUrl = new URL(`/quotations/${id}/pdf?download=1`, origin);
-  const cookieHeader = request.headers.get("cookie") ?? "";
+  const origin = requestOrigin(request);
+  const sourceUrl = `${origin}/quotations/${id}/pdf?print=1`;
   const fallbackUrl = new URL(`/quotations/${id}/pdf?print=1`, origin);
-  let browser:
-    | Awaited<ReturnType<typeof launchPdfBrowser>>
-    | null = null;
+  const cookieHeader = request.headers.get("cookie") ?? "";
 
   try {
-    browser = await launchPdfBrowser();
-    const context = await browser.newContext({
-      extraHTTPHeaders: cookieHeader ? { cookie: cookieHeader } : undefined,
-      viewport: { width: 1280, height: 900 },
-    });
-    const page = await context.newPage();
-    page.setDefaultTimeout(30_000);
-    page.setDefaultNavigationTimeout(30_000);
-
-    await page.goto(previewUrl.toString(), {
-      waitUntil: "domcontentloaded",
-      timeout: 30_000,
-    });
-    const renderedPath = new URL(page.url()).pathname;
-
-    if (renderedPath === "/login" || renderedPath === "/pending-approval") {
-      throw new Error(`PDF preview loaded an auth page instead of quotation content: ${renderedPath}`);
-    }
-
-    await page.emulateMedia({ media: "print" });
-
-    const pdf = await withTimeout(
-      page.pdf({
-        format: "A4",
-        landscape: true,
-        printBackground: true,
+    const pdfBuffer = await generatePdfBuffer({
+      cookieHeader,
+      pdfOptions: {
         displayHeaderFooter: true,
-        headerTemplate: "<div></div>",
         footerTemplate: `
           <div style="width:100%; font-size:8px; color:#6b7280; text-align:center; padding:0 8mm;">
             Page <span class="pageNumber"></span> of <span class="totalPages"></span>
           </div>
         `,
+        format: "A4",
+        headerTemplate: "<div></div>",
+        landscape: true,
         margin: {
           top: "8mm",
           right: "8mm",
           bottom: "12mm",
           left: "8mm",
         },
-        preferCSSPageSize: true,
-      }),
-      30_000,
-      "PDF rendering timed out.",
-    );
+      },
+      sourceUrl,
+      viewport: { width: 1280, height: 900, deviceScaleFactor: 1, hasTouch: false, isLandscape: true, isMobile: false },
+    });
     const filename = `${quotationPdfFilename(quotation)}.pdf`;
-    const pdfBody = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength) as ArrayBuffer;
+    const pdfBody = pdfBuffer.buffer.slice(
+      pdfBuffer.byteOffset,
+      pdfBuffer.byteOffset + pdfBuffer.byteLength,
+    ) as ArrayBuffer;
 
     return new Response(pdfBody, {
       headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
         "Cache-Control": "no-store",
+        "Content-Disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        "Content-Type": "application/pdf",
       },
     });
   } catch (pdfError) {
     console.error("QUOTATION PDF DOWNLOAD ERROR", pdfError);
     return Response.redirect(fallbackUrl, 307);
-  } finally {
-    await browser?.close();
   }
 }
