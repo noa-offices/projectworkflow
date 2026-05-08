@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Fragment, type CSSProperties, type ReactNode } from "react";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
+import { GlobalRefreshButton } from "@/components/global-refresh-button";
 import { ContextBackLink } from "@/components/navigation/context-back-link";
 import { PendingLinkButton } from "@/components/pending-link-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
@@ -3679,6 +3680,7 @@ export default async function QuotationBuilderPage({
                 />
               </div>
             </details>
+            <GlobalRefreshButton />
             <Link
               href={`/quotations/${quotation.id}/pdf`}
               target="_blank"
