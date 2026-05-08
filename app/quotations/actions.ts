@@ -3639,6 +3639,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     )
     .eq("id", templateId)
     .eq("is_active", true)
+    .eq("lifecycle_status", "active")
     .single<ProductTemplateSnapshotSource>();
 
   if (templateError || !template) {
@@ -3708,6 +3709,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
           "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price",
         )
         .eq("is_active", true)
+        .eq("lifecycle_status", "active")
         .in("id", linkedTemplateIds)
         .returns<ProductTemplateSnapshotSource[]>()
     : { data: [], error: null };

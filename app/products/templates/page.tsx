@@ -20,6 +20,10 @@ import {
   type VariantPricingRow,
 } from "@/components/products/variant-pricing-tables";
 import { ProductTemplateImageUploader } from "@/components/products/product-template-image-uploader";
+import {
+  QuickCategoryForm,
+  TemplateCategoryFields,
+} from "@/components/products/template-category-fields";
 import { TopBar } from "@/components/top-bar";
 import { requireSettingsManager } from "@/lib/auth";
 import {
@@ -38,14 +42,13 @@ import {
   createProductComponent,
   createLinkedProductFamily,
   archiveBrandPriceListUpdate,
+  archiveProductTemplate,
   createBrandPriceListUpdate,
-  createMainCategoryFromTemplates,
   createProductTemplateMaterialGroup,
   createProductTemplate,
-  createSubCategoryFromTemplates,
   deactivateLinkedProductFamily,
   deactivateProductTemplateMaterialGroup,
-  deactivateProductTemplate,
+  markProductTemplateDiscontinued,
   markComponentPriceChecked,
   markBrandPriceListCheckedAction,
   markBrandTemplatesPriceChecked,
@@ -211,6 +214,7 @@ type ProductTemplate = {
   currency: string;
   default_unit_price: number;
   is_active: boolean;
+  lifecycle_status: "active" | "archived" | "discontinued";
   last_price_checked_at: string | null;
   last_price_checked_by: string | null;
   price_check_interval_days: number | null;
@@ -397,6 +401,34 @@ function StatusBadge({ active }: { active: boolean }) {
   );
 }
 
+function normalizeTemplateLifecycleStatus(
+  template: Pick<ProductTemplate, "is_active" | "lifecycle_status">,
+): "active" | "archived" | "discontinued" {
+  if (template.lifecycle_status === "archived" || template.lifecycle_status === "discontinued") {
+    return template.lifecycle_status;
+  }
+
+  return template.is_active ? "active" : "archived";
+}
+
+function TemplateLifecycleBadge({
+  status,
+}: {
+  status: "active" | "archived" | "discontinued";
+}) {
+  const className = status === "active"
+    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+    : status === "discontinued"
+      ? "border-amber-200 bg-amber-50 text-amber-900"
+      : "border-zinc-200 bg-zinc-100 text-zinc-600";
+
+  return (
+    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
+      {status}
+    </span>
+  );
+}
+
 function Field({
   name,
   label,
@@ -532,38 +564,6 @@ function FormSection({
   );
 }
 
-function QuickCategoryForm({
-  brandId,
-  parentId,
-  returnMode = "library",
-  title,
-}: {
-  brandId: string;
-  parentId?: string | null;
-  returnMode?: "add-template" | "library";
-  title: string;
-}) {
-  return (
-    <form
-      action={
-        parentId ? createSubCategoryFromTemplates : createMainCategoryFromTemplates
-      }
-      className="grid gap-3 md:grid-cols-2"
-    >
-      <input type="hidden" name="brand_id" value={brandId} />
-      <input type="hidden" name="parent_id" value={parentId ?? ""} />
-      <input type="hidden" name="return_mode" value={returnMode} />
-      <Field name="name" label={title} required />
-      <Field name="code" label="Code" />
-      <TextArea name="description" label="Description" />
-      <div className="flex flex-col gap-3 md:col-span-2 sm:flex-row sm:items-center sm:justify-between">
-        <Checkbox name="is_active" label="Active" defaultChecked />
-        <SubmitButton label="Save" />
-      </div>
-    </form>
-  );
-}
-
 function TemplateForm({
   brands,
   categories,
@@ -585,17 +585,6 @@ function TemplateForm({
     template?.main_category_id ?? defaultMainCategoryId ?? "";
   const selectedSubCategoryId =
     template?.sub_category_id ?? defaultSubCategoryId ?? "";
-  const mainCategoryOptions = categories.filter(
-    (category) =>
-      !category.parent_id &&
-      (!selectedBrandId || category.brand_id === selectedBrandId),
-  );
-  const subCategoryOptions = categories.filter(
-    (category) =>
-      category.parent_id &&
-      (!selectedBrandId || category.brand_id === selectedBrandId) &&
-      (!selectedMainCategoryId || category.parent_id === selectedMainCategoryId),
-  );
   const allowQuickCreate = !template;
 
   return (
@@ -605,83 +594,14 @@ function TemplateForm({
     >
       <input type="hidden" name="id" value={templateId} />
       <FormSection title="Product Identity">
-        <label className="block">
-          <span className="text-xs font-semibold uppercase text-zinc-500">
-            Brand
-          </span>
-          <select
-            name="brand_id"
-            defaultValue={selectedBrandId}
-            required
-            className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-          >
-            <option value="">Select brand</option>
-            {brands.map((brand) => (
-              <option key={brand.id} value={brand.id}>
-                {brand.name}
-              </option>
-            ))}
-          </select>
-          {!brands.length ? (
-            <span className="mt-1 block text-xs text-zinc-500">
-              Create a brand first.
-            </span>
-          ) : null}
-        </label>
-        <div className="space-y-2">
-          <CategorySelect
-            name="main_category_id"
-            label="Main Category"
-            categories={mainCategoryOptions}
-            defaultValue={selectedMainCategoryId}
-          />
-          {allowQuickCreate && selectedBrandId ? (
-            <details>
-              <summary className="cursor-pointer text-xs font-semibold text-emerald-900">
-                + New Main Category
-              </summary>
-              <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                <QuickCategoryForm
-                  brandId={selectedBrandId}
-                  returnMode="add-template"
-                  title="Category Name"
-                />
-              </div>
-            </details>
-          ) : allowQuickCreate ? (
-            <p className="text-xs text-zinc-500">
-              Select a brand in the toolbar to quick-create a main category.
-            </p>
-          ) : null}
-        </div>
-        <div className="space-y-2">
-          <CategorySelect
-            name="sub_category_id"
-            label="Sub Category"
-            categories={subCategoryOptions}
-            defaultValue={selectedSubCategoryId}
-          />
-          {allowQuickCreate && selectedBrandId && selectedMainCategoryId ? (
-            <details>
-              <summary className="cursor-pointer text-xs font-semibold text-emerald-900">
-                + New Sub Category
-              </summary>
-              <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                <QuickCategoryForm
-                  brandId={selectedBrandId}
-                  parentId={selectedMainCategoryId}
-                  returnMode="add-template"
-                  title="Sub Category Name"
-                />
-              </div>
-            </details>
-          ) : allowQuickCreate ? (
-            <p className="text-xs text-zinc-500">
-              Select a main category in the toolbar to quick-create a
-              subcategory.
-            </p>
-          ) : null}
-        </div>
+        <TemplateCategoryFields
+          allowQuickCreate={allowQuickCreate}
+          brands={brands}
+          categories={categories}
+          defaultBrandId={selectedBrandId}
+          defaultMainCategoryId={selectedMainCategoryId}
+          defaultSubCategoryId={selectedSubCategoryId}
+        />
         <Field
           name="template_name"
           label="Item Name / Template Name"
@@ -733,11 +653,9 @@ function TemplateForm({
             defaultValue={template?.default_unit_price ?? 0}
           />
           <div className="flex items-end">
-            <Checkbox
-              name="is_active"
-              label="Active"
-              defaultChecked={template?.is_active ?? true}
-            />
+            <p className="text-xs leading-5 text-zinc-500">
+              New templates are created as active. Use Archive or Discontinue from the Product Library when the lifecycle changes.
+            </p>
           </div>
         </FormSection>
 
@@ -842,38 +760,6 @@ function TemplateForm({
         <SubmitButton label={template ? "Save template" : "Add template"} />
       </div>
     </form>
-  );
-}
-
-function CategorySelect({
-  name,
-  label,
-  categories,
-  defaultValue,
-}: {
-  name: string;
-  label: string;
-  categories: Category[];
-  defaultValue?: string | null;
-}) {
-  return (
-    <label className="block">
-      <span className="text-xs font-semibold uppercase text-zinc-500">
-        {label}
-      </span>
-      <select
-        name={name}
-        defaultValue={defaultValue ?? ""}
-        className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-      >
-        <option value="">None</option>
-        {categories.map((category) => (
-          <option key={category.id} value={category.id}>
-            {category.name}
-          </option>
-        ))}
-      </select>
-    </label>
   );
 }
 
@@ -1566,7 +1452,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const { data: templates, error: templatesError } = await supabase
     .from("product_templates")
     .select(
-      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price,is_active,last_price_checked_at,last_price_checked_by,price_check_interval_days,price_check_note,price_notes",
+      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price,is_active,lifecycle_status,last_price_checked_at,last_price_checked_by,price_check_interval_days,price_check_note,price_notes",
     )
     .order("brand_id", { ascending: true })
     .order("template_name", { ascending: true })
@@ -1587,6 +1473,12 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     .order("parent_template_id", { ascending: true })
     .order("sort_order", { ascending: true })
     .returns<LinkedProductFamily[]>();
+
+  const { data: templateUsageRows, error: templateUsageRowsError } = await supabase
+    .from("quotation_items")
+    .select("source_template_id")
+    .not("source_template_id", "is", null)
+    .returns<Array<{ source_template_id: string | null }>>();
 
   const { data: materialGroups, error: materialGroupsError } = await supabase
     .from("brand_material_groups")
@@ -1664,6 +1556,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   if (templatesError) console.error("PRODUCT TEMPLATES LIST ERROR", templatesError.message);
   if (componentsError) console.error("PRODUCT COMPONENTS LIST ERROR", componentsError.message);
   if (linkedFamiliesError) console.error("LINKED PRODUCT FAMILIES LIST ERROR", linkedFamiliesError.message);
+  if (templateUsageRowsError) console.error("PRODUCT TEMPLATE USAGE LIST ERROR", templateUsageRowsError.message);
   if (materialGroupsError) console.error("BRAND MATERIAL GROUPS LIST ERROR", materialGroupsError.message);
   if (materialsError) console.error("BRAND MATERIALS LIST ERROR", materialsError.message);
   if (templateMaterialGroupsError) console.error("TEMPLATE MATERIAL GROUPS LIST ERROR", templateMaterialGroupsError.message);
@@ -1677,9 +1570,21 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const brandList = brands ?? [];
   const categoryList = categories ?? [];
   const templateList = templates ?? [];
-  const activeTemplateList = templateList.filter((template) => template.is_active);
-  const archivedTemplateList = templateList.filter((template) => !template.is_active);
+  const templateLifecycleById = new Map<string, "active" | "archived" | "discontinued">(
+    templateList.map((template) => [template.id, normalizeTemplateLifecycleStatus(template)]),
+  );
+  const activeTemplateList = templateList.filter((template) => templateLifecycleById.get(template.id) === "active");
+  const archivedTemplateList = templateList.filter((template) => templateLifecycleById.get(template.id) === "archived");
+  const discontinuedTemplateList = templateList.filter((template) => templateLifecycleById.get(template.id) === "discontinued");
   const archivedLinkedFamilyList = (linkedFamilies ?? []).filter((link) => !link.is_active);
+  const usedTemplateIds = new Set(
+    (templateUsageRows ?? [])
+      .map((row) => row.source_template_id)
+      .filter((value): value is string => Boolean(value)),
+  );
+  const linkedTemplateIds = new Set(
+    (linkedFamilies ?? []).flatMap((link) => [link.parent_template_id, link.linked_template_id]),
+  );
   const materialGroupList = materialGroups ?? [];
   const materialList = materials ?? [];
   const activeTemplateMaterialGroupList = (templateMaterialGroups ?? []).filter((link) => link.is_active);
@@ -2226,7 +2131,6 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
                               <QuickCategoryForm
                                 brandId={brand.id}
-                                title="Category Name"
                               />
                             </div>
                           </details>
@@ -2279,7 +2183,6 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                       <QuickCategoryForm
                                         brandId={brand.id}
                                         parentId={mainCategory.id}
-                                        title="Sub Category Name"
                                       />
                                     </div>
                                   </details>
@@ -2407,7 +2310,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             <h3 className="font-semibold text-zinc-950">
                               {template.template_name}
                             </h3>
-                            <StatusBadge active={template.is_active} />
+                            <TemplateLifecycleBadge status={templateLifecycleById.get(template.id) ?? "active"} />
                           </div>
                           <p className="mt-1 text-sm text-zinc-500">{path}</p>
                           <p className="mt-1 text-xs text-zinc-500">
@@ -2455,13 +2358,22 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             Mark checked now
                           </PendingSubmitButton>
                           </form>
-                          <form action={deactivateProductTemplate}>
+                          <form action={archiveProductTemplate}>
                             <input type="hidden" name="id" value={template.id} />
                             <ConfirmSubmitButton
                               message="This will move the product template to Archive. You can restore it later."
-                              className="text-sm font-semibold text-red-700 transition hover:text-red-800"
+                              className="text-sm font-semibold text-zinc-700 transition hover:text-zinc-950"
                             >
-                              Delete
+                              Archive
+                            </ConfirmSubmitButton>
+                          </form>
+                          <form action={markProductTemplateDiscontinued}>
+                            <input type="hidden" name="id" value={template.id} />
+                            <ConfirmSubmitButton
+                              message="This will hide the product from active Product Library and future quotations. Existing quotations will not be affected."
+                              className="text-sm font-semibold text-amber-700 transition hover:text-amber-800"
+                            >
+                              Discontinue
                             </ConfirmSubmitButton>
                           </form>
                         </div>
@@ -2556,10 +2468,10 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         </div>
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="text-xl font-semibold text-zinc-950">
-                            {template.template_name}
-                          </h2>
-                          <StatusBadge active={template.is_active} />
+                            <h2 className="text-xl font-semibold text-zinc-950">
+                              {template.template_name}
+                            </h2>
+                          <TemplateLifecycleBadge status={templateLifecycleById.get(template.id) ?? "active"} />
                           </div>
                           <p className="mt-2 text-sm text-zinc-500">
                           {brandMap.get(template.brand_id) ?? "Unknown brand"}
@@ -3205,50 +3117,154 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
               <div className="border-b border-zinc-200 p-4">
                 <h2 className="font-semibold text-zinc-950">Archive</h2>
                 <p className="mt-1 text-sm text-zinc-500">
-                  Restore archived product templates, or permanently delete unused templates.
+                  Archived products are hidden from active library. Unused archived records can be permanently deleted.
                 </p>
               </div>
               <div className="divide-y divide-zinc-100">
-                {archivedTemplateList.map((template) => (
-                  <div
-                    key={template.id}
-                    className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"
-                  >
-                    <div>
-                      <h3 className="font-semibold text-zinc-950">
-                        {template.template_name}
-                      </h3>
-                      <p className="mt-1 text-sm text-zinc-500">
-                        {brandMap.get(template.brand_id) ?? "Unknown brand"} / {template.template_code ?? "No template code"}
-                      </p>
+                {archivedTemplateList.map((template) => {
+                  const isUsedInQuotations = usedTemplateIds.has(template.id);
+                  const isLinked = linkedTemplateIds.has(template.id);
+                  const deleteBlocked = isUsedInQuotations || isLinked;
+                  const deleteBlockedLabel = isUsedInQuotations
+                    ? "Used in quotations - cannot delete"
+                    : "Linked to product families - cannot delete";
+
+                  return (
+                    <div
+                      key={template.id}
+                      className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-semibold text-zinc-950">
+                            {template.template_name}
+                          </h3>
+                          <TemplateLifecycleBadge status="archived" />
+                        </div>
+                        <p className="mt-1 text-sm text-zinc-500">
+                          {brandMap.get(template.brand_id) ?? "Unknown brand"} / {template.template_code ?? "No template code"}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-500">
+                          Keep archived to preserve quotation history.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2 md:justify-end">
+                        <form action={restoreProductTemplate}>
+                          <input type="hidden" name="id" value={template.id} />
+                          <button
+                            type="submit"
+                            className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                          >
+                            Restore
+                          </button>
+                        </form>
+                        {deleteBlocked ? (
+                          <span className="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-xs font-semibold text-zinc-500">
+                            {deleteBlockedLabel}
+                          </span>
+                        ) : (
+                          <form action={permanentlyDeleteProductTemplate}>
+                            <input type="hidden" name="id" value={template.id} />
+                            <ConfirmSubmitButton
+                              message="Permanently delete this product template? This cannot be undone."
+                              className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
+                            >
+                              Delete permanently
+                            </ConfirmSubmitButton>
+                          </form>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex flex-wrap gap-2 md:justify-end">
-                      <form action={restoreProductTemplate}>
-                        <input type="hidden" name="id" value={template.id} />
-                        <button
-                          type="submit"
-                          className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                        >
-                          Restore
-                        </button>
-                      </form>
-                      <form action={permanentlyDeleteProductTemplate}>
-                        <input type="hidden" name="id" value={template.id} />
-                        <ConfirmSubmitButton
-                          message="Permanently delete this product template? This cannot be undone."
-                          className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
-                        >
-                          Delete permanently
-                        </ConfirmSubmitButton>
-                      </form>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
                 {!archivedTemplateList.length ? (
                   <p className="p-6 text-sm text-zinc-500">
                     No archived product templates.
                   </p>
                 ) : null}
+              </div>
+              <div className="border-t border-zinc-200">
+                <details>
+                  <summary className="cursor-pointer px-4 py-4 font-semibold text-zinc-950">
+                    Discontinued Products
+                  </summary>
+                  <div className="border-t border-zinc-200">
+                    <div className="p-4">
+                      <p className="text-sm text-zinc-500">
+                        Discontinued products are hidden from new quotations but preserved for old quotation history.
+                      </p>
+                    </div>
+                    <div className="divide-y divide-zinc-100">
+                      {discontinuedTemplateList.map((template) => {
+                        const isUsedInQuotations = usedTemplateIds.has(template.id);
+                        const isLinked = linkedTemplateIds.has(template.id);
+                        const deleteBlocked = isUsedInQuotations || isLinked;
+                        const deleteBlockedLabel = isUsedInQuotations
+                          ? "Used in quotations - cannot delete"
+                          : "Linked to product families - cannot delete";
+
+                        return (
+                          <div
+                            key={template.id}
+                            className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"
+                          >
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h3 className="font-semibold text-zinc-950">
+                                  {template.template_name}
+                                </h3>
+                                <TemplateLifecycleBadge status="discontinued" />
+                              </div>
+                              <p className="mt-1 text-sm text-zinc-500">
+                                {brandMap.get(template.brand_id) ?? "Unknown brand"} / {template.template_code ?? "No template code"}
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap gap-2 md:justify-end">
+                              <form action={restoreProductTemplate}>
+                                <input type="hidden" name="id" value={template.id} />
+                                <button
+                                  type="submit"
+                                  className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                                >
+                                  Reactivate
+                                </button>
+                              </form>
+                              <form action={archiveProductTemplate}>
+                                <input type="hidden" name="id" value={template.id} />
+                                <button
+                                  type="submit"
+                                  className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                                >
+                                  Move to Archive
+                                </button>
+                              </form>
+                              {deleteBlocked ? (
+                                <span className="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-xs font-semibold text-zinc-500">
+                                  {deleteBlockedLabel}
+                                </span>
+                              ) : (
+                                <form action={permanentlyDeleteProductTemplate}>
+                                  <input type="hidden" name="id" value={template.id} />
+                                  <ConfirmSubmitButton
+                                    message="Permanently delete this discontinued product template? This cannot be undone."
+                                    className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
+                                  >
+                                    Delete permanently
+                                  </ConfirmSubmitButton>
+                                </form>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {!discontinuedTemplateList.length ? (
+                        <p className="p-6 text-sm text-zinc-500">
+                          No discontinued product templates.
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                </details>
               </div>
               <div className="border-t border-zinc-200 p-4">
                 <h3 className="font-semibold text-zinc-950">Archived Linked Families</h3>

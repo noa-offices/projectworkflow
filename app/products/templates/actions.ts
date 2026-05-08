@@ -170,6 +170,8 @@ function numberInRange(formData: FormData, name: string, fallback: number, min: 
   return Math.min(Math.max(value, min), max);
 }
 
+type ProductTemplateLifecycleStatus = "active" | "archived" | "discontinued";
+
 function splitRelativePath(path: string) {
   const hashIndex = path.indexOf("#");
   const hash = hashIndex >= 0 ? path.slice(hashIndex) : "";
@@ -234,6 +236,82 @@ function safeTemplateLabel(templateName: string | null | undefined) {
 
 function safeBrandLabel(brandName: string | null | undefined) {
   return brandName?.trim() || "Brand";
+}
+
+async function validateProductTemplateCategories({
+  brandId,
+  mainCategoryId,
+  subCategoryId,
+}: {
+  brandId: string;
+  mainCategoryId: string | null;
+  subCategoryId: string | null;
+}) {
+  const supabase = await createClient();
+
+  if (mainCategoryId) {
+    const { data: mainCategory, error: mainCategoryError } = await supabase
+      .from("product_categories")
+      .select("id,brand_id,parent_id")
+      .eq("id", mainCategoryId)
+      .maybeSingle<{ id: string; brand_id: string; parent_id: string | null }>();
+
+    if (
+      mainCategoryError ||
+      !mainCategory ||
+      mainCategory.brand_id !== brandId ||
+      mainCategory.parent_id !== null
+    ) {
+      console.error("PRODUCT TEMPLATE MAIN CATEGORY VALIDATION ERROR", mainCategoryError?.message);
+      redirectWithMessage("Selected category does not belong to this brand.");
+    }
+  }
+
+  if (subCategoryId) {
+    const { data: subCategory, error: subCategoryError } = await supabase
+      .from("product_categories")
+      .select("id,brand_id,parent_id")
+      .eq("id", subCategoryId)
+      .maybeSingle<{ id: string; brand_id: string; parent_id: string | null }>();
+
+    if (
+      subCategoryError ||
+      !subCategory ||
+      subCategory.brand_id !== brandId ||
+      !mainCategoryId ||
+      subCategory.parent_id !== mainCategoryId
+    ) {
+      console.error("PRODUCT TEMPLATE SUB CATEGORY VALIDATION ERROR", subCategoryError?.message);
+      redirectWithMessage("Selected category does not belong to this brand.");
+    }
+  }
+}
+
+async function updateProductTemplateLifecycle({
+  actionLabel,
+  id,
+  message,
+  status,
+}: {
+  actionLabel: string;
+  id: string;
+  message: string;
+  status: ProductTemplateLifecycleStatus;
+}) {
+  const supabase = await createClient();
+  const isActive = status === "active";
+  const { error } = await supabase
+    .from("product_templates")
+    .update({
+      is_active: isActive,
+      lifecycle_status: status,
+    })
+    .eq("id", id);
+
+  if (error) {
+    console.error(`PRODUCT TEMPLATE ${actionLabel} ERROR`, error.message);
+    redirectWithMessage(message);
+  }
 }
 
 async function duplicateCategoryExists({
@@ -619,7 +697,6 @@ function templatePayload(formData: FormData, userId?: string) {
     unit_label: textValue(formData, "unit_label") || "Pc",
     currency: normalizeCurrency(textValue(formData, "currency") || defaultCurrency),
     default_unit_price: numberValue(formData, "default_unit_price", 0),
-    is_active: boolValue(formData, "is_active"),
     price_notes: optionalTextValue(formData, "price_notes"),
   };
 
@@ -712,6 +789,12 @@ export async function createProductTemplate(formData: FormData) {
     redirectWithMessage("Brand and template name are required.");
   }
 
+  await validateProductTemplateCategories({
+    brandId: payload.brand_id,
+    mainCategoryId: payload.main_category_id,
+    subCategoryId: payload.sub_category_id,
+  });
+
   const supabase = await createClient();
   const { data: template, error } = await supabase
     .from("product_templates")
@@ -750,6 +833,12 @@ export async function updateProductTemplate(formData: FormData) {
   if (!id || !payload.brand_id || !payload.template_name) {
     redirectWithMessage("Template id, brand, and template name are required.");
   }
+
+  await validateProductTemplateCategories({
+    brandId: payload.brand_id,
+    mainCategoryId: payload.main_category_id,
+    subCategoryId: payload.sub_category_id,
+  });
 
   const supabase = await createClient();
   const { data: currentTemplate, error: currentTemplateError } = await supabase
@@ -1075,7 +1164,7 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
   redirectWithMessageToPath(redirectPath, "Detail source price updated.");
 }
 
-export async function deactivateProductTemplate(formData: FormData) {
+export async function archiveProductTemplate(formData: FormData) {
   await requireSettingsManager();
   const id = textValue(formData, "id");
 
@@ -1083,19 +1172,34 @@ export async function deactivateProductTemplate(formData: FormData) {
     redirectWithMessage("Product template id is required.");
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("product_templates")
-    .update({ is_active: false })
-    .eq("id", id);
-
-  if (error) {
-    console.error("PRODUCT TEMPLATE ARCHIVE ERROR", error.message);
-    redirectWithMessage("Product template could not be moved to Archive.");
-  }
+  await updateProductTemplateLifecycle({
+    actionLabel: "ARCHIVE",
+    id,
+    message: "Product template could not be moved to Archive.",
+    status: "archived",
+  });
 
   revalidatePath("/products/templates");
   redirectWithMessage("Product template moved to Archive.");
+}
+
+export async function markProductTemplateDiscontinued(formData: FormData) {
+  await requireSettingsManager();
+  const id = textValue(formData, "id");
+
+  if (!id) {
+    redirectWithMessage("Product template id is required.");
+  }
+
+  await updateProductTemplateLifecycle({
+    actionLabel: "DISCONTINUE",
+    id,
+    message: "Product template could not be marked as discontinued.",
+    status: "discontinued",
+  });
+
+  revalidatePath("/products/templates");
+  redirectWithMessage("Product template marked as discontinued.");
 }
 
 export async function restoreProductTemplate(formData: FormData) {
@@ -1106,16 +1210,12 @@ export async function restoreProductTemplate(formData: FormData) {
     redirectWithMessage("Product template id is required.");
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("product_templates")
-    .update({ is_active: true })
-    .eq("id", id);
-
-  if (error) {
-    console.error("PRODUCT TEMPLATE RESTORE ERROR", error.message);
-    redirectWithMessage("Product template could not be restored.");
-  }
+  await updateProductTemplateLifecycle({
+    actionLabel: "RESTORE",
+    id,
+    message: "Product template could not be restored.",
+    status: "active",
+  });
 
   revalidatePath("/products/templates");
   redirectWithMessage("Product template restored.");
@@ -1130,6 +1230,11 @@ export async function permanentlyDeleteProductTemplate(formData: FormData) {
   }
 
   const supabase = await createClient();
+  const { data: template, error: templateError } = await supabase
+    .from("product_templates")
+    .select("id,is_active,lifecycle_status")
+    .eq("id", id)
+    .maybeSingle<{ id: string; is_active: boolean; lifecycle_status: ProductTemplateLifecycleStatus }>();
   const { count: quotationItemCount, error: quotationItemError } = await supabase
     .from("quotation_items")
     .select("id", { count: "exact", head: true })
@@ -1139,17 +1244,21 @@ export async function permanentlyDeleteProductTemplate(formData: FormData) {
     .select("id", { count: "exact", head: true })
     .or(`parent_template_id.eq.${id},linked_template_id.eq.${id}`);
 
-  if (quotationItemError || linkedFamilyError) {
+  if (templateError || !template || quotationItemError || linkedFamilyError) {
     console.error(
       "PRODUCT TEMPLATE DEPENDENCY CHECK ERROR",
-      quotationItemError?.message ?? linkedFamilyError?.message,
+      templateError?.message ?? quotationItemError?.message ?? linkedFamilyError?.message,
     );
     redirectWithMessage("Product template dependencies could not be checked.");
   }
 
+  if (template.is_active || template.lifecycle_status === "active") {
+    redirectWithMessage("Archive or discontinue this product before deleting it permanently.");
+  }
+
   if ((quotationItemCount ?? 0) > 0 || (linkedFamilyCount ?? 0) > 0) {
     redirectWithMessage(
-      "This product template is used in quotations or linked product families. Keep it archived.",
+      "This product is used in existing quotations. It cannot be permanently deleted because quotation history must be preserved.",
     );
   }
 
@@ -1162,6 +1271,10 @@ export async function permanentlyDeleteProductTemplate(formData: FormData) {
 
   revalidatePath("/products/templates");
   redirectWithMessage("Product template permanently deleted.");
+}
+
+export async function deactivateProductTemplate(formData: FormData) {
+  return archiveProductTemplate(formData);
 }
 
 export async function createLinkedProductFamily(formData: FormData) {
