@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Suspense } from "react";
 import { PreserveUiState } from "@/components/preserve-ui-state";
+import { PwaServiceWorkerRegister } from "@/components/pwa-service-worker-register";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -65,6 +66,7 @@ export default function RootLayout({
         <Suspense fallback={null}>
           <PreserveUiState />
         </Suspense>
+        <PwaServiceWorkerRegister />
         {children}
       </body>
     </html>
