@@ -3451,14 +3451,46 @@ export async function createBlankQuotationItem(formData: FormData) {
   const quotationId = textValue(formData, "quotation_id");
   const sectionId = optionalTextValue(formData, "section_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
-  const currency = "AED";
 
   if (!quotationId) {
     redirectWithMessage("/quotations", "Quotation is required.");
   }
 
+  const result = await createBlankQuotationItemRecord({
+    displayName,
+    formData,
+    quotationId,
+    sectionId,
+    userId: user.id,
+  });
+
+  if (!result.ok) {
+    redirectWithMessage(redirectPath, result.message);
+  }
+
+  await recalculateQuotationTotals(quotationId);
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(redirectPath);
+  redirect(pathWithParams(redirectPath, {
+    message: "Blank row added.",
+  }) + `#item-${result.itemId}`);
+}
+
+async function createBlankQuotationItemRecord({
+  displayName,
+  formData,
+  quotationId,
+  sectionId,
+  userId,
+}: {
+  displayName: string;
+  formData: FormData;
+  quotationId: string;
+  sectionId: string | null;
+  userId: string;
+}) {
   if (sectionId && !(await sectionBelongsToQuotation(sectionId, quotationId))) {
-    redirectWithMessage(redirectPath, "Destination section was not found.");
+    return { ok: false as const, message: "Destination section was not found." };
   }
 
   const supabase = await createSupabaseClient();
@@ -3489,7 +3521,7 @@ export async function createBlankQuotationItem(formData: FormData) {
     discount_value: 0,
     net_price: 0,
     net_total: 0,
-    currency,
+    currency: "AED",
     sort_order: await nextSortOrder(quotationId, sectionId),
     is_optional: false,
     internal_cost: 0,
@@ -3501,7 +3533,7 @@ export async function createBlankQuotationItem(formData: FormData) {
     cell_layout: cellLayoutValue(formData),
     is_active: true,
     notes: null,
-    created_by: user.id,
+    created_by: userId,
   };
 
   const { data: createdItem, error } = await supabase
@@ -3512,7 +3544,7 @@ export async function createBlankQuotationItem(formData: FormData) {
 
   if (error || !createdItem) {
     console.error("BLANK QUOTATION ITEM CREATE ERROR", error?.message);
-    redirectWithMessage(redirectPath, "Blank row could not be created.");
+    return { ok: false as const, message: "Blank row could not be created." };
   }
 
   await createAuditLog(supabase, {
@@ -3528,15 +3560,42 @@ export async function createBlankQuotationItem(formData: FormData) {
       source: "blank_manual_row",
     },
     actorName: displayName,
-    createdBy: user.id,
+    createdBy: userId,
   });
+
+  return { ok: true as const, itemId: createdItem.id };
+}
+
+export async function createBlankQuotationItemOptimistic(formData: FormData) {
+  const { user, displayName } = await requireRecordsManager();
+  const quotationId = textValue(formData, "quotation_id");
+  const sectionId = optionalTextValue(formData, "section_id");
+  const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
+
+  if (!quotationId) {
+    return { ok: false as const, message: "Quotation is required." };
+  }
+
+  const result = await createBlankQuotationItemRecord({
+    displayName,
+    formData,
+    quotationId,
+    sectionId,
+    userId: user.id,
+  });
+
+  if (!result.ok) {
+    return result;
+  }
 
   await recalculateQuotationTotals(quotationId);
   revalidatePath(`/quotations/${quotationId}`);
   revalidatePath(redirectPath);
-  redirect(pathWithParams(redirectPath, {
+  return {
+    ok: true as const,
+    itemId: result.itemId,
     message: "Blank row added.",
-  }) + `#item-${createdItem.id}`);
+  };
 }
 
 export async function addProductTemplateToQuotation(formData: FormData) {

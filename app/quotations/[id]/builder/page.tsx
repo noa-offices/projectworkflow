@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Fragment, type CSSProperties, type ReactNode } from "react";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { ContextBackLink } from "@/components/navigation/context-back-link";
+import { OptimisticAddRowButton } from "@/components/quotations/optimistic-add-row-button";
 import { CellFormattingToolbar } from "@/components/quotations/cell-formatting-toolbar";
 import {
   QuotationRowComputedValue,
@@ -49,7 +50,6 @@ import {
 import { formatQuotationMoney, quotationMoneyCell, quotationMoneyValue } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
-  createBlankQuotationItem,
   createQuotationItem,
   createQuotationSection,
   deactivateQuotationItem,
@@ -2175,18 +2175,11 @@ function RowActionPanel({
           templateMaterialGroups={templateMaterialGroups}
           templates={productTemplates}
         />
-        <form action={createBlankQuotationItem}>
-          <input type="hidden" name="quotation_id" value={quotation.id} />
-          <input type="hidden" name="section_id" value={sectionId} />
-          <input type="hidden" name="currency" value={quotation.currency || defaultCurrency} />
-          <input type="hidden" name="return_to" value={returnTo} />
-          <button
-            type="submit"
-            className="border border-zinc-300 bg-white px-3 py-2 text-xs font-bold text-emerald-900 transition hover:bg-emerald-50"
-          >
-            + Item Row
-          </button>
-        </form>
+        <OptimisticAddRowButton
+          quotationId={quotation.id}
+          returnTo={returnTo}
+          sectionId={sectionId}
+        />
         <details>
           <summary className={summaryClass}>+ Heading Row</summary>
           <div className="mt-3 w-[min(720px,calc(100vw-4rem))] border border-zinc-300 bg-white p-3">

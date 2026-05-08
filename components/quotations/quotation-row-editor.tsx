@@ -12,6 +12,7 @@ import {
   useState,
   useTransition,
 } from "react";
+import { useRouter } from "next/navigation";
 import { autosaveQuotationItemInline } from "@/app/quotations/actions";
 import { quotationMoneyCell, quotationMoneyValue } from "@/lib/quotation-pricing";
 
@@ -38,10 +39,12 @@ type RowEditorContextValue = {
   discountPercentageText: string;
   formatComputedValue: (field: "discount_amount" | "net_price" | "net_total") => string;
   getInputValue: (field: string, fallback: string) => string;
+  isRefreshingTotal: boolean;
   markUnsaved: () => void;
   onInputChange: (field: string, nextValue: string) => void;
+  retrySave: () => void;
   saveNow: () => void;
-  scheduleAutosave: () => void;
+  scheduleAutosave: (field?: string) => void;
   status: SaveStatus;
 };
 
@@ -101,13 +104,17 @@ export function QuotationRowEditorProvider({
   row: RowSnapshot;
 }) {
   const [status, setStatus] = useState<SaveStatus>("saved");
+  const [isRefreshingTotal, setIsRefreshingTotal] = useState(false);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({
     discount_value: String(row.discountValue),
     qty: String(row.qty),
     unit_price: String(row.unitPrice),
   });
+  const router = useRouter();
   const [, startTransition] = useTransition();
   const timerRef = useRef<number | null>(null);
+  const refreshTimerRef = useRef<number | null>(null);
+  const pendingFieldsRef = useRef(new Set<string>());
   const saveVersionRef = useRef(0);
 
   const clearTimer = useCallback(() => {
@@ -116,6 +123,27 @@ export function QuotationRowEditorProvider({
       timerRef.current = null;
     }
   }, []);
+
+  const clearRefreshTimer = useCallback(() => {
+    if (refreshTimerRef.current !== null) {
+      window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleBackgroundRefresh = useCallback(() => {
+    clearRefreshTimer();
+    setIsRefreshingTotal(true);
+    refreshTimerRef.current = window.setTimeout(() => {
+      startTransition(() => {
+        router.refresh();
+      });
+      refreshTimerRef.current = window.setTimeout(() => {
+        setIsRefreshingTotal(false);
+        refreshTimerRef.current = null;
+      }, 1200);
+    }, 250);
+  }, [clearRefreshTimer, router, startTransition]);
 
   const syncFromResult = useCallback((result: SaveResult) => {
     if (!result.ok || !result.row) return;
@@ -143,6 +171,15 @@ export function QuotationRowEditorProvider({
           if (result.ok) {
             syncFromResult(result);
             setStatus("saved");
+            const shouldRefreshTotals = ["discount_value", "discount_type", "qty", "unit_price"].some((field) =>
+              pendingFieldsRef.current.has(field),
+            );
+            pendingFieldsRef.current.clear();
+            if (shouldRefreshTotals) {
+              scheduleBackgroundRefresh();
+            } else {
+              setIsRefreshingTotal(false);
+            }
             return;
           }
           setStatus("failed");
@@ -152,9 +189,12 @@ export function QuotationRowEditorProvider({
           setStatus("failed");
         });
     });
-  }, [clearTimer, formId, startTransition, syncFromResult]);
+  }, [clearTimer, formId, scheduleBackgroundRefresh, startTransition, syncFromResult]);
 
-  const scheduleAutosave = useCallback(() => {
+  const scheduleAutosave = useCallback((field?: string) => {
+    if (field) {
+      pendingFieldsRef.current.add(field);
+    }
     setStatus("unsaved");
     clearTimer();
     timerRef.current = window.setTimeout(saveNow, 700);
@@ -184,9 +224,10 @@ export function QuotationRowEditorProvider({
 
     return () => {
       clearTimer();
+      clearRefreshTimer();
       form.removeEventListener("submit", handleSubmit);
     };
-  }, [clearTimer, formId, saveNow]);
+  }, [clearRefreshTimer, clearTimer, formId, saveNow]);
 
   const contextValue = useMemo<RowEditorContextValue>(() => ({
     discountPercentageText: row.discountType === "percent" ? `${fieldValues.discount_value ?? row.discountValue}%` : "-",
@@ -198,15 +239,17 @@ export function QuotationRowEditorProvider({
     getInputValue(field, fallback) {
       return fieldValues[field] ?? fallback;
     },
+    isRefreshingTotal,
     markUnsaved,
     onInputChange(field, nextValue) {
       setFieldValues((current) => ({ ...current, [field]: nextValue }));
-      scheduleAutosave();
+      scheduleAutosave(field);
     },
+    retrySave: saveNow,
     saveNow,
     scheduleAutosave,
     status,
-  }), [computed.discountAmount, computed.netPrice, computed.netTotal, fieldValues, markUnsaved, row.discountType, row.discountValue, saveNow, scheduleAutosave, status]);
+  }), [computed.discountAmount, computed.netPrice, computed.netTotal, fieldValues, isRefreshingTotal, markUnsaved, row.discountType, row.discountValue, saveNow, scheduleAutosave, status]);
 
   return (
     <RowEditorContext.Provider value={contextValue}>
@@ -252,7 +295,7 @@ export function QuotationRowFieldInput({
       onChange={isTrackedField ? (event) => context.onInputChange(name, event.target.value) : undefined}
       onInput={!isTrackedField && context ? () => {
         context.markUnsaved();
-        context.scheduleAutosave();
+        context.scheduleAutosave(name);
       } : undefined}
       onBlur={context ? () => context.saveNow() : undefined}
       className={`w-full border-0 bg-transparent px-1 py-0.5 text-xs text-zinc-800 outline-none focus:bg-emerald-50 focus:ring-1 focus:ring-emerald-800 ${
@@ -286,13 +329,23 @@ export function QuotationRowSaveControls() {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => context?.saveNow()}
-        className="h-6 border border-emerald-900 bg-emerald-900 px-2 text-[11px] font-semibold text-white transition hover:bg-emerald-800"
-      >
-        Save
-      </button>
+      {status === "failed" ? (
+        <button
+          type="button"
+          onClick={() => context?.retrySave()}
+          className="h-6 border border-red-700 bg-red-700 px-2 text-[11px] font-semibold text-white transition hover:bg-red-600"
+        >
+          Retry
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => context?.saveNow()}
+          className="h-6 border border-emerald-900 bg-emerald-900 px-2 text-[11px] font-semibold text-white transition hover:bg-emerald-800"
+        >
+          Save
+        </button>
+      )}
       <span
         className={`text-[10px] font-semibold ${
           status === "failed"
@@ -306,6 +359,9 @@ export function QuotationRowSaveControls() {
       >
         {statusLabels[status]}
       </span>
+      {context?.isRefreshingTotal ? (
+        <span className="text-[10px] font-semibold text-zinc-500">Updating total...</span>
+      ) : null}
     </>
   );
 }
