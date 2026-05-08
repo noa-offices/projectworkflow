@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import type { ChangeEvent } from "react";
+import type {
+  ChangeEvent,
+  ClipboardEvent,
+  FocusEvent,
+  MouseEvent,
+} from "react";
 import {
   updateProductTemplateImageSettings,
   updateProductTemplateImage,
@@ -15,14 +20,52 @@ import {
 import { uploadProductTemplateImage } from "@/lib/quotation-image-upload";
 import { createClient } from "@/lib/supabase/client";
 
-type UploadStatus = "idle" | "uploading" | "failed";
+type UploadStatus = "idle" | "uploading" | "pasting" | "uploaded" | "failed";
+type SettingsStatus = "idle" | "uploading" | "failed";
 type ProductTemplateImageField =
   | "proposed_image_url_1"
   | "proposed_image_url_2"
-  | "proposed_image_url_3";
+  | "proposed_image_url_3"
+  | "proposed_image_url_4"
+  | "proposed_image_url_5"
+  | "proposed_image_url_6"
+  | "proposed_image_url_7"
+  | "proposed_image_url_8";
+
+const extensionByType: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
 
 function isDirectImageUrl(value: string) {
   return /^(https?:|blob:|data:|\/)/i.test(value);
+}
+
+function filenameForClipboardImage(type: string) {
+  return `pasted-template-${Date.now()}.${extensionByType[type] ?? "png"}`;
+}
+
+function clipboardImageFile(event: ClipboardEvent<HTMLDivElement>) {
+  const items = Array.from(event.clipboardData.items);
+  const imageItem = items.find(
+    (item) =>
+      item.kind === "file" &&
+      ["image/png", "image/jpeg", "image/webp"].includes(item.type),
+  );
+  const file =
+    imageItem?.getAsFile() ??
+    Array.from(event.clipboardData.files).find((item) =>
+      ["image/png", "image/jpeg", "image/webp"].includes(item.type),
+    );
+
+  if (!file) return null;
+  if (file.name) return file;
+
+  return new File([file], filenameForClipboardImage(file.type), {
+    lastModified: file.lastModified,
+    type: file.type,
+  });
 }
 
 async function signedProductImageUrl(path: string) {
@@ -58,7 +101,10 @@ export function ProductTemplateImageUploader({
   value: string | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const pasteTargetRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const lastPasteSignatureRef = useRef("");
+  const lastPasteAtRef = useRef(0);
   const [currentValue, setCurrentValue] = useState(value ?? "");
   const [previewUrl, setPreviewUrl] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -66,8 +112,9 @@ export function ProductTemplateImageUploader({
     normalizeImageDisplaySettings(imageSettings),
   );
   const [isAdjusting, setIsAdjusting] = useState(false);
+  const [isSelected, setIsSelected] = useState(false);
   const [status, setStatus] = useState<UploadStatus>("idle");
-  const [settingsStatus, setSettingsStatus] = useState<UploadStatus>("idle");
+  const [settingsStatus, setSettingsStatus] = useState<SettingsStatus>("idle");
   const [, startTransition] = useTransition();
   const imageValue = currentValue;
 
@@ -83,7 +130,10 @@ export function ProductTemplateImageUploader({
 
     void signedProductImageUrl(imageValue)
       .then((url) => {
-        if (!cancelled) setPreviewUrl(url);
+        if (!cancelled) {
+          setPreviewUrl(url);
+          setErrorMessage("");
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -110,7 +160,8 @@ export function ProductTemplateImageUploader({
 
     if (formOnly) {
       setCurrentValue(path);
-      setStatus("idle");
+      setErrorMessage("");
+      setStatus(path ? "uploaded" : "idle");
       return;
     }
 
@@ -123,15 +174,14 @@ export function ProductTemplateImageUploader({
       void updateProductTemplateImage(formData)
         .then((result) => {
           if (!result.ok) {
-            setErrorMessage(
-              result.message || "Product image could not be saved.",
-            );
+            setErrorMessage(result.message || "Product image could not be saved.");
             setStatus("failed");
             return;
           }
 
           setCurrentValue(path);
-          setStatus("idle");
+          setErrorMessage("");
+          setStatus(path ? "uploaded" : "idle");
         })
         .catch((error: unknown) => {
           setErrorMessage(
@@ -148,12 +198,11 @@ export function ProductTemplateImageUploader({
     saveImagePath("");
   }
 
-  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-
-    setStatus("uploading");
+  async function uploadAndSaveImage(
+    file: File,
+    nextStatus: "uploading" | "pasting",
+  ) {
+    setStatus(nextStatus);
     setErrorMessage("");
 
     try {
@@ -165,6 +214,39 @@ export function ProductTemplateImageUploader({
       );
       setStatus("failed");
     }
+  }
+
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    await uploadAndSaveImage(file, "uploading");
+  }
+
+  async function handlePaste(event: ClipboardEvent<HTMLDivElement>) {
+    if (!canEdit || status === "uploading" || status === "pasting") return;
+
+    const file = clipboardImageFile(event);
+    if (!file) {
+      return;
+    }
+
+    event.preventDefault();
+    const signature = [file.name, file.size, file.type, file.lastModified].join(":");
+    const now = Date.now();
+
+    if (
+      signature === lastPasteSignatureRef.current &&
+      now - lastPasteAtRef.current < 1000
+    ) {
+      return;
+    }
+
+    lastPasteSignatureRef.current = signature;
+    lastPasteAtRef.current = now;
+
+    await uploadAndSaveImage(file, "pasting");
   }
 
   function saveImageSettings(settings: ImageDisplaySettings) {
@@ -218,9 +300,62 @@ export function ProductTemplateImageUploader({
     });
   }
 
+  function handleBlur(event: FocusEvent<HTMLDivElement>) {
+    const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
+
+    if (!event.currentTarget.contains(nextTarget)) {
+      setIsSelected(false);
+    }
+  }
+
+  function handlePreviewMouseDown(event: MouseEvent<HTMLDivElement>) {
+    if (
+      event.target instanceof HTMLButtonElement ||
+      event.target instanceof HTMLInputElement
+    ) {
+      return;
+    }
+
+    pasteTargetRef.current?.focus();
+  }
+
+  const statusMessage = errorMessage
+    ? status === "failed"
+      ? errorMessage
+      : errorMessage
+    : status === "uploading"
+      ? "Uploading..."
+      : status === "pasting"
+        ? "Pasting..."
+        : status === "uploaded"
+          ? "Uploaded"
+          : canEdit
+            ? isSelected
+              ? "Press Ctrl+V to paste an image."
+              : "Click the image card, then paste or upload."
+            : "";
+  const boxClassName =
+    "relative flex h-28 w-full items-center justify-center overflow-hidden rounded-md border border-dashed bg-white transition";
+  const selectedClassName = isSelected
+    ? "border-emerald-600 ring-1 ring-emerald-600"
+    : "border-zinc-300";
+
   return (
-    <div ref={containerRef} className="flex items-center gap-3">
-      <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-md border border-dashed border-zinc-300 bg-white text-center text-[11px] text-zinc-400">
+    <div ref={containerRef} className="grid gap-2">
+      <div
+        ref={pasteTargetRef}
+        tabIndex={canEdit ? 0 : undefined}
+        onBlur={handleBlur}
+        onFocus={() => setIsSelected(true)}
+        onMouseDown={handlePreviewMouseDown}
+        onPaste={handlePaste}
+        className={`${boxClassName} ${selectedClassName} outline-none`}
+        aria-label={
+          canEdit
+            ? `${label}. Click or focus this image card, then paste or upload.`
+            : label
+        }
+      >
         {previewUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -230,13 +365,15 @@ export function ProductTemplateImageUploader({
             style={imageDisplayStyle(currentImageSettings)}
           />
         ) : (
-          <span className="px-2">{canEdit ? "Upload image" : "No image"}</span>
+          <span className="px-3 text-center text-[11px] leading-5 text-zinc-400">
+            {canEdit ? "Paste image or upload" : "No image"}
+          </span>
         )}
       </div>
 
       <div className="min-w-0">
         {canEdit ? (
-          <>
+          <div className="flex flex-wrap items-center gap-3">
             <input
               ref={inputRef}
               type="file"
@@ -247,7 +384,7 @@ export function ProductTemplateImageUploader({
             <button
               type="button"
               onClick={() => inputRef.current?.click()}
-              disabled={status === "uploading"}
+              disabled={status === "uploading" || status === "pasting"}
               className="text-xs font-semibold text-emerald-900 transition hover:text-emerald-800 disabled:text-zinc-400"
             >
               {status === "uploading"
@@ -256,12 +393,20 @@ export function ProductTemplateImageUploader({
                   ? "Replace image"
                   : "Upload image"}
             </button>
+            <button
+              type="button"
+              onClick={() => pasteTargetRef.current?.focus()}
+              disabled={status === "uploading" || status === "pasting"}
+              className="text-xs font-semibold text-zinc-600 transition hover:text-zinc-950 disabled:text-zinc-400"
+            >
+              {status === "pasting" ? "Pasting..." : "Paste image"}
+            </button>
             {imageValue ? (
               <button
                 type="button"
                 onClick={clearImage}
-                disabled={status === "uploading"}
-                className="ml-3 text-xs font-semibold text-red-700 transition hover:text-red-800 disabled:text-zinc-400"
+                disabled={status === "uploading" || status === "pasting"}
+                className="text-xs font-semibold text-red-700 transition hover:text-red-800 disabled:text-zinc-400"
               >
                 Remove
               </button>
@@ -271,17 +416,21 @@ export function ProductTemplateImageUploader({
                 type="button"
                 onClick={() => setIsAdjusting(true)}
                 disabled={settingsStatus === "uploading"}
-                className="ml-3 text-xs font-semibold text-zinc-600 transition hover:text-zinc-950 disabled:text-zinc-400"
+                className="text-xs font-semibold text-zinc-600 transition hover:text-zinc-950 disabled:text-zinc-400"
               >
                 Adjust
               </button>
             ) : null}
-          </>
+          </div>
         ) : null}
 
-        {errorMessage ? (
-          <p className="mt-1 max-w-48 text-xs leading-4 text-red-700">
-            {errorMessage}
+        {statusMessage ? (
+          <p
+            className={`mt-1 max-w-48 text-xs leading-4 ${
+              status === "failed" ? "text-red-700" : "text-zinc-500"
+            }`}
+          >
+            {statusMessage}
           </p>
         ) : null}
       </div>

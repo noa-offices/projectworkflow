@@ -163,6 +163,44 @@ type Category = {
   is_active: boolean;
 };
 
+type ProductTemplateImageField =
+  | "proposed_image_url_1"
+  | "proposed_image_url_2"
+  | "proposed_image_url_3"
+  | "proposed_image_url_4"
+  | "proposed_image_url_5"
+  | "proposed_image_url_6"
+  | "proposed_image_url_7"
+  | "proposed_image_url_8";
+type ExtraProductTemplateImageField = Exclude<
+  ProductTemplateImageField,
+  "proposed_image_url_1" | "proposed_image_url_2" | "proposed_image_url_3"
+>;
+
+type ProductTemplateImageDisplaySettings = {
+  fit?: "contain" | "cover";
+  zoom?: number;
+  positionX?: number;
+  positionY?: number;
+};
+
+type ProductTemplateImageSettings = {
+  default_image_url?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_1?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_2?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_3?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_4?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_5?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_6?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_7?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_8?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_4_path?: string | null;
+  proposed_image_url_5_path?: string | null;
+  proposed_image_url_6_path?: string | null;
+  proposed_image_url_7_path?: string | null;
+  proposed_image_url_8_path?: string | null;
+};
+
 type ProductTemplate = {
   id: string;
   brand_id: string;
@@ -184,32 +222,7 @@ type ProductTemplate = {
   variant_pricing: VariantPricingRow[] | null;
   category_pricing: CategoryPricingRow[] | null;
   accessory_pricing: AccessoryPricingRow[] | null;
-  image_settings: {
-    default_image_url?: {
-      fit?: "contain" | "cover";
-      zoom?: number;
-      positionX?: number;
-      positionY?: number;
-    };
-    proposed_image_url_1?: {
-      fit?: "contain" | "cover";
-      zoom?: number;
-      positionX?: number;
-      positionY?: number;
-    };
-    proposed_image_url_2?: {
-      fit?: "contain" | "cover";
-      zoom?: number;
-      positionX?: number;
-      positionY?: number;
-    };
-    proposed_image_url_3?: {
-      fit?: "contain" | "cover";
-      zoom?: number;
-      positionX?: number;
-      positionY?: number;
-    };
-  } | null;
+  image_settings: ProductTemplateImageSettings | null;
   unit_label: string;
   currency: string;
   default_unit_price: number;
@@ -334,7 +347,63 @@ const proposedImageSlots = [
   { field: "proposed_image_url_1", label: "Image 1" },
   { field: "proposed_image_url_2", label: "Image 2" },
   { field: "proposed_image_url_3", label: "Image 3" },
+  { field: "proposed_image_url_4", label: "Image 4" },
+  { field: "proposed_image_url_5", label: "Image 5" },
+  { field: "proposed_image_url_6", label: "Image 6" },
+  { field: "proposed_image_url_7", label: "Image 7" },
+  { field: "proposed_image_url_8", label: "Image 8" },
 ] as const;
+
+function extraTemplateImagePathKey(field: ExtraProductTemplateImageField) {
+  return `${field}_path` as const;
+}
+
+function templateImageValue(
+  template: Pick<
+    ProductTemplate,
+    | "default_image_url"
+    | "image_settings"
+    | "proposed_image_url_1"
+    | "proposed_image_url_2"
+    | "proposed_image_url_3"
+  > | null | undefined,
+  field: ProductTemplateImageField,
+) {
+  if (!template) return null;
+
+  if (field === "proposed_image_url_1") {
+    return template.proposed_image_url_1 ?? template.default_image_url;
+  }
+
+  if (field === "proposed_image_url_2") {
+    return template.proposed_image_url_2;
+  }
+
+  if (field === "proposed_image_url_3") {
+    return template.proposed_image_url_3;
+  }
+
+  const imagePath = template.image_settings?.[
+    extraTemplateImagePathKey(field as ExtraProductTemplateImageField)
+  ];
+  return typeof imagePath === "string" && imagePath ? imagePath : null;
+}
+
+function templateImageDisplaySettings(
+  template: Pick<ProductTemplate, "image_settings"> | null | undefined,
+  field: ProductTemplateImageField,
+) {
+  if (!template?.image_settings) return undefined;
+
+  const settings = template.image_settings[field];
+  if (settings && typeof settings === "object") {
+    return settings;
+  }
+
+  return field === "proposed_image_url_1"
+    ? template.image_settings.default_image_url
+    : undefined;
+}
 
 function stringParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
@@ -660,25 +729,20 @@ function TemplateForm({
           </div>
         </FormSection>
 
-        <FormSection title="Proposed Item Reference Images">
+        <FormSection
+          title="Proposed Item Reference Images"
+          description="Up to 8 product reference images. Click an image card or Paste image, then paste a PNG, JPG, JPEG, or WebP image from the clipboard."
+        >
           <input
             type="hidden"
             name="reference_image_url"
             defaultValue={template?.reference_image_url ?? ""}
           />
           <div className="md:col-span-2 xl:col-span-3">
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {proposedImageSlots.map((slot) => {
-                const value =
-                  template?.[slot.field] ??
-                  (slot.field === "proposed_image_url_1"
-                    ? template?.default_image_url
-                    : null);
-                const settings =
-                  template?.image_settings?.[slot.field] ??
-                  (slot.field === "proposed_image_url_1"
-                    ? template?.image_settings?.default_image_url
-                    : undefined);
+                const value = templateImageValue(template, slot.field);
+                const settings = templateImageDisplaySettings(template, slot.field);
 
                 return (
                   <div key={slot.field}>
@@ -2448,18 +2512,10 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   <div className="border-b border-zinc-200 p-5">
                     <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
                       <div className="flex min-w-0 flex-col gap-4 sm:flex-row">
-                        <div className="flex shrink-0 gap-2">
+                        <div className="flex shrink-0 flex-wrap gap-2">
                           {proposedImageSlots.map((slot) => {
-                            const value =
-                              template[slot.field] ??
-                              (slot.field === "proposed_image_url_1"
-                                ? template.default_image_url
-                                : null);
-                            const settings =
-                              template.image_settings?.[slot.field] ??
-                              (slot.field === "proposed_image_url_1"
-                                ? template.image_settings?.default_image_url
-                                : undefined);
+                            const value = templateImageValue(template, slot.field);
+                            const settings = templateImageDisplaySettings(template, slot.field);
 
                             return (
                               <ProductTemplateImageUploader

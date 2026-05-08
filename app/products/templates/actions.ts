@@ -16,7 +16,18 @@ const allowedOptionTypes = new Set([
   "other",
 ]);
 const imageFits = new Set(["contain", "cover"]);
-const imageFields = new Set([
+const imageFields = [
+  "proposed_image_url_1",
+  "proposed_image_url_2",
+  "proposed_image_url_3",
+  "proposed_image_url_4",
+  "proposed_image_url_5",
+  "proposed_image_url_6",
+  "proposed_image_url_7",
+  "proposed_image_url_8",
+] as const;
+const imageFieldSet = new Set(imageFields);
+const directImageFieldSet = new Set([
   "proposed_image_url_1",
   "proposed_image_url_2",
   "proposed_image_url_3",
@@ -486,33 +497,46 @@ function imageDisplaySettingsValue(formData: FormData) {
   };
 }
 
-function imageSettingsValue(formData: FormData) {
-  const settings: Record<string, ReturnType<typeof imageDisplaySettingsValue>> = {};
+function extraTemplateImagePathKey(field: string) {
+  return `${field}_path`;
+}
+
+function templateImageMetadataValue(formData: FormData) {
+  const metadata: Record<string, ReturnType<typeof imageDisplaySettingsValue> | string> = {};
 
   for (const field of imageFields) {
     const rawValue = textValue(formData, `image_settings_${field}`);
-    if (!rawValue) continue;
+    if (rawValue) {
+      try {
+        const parsed = JSON.parse(rawValue) as {
+          fit?: string;
+          zoom?: number;
+          positionX?: number;
+          positionY?: number;
+        };
 
-    try {
-      const parsed = JSON.parse(rawValue) as {
-        fit?: string;
-        zoom?: number;
-        positionX?: number;
-        positionY?: number;
-      };
+        metadata[field] = {
+          fit: parsed.fit === "cover" ? "cover" : "contain",
+          zoom: Math.min(Math.max(Number(parsed.zoom) || 1, 1), 3),
+          positionX: Math.min(Math.max(Number(parsed.positionX) || 50, 0), 100),
+          positionY: Math.min(Math.max(Number(parsed.positionY) || 50, 0), 100),
+        };
+      } catch {
+        // Ignore malformed client-side display metadata.
+      }
+    }
 
-      settings[field] = {
-        fit: parsed.fit === "cover" ? "cover" : "contain",
-        zoom: Math.min(Math.max(Number(parsed.zoom) || 1, 1), 3),
-        positionX: Math.min(Math.max(Number(parsed.positionX) || 50, 0), 100),
-        positionY: Math.min(Math.max(Number(parsed.positionY) || 50, 0), 100),
-      };
-    } catch {
-      // Ignore malformed client-side display metadata.
+    if (directImageFieldSet.has(field)) {
+      continue;
+    }
+
+    const path = optionalTextValue(formData, field);
+    if (path) {
+      metadata[extraTemplateImagePathKey(field)] = path;
     }
   }
 
-  return Object.keys(settings).length ? settings : undefined;
+  return Object.keys(metadata).length ? metadata : undefined;
 }
 
 function deskingSizePricingValue(formData: FormData) {
@@ -727,7 +751,7 @@ function templatePayload(formData: FormData, userId?: string) {
 
 function createTemplatePayload(formData: FormData, userId: string) {
   const id = optionalTextValue(formData, "id");
-  const imageSettings = imageSettingsValue(formData);
+  const imageSettings = templateImageMetadataValue(formData);
   const payload = {
     ...templatePayload(formData, userId),
     ...(imageSettings ? { image_settings: imageSettings } : {}),
@@ -1660,19 +1684,56 @@ export async function updateProductTemplateImage(formData: FormData) {
   const field = textValue(formData, "image_field");
   const path = optionalTextValue(formData, "image_path");
 
-  if (!id || !imageFields.has(field)) {
+  if (!id || !imageFieldSet.has(field as (typeof imageFields)[number])) {
     return { ok: false, message: "Template id and image field are required." };
   }
 
   const supabase = await createClient();
-  const updates = {
-    [field]: path,
-    ...(field === "proposed_image_url_1" ? { default_image_url: path } : {}),
-  };
-  const { error } = await supabase
-    .from("product_templates")
-    .update(updates)
-    .eq("id", id);
+  let error: { message?: string } | null = null;
+
+  if (directImageFieldSet.has(field)) {
+    const updates = {
+      [field]: path,
+      ...(field === "proposed_image_url_1" ? { default_image_url: path } : {}),
+    };
+    const response = await supabase
+      .from("product_templates")
+      .update(updates)
+      .eq("id", id);
+    error = response.error;
+  } else {
+    const { data: currentTemplate, error: readError } = await supabase
+      .from("product_templates")
+      .select("image_settings")
+      .eq("id", id)
+      .single<{ image_settings: Record<string, unknown> | null }>();
+
+    if (readError || !currentTemplate) {
+      console.error("PRODUCT TEMPLATE IMAGE READ ERROR", readError?.message);
+      return { ok: false, message: "Product template image could not be saved." };
+    }
+
+    const nextImageSettings = { ...(currentTemplate.image_settings ?? {}) };
+    const pathKey = extraTemplateImagePathKey(field);
+
+    if (path) {
+      nextImageSettings[pathKey] = path;
+    } else {
+      delete nextImageSettings[pathKey];
+      delete nextImageSettings[field];
+    }
+
+    const response = await supabase
+      .from("product_templates")
+      .update({
+        image_settings: Object.keys(nextImageSettings).length
+          ? nextImageSettings
+          : null,
+      })
+      .eq("id", id);
+
+    error = response.error;
+  }
 
   if (error) {
     console.error("PRODUCT TEMPLATE IMAGE UPDATE ERROR", error.message);
@@ -1688,7 +1749,7 @@ export async function updateProductTemplateImageSettings(formData: FormData) {
   const id = textValue(formData, "id");
   const field = textValue(formData, "image_field");
 
-  if (!id || !imageFields.has(field)) {
+  if (!id || !imageFieldSet.has(field as (typeof imageFields)[number])) {
     return { ok: false, message: "Template id and image field are required." };
   }
 
