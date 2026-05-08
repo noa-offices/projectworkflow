@@ -1,7 +1,7 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { PendingNavLink } from "@/components/pending-nav-link";
 import { APP_LABEL, APP_NAME } from "@/lib/app-meta";
 
 const navigationGroups = [
@@ -65,12 +65,9 @@ export function AppSidebar() {
     <aside className="border-b border-zinc-200 bg-white lg:min-h-screen lg:w-64 lg:border-b-0 lg:border-r">
       <div className="flex items-center justify-between px-5 py-4 lg:block lg:px-6 lg:py-6">
         <div>
-          <PendingNavLink
-            href="/"
-            label={APP_NAME}
-            pendingLabel="Loading..."
-            className="text-lg font-semibold tracking-tight text-zinc-950"
-          />
+          <Link href="/" className="text-lg font-semibold tracking-tight text-zinc-950">
+            {APP_NAME}
+          </Link>
           <p className="hidden pt-1 text-xs font-medium text-zinc-500 lg:block">
             {APP_LABEL}
           </p>
@@ -85,11 +82,9 @@ export function AppSidebar() {
               </p>
             ) : null}
             {group.items.map((item) => (
-              <PendingNavLink
+              <Link
                 key={item.href}
                 href={item.href}
-                label={item.label}
-                pendingLabel="Loading..."
                 className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition hover:bg-slate-50 hover:text-emerald-900 ${
                   isActive(item.href)
                     ? "bg-emerald-50 text-emerald-900"
@@ -97,8 +92,9 @@ export function AppSidebar() {
                 } ${
                   group.label ? "lg:ml-3" : ""
                 }`}
-                pendingClassName="pointer-events-none"
-              />
+              >
+                {item.label}
+              </Link>
             ))}
           </div>
         ))}
