@@ -191,6 +191,45 @@ function numberValue(value: unknown, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+function parseSizeLabel(label?: string | null) {
+  const normalized = (label ?? "")
+    .replace(/[A-Za-z]+$/g, "")
+    .trim();
+  const parts = normalized
+    .split(/\s*x\s*/i)
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isFinite(value));
+
+  if (parts.length !== 3) {
+    return null;
+  }
+
+  return {
+    depth: parts[1],
+    height: parts[2],
+    length: parts[0],
+  };
+}
+
+function normalizedSizePricingRow(row: DeskingSizePricingRow, index: number): DeskingSizePricingRow {
+  const parsedLabel = parseSizeLabel(row.label);
+  const length = parsedLabel?.length ?? numberValue(row.length);
+  const depth = parsedLabel?.depth ?? numberValue(row.depth);
+  const height = parsedLabel?.height ?? numberValue(row.height);
+
+  return {
+    ...row,
+    currency: normalizeCurrency(row.currency ?? "AED"),
+    depth,
+    height,
+    id: row.id ?? `size-${index}`,
+    is_active: row.is_active !== false,
+    label: row.label?.trim() || `${length}x${depth}x${height}`,
+    length,
+    sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
+  };
+}
+
 function formatPriceCheckDate(value: string | null) {
   if (!value) return "";
 
@@ -234,6 +273,7 @@ function PriceCheckBadge({
 
 function activeSizePricingRows(rows?: DeskingSizePricingRow[] | null) {
   return (Array.isArray(rows) ? rows : [])
+    .map((row, index) => normalizedSizePricingRow(row, index))
     .filter((row) => row.is_active !== false)
     .filter((row) => numberValue(row.length) > 0 && numberValue(row.depth) > 0 && numberValue(row.height) > 0)
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
@@ -847,6 +887,9 @@ export function ProductLibrarySelector({
                     : null;
                   const templateComponents = componentsByTemplate.get(template.id) ?? [];
                   const sizePricingRows = activeSizePricingRows(template.desking_size_pricing);
+                  const workstationCurrencies = Array.from(
+                    new Set(sizePricingRows.map((row) => normalizeCurrency(row.currency ?? template.currency))),
+                  );
                   const variantRows = activeVariantRows(template.variant_pricing);
                   const categoryRows = activeCategoryRows(template.category_pricing);
                   const accessoryGroups = activeAccessoryRows(template.accessory_pricing);
@@ -893,6 +936,8 @@ export function ProductLibrarySelector({
                     sizePricingRows.find((row) => row.id === selectedDeskingSizes[template.id]) ??
                     sizePricingRows[0] ??
                     null;
+                  const hasMixedWorkstationCurrencies = usesWorkstationFlow && workstationCurrencies.length > 1;
+                  const missingRequiredWorkstationSelection = usesWorkstationFlow && !selectedSizeRow;
                   const derivedDesking = isDesking && selectedSizeRow
                     ? deskingSizePricingCalculation({
                         accessoryQuantities: templateAccessoryQuantities,
@@ -1197,7 +1242,10 @@ export function ProductLibrarySelector({
                         {usesWorkstationFlow ? (
                           <div className="mt-4 space-y-2">
                             <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
-                              1. Select workstation size
+                              1. Select workstation size / base price
+                            </p>
+                            <p className="text-xs leading-5 text-zinc-500">
+                              This is the main workstation base price.
                             </p>
                             <label className="block">
                               <span className="text-[10px] font-bold uppercase text-zinc-500">
@@ -1220,6 +1268,59 @@ export function ProductLibrarySelector({
                                 ))}
                               </select>
                             </label>
+                            {selectedSizeRow ? (
+                              <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-700">
+                                <p>
+                                  Base price: {formatMoney(selectedSizeRow.currency ?? template.currency, numberValue(selectedSizeRow.default_price))}
+                                </p>
+                                <p>
+                                  Additional CL2 price: {formatMoney(selectedSizeRow.currency ?? template.currency, numberValue(selectedSizeRow.additional_price))}
+                                </p>
+                              </div>
+                            ) : null}
+                            {hasMixedWorkstationCurrencies ? (
+                              <p className="text-xs leading-5 text-amber-700">
+                                Mixed currencies detected. Review conversion before adding.
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {usesWorkstationFlow ? (
+                          <div className="mt-4 space-y-2">
+                            <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                              2. Additional CL2 quantity
+                            </p>
+                            <label className="block">
+                              <span className="text-[10px] font-bold uppercase text-zinc-500">
+                                Additional CL2 Quantity
+                              </span>
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                value={additionalClusterQty}
+                                onChange={(event) =>
+                                  setAdditionalClusterQuantities((current) => ({
+                                    ...current,
+                                    [template.id]: Math.max(
+                                      0,
+                                      Math.trunc(Number(event.target.value) || 0),
+                                    ),
+                                  }))
+                                }
+                                className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                              />
+                            </label>
+                            {selectedSizeRow ? (
+                              <p className="text-xs leading-5 text-zinc-500">
+                                {formatMoney(selectedSizeRow.currency ?? template.currency, numberValue(selectedSizeRow.default_price))}
+                                {" + ("}
+                                {formatMoney(selectedSizeRow.currency ?? template.currency, numberValue(selectedSizeRow.additional_price))}
+                                {" x "}
+                                {additionalClusterQty}
+                                {`) = ${formatMoney(selectedSizeRow.currency ?? template.currency, numberValue(selectedSizeRow.default_price) + numberValue(selectedSizeRow.additional_price) * additionalClusterQty)}`}
+                              </p>
+                            ) : null}
                           </div>
                         ) : null}
                         {usesCategoryPricing ? (
@@ -1287,7 +1388,7 @@ export function ProductLibrarySelector({
                         {usesWorkstationFlow && (variantRows.length || accessoryGroups.length) ? (
                           <div className="mt-4 space-y-2">
                             <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
-                              2. Optional items
+                              3. Accessories / Optional Items
                             </p>
                             {variantRows.length ? (
                               <label className="block">
@@ -1451,7 +1552,7 @@ export function ProductLibrarySelector({
                         {selectedLinkedProducts.length ? (
                           <div className="mt-4 space-y-2">
                             <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
-                              {usesWorkstationFlow ? "3. Linked product families" : "Linked Product Families / Screens & Add-ons"}
+                              {usesWorkstationFlow ? "4. Linked Product Families / Screens & Add-ons" : "Linked Product Families / Screens & Add-ons"}
                             </p>
                             {selectedLinkedProducts.map((line) => (
                               <fieldset key={line.link.id} className="border border-zinc-200 bg-zinc-50 p-2">
@@ -1802,7 +1903,7 @@ export function ProductLibrarySelector({
                             ) : null}
                           </div>
                         ) : null}
-                        {isDesking ? (
+                        {isDesking && !usesWorkstationFlow ? (
                           <label className="block max-w-48 text-right">
                             <span className="text-[10px] font-bold uppercase text-zinc-500">
                               Additional {derivedDesking?.clusterName ?? "CL2"} Quantity
@@ -1848,7 +1949,7 @@ export function ProductLibrarySelector({
                         {nonAedCurrencies.length ? (
                           <div className="max-w-56 space-y-2 border border-amber-200 bg-amber-50 p-2 text-left text-xs leading-5 text-amber-900">
                             <p className="font-bold uppercase">
-                              {usesWorkstationFlow ? "4. Currency conversion" : "Currency Conversion"}
+                              {usesWorkstationFlow ? "5. Currency conversion" : "Currency Conversion"}
                             </p>
                             {Array.from(originalCurrencyTotals.entries()).map(([currency, amount]) => (
                               <p key={currency}>
@@ -1890,7 +1991,7 @@ export function ProductLibrarySelector({
                         ) : null}
                         <div className="max-w-56 space-y-2 border border-zinc-200 bg-zinc-50 p-2 text-left text-xs leading-5 text-zinc-700">
                           <p className="font-bold uppercase text-zinc-500">
-                            {usesWorkstationFlow ? "5. Final quotation price" : "Pricing / Discount"}
+                            {usesWorkstationFlow ? "6. Pricing / Discount" : "Pricing / Discount"}
                           </p>
                           <p>U.Price: {formatQuotationMoney(previewCurrency, previewUnitPriceWithConversion)}</p>
                           <label className="block">
@@ -2050,7 +2151,7 @@ export function ProductLibrarySelector({
                           <div className="sticky bottom-0 -mx-3 mt-3 border-t border-zinc-200 bg-white px-3 py-3 text-right">
                             <button
                               type="submit"
-                              disabled={missingExchangeRate}
+                              disabled={missingExchangeRate || missingRequiredWorkstationSelection}
                               className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                             >
                               Add

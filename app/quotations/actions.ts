@@ -458,8 +458,47 @@ function deskingAdditionalClusterQty(formData: FormData) {
   return Math.max(0, Math.trunc(numberValue(formData, "desking_additional_cluster_qty", 0)));
 }
 
+function parseDeskingSizeLabel(label?: string | null) {
+  const normalized = (label ?? "")
+    .replace(/[A-Za-z]+$/g, "")
+    .trim();
+  const parts = normalized
+    .split(/\s*x\s*/i)
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isFinite(value));
+
+  if (parts.length !== 3) {
+    return null;
+  }
+
+  return {
+    depth: parts[1],
+    height: parts[2],
+    length: parts[0],
+  };
+}
+
+function normalizedDeskingSizeRow(row: DeskingSizePricingRow, index: number): DeskingSizePricingRow {
+  const parsedLabel = parseDeskingSizeLabel(row.label);
+  const length = parsedLabel?.length ?? calculationNumber(row.length);
+  const depth = parsedLabel?.depth ?? calculationNumber(row.depth);
+  const height = parsedLabel?.height ?? calculationNumber(row.height);
+
+  return {
+    ...row,
+    depth,
+    height,
+    id: row.id ?? `size-${index}`,
+    is_active: row.is_active !== false,
+    label: row.label?.trim() || `${length}x${depth}x${height}`,
+    length,
+    sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
+  };
+}
+
 function activeDeskingSizeRows(rows?: DeskingSizePricingRow[] | null) {
   return (Array.isArray(rows) ? rows : [])
+    .map((row, index) => normalizedDeskingSizeRow(row, index))
     .filter((row) => row.is_active !== false)
     .filter(
       (row) =>
