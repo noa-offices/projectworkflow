@@ -242,6 +242,14 @@ function NewQuotationForm({
   };
   project: Project;
 }) {
+  const projectCode = project.project_code?.trim() ?? "";
+  const rawProjectName = project.project_name?.trim() ?? "";
+  const projectName = rawProjectName || "New quotation";
+  const quotationNoValue = defaultValues?.quotation_no ?? projectCode;
+  const titleValue = defaultValues?.title ?? projectName;
+  const quotationNoAutofilled = !defaultValues?.quotation_no && Boolean(projectCode);
+  const titleAutofilled = !defaultValues?.title;
+
   return (
     <form action={createQuotation} className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       <input type="hidden" name="client_id" value={client.id} />
@@ -249,8 +257,39 @@ function NewQuotationForm({
       <input type="hidden" name="status" value="draft" />
       <input type="hidden" name="is_active" value="on" />
       <input type="hidden" name="return_to" value={`/clients/projects/${project.id}?newQuotation=1`} />
-      <Field name="title" label="Title" defaultValue={defaultValues?.title} required />
-      <Field name="quotation_no" label="Quotation no" defaultValue={defaultValues?.quotation_no} />
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Title</span>
+        <input
+          name="title"
+          defaultValue={titleValue}
+          required
+          className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+        />
+        {titleAutofilled ? (
+          <span className="mt-1 block text-xs text-zinc-500">
+            {rawProjectName
+              ? "Defaulted from project name."
+              : "Project name is missing, so 'New quotation' will be used."}
+          </span>
+        ) : null}
+      </label>
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Quotation no</span>
+        <input
+          name="quotation_no"
+          defaultValue={quotationNoValue}
+          className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+        />
+        {quotationNoAutofilled ? (
+          <span className="mt-1 block text-xs text-zinc-500">
+            Defaulted from project code.
+          </span>
+        ) : !projectCode ? (
+          <span className="mt-1 block text-xs text-zinc-500">
+            Add project code to auto-fill quotation number.
+          </span>
+        ) : null}
+      </label>
       <Field
         name="quotation_date"
         label="Quotation date"

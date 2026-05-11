@@ -797,6 +797,15 @@ function redirectQuotationCreateError(formData: FormData, redirectPath: string, 
   redirectWithMessageAndParams(redirectPath, message, createQuotationDraftParams(formData));
 }
 
+function safeProjectQuotationTitle(projectName: string | null | undefined) {
+  return projectName?.trim() || "New quotation";
+}
+
+function safeProjectQuotationNo(projectCode: string | null | undefined) {
+  const normalizedCode = projectCode?.trim() ?? "";
+  return normalizedCode || null;
+}
+
 function safeQuotationCreateErrorMessage(error: {
   code?: string;
   details?: string;
@@ -1681,10 +1690,6 @@ export async function createQuotation(formData: FormData) {
     redirectQuotationCreateError(formData, redirectPath, "Project is required.");
   }
 
-  if (!payload.title) {
-    redirectQuotationCreateError(formData, redirectPath, "Quotation title is required.");
-  }
-
   if (!quotationStatuses.has(payload.status) || !layoutModes.has(payload.layout_mode)) {
     redirectQuotationCreateError(formData, redirectPath, "Select valid quotation settings.");
   }
@@ -1712,9 +1717,14 @@ export async function createQuotation(formData: FormData) {
 
     const { data: project, error: projectError } = await supabase
       .from("projects")
-      .select("id,client_id")
+      .select("id,client_id,project_name,project_code")
       .eq("id", payload.project_id)
-      .maybeSingle<{ id: string; client_id: string }>();
+      .maybeSingle<{
+        id: string;
+        client_id: string;
+        project_code: string | null;
+        project_name: string | null;
+      }>();
 
     if (projectError) {
       console.error("QUOTATION CREATE PROJECT READ ERROR", {
@@ -1738,12 +1748,16 @@ export async function createQuotation(formData: FormData) {
       redirectQuotationCreateError(formData, redirectPath, "Selected project does not belong to the selected client.");
     }
 
+    payload.title = payload.title || safeProjectQuotationTitle(project.project_name);
+    payload.quotation_no = payload.quotation_no || safeProjectQuotationNo(project.project_code);
+
     if (payload.quotation_no) {
       const { data: duplicateQuotation, error: duplicateQuotationError } = await supabase
         .from("quotations")
-        .select("id")
-        .eq("quotation_no", payload.quotation_no)
-        .maybeSingle<{ id: string }>();
+        .select("id,client_id,project_id")
+        .ilike("quotation_no", payload.quotation_no)
+        .limit(1)
+        .maybeSingle<{ id: string; client_id: string; project_id: string }>();
 
       if (duplicateQuotationError) {
         console.error("QUOTATION CREATE DUPLICATE CHECK ERROR", {
@@ -1756,11 +1770,12 @@ export async function createQuotation(formData: FormData) {
       }
 
       if (duplicateQuotation) {
-        redirectQuotationCreateError(
-          formData,
-          redirectPath,
-          "Could not create quotation because this quotation number already exists.",
-        );
+        const duplicateMessage =
+          duplicateQuotation.client_id === payload.client_id &&
+          duplicateQuotation.project_id === payload.project_id
+            ? "Quotation number already exists for this project."
+            : "Could not create quotation because this quotation number already exists.";
+        redirectQuotationCreateError(formData, redirectPath, duplicateMessage);
       }
     }
 
