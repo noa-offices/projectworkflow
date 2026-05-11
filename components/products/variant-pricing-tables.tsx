@@ -279,7 +279,7 @@ export function AccessoryPricingTable({ rows }: { rows?: AccessoryPricingRow[] |
         {groups.map((group, groupIndex) => (
           <div key={group.id ?? groupIndex} className="rounded-md border border-zinc-200 bg-white p-3">
             <div className="flex flex-wrap items-center gap-2">
-              <input value={group.group_name ?? ""} onChange={(e) => updateGroup(groupIndex, { group_name: e.target.value })} placeholder="Accessories" className="h-8 w-56 border border-zinc-200 px-2 text-sm font-semibold outline-none focus:border-emerald-800" />
+              <input value={group.group_name ?? ""} onChange={(e) => updateGroup(groupIndex, { group_name: e.target.value })} placeholder="Accessories / Optional Items" className="h-8 w-56 border border-zinc-200 px-2 text-sm font-semibold outline-none focus:border-emerald-800" />
               <label className="flex items-center gap-2 text-xs text-zinc-600">
                 <input type="checkbox" checked={group.is_active !== false} onChange={(e) => updateGroup(groupIndex, { is_active: e.target.checked })} />
                 Active
@@ -290,10 +290,10 @@ export function AccessoryPricingTable({ rows }: { rows?: AccessoryPricingRow[] |
               <table className="min-w-[760px] w-full text-left text-xs">
                 <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
                   <tr>
-                    <th className="px-2 py-2">Item</th>
+                    <th className="px-2 py-2">Accessory name</th>
                     <th className="px-2 py-2">Price</th>
                     <th className="px-2 py-2">Currency</th>
-                    <th className="px-2 py-2">Specification</th>
+                    <th className="px-2 py-2">Specification / Notes</th>
                     <th className="px-2 py-2">Active</th>
                     <th className="px-2 py-2">Actions</th>
                   </tr>
@@ -313,12 +313,12 @@ export function AccessoryPricingTable({ rows }: { rows?: AccessoryPricingRow[] |
                 </tbody>
               </table>
             </div>
-            <button type="button" onClick={() => updateGroup(groupIndex, { items: [...(group.items ?? []), { id: idFor("add-on", group.items?.length ?? 0), currency: defaultCurrency, is_active: true, sort_order: group.items?.length ?? 0 }] })} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">+ Add more</button>
+            <button type="button" onClick={() => updateGroup(groupIndex, { items: [...(group.items ?? []), { id: idFor("add-on", group.items?.length ?? 0), currency: defaultCurrency, is_active: true, sort_order: group.items?.length ?? 0 }] })} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">+ Add Accessory</button>
           </div>
         ))}
-        {!groups.length ? <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">No option/add-on groups yet.</p> : null}
+        {!groups.length ? <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">No accessories / optional items yet.</p> : null}
       </div>
-      <button type="button" onClick={() => setGroups((current) => [...current, { id: idFor("add-on-group", current.length), group_name: "Accessories", is_active: true, sort_order: current.length, items: [] }])} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">+ Add Option Group</button>
+      <button type="button" onClick={() => setGroups((current) => [...current, { id: idFor("add-on-group", current.length), group_name: "Accessories", is_active: true, sort_order: current.length, items: [] }])} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">+ Add Accessory Group</button>
     </div>
   );
 }

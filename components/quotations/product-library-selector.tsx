@@ -1255,29 +1255,34 @@ export function ProductLibrarySelector({
                           </div>
                         ) : null}
                         {usesVariantPricing ? (
-                          <label className="mt-3 block">
-                            <span className="text-[10px] font-bold uppercase text-zinc-500">Select Size / Model Variant</span>
-                            <select
-                              value={selectedVariantRow?.id ?? ""}
-                              onChange={(event) => setSelectedVariantRows((current) => ({ ...current, [template.id]: event.target.value }))}
-                              className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
-                            >
-                                {variantRows.map((row, index) => (
-                                  <option key={row.id ?? index} value={row.id ?? `variant-${index}`}>
-                                    {row.variant_name} {row.dimension ? `- ${row.dimension}` : ""} - {formatMoney(row.currency ?? template.currency, numberValue(row.price))}
-                                  </option>
-                                ))}
-                              </select>
-                            {selectedVariantRow ? (
-                              <span className="mt-1 block text-xs leading-5 text-zinc-500">
-                                {selectedVariantRow.variant_name}
-                                {selectedVariantRow.dimension ? ` - ${selectedVariantRow.dimension}` : ""}
-                                {" - "}
-                                {formatMoney(selectedVariantRow.currency ?? template.currency, numberValue(selectedVariantRow.price))}
-                                {selectedVariantRow.specification ? ` - ${selectedVariantRow.specification}` : ""}
-                              </span>
-                            ) : null}
-                          </label>
+                          <div className="mt-3 space-y-2">
+                            <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                              Base Size / Main Price
+                            </p>
+                            <label className="block">
+                              <span className="text-[10px] font-bold uppercase text-zinc-500">Select size / model</span>
+                              <select
+                                value={selectedVariantRow?.id ?? ""}
+                                onChange={(event) => setSelectedVariantRows((current) => ({ ...current, [template.id]: event.target.value }))}
+                                className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                              >
+                                  {variantRows.map((row, index) => (
+                                    <option key={row.id ?? index} value={row.id ?? `variant-${index}`}>
+                                      {row.variant_name} {row.dimension ? `- ${row.dimension}` : ""} - {formatMoney(row.currency ?? template.currency, numberValue(row.price))}
+                                    </option>
+                                  ))}
+                                </select>
+                              {selectedVariantRow ? (
+                                <span className="mt-1 block text-xs leading-5 text-zinc-500">
+                                  {selectedVariantRow.variant_name}
+                                  {selectedVariantRow.dimension ? ` - ${selectedVariantRow.dimension}` : ""}
+                                  {" - "}
+                                  {formatMoney(selectedVariantRow.currency ?? template.currency, numberValue(selectedVariantRow.price))}
+                                  {selectedVariantRow.specification ? ` - ${selectedVariantRow.specification}` : ""}
+                                </span>
+                              ) : null}
+                            </label>
+                          </div>
                         ) : null}
                         {usesWorkstationFlow && (variantRows.length || accessoryGroups.length) ? (
                           <div className="mt-4 space-y-2">
@@ -1382,7 +1387,10 @@ export function ProductLibrarySelector({
                           </div>
                         ) : null}
                         {!usesWorkstationFlow && accessoryGroups.length ? (
-                          <div className="mt-3 space-y-2">
+                          <div className="mt-4 space-y-2">
+                            <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                              Accessories / Optional Items
+                            </p>
                             {accessoryGroups.map((group) => (
                               <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
                                 <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">

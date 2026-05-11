@@ -13,6 +13,7 @@ import {
   DeactivateOptionForm,
 } from "@/components/products/option-deactivate-controls";
 import {
+  AccessoryPricingTable,
   type AccessoryPricingRow,
   CategoryPricingTable,
   type CategoryPricingRow,
@@ -814,10 +815,9 @@ function TemplateForm({
       </FormSection>
 
       <FormSection
-        title="Pricing / Variant Tables"
-        description="Use these tables for product sizes, fabric/leather pricing, and workstation pricing. Linked Product Families below are for reusable screens, pedestals, cable trays, and power modules."
+        title="Pricing / Configuration"
+        description="Set the main product price first, then add optional accessories, finish-category pricing, and any linked product families below."
       >
-        <input type="hidden" name="accessory_pricing" value={JSON.stringify(template?.accessory_pricing ?? [])} />
         <div className="md:col-span-2 xl:col-span-3">
           <h4 className="mb-2 text-xs font-bold uppercase text-zinc-500">
             Workstation Size / Base Price
@@ -829,13 +829,25 @@ function TemplateForm({
         </div>
         <div className="md:col-span-2 xl:col-span-3">
           <h4 className="mb-2 mt-5 text-xs font-bold uppercase text-zinc-500">
-            Optional Item / Variant Pricing
+            Base Size / Main Price
           </h4>
+          <p className="mb-2 text-xs leading-5 text-zinc-500">
+            Use this for the product&apos;s main size or model pricing for desks, tables, chairs, sofas, and other non-workstation products.
+          </p>
           <VariantPricingTable rows={template?.variant_pricing} />
         </div>
         <div className="md:col-span-2 xl:col-span-3">
           <h4 className="mb-2 mt-5 text-xs font-bold uppercase text-zinc-500">
-            Fabric / Leather Category Pricing
+            Accessories / Optional Items
+          </h4>
+          <p className="mb-2 text-xs leading-5 text-zinc-500">
+            Add optional accessories and add-ons such as locks, pedestals, power modules, headrests, cushions, and similar extras.
+          </p>
+          <AccessoryPricingTable rows={template?.accessory_pricing} />
+        </div>
+        <div className="md:col-span-2 xl:col-span-3">
+          <h4 className="mb-2 mt-5 text-xs font-bold uppercase text-zinc-500">
+            Fabric / Leather / Finish Category Pricing
           </h4>
           <CategoryPricingTable rows={template?.category_pricing} />
         </div>
@@ -2776,7 +2788,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
                           {template.variant_pricing?.length ? (
                             <section>
-                              <h4 className="text-xs font-bold uppercase text-zinc-500">Optional Item / Variant Pricing</h4>
+                              <h4 className="text-xs font-bold uppercase text-zinc-500">Base Size / Main Price</h4>
                               <div className="mt-2 grid gap-3">
                                 {template.variant_pricing.filter((row) => row.is_active !== false).map((row, index) => (
                                   <DetailPriceRow
@@ -2807,7 +2819,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
                           {template.category_pricing?.length ? (
                             <section>
-                              <h4 className="text-xs font-bold uppercase text-zinc-500">Fabric / Leather Categories</h4>
+                              <h4 className="text-xs font-bold uppercase text-zinc-500">Fabric / Leather / Finish Category Pricing</h4>
                               <div className="mt-2 grid gap-3">
                                 {template.category_pricing.filter((row) => row.is_active !== false).map((row, index) => (
                                   <DetailPriceRow
@@ -2841,7 +2853,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
                           {template.accessory_pricing?.length ? (
                             <section>
-                              <h4 className="text-xs font-bold uppercase text-zinc-500">Options / Add-ons</h4>
+                              <h4 className="text-xs font-bold uppercase text-zinc-500">Accessories / Optional Items</h4>
                               <div className="mt-2 grid gap-3">
                                 {template.accessory_pricing
                                   .filter((group) => group.is_active !== false)
