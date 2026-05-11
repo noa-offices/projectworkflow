@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ClipboardEvent, ChangeEvent } from "react";
 import { FinishImagePreview } from "@/components/quotations/finish-image-uploader";
 import { uploadQuotationFinishImage } from "@/lib/quotation-image-upload";
@@ -147,6 +147,7 @@ function normalizeFinish(row: FinishSelectionEditorRow, index: number): DraftFin
     finish_image_url: row.finish_image_url ?? "",
     show_in_quotation: row.show_in_quotation === true,
     show_in_specification: row.show_in_specification !== false,
+    sort_order: typeof row.sort_order === "number" ? row.sort_order : index,
   };
 }
 
@@ -200,6 +201,10 @@ function finishHasContent(finish: DraftFinish) {
     finish.finish_description.trim() ||
     finish.finish_image_url.trim(),
   );
+}
+
+function selectedCountLabel(count: number) {
+  return `${count} selected`;
 }
 
 function selectedFinishGroups(finishes: DraftFinish[]): GroupedSelectedFinish[] {
@@ -574,6 +579,7 @@ export function FinishSelectionsEditor({
   const [libraryCategory, setLibraryCategory] = useState("");
   const [librarySearch, setLibrarySearch] = useState("");
   const [activeOnly, setActiveOnly] = useState(true);
+  const validationInputRef = useRef<HTMLInputElement | null>(null);
   const isEditing = editingIndex !== null;
   const brandsById = new Map((brands ?? []).map((brand) => [brand.id, brand]));
   const groupsById = new Map((materialGroups ?? []).map((group) => [group.id, group]));
@@ -591,6 +597,19 @@ export function FinishSelectionsEditor({
   const visibleMaterials = availableMaterials.filter((material) => !activeOnly || material.is_active !== false);
   const groupedFinishes = selectedFinishGroups(finishes);
   const fitSummary = specificationFitSummary(groupedFinishes);
+  const missingRequiredLinkedGroups = linkedGroups.filter((link) => {
+    if (!link.is_required) return false;
+
+    return !finishes.some(
+      (finish) =>
+        finish.source_scope === "linked" &&
+        (finish.product_template_material_group_id === link.id ||
+          (!finish.product_template_material_group_id && finish.material_group_id === link.material_group_id)),
+    );
+  });
+  const missingRequiredLinkedGroupLabels = missingRequiredLinkedGroups.map(
+    (link) => link.label_override?.trim() || groupsById.get(link.material_group_id)?.group_name || "Required material group",
+  );
   const categoryOptions = Array.from(
     new Set(
       visibleMaterials
@@ -610,6 +629,16 @@ export function FinishSelectionsEditor({
 
       return [material.material_code, material.material_name].some((value) => value?.toLowerCase().includes(search));
     });
+
+  useEffect(() => {
+    if (!validationInputRef.current) return;
+
+    validationInputRef.current.setCustomValidity(
+      missingRequiredLinkedGroupLabels.length
+        ? `Select at least one finish for: ${missingRequiredLinkedGroupLabels.join(", ")}.`
+        : "",
+    );
+  }, [missingRequiredLinkedGroupLabels]);
 
   function startAdd() {
     setDraft(emptyDraft());
@@ -731,8 +760,17 @@ export function FinishSelectionsEditor({
     <fieldset className="border border-zinc-300 bg-white p-3">
       <div className="flex items-center justify-between gap-3">
         <legend className="text-[11px] font-bold uppercase text-zinc-500">Materials & Finishes</legend>
-        <span className="text-[11px] font-semibold text-zinc-500">{finishes.length} selected</span>
+        <span className="text-[11px] font-semibold text-zinc-500">{selectedCountLabel(finishes.length)}</span>
       </div>
+
+      <input
+        ref={validationInputRef}
+        aria-hidden="true"
+        tabIndex={-1}
+        value={missingRequiredLinkedGroups.length ? "" : "ok"}
+        onChange={() => {}}
+        className="pointer-events-none absolute h-0 w-0 opacity-0"
+      />
 
       <datalist id="finish-group-suggestions">
         {finishGroupSuggestions.map((label) => (
@@ -745,6 +783,11 @@ export function FinishSelectionsEditor({
       ))}
 
       <div className="mt-3 grid gap-2 border border-zinc-200 bg-zinc-50 p-2">
+        {missingRequiredLinkedGroups.length ? (
+          <p className="border border-red-200 bg-red-50 px-2 py-1.5 text-xs font-medium leading-5 text-red-800">
+            Select at least one finish for: {missingRequiredLinkedGroupLabels.join(", ")}.
+          </p>
+        ) : null}
         {fitSummary.shouldWarn ? (
           <p className="border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium leading-5 text-amber-900">
             Too many materials selected. Specification page may not fit cleanly. Reduce selected finishes or allow a continuation page for this item.
@@ -779,7 +822,7 @@ export function FinishSelectionsEditor({
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 pb-1.5">
               <h4 className="text-[11px] font-bold uppercase text-zinc-700">{group.groupLabel}</h4>
               <span className="border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] font-bold uppercase text-zinc-500">
-                {group.items.length} selected
+                {selectedCountLabel(group.items.length)}
               </span>
             </div>
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -868,7 +911,8 @@ export function FinishSelectionsEditor({
                 .map((finish) => finish.brand_material_id)
                 .filter((value): value is string => Boolean(value)),
             );
-            const hasSelection = selectedMaterialIds.size > 0;
+            const selectedCount = selectedMaterialIds.size;
+            const hasSelection = selectedCount > 0;
 
             return (
               <section key={link.id} className="border border-zinc-200 bg-zinc-50 p-3">
@@ -877,14 +921,16 @@ export function FinishSelectionsEditor({
                     <h4 className="text-sm font-bold text-zinc-900">{label}</h4>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-zinc-500">
                       <span className="border border-zinc-200 bg-white px-1.5 py-0.5 font-bold uppercase text-zinc-600">
-                        {link.allow_multiple ? "Multiple selection" : "Single selection"}
+                        {link.allow_multiple ? "MULTIPLE SELECTION" : "SINGLE SELECTION"}
                       </span>
                       <span>{link.is_required ? "Required" : "Optional"}</span>
                       <span>Spec {link.show_in_specification ? "Yes" : "No"}</span>
                       <span>Quote {link.show_in_quotation ? "Yes" : "No"}</span>
                     </div>
                   </div>
-                  <span className="border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-bold text-zinc-500">{groupMaterials.length}</span>
+                  <span className="border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-bold text-zinc-500">
+                    {selectedCountLabel(selectedCount)}
+                  </span>
                 </div>
                 {groupMaterials.length ? (
                   <MaterialGrid

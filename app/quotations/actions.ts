@@ -1598,6 +1598,69 @@ function finishSelectionsValue(formData: FormData) {
     });
 }
 
+type FinishSelectionSnapshotRow = ReturnType<typeof finishSelectionsValue>[number];
+
+function finishSnapshotValue(
+  finishes: FinishSelectionSnapshotRow[],
+  fallback: string | null,
+) {
+  const visibleFinishes = finishes.filter((finish) => finish.show_in_quotation);
+
+  if (!visibleFinishes.length) {
+    return fallback;
+  }
+
+  const groups = new Map<string, {
+    label: string;
+    groupSortOrder: number;
+    items: Array<{
+      label: string;
+      sortOrder: number;
+    }>;
+  }>();
+
+  visibleFinishes.forEach((finish, index) => {
+    const groupKey =
+      finish.product_template_material_group_id ||
+      finish.material_group_id ||
+      finish.group_label ||
+      `group-${index}`;
+    const groupLabel = finish.group_label || "Finish";
+    const groupSortOrder = Number.isFinite(finish.group_sort_order)
+      ? Number(finish.group_sort_order)
+      : Number.MAX_SAFE_INTEGER;
+    const itemLabel = [finish.finish_code, finish.finish_name].filter(Boolean).join(" ").trim() ||
+      finish.finish_description ||
+      "Selected finish";
+    const itemSortOrder = Number.isFinite(finish.sort_order) ? Number(finish.sort_order) : index;
+    const existing = groups.get(groupKey);
+
+    if (existing) {
+      existing.groupSortOrder = Math.min(existing.groupSortOrder, groupSortOrder);
+      existing.items.push({ label: itemLabel, sortOrder: itemSortOrder });
+      return;
+    }
+
+    groups.set(groupKey, {
+      label: groupLabel,
+      groupSortOrder,
+      items: [{ label: itemLabel, sortOrder: itemSortOrder }],
+    });
+  });
+
+  const lines = Array.from(groups.values())
+    .sort((left, right) => left.groupSortOrder - right.groupSortOrder || left.label.localeCompare(right.label))
+    .map((group) => {
+      const items = group.items
+        .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label))
+        .map((item) => item.label);
+
+      return `${group.label}: ${items.join(", ")}`;
+    });
+
+  return lines.length ? lines.join("\n") : fallback;
+}
+
 function itemPayload(formData: FormData, userId?: string) {
   const qty = numberValue(formData, "qty", 1);
   const rawUnitPrice = numberValue(formData, "unit_price", 0);
@@ -4454,6 +4517,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     converted_quotation_price: unitPrice,
     quotation_currency: rowOutputCurrency,
   };
+  const submittedFinishSelections = finishSelectionsValue(formData);
   const payload = {
     quotation_id: quotationId,
     section_id: sectionId,
@@ -4537,7 +4601,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     specified_image_url_snapshot: null,
     proposed_image_url_snapshot: proposedImagePath,
     specification_snapshot: specificationWithAccessories,
-    finish_selections_snapshot: finishSelectionsValue(formData),
+    finish_selections_snapshot: submittedFinishSelections,
     selected_options_snapshot: finalSelectedOptionsWithLinkedProducts,
     model_snapshot: derivedDesking
       ? `Cluster of ${derivedDesking.totalSeats}`
@@ -4545,9 +4609,12 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         selectedVariantPricingRow?.variant_name ||
         selectedClusterOptions.join(", ") ||
         null,
-    finish_snapshot: selectedCategoryPricingRow
-      ? selectedCategory
-      : derivedDesking?.finishOptions.join(", ") || selectedFinishOptions.join(", ") || null,
+    finish_snapshot: finishSnapshotValue(
+      submittedFinishSelections,
+      selectedCategoryPricingRow
+        ? selectedCategory
+        : derivedDesking?.finishOptions.join(", ") || selectedFinishOptions.join(", ") || null,
+    ),
     size_snapshot: derivedDesking?.dimensionValue ||
       selectedCategoryPricingRow?.dimension ||
       selectedVariantPricingRow?.dimension ||
