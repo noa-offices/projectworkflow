@@ -24,6 +24,7 @@ import {
   QuickCategoryForm,
   TemplateCategoryFields,
 } from "@/components/products/template-category-fields";
+import { TemplateFormShell } from "@/components/products/template-form-shell";
 import { TopBar } from "@/components/top-bar";
 import { requireSettingsManager } from "@/lib/auth";
 import {
@@ -612,6 +613,22 @@ function SubmitButton({ label, pendingLabel }: { label: string; pendingLabel?: s
   );
 }
 
+function messageTone(message: string): "error" | "success" {
+  const normalized = message.trim().toLowerCase();
+
+  if (
+    normalized.includes("could not") ||
+    normalized.includes("required") ||
+    normalized.includes("does not belong") ||
+    normalized.includes("invalid") ||
+    normalized.includes("failed")
+  ) {
+    return "error";
+  }
+
+  return "success";
+}
+
 function FormSection({
   children,
   description,
@@ -640,6 +657,8 @@ function TemplateForm({
   defaultBrandId,
   defaultMainCategoryId,
   defaultSubCategoryId,
+  initialMessage,
+  returnTo,
   template,
 }: {
   brands: Brand[];
@@ -647,6 +666,8 @@ function TemplateForm({
   defaultBrandId?: string;
   defaultMainCategoryId?: string;
   defaultSubCategoryId?: string;
+  initialMessage?: string;
+  returnTo: string;
   template?: ProductTemplate;
 }) {
   const templateId = template?.id ?? randomUUID();
@@ -658,11 +679,16 @@ function TemplateForm({
   const allowQuickCreate = !template;
 
   return (
-    <form
+    <TemplateFormShell
       action={template ? updateProductTemplate : createProductTemplate}
-      className="space-y-4"
+      cancelHref="/products/templates"
+      initialMessage={initialMessage}
+      pendingLabel={template ? "Saving template..." : "Adding template..."}
+      pendingMessage={template ? "Saving template..." : "Adding product to library..."}
+      submitLabel={template ? "Save template" : "Add template"}
     >
       <input type="hidden" name="id" value={templateId} />
+      <input type="hidden" name="return_to" value={returnTo} />
       <FormSection title="Product Identity">
         <TemplateCategoryFields
           allowQuickCreate={allowQuickCreate}
@@ -814,20 +840,7 @@ function TemplateForm({
         <DeskingSizePricingTable rows={template?.desking_size_pricing} />
         </div>
       </FormSection>
-
-      <div className="flex flex-col-reverse gap-2 border-t border-zinc-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
-        <Link
-          href="/products/templates"
-          className="text-sm font-semibold text-zinc-500 transition hover:text-zinc-950"
-        >
-          Cancel
-        </Link>
-        <SubmitButton
-          label={template ? "Save template" : "Add template"}
-          pendingLabel={template ? "Saving product..." : "Creating product..."}
-        />
-      </div>
-    </form>
+    </TemplateFormShell>
   );
 }
 
@@ -1874,7 +1887,11 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
               Back to products
             </Link>
             {message ? (
-              <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
+              <p className={`rounded-md border px-3 py-2 text-sm ${
+                messageTone(message) === "error"
+                  ? "border-red-200 bg-red-50 text-red-900"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-950"
+              }`}>
                 {message}
               </p>
             ) : null}
@@ -1986,6 +2003,8 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                     defaultBrandId={selectedBrandFilter}
                     defaultMainCategoryId={selectedMainFilter}
                     defaultSubCategoryId={selectedSubFilter}
+                    initialMessage={message}
+                    returnTo={templatesHref(params, { addTemplate: "1" })}
                   />
                 </div>
               ) : null}
@@ -2639,6 +2658,14 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           defaultBrandId={selectedBrandFilter}
                           defaultMainCategoryId={selectedMainFilter}
                           defaultSubCategoryId={selectedSubFilter}
+                          returnTo={withHash(
+                            templatesHref(params, {
+                              template: template.id,
+                              editTemplate: template.id,
+                              addTemplate: null,
+                            }),
+                            `template-${template.id}`,
+                          )}
                           template={template}
                         />
                       </div>

@@ -37,7 +37,6 @@ function InlineQuickCategoryFields({
         <span className="text-xs font-semibold uppercase text-zinc-500">Name</span>
         <input
           name="quick_name"
-          required
           className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
         />
       </label>

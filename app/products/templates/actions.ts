@@ -274,10 +274,12 @@ function boolValueFromNames(formData: FormData, names: string[]) {
 async function validateProductTemplateCategories({
   brandId,
   mainCategoryId,
+  redirectPath,
   subCategoryId,
 }: {
   brandId: string;
   mainCategoryId: string | null;
+  redirectPath?: string;
   subCategoryId: string | null;
 }) {
   const supabase = await createClient();
@@ -296,6 +298,10 @@ async function validateProductTemplateCategories({
       mainCategory.parent_id !== null
     ) {
       console.error("PRODUCT TEMPLATE MAIN CATEGORY VALIDATION ERROR", mainCategoryError?.message);
+      if (redirectPath) {
+        redirectWithMessageToPath(redirectPath, "Selected category does not belong to this brand.");
+      }
+
       redirectWithMessage("Selected category does not belong to this brand.");
     }
   }
@@ -315,6 +321,10 @@ async function validateProductTemplateCategories({
       subCategory.parent_id !== mainCategoryId
     ) {
       console.error("PRODUCT TEMPLATE SUB CATEGORY VALIDATION ERROR", subCategoryError?.message);
+      if (redirectPath) {
+        redirectWithMessageToPath(redirectPath, "Selected category does not belong to this brand.");
+      }
+
       redirectWithMessage("Selected category does not belong to this brand.");
     }
   }
@@ -830,14 +840,19 @@ function componentPayload(formData: FormData, userId?: string) {
 export async function createProductTemplate(formData: FormData) {
   const { user, displayName } = await requireSettingsManager();
   const payload = createTemplatePayload(formData, user.id);
+  const redirectPath = returnPath(formData, "/products/templates?addTemplate=1");
 
   if (!payload.brand_id || !payload.template_name) {
-    redirectWithMessage("Brand and template name are required.");
+    redirectWithMessageToPath(
+      redirectPath,
+      "Brand and item name/template name are required.",
+    );
   }
 
   await validateProductTemplateCategories({
     brandId: payload.brand_id,
     mainCategoryId: payload.main_category_id,
+    redirectPath,
     subCategoryId: payload.sub_category_id,
   });
 
@@ -850,7 +865,10 @@ export async function createProductTemplate(formData: FormData) {
 
   if (error || !template) {
     console.error("PRODUCT TEMPLATE CREATE ERROR", error?.message);
-    redirectWithMessage("Product template could not be created.");
+    redirectWithMessageToPath(
+      redirectPath,
+      "Template could not be saved. Please check required fields.",
+    );
   }
 
   await createAuditLog(supabase, {
@@ -868,7 +886,7 @@ export async function createProductTemplate(formData: FormData) {
   });
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Product template created.");
+  redirectWithMessage("Product template created successfully.");
 }
 
 export async function updateProductTemplate(formData: FormData) {
@@ -883,6 +901,7 @@ export async function updateProductTemplate(formData: FormData) {
   await validateProductTemplateCategories({
     brandId: payload.brand_id,
     mainCategoryId: payload.main_category_id,
+    redirectPath: returnPath(formData),
     subCategoryId: payload.sub_category_id,
   });
 
