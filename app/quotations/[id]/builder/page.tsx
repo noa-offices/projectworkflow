@@ -45,9 +45,14 @@ import {
   CopyQuotationRowButton,
   PasteQuotationRowControls,
 } from "@/components/quotations/quotation-row-clipboard";
+import { LocalDraftLink } from "@/components/quotations/local-draft-link";
 import { ManualCurrencyConversionPanel } from "@/components/quotations/manual-currency-conversion-panel";
 import { SaveRowToProductLibraryPanel as SaveRowToProductLibraryPanelClient } from "@/components/quotations/save-row-to-product-library-panel";
 import { RowHeightTextarea } from "@/components/quotations/row-height-textarea";
+import {
+  SharedQuotationMoreMenu,
+  SharedQuotationRowDetailsPanel,
+} from "@/components/quotations/shared-quotation-row-details-panel";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import {
@@ -317,15 +322,6 @@ const sectionTypes = [
   ["floor", "Floor"],
   ["room", "Room"],
   ["category", "Category"],
-] as const;
-
-const lineStyles = [
-  ["normal", "Normal"],
-  ["optional", "Optional"],
-  ["rate_only", "Rate Only"],
-  ["no_quote", "No Quote"],
-  ["note", "Note"],
-  ["heading", "Heading"],
 ] as const;
 
 const mergeModes = [
@@ -1306,35 +1302,6 @@ function TextArea({
   );
 }
 
-function CurrencySelect({
-  defaultValue,
-  label = "Currency",
-  name = "currency",
-  options = supportedCurrencies,
-}: {
-  defaultValue?: string | null;
-  label?: string;
-  name?: string;
-  options?: ReadonlyArray<{ code: string; label: string }>;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">{label}</span>
-      <select
-        name={name}
-        defaultValue={normalizeCurrency(defaultValue ?? defaultCurrency)}
-        className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20"
-      >
-        {options.map((currency) => (
-          <option key={currency.code} value={currency.code}>
-            {currency.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
 function SubmitButton({ label }: { label: string }) {
   return (
     <PendingSubmitButton
@@ -1945,136 +1912,48 @@ function LineForm({
             <input type="hidden" name="notes" value={item.notes ?? ""} />
           </>
         ) : null}
+        {isManualRow ? <input type="hidden" name="currency" value="AED" /> : null}
 
-        <fieldset className="border border-zinc-300 bg-white p-3">
-          <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Basic</legend>
-          <div className="grid gap-2 md:grid-cols-6">
-            <Field name="manual_serial" label="Manual S.No." defaultValue={item?.manual_serial} />
-            <Field name="item_code_snapshot" label="Code" defaultValue={item?.item_code_snapshot} />
-            <Field name="item_name_snapshot" label="Item / Model Name" defaultValue={item?.item_name_snapshot} className="md:col-span-2" />
-            <Field name="qty" label="Qty" type="number" step="1" defaultValue={item?.qty ?? 1} />
-            <Field name="unit_label" label="Unit" defaultValue={item?.unit_label ?? "Pc"} />
-            <Field
-              name="unit_price"
-              label={isManualRow ? "Quotation U.Price" : "U.Price"}
-              type="number"
-              defaultValue={item?.unit_price ?? 0}
+        <SharedQuotationRowDetailsPanel
+          basicHint={
+            isManualRow
+              ? "Quotation pricing always uses AED for manual rows. Use the manual source price / conversion section for EUR or USD supplier pricing."
+              : "Item / Model Name is the main visible title at the top of the Specification cell."
+          }
+          currencyFieldName={isManualRow ? undefined : "currency"}
+          currencyOptions={
+            isManualRow
+              ? [{ code: "AED", label: "AED" }]
+              : supportedCurrencies
+          }
+          extraSectionsAfterImages={(
+            <MaterialsFinishesEditor
+              brands={brands}
+              item={item}
+              materialGroups={materialGroups}
+              materials={materials}
+              productTemplates={productTemplates}
+              quotationId={quotation.id}
+              templateMaterialGroupItems={templateMaterialGroupItems}
+              templateMaterialGroups={templateMaterialGroups}
             />
-            {isManualRow ? (
-              <>
-                <input type="hidden" name="currency" value="AED" />
-                <CurrencySelect
-                  defaultValue="AED"
-                  label="Quotation Currency"
-                  options={[{ code: "AED", label: "AED" }]}
-                />
-              </>
-            ) : (
-              <CurrencySelect defaultValue={item?.currency ?? quotation.currency} />
-            )}
-            <label className="block">
-              <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Discount type</span>
-              <select name="discount_type" defaultValue={item?.discount_type ?? "amount"} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20">
-                <option value="amount">Amount</option>
-                <option value="percent">Percent</option>
-              </select>
-            </label>
-            <Field name="discount_value" label="Discount" type="number" defaultValue={item?.discount_value ?? 0} />
-            <label className="block">
-              <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Line style</span>
-              <select name="line_style" defaultValue={item?.line_style ?? "normal"} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20">
-                {lineStyles.map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-            </label>
-            <Field name="sort_order" label="Sort" type="number" defaultValue={item?.sort_order ?? 0} />
-            <Field name="row_height" label="Row height" type="number" defaultValue={item?.row_height} />
-            <MergeModeSelect item={item} />
-            {isManualRow ? (
-              <p className="self-end pb-2 text-[11px] text-zinc-500 md:col-span-3">
-                Quotation pricing always uses AED for manual rows. Use the manual source price / conversion section for EUR or USD supplier pricing.
-              </p>
-            ) : (
-              <p className="self-end pb-2 text-[11px] text-zinc-500 md:col-span-3">
-                Item / Model Name is the main visible title at the top of the Specification cell.
-              </p>
-            )}
-            <label className="flex items-end gap-2 text-xs font-semibold text-zinc-600">
-              <input type="checkbox" name="is_rate_only" defaultChecked={item?.is_rate_only ?? false} className="mb-2 h-4 w-4 rounded border-zinc-300" />
-              <span className="pb-2">Rate only</span>
-            </label>
-          </div>
-        </fieldset>
-
-        <SourceLibraryPriceReference
-          components={components}
-          item={item}
-          productTemplates={productTemplates}
+          )}
+          extraSectionsBeforeSpecification={(
+            <>
+              <MergeModeSelect item={item} />
+              <SourceLibraryPriceReference
+                components={components}
+                item={item}
+                productTemplates={productTemplates}
+              />
+              {showInternal ? <PriceChangeHistory history={priceHistory} /> : null}
+            </>
+          )}
+          item={item ?? {}}
+          mode="server"
+          showInternal={showInternal}
+          unitPriceLabel={isManualRow ? "Quotation U.Price" : "U.Price"}
         />
-
-        {showInternal ? <PriceChangeHistory history={priceHistory} /> : null}
-
-        <fieldset className="border border-zinc-300 bg-white p-3">
-          <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Specification</legend>
-          <div className="grid gap-2 md:grid-cols-6">
-            <TextArea name="specification_snapshot" label="Specification" defaultValue={item?.specification_snapshot} className="md:col-span-6" />
-            <p className="text-[11px] text-zinc-500 md:col-span-6">
-              Description appears below the main title and keeps text wrapping in the row.
-            </p>
-          </div>
-        </fieldset>
-
-        <fieldset className="border border-zinc-300 bg-white p-3">
-          <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Product details</legend>
-          <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
-            <Field name="room_name_snapshot" label="Room" defaultValue={item?.room_name_snapshot} />
-            <Field name="model_snapshot" label="Model code / alternate model" defaultValue={item?.model_snapshot} />
-            <Field name="size_snapshot" label="Dimension" defaultValue={item?.size_snapshot} />
-            <Field name="finish_snapshot" label="Finish" defaultValue={item?.finish_snapshot} />
-            <Field name="origin_snapshot" label="Origin" defaultValue={item?.origin_snapshot} />
-            <Field name="warranty_snapshot" label="Warranty" defaultValue={item?.warranty_snapshot} />
-            <Field name="supplier_name_snapshot" label="Supplier" defaultValue={item?.supplier_name_snapshot} />
-          </div>
-        </fieldset>
-
-        <fieldset className="border border-zinc-300 bg-white p-3">
-          <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Images</legend>
-          <div className="grid gap-2 md:grid-cols-2">
-            <Field name="specified_image_url_snapshot" label="Specified Image URL" defaultValue={item?.specified_image_url_snapshot} />
-            <Field name="proposed_image_url_snapshot" label="Proposed / Reference Image URL" defaultValue={item?.proposed_image_url_snapshot} />
-          </div>
-        </fieldset>
-
-        <MaterialsFinishesEditor
-          brands={brands}
-          item={item}
-          materialGroups={materialGroups}
-          materials={materials}
-          productTemplates={productTemplates}
-          quotationId={quotation.id}
-          templateMaterialGroupItems={templateMaterialGroupItems}
-          templateMaterialGroups={templateMaterialGroups}
-        />
-
-        {showInternal ? (
-          <fieldset className="border border-zinc-300 bg-white p-3">
-            <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Internal</legend>
-            <div className="grid gap-2 md:grid-cols-4">
-              <Field name="internal_cost" label="Internal Cost" type="number" defaultValue={item?.internal_cost ?? 0} />
-              <label className="block">
-                <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Margin type</span>
-                <select name="margin_type" defaultValue={item?.margin_type ?? "amount"} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/20">
-                  <option value="amount">Amount</option>
-                  <option value="percent">Percent</option>
-                </select>
-              </label>
-              <Field name="margin_value" label="Margin" type="number" defaultValue={item?.margin_value ?? 0} />
-              <TextArea name="supplier_notes_snapshot" label="Supplier Notes" defaultValue={item?.supplier_notes_snapshot} className="md:col-span-2" />
-              <TextArea name="notes" label="Internal Notes" defaultValue={item?.notes} className="md:col-span-2" />
-            </div>
-          </fieldset>
-        ) : null}
 
         <div className="flex justify-end">
           <SubmitButton label={item ? "Save line" : "Add line"} />
@@ -3024,25 +2903,9 @@ function InlineRowActions({
       </div>
       <div className="flex items-center gap-1">
         <RowMoveActions item={item} quotationId={quotation.id} returnTo={returnTo} />
-        <details className="relative" data-state-key={`quotation-item-more-${item.id}`}>
-          <summary className="h-6 cursor-pointer border border-zinc-300 bg-white px-2 py-1 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
-            More
-          </summary>
-          <div className="absolute right-0 z-30 mt-1 w-56 border border-zinc-300 bg-white p-2 text-left shadow-lg">
-            <label className="grid gap-1">
-              <span className="text-[10px] font-semibold uppercase text-zinc-500">Merge</span>
-              <select
-                form={inlineFormId}
-                name="merge_mode"
-                defaultValue={mergeModeForItem(item)}
-                className="h-7 w-full border border-zinc-300 bg-white px-1.5 text-xs text-zinc-800 outline-none focus:border-emerald-800"
-              >
-                {mergeModes.map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-            </label>
-            <div className="mt-2 grid gap-2">
+        <SharedQuotationMoreMenu
+          actionButtons={(
+            <>
               <form action={duplicateQuotationItemBelow}>
                 <input type="hidden" name="id" value={item.id} />
                 <input type="hidden" name="quotation_id" value={quotation.id} />
@@ -3058,33 +2921,44 @@ function InlineRowActions({
                 payload={rowClipboardPayload({ item, quotation })}
               />
               <DeactivateRowAction item={item} quotationId={quotation.id} returnTo={returnTo} />
-              <details className="relative" data-state-key={`quotation-item-details-${item.id}`}>
-                <summary className="h-7 cursor-pointer border border-zinc-300 bg-white px-2 py-1.5 text-xs font-semibold text-emerald-900">
-                  Details
-                </summary>
-                <div className="absolute right-0 top-full z-40 mt-2 w-[1080px] max-w-[calc(100vw-3rem)] border border-zinc-300 bg-zinc-50 p-3 shadow-lg">
-                  <LineForm
-                    brands={brands}
-                    canManageProductLibrary={canManageProductLibrary}
-                    components={components}
-                    item={item}
-                    productBrands={productBrands ?? []}
-                    productCategories={productCategories ?? []}
-                    priceHistory={priceHistoryByItem.get(item.id) ?? []}
-                    materialGroups={materialGroups}
-                    materials={materials}
-                    productTemplates={productTemplates}
-                    quotation={quotation}
-                    returnTo={returnTo}
-                    showInternal={showInternal}
-                    templateMaterialGroupItems={templateMaterialGroupItems}
-                    templateMaterialGroups={templateMaterialGroups}
-                  />
-                </div>
-              </details>
-            </div>
-          </div>
-        </details>
+            </>
+          )}
+          detailsContent={(
+            <LineForm
+              brands={brands}
+              canManageProductLibrary={canManageProductLibrary}
+              components={components}
+              item={item}
+              productBrands={productBrands ?? []}
+              productCategories={productCategories ?? []}
+              priceHistory={priceHistoryByItem.get(item.id) ?? []}
+              materialGroups={materialGroups}
+              materials={materials}
+              productTemplates={productTemplates}
+              quotation={quotation}
+              returnTo={returnTo}
+              showInternal={showInternal}
+              templateMaterialGroupItems={templateMaterialGroupItems}
+              templateMaterialGroups={templateMaterialGroups}
+            />
+          )}
+          itemId={item.id}
+          mergeControl={(
+            <label className="grid gap-1">
+              <span className="text-[10px] font-semibold uppercase text-zinc-500">Merge</span>
+              <select
+                form={inlineFormId}
+                name="merge_mode"
+                defaultValue={mergeModeForItem(item)}
+                className="h-7 w-full border border-zinc-300 bg-white px-1.5 text-xs text-zinc-800 outline-none focus:border-emerald-800"
+              >
+                {mergeModes.map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+          )}
+        />
       </div>
     </div>
   );
@@ -3682,6 +3556,7 @@ export default async function QuotationBuilderPage({
               </div>
             </details>
             <GlobalRefreshButton />
+            <LocalDraftLink quotationId={quotation.id} />
             <Link
               href={`/quotations/${quotation.id}/pdf`}
               target="_blank"

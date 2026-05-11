@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
+import type { ImageDisplaySettings } from "@/components/images/image-adjustment-dialog";
 import {
   FinishSelectionsEditor,
+  type FinishSelectionEditorRow,
   type FinishMaterial,
   type FinishMaterialBrand,
   type FinishMaterialGroup,
@@ -11,9 +13,14 @@ import {
   type ProductTemplateMaterialGroupLink,
 } from "@/components/quotations/finish-selections-editor";
 import { formatMoney, normalizeCurrency } from "@/lib/currencies";
+import { createLocalId, localNow, type LocalQuotationItem } from "@/lib/local/quotation-workspace";
 import { productTemplatePriceCheckState } from "@/lib/product-price-check";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
-import { createClient } from "@/lib/supabase/client";
+import {
+  markQuotationImagePathFailed,
+  normalizeProductImageSnapshotPath,
+  resolveQuotationImageUrl,
+} from "@/lib/quotation-image-path";
 
 export type ProductLibraryBrand = {
   id: string;
@@ -44,10 +51,12 @@ export type ProductLibraryTemplate = {
   proposed_image_url_1: string | null;
   proposed_image_url_2: string | null;
   proposed_image_url_3: string | null;
+  image_settings?: Record<string, Partial<ImageDisplaySettings> | undefined> | null;
   desking_size_pricing: DeskingSizePricingRow[] | null;
   variant_pricing: VariantPricingRow[] | null;
   category_pricing: CategoryPricingRow[] | null;
   accessory_pricing: AccessoryPricingRow[] | null;
+  unit_label?: string | null;
   currency: string;
   default_unit_price: number;
   last_price_checked_at: string | null;
@@ -182,10 +191,6 @@ const optionTypeOrder = [
   "other",
 ];
 
-function isDirectImageUrl(value: string) {
-  return /^(https?:|blob:|data:|\/)/i.test(value);
-}
-
 function numberValue(value: unknown, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -236,6 +241,41 @@ function formatPriceCheckDate(value: string | null) {
   return new Intl.DateTimeFormat("en", {
     dateStyle: "medium",
   }).format(new Date(value));
+}
+
+function finishSnapshotValue(finishes: FinishSelectionEditorRow[]) {
+  const visibleFinishes = finishes.filter((finish) => finish.show_in_quotation === true);
+
+  if (!visibleFinishes.length) return null;
+
+  const groups = new Map<string, { label: string; items: string[] }>();
+
+  visibleFinishes.forEach((finish, index) => {
+    const groupKey =
+      finish.product_template_material_group_id ||
+      finish.material_group_id ||
+      finish.group_label ||
+      `group-${index}`;
+    const groupLabel = finish.group_label || "Finish";
+    const itemLabel = [finish.finish_code, finish.finish_name].filter(Boolean).join(" ").trim() ||
+      finish.finish_description ||
+      "Selected finish";
+    const existing = groups.get(groupKey);
+
+    if (existing) {
+      existing.items.push(itemLabel);
+      return;
+    }
+
+    groups.set(groupKey, {
+      label: groupLabel,
+      items: [itemLabel],
+    });
+  });
+
+  return Array.from(groups.values())
+    .map((group) => `${group.label}: ${group.items.join(", ")}`)
+    .join("\n");
 }
 
 function priceCheckState(template: ProductLibraryTemplate, brandName?: string | null) {
@@ -407,6 +447,7 @@ function deskingSizePricingCalculation({
     accessoryLines,
     accessoryPrice,
     additionalClusterQty,
+    additionalPrice,
     basePrice,
     clusterLabel,
     clusterName,
@@ -446,23 +487,12 @@ function ProductThumbnail({
       return;
     }
 
-    if (isDirectImageUrl(path)) {
-      window.queueMicrotask(() => {
-        if (!cancelled) setPreviewUrl(path);
-      });
-      return;
-    }
-
-    const supabase = createClient();
-    const storagePath = path.startsWith("product-images:")
-      ? path.slice("product-images:".length)
-      : path;
-
-    void supabase.storage
-      .from("product-images")
-      .createSignedUrl(storagePath, 60 * 60)
-      .then(({ data }) => {
-        if (!cancelled) setPreviewUrl(data?.signedUrl ?? "");
+    void resolveQuotationImageUrl(normalizeProductImageSnapshotPath(path) ?? path)
+      .then((url) => {
+        if (!cancelled) setPreviewUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setPreviewUrl("");
       });
 
     return () => {
@@ -482,6 +512,10 @@ function ProductThumbnail({
         <img
           src={previewUrl}
           alt="Product template"
+          onError={() => {
+            if (path) markQuotationImagePathFailed(normalizeProductImageSnapshotPath(path) ?? path);
+            setPreviewUrl("");
+          }}
           className="block h-full w-full object-contain"
         />
       ) : (
@@ -498,6 +532,7 @@ export function ProductLibrarySelector({
   linkedFamilies,
   materialGroups,
   materials,
+  onAddLocalItem,
   quotationId,
   returnTo,
   sectionId,
@@ -511,6 +546,7 @@ export function ProductLibrarySelector({
   linkedFamilies: ProductLibraryLinkedFamily[];
   materialGroups: FinishMaterialGroup[];
   materials: FinishMaterial[];
+  onAddLocalItem?: (item: LocalQuotationItem) => void;
   quotationId: string;
   returnTo: string;
   sectionId: string;
@@ -518,6 +554,7 @@ export function ProductLibrarySelector({
   templateMaterialGroups: ProductTemplateMaterialGroupLink[];
   templates: ProductLibraryTemplate[];
 }) {
+  const isLocalMode = Boolean(onAddLocalItem);
   const [isOpen, setIsOpen] = useState(false);
   const [brandId, setBrandId] = useState("");
   const [categoryId, setCategoryId] = useState("");
@@ -541,6 +578,7 @@ export function ProductLibrarySelector({
   const [exchangeRates, setExchangeRates] = useState<Record<string, Record<string, string>>>({});
   const [discountTypes, setDiscountTypes] = useState<Record<string, string>>({});
   const [discountValues, setDiscountValues] = useState<Record<string, string>>({});
+  const [selectedFinishesByTemplate, setSelectedFinishesByTemplate] = useState<Record<string, FinishSelectionEditorRow[]>>({});
 
   const brandNameById = useMemo(
     () => new Map(brands.map((brand) => [brand.id, brand.name])),
@@ -1140,21 +1178,44 @@ export function ProductLibrarySelector({
                   );
                   const netPricePreview = quotationMoneyValue(Math.max(previewUnitPriceWithConversion - unitDiscountAmount, 0));
                   const netTotalPreview = quotationMoneyValue(netPricePreview);
-                  const proposedImages = [
-                    template.proposed_image_url_1 ?? template.default_image_url,
-                    template.proposed_image_url_2,
-                    template.proposed_image_url_3,
-                  ].filter((value): value is string => Boolean(value));
+                  const proposedImageFields = [
+                    "proposed_image_url_1",
+                    "proposed_image_url_2",
+                    "proposed_image_url_3",
+                  ] as const;
+                  const availableProposedImages = proposedImageFields
+                    .map((field) => ({
+                      field,
+                      path:
+                        field === "proposed_image_url_1"
+                          ? template.proposed_image_url_1 ?? template.default_image_url
+                          : template[field],
+                    }))
+                    .filter((image): image is { field: (typeof proposedImageFields)[number]; path: string } =>
+                      Boolean(image.path),
+                    );
+                  const proposedImages = availableProposedImages.map((image) => image.path);
                   const selectedImage =
                     selectedImages[template.id] &&
                     proposedImages.includes(selectedImages[template.id])
                       ? selectedImages[template.id]
                       : proposedImages[0] ?? "";
+                  const selectedImageField =
+                    availableProposedImages.find((image) => image.path === selectedImage)?.field ??
+                    null;
+                  const selectedImageSettings = selectedImageField
+                    ? template.image_settings?.[selectedImageField] ??
+                      (selectedImageField === "proposed_image_url_1"
+                        ? template.image_settings?.default_image_url
+                        : undefined)
+                    : undefined;
+                  const localSelectedImagePath = normalizeProductImageSnapshotPath(selectedImage);
                   const templateMaterialLinks = templateMaterialGroups.filter((link) => link.product_template_id === template.id);
                   const templateMaterialLinkIds = new Set(templateMaterialLinks.map((link) => link.id));
                   const templateMaterialItems = templateMaterialGroupItems.filter((item) =>
                     templateMaterialLinkIds.has(item.product_template_material_group_id),
                   );
+                  const selectedFinishes = selectedFinishesByTemplate[template.id] ?? [];
 
                   for (const component of templateComponents) {
                     const groupKey = `${component.option_type}:${component.component_group}`;
@@ -1220,6 +1281,20 @@ export function ProductLibrarySelector({
                   const effectiveSelectedNames = effectiveSelectedIds
                     .map((id) => templateComponents.find((component) => component.id === id)?.component_name)
                     .filter(Boolean);
+                  const selectedOptionSnapshots = effectiveSelectedIds
+                    .map((id) => templateComponents.find((component) => component.id === id))
+                    .filter((component): component is ProductLibraryComponent => Boolean(component))
+                    .map((component) => ({
+                      item_type: component.option_type ?? "component_option",
+                      id: component.id,
+                      group: component.component_group,
+                      label: component.component_name,
+                      component_code: component.component_code,
+                      qty: numberValue(component.qty, 1),
+                      unit_label: component.unit_label ?? "Pc",
+                      price: numberValue(component.unit_price),
+                      currency: normalizeCurrency(component.currency ?? template.currency),
+                    }));
                   const hasMixedOptionCurrencies = effectiveSelectedIds
                     .map((id) => templateComponents.find((component) => component.id === id))
                     .filter(Boolean)
@@ -1227,6 +1302,230 @@ export function ProductLibrarySelector({
                       (option) =>
                         normalizeCurrency(option?.currency) !== normalizeCurrency(template.currency),
                     );
+                  const accessorySnapshots = selectedPricingAccessories.map((line) => ({
+                    item_type: "add_on",
+                    group_name: line.groupName,
+                    item_name: line.accessory.item_name,
+                    qty: line.qty,
+                    price: numberValue(line.accessory.price),
+                    currency: normalizeCurrency(line.accessory.currency ?? rowCurrency),
+                    specification: line.accessory.specification ?? "",
+                  }));
+                  const linkedProductSnapshots = selectedLinkedProducts.map((line) => ({
+                    item_type: "linked_product",
+                    label: line.link.label,
+                    template_name: line.childTemplate.template_name,
+                    template_code: line.childTemplate.template_code,
+                    selected_variant: line.childVariantRow?.variant_name ?? null,
+                    selected_category: line.childCategoryRow ? line.childCategory : null,
+                    dimension: line.childCategoryRow?.dimension ?? line.childVariantRow?.dimension ?? null,
+                    specification: line.childCategoryRow?.specification ?? line.childVariantRow?.specification ?? null,
+                    qty: line.qty,
+                    unit_price: line.unitPrice,
+                    currency: normalizeCurrency(line.currency),
+                    add_to_parent_price: line.link.add_to_parent_price,
+                    append_to_specification: line.link.append_to_specification,
+                    accessories: line.selectedAccessories.map((accessoryLine) => ({
+                      group_name: accessoryLine.groupName,
+                      item_name: accessoryLine.accessory.item_name,
+                      qty: accessoryLine.qty,
+                      price: numberValue(accessoryLine.accessory.price),
+                      currency: normalizeCurrency(accessoryLine.accessory.currency ?? line.currency),
+                    })),
+                  }));
+                  const sourceCurrencyTotals = Object.fromEntries(
+                    Array.from(originalCurrencyTotals.entries()).map(([currency, amount]) => [
+                      normalizeCurrency(currency),
+                      quotationMoneyValue(amount),
+                    ]),
+                  );
+                  const sourcePriceReference = {
+                    original_source_price: originalCurrencyTotals.size === 1
+                      ? Array.from(originalCurrencyTotals.values())[0]
+                      : null,
+                    original_source_currency: originalCurrencyTotals.size === 1
+                      ? Array.from(originalCurrencyTotals.keys())[0]
+                      : null,
+                    original_source_totals: sourceCurrencyTotals,
+                    source_price_type: derivedDesking
+                      ? "desking_size_pricing"
+                      : selectedCategoryRow
+                        ? "category_pricing"
+                        : selectedVariantRow
+                          ? "variant_pricing"
+                          : selectedOptionSnapshots.length
+                            ? "component_options"
+                            : "template_default",
+                    source_price_label: derivedDesking?.sizeLabel ??
+                      selectedCategoryRow?.variant_name ??
+                      selectedVariantRow?.variant_name ??
+                      (effectiveSelectedNames.join(", ") || undefined) ??
+                      template.template_name,
+                    converted_quotation_price: previewUnitPriceWithConversion,
+                    quotation_currency: previewCurrency,
+                  };
+                  const localSpecification = [
+                    template.default_specification ?? template.description ?? "",
+                    effectiveSelectedNames.length
+                      ? `Selected options: ${effectiveSelectedNames.join(", ")}`
+                      : "",
+                    selectedWorkstationVariantRow
+                      ? `Optional item: ${[
+                          selectedWorkstationVariantRow.variant_name,
+                          selectedWorkstationVariantRow.dimension,
+                        ].filter(Boolean).join(" / ")}`
+                      : "",
+                    ...accessorySnapshots.map((snapshot) =>
+                      `${snapshot.group_name}: ${snapshot.item_name} x${snapshot.qty}`,
+                    ),
+                    ...linkedProductSnapshots.map((snapshot) => {
+                      const parts = [
+                        snapshot.label,
+                        snapshot.template_name,
+                        snapshot.selected_variant,
+                        snapshot.selected_category,
+                        snapshot.dimension,
+                        `Qty ${snapshot.qty}`,
+                      ].filter(Boolean);
+                      const accessorySummary = snapshot.accessories.length
+                        ? ` Accessories: ${snapshot.accessories.map((accessory) => `${accessory.item_name} x${accessory.qty}`).join(", ")}`
+                        : "";
+                      return `${parts.join(" / ")}${accessorySummary}`;
+                    }),
+                  ]
+                    .filter(Boolean)
+                    .join("\n") || null;
+                  const localProductItem: LocalQuotationItem = {
+                    id: createLocalId("item"),
+                    quotation_id: quotationId,
+                    section_id: sectionId,
+                    item_type: "product",
+                    source_template_id: template.id,
+                    source_component_data: {
+                      template_code: template.template_code,
+                      template_name: template.template_name,
+                      brand_id: template.brand_id,
+                      origin: template.origin,
+                      supplier_name: template.supplier_name,
+                      default_image_url: template.default_image_url,
+                      reference_image_url: template.reference_image_url,
+                      proposed_image_url_1: template.proposed_image_url_1,
+                      proposed_image_url_2: template.proposed_image_url_2,
+                      proposed_image_url_3: template.proposed_image_url_3,
+                      selected_proposed_image_url: selectedImage || null,
+                      selected_option_ids: effectiveSelectedIds,
+                      selected_options: effectiveSelectedNames,
+                      selected_options_snapshot: selectedOptionSnapshots,
+                      source_price_reference: sourcePriceReference,
+                      ...(derivedDesking
+                        ? {
+                            desking: {
+                              size_label: derivedDesking.sizeLabel,
+                              cluster_label: derivedDesking.clusterLabel,
+                              dimension: derivedDesking.dimension,
+                              total_modules: derivedDesking.totalModules,
+                              total_seats: derivedDesking.totalSeats,
+                              default_price: derivedDesking.basePrice,
+                              additional_price: derivedDesking.additionalPrice,
+                              additional_qty: derivedDesking.additionalClusterQty,
+                              accessory_price: derivedDesking.accessoryPrice,
+                              final_price: derivedDesking.unitPrice,
+                              formula: derivedDesking.formula,
+                            },
+                          }
+                        : {}),
+                      ...(selectedVariantRow ? { variant_pricing: selectedVariantRow } : {}),
+                      ...(selectedCategoryRow
+                        ? {
+                            category_pricing: {
+                              selected_row: selectedCategoryRow,
+                              selected_category: selectedFabricCategory,
+                              selected_price: selectedCategoryPrice,
+                            },
+                          }
+                        : {}),
+                      ...(accessorySnapshots.length
+                        ? {
+                            add_ons: {
+                              groups: accessoryGroups
+                                .map((group) => ({
+                                  group_name: group.group_name,
+                                  items: accessorySnapshots.filter((snapshot) => snapshot.group_name === group.group_name),
+                                }))
+                                .filter((group) => group.items.length > 0),
+                              matching_currency_total: matchingAccessoryTotal,
+                              mixed_currency_warning: hasMixedAccessoryCurrencies,
+                            },
+                          }
+                        : {}),
+                      ...(linkedProductSnapshots.length
+                        ? {
+                            linked_products: {
+                              items: linkedProductSnapshots,
+                              matching_currency_total: matchingLinkedProductTotal,
+                              mixed_currency_warning: hasMixedLinkedProductCurrencies,
+                            },
+                          }
+                        : {}),
+                      ...(nonAedCurrencies.length
+                        ? {
+                            currency_conversion: {
+                              exchange_rates: templateExchangeRates,
+                              source_totals: sourceCurrencyTotals,
+                              converted_total_aed: previewUnitPriceWithConversion,
+                            },
+                          }
+                        : {}),
+                    },
+                    manual_serial: null,
+                    item_code_snapshot: template.item_code ?? template.template_code,
+                    item_name_snapshot: template.template_name,
+                    brand_name_snapshot: brandNameById.get(template.brand_id) ?? null,
+                    category_name_snapshot: [mainCategory, subCategory].filter(Boolean).join(" / ") || null,
+                    specified_image_url_snapshot: null,
+                    proposed_image_url_snapshot: localSelectedImagePath || null,
+                    specification_snapshot: localSpecification,
+                    finish_selections_snapshot: selectedFinishes,
+                    selected_options_snapshot: [
+                      ...selectedOptionSnapshots,
+                      ...accessorySnapshots,
+                      ...linkedProductSnapshots,
+                    ],
+                    internal_components_snapshot: linkedProductSnapshots,
+                    room_name_snapshot: null,
+                    model_snapshot: selectedCategoryRow?.variant_name || selectedVariantRow?.variant_name || null,
+                    finish_snapshot: finishSnapshotValue(selectedFinishes),
+                    size_snapshot: selectedSizeRow?.label ?? selectedCategoryRow?.dimension ?? selectedVariantRow?.dimension ?? null,
+                    origin_snapshot: template.origin ?? null,
+                    warranty_snapshot: null,
+                    supplier_name_snapshot: template.supplier_name ?? null,
+                    supplier_notes_snapshot: null,
+                    allow_material_continuation_page: false,
+                    qty: 1,
+                    unit_label: template.unit_label ?? "Pc",
+                    unit_price: previewUnitPriceWithConversion,
+                    discount_type: selectedDiscountType === "percent" ? "percent" : "amount",
+                    discount_value: selectedDiscountType === "none" ? 0 : selectedDiscountValue,
+                    net_price: netPricePreview,
+                    net_total: netTotalPreview,
+                    currency: previewCurrency,
+                    sort_order: 0,
+                    is_optional: false,
+                    internal_cost: 0,
+                    margin_type: "amount",
+                    margin_value: 0,
+                    is_rate_only: false,
+                    line_style: "normal",
+                    row_height: null,
+                    cell_layout: selectedImageSettings
+                      ? { images: { proposed_image_url_snapshot: selectedImageSettings } }
+                      : {},
+                    is_active: true,
+                    notes: null,
+                    created_at: localNow(),
+                    updated_at: localNow(),
+                    source_item_id: null,
+                  };
 
                   return (
                     <article
@@ -2273,22 +2572,42 @@ export function ProductLibrarySelector({
                             <FinishSelectionsEditor
                               brands={finishBrands}
                               initialBrandId={template.brand_id}
-                              initialFinishes={[]}
+                              initialFinishes={selectedFinishes}
                               materialGroups={materialGroups}
                               materials={materials}
+                              onChange={(nextFinishes) =>
+                                setSelectedFinishesByTemplate((current) => ({
+                                  ...current,
+                                  [template.id]: nextFinishes,
+                                }))
+                              }
                               quotationId={quotationId}
                               templateMaterialGroupItems={templateMaterialItems}
                               templateMaterialGroups={templateMaterialLinks}
                             />
                           </div>
                           <div className="sticky bottom-0 -mx-3 mt-3 border-t border-zinc-200 bg-white px-3 py-3 text-right">
-                            <button
-                              type="submit"
-                              disabled={missingExchangeRate || missingRequiredWorkstationSelection}
-                              className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
-                            >
-                              Add
-                            </button>
+                            {isLocalMode ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onAddLocalItem?.(localProductItem);
+                                  setIsOpen(false);
+                                }}
+                                disabled={missingExchangeRate || missingRequiredWorkstationSelection}
+                                className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                              >
+                                Add to Local Workspace
+                              </button>
+                            ) : (
+                              <button
+                                type="submit"
+                                disabled={missingExchangeRate || missingRequiredWorkstationSelection}
+                                className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                              >
+                                Add
+                              </button>
+                            )}
                           </div>
                         </form>
                       </div>

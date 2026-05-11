@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ContextBackLink } from "@/components/navigation/context-back-link";
 import { PendingLinkButton } from "@/components/pending-link-button";
+import { LocalDraftLink } from "@/components/quotations/local-draft-link";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
@@ -855,6 +856,7 @@ export default async function QuotationDetailPage({
                   >
                     Open Builder
                   </Link>
+                  <LocalDraftLink quotationId={quotation.id} />
                   {showOptionNumber ? <OptionBadge optionNo={quotation.option_no} /> : null}
                   <StatusBadge status={quotation.status} />
                 </div>

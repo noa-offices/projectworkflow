@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
+import { LocalDraftLink } from "@/components/quotations/local-draft-link";
 import { TopBar } from "@/components/top-bar";
 import {
   createQuotation,
@@ -672,6 +673,9 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                         >
                           Open Builder
                         </Link>
+                        <div className="mt-2">
+                          <LocalDraftLink quotationId={quotation.id} />
+                        </div>
                       </td>
                       {canManageRecords ? (
                         <td className="py-3">

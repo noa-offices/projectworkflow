@@ -555,6 +555,7 @@ export function FinishSelectionsEditor({
   itemId,
   materialGroups,
   materials,
+  onChange,
   templateMaterialGroupItems,
   templateMaterialGroups,
   quotationId,
@@ -566,6 +567,7 @@ export function FinishSelectionsEditor({
   itemId?: string | null;
   materialGroups?: FinishMaterialGroup[];
   materials?: FinishMaterial[];
+  onChange?: (finishes: FinishSelectionEditorRow[]) => void;
   templateMaterialGroupItems?: ProductTemplateMaterialGroupItemLink[];
   templateMaterialGroups?: ProductTemplateMaterialGroupLink[];
   quotationId: string;
@@ -580,6 +582,7 @@ export function FinishSelectionsEditor({
   const [librarySearch, setLibrarySearch] = useState("");
   const [activeOnly, setActiveOnly] = useState(true);
   const validationInputRef = useRef<HTMLInputElement | null>(null);
+  const onChangeRef = useRef<typeof onChange>(onChange);
   const isEditing = editingIndex !== null;
   const brandsById = new Map((brands ?? []).map((brand) => [brand.id, brand]));
   const groupsById = new Map((materialGroups ?? []).map((group) => [group.id, group]));
@@ -639,6 +642,14 @@ export function FinishSelectionsEditor({
         : "",
     );
   }, [missingRequiredLinkedGroupLabels]);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    onChangeRef.current?.(finishes);
+  }, [finishes]);
 
   function startAdd() {
     setDraft(emptyDraft());
