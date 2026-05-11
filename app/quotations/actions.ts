@@ -527,11 +527,16 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
     : groups;
 }
 
-function selectedVariantPricing(formData: FormData, rows?: VariantPricingRow[] | null) {
-  const selectedId = textValue(formData, "variant_pricing_row_id");
+function selectedVariantPricing(
+  formData: FormData,
+  rows?: VariantPricingRow[] | null,
+  fieldName = "variant_pricing_row_id",
+) {
+  const selectedId = textValue(formData, fieldName);
+  if (!selectedId) return null;
   const activeRows = activeVariantRows(rows);
 
-  return activeRows.find((row) => row.id === selectedId) ?? activeRows[0] ?? null;
+  return activeRows.find((row) => row.id === selectedId) ?? null;
 }
 
 function selectedCategoryPricing(formData: FormData, rows?: CategoryPricingRow[] | null) {
@@ -3910,9 +3915,15 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const selectedSizePricing = selectedVariantPricingRow || selectedCategoryPricingRow
     ? null
     : selectedDeskingSize(formData, template.desking_size_pricing);
+  const selectedWorkstationVariantPricingRow = selectedSizePricing
+    ? selectedVariantPricing(formData, template.variant_pricing, "workstation_variant_pricing_row_id")
+    : null;
   const selectedCategory = textValue(formData, "category_pricing_category") || "Cat A";
   const selectedCategoryPrice = selectedCategoryPricingRow
     ? money(calculationNumber(selectedCategoryPricingRow.prices?.[selectedCategory]))
+    : 0;
+  const selectedWorkstationVariantPrice = selectedWorkstationVariantPricingRow
+    ? money(calculationNumber(selectedWorkstationVariantPricingRow.price))
     : 0;
   const isDesking =
     (!selectedVariantPricingRow && !selectedCategoryPricingRow && /workstation|desking/.test(categoryName.toLowerCase())) ||
@@ -4068,6 +4079,12 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   };
 
   addCurrencyTotal(rowCurrency, baseUnitPrice);
+  if (selectedWorkstationVariantPricingRow) {
+    addCurrencyTotal(
+      selectedWorkstationVariantPricingRow.currency ?? rowCurrency,
+      selectedWorkstationVariantPrice,
+    );
+  }
   for (const accessory of selectedAccessoryPricing) {
     addCurrencyTotal(accessory.currency, accessory.qty * accessory.price);
   }
@@ -4129,7 +4146,10 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     unit_discount_amount: unitDiscountAmount,
   };
   const sourceSelectedOptionsPrice =
-    selectedAccessoryPricing.length || selectedLinkedProducts.length || currencyConversionData
+    selectedAccessoryPricing.length ||
+    selectedLinkedProducts.length ||
+    currencyConversionData ||
+    selectedWorkstationVariantPricingRow
       ? unitPrice
       : baseUnitPrice;
   const proposedImageFields = [
@@ -4196,8 +4216,22 @@ export async function addProductTemplateToQuotation(formData: FormData) {
 
       return `${item.label}: ${parts.join(", ")}`;
     });
-  const specificationWithAccessories = accessorySpecificationLines.length || linkedProductSpecificationLines.length
-    ? [specification, ...accessorySpecificationLines, ...linkedProductSpecificationLines]
+  const workstationVariantSpecificationLine = selectedWorkstationVariantPricingRow
+    ? [
+        selectedWorkstationVariantPricingRow.variant_name,
+        selectedWorkstationVariantPricingRow.dimension,
+      ].filter(Boolean).join(" / ")
+    : "";
+  const specificationWithAccessories =
+    workstationVariantSpecificationLine || accessorySpecificationLines.length || linkedProductSpecificationLines.length
+    ? [
+        specification,
+        workstationVariantSpecificationLine
+          ? `Optional item: ${workstationVariantSpecificationLine}`
+          : null,
+        ...accessorySpecificationLines,
+        ...linkedProductSpecificationLines,
+      ]
         .filter(Boolean)
         .join("\n")
     : specification;
@@ -4229,14 +4263,32 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         selected_price: selectedCategoryPrice,
       }
     : null;
+  const workstationVariantSnapshot = selectedWorkstationVariantPricingRow
+    ? {
+        item_type: "add_on",
+        group_name: "Optional item / variant",
+        item_name: [
+          selectedWorkstationVariantPricingRow.variant_name,
+          selectedWorkstationVariantPricingRow.dimension,
+        ].filter(Boolean).join(" / "),
+        qty: 1,
+        price: selectedWorkstationVariantPrice,
+        currency: normalizeCurrency(
+          selectedWorkstationVariantPricingRow.currency || rowCurrency || defaultCurrency,
+        ),
+        specification: selectedWorkstationVariantPricingRow.specification ?? "",
+      }
+    : null;
   const finalSelectedOptions = categorySnapshot
     ? [categorySnapshot, ...snapshotSelectedOptions]
     : variantSnapshot
       ? [variantSnapshot, ...snapshotSelectedOptions]
       : snapshotSelectedOptions;
-  const finalSelectedOptionsWithAccessories = selectedAccessoryPricing.length
-    ? [...finalSelectedOptions, ...selectedAccessoryPricing]
-    : finalSelectedOptions;
+  const finalSelectedOptionsWithAccessories = workstationVariantSnapshot
+    ? [workstationVariantSnapshot, ...finalSelectedOptions, ...selectedAccessoryPricing]
+    : selectedAccessoryPricing.length
+      ? [...finalSelectedOptions, ...selectedAccessoryPricing]
+      : finalSelectedOptions;
   const finalSelectedOptionsWithLinkedProducts = selectedLinkedProducts.length
     ? [...finalSelectedOptionsWithAccessories, ...selectedLinkedProducts]
     : finalSelectedOptionsWithAccessories;

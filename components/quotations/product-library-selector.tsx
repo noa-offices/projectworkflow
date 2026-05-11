@@ -851,7 +851,8 @@ export function ProductLibrarySelector({
                   const categoryRows = activeCategoryRows(template.category_pricing);
                   const accessoryGroups = activeAccessoryRows(template.accessory_pricing);
                   const templateLinkedFamilies = linkedFamiliesByParent.get(template.id) ?? [];
-                  const usesVariantPricing = variantRows.length > 0;
+                  const usesWorkstationFlow = sizePricingRows.length > 0;
+                  const usesVariantPricing = !usesWorkstationFlow && variantRows.length > 0;
                   const usesCategoryPricing = !usesVariantPricing && categoryRows.length > 0;
                   const templatePricingAccessoryQuantities = pricingAccessoryQuantities[template.id] ?? {};
                   const selectedVariantRow =
@@ -859,6 +860,10 @@ export function ProductLibrarySelector({
                       ? variantRows.find((row) => row.id === selectedVariantRows[template.id]) ??
                         variantRows[0] ??
                         null
+                      : null;
+                  const selectedWorkstationVariantRow =
+                    usesWorkstationFlow
+                      ? variantRows.find((row) => row.id === selectedVariantRows[template.id]) ?? null
                       : null;
                   const selectedCategoryRow =
                     usesCategoryPricing
@@ -877,14 +882,13 @@ export function ProductLibrarySelector({
                     Math.trunc(numberValue(additionalClusterQuantities[template.id], 0)),
                   );
                   const templateAccessoryQuantities = accessoryQuantities[template.id] ?? {};
-                  const isDesking = !usesVariantPricing && !usesCategoryPricing && (
-                    sizePricingRows.length > 0 ||
+                  const isDesking = usesWorkstationFlow || (!usesVariantPricing && !usesCategoryPricing && (
                     isDeskingTemplate({
                       mainCategory,
                       subCategory,
                       templateComponents,
                     })
-                  );
+                  ));
                   const selectedSizeRow =
                     sizePricingRows.find((row) => row.id === selectedDeskingSizes[template.id]) ??
                     sizePricingRows[0] ??
@@ -902,6 +906,9 @@ export function ProductLibrarySelector({
                     selectedCategoryRow?.currency ??
                     selectedVariantRow?.currency ??
                     template.currency;
+                  const selectedWorkstationVariantPrice = selectedWorkstationVariantRow
+                    ? numberValue(selectedWorkstationVariantRow.price)
+                    : 0;
                   const selectedPricingAccessories = accessoryGroups
                     .flatMap((group) =>
                       group.items.map((accessory) => {
@@ -925,7 +932,9 @@ export function ProductLibrarySelector({
                     (derivedDesking?.unitPrice ??
                       (selectedCategoryRow ? selectedCategoryPrice : undefined) ??
                       selectedVariantRow?.price ??
-                      template.default_unit_price) + matchingAccessoryTotal;
+                      template.default_unit_price) +
+                    selectedWorkstationVariantPrice +
+                    matchingAccessoryTotal;
                   const selectedLinkedProducts = templateLinkedFamilies
                     .map((link) => {
                       const childTemplate = templateById.get(link.linked_template_id);
@@ -990,6 +999,12 @@ export function ProductLibrarySelector({
                   };
 
                   addCurrencyTotal(rowCurrency, baseProductPrice);
+                  if (selectedWorkstationVariantRow) {
+                    addCurrencyTotal(
+                      selectedWorkstationVariantRow.currency ?? rowCurrency,
+                      selectedWorkstationVariantPrice,
+                    );
+                  }
                   for (const line of selectedPricingAccessories) {
                     addCurrencyTotal(line.accessory.currency ?? rowCurrency, line.qty * numberValue(line.accessory.price));
                   }
@@ -1179,28 +1194,33 @@ export function ProductLibrarySelector({
                             </div>
                           </div>
                         ) : null}
-                        {isDesking && sizePricingRows.length ? (
-                          <label className="mt-3 block">
-                            <span className="text-[10px] font-bold uppercase text-zinc-500">
-                              Size
-                            </span>
-                            <select
-                              value={selectedSizeRow?.id ?? ""}
-                              onChange={(event) =>
-                                setSelectedDeskingSizes((current) => ({
-                                  ...current,
-                                  [template.id]: event.target.value,
-                                }))
-                              }
-                              className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
-                            >
-                              {sizePricingRows.map((row, index) => (
-                                <option key={row.id ?? index} value={row.id ?? `size-${index}`}>
-                                  {row.label ?? `${row.length} x ${row.depth} x ${row.height}`} - {formatMoney(row.currency ?? template.currency, numberValue(row.default_price))}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
+                        {usesWorkstationFlow ? (
+                          <div className="mt-4 space-y-2">
+                            <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                              1. Select workstation size
+                            </p>
+                            <label className="block">
+                              <span className="text-[10px] font-bold uppercase text-zinc-500">
+                                Workstation Size / Base Price
+                              </span>
+                              <select
+                                value={selectedSizeRow?.id ?? ""}
+                                onChange={(event) =>
+                                  setSelectedDeskingSizes((current) => ({
+                                    ...current,
+                                    [template.id]: event.target.value,
+                                  }))
+                                }
+                                className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                              >
+                                {sizePricingRows.map((row, index) => (
+                                  <option key={row.id ?? index} value={row.id ?? `size-${index}`}>
+                                    {row.label ?? `${row.length} x ${row.depth} x ${row.height}`} - {formatMoney(row.currency ?? template.currency, numberValue(row.default_price))}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
                         ) : null}
                         {usesCategoryPricing ? (
                           <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -1259,7 +1279,109 @@ export function ProductLibrarySelector({
                             ) : null}
                           </label>
                         ) : null}
-                        {accessoryGroups.length ? (
+                        {usesWorkstationFlow && (variantRows.length || accessoryGroups.length) ? (
+                          <div className="mt-4 space-y-2">
+                            <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                              2. Optional items
+                            </p>
+                            {variantRows.length ? (
+                              <label className="block">
+                                <span className="text-[10px] font-bold uppercase text-zinc-500">
+                                  Optional Item / Variant Pricing
+                                </span>
+                                <select
+                                  value={selectedWorkstationVariantRow?.id ?? ""}
+                                  onChange={(event) =>
+                                    setSelectedVariantRows((current) => ({
+                                      ...current,
+                                      [template.id]: event.target.value,
+                                    }))
+                                  }
+                                  className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                >
+                                  <option value="">No optional item</option>
+                                  {variantRows.map((row, index) => (
+                                    <option key={row.id ?? index} value={row.id ?? `workstation-variant-${index}`}>
+                                      {row.variant_name} {row.dimension ? `- ${row.dimension}` : ""} - {formatMoney(row.currency ?? template.currency, numberValue(row.price))}
+                                    </option>
+                                  ))}
+                                </select>
+                                <span className="mt-1 block text-xs leading-5 text-zinc-500">
+                                  Optional workstation add-ons stay separate from the base workstation size.
+                                </span>
+                                {selectedWorkstationVariantRow ? (
+                                  <span className="mt-1 block text-xs leading-5 text-zinc-600">
+                                    Selected add-on: {selectedWorkstationVariantRow.variant_name}
+                                    {selectedWorkstationVariantRow.dimension ? ` - ${selectedWorkstationVariantRow.dimension}` : ""}
+                                    {" - "}
+                                    {formatMoney(selectedWorkstationVariantRow.currency ?? template.currency, numberValue(selectedWorkstationVariantRow.price))}
+                                    {selectedWorkstationVariantRow.specification ? ` - ${selectedWorkstationVariantRow.specification}` : ""}
+                                  </span>
+                                ) : null}
+                              </label>
+                            ) : null}
+                            {accessoryGroups.length ? (
+                              <div className="space-y-2">
+                                {accessoryGroups.map((group) => (
+                                  <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
+                                    <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
+                                      {group.group_name}
+                                    </legend>
+                                    <div className="mt-1 space-y-2">
+                                      {group.items.map((accessory) => {
+                                        const id = accessory.id ?? accessory.item_name ?? "";
+                                        const qty = templatePricingAccessoryQuantities[id] ?? 0;
+
+                                        return (
+                                          <label key={id} className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
+                                            <span>
+                                              <input
+                                                type="checkbox"
+                                                checked={qty > 0}
+                                                onChange={(event) =>
+                                                  setPricingAccessoryQuantities((current) => ({
+                                                    ...current,
+                                                    [template.id]: {
+                                                      ...(current[template.id] ?? {}),
+                                                      [id]: event.target.checked ? Math.max(1, qty || 1) : 0,
+                                                    },
+                                                  }))
+                                                }
+                                                className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle"
+                                              />
+                                              {accessory.item_name}
+                                            </span>
+                                            <span className="font-semibold">
+                                              {formatMoney(accessory.currency ?? rowCurrency, numberValue(accessory.price))}
+                                            </span>
+                                            <input
+                                              type="number"
+                                              min={1}
+                                              step={1}
+                                              value={qty || 1}
+                                              disabled={qty <= 0}
+                                              onChange={(event) =>
+                                                setPricingAccessoryQuantities((current) => ({
+                                                  ...current,
+                                                  [template.id]: {
+                                                    ...(current[template.id] ?? {}),
+                                                    [id]: Math.max(1, Math.trunc(Number(event.target.value) || 1)),
+                                                  },
+                                                }))
+                                              }
+                                              className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100"
+                                            />
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                  </fieldset>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {!usesWorkstationFlow && accessoryGroups.length ? (
                           <div className="mt-3 space-y-2">
                             {accessoryGroups.map((group) => (
                               <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
@@ -1319,9 +1441,9 @@ export function ProductLibrarySelector({
                           </div>
                         ) : null}
                         {selectedLinkedProducts.length ? (
-                          <div className="mt-3 space-y-2">
-                            <p className="text-[10px] font-bold uppercase text-zinc-500">
-                              Linked Product Families
+                          <div className="mt-4 space-y-2">
+                            <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                              {usesWorkstationFlow ? "3. Linked product families" : "Linked Product Families / Screens & Add-ons"}
                             </p>
                             {selectedLinkedProducts.map((line) => (
                               <fieldset key={line.link.id} className="border border-zinc-200 bg-zinc-50 p-2">
@@ -1656,6 +1778,22 @@ export function ProductLibrarySelector({
                             ) : null}
                           </div>
                         ) : null}
+                        {usesWorkstationFlow && selectedWorkstationVariantRow ? (
+                          <div className="max-w-48 space-y-1 text-xs leading-5 text-zinc-600">
+                            <p className="font-semibold text-zinc-950">
+                              Optional item: {selectedWorkstationVariantRow.variant_name}
+                            </p>
+                            {selectedWorkstationVariantRow.dimension ? (
+                              <p>Dimension: {selectedWorkstationVariantRow.dimension}</p>
+                            ) : null}
+                            <p>
+                              Price: {formatMoney(selectedWorkstationVariantRow.currency ?? template.currency, numberValue(selectedWorkstationVariantRow.price))}
+                            </p>
+                            {selectedWorkstationVariantRow.specification ? (
+                              <p className="line-clamp-3">{selectedWorkstationVariantRow.specification}</p>
+                            ) : null}
+                          </div>
+                        ) : null}
                         {isDesking ? (
                           <label className="block max-w-48 text-right">
                             <span className="text-[10px] font-bold uppercase text-zinc-500">
@@ -1701,7 +1839,9 @@ export function ProductLibrarySelector({
                         ) : null}
                         {nonAedCurrencies.length ? (
                           <div className="max-w-56 space-y-2 border border-amber-200 bg-amber-50 p-2 text-left text-xs leading-5 text-amber-900">
-                            <p className="font-bold uppercase">Currency Conversion</p>
+                            <p className="font-bold uppercase">
+                              {usesWorkstationFlow ? "4. Currency conversion" : "Currency Conversion"}
+                            </p>
                             {Array.from(originalCurrencyTotals.entries()).map(([currency, amount]) => (
                               <p key={currency}>
                                 {currency} total: {formatMoney(currency, amount)}
@@ -1741,7 +1881,9 @@ export function ProductLibrarySelector({
                           </div>
                         ) : null}
                         <div className="max-w-56 space-y-2 border border-zinc-200 bg-zinc-50 p-2 text-left text-xs leading-5 text-zinc-700">
-                          <p className="font-bold uppercase text-zinc-500">Pricing / Discount</p>
+                          <p className="font-bold uppercase text-zinc-500">
+                            {usesWorkstationFlow ? "5. Final quotation price" : "Pricing / Discount"}
+                          </p>
                           <p>U.Price: {formatQuotationMoney(previewCurrency, previewUnitPriceWithConversion)}</p>
                           <label className="block">
                             <span className="text-[10px] font-bold uppercase text-zinc-500">Discount Type</span>
@@ -1825,6 +1967,13 @@ export function ProductLibrarySelector({
                           ) : null}
                           {usesVariantPricing && selectedVariantRow ? (
                             <input type="hidden" name="variant_pricing_row_id" value={selectedVariantRow.id ?? ""} />
+                          ) : null}
+                          {usesWorkstationFlow && selectedWorkstationVariantRow ? (
+                            <input
+                              type="hidden"
+                              name="workstation_variant_pricing_row_id"
+                              value={selectedWorkstationVariantRow.id ?? ""}
+                            />
                           ) : null}
                           {selectedPricingAccessories.map((line) => (
                             <input

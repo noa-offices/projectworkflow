@@ -820,7 +820,16 @@ function TemplateForm({
         <input type="hidden" name="accessory_pricing" value={JSON.stringify(template?.accessory_pricing ?? [])} />
         <div className="md:col-span-2 xl:col-span-3">
           <h4 className="mb-2 text-xs font-bold uppercase text-zinc-500">
-            Size / Model Variant Pricing
+            Workstation Size / Base Price
+          </h4>
+          <p className="mb-2 text-xs leading-5 text-zinc-500">
+            Default price is the base CL2 price. Additional price is for each extra CL2.
+          </p>
+          <DeskingSizePricingTable rows={template?.desking_size_pricing} />
+        </div>
+        <div className="md:col-span-2 xl:col-span-3">
+          <h4 className="mb-2 mt-5 text-xs font-bold uppercase text-zinc-500">
+            Optional Item / Variant Pricing
           </h4>
           <VariantPricingTable rows={template?.variant_pricing} />
         </div>
@@ -829,15 +838,6 @@ function TemplateForm({
             Fabric / Leather Category Pricing
           </h4>
           <CategoryPricingTable rows={template?.category_pricing} />
-        </div>
-        <div className="md:col-span-2 xl:col-span-3">
-          <h4 className="mb-2 mt-5 text-xs font-bold uppercase text-zinc-500">
-            Workstation Size Pricing
-          </h4>
-          <p className="mb-2 text-xs leading-5 text-zinc-500">
-            Default price is the base CL2 price. Additional price is for each extra CL2.
-          </p>
-        <DeskingSizePricingTable rows={template?.desking_size_pricing} />
         </div>
       </FormSection>
     </TemplateFormShell>
@@ -2732,7 +2732,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
                           {template.desking_size_pricing?.length ? (
                             <section>
-                              <h4 className="text-xs font-bold uppercase text-zinc-500">Desking / Size Pricing</h4>
+                              <h4 className="text-xs font-bold uppercase text-zinc-500">Workstation Size / Base Price</h4>
                               <div className="mt-2 grid gap-3">
                                 {template.desking_size_pricing.filter((row) => row.is_active !== false).map((row, index) => (
                                   <DetailPriceRow
@@ -2776,7 +2776,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
                           {template.variant_pricing?.length ? (
                             <section>
-                              <h4 className="text-xs font-bold uppercase text-zinc-500">Size / Model Variants</h4>
+                              <h4 className="text-xs font-bold uppercase text-zinc-500">Optional Item / Variant Pricing</h4>
                               <div className="mt-2 grid gap-3">
                                 {template.variant_pricing.filter((row) => row.is_active !== false).map((row, index) => (
                                   <DetailPriceRow
@@ -2993,7 +2993,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>
                         <h3 className="text-sm font-semibold uppercase text-zinc-500">
-                          Linked Product Families
+                          Linked Product Families / Screens & Add-ons
                         </h3>
                         <p className="mt-1 text-sm leading-6 text-zinc-500">
                           Connect reusable product families such as screens, pedestals, cable trays, and power modules. These can be selected manually when adding this product to a quotation.
