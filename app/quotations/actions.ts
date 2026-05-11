@@ -423,6 +423,12 @@ type LinkedProductSelectionInput = {
   variantRowId: string;
 };
 
+type LinkedProductAccessorySelectionInput = {
+  accessoryId: string;
+  linkId: string;
+  qty: number;
+};
+
 function linkedProductSelections(formData: FormData) {
   return formData
     .getAll("linked_product_selection")
@@ -434,6 +440,19 @@ function linkedProductSelections(formData: FormData) {
       return linkId && qty > 0 ? { category, categoryRowId, linkId, qty, variantRowId } : null;
     })
     .filter((value): value is LinkedProductSelectionInput => Boolean(value));
+}
+
+function linkedProductAccessorySelections(formData: FormData) {
+  return formData
+    .getAll("linked_product_accessory_qty")
+    .filter((value): value is string => typeof value === "string")
+    .map((value): LinkedProductAccessorySelectionInput | null => {
+      const [linkId, accessoryId, rawQty] = value.split(":");
+      const qty = Math.max(0, Math.trunc(Number(rawQty) || 0));
+
+      return linkId && accessoryId && qty > 0 ? { accessoryId, linkId, qty } : null;
+    })
+    .filter((value): value is LinkedProductAccessorySelectionInput => Boolean(value));
 }
 
 function currencyExchangeRates(formData: FormData) {
@@ -3828,6 +3847,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const accessoryQtyById = accessoryQuantities(formData);
   const accessoryPricingQtyById = accessoryPricingQuantities(formData);
   const linkedProductSelectionInputs = linkedProductSelections(formData);
+  const linkedProductAccessorySelectionInputs = linkedProductAccessorySelections(formData);
   const exchangeRateByCurrency = currencyExchangeRates(formData);
   const additionalClusterQty = deskingAdditionalClusterQty(formData);
   const selectedComponentIds = Array.from(
@@ -4033,6 +4053,11 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   );
   const linkedFamilyById = new Map((linkedFamilies ?? []).map((link) => [link.id, link]));
   const linkedTemplateById = new Map((linkedTemplates ?? []).map((linkedTemplate) => [linkedTemplate.id, linkedTemplate]));
+  const linkedAccessorySelectionsByLinkId = linkedProductAccessorySelectionInputs.reduce((map, selection) => {
+    const currentSelections = map.get(selection.linkId) ?? [];
+    map.set(selection.linkId, [...currentSelections, selection]);
+    return map;
+  }, new Map<string, LinkedProductAccessorySelectionInput[]>());
   const selectedLinkedProducts = linkedProductSelectionInputs
     .map((selection) => {
       const link = linkedFamilyById.get(selection.linkId);
@@ -4068,6 +4093,38 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         linkedTemplate.default_specification ||
         linkedTemplate.description ||
         "";
+      const linkedAccessorySelections = linkedAccessorySelectionsByLinkId.get(selection.linkId) ?? [];
+      const selectedAccessories = activeAccessoryRows(linkedTemplate.accessory_pricing)
+        .flatMap((group) =>
+          group.items.map((accessory) => {
+            const id = accessory.id ?? accessory.item_name ?? "";
+            const selectedAccessory = linkedAccessorySelections.find((item) => item.accessoryId === id);
+            const qty = selectedAccessory?.qty ?? 0;
+
+            return {
+              type: "linked_product_add_on",
+              item_type: "linked_product_add_on",
+              id,
+              group_name: group.group_name,
+              item_name: accessory.item_name ?? "",
+              qty,
+              price: calculationNumber(accessory.price),
+              currency: normalizeCurrency(accessory.currency ?? currency),
+              specification: accessory.specification ?? "",
+            };
+          }),
+        )
+        .filter((accessory) => accessory.qty > 0);
+      const accessoryTotal = money(
+        selectedAccessories.reduce((total, accessory) => total + accessory.qty * accessory.price, 0),
+      );
+      const matchingAccessoryTotal = money(
+        selectedAccessories
+          .filter((accessory) => accessory.currency === currency)
+          .reduce((total, accessory) => total + accessory.qty * accessory.price, 0),
+      );
+      const lineTotal = money(unitPrice * selection.qty);
+      const familyTotal = money(lineTotal + matchingAccessoryTotal);
 
       return {
         type: "linked_product_family",
@@ -4079,7 +4136,11 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         qty: selection.qty,
         unit_price: unitPrice,
         currency,
-        line_total: money(unitPrice * selection.qty),
+        line_total: lineTotal,
+        accessory_total: accessoryTotal,
+        matching_accessory_total: matchingAccessoryTotal,
+        family_total: familyTotal,
+        accessories: selectedAccessories,
         specification,
         add_to_parent_price: link.add_to_parent_price,
         append_to_specification: link.append_to_specification,
@@ -4089,7 +4150,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const matchingLinkedProductsTotal = money(
     selectedLinkedProducts
       .filter((item) => item.add_to_parent_price && item.currency === rowCurrency)
-      .reduce((total, item) => total + item.line_total, 0),
+      .reduce((total, item) => total + item.line_total + item.matching_accessory_total, 0),
   );
 
   const { data: lastItem } = await supabase
@@ -4130,6 +4191,9 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   for (const linkedProduct of selectedLinkedProducts) {
     if (linkedProduct.add_to_parent_price) {
       addCurrencyTotal(linkedProduct.currency, linkedProduct.line_total);
+      for (const accessory of linkedProduct.accessories) {
+        addCurrencyTotal(accessory.currency, accessory.qty * accessory.price);
+      }
     }
   }
 
@@ -4252,8 +4316,11 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         item.selected_category,
         `Qty ${item.qty}`,
       ].filter(Boolean);
+      const accessorySummary = item.accessories.length
+        ? ` Accessories: ${item.accessories.map((accessory) => `${accessory.item_name} x${accessory.qty}`).join(", ")}`
+        : "";
 
-      return `${item.label}: ${parts.join(", ")}`;
+      return `${item.label}: ${parts.join(", ")}${accessorySummary}`;
     });
   const workstationVariantSpecificationLine = selectedWorkstationVariantPricingRow
     ? [
@@ -4450,7 +4517,12 @@ export async function addProductTemplateToQuotation(formData: FormData) {
               items: selectedLinkedProducts,
               matching_currency_total: matchingLinkedProductsTotal,
               mixed_currency_warning: selectedLinkedProducts.some(
-                (item) => item.add_to_parent_price && item.currency !== rowCurrency,
+                (item) =>
+                  item.add_to_parent_price &&
+                  (
+                    item.currency !== rowCurrency ||
+                    item.accessories.some((accessory) => accessory.currency !== rowCurrency)
+                  ),
               ),
             },
           }

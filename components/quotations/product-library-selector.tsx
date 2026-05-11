@@ -534,6 +534,7 @@ export function ProductLibrarySelector({
   const [selectedFabricCategories, setSelectedFabricCategories] = useState<Record<string, string>>({});
   const [pricingAccessoryQuantities, setPricingAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [linkedProductQuantities, setLinkedProductQuantities] = useState<Record<string, number>>({});
+  const [linkedAccessoryQuantities, setLinkedAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [selectedLinkedVariants, setSelectedLinkedVariants] = useState<Record<string, string>>({});
   const [selectedLinkedCategories, setSelectedLinkedCategories] = useState<Record<string, string>>({});
   const [selectedLinkedFabricCategories, setSelectedLinkedFabricCategories] = useState<Record<string, string>>({});
@@ -987,6 +988,8 @@ export function ProductLibrarySelector({
 
                       const childCategoryRows = activeCategoryRows(childTemplate.category_pricing);
                       const childVariantRows = activeVariantRows(childTemplate.variant_pricing);
+                      const childAccessoryGroups = activeAccessoryRows(childTemplate.accessory_pricing);
+                      const childAccessoryQuantities = linkedAccessoryQuantities[link.id] ?? {};
                       const childCategoryRow =
                         childCategoryRows.find((row) => row.id === selectedLinkedCategories[link.id]) ??
                         childCategoryRows[0] ??
@@ -1008,15 +1011,47 @@ export function ProductLibrarySelector({
                         linkedProductQuantities[link.id],
                         numberValue(link.default_qty),
                       )));
+                      const selectedAccessories = childAccessoryGroups
+                        .flatMap((group) =>
+                          group.items.map((accessory) => {
+                            const id = accessory.id ?? accessory.item_name ?? "";
+                            const accessoryQty = Math.max(0, Math.trunc(numberValue(childAccessoryQuantities[id])));
+
+                            return {
+                              accessory,
+                              groupName: group.group_name,
+                              id,
+                              qty: accessoryQty,
+                            };
+                          }),
+                        )
+                        .filter((line) => line.qty > 0);
+                      const baseLineTotal = qty * unitPrice;
+                      const matchingAccessoryTotal = selectedAccessories
+                        .filter((line) => normalizeCurrency(line.accessory.currency ?? currency) === normalizeCurrency(currency))
+                        .reduce((total, line) => total + line.qty * numberValue(line.accessory.price), 0);
+                      const accessoryTotal = selectedAccessories.reduce(
+                        (total, line) => total + line.qty * numberValue(line.accessory.price),
+                        0,
+                      );
+                      const hasMixedAccessoryCurrencies = selectedAccessories.some(
+                        (line) => normalizeCurrency(line.accessory.currency ?? currency) !== normalizeCurrency(currency),
+                      );
 
                       return {
+                        accessoryTotal,
+                        baseLineTotal,
                         childCategory,
                         childCategoryRow,
+                        childAccessoryGroups,
                         childTemplate,
                         childVariantRow,
                         currency,
+                        hasMixedAccessoryCurrencies,
                         link,
+                        matchingAccessoryTotal,
                         qty,
+                        selectedAccessories,
                         unitPrice,
                       };
                     })
@@ -1024,10 +1059,16 @@ export function ProductLibrarySelector({
                   const matchingLinkedProductTotal = selectedLinkedProducts
                     .filter((line) => line.qty > 0 && line.link.add_to_parent_price)
                     .filter((line) => normalizeCurrency(line.currency) === normalizeCurrency(rowCurrency))
-                    .reduce((total, line) => total + line.qty * line.unitPrice, 0);
+                    .reduce((total, line) => total + line.baseLineTotal + line.matchingAccessoryTotal, 0);
                   const hasMixedLinkedProductCurrencies = selectedLinkedProducts
                     .filter((line) => line.qty > 0 && line.link.add_to_parent_price)
-                    .some((line) => normalizeCurrency(line.currency) !== normalizeCurrency(rowCurrency));
+                    .some((line) =>
+                      normalizeCurrency(line.currency) !== normalizeCurrency(rowCurrency) ||
+                      line.selectedAccessories.some(
+                        (accessoryLine) =>
+                          normalizeCurrency(accessoryLine.accessory.currency ?? line.currency) !== normalizeCurrency(rowCurrency),
+                      ),
+                    );
                   const totalPreviewUnitPrice = previewUnitPrice + matchingLinkedProductTotal;
                   const baseProductPrice =
                     derivedDesking?.unitPrice ??
@@ -1055,7 +1096,13 @@ export function ProductLibrarySelector({
                   }
                   for (const line of selectedLinkedProducts) {
                     if (line.qty > 0 && line.link.add_to_parent_price) {
-                      addCurrencyTotal(line.currency, line.qty * line.unitPrice);
+                      addCurrencyTotal(line.currency, line.baseLineTotal);
+                      for (const accessoryLine of line.selectedAccessories) {
+                        addCurrencyTotal(
+                          accessoryLine.accessory.currency ?? line.currency,
+                          accessoryLine.qty * numberValue(accessoryLine.accessory.price),
+                        );
+                      }
                     }
                   }
 
@@ -1626,6 +1673,83 @@ export function ProductLibrarySelector({
                                     />
                                   </label>
                                 </div>
+                                {line.childAccessoryGroups.length ? (
+                                  <div className="mt-3 space-y-2 border-t border-zinc-200 pt-3">
+                                    <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                                      {line.childTemplate.template_name} Accessories / Optional Items
+                                    </p>
+                                    {line.childAccessoryGroups.map((group) => (
+                                      <fieldset key={`${line.link.id}-${group.id}`} className="border border-zinc-200 bg-white p-2">
+                                        <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
+                                          {group.group_name}
+                                        </legend>
+                                        <div className="mt-1 space-y-2">
+                                          {group.items.map((accessory) => {
+                                            const id = accessory.id ?? accessory.item_name ?? "";
+                                            const qty = linkedAccessoryQuantities[line.link.id]?.[id] ?? 0;
+
+                                            return (
+                                              <label key={`${line.link.id}-${id}`} className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
+                                                <span>
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={qty > 0}
+                                                    onChange={(event) =>
+                                                      setLinkedAccessoryQuantities((current) => ({
+                                                        ...current,
+                                                        [line.link.id]: {
+                                                          ...(current[line.link.id] ?? {}),
+                                                          [id]: event.target.checked ? Math.max(1, qty || 1) : 0,
+                                                        },
+                                                      }))
+                                                    }
+                                                    className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle"
+                                                  />
+                                                  {accessory.item_name}
+                                                  {accessory.specification ? ` - ${accessory.specification}` : ""}
+                                                </span>
+                                                <span className="font-semibold">
+                                                  {formatMoney(accessory.currency ?? line.currency, numberValue(accessory.price))}
+                                                </span>
+                                                <input
+                                                  type="number"
+                                                  min={1}
+                                                  step={1}
+                                                  value={qty || 1}
+                                                  disabled={qty <= 0}
+                                                  onChange={(event) =>
+                                                    setLinkedAccessoryQuantities((current) => ({
+                                                      ...current,
+                                                      [line.link.id]: {
+                                                        ...(current[line.link.id] ?? {}),
+                                                        [id]: Math.max(1, Math.trunc(Number(event.target.value) || 1)),
+                                                      },
+                                                    }))
+                                                  }
+                                                  className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100"
+                                                />
+                                              </label>
+                                            );
+                                          })}
+                                        </div>
+                                      </fieldset>
+                                    ))}
+                                    {line.qty > 0 ? (
+                                      <div className="rounded-md border border-zinc-200 bg-white p-2 text-xs leading-5 text-zinc-600">
+                                        <p>Linked screen total: {formatMoney(line.currency, line.baseLineTotal)}</p>
+                                        <p>Accessories: {formatMoney(line.currency, line.matchingAccessoryTotal)}</p>
+                                        <p className="font-semibold text-zinc-900">
+                                          Total: {formatMoney(line.currency, line.baseLineTotal + line.matchingAccessoryTotal)}
+                                        </p>
+                                        {line.hasMixedAccessoryCurrencies ? (
+                                          <p className="text-amber-700">
+                                            Mixed currencies detected in linked accessories. Review conversion before adding.
+                                          </p>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
                               </fieldset>
                             ))}
                           </div>
@@ -2094,18 +2218,27 @@ export function ProductLibrarySelector({
                           ))}
                           {selectedLinkedProducts.map((line) => (
                             line.qty > 0 ? (
-                              <input
-                                key={line.link.id}
-                                type="hidden"
-                                name="linked_product_selection"
-                                value={[
-                                  line.link.id,
-                                  line.qty,
-                                  line.childCategoryRow?.id ?? "",
-                                  line.childCategoryRow ? line.childCategory : "",
-                                  line.childVariantRow?.id ?? "",
-                                ].join(":")}
-                              />
+                              <span key={line.link.id} className="contents">
+                                <input
+                                  type="hidden"
+                                  name="linked_product_selection"
+                                  value={[
+                                    line.link.id,
+                                    line.qty,
+                                    line.childCategoryRow?.id ?? "",
+                                    line.childCategoryRow ? line.childCategory : "",
+                                    line.childVariantRow?.id ?? "",
+                                  ].join(":")}
+                                />
+                                {line.selectedAccessories.map((accessoryLine) => (
+                                  <input
+                                    key={`${line.link.id}-${accessoryLine.id}`}
+                                    type="hidden"
+                                    name="linked_product_accessory_qty"
+                                    value={[line.link.id, accessoryLine.id, accessoryLine.qty].join(":")}
+                                  />
+                                ))}
+                              </span>
                             ) : null
                           ))}
                           {nonAedCurrencies.map((currency) => (
