@@ -32,7 +32,21 @@ export const dynamic = "force-dynamic";
 
 type ProjectPageProps = {
   params: Promise<{ id: string }>;
-  searchParams?: Promise<{ message?: string }>;
+  searchParams?: Promise<{
+    currency?: string;
+    delivery_terms?: string;
+    layout_mode?: string;
+    message?: string;
+    newQuotation?: string;
+    notes?: string;
+    payment_terms?: string;
+    quotation_date?: string;
+    quotation_no?: string;
+    title?: string;
+    validity?: string;
+    vat_percent?: string;
+    warranty_terms?: string;
+  }>;
 };
 
 type Client = {
@@ -121,12 +135,21 @@ function Field({
   );
 }
 
-function TextArea({ name, label }: { name: string; label: string }) {
+function TextArea({
+  name,
+  label,
+  defaultValue,
+}: {
+  name: string;
+  label: string;
+  defaultValue?: string | null;
+}) {
   return (
     <label className="block md:col-span-2">
       <span className="text-xs font-semibold uppercase text-zinc-500">{label}</span>
       <textarea
         name={name}
+        defaultValue={defaultValue ?? ""}
         rows={2}
         className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
       />
@@ -200,9 +223,23 @@ function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
 
 function NewQuotationForm({
   client,
+  defaultValues,
   project,
 }: {
   client: Client;
+  defaultValues?: {
+    currency?: string;
+    delivery_terms?: string;
+    layout_mode?: string;
+    notes?: string;
+    payment_terms?: string;
+    quotation_date?: string;
+    quotation_no?: string;
+    title?: string;
+    validity?: string;
+    vat_percent?: string;
+    warranty_terms?: string;
+  };
   project: Project;
 }) {
   return (
@@ -211,20 +248,20 @@ function NewQuotationForm({
       <input type="hidden" name="project_id" value={project.id} />
       <input type="hidden" name="status" value="draft" />
       <input type="hidden" name="is_active" value="on" />
-      <input type="hidden" name="return_to" value={`/clients/projects/${project.id}`} />
-      <Field name="title" label="Title" required />
-      <Field name="quotation_no" label="Quotation no" />
+      <input type="hidden" name="return_to" value={`/clients/projects/${project.id}?newQuotation=1`} />
+      <Field name="title" label="Title" defaultValue={defaultValues?.title} required />
+      <Field name="quotation_no" label="Quotation no" defaultValue={defaultValues?.quotation_no} />
       <Field
         name="quotation_date"
         label="Quotation date"
         type="date"
-        defaultValue={new Date().toISOString().slice(0, 10)}
+        defaultValue={defaultValues?.quotation_date ?? new Date().toISOString().slice(0, 10)}
       />
       <label className="block">
         <span className="text-xs font-semibold uppercase text-zinc-500">Layout Mode</span>
         <select
           name="layout_mode"
-          defaultValue="standard_proposal"
+          defaultValue={defaultValues?.layout_mode ?? "standard_proposal"}
           className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
         >
           {layoutModes.map(([value, label]) => (
@@ -234,13 +271,13 @@ function NewQuotationForm({
           ))}
         </select>
       </label>
-      <CurrencySelect />
-      <Field name="vat_percent" label="VAT %" type="number" defaultValue={5} />
-      <Field name="payment_terms" label="Payment terms" />
-      <Field name="validity" label="Validity" />
-      <Field name="delivery_terms" label="Delivery terms" />
-      <Field name="warranty_terms" label="Warranty terms" />
-      <TextArea name="notes" label="Terms / Notes" />
+      <CurrencySelect defaultValue={defaultValues?.currency} />
+      <Field name="vat_percent" label="VAT %" type="number" defaultValue={defaultValues?.vat_percent ?? 5} />
+      <Field name="payment_terms" label="Payment terms" defaultValue={defaultValues?.payment_terms} />
+      <Field name="validity" label="Validity" defaultValue={defaultValues?.validity} />
+      <Field name="delivery_terms" label="Delivery terms" defaultValue={defaultValues?.delivery_terms} />
+      <Field name="warranty_terms" label="Warranty terms" defaultValue={defaultValues?.warranty_terms} />
+      <TextArea name="notes" label="Terms / Notes" defaultValue={defaultValues?.notes} />
       <div className="flex justify-end md:col-span-2 xl:col-span-3">
         <PendingSubmitButton
           className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
@@ -302,6 +339,24 @@ function QuotationActionForm({
   );
 }
 
+function messageTone(message: string): "error" | "success" {
+  const normalized = message.trim().toLowerCase();
+
+  if (
+    normalized.includes("could not") ||
+    normalized.includes("required") ||
+    normalized.includes("missing") ||
+    normalized.includes("invalid") ||
+    normalized.includes("does not belong") ||
+    normalized.includes("permission") ||
+    normalized.includes("error")
+  ) {
+    return "error";
+  }
+
+  return "success";
+}
+
 export default async function ProjectFolderPage({ params, searchParams }: ProjectPageProps) {
   const { id } = await params;
   const query = await searchParams;
@@ -353,6 +408,21 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
   });
   const quotationList = allQuotationList.filter((quotation) => quotation.is_active);
   const archivedQuotationList = allQuotationList.filter((quotation) => !quotation.is_active);
+  const quotationMessage = query?.message?.trim() ?? "";
+  const newQuotationDefaults = {
+    currency: query?.currency,
+    delivery_terms: query?.delivery_terms,
+    layout_mode: query?.layout_mode,
+    notes: query?.notes,
+    payment_terms: query?.payment_terms,
+    quotation_date: query?.quotation_date,
+    quotation_no: query?.quotation_no,
+    title: query?.title,
+    validity: query?.validity,
+    vat_percent: query?.vat_percent,
+    warranty_terms: query?.warranty_terms,
+  };
+  const shouldOpenNewQuotation = query?.newQuotation === "1";
   const latestRevisionByBaseNo = new Map<string, Quotation>();
   const optionCountByRootBase = new Map<string, number>();
 
@@ -394,9 +464,13 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
             >
               Back to Clients & Projects
             </Link>
-            {query?.message ? (
-              <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
-                {query.message}
+            {quotationMessage ? (
+              <p className={`rounded-md border px-3 py-2 text-sm ${
+                messageTone(quotationMessage) === "error"
+                  ? "border-red-200 bg-red-50 text-red-900"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-950"
+              }`}>
+                {quotationMessage}
               </p>
             ) : null}
           </div>
@@ -458,14 +532,27 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                   Manage quotation options, revisions, and builder access from this project folder.
                 </p>
               </div>
+              {quotationMessage ? (
+                <p className={`rounded-md border px-3 py-2 text-sm ${
+                  messageTone(quotationMessage) === "error"
+                    ? "border-red-200 bg-red-50 text-red-900"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-950"
+                }`}>
+                  {quotationMessage}
+                </p>
+              ) : null}
               {canManageRecords ? (
-                <details className="sm:min-w-[420px]">
+                <details className="sm:min-w-[420px]" open={shouldOpenNewQuotation}>
                   <summary className="cursor-pointer rounded-md bg-emerald-900 px-4 py-2 text-sm font-semibold text-white">
                     + New quotation for this project
                   </summary>
                   <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
                     {client ? (
-                      <NewQuotationForm client={client} project={project} />
+                      <NewQuotationForm
+                        client={client}
+                        defaultValues={newQuotationDefaults}
+                        project={project}
+                      />
                     ) : (
                       <p className="text-sm text-zinc-500">
                         Client record is required before creating a quotation.

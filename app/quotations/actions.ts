@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 import {
   requireActiveUser,
   requireRecordsManager,
@@ -773,6 +774,64 @@ function quotationPayload(formData: FormData, userId?: string) {
   };
 
   return userId ? { ...payload, created_by: userId } : payload;
+}
+
+function createQuotationDraftParams(formData: FormData) {
+  return {
+    currency: textValue(formData, "currency") || null,
+    delivery_terms: textValue(formData, "delivery_terms") || null,
+    layout_mode: textValue(formData, "layout_mode") || null,
+    newQuotation: "1",
+    notes: textValue(formData, "notes") || null,
+    payment_terms: textValue(formData, "payment_terms") || null,
+    quotation_date: textValue(formData, "quotation_date") || null,
+    quotation_no: textValue(formData, "quotation_no") || null,
+    title: textValue(formData, "title") || null,
+    validity: textValue(formData, "validity") || null,
+    vat_percent: textValue(formData, "vat_percent") || null,
+    warranty_terms: textValue(formData, "warranty_terms") || null,
+  };
+}
+
+function redirectQuotationCreateError(formData: FormData, redirectPath: string, message: string): never {
+  redirectWithMessageAndParams(redirectPath, message, createQuotationDraftParams(formData));
+}
+
+function safeQuotationCreateErrorMessage(error: {
+  code?: string;
+  details?: string;
+  hint?: string;
+  message?: string;
+} | null | undefined) {
+  if (!error) {
+    return "Database error: quotation insert failed.";
+  }
+
+  if (error.code === "23505") {
+    return "Could not create quotation because this quotation number already exists.";
+  }
+
+  if (error.code === "23503") {
+    return "Project or client reference is no longer valid.";
+  }
+
+  if (error.code === "23502") {
+    return "Quotation is missing a required value. Please check the title, client, and project.";
+  }
+
+  if (error.code === "23514") {
+    return "Quotation settings are invalid. Please check the selected status and layout.";
+  }
+
+  if (error.code === "42501") {
+    return "You do not have permission to create quotations.";
+  }
+
+  if (error.message && error.message.length <= 140) {
+    return `Database error: ${error.message}`;
+  }
+
+  return "Database error: quotation insert failed.";
 }
 
 type QuotationCopyMode = "duplicate" | "revision" | "option";
@@ -1600,59 +1659,166 @@ export async function recalculateQuotationTotals(quotationId: string) {
 }
 
 export async function createQuotation(formData: FormData) {
-  const { user, displayName } = await requireRecordsManager();
-  const payload = quotationPayload(formData, user.id);
   const redirectPath = returnPath(formData, "/quotations");
+  const { user, profile, displayName } = await requireActiveUser();
+  const role = profile?.role;
 
-  if (!payload.client_id || !payload.project_id || !payload.title) {
-    redirectWithMessage(redirectPath, "Client, project, and title are required.");
+  if (
+    role !== "system_owner" &&
+    role !== "admin_manager" &&
+    role !== "sales_designer"
+  ) {
+    redirectQuotationCreateError(formData, redirectPath, "You do not have permission to create quotations.");
+  }
+
+  const payload = quotationPayload(formData, user.id);
+
+  if (!payload.client_id) {
+    redirectQuotationCreateError(formData, redirectPath, "Client is required.");
+  }
+
+  if (!payload.project_id) {
+    redirectQuotationCreateError(formData, redirectPath, "Project is required.");
+  }
+
+  if (!payload.title) {
+    redirectQuotationCreateError(formData, redirectPath, "Quotation title is required.");
   }
 
   if (!quotationStatuses.has(payload.status) || !layoutModes.has(payload.layout_mode)) {
-    redirectWithMessage(redirectPath, "Select valid quotation settings.");
+    redirectQuotationCreateError(formData, redirectPath, "Select valid quotation settings.");
   }
 
-  const supabase = await createSupabaseClient();
-  const { data: project, error: projectError } = await supabase
-    .from("projects")
-    .select("id,client_id")
-    .eq("id", payload.project_id)
-    .maybeSingle<{ id: string; client_id: string }>();
+  try {
+    const supabase = await createSupabaseClient();
+    const { data: client, error: clientError } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("id", payload.client_id)
+      .maybeSingle<{ id: string }>();
 
-  if (projectError || !project || project.client_id !== payload.client_id) {
-    redirectWithMessage(redirectPath, "Select a project that belongs to the selected client.");
+    if (clientError) {
+      console.error("QUOTATION CREATE CLIENT READ ERROR", {
+        action: "createQuotation",
+        client_id: payload.client_id,
+        message: clientError.message,
+      });
+      redirectQuotationCreateError(formData, redirectPath, "Client could not be found.");
+    }
+
+    if (!client) {
+      redirectQuotationCreateError(formData, redirectPath, "Client could not be found.");
+    }
+
+    const { data: project, error: projectError } = await supabase
+      .from("projects")
+      .select("id,client_id")
+      .eq("id", payload.project_id)
+      .maybeSingle<{ id: string; client_id: string }>();
+
+    if (projectError) {
+      console.error("QUOTATION CREATE PROJECT READ ERROR", {
+        action: "createQuotation",
+        client_id: payload.client_id,
+        project_id: payload.project_id,
+        message: projectError.message,
+      });
+      redirectQuotationCreateError(formData, redirectPath, "Project could not be found.");
+    }
+
+    if (!project) {
+      redirectQuotationCreateError(formData, redirectPath, "Project could not be found.");
+    }
+
+    if (!project.client_id) {
+      redirectQuotationCreateError(formData, redirectPath, "Project is missing client link.");
+    }
+
+    if (project.client_id !== payload.client_id) {
+      redirectQuotationCreateError(formData, redirectPath, "Selected project does not belong to the selected client.");
+    }
+
+    if (payload.quotation_no) {
+      const { data: duplicateQuotation, error: duplicateQuotationError } = await supabase
+        .from("quotations")
+        .select("id")
+        .eq("quotation_no", payload.quotation_no)
+        .maybeSingle<{ id: string }>();
+
+      if (duplicateQuotationError) {
+        console.error("QUOTATION CREATE DUPLICATE CHECK ERROR", {
+          action: "createQuotation",
+          client_id: payload.client_id,
+          project_id: payload.project_id,
+          quotation_no: payload.quotation_no,
+          message: duplicateQuotationError.message,
+        });
+      }
+
+      if (duplicateQuotation) {
+        redirectQuotationCreateError(
+          formData,
+          redirectPath,
+          "Could not create quotation because this quotation number already exists.",
+        );
+      }
+    }
+
+    const { data, error } = await supabase
+      .from("quotations")
+      .insert(payload)
+      .select("id,title,quotation_no")
+      .single<{ id: string; quotation_no: string | null; title: string }>();
+
+    if (error || !data) {
+      console.error("QUOTATION CREATE ERROR", {
+        action: "createQuotation",
+        client_id: payload.client_id,
+        project_id: payload.project_id,
+        quotation_no: payload.quotation_no,
+        title: payload.title,
+        code: error?.code,
+        details: error?.details,
+        hint: error?.hint,
+        message: error?.message,
+      });
+      redirectQuotationCreateError(formData, redirectPath, safeQuotationCreateErrorMessage(error));
+    }
+
+    await createAuditLog(supabase, {
+      entityType: "quotation",
+      entityId: data.id,
+      action: "quotation_created",
+      title: "Quotation created",
+      description: quotationLabel(data.title, data.quotation_no),
+      metadata: {
+        clientId: payload.client_id,
+        projectId: payload.project_id,
+        quotationLabel: quotationLabel(data.title, data.quotation_no),
+        status: payload.status,
+      },
+      actorName: displayName,
+      createdBy: user.id,
+    });
+
+    revalidatePath("/quotations");
+    revalidatePath(redirectPath);
+    redirectWithMessage(`/quotations/${data.id}`, "Quotation created.");
+  } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
+
+    console.error("QUOTATION CREATE UNEXPECTED ERROR", {
+      action: "createQuotation",
+      client_id: payload.client_id,
+      project_id: payload.project_id,
+      quotation_no: payload.quotation_no,
+      title: payload.title,
+      error,
+    });
+    redirectQuotationCreateError(formData, redirectPath, "Database error: quotation insert failed.");
   }
-
-  const { data, error } = await supabase
-    .from("quotations")
-    .insert(payload)
-    .select("id,title,quotation_no")
-    .single<{ id: string; quotation_no: string | null; title: string }>();
-
-  if (error || !data) {
-    console.error("QUOTATION CREATE ERROR", error?.message);
-    redirectWithMessage(redirectPath, "Quotation could not be created.");
-  }
-
-  await createAuditLog(supabase, {
-    entityType: "quotation",
-    entityId: data.id,
-    action: "quotation_created",
-    title: "Quotation created",
-    description: quotationLabel(data.title, data.quotation_no),
-    metadata: {
-      clientId: payload.client_id,
-      projectId: payload.project_id,
-      quotationLabel: quotationLabel(data.title, data.quotation_no),
-      status: payload.status,
-    },
-    actorName: displayName,
-    createdBy: user.id,
-  });
-
-  revalidatePath("/quotations");
-  revalidatePath(redirectPath);
-  redirectWithMessage(`/quotations/${data.id}`, "Quotation created.");
 }
 
 export async function saveQuotationItemToProductLibrary(formData: FormData) {
