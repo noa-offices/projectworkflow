@@ -79,9 +79,11 @@ function SharedField({
         name={mode === "server" ? name : undefined}
         type={type}
         step={type === "number" ? step ?? "0.01" : undefined}
+        inputMode={type === "number" ? "decimal" : undefined}
         defaultValue={mode === "server" ? stringValue(value) : undefined}
         value={mode === "local" ? stringValue(value) : undefined}
         onChange={mode === "local" ? (event) => onValueChange?.(event.target.value) : undefined}
+        onWheel={type === "number" ? (event) => event.currentTarget.blur() : undefined}
         className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800"
       />
     </label>

@@ -142,21 +142,29 @@ export function createLocalId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+function exactMoneyValue(value: unknown) {
+  const number = Number(value);
+  const safeValue = Number.isFinite(number) ? number : 0;
+
+  return Math.round(safeValue * 100) / 100;
+}
+
 export function itemLinePricing(item: Pick<LocalQuotationItem, "qty" | "unit_price" | "discount_type" | "discount_value">) {
   const qty = Number.isFinite(item.qty) ? Math.max(item.qty, 0) : 0;
   const unitPrice = quotationMoneyValue(Number.isFinite(item.unit_price) ? item.unit_price : 0);
-  const rawDiscountValue = quotationMoneyValue(Number.isFinite(item.discount_value) ? item.discount_value : 0);
+  const rawDiscountValue = exactMoneyValue(Number.isFinite(item.discount_value) ? item.discount_value : 0);
+  const discountValue = item.discount_type === "percent"
+    ? Math.min(Math.max(rawDiscountValue, 0), 100)
+    : Math.min(Math.max(rawDiscountValue, 0), unitPrice);
   const discountAmount = item.discount_type === "percent"
-    ? quotationMoneyValue(unitPrice * Math.min(Math.max(rawDiscountValue, 0), 100) / 100)
-    : quotationMoneyValue(Math.min(Math.max(rawDiscountValue, 0), unitPrice));
-  const netPrice = quotationMoneyValue(Math.max(unitPrice - discountAmount, 0));
-  const netTotal = quotationMoneyValue(netPrice * qty);
+    ? exactMoneyValue(unitPrice * discountValue / 100)
+    : discountValue;
+  const netPrice = exactMoneyValue(Math.max(unitPrice - discountAmount, 0));
+  const netTotal = exactMoneyValue(netPrice * qty);
 
   return {
     unitPrice,
-    discountValue: item.discount_type === "percent"
-      ? Math.min(Math.max(rawDiscountValue, 0), 100)
-      : rawDiscountValue,
+    discountValue,
     netPrice,
     netTotal,
   };
@@ -168,13 +176,13 @@ function overallDiscountAmount(
   discountType: string,
   discountValue: number,
 ) {
-  const base = quotationMoneyValue(
+  const base = exactMoneyValue(
     discountType === "percent"
       ? netTotal * Math.min(Math.max(discountValue, 0), 100) / 100
       : Math.max(discountValue, 0),
   );
 
-  return quotationMoneyValue(Math.min(base, netTotal || subtotal));
+  return exactMoneyValue(Math.min(base, netTotal || subtotal));
 }
 
 export function workspaceTotals(workspace: Pick<LocalQuotationWorkspace, "items" | "overall_discount_type" | "overall_discount_value" | "vat_percent">): LocalQuotationTotals {
@@ -185,22 +193,22 @@ export function workspaceTotals(workspace: Pick<LocalQuotationWorkspace, "items"
       !["note", "blank", "subtotal"].includes(item.item_type) &&
       !["heading", "note", "no_quote"].includes(item.line_style),
   );
-  const subtotal = quotationMoneyValue(
-    pricedItems.reduce((total, item) => total + quotationMoneyValue(item.qty * item.unit_price), 0),
+  const subtotal = exactMoneyValue(
+    pricedItems.reduce((total, item) => total + exactMoneyValue(item.qty * item.unit_price), 0),
   );
-  const netTotal = quotationMoneyValue(
-    pricedItems.reduce((total, item) => total + quotationMoneyValue(item.net_total), 0),
+  const netTotal = exactMoneyValue(
+    pricedItems.reduce((total, item) => total + exactMoneyValue(item.net_total), 0),
   );
-  const discountTotal = quotationMoneyValue(Math.max(subtotal - netTotal, 0));
+  const discountTotal = exactMoneyValue(Math.max(subtotal - netTotal, 0));
   const extraDiscount = overallDiscountAmount(
     subtotal,
     netTotal,
     workspace.overall_discount_type,
     workspace.overall_discount_value,
   );
-  const totalAfterExtraDiscount = quotationMoneyValue(Math.max(netTotal - extraDiscount, 0));
-  const vatAmount = quotationMoneyValue(totalAfterExtraDiscount * Math.max(workspace.vat_percent, 0) / 100);
-  const grandTotal = quotationMoneyValue(totalAfterExtraDiscount + vatAmount);
+  const totalAfterExtraDiscount = exactMoneyValue(Math.max(netTotal - extraDiscount, 0));
+  const vatAmount = exactMoneyValue(totalAfterExtraDiscount * Math.max(workspace.vat_percent, 0) / 100);
+  const grandTotal = exactMoneyValue(totalAfterExtraDiscount + vatAmount);
 
   return {
     subtotal,
