@@ -41,6 +41,7 @@ import {
   formatBrandOriginSupplier,
   specificationWithoutDuplicateCode,
 } from "@/lib/quotations/format-quotation-row";
+import { formatMoney } from "@/lib/currencies";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 
 type BuilderView = "client" | "internal";
@@ -558,6 +559,24 @@ function sectionSubtotal(items: LocalQuotationItem[]) {
       .filter((item) => !["heading", "note", "no_quote"].includes(item.line_style))
       .reduce((total, item) => total + quotationMoneyValue(item.net_total), 0),
   );
+}
+
+function exactMoneyValue(value: unknown) {
+  const number = Number(value);
+  const safeValue = Number.isFinite(number) ? number : 0;
+
+  return Math.round(safeValue * 100) / 100;
+}
+
+function lineDiscountAmountPerUnit(item: LocalQuotationItem) {
+  return exactMoneyValue(Math.max(exactMoneyValue(item.unit_price) - exactMoneyValue(item.net_price), 0));
+}
+
+function formatExactQuotationMoney(currency: string | null | undefined, value: unknown) {
+  return formatMoney(currency, exactMoneyValue(value), {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+  });
 }
 
 function InsertSectionRow({
@@ -1361,12 +1380,8 @@ export function LocalQuotationBuilder({
                                 </div>
                               </td>}
                               {isColVisible("discount_amount") && <td className={`${compactCellClassName} break-words text-center`}>
-                                <div className="grid h-full content-center gap-1 text-center">
-                                  <select value={item.discount_type} onChange={(event) => updateItem(item.id, { discount_type: event.target.value })} className="w-full bg-transparent text-[11px] outline-none text-center">
-                                    <option value="amount">Amount</option>
-                                    <option value="percent">Percent</option>
-                                  </select>
-                                  <input type="number" min={0} step="0.01" value={item.discount_value} onChange={(event) => updateItem(item.id, { discount_value: Number(event.target.value) || 0 })} className="w-full bg-transparent text-center text-xs outline-none" />
+                                <div className="grid h-full content-center text-center text-xs">
+                                  {formatExactQuotationMoney(item.currency || workspace.currency, lineDiscountAmountPerUnit(item))}
                                 </div>
                               </td>}
                               {isColVisible("net_price") && <td className={`${compactCellClassName} break-words text-center text-xs`}>{formatQuotationMoney(item.currency || workspace.currency, item.net_price)}</td>}
