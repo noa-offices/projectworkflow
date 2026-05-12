@@ -18,6 +18,12 @@ import {
 } from "@/lib/quotation-options";
 import { allowedQuotationStatuses, quotationStatusLabel } from "@/lib/quotation-status";
 import { quotationMoneyValue } from "@/lib/quotation-pricing";
+import {
+  buildCompanyStyleProductSpecification,
+  resolveProductDimensionSnapshot,
+  resolveProductOriginSnapshot,
+  resolveProductSpecificationSnapshot,
+} from "@/lib/quotations/product-template-snapshot";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 const quotationStatuses = allowedQuotationStatuses;
@@ -4028,7 +4034,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   }
 
   const selectedOptions = selectedComponents ?? [];
-  const originSnapshot = template.origin ?? brand?.origin ?? null;
+  const originSnapshot = resolveProductOriginSnapshot(template.origin, brand?.origin ?? null);
   const supplierNameSnapshot = template.supplier_name ?? brand?.name ?? null;
   const selectedVariantPricingRow = selectedVariantPricing(formData, template.variant_pricing);
   const selectedCategoryPricingRow = selectedVariantPricingRow
@@ -4065,6 +4071,13 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       })
     : null;
   const selectedOptionNames = selectedOptions.map((option) => option.component_name);
+  const selectedOptionSnapshots = selectedOptions.map((option) => ({
+    item_type: option.option_type ?? "component_option",
+    group: option.component_group,
+    id: option.id,
+    label: option.component_name,
+    specification: option.description ?? "",
+  }));
   const selectedFinishOptions = selectedOptions
     .filter((option) => option.option_type === "material_finish" || option.option_type === "fabric_category")
     .map((option) => option.component_name);
@@ -4349,61 +4362,28 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         : undefined)
     : undefined;
   const proposedImagePath = productImageSnapshotPath(selectedProposedImage);
-  const baseSpecification = template.default_specification ?? template.description ?? "";
-  const specification = derivedDesking?.specification ||
-    selectedCategoryPricingRow?.specification ||
-    selectedVariantPricingRow?.specification ||
-    (selectedOptionNames.length
-    ? [baseSpecification, `Selected options: ${selectedOptionNames.join(", ")}`]
-        .filter(Boolean)
-        .join("\n")
-    : baseSpecification || null);
-  const accessoryNamesByGroup = new Map<string, string[]>();
-  for (const accessory of selectedAccessoryPricing) {
-    if (!accessory.item_name) continue;
-
-    accessoryNamesByGroup.set(accessory.group_name, [
-      ...(accessoryNamesByGroup.get(accessory.group_name) ?? []),
-      accessory.item_name,
-    ]);
-  }
-  const accessorySpecificationLines = Array.from(accessoryNamesByGroup.entries()).map(
-    ([groupName, names]) => `${groupName}: ${names.join(", ")}`,
-  );
-  const linkedProductSpecificationLines = selectedLinkedProducts
-    .filter((item) => item.append_to_specification)
-    .map((item) => {
-      const parts = [
-        item.template_name,
-        item.selected_variant,
-        item.selected_category,
-        `Qty ${item.qty}`,
-      ].filter(Boolean);
-      const accessorySummary = item.accessories.length
-        ? ` Accessories: ${item.accessories.map((accessory) => `${accessory.item_name} x${accessory.qty}`).join(", ")}`
-        : "";
-
-      return `${item.label}: ${parts.join(", ")}${accessorySummary}`;
-    });
-  const workstationVariantSpecificationLine = selectedWorkstationVariantPricingRow
-    ? [
-        selectedWorkstationVariantPricingRow.variant_name,
-        selectedWorkstationVariantPricingRow.dimension,
-      ].filter(Boolean).join(" / ")
-    : "";
-  const specificationWithAccessories =
-    workstationVariantSpecificationLine || accessorySpecificationLines.length || linkedProductSpecificationLines.length
-    ? [
-        specification,
-        workstationVariantSpecificationLine
-          ? `Optional item: ${workstationVariantSpecificationLine}`
-          : null,
-        ...accessorySpecificationLines,
-        ...linkedProductSpecificationLines,
-      ]
-        .filter(Boolean)
-        .join("\n")
-    : specification;
+  const companyStyleSpecification = buildCompanyStyleProductSpecification({
+    accessorySnapshots: selectedAccessoryPricing,
+    linkedProductSnapshots: selectedLinkedProducts,
+    selectedOptionSnapshots,
+    selectedWorkstationVariant: selectedWorkstationVariantPricingRow,
+    template,
+  });
+  const specificationSnapshot = resolveProductSpecificationSnapshot({
+    companyStyleSpecification,
+    selectedCategorySpecification: selectedCategoryPricingRow?.specification ?? null,
+    selectedVariantSpecification: selectedVariantPricingRow?.specification ?? null,
+    selectedWorkstationVariantSpecification: selectedWorkstationVariantPricingRow?.specification ?? null,
+    template,
+  });
+  const dimensionSnapshot = resolveProductDimensionSnapshot({
+    derivedDeskingDimension: derivedDesking?.dimensionValue ?? derivedDesking?.dimension,
+    selectedSizeLabel: selectedSizePricing?.label ?? null,
+    selectedCategoryDimension: selectedCategoryPricingRow?.dimension ?? null,
+    selectedVariantDimension: selectedVariantPricingRow?.dimension ?? null,
+    selectedWorkstationVariantDimension: selectedWorkstationVariantPricingRow?.dimension ?? null,
+    selectedSizeOptions: selectedSizeOptions.join(", ") || null,
+  });
   const snapshotSelectedOptions = derivedDesking
     ? [
         {
@@ -4529,7 +4509,15 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       brand_id: template.brand_id,
       brand_name: brand?.name ?? null,
       origin: originSnapshot,
+      origin_country: originSnapshot,
+      country_of_origin: originSnapshot,
       supplier_name: supplierNameSnapshot,
+      default_specification: template.default_specification,
+      description: template.description,
+      specification: specificationSnapshot,
+      dimension: dimensionSnapshot,
+      dimensions: dimensionSnapshot,
+      size_label: dimensionSnapshot,
       main_category_id: template.main_category_id,
       main_category_name: template.main_category_id
         ? categoryNameById.get(template.main_category_id) ?? null
@@ -4600,7 +4588,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     category_name_snapshot: categoryName || null,
     specified_image_url_snapshot: null,
     proposed_image_url_snapshot: proposedImagePath,
-    specification_snapshot: specificationWithAccessories,
+    specification_snapshot: specificationSnapshot,
     finish_selections_snapshot: submittedFinishSelections,
     selected_options_snapshot: finalSelectedOptionsWithLinkedProducts,
     model_snapshot: derivedDesking
@@ -4615,11 +4603,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         ? selectedCategory
         : derivedDesking?.finishOptions.join(", ") || selectedFinishOptions.join(", ") || null,
     ),
-    size_snapshot: derivedDesking?.dimensionValue ||
-      selectedCategoryPricingRow?.dimension ||
-      selectedVariantPricingRow?.dimension ||
-      selectedSizeOptions.join(", ") ||
-      null,
+    size_snapshot: dimensionSnapshot,
     origin_snapshot: originSnapshot,
     supplier_name_snapshot: supplierNameSnapshot,
     allow_material_continuation_page: boolValue(formData, "allow_material_continuation_page"),

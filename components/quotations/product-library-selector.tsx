@@ -17,6 +17,12 @@ import { createLocalId, localNow, type LocalQuotationItem } from "@/lib/local/qu
 import { productTemplatePriceCheckState } from "@/lib/product-price-check";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 import {
+  buildCompanyStyleProductSpecification,
+  resolveProductDimensionSnapshot,
+  resolveProductOriginSnapshot,
+  resolveProductSpecificationSnapshot,
+} from "@/lib/quotations/product-template-snapshot";
+import {
   markQuotationImagePathFailed,
   normalizeProductImageSnapshotPath,
   resolveQuotationImageUrl,
@@ -25,6 +31,7 @@ import {
 export type ProductLibraryBrand = {
   id: string;
   name: string;
+  origin?: string | null;
 };
 
 export type ProductLibraryCategory = {
@@ -582,6 +589,10 @@ export function ProductLibrarySelector({
 
   const brandNameById = useMemo(
     () => new Map(brands.map((brand) => [brand.id, brand.name])),
+    [brands],
+  );
+  const brandOriginById = useMemo(
+    () => new Map(brands.map((brand) => [brand.id, brand.origin ?? null])),
     [brands],
   );
   const templateById = useMemo(
@@ -1289,6 +1300,7 @@ export function ProductLibrarySelector({
                       id: component.id,
                       group: component.component_group,
                       label: component.component_name,
+                      specification: component.description ?? "",
                       component_code: component.component_code,
                       qty: numberValue(component.qty, 1),
                       unit_label: component.unit_label ?? "Pc",
@@ -1364,37 +1376,32 @@ export function ProductLibrarySelector({
                     converted_quotation_price: previewUnitPriceWithConversion,
                     quotation_currency: previewCurrency,
                   };
-                  const localSpecification = [
-                    template.default_specification ?? template.description ?? "",
-                    effectiveSelectedNames.length
-                      ? `Selected options: ${effectiveSelectedNames.join(", ")}`
-                      : "",
-                    selectedWorkstationVariantRow
-                      ? `Optional item: ${[
-                          selectedWorkstationVariantRow.variant_name,
-                          selectedWorkstationVariantRow.dimension,
-                        ].filter(Boolean).join(" / ")}`
-                      : "",
-                    ...accessorySnapshots.map((snapshot) =>
-                      `${snapshot.group_name}: ${snapshot.item_name} x${snapshot.qty}`,
-                    ),
-                    ...linkedProductSnapshots.map((snapshot) => {
-                      const parts = [
-                        snapshot.label,
-                        snapshot.template_name,
-                        snapshot.selected_variant,
-                        snapshot.selected_category,
-                        snapshot.dimension,
-                        `Qty ${snapshot.qty}`,
-                      ].filter(Boolean);
-                      const accessorySummary = snapshot.accessories.length
-                        ? ` Accessories: ${snapshot.accessories.map((accessory) => `${accessory.item_name} x${accessory.qty}`).join(", ")}`
-                        : "";
-                      return `${parts.join(" / ")}${accessorySummary}`;
-                    }),
-                  ]
-                    .filter(Boolean)
-                    .join("\n") || null;
+                  const originSnapshot = resolveProductOriginSnapshot(
+                    template.origin,
+                    brandOriginById.get(template.brand_id) ?? null,
+                  );
+                  const supplierNameSnapshot = template.supplier_name ?? null;
+                  const companyStyleSpecification = buildCompanyStyleProductSpecification({
+                    accessorySnapshots,
+                    linkedProductSnapshots,
+                    selectedOptionSnapshots,
+                    selectedWorkstationVariant: selectedWorkstationVariantRow,
+                    template,
+                  });
+                  const localSpecification = resolveProductSpecificationSnapshot({
+                    companyStyleSpecification,
+                    selectedCategorySpecification: selectedCategoryRow?.specification ?? null,
+                    selectedVariantSpecification: selectedVariantRow?.specification ?? null,
+                    selectedWorkstationVariantSpecification: selectedWorkstationVariantRow?.specification,
+                    template,
+                  });
+                  const localDimension = resolveProductDimensionSnapshot({
+                    derivedDeskingDimension: derivedDesking?.dimension,
+                    selectedSizeLabel: selectedSizeRow?.label,
+                    selectedCategoryDimension: selectedCategoryRow?.dimension,
+                    selectedVariantDimension: selectedVariantRow?.dimension,
+                    selectedWorkstationVariantDimension: selectedWorkstationVariantRow?.dimension ?? null,
+                  });
                   const localProductItem: LocalQuotationItem = {
                     id: createLocalId("item"),
                     quotation_id: quotationId,
@@ -1404,9 +1411,20 @@ export function ProductLibrarySelector({
                     source_component_data: {
                       template_code: template.template_code,
                       template_name: template.template_name,
+                      brand_name: brandNameById.get(template.brand_id) ?? null,
+                      brand: brandNameById.get(template.brand_id) ?? null,
                       brand_id: template.brand_id,
-                      origin: template.origin,
-                      supplier_name: template.supplier_name,
+                      origin: originSnapshot,
+                      origin_country: originSnapshot,
+                      country_of_origin: originSnapshot,
+                      supplier_name: supplierNameSnapshot,
+                      supplier: supplierNameSnapshot,
+                      specification: localSpecification,
+                      description: template.description ?? null,
+                      default_specification: template.default_specification ?? null,
+                      dimension: localDimension,
+                      dimensions: localDimension,
+                      size_label: localDimension,
                       default_image_url: template.default_image_url,
                       reference_image_url: template.reference_image_url,
                       proposed_image_url_1: template.proposed_image_url_1,
@@ -1495,10 +1513,10 @@ export function ProductLibrarySelector({
                     room_name_snapshot: null,
                     model_snapshot: selectedCategoryRow?.variant_name || selectedVariantRow?.variant_name || null,
                     finish_snapshot: finishSnapshotValue(selectedFinishes),
-                    size_snapshot: selectedSizeRow?.label ?? selectedCategoryRow?.dimension ?? selectedVariantRow?.dimension ?? null,
-                    origin_snapshot: template.origin ?? null,
+                    size_snapshot: localDimension,
+                    origin_snapshot: originSnapshot,
                     warranty_snapshot: null,
-                    supplier_name_snapshot: template.supplier_name ?? null,
+                    supplier_name_snapshot: supplierNameSnapshot,
                     supplier_notes_snapshot: null,
                     allow_material_continuation_page: false,
                     qty: 1,

@@ -17,6 +17,7 @@ type ImageField = "specified_image_url_snapshot" | "proposed_image_url_snapshot"
 export function QuotationImageCell({
   canEdit,
   field,
+  frameHeight,
   imageSettings,
   itemId,
   quotationId,
@@ -24,6 +25,7 @@ export function QuotationImageCell({
 }: {
   canEdit: boolean;
   field: ImageField;
+  frameHeight?: number;
   imageSettings?: Partial<ImageDisplaySettings> | null;
   itemId: string;
   quotationId: string;
@@ -92,6 +94,7 @@ export function QuotationImageCell({
 
   return (
     <QuotationImageCellBase
+      boxStyle={frameHeight ? { height: `${frameHeight}px`, minHeight: `${Math.min(frameHeight, 96)}px` } : undefined}
       canEdit={canEdit}
       errorMessage={errorMessage}
       imageSettings={imageSettings}

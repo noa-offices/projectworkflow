@@ -53,11 +53,15 @@ export function QuotationSheetTable({
   columns,
   children,
   minimumTableWidth,
+  onColumnWidthChange,
+  onRowHeightChange,
 }: {
   quotationId: string;
   columns: SheetColumn[];
   children: ReactNode;
   minimumTableWidth?: number;
+  onColumnWidthChange?: (key: string, width: number) => void;
+  onRowHeightChange?: (type: "item" | "section", id: string, height: number) => void;
 }) {
   const [widths, setWidths] = useState(() =>
     Object.fromEntries(columns.map((column) => [column.key, clampWidth(column.width)])),
@@ -141,6 +145,11 @@ export function QuotationSheetTable({
   }, [hasHorizontalOverflow]);
 
   function saveColumnWidth(key: string, width: number) {
+    if (onColumnWidthChange) {
+      onColumnWidthChange(key, clampWidth(width));
+      return;
+    }
+
     const formData = new FormData();
     formData.set("quotation_id", quotationId);
     formData.set("column_key", key);
@@ -152,6 +161,11 @@ export function QuotationSheetTable({
   }
 
   function saveRowHeight(type: RowResizeState["type"], id: string, height: number) {
+    if (onRowHeightChange) {
+      onRowHeightChange(type, id, clampHeight(height));
+      return;
+    }
+
     const formData = new FormData();
     formData.set("quotation_id", quotationId);
     formData.set("id", id);

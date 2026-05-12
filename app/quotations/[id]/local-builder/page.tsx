@@ -90,7 +90,7 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
 
   const { data: productBrands } = await supabase
     .from("brands")
-    .select("id,name")
+    .select("id,name,origin")
     .eq("is_active", true)
     .order("name", { ascending: true })
     .returns<ProductLibraryBrand[]>();

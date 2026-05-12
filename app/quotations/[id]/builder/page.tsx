@@ -56,6 +56,10 @@ import {
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import {
+  formatBrandOriginSupplier,
+  specificationWithoutDuplicateCode,
+} from "@/lib/quotations/format-quotation-row";
+import {
   formatQuotationDisplayNo,
   quotationOptionLabel,
   quotationRootBaseNo,
@@ -2172,6 +2176,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
       <QuotationImageCell
         canEdit={canEdit}
         field="proposed_image_url_snapshot"
+        frameHeight={item.row_height ? Math.max(item.row_height - 34, 72) : undefined}
         imageSettings={item.cell_layout?.images?.proposed_image_url_snapshot}
         itemId={item.id}
         quotationId={item.quotation_id}
@@ -2188,6 +2193,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
       <QuotationImageCell
         canEdit={canEdit}
         field="specified_image_url_snapshot"
+        frameHeight={item.row_height ? Math.max(item.row_height - 34, 72) : undefined}
         imageSettings={item.cell_layout?.images?.specified_image_url_snapshot}
         itemId={item.id}
         quotationId={item.quotation_id}
@@ -2204,6 +2210,7 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
       <QuotationImageCell
         canEdit={canEdit}
         field="proposed_image_url_snapshot"
+        frameHeight={item.row_height ? Math.max(item.row_height - 34, 72) : undefined}
         imageSettings={item.cell_layout?.images?.proposed_image_url_snapshot}
         itemId={item.id}
         quotationId={item.quotation_id}
@@ -2220,6 +2227,10 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
       const style = cellStyleForItem(item, "specification");
       const css = cellStyleCss(style);
       const displayCss = visibleWrapCss(css);
+      const cleanedSpecification = specificationWithoutDuplicateCode({
+        code: item.item_code_snapshot,
+        specification: item.specification_snapshot,
+      });
 
       return (
       <div className="flex min-h-full flex-col justify-center text-left" style={canEdit ? css : displayCss}>
@@ -2249,14 +2260,14 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
             <RowHeightTextarea
               formId={formId}
               name="specification_snapshot"
-              defaultValue={item.specification_snapshot}
+              defaultValue={cleanedSpecification}
               rowHeight={item.row_height}
               cellStyle={css}
               formatCellKey="specification"
             />
           ) : (
             <p className="text-zinc-700" style={displayCss}>
-              {item.specification_snapshot ?? "-"}
+              {cleanedSpecification ?? "-"}
             </p>
           )}
         </div>
@@ -2284,19 +2295,27 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
     label: "ORIGIN / SUPPLIER",
     className: "w-32",
     defaultWidth: 136,
-    render: (item, _serial, formId, canEdit) =>
-      canEdit ? (
+    render: (item, _serial, formId, canEdit) => {
+      const originDisplay = formatBrandOriginSupplier({
+        brandName: item.brand_name_snapshot,
+        origin: item.origin_snapshot,
+        supplier: item.supplier_name_snapshot,
+      });
+
+      return canEdit ? (
         <div className="grid h-full content-center gap-1.5">
-          <CellInput formId={formId} name="supplier_name_snapshot" defaultValue={item.supplier_name_snapshot} />
+          <CellInput formId={formId} name="brand_name_snapshot" defaultValue={item.brand_name_snapshot} />
           <CellInput formId={formId} name="origin_snapshot" defaultValue={item.origin_snapshot} />
+          <CellInput formId={formId} name="supplier_name_snapshot" defaultValue={item.supplier_name_snapshot} />
         </div>
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-1 text-center leading-5">
-          {item.supplier_name_snapshot ? <span>{item.supplier_name_snapshot}</span> : null}
-          {item.origin_snapshot ? <span>{item.origin_snapshot}</span> : null}
-          {!item.supplier_name_snapshot && !item.origin_snapshot ? "-" : null}
+          {originDisplay.primaryLine ? <span>{originDisplay.primaryLine}</span> : null}
+          {originDisplay.supplier ? <span className="text-[11px] text-zinc-600">Supplier: {originDisplay.supplier}</span> : null}
+          {!originDisplay.primaryLine && !originDisplay.supplier ? "-" : null}
         </div>
-      ),
+      );
+    },
   };
   const warranty: Column = { key: "warranty", label: "Warranty", className: "w-24", defaultWidth: 100, render: (item, _serial, formId, canEdit) => canEdit ? <CellInput formId={formId} name="warranty_snapshot" defaultValue={item.warranty_snapshot} /> : item.warranty_snapshot ?? "-" };
   const qty: Column = {
@@ -3198,7 +3217,7 @@ export default async function QuotationBuilderPage({
 
   const { data: productBrands, error: productBrandsError } = await supabase
     .from("brands")
-    .select("id,name")
+    .select("id,name,origin")
     .eq("is_active", true)
     .order("name", { ascending: true })
     .returns<ProductLibraryBrand[]>();

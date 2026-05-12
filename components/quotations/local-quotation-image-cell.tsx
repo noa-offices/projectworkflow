@@ -40,10 +40,12 @@ function updateItemImageSettings(
 export function LocalQuotationImageCell({
   item,
   quotationId,
+  rowHeight,
   updateItem,
 }: {
   item: LocalQuotationItem;
   quotationId: string;
+  rowHeight?: number | null;
   updateItem: (patch: Partial<LocalQuotationItem>) => void;
 }) {
   const [errorMessage, setErrorMessage] = useState("");
@@ -79,9 +81,17 @@ export function LocalQuotationImageCell({
     } as Partial<LocalQuotationItem>);
   }
 
+  const imageBoxHeight =
+    typeof rowHeight === "number" && Number.isFinite(rowHeight)
+      ? Math.max(Math.round(rowHeight) - 34, 88)
+      : 118;
+
   return (
     <QuotationImageCellBase
+      boxStyle={{ height: `${imageBoxHeight}px`, minHeight: `${Math.min(imageBoxHeight, 118)}px`, minWidth: "0" }}
       canEdit
+      containerClassName="grid h-full min-h-full w-full grid-rows-[minmax(0,1fr)_auto] gap-1.5 outline-none"
+      controlsClassName="flex flex-wrap items-center justify-center gap-x-2 gap-y-1"
       errorMessage={errorMessage}
       imageSettings={imageSettingsForItem(item, field)}
       onAdjustSave={handleAdjustSave}

@@ -6,10 +6,14 @@ import { join } from "node:path";
 import { requireActiveUser } from "@/lib/auth";
 import { getCompanyProfile, isRemoteOrAppLogo } from "@/lib/company-profile";
 import {
-  imageDisplayStyle,
   normalizeImageDisplaySettings,
   type ImageDisplaySettings,
 } from "@/lib/image-display-settings";
+import {
+  formatBrandOriginSupplier,
+  specificationWithoutDuplicateCode,
+} from "@/lib/quotations/format-quotation-row";
+import { QuotationImageFrame } from "@/components/quotations/quotation-image-frame";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -408,17 +412,13 @@ function SpecImage({
     <div>
       <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">{label}</p>
       <div className={`flex items-center justify-center overflow-hidden bg-white ${large ? "h-[350px]" : "h-28"}`}>
-        {src ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={src}
-            alt={label}
-            className="block h-full w-full"
-            style={imageDisplayStyle(settings)}
-          />
-        ) : (
-          <span className="text-xs text-zinc-400">No image</span>
-        )}
+        <QuotationImageFrame
+          alt={label}
+          className="h-full w-full overflow-hidden"
+          emptyContent={<span className="text-xs text-zinc-400">No image</span>}
+          imageUrl={src}
+          settings={settings}
+        />
       </div>
     </div>
   );
@@ -857,7 +857,19 @@ function ProductSpecPage({
   totalPages: number;
 }) {
   const title = item.item_name_snapshot || item.model_snapshot || item.item_code_snapshot || `Item ${serial}`;
-  const originSupplier = [item.supplier_name_snapshot, item.origin_snapshot].filter(Boolean).join(" / ");
+  const cleanedSpecification = specificationWithoutDuplicateCode({
+    code: item.item_code_snapshot,
+    specification: item.specification_snapshot,
+  });
+  const originSupplierDisplay = formatBrandOriginSupplier({
+    brandName: item.brand_name_snapshot,
+    origin: item.origin_snapshot,
+    supplier: item.supplier_name_snapshot,
+  });
+  const originSupplier = [
+    originSupplierDisplay.primaryLine,
+    originSupplierDisplay.supplier ? `Supplier: ${originSupplierDisplay.supplier}` : null,
+  ].filter(Boolean).join("\n");
   const { charts, selectedFinishes } = materialContent(item, finishImageUrlById, materialGroupSortOrderByLinkId);
 
   return (
@@ -909,10 +921,10 @@ function ProductSpecPage({
             <DetailLine label="Warranty" value={item.warranty_snapshot} />
           </dl>
 
-          {item.specification_snapshot ? (
+          {cleanedSpecification ? (
             <div className="mt-5 border-t border-zinc-200 pt-4">
               <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Description / Specification</h3>
-              <p className="mt-3 max-h-44 overflow-hidden whitespace-pre-wrap text-sm leading-7 text-zinc-700">{item.specification_snapshot}</p>
+              <p className="mt-3 max-h-44 overflow-hidden whitespace-pre-wrap text-sm leading-7 text-zinc-700">{cleanedSpecification}</p>
             </div>
           ) : null}
 

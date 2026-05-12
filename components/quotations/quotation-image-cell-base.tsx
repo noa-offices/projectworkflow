@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ChangeEvent, ClipboardEvent, FocusEvent, MouseEvent } from "react";
+import type { CSSProperties, ChangeEvent, ClipboardEvent, FocusEvent, MouseEvent } from "react";
 import {
   ImageAdjustmentDialog,
-  imageDisplayStyle,
   normalizeImageDisplaySettings,
   type ImageDisplaySettings,
 } from "@/components/images/image-adjustment-dialog";
+import { QuotationImageFrame } from "@/components/quotations/quotation-image-frame";
 import {
   markQuotationImagePathFailed,
   resolveQuotationImageUrl,
@@ -44,7 +44,10 @@ function clipboardImageFile(event: ClipboardEvent<HTMLDivElement>) {
 }
 
 export function QuotationImageCellBase({
+  boxStyle,
   canEdit,
+  containerClassName,
+  controlsClassName,
   emptyHint,
   errorMessage,
   fieldLabel,
@@ -55,7 +58,10 @@ export function QuotationImageCellBase({
   uploading,
   value,
 }: {
+  boxStyle?: CSSProperties;
   canEdit: boolean;
+  containerClassName?: string;
+  controlsClassName?: string;
   emptyHint?: string;
   errorMessage?: string;
   fieldLabel?: string;
@@ -68,10 +74,12 @@ export function QuotationImageCellBase({
 }) {
   const cellRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [currentImageSettings, setCurrentImageSettings] = useState<ImageDisplaySettings>(
     normalizeImageDisplaySettings(imageSettings),
   );
+  const [frameSize, setFrameSize] = useState({ width: 180, height: 132 });
   const [isAdjusting, setIsAdjusting] = useState(false);
   const [isSelected, setIsSelected] = useState(false);
   const [localError, setLocalError] = useState("");
@@ -106,6 +114,26 @@ export function QuotationImageCellBase({
       cancelled = true;
     };
   }, [imageValue]);
+
+  useEffect(() => {
+    const frameElement = frameRef.current;
+    if (!frameElement) return;
+
+    const syncFrameSize = () => {
+      const nextWidth = Math.round(frameElement.clientWidth);
+      const nextHeight = Math.round(frameElement.clientHeight);
+
+      if (nextWidth > 0 && nextHeight > 0) {
+        setFrameSize({ width: nextWidth, height: nextHeight });
+      }
+    };
+
+    syncFrameSize();
+    const observer = new ResizeObserver(syncFrameSize);
+    observer.observe(frameElement);
+
+    return () => observer.disconnect();
+  }, []);
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -171,11 +199,16 @@ export function QuotationImageCellBase({
   }
 
   const boxClassName =
-    "relative flex h-[132px] w-full min-w-[150px] max-w-full items-center justify-center overflow-hidden border border-dashed bg-white transition";
+    "relative flex h-full min-h-[72px] w-full min-w-0 flex-1 items-center justify-center overflow-hidden border border-dashed bg-white transition";
   const selectedClassName = isSelected
     ? "border-emerald-600 ring-1 ring-emerald-600"
     : "border-zinc-300";
   const effectiveError = errorMessage || (imageValue ? localError : "");
+  const resolvedContainerClassName =
+    containerClassName ??
+    "grid h-full min-h-0 w-full grid-rows-[minmax(0,1fr)_auto] gap-1 outline-none";
+  const resolvedControlsClassName =
+    controlsClassName ?? "flex flex-wrap items-center justify-center gap-2";
 
   function handleImageError() {
     if (!imageValue) return;
@@ -193,7 +226,7 @@ export function QuotationImageCellBase({
       onFocus={() => setIsSelected(true)}
       onMouseDown={handleCellMouseDown}
       onPaste={handlePaste}
-      className="flex h-full min-h-16 flex-col items-center justify-center gap-1 outline-none"
+      className={resolvedContainerClassName}
       aria-label={fieldLabel ?? (canEdit ? "Quotation image cell. Paste image or upload." : "Quotation image cell")}
     >
       {previewUrl ? (
@@ -202,24 +235,23 @@ export function QuotationImageCellBase({
           target="_blank"
           rel="noreferrer"
           className={`${boxClassName} ${selectedClassName}`}
+          style={boxStyle}
         >
-          <span className="absolute inset-0 h-full w-full overflow-hidden">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={previewUrl}
+          <span ref={frameRef} className="absolute inset-0 h-full w-full overflow-hidden">
+            <QuotationImageFrame
               alt="Quotation item"
-              onError={handleImageError}
-              className="block h-full w-full"
-              style={{
-                ...imageDisplayStyle(currentImageSettings),
-                transformOrigin: "center center",
-              }}
+              className="h-full w-full overflow-hidden"
+              imageUrl={previewUrl}
+              onImageError={handleImageError}
+              settings={currentImageSettings}
             />
           </span>
         </a>
       ) : (
         <span
+          ref={frameRef}
           className={`${boxClassName} ${selectedClassName} px-2 text-center text-[11px] text-zinc-400`}
+          style={boxStyle}
         >
           {canEdit ? (emptyHint ?? "Paste image or upload") : "No image"}
         </span>
@@ -234,7 +266,7 @@ export function QuotationImageCellBase({
             className="sr-only"
             onChange={handleFileChange}
           />
-          <div className="flex items-center gap-2">
+          <div className={resolvedControlsClassName}>
             <button
               type="button"
               onClick={() => inputRef.current?.click()}
@@ -287,6 +319,8 @@ export function QuotationImageCellBase({
           initialSettings={currentImageSettings}
           onCancel={() => setIsAdjusting(false)}
           onSave={handleAdjustSave}
+          previewFrameHeight={frameSize.height}
+          previewFrameWidth={frameSize.width}
           saving={settingsStatus === "uploading"}
         />
       ) : null}

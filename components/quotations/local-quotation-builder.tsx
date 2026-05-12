@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Fragment, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   ProductLibrarySelector,
   type ProductLibraryBrand,
@@ -12,6 +12,7 @@ import {
 } from "@/components/quotations/product-library-selector";
 import { SaveRowToProductLibraryPanel } from "@/components/quotations/save-row-to-product-library-panel";
 import { LocalQuotationImageCell } from "@/components/quotations/local-quotation-image-cell";
+import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
 import {
   SharedQuotationMoreMenu,
   SharedQuotationRowDetailsPanel,
@@ -36,9 +37,61 @@ import {
   type LocalQuotationSection,
   type LocalQuotationWorkspace,
 } from "@/lib/local/quotation-workspace";
+import {
+  formatBrandOriginSupplier,
+  specificationWithoutDuplicateCode,
+} from "@/lib/quotations/format-quotation-row";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 
 type BuilderView = "client" | "internal";
+
+const allColumns = [
+  { key: "s_no", label: "S. No.", defaultWidth: 54, align: "center" },
+  { key: "code", label: "Code", defaultWidth: 90, align: "left" },
+  { key: "proposed_image", label: "Proposed Item Reference Image", defaultWidth: 180, align: "left" },
+  { key: "specification", label: "Specifications", defaultWidth: 500, align: "left" },
+  { key: "origin", label: "Origin / Supplier", defaultWidth: 136, align: "center" },
+  { key: "qty", label: "Qty", defaultWidth: 70, align: "center" },
+  { key: "unit_price", label: "U.Price", defaultWidth: 90, align: "center" },
+  { key: "discount_amount", label: "Disc. Amount", defaultWidth: 96, align: "center" },
+  { key: "net_price", label: "Net Price", defaultWidth: 96, align: "center" },
+  { key: "net_total", label: "Net Total", defaultWidth: 106, align: "center" },
+  { key: "edit", label: "Edit / Actions", defaultWidth: 132, align: "center" },
+];
+type LocalLayoutColumnSetting = {
+  key: string;
+  visible?: boolean;
+  width?: number;
+};
+
+const minColumnWidth = 40;
+const maxColumnWidth = 800;
+const minRowHeight = 40;
+const maxRowHeight = 600;
+
+function clampColumnWidth(width: number) {
+  return Math.min(Math.max(Math.round(width), minColumnWidth), maxColumnWidth);
+}
+
+function clampRowHeight(height: number) {
+  return Math.min(Math.max(Math.round(height), minRowHeight), maxRowHeight);
+}
+
+function ItemRowResizeHandle({ item, totalColumns }: { item: LocalQuotationItem; totalColumns: number }) {
+  return (
+    <tr aria-hidden="true" className="h-0">
+      <td colSpan={totalColumns} className="border-0 p-0">
+        <span
+          title="Drag to resize row"
+          data-resize-row-id={item.id}
+          data-resize-row-type="item"
+          data-resize-row-target="previous"
+          className="block h-1.5 cursor-row-resize border-t border-transparent transition hover:border-emerald-700"
+        />
+      </td>
+    </tr>
+  );
+}
 
 function stringValue(record: Record<string, unknown> | undefined, key: string) {
   const value = record?.[key];
@@ -58,6 +111,46 @@ function statusText(workspace: LocalQuotationWorkspace, localDraftSaved: boolean
   if (workspace.has_unsaved_changes) return localDraftSaved ? "Unsaved local changes" : "Saving local draft...";
   if (workspace.last_saved_to_software_at) return "Saved to software";
   return localDraftSaved ? "Local draft saved" : "Saving local draft...";
+}
+
+function LocalServerViewLink({
+  children,
+  disabled,
+  href,
+  primary = false,
+  target,
+}: {
+  children: ReactNode;
+  disabled: boolean;
+  href: string;
+  primary?: boolean;
+  target?: string;
+}) {
+  const enabledClassName = primary
+    ? "bg-emerald-900 text-white transition hover:bg-emerald-800"
+    : "border border-zinc-300 bg-white text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900";
+  const disabledClassName = primary
+    ? "cursor-not-allowed bg-zinc-300 text-zinc-600"
+    : "cursor-not-allowed border border-zinc-200 bg-zinc-100 text-zinc-400";
+  const className = `px-3 py-2 text-xs font-semibold ${disabled ? disabledClassName : enabledClassName}`;
+
+  if (disabled) {
+    return (
+      <span
+        aria-disabled="true"
+        className={className}
+        title="Save to Software before opening server-based preview or download."
+      >
+        {children}
+      </span>
+    );
+  }
+
+  return (
+    <Link href={href} target={target} className={className}>
+      {children}
+    </Link>
+  );
 }
 
 function moveSortOrder<T extends { id: string; sort_order: number }>(rows: T[], id: string, direction: -1 | 1) {
@@ -97,7 +190,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function sectionTitleClass(section: LocalQuotationSection) {
   if (section.section_kind === "main") {
-    return "bg-zinc-900 text-sm font-bold text-white";
+    return "bg-zinc-900 text-center text-base font-bold text-white";
   }
 
   return "bg-zinc-100 text-xs font-bold text-zinc-800";
@@ -116,6 +209,147 @@ function mergeModeForItem(item: LocalQuotationItem) {
   }
 
   return "none";
+}
+
+function isSerialCountedLine(item: LocalQuotationItem) {
+  return !["heading", "note", "no_quote"].includes(item.line_style) &&
+    !["heading", "note", "blank", "subtotal"].includes(item.item_type);
+}
+
+const DEFAULT_ITEM_ROW_MIN_HEIGHT = 132;
+
+function itemRowMinHeight(rowHeight: number | null | undefined) {
+  if (typeof rowHeight !== "number" || !Number.isFinite(rowHeight)) {
+    return DEFAULT_ITEM_ROW_MIN_HEIGHT;
+  }
+
+  return Math.max(rowHeight, DEFAULT_ITEM_ROW_MIN_HEIGHT);
+}
+
+function rowContentHeight(rowHeight: number | null | undefined, fallback: number) {
+  return Math.max(itemRowMinHeight(rowHeight) - 18, fallback);
+}
+
+function LocalAutoResizeTextarea({
+  className,
+  onChange,
+  placeholder,
+  value,
+}: {
+  className?: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  value: string;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      rows={1}
+      value={value}
+      placeholder={placeholder}
+      onChange={(event) => onChange(event.target.value)}
+      className={className ?? ""}
+    />
+  );
+}
+
+function sourceSnapshotRecord(item: LocalQuotationItem) {
+  return recordEntries(item.source_component_data);
+}
+
+function firstNonEmptyValue(...values: Array<string | null | undefined>) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+
+  return null;
+}
+
+function localDimensionValue(item: LocalQuotationItem) {
+  const source = sourceSnapshotRecord(item);
+  const desking = recordEntries(source.desking);
+
+  return firstNonEmptyValue(
+    item.size_snapshot,
+    stringValue(source, "dimension"),
+    stringValue(source, "dimensions"),
+    stringValue(source, "dimension_label"),
+    stringValue(source, "size"),
+    stringValue(source, "size_label"),
+    stringValue(source, "selected_size"),
+    stringValue(source, "selectedSize"),
+    stringValue(desking, "dimension"),
+    stringValue(desking, "size_label"),
+  );
+}
+
+function specificationHasDimension(specification: string | null | undefined, dimension: string | null) {
+  if (!dimension || !specification) return false;
+  return specification.toLowerCase().includes(dimension.toLowerCase());
+}
+
+function localOriginDisplay(item: LocalQuotationItem) {
+  const source = sourceSnapshotRecord(item);
+  const selectedOptions = Array.isArray(item.selected_options_snapshot)
+    ? item.selected_options_snapshot.map((entry) => recordEntries(entry))
+    : [];
+  const selectedOptionOrigin = selectedOptions
+    .map((entry) =>
+      firstNonEmptyValue(
+        stringValue(entry, "origin"),
+        stringValue(entry, "origin_country"),
+        stringValue(entry, "country_of_origin"),
+        stringValue(entry, "country"),
+        stringValue(entry, "brand_origin"),
+        stringValue(entry, "supplier_country"),
+      ))
+    .find(Boolean) ?? null;
+  const brand = firstNonEmptyValue(
+    item.brand_name_snapshot,
+    stringValue(source, "brand_name"),
+    stringValue(source, "brand"),
+  );
+  const origin = firstNonEmptyValue(
+    item.origin_snapshot,
+    stringValue(source, "origin"),
+    stringValue(source, "origin_country"),
+    stringValue(source, "country_of_origin"),
+    stringValue(source, "country"),
+    selectedOptionOrigin,
+  );
+  const supplier = firstNonEmptyValue(
+    item.supplier_name_snapshot,
+    stringValue(source, "supplier_name"),
+    stringValue(source, "supplier"),
+    stringValue(source, "supplierName"),
+    stringValue(source, "manufacturer"),
+  );
+  return formatBrandOriginSupplier({
+    brandName: brand,
+    origin,
+    supplier,
+  });
+}
+
+function layoutColumnSettings(value: unknown) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((entry): entry is LocalLayoutColumnSetting =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as LocalLayoutColumnSetting).key === "string",
+    );
 }
 
 function updateItemMergeMode(item: LocalQuotationItem, mergeMode: string): LocalQuotationItem {
@@ -189,6 +423,11 @@ function recordEntries(value: unknown) {
 
 function stableSerialize(value: unknown) {
   return JSON.stringify(value);
+}
+
+function cleanInlineValue(value: string) {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 function valuesEqual(left: unknown, right: unknown) {
@@ -409,6 +648,7 @@ export function LocalQuotationBuilder({
   const [saveMessage, setSaveMessage] = useState("");
   const [view, setView] = useState<BuilderView>("client");
   const [recentEditedRowId, setRecentEditedRowId] = useState<string | null>(null);
+  const [editingOriginCellId, setEditingOriginCellId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const importRef = useRef<HTMLInputElement | null>(null);
   const lastPersistedSignatureRef = useRef<string | null>(null);
@@ -516,6 +756,53 @@ export function LocalQuotationBuilder({
     }
     return map;
   }, [childrenByParent, orderedSectionRows, sectionTotalById]);
+
+  const layoutSettings = (workspace.layout_settings as Record<string, unknown>) || {};
+  const columnSettings = new Map(
+    layoutColumnSettings(layoutSettings.columns).map((column) => [column.key, column])
+  );
+
+  const visibleColumns = allColumns.map(c => ({
+    ...c,
+    width: columnSettings.get(c.key)?.width ?? c.defaultWidth,
+    visible: columnSettings.get(c.key)?.visible ?? true
+  })).filter(c => c.visible);
+
+  const tableWidth = visibleColumns.reduce((sum, c) => sum + c.width, 0);
+  const totalColumns = visibleColumns.length;
+  const sheetColumns = visibleColumns.map((column) => ({ key: column.key, width: column.width }));
+  const sheetColumnSignature = sheetColumns.map((column) => `${column.key}:${column.width}`).join("|");
+  const isColVisible = (key: string) => visibleColumns.some(c => c.key === key);
+  let runningSerialNumber = 0;
+
+  function updateColumnSetting(key: string, patch: { visible?: boolean; width?: number }) {
+    commit((current) => {
+      const currentLayout = (current.layout_settings as Record<string, unknown>) || {};
+      const currentCols = layoutColumnSettings(currentLayout.columns);
+      const existingIndex = currentCols.findIndex((column) => column.key === key);
+      const nextCols = [...currentCols];
+      const normalizedPatch = {
+        ...patch,
+        width: typeof patch.width === "number" ? clampColumnWidth(patch.width) : patch.width,
+      };
+      if (existingIndex >= 0) {
+        nextCols[existingIndex] = { ...nextCols[existingIndex], ...normalizedPatch };
+      } else {
+        nextCols.push({ key, ...normalizedPatch });
+      }
+      return { ...current, layout_settings: { ...currentLayout, columns: nextCols } };
+    });
+  }
+
+  function updateRowHeight(type: "item" | "section", id: string, height: number) {
+    const nextHeight = clampRowHeight(height);
+    if (type === "section") {
+      updateSection(id, { row_height: nextHeight });
+      return;
+    }
+
+    updateItem(id, { row_height: nextHeight });
+  }
 
   function commit(next: LocalQuotationWorkspace | ((current: LocalQuotationWorkspace) => LocalQuotationWorkspace)) {
     setLocalDraftSaved(false);
@@ -679,8 +966,18 @@ export function LocalQuotationBuilder({
       })
         .then(async (response) => {
           if (!response.ok) {
-            const error = await response.json().catch(() => ({ error: "Save failed." }));
-            throw new Error(error.error || "Save failed.");
+            const error = await response.json().catch(() => ({ error: "Save failed." })) as {
+              code?: string;
+              details?: string;
+              error?: string;
+              hint?: string;
+            };
+            const detailParts = [error.details, error.hint, error.code ? `code=${error.code}` : ""].filter(Boolean);
+            throw new Error(
+              detailParts.length
+                ? `${error.error || "Save failed."} ${detailParts.join(" | ")}`
+                : (error.error || "Save failed."),
+            );
           }
 
           const result = await response.json() as { savedAt: string };
@@ -701,8 +998,6 @@ export function LocalQuotationBuilder({
         });
     });
   }
-
-  const totalColumns = 11;
 
   return (
     <div className="min-h-screen bg-zinc-100 text-zinc-950">
@@ -732,17 +1027,49 @@ export function LocalQuotationBuilder({
               <summary className="cursor-pointer border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
                 Column settings
               </summary>
-              <div className="absolute right-0 z-30 mt-2 w-72 border border-zinc-300 bg-white p-3 text-xs text-zinc-600 shadow-lg">
-                <p className="font-semibold text-zinc-900">Local support coming next</p>
-                <p className="mt-2">Exact column-width persistence and advanced column settings parity are planned for the next local-builder pass.</p>
+              <div className="absolute right-0 z-30 mt-2 w-[400px] max-w-[calc(100vw-2rem)] border border-zinc-300 bg-white p-3 text-xs text-zinc-600 shadow-lg">
+                <p className="mb-2 text-[10px] font-bold uppercase text-zinc-500">Local Column Settings</p>
+                <p className="mb-3 text-xs text-zinc-500">
+                  Column changes stay in this IndexedDB workspace until you use Save to Software.
+                </p>
+                <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                  {allColumns.map((column) => {
+                    const setting = columnSettings.get(column.key);
+                    const isVisible = setting?.visible ?? true;
+                    const currentWidth = setting?.width ?? column.defaultWidth;
+                    return (
+                      <div key={column.key} className="grid grid-cols-[1fr_86px] gap-2 border border-zinc-200 bg-zinc-50 p-2">
+                        <label className="flex items-center gap-2 text-xs font-semibold text-zinc-700">
+                          <input type="checkbox" checked={isVisible} onChange={(e) => updateColumnSetting(column.key, { visible: e.target.checked })} className="h-4 w-4 rounded border-zinc-300" />
+                          <span className="truncate" title={column.label}>Show: {column.label}</span>
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Width px</span>
+                          <input type="number" min={40} max={800} value={currentWidth} onChange={(e) => updateColumnSetting(column.key, { width: Number(e.target.value) || column.defaultWidth })} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-3 flex justify-end gap-2">
+                  <button type="button" onClick={() => commit((current) => ({ ...current, layout_settings: { ...((current.layout_settings as Record<string, unknown>) || {}), columns: [] } }))} className="border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50">Reset Defaults</button>
+                </div>
               </div>
             </details>
             <Link href={`/quotations/${workspace.server_quotation_id}`} className="border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Open Summary</Link>
             <Link href={`/quotations/${workspace.server_quotation_id}/builder`} className="border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Open Legacy Builder</Link>
-            <Link href={`/quotations/${workspace.server_quotation_id}/pdf`} target="_blank" className="border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Preview PDF</Link>
-            <Link href={`/quotations/${workspace.server_quotation_id}/download-pdf`} className="bg-emerald-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800">Download PDF</Link>
-            <Link href={`/quotations/${workspace.server_quotation_id}/specification`} target="_blank" className="border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Specification Sheet</Link>
-            <Link href={`/quotations/${workspace.server_quotation_id}/download-specification`} className="border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Download Specification</Link>
+            <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/pdf`} target="_blank">
+              Preview PDF
+            </LocalServerViewLink>
+            <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/download-pdf`} primary>
+              Download PDF
+            </LocalServerViewLink>
+            <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/specification`} target="_blank">
+              Specification Sheet
+            </LocalServerViewLink>
+            <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/download-specification`}>
+              Download Specification
+            </LocalServerViewLink>
             <div className="flex border border-zinc-300 text-xs font-semibold">
               <button type="button" onClick={() => setView("client")} className={`px-3 py-2 ${view === "client" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"}`}>Client View</button>
               <button type="button" onClick={() => setView("internal")} className={`border-l border-zinc-300 px-3 py-2 ${view === "internal" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"}`}>Internal View</button>
@@ -795,8 +1122,15 @@ export function LocalQuotationBuilder({
             </div>
           </div>
 
-          <div className="w-full overflow-x-auto">
-            <table className="min-w-[1480px] w-full border-collapse">
+          <div className="w-full">
+            <QuotationSheetTable
+              columns={sheetColumns}
+              key={sheetColumnSignature}
+              minimumTableWidth={Math.max(1480, tableWidth)}
+              onColumnWidthChange={(key, width) => updateColumnSetting(key, { width })}
+              onRowHeightChange={updateRowHeight}
+              quotationId={workspace.server_quotation_id}
+            >
               <tbody>
                 {displaySections.map((section, sectionIndex) => {
                   const nextSection = displaySections[sectionIndex + 1];
@@ -807,7 +1141,7 @@ export function LocalQuotationBuilder({
                       <Fragment key={section.id}>
                         <InsertSectionRow canManage onAddMain={() => addSection("main")} onAddSub={() => addSection("sub", section.id)} totalColumns={totalColumns} />
                         <tr>
-                          <td colSpan={totalColumns} className={`border border-zinc-300 px-3 py-3 uppercase tracking-wide ${sectionTitleClass(section)}`}>
+                          <td colSpan={totalColumns} className={`relative border border-zinc-300 px-3 py-3 uppercase tracking-wide ${sectionTitleClass(section)}`} style={section.row_height ? { height: `${section.row_height}px` } : undefined}>
                               <div className="flex items-center justify-between gap-3">
                                 <input value={section.section_title} onChange={(event) => updateSection(section.id, { section_title: event.target.value })} className="min-w-0 flex-1 bg-transparent outline-none" />
                                 <div className="flex gap-2 text-[11px] normal-case">
@@ -817,6 +1151,7 @@ export function LocalQuotationBuilder({
                                   <button type="button" onClick={() => removeSection(section.id)} className="border border-white/20 px-2 py-1 hover:bg-white/10">Remove</button>
                                 </div>
                               </div>
+                              <span aria-hidden="true" title="Drag to resize row" data-resize-row-id={section.id} data-resize-row-type="section" className="absolute bottom-0 left-0 h-2 w-full cursor-row-resize border-b-2 border-transparent transition hover:border-emerald-700" />
                           </td>
                         </tr>
                         {!childrenByParent.get(section.id)?.length ? (
@@ -833,7 +1168,7 @@ export function LocalQuotationBuilder({
                     <Fragment key={section.id}>
                       <InsertSectionRow canManage onAddMain={() => addSection("main")} onAddSub={() => addSection("sub", section.parent_section_id ?? null)} totalColumns={totalColumns} />
                       <tr>
-                        <td colSpan={totalColumns} className={`border border-zinc-300 px-3 py-2 uppercase tracking-wide ${sectionTitleClass(section)}`}>
+                        <td colSpan={totalColumns} className={`relative border border-zinc-300 px-3 py-2 uppercase tracking-wide ${sectionTitleClass(section)}`} style={section.row_height ? { height: `${section.row_height}px` } : undefined}>
                           <div className="flex items-center justify-between gap-3">
                             <input value={section.section_title} onChange={(event) => updateSection(section.id, { section_title: event.target.value })} className="min-w-0 flex-1 bg-transparent outline-none" />
                             <div className="flex gap-2 text-[11px] normal-case">
@@ -843,20 +1178,16 @@ export function LocalQuotationBuilder({
                               <button type="button" onClick={() => removeSection(section.id)} className="border border-red-200 bg-white px-2 py-1 text-red-700">Remove</button>
                             </div>
                           </div>
+                          <span aria-hidden="true" title="Drag to resize row" data-resize-row-id={section.id} data-resize-row-type="section" className="absolute bottom-0 left-0 h-2 w-full cursor-row-resize border-b-2 border-transparent transition hover:border-emerald-700" />
                         </td>
                       </tr>
                       <tr className="bg-zinc-100 text-[11px] font-bold uppercase text-zinc-700">
-                        <th className="border border-zinc-300 px-2 py-2 text-center">S.No.</th>
-                        <th className="border border-zinc-300 px-2 py-2 text-left">Code</th>
-                        <th className="border border-zinc-300 px-2 py-2 text-left">Proposed Item Reference Image</th>
-                        <th className="border border-zinc-300 px-2 py-2 text-left">Specifications</th>
-                        <th className="border border-zinc-300 px-2 py-2 text-left">Origin / Supplier</th>
-                        <th className="border border-zinc-300 px-2 py-2 text-center">Qty</th>
-                        <th className="border border-zinc-300 px-2 py-2 text-right">U.Price</th>
-                        <th className="border border-zinc-300 px-2 py-2 text-right">Disc. Amount</th>
-                        <th className="border border-zinc-300 px-2 py-2 text-right">Net Price</th>
-                        <th className="border border-zinc-300 px-2 py-2 text-right">Net Total</th>
-                        <th className="border border-zinc-300 px-2 py-2 text-left">Edit</th>
+                        {visibleColumns.map((col) => (
+                          <th key={col.key} className={`relative border border-zinc-300 px-2 py-2 pr-4 ${col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left"}`}>
+                            {col.label}
+                            <span aria-hidden="true" data-resize-column={col.key} className="absolute right-0 top-0 h-full w-2 cursor-col-resize border-r-2 border-transparent transition hover:border-emerald-700" />
+                          </th>
+                        ))}
                       </tr>
                       {section.section_notes ? (
                         <tr>
@@ -870,86 +1201,182 @@ export function LocalQuotationBuilder({
                           <td colSpan={totalColumns} className="border border-zinc-300 bg-white px-3 py-6 text-center text-sm text-zinc-500">No rows yet.</td>
                         </tr>
                       ) : null}
-                      {sectionItems.map((item, itemIndex) => (
+                      {sectionItems.map((item) => (
                         <Fragment key={item.id}>
                           {itemTypeDisplay(item) === "blank" ? (
-                            <tr>
-                              <td colSpan={10} className="h-8 border border-zinc-300 bg-white" />
-                              <td className="border border-zinc-300 bg-zinc-50 px-2 py-2 align-top">
-                                <div className="flex flex-col gap-1 text-[11px] font-semibold">
-                                  <button type="button" onClick={() => removeItem(item.id)} className="text-left text-red-700">Remove</button>
-                                </div>
-                              </td>
-                            </tr>
+                            <>
+                              <tr className="align-middle" style={{ minHeight: `${itemRowMinHeight(item.row_height)}px` }}>
+                                <td colSpan={isColVisible("edit") ? totalColumns - 1 : totalColumns} className="h-8 border border-zinc-300 bg-white" />
+                                {isColVisible("edit") && (
+                                  <td className="border border-zinc-300 bg-zinc-50 px-2 py-2 align-top text-center">
+                                    <div className="flex flex-col gap-1 text-[11px] font-semibold">
+                                      <button type="button" onClick={() => removeItem(item.id)} className="text-left text-red-700">Remove</button>
+                                    </div>
+                                  </td>
+                                )}
+                              </tr>
+                              <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
+                            </>
                           ) : itemTypeDisplay(item) === "note" ? (
-                            <tr>
-                              <td colSpan={10} className="border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-700">
-                                <div className="grid gap-1">
-                                  <input value={item.item_name_snapshot ?? "Note"} onChange={(event) => updateItem(item.id, { item_name_snapshot: event.target.value })} className="bg-transparent font-semibold outline-none" />
-                                  <textarea value={item.specification_snapshot ?? ""} onChange={(event) => updateItem(item.id, { specification_snapshot: event.target.value || null })} rows={3} className="resize-none bg-transparent outline-none" />
-                                </div>
-                              </td>
-                              <td className="border border-zinc-300 bg-zinc-50 px-2 py-2 align-top">
-                                <div className="flex flex-col gap-1 text-[11px] font-semibold">
-                                  <button type="button" onClick={() => moveItem(section.id, item.id, -1)} className="text-left text-zinc-700">Up</button>
-                                  <button type="button" onClick={() => moveItem(section.id, item.id, 1)} className="text-left text-zinc-700">Down</button>
-                                  <button type="button" onClick={() => duplicateItem(item.id)} className="text-left text-zinc-700">Duplicate</button>
-                                  <button type="button" onClick={() => removeItem(item.id)} className="text-left text-red-700">Remove</button>
-                                </div>
-                              </td>
-                            </tr>
+                            <>
+                              <tr className="align-middle" style={{ minHeight: `${itemRowMinHeight(item.row_height)}px` }}>
+                                <td colSpan={isColVisible("edit") ? totalColumns - 1 : totalColumns} className="border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-700 break-words whitespace-pre-wrap">
+                                  <div className="grid gap-1">
+                                    <input value={item.item_name_snapshot ?? "Note"} onChange={(event) => updateItem(item.id, { item_name_snapshot: event.target.value })} className="bg-transparent font-semibold outline-none w-full" />
+                                    <textarea value={item.specification_snapshot ?? ""} onChange={(event) => updateItem(item.id, { specification_snapshot: event.target.value || null })} rows={3} className="w-full resize-none bg-transparent outline-none" />
+                                  </div>
+                                </td>
+                                {isColVisible("edit") && (
+                                  <td className="border border-zinc-300 bg-zinc-50 px-2 py-2 align-top text-center">
+                                    <div className="flex flex-col gap-1 text-[11px] font-semibold">
+                                      <button type="button" onClick={() => moveItem(section.id, item.id, -1)} className="text-left text-zinc-700">Up</button>
+                                      <button type="button" onClick={() => moveItem(section.id, item.id, 1)} className="text-left text-zinc-700">Down</button>
+                                      <button type="button" onClick={() => duplicateItem(item.id)} className="text-left text-zinc-700">Duplicate</button>
+                                      <button type="button" onClick={() => removeItem(item.id)} className="text-left text-red-700">Remove</button>
+                                    </div>
+                                  </td>
+                                )}
+                              </tr>
+                              <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
+                            </>
                           ) : (() => {
                             const snapshotDetails = sourceSnapshotDetails(item);
+                            const rowSerial = isSerialCountedLine(item) ? ++runningSerialNumber : 0;
+                            const imageCellHeight = rowContentHeight(item.row_height, 118);
+                            const compactCellClassName = "border border-zinc-300 px-2.5 py-2.5 align-middle text-zinc-700";
+                            const dimensionValue = localDimensionValue(item);
+                            const showDimensionLine = Boolean(dimensionValue && !specificationHasDimension(item.specification_snapshot, dimensionValue));
+                            const originDisplay = localOriginDisplay(item);
+                            const isEditingOriginCell = editingOriginCellId === item.id;
+                            const cleanedSpecification = specificationWithoutDuplicateCode({
+                              code: item.item_code_snapshot,
+                              specification: item.specification_snapshot,
+                            });
 
                             return (
-                            <tr className="align-middle" style={item.row_height ? { height: `${item.row_height}px` } : undefined}>
-                              <td className="border border-zinc-300 px-2 py-2 text-center text-xs">{itemIndex + 1}</td>
-                              <td className="border border-zinc-300 px-2 py-2 align-top">
-                                <div className="grid gap-1">
+                            <>
+                              <tr className="align-middle" style={{ minHeight: `${itemRowMinHeight(item.row_height)}px` }}>
+                              {isColVisible("s_no") && <td className={`${compactCellClassName} break-words text-center text-xs`}>{rowSerial || "-"}</td>}
+                              {isColVisible("code") && <td className={`${compactCellClassName} break-words`}>
+                                <div className="grid h-full content-center">
                                   <input value={item.item_code_snapshot ?? ""} onChange={(event) => updateItem(item.id, { item_code_snapshot: event.target.value || null })} className="w-full bg-transparent text-xs font-semibold outline-none" />
-                                  <input value={item.item_name_snapshot ?? ""} onChange={(event) => updateItem(item.id, { item_name_snapshot: event.target.value || null })} className="w-full bg-transparent text-xs outline-none" />
                                 </div>
-                              </td>
-                              <td className="border border-zinc-300 px-2 py-2 align-top">
-                                <LocalQuotationImageCell
+                              </td>}
+                              {isColVisible("proposed_image") && <td className={`${compactCellClassName} break-words`}>
+                                <div className="flex h-full items-center">
+                                  <LocalQuotationImageCell
                                   item={item}
                                   quotationId={workspace.server_quotation_id}
+                                  rowHeight={imageCellHeight}
                                   updateItem={(patch) => updateItem(item.id, patch)}
                                 />
-                              </td>
-                              <td className="border border-zinc-300 px-2 py-2 align-top">
-                                <textarea value={item.specification_snapshot ?? ""} onChange={(event) => updateItem(item.id, { specification_snapshot: event.target.value || null })} rows={6} className="w-full resize-none bg-transparent text-xs outline-none" />
-                              </td>
-                              <td className="border border-zinc-300 px-2 py-2 align-top">
-                                <div className="grid gap-1">
-                                  <input value={item.origin_snapshot ?? ""} onChange={(event) => updateItem(item.id, { origin_snapshot: event.target.value || null })} placeholder="Origin" className="w-full bg-transparent text-xs font-semibold outline-none" />
-                                  <input value={item.supplier_name_snapshot ?? ""} onChange={(event) => updateItem(item.id, { supplier_name_snapshot: event.target.value || null })} placeholder="Supplier" className="w-full bg-transparent text-xs outline-none" />
-                                  {view === "internal" && item.brand_name_snapshot ? <p className="text-[11px] text-zinc-500">{item.brand_name_snapshot}</p> : null}
                                 </div>
-                              </td>
-                              <td className="border border-zinc-300 px-2 py-2 align-top">
-                                <input type="number" min={0} step="0.01" value={item.qty} onChange={(event) => updateItem(item.id, { qty: Number(event.target.value) || 0 })} className="w-full bg-transparent text-right text-xs outline-none" />
-                              </td>
-                              <td className="border border-zinc-300 px-2 py-2 align-top">
-                                <input type="number" min={0} step="0.01" value={item.unit_price} onChange={(event) => updateItem(item.id, { unit_price: Number(event.target.value) || 0 })} className="w-full bg-transparent text-right text-xs outline-none" />
-                              </td>
-                              <td className="border border-zinc-300 px-2 py-2 align-top">
-                                <div className="grid gap-1">
-                                  <select value={item.discount_type} onChange={(event) => updateItem(item.id, { discount_type: event.target.value })} className="w-full bg-transparent text-[11px] outline-none">
+                              </td>}
+                              {isColVisible("specification") && <td className={`${compactCellClassName} break-words whitespace-pre-wrap`}>
+                                <div className="flex h-full min-h-full flex-col justify-center py-0.5 text-left">
+                                  <input
+                                    value={item.item_name_snapshot ?? ""}
+                                    onChange={(event) => updateItem(item.id, { item_name_snapshot: event.target.value || null })}
+                                    className="w-full bg-transparent text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50"
+                                  />
+                                  <LocalAutoResizeTextarea
+                                    value={cleanedSpecification ?? ""}
+                                    onChange={(value) => updateItem(item.id, { specification_snapshot: cleanInlineValue(value) })}
+                                    placeholder="Click to add specification"
+                                    className="mt-1 w-full resize-none overflow-hidden bg-transparent text-xs leading-5 text-zinc-700 outline-none focus:bg-emerald-50"
+                                  />
+                                  <label className="mt-1 flex items-center gap-1 text-xs leading-4 text-zinc-500">
+                                    <span className="font-semibold">Dimension:</span>
+                                    <input
+                                      value={showDimensionLine ? (dimensionValue ?? "") : (item.size_snapshot ?? dimensionValue ?? "")}
+                                      onChange={(event) => updateItem(item.id, { size_snapshot: cleanInlineValue(event.target.value) })}
+                                      placeholder="Click to add dimension"
+                                      className="min-w-0 flex-1 bg-transparent text-xs text-zinc-600 outline-none focus:bg-emerald-50"
+                                    />
+                                  </label>
+                                </div>
+                              </td>}
+                              {isColVisible("origin") && <td className={`${compactCellClassName} break-words`}>
+                                <div
+                                  className="flex h-full min-h-full flex-col justify-center gap-1.5 py-0.5 text-center leading-5"
+                                  onBlur={(event) => {
+                                    const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
+                                    if (!event.currentTarget.contains(nextTarget)) {
+                                      setEditingOriginCellId((current) => (current === item.id ? null : current));
+                                    }
+                                  }}
+                                >
+                                  {isEditingOriginCell ? (
+                                    <>
+                                      <input
+                                        autoFocus
+                                        value={item.brand_name_snapshot ?? (originDisplay.brand ?? "")}
+                                        onChange={(event) => updateItem(item.id, { brand_name_snapshot: cleanInlineValue(event.target.value) })}
+                                        placeholder="Brand"
+                                        className="w-full bg-transparent text-center text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50"
+                                      />
+                                      <input
+                                        value={item.origin_snapshot ?? (originDisplay.origin ?? "")}
+                                        onChange={(event) => updateItem(item.id, { origin_snapshot: cleanInlineValue(event.target.value) })}
+                                        placeholder="Origin"
+                                        className="w-full bg-transparent text-center text-xs text-zinc-700 outline-none focus:bg-emerald-50"
+                                      />
+                                      <input
+                                        value={item.supplier_name_snapshot ?? (originDisplay.supplier ?? "")}
+                                        onChange={(event) => updateItem(item.id, { supplier_name_snapshot: cleanInlineValue(event.target.value) })}
+                                        placeholder="Supplier"
+                                        className="w-full bg-transparent text-center text-xs text-zinc-500 outline-none focus:bg-emerald-50"
+                                      />
+                                    </>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingOriginCellId(item.id)}
+                                      className="w-full bg-transparent text-center outline-none"
+                                    >
+                                      {originDisplay.primaryLine ? (
+                                        <span className="block text-xs font-semibold uppercase text-zinc-950">
+                                          {originDisplay.primaryLine}
+                                        </span>
+                                      ) : (
+                                        <span className="block text-xs text-zinc-400">Click to add origin / supplier</span>
+                                      )}
+                                      {originDisplay.supplier ? (
+                                        <span className="mt-1 block text-[11px] text-zinc-500">
+                                          Supplier: {originDisplay.supplier}
+                                        </span>
+                                      ) : null}
+                                    </button>
+                                  )}
+                                </div>
+                              </td>}
+                              {isColVisible("qty") && <td className={`${compactCellClassName} break-words text-center`}>
+                                <div className="grid h-full items-center">
+                                  <input type="number" min={0} step="0.01" value={item.qty} onChange={(event) => updateItem(item.id, { qty: Number(event.target.value) || 0 })} className="w-full bg-transparent text-center text-xs outline-none" />
+                                </div>
+                              </td>}
+                              {isColVisible("unit_price") && <td className={`${compactCellClassName} break-words text-center`}>
+                                <div className="grid h-full items-center">
+                                  <input type="number" min={0} step="0.01" value={item.unit_price} onChange={(event) => updateItem(item.id, { unit_price: Number(event.target.value) || 0 })} className="w-full bg-transparent text-center text-xs outline-none" />
+                                </div>
+                              </td>}
+                              {isColVisible("discount_amount") && <td className={`${compactCellClassName} break-words text-center`}>
+                                <div className="grid h-full content-center gap-1 text-center">
+                                  <select value={item.discount_type} onChange={(event) => updateItem(item.id, { discount_type: event.target.value })} className="w-full bg-transparent text-[11px] outline-none text-center">
                                     <option value="amount">Amount</option>
                                     <option value="percent">Percent</option>
                                   </select>
-                                  <input type="number" min={0} step="0.01" value={item.discount_value} onChange={(event) => updateItem(item.id, { discount_value: Number(event.target.value) || 0 })} className="w-full bg-transparent text-right text-xs outline-none" />
+                                  <input type="number" min={0} step="0.01" value={item.discount_value} onChange={(event) => updateItem(item.id, { discount_value: Number(event.target.value) || 0 })} className="w-full bg-transparent text-center text-xs outline-none" />
                                 </div>
-                              </td>
-                              <td className="border border-zinc-300 px-2 py-2 text-right text-xs">{formatQuotationMoney(item.currency || workspace.currency, item.net_price)}</td>
-                              <td className="border border-zinc-300 px-2 py-2 text-right text-xs font-semibold">{formatQuotationMoney(item.currency || workspace.currency, item.net_total)}</td>
-                              <td className="border border-zinc-300 bg-zinc-50 px-2 py-2 align-top">
-                                <div className="grid h-full content-center justify-items-center gap-1" data-preserve-anchor={`item-${item.id}`}>
+                              </td>}
+                              {isColVisible("net_price") && <td className={`${compactCellClassName} break-words text-center text-xs`}>{formatQuotationMoney(item.currency || workspace.currency, item.net_price)}</td>}
+                              {isColVisible("net_total") && <td className={`${compactCellClassName} break-words text-center text-xs font-semibold`}>{formatQuotationMoney(item.currency || workspace.currency, item.net_total)}</td>}
+                              {isColVisible("edit") && <td className="border border-zinc-300 px-2 py-2 align-middle text-center">
+                                <div className="grid h-full min-h-full content-center justify-items-center gap-1.5" data-preserve-anchor={`item-${item.id}`}>
                                   <button
                                     type="button"
                                     onClick={() => void saveLocalDraftNow(item.id)}
-                                    className="h-6 border border-emerald-900 bg-emerald-900 px-2 text-[11px] font-semibold text-white transition hover:bg-emerald-800"
+                                    className="h-6 min-w-14 border border-emerald-900 bg-emerald-900 px-2 text-[11px] font-semibold text-white transition hover:bg-emerald-800"
                                   >
                                     Save
                                   </button>
@@ -957,8 +1384,8 @@ export function LocalQuotationBuilder({
                                     {rowLocalStatus(item.id, recentEditedRowId, localDraftSaved, workspace.has_unsaved_changes)}
                                   </span>
                                   <div className="flex items-center gap-1">
-                                    <button type="button" onClick={() => moveItem(section.id, item.id, -1)} className="h-6 border border-zinc-300 bg-white px-2 py-1 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Up</button>
-                                    <button type="button" onClick={() => moveItem(section.id, item.id, 1)} className="h-6 border border-zinc-300 bg-white px-2 py-1 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Down</button>
+                                    <button type="button" onClick={() => moveItem(section.id, item.id, -1)} className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">^</button>
+                                    <button type="button" onClick={() => moveItem(section.id, item.id, 1)} className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">v</button>
                                   </div>
                                   <SharedQuotationMoreMenu
                                     actionButtons={(
@@ -1153,23 +1580,37 @@ export function LocalQuotationBuilder({
                                     itemId={item.id}
                                     menuClassName="absolute right-0 z-30 mt-1 w-56 border border-zinc-300 bg-white p-2 text-left shadow-lg"
                                     mergeControl={(
-                                      <label className="grid gap-1">
-                                        <span className="text-[10px] font-semibold uppercase text-zinc-500">Merge</span>
-                                        <select
-                                          value={mergeModeForItem(item)}
-                                          onChange={(event) => updateItem(item.id, updateItemMergeMode(item, event.target.value))}
-                                          className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
-                                        >
-                                          <option value="none">No merge</option>
-                                          <option value="merge_specification">Merge spec</option>
-                                          <option value="merge_full_row">Merge full row</option>
-                                        </select>
-                                      </label>
+                                      <>
+                                        <label className="grid gap-1">
+                                          <span className="text-[10px] font-semibold uppercase text-zinc-500">Merge</span>
+                                          <select
+                                            value={mergeModeForItem(item)}
+                                            onChange={(event) => updateItem(item.id, updateItemMergeMode(item, event.target.value))}
+                                            className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                          >
+                                            <option value="none">No merge</option>
+                                            <option value="merge_specification">Merge spec</option>
+                                            <option value="merge_full_row">Merge full row</option>
+                                          </select>
+                                        </label>
+                                        <label className="grid gap-1 mt-2">
+                                          <span className="text-[10px] font-semibold uppercase text-zinc-500">Row Height (px)</span>
+                                          <input
+                                            type="number" min={40}
+                                            value={item.row_height || ""}
+                                            onChange={(event) => updateItem(item.id, { row_height: event.target.value ? clampRowHeight(Number(event.target.value)) : null })}
+                                            className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                            placeholder="Auto"
+                                          />
+                                        </label>
+                                      </>
                                     )}
                                   />
                                 </div>
-                              </td>
+                              </td>}
                             </tr>
+                            <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
+                            </>
                             );
                           })()}
                         </Fragment>
@@ -1217,7 +1658,7 @@ export function LocalQuotationBuilder({
                   </tr>
                 ) : null}
               </tbody>
-            </table>
+            </QuotationSheetTable>
           </div>
         </section>
 

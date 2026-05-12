@@ -7,10 +7,14 @@ import { PrintActions } from "@/components/quotations/print-actions";
 import { requireActiveUser } from "@/lib/auth";
 import { getCompanyProfile, isRemoteOrAppLogo } from "@/lib/company-profile";
 import {
-  imageDisplayStyle,
   normalizeImageDisplaySettings,
   type ImageDisplaySettings,
 } from "@/lib/image-display-settings";
+import { QuotationImageFrame } from "@/components/quotations/quotation-image-frame";
+import {
+  formatBrandOriginSupplier,
+  specificationWithoutDuplicateCode,
+} from "@/lib/quotations/format-quotation-row";
 import { formatQuotationMoney, quotationMoneyCell } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
@@ -82,6 +86,7 @@ type QuotationItem = {
   manual_serial: string | null;
   item_code_snapshot: string | null;
   item_name_snapshot: string | null;
+  brand_name_snapshot: string | null;
   specified_image_url_snapshot: string | null;
   proposed_image_url_snapshot: string | null;
   specification_snapshot: string | null;
@@ -306,15 +311,12 @@ function ImageBox({
 
   return (
     <div className="mx-auto flex h-[85px] w-[115px] items-center justify-center overflow-hidden bg-white">
-      {src ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={src}
-          alt="Proposed item"
-          className="block h-full w-full"
-          style={imageDisplayStyle(settings)}
-        />
-      ) : null}
+      <QuotationImageFrame
+        alt="Proposed item"
+        className="h-full w-full overflow-hidden"
+        imageUrl={src}
+        settings={settings}
+      />
     </div>
   );
 }
@@ -395,14 +397,14 @@ function getPdfColumns(layoutMode: string, settings?: LayoutSettings | null) {
   const settingsMap = columnSettingsMap(settings);
   const serial: PdfColumn = { key: "s_no", label: "S. No.", defaultWidth: 54, align: "center" };
   const manualSerial: PdfColumn = { key: "manual_serial", label: "Manual S.No.", defaultWidth: 90, defaultVisible: false, align: "center" };
-  const code: PdfColumn = { key: "code", label: "Code", defaultWidth: 90 };
+  const code: PdfColumn = { key: "code", label: "Code", defaultWidth: 78 };
   const referenceImage: PdfColumn = { key: "reference_image", label: "Reference Image", defaultWidth: 180, align: "center" };
   const specifiedImage: PdfColumn = { key: "specified_image", label: "Specified Item Reference Image", defaultWidth: 180, align: "center" };
-  const proposedImage: PdfColumn = { key: "proposed_image", label: "Proposed Item Reference Image", defaultWidth: 180, align: "center" };
+  const proposedImage: PdfColumn = { key: "proposed_image", label: "Proposed Item Reference Image", defaultWidth: 170, align: "center" };
   const description: PdfColumn = {
     key: layoutMode === "boq_schedule" ? "description" : "specification",
     label: layoutMode === "boq_schedule" ? "Description" : "Specifications",
-    defaultWidth: layoutMode === "standard_proposal" ? 500 : 420,
+    defaultWidth: layoutMode === "standard_proposal" ? 520 : 420,
   };
   const room: PdfColumn = { key: "room", label: "Room", defaultWidth: 110 };
   const model: PdfColumn = { key: "model", label: "Model", defaultWidth: 110 };
@@ -423,10 +425,10 @@ function getPdfColumns(layoutMode: string, settings?: LayoutSettings | null) {
   const notes: PdfColumn = { key: "supplier_notes", label: "Internal / Supplier Notes", defaultWidth: 240 };
 
   const byLayout: Record<string, PdfColumn[]> = {
-    simple_proposal: [serial, referenceImage, description, qty, unitPrice, netTotal],
+    simple_proposal: [serial, code, referenceImage, description, qty, unitPrice, netTotal],
     standard_proposal: [
       serial,
-      { ...code, defaultVisible: false },
+      code,
       { ...specifiedImage, defaultVisible: false },
       proposedImage,
       description,
@@ -502,6 +504,10 @@ function SpecificationBlock({
   visibleColumnKeys: Set<string>;
 }) {
   const title = item.item_name_snapshot ?? item.model_snapshot ?? "Custom item";
+  const cleanedSpecification = specificationWithoutDuplicateCode({
+    code: item.item_code_snapshot,
+    specification: item.specification_snapshot,
+  });
   const detailRows = [
     settings.model && item.model_snapshot && item.model_snapshot.trim().toLowerCase() !== title.trim().toLowerCase()
       ? ["Model", item.model_snapshot]
@@ -514,11 +520,8 @@ function SpecificationBlock({
   return (
     <div className="space-y-0.5">
       {settings.title ? <p className="font-semibold text-zinc-950">{title}</p> : null}
-      {item.item_code_snapshot ? (
-        <p className="text-[10px] font-semibold uppercase text-zinc-500">{item.item_code_snapshot}</p>
-      ) : null}
-      {item.specification_snapshot ? (
-        <p className="whitespace-pre-wrap text-zinc-700">{item.specification_snapshot}</p>
+      {cleanedSpecification ? (
+        <p className="whitespace-pre-wrap text-zinc-700">{cleanedSpecification}</p>
       ) : null}
       {detailRows.map(([label, value]) => (
         <p key={label} className="text-zinc-600">{label}: {value}</p>
@@ -641,14 +644,20 @@ function renderPdfCell({
       );
     case "size":
       return item.size_snapshot ?? "-";
-    case "origin":
+    case "origin": {
+      const originDisplay = formatBrandOriginSupplier({
+        brandName: item.brand_name_snapshot,
+        origin: item.origin_snapshot,
+        supplier: item.supplier_name_snapshot,
+      });
       return (
         <div className="flex flex-col items-center justify-center gap-1 text-center">
-          {item.supplier_name_snapshot ? <span className="font-medium text-zinc-800">{item.supplier_name_snapshot}</span> : null}
-          {item.origin_snapshot ? <span className="text-[9px] text-zinc-600">{item.origin_snapshot}</span> : null}
-          {!item.supplier_name_snapshot && !item.origin_snapshot ? "-" : null}
+          {originDisplay.primaryLine ? <span className="font-medium text-zinc-800">{originDisplay.primaryLine}</span> : null}
+          {originDisplay.supplier ? <span className="text-[9px] text-zinc-600">Supplier: {originDisplay.supplier}</span> : null}
+          {!originDisplay.primaryLine && !originDisplay.supplier ? "-" : null}
         </div>
       );
+    }
     case "warranty":
       return item.warranty_snapshot ?? "-";
     case "qty":
@@ -711,7 +720,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
         .returns<QuotationSection[]>(),
       supabase
         .from("quotation_items")
-        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,line_style,is_rate_only,is_active,cell_layout,notes")
+        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,line_style,is_rate_only,is_active,cell_layout,notes")
         .eq("quotation_id", id)
         .eq("is_active", true)
         .order("sort_order", { ascending: true })
