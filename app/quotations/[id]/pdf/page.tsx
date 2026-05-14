@@ -953,20 +953,29 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                 <table className="w-full table-fixed border-collapse text-[9.5px] leading-tight">
                   <colgroup>
                     {pdfColumnWidths.map((width, index) => (
-                      <col key={`${width}-${index}`} style={{ width }} />
+                      <col key={`${width}-heading-${index}`} style={{ width }} />
                     ))}
                   </colgroup>
-                  <thead>
+                  <tbody>
                     <tr className="print-section-heading bg-zinc-200">
-                      <th colSpan={columnCount} className="border border-zinc-300 px-3 py-1.5 text-center">
+                      <td colSpan={columnCount} className="border border-zinc-300 px-3 py-1.5 text-center">
                         <span className="block text-sm font-bold text-zinc-950">{section.section_title}</span>
                         {section.section_notes ? (
                           <span className="mt-0.5 block text-[10px] font-medium normal-case tracking-normal text-zinc-600">
                             {section.section_notes}
                           </span>
                         ) : null}
-                      </th>
+                      </td>
                     </tr>
+                  </tbody>
+                </table>
+                <table className="w-full table-fixed border-collapse text-[9.5px] leading-tight">
+                  <colgroup>
+                    {pdfColumnWidths.map((width, index) => (
+                      <col key={`${width}-${index}`} style={{ width }} />
+                    ))}
+                  </colgroup>
+                  <thead>
                     <tr className="bg-zinc-100 text-left text-[9px] uppercase tracking-wide text-zinc-600">
                       {pdfColumns.map((column) => (
                         <th key={column.key} className={tableCellClass(column)}>
