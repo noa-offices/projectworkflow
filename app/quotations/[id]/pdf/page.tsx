@@ -849,8 +849,9 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
           .no-print { display: none !important; }
           .print-sheet { box-shadow: none !important; width: 100% !important; max-width: 100% !important; padding: 24px !important; box-sizing: border-box !important; }
           thead { display: table-header-group; }
-          .avoid-break, .final-section, .totals-box, .terms-block, .signature-block, .print-section-heading { break-inside: avoid; page-break-inside: avoid; }
+          .avoid-break, .final-section, .totals-box, .terms-block, .signature-block, .print-section-heading, .section-column-header, .section-starter { break-inside: avoid; page-break-inside: avoid; }
           .print-section-heading { break-after: avoid; page-break-after: avoid; }
+          .section-column-header { break-after: avoid; page-break-after: avoid; }
           .print-section { break-before: auto; page-break-before: auto; break-inside: auto; page-break-inside: auto; }
           .main-section-heading { break-after: avoid; page-break-after: avoid; break-inside: avoid; page-break-inside: avoid; }
           .final-section { break-before: page; page-break-before: always; }
@@ -946,6 +947,8 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
             }
 
             const sectionItems = itemsBySection.get(section.id) ?? [];
+            const starterItems = sectionItems.slice(0, 2);
+            const remainingItems = sectionItems.slice(2);
             const subtotal = sectionTotals.get(section.id) ?? 0;
 
             return (
@@ -976,7 +979,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                     ))}
                   </colgroup>
                   <thead>
-                    <tr className="bg-zinc-100 text-left text-[9px] uppercase tracking-wide text-zinc-600">
+                    <tr className="section-column-header bg-zinc-100 text-left text-[9px] uppercase tracking-wide text-zinc-600">
                       {pdfColumns.map((column) => (
                         <th key={column.key} className={tableCellClass(column)}>
                           <span className="block">{column.label}</span>
@@ -984,8 +987,49 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                       ))}
                     </tr>
                   </thead>
+                  {starterItems.length ? (
+                    <tbody className="section-starter">
+                      {starterItems.map((item) => {
+                        const rowSerial = isSerialCountedLine(item)
+                          ? ++runningSerialNumber
+                          : 0;
+
+                        return isFullWidthPdfRow(item) ? (
+                          <tr key={item.id} className="avoid-break">
+                            <td
+                              colSpan={columnCount}
+                              className={`border border-zinc-300 px-3 py-1.5 ${
+                                isHeadingRow(item)
+                                  ? "bg-zinc-50 text-center text-sm font-bold text-zinc-900"
+                                  : "bg-white text-left text-xs text-zinc-700"
+                              }`}
+                            >
+                              {fullWidthRowText(item) || (isHeadingRow(item) ? "Heading" : "-")}
+                            </td>
+                          </tr>
+                        ) : (
+                          <tr key={item.id}>
+                            {pdfColumns.map((column) => (
+                              <td key={`${item.id}-${column.key}`} className={tableCellClass(column)}>
+                                {renderPdfCell({
+                                  column,
+                                  item,
+                                  finishImageUrlByItemAndFinishId,
+                                  proposedImageUrlByItemId,
+                                  serial: rowSerial,
+                                  settings: metadataSettings,
+                                  specifiedImageUrlByItemId,
+                                  visibleColumnKeys,
+                                })}
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  ) : null}
                   <tbody>
-                    {sectionItems.map((item) => {
+                    {remainingItems.map((item) => {
                       const rowSerial = isSerialCountedLine(item)
                         ? ++runningSerialNumber
                         : 0;
