@@ -30,7 +30,19 @@ type ProductTemplateImageField =
   | "proposed_image_url_5"
   | "proposed_image_url_6"
   | "proposed_image_url_7"
-  | "proposed_image_url_8";
+  | "proposed_image_url_8"
+  | "proposed_image_url_9"
+  | "proposed_image_url_10"
+  | "proposed_image_url_11"
+  | "proposed_image_url_12"
+  | "proposed_image_url_13"
+  | "proposed_image_url_14"
+  | "proposed_image_url_15"
+  | "proposed_image_url_16"
+  | "proposed_image_url_17"
+  | "proposed_image_url_18"
+  | "proposed_image_url_19"
+  | "proposed_image_url_20";
 
 const extensionByType: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -89,6 +101,7 @@ export function ProductTemplateImageUploader({
   formOnly = false,
   imageSettings,
   label = "Product template image",
+  onValueChange,
   templateId,
   value,
 }: {
@@ -97,6 +110,7 @@ export function ProductTemplateImageUploader({
   formOnly?: boolean;
   imageSettings?: Partial<ImageDisplaySettings> | null;
   label?: string;
+  onValueChange?: (value: string | null) => void;
   templateId: string;
   value: string | null;
 }) {
@@ -160,6 +174,7 @@ export function ProductTemplateImageUploader({
 
     if (formOnly) {
       setCurrentValue(path);
+      onValueChange?.(path || null);
       setErrorMessage("");
       setStatus(path ? "uploaded" : "idle");
       return;
@@ -180,6 +195,7 @@ export function ProductTemplateImageUploader({
           }
 
           setCurrentValue(path);
+          onValueChange?.(path || null);
           setErrorMessage("");
           setStatus(path ? "uploaded" : "idle");
         })

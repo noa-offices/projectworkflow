@@ -152,19 +152,31 @@ export function TemplateFormShell({
         validationNotice={validationNotice}
       />
       {children}
-      <div className="flex flex-col-reverse gap-2 border-t border-zinc-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
-        <Link
-          href={cancelHref}
-          className="text-sm font-semibold text-zinc-500 transition hover:text-zinc-950"
-        >
-          Cancel
-        </Link>
-        <PendingSubmitButton
-          className="h-10 rounded-md bg-emerald-900 px-5 text-sm font-semibold text-white transition hover:bg-emerald-800"
-          pendingLabel={pendingLabel}
-        >
-          {submitLabel}
-        </PendingSubmitButton>
+      <div className="sticky bottom-4 z-10 rounded-xl border border-zinc-200 bg-white/95 p-4 shadow-lg backdrop-blur sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+              Primary Action
+            </p>
+            <p className="mt-1 text-sm text-zinc-500">
+              Save the template after reviewing each section.
+            </p>
+          </div>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center">
+            <Link
+              href={cancelHref}
+              className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950"
+            >
+              Cancel
+            </Link>
+            <PendingSubmitButton
+              className="h-10 rounded-md bg-emerald-900 px-5 text-sm font-semibold text-white transition hover:bg-emerald-800"
+              pendingLabel={pendingLabel}
+            >
+              {submitLabel}
+            </PendingSubmitButton>
+          </div>
+        </div>
       </div>
     </form>
   );

@@ -58,6 +58,23 @@ export type ProductLibraryTemplate = {
   proposed_image_url_1: string | null;
   proposed_image_url_2: string | null;
   proposed_image_url_3: string | null;
+  proposed_image_url_4: string | null;
+  proposed_image_url_5: string | null;
+  proposed_image_url_6: string | null;
+  proposed_image_url_7: string | null;
+  proposed_image_url_8: string | null;
+  proposed_image_url_9: string | null;
+  proposed_image_url_10: string | null;
+  proposed_image_url_11: string | null;
+  proposed_image_url_12: string | null;
+  proposed_image_url_13: string | null;
+  proposed_image_url_14: string | null;
+  proposed_image_url_15: string | null;
+  proposed_image_url_16: string | null;
+  proposed_image_url_17: string | null;
+  proposed_image_url_18: string | null;
+  proposed_image_url_19: string | null;
+  proposed_image_url_20: string | null;
   image_settings?: Record<string, Partial<ImageDisplaySettings> | undefined> | null;
   desking_size_pricing: DeskingSizePricingRow[] | null;
   variant_pricing: VariantPricingRow[] | null;
@@ -880,7 +897,29 @@ export function ProductLibrarySelector({
                     const subCategory = template.sub_category_id
                       ? categoryNameById.get(template.sub_category_id)
                       : null;
-                    const thumbnailPath = template.proposed_image_url_1 ?? template.default_image_url ?? template.reference_image_url;
+                    const thumbnailPath = [
+                      template.proposed_image_url_1 ?? template.default_image_url,
+                      template.proposed_image_url_2,
+                      template.proposed_image_url_3,
+                      template.proposed_image_url_4,
+                      template.proposed_image_url_5,
+                      template.proposed_image_url_6,
+                      template.proposed_image_url_7,
+                      template.proposed_image_url_8,
+                      template.proposed_image_url_9,
+                      template.proposed_image_url_10,
+                      template.proposed_image_url_11,
+                      template.proposed_image_url_12,
+                      template.proposed_image_url_13,
+                      template.proposed_image_url_14,
+                      template.proposed_image_url_15,
+                      template.proposed_image_url_16,
+                      template.proposed_image_url_17,
+                      template.proposed_image_url_18,
+                      template.proposed_image_url_19,
+                      template.proposed_image_url_20,
+                      template.reference_image_url,
+                    ].find((value) => Boolean(value)) ?? null;
                     const selected = selectedTemplateId === template.id;
 
                     return (
@@ -1193,6 +1232,23 @@ export function ProductLibrarySelector({
                     "proposed_image_url_1",
                     "proposed_image_url_2",
                     "proposed_image_url_3",
+                    "proposed_image_url_4",
+                    "proposed_image_url_5",
+                    "proposed_image_url_6",
+                    "proposed_image_url_7",
+                    "proposed_image_url_8",
+                    "proposed_image_url_9",
+                    "proposed_image_url_10",
+                    "proposed_image_url_11",
+                    "proposed_image_url_12",
+                    "proposed_image_url_13",
+                    "proposed_image_url_14",
+                    "proposed_image_url_15",
+                    "proposed_image_url_16",
+                    "proposed_image_url_17",
+                    "proposed_image_url_18",
+                    "proposed_image_url_19",
+                    "proposed_image_url_20",
                   ] as const;
                   const availableProposedImages = proposedImageFields
                     .map((field) => ({
@@ -1430,6 +1486,23 @@ export function ProductLibrarySelector({
                       proposed_image_url_1: template.proposed_image_url_1,
                       proposed_image_url_2: template.proposed_image_url_2,
                       proposed_image_url_3: template.proposed_image_url_3,
+                      proposed_image_url_4: template.proposed_image_url_4,
+                      proposed_image_url_5: template.proposed_image_url_5,
+                      proposed_image_url_6: template.proposed_image_url_6,
+                      proposed_image_url_7: template.proposed_image_url_7,
+                      proposed_image_url_8: template.proposed_image_url_8,
+                      proposed_image_url_9: template.proposed_image_url_9,
+                      proposed_image_url_10: template.proposed_image_url_10,
+                      proposed_image_url_11: template.proposed_image_url_11,
+                      proposed_image_url_12: template.proposed_image_url_12,
+                      proposed_image_url_13: template.proposed_image_url_13,
+                      proposed_image_url_14: template.proposed_image_url_14,
+                      proposed_image_url_15: template.proposed_image_url_15,
+                      proposed_image_url_16: template.proposed_image_url_16,
+                      proposed_image_url_17: template.proposed_image_url_17,
+                      proposed_image_url_18: template.proposed_image_url_18,
+                      proposed_image_url_19: template.proposed_image_url_19,
+                      proposed_image_url_20: template.proposed_image_url_20,
                       selected_proposed_image_url: selectedImage || null,
                       selected_option_ids: effectiveSelectedIds,
                       selected_options: effectiveSelectedNames,

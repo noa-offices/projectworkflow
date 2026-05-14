@@ -22,6 +22,10 @@ import {
 } from "@/components/products/variant-pricing-tables";
 import { ProductTemplateImageUploader } from "@/components/products/product-template-image-uploader";
 import {
+  TemplateDetailImageGallery,
+  TemplateReferenceImageFieldManager,
+} from "@/components/products/template-image-galleries";
+import {
   QuickCategoryForm,
   TemplateCategoryFields,
 } from "@/components/products/template-category-fields";
@@ -173,7 +177,19 @@ type ProductTemplateImageField =
   | "proposed_image_url_5"
   | "proposed_image_url_6"
   | "proposed_image_url_7"
-  | "proposed_image_url_8";
+  | "proposed_image_url_8"
+  | "proposed_image_url_9"
+  | "proposed_image_url_10"
+  | "proposed_image_url_11"
+  | "proposed_image_url_12"
+  | "proposed_image_url_13"
+  | "proposed_image_url_14"
+  | "proposed_image_url_15"
+  | "proposed_image_url_16"
+  | "proposed_image_url_17"
+  | "proposed_image_url_18"
+  | "proposed_image_url_19"
+  | "proposed_image_url_20";
 type ExtraProductTemplateImageField = Exclude<
   ProductTemplateImageField,
   "proposed_image_url_1" | "proposed_image_url_2" | "proposed_image_url_3"
@@ -196,11 +212,35 @@ type ProductTemplateImageSettings = {
   proposed_image_url_6?: ProductTemplateImageDisplaySettings;
   proposed_image_url_7?: ProductTemplateImageDisplaySettings;
   proposed_image_url_8?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_9?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_10?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_11?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_12?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_13?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_14?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_15?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_16?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_17?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_18?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_19?: ProductTemplateImageDisplaySettings;
+  proposed_image_url_20?: ProductTemplateImageDisplaySettings;
   proposed_image_url_4_path?: string | null;
   proposed_image_url_5_path?: string | null;
   proposed_image_url_6_path?: string | null;
   proposed_image_url_7_path?: string | null;
   proposed_image_url_8_path?: string | null;
+  proposed_image_url_9_path?: string | null;
+  proposed_image_url_10_path?: string | null;
+  proposed_image_url_11_path?: string | null;
+  proposed_image_url_12_path?: string | null;
+  proposed_image_url_13_path?: string | null;
+  proposed_image_url_14_path?: string | null;
+  proposed_image_url_15_path?: string | null;
+  proposed_image_url_16_path?: string | null;
+  proposed_image_url_17_path?: string | null;
+  proposed_image_url_18_path?: string | null;
+  proposed_image_url_19_path?: string | null;
+  proposed_image_url_20_path?: string | null;
 };
 
 type ProductTemplate = {
@@ -220,6 +260,23 @@ type ProductTemplate = {
   proposed_image_url_1: string | null;
   proposed_image_url_2: string | null;
   proposed_image_url_3: string | null;
+  proposed_image_url_4: string | null;
+  proposed_image_url_5: string | null;
+  proposed_image_url_6: string | null;
+  proposed_image_url_7: string | null;
+  proposed_image_url_8: string | null;
+  proposed_image_url_9: string | null;
+  proposed_image_url_10: string | null;
+  proposed_image_url_11: string | null;
+  proposed_image_url_12: string | null;
+  proposed_image_url_13: string | null;
+  proposed_image_url_14: string | null;
+  proposed_image_url_15: string | null;
+  proposed_image_url_16: string | null;
+  proposed_image_url_17: string | null;
+  proposed_image_url_18: string | null;
+  proposed_image_url_19: string | null;
+  proposed_image_url_20: string | null;
   desking_size_pricing: DeskingSizePricingRow[] | null;
   variant_pricing: VariantPricingRow[] | null;
   category_pricing: CategoryPricingRow[] | null;
@@ -354,6 +411,18 @@ const proposedImageSlots = [
   { field: "proposed_image_url_6", label: "Image 6" },
   { field: "proposed_image_url_7", label: "Image 7" },
   { field: "proposed_image_url_8", label: "Image 8" },
+  { field: "proposed_image_url_9", label: "Image 9" },
+  { field: "proposed_image_url_10", label: "Image 10" },
+  { field: "proposed_image_url_11", label: "Image 11" },
+  { field: "proposed_image_url_12", label: "Image 12" },
+  { field: "proposed_image_url_13", label: "Image 13" },
+  { field: "proposed_image_url_14", label: "Image 14" },
+  { field: "proposed_image_url_15", label: "Image 15" },
+  { field: "proposed_image_url_16", label: "Image 16" },
+  { field: "proposed_image_url_17", label: "Image 17" },
+  { field: "proposed_image_url_18", label: "Image 18" },
+  { field: "proposed_image_url_19", label: "Image 19" },
+  { field: "proposed_image_url_20", label: "Image 20" },
 ] as const;
 
 function extraTemplateImagePathKey(field: ExtraProductTemplateImageField) {
@@ -361,28 +430,18 @@ function extraTemplateImagePathKey(field: ExtraProductTemplateImageField) {
 }
 
 function templateImageValue(
-  template: Pick<
-    ProductTemplate,
-    | "default_image_url"
-    | "image_settings"
-    | "proposed_image_url_1"
-    | "proposed_image_url_2"
-    | "proposed_image_url_3"
-  > | null | undefined,
+  template: Pick<ProductTemplate, "default_image_url" | "image_settings" | ProductTemplateImageField> | null | undefined,
   field: ProductTemplateImageField,
 ) {
   if (!template) return null;
+  const directValue = template[field];
 
   if (field === "proposed_image_url_1") {
-    return template.proposed_image_url_1 ?? template.default_image_url;
+    return directValue ?? template.default_image_url;
   }
 
-  if (field === "proposed_image_url_2") {
-    return template.proposed_image_url_2;
-  }
-
-  if (field === "proposed_image_url_3") {
-    return template.proposed_image_url_3;
+  if (directValue) {
+    return directValue;
   }
 
   const imagePath = template.image_settings?.[
@@ -640,7 +699,7 @@ function FormSection({
   title: string;
 }) {
   return (
-    <section className="rounded-lg border border-zinc-200 bg-white p-4">
+    <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
       <div className="mb-4">
         <h3 className="text-sm font-semibold text-zinc-950">{title}</h3>
         {description ? (
@@ -690,7 +749,10 @@ function TemplateForm({
     >
       <input type="hidden" name="id" value={templateId} />
       <input type="hidden" name="return_to" value={returnTo} />
-      <FormSection title="Product Identity">
+      <FormSection
+        title="Template Details"
+        description="Set the core product identity, category placement, quotation defaults, and internal notes for this template."
+      >
         <TemplateCategoryFields
           allowQuickCreate={allowQuickCreate}
           brands={brands}
@@ -711,9 +773,6 @@ function TemplateForm({
           defaultValue={template?.template_code}
         />
         <Field name="item_code" label="Item Code" defaultValue={template?.item_code} />
-      </FormSection>
-
-      <FormSection title="Quotation Row Defaults">
         <TextArea
           name="default_specification"
           label="Specifications"
@@ -733,10 +792,19 @@ function TemplateForm({
           Dimension is calculated from workstation size pricing when available.
           Finish and accessory choices still come from Template Options.
         </div>
+        <TextArea name="description" label="Description" defaultValue={template?.description} />
+        <TextArea
+          name="price_notes"
+          label="Pricing / Formula Notes"
+          defaultValue={template?.price_notes}
+        />
       </FormSection>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_1.2fr]">
-        <FormSection title="Pricing">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <FormSection
+          title="Pricing"
+          description="Define the base commercial values used before optional rows, materials, and linked product families are applied."
+        >
           <Field
             name="unit_label"
             label="Unit"
@@ -757,8 +825,8 @@ function TemplateForm({
         </FormSection>
 
         <FormSection
-          title="Proposed Item Reference Images"
-          description="Up to 8 product reference images. Click an image card or Paste image, then paste a PNG, JPG, JPEG, or WebP image from the clipboard."
+          title="Reference Images"
+          description="Add product reference images. Click an image card or paste a PNG, JPG, JPEG, or WebP image from the clipboard."
         >
           <input
             type="hidden"
@@ -766,57 +834,22 @@ function TemplateForm({
             defaultValue={template?.reference_image_url ?? ""}
           />
           <div className="md:col-span-2 xl:col-span-3">
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              {proposedImageSlots.map((slot) => {
-                const value = templateImageValue(template, slot.field);
-                const settings = templateImageDisplaySettings(template, slot.field);
-
-                return (
-                  <div key={slot.field}>
-                    <input
-                      type="hidden"
-                      name={slot.field}
-                      defaultValue={value ?? ""}
-                    />
-                    <input
-                      type="hidden"
-                      name={`image_settings_${slot.field}`}
-                      defaultValue={settings ? JSON.stringify(settings) : ""}
-                    />
-                    <span className="text-xs font-semibold uppercase text-zinc-500">
-                      {slot.label}
-                    </span>
-                    <div className="mt-2">
-                      <ProductTemplateImageUploader
-                        canEdit
-                        field={slot.field}
-                        formOnly={!template}
-                        imageSettings={settings}
-                        label={`${slot.label} proposed item reference image`}
-                        templateId={templateId}
-                        value={value ?? null}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <TemplateReferenceImageFieldManager
+              initialSlots={proposedImageSlots.map((slot) => ({
+                ...slot,
+                settings: templateImageDisplaySettings(template, slot.field),
+                value: templateImageValue(template, slot.field),
+              }))}
+              templateExists={Boolean(template)}
+              templateId={templateId}
+            />
           </div>
         </FormSection>
       </div>
 
-      <FormSection title="Notes">
-        <TextArea name="description" label="Description" defaultValue={template?.description} />
-        <TextArea
-          name="price_notes"
-          label="Pricing / Formula Notes"
-          defaultValue={template?.price_notes}
-        />
-      </FormSection>
-
       <FormSection
-        title="Pricing / Configuration"
-        description="Set the main product price first, then add optional accessories, finish-category pricing, and any linked product families below."
+        title="Detailed Pricing"
+        description="Maintain workstation pricing, base variants, accessories, and finish-category pricing in one dedicated pricing area."
       >
         <div className="md:col-span-2 xl:col-span-3">
           <h4 className="mb-2 text-xs font-bold uppercase text-zinc-500">
@@ -1274,6 +1307,162 @@ function PriceCheckStatus({
   );
 }
 
+function CompactPriceCheckStatus({
+  actorNameById,
+  brandName,
+  latestBrandUpdate,
+  template,
+}: {
+  actorNameById: Map<string, string>;
+  brandName?: string | null;
+  latestBrandUpdate?: BrandPriceListUpdate | null;
+  template: ProductTemplate;
+}) {
+  const status = priceCheckState(template, latestBrandUpdate, brandName);
+  const className = status.tone === "ok"
+    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+    : status.tone === "notice"
+      ? "border-sky-200 bg-sky-50 text-sky-900"
+      : "border-amber-200 bg-amber-50 text-amber-900";
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+      <span className={`inline-flex rounded-full border px-2 py-0.5 font-semibold ${className}`}>
+        {status.label}
+      </span>
+      <span>
+        {template.last_price_checked_at
+          ? `Checked ${formatShortDate(template.last_price_checked_at)} by ${actorDisplayName(actorNameById, template.last_price_checked_by)}`
+          : status.detail}
+      </span>
+    </div>
+  );
+}
+
+function TemplateRowActions({
+  editHref,
+  openHref,
+  template,
+}: {
+  editHref: string;
+  openHref: string;
+  template: ProductTemplate;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 md:justify-end">
+      <Link
+        href={openHref}
+        className="inline-flex h-9 items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100"
+      >
+        Open
+      </Link>
+      <Link
+        href={editHref}
+        className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+      >
+        Edit
+      </Link>
+      <details className="relative">
+        <summary className="inline-flex h-9 cursor-pointer list-none items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
+          More
+        </summary>
+        <div className="absolute right-0 z-20 mt-2 w-56 rounded-lg border border-zinc-200 bg-white p-2 shadow-lg">
+          <div className="mb-2 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+            Template actions
+          </div>
+          <form action={markTemplatePriceChecked} className="mb-1">
+            <input type="hidden" name="id" value={template.id} />
+            <PendingSubmitButton
+              className="flex w-full items-center justify-start rounded-md px-2 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+              pendingLabel="Marking checked..."
+            >
+              Mark price checked
+            </PendingSubmitButton>
+          </form>
+          <form action={archiveProductTemplate} className="mb-1">
+            <input type="hidden" name="id" value={template.id} />
+            <ConfirmSubmitButton
+              message="This will move the product template to Archive. You can restore it later."
+              className="flex w-full items-center justify-start rounded-md px-2 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+              pendingLabel="Archiving..."
+            >
+              Archive
+            </ConfirmSubmitButton>
+          </form>
+          <form action={markProductTemplateDiscontinued}>
+            <input type="hidden" name="id" value={template.id} />
+            <ConfirmSubmitButton
+              message="This will hide the product from active Product Library and future quotations. Existing quotations will not be affected."
+              className="flex w-full items-center justify-start rounded-md px-2 py-2 text-sm font-medium text-amber-700 transition hover:bg-amber-50"
+              pendingLabel="Discontinuing..."
+            >
+              Discontinue
+            </ConfirmSubmitButton>
+          </form>
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function TemplateDetailHeaderActions({
+  editHref,
+  template,
+}: {
+  editHref: string;
+  template: ProductTemplate;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Link
+        href={editHref}
+        className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+      >
+        Edit template details
+      </Link>
+      <details className="relative">
+        <summary className="inline-flex h-10 cursor-pointer list-none items-center justify-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
+          More
+        </summary>
+        <div className="absolute right-0 z-20 mt-2 w-56 rounded-lg border border-zinc-200 bg-white p-2 shadow-lg">
+          <div className="mb-2 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+            Template actions
+          </div>
+          <form action={markTemplatePriceChecked} className="mb-1">
+            <input type="hidden" name="id" value={template.id} />
+            <PendingSubmitButton
+              className="flex w-full items-center justify-start rounded-md px-2 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+              pendingLabel="Marking checked..."
+            >
+              Mark price checked
+            </PendingSubmitButton>
+          </form>
+          <form action={archiveProductTemplate} className="mb-1">
+            <input type="hidden" name="id" value={template.id} />
+            <ConfirmSubmitButton
+              message="This will move the product template to Archive. You can restore it later."
+              className="flex w-full items-center justify-start rounded-md px-2 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+              pendingLabel="Archiving..."
+            >
+              Archive
+            </ConfirmSubmitButton>
+          </form>
+          <form action={markProductTemplateDiscontinued}>
+            <input type="hidden" name="id" value={template.id} />
+            <ConfirmSubmitButton
+              message="This will hide the product from active Product Library and future quotations. Existing quotations will not be affected."
+              className="flex w-full items-center justify-start rounded-md px-2 py-2 text-sm font-medium text-amber-700 transition hover:bg-amber-50"
+              pendingLabel="Discontinuing..."
+            >
+              Discontinue
+            </ConfirmSubmitButton>
+          </form>
+        </div>
+      </details>
+    </div>
+  );
+}
+
 function brandPriceCheckState(brand: Brand) {
   const intervalDays = brand.price_list_check_interval_days && brand.price_list_check_interval_days > 0
     ? brand.price_list_check_interval_days
@@ -1545,7 +1734,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const { data: templates, error: templatesError } = await supabase
     .from("product_templates")
     .select(
-      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price,is_active,lifecycle_status,last_price_checked_at,last_price_checked_by,price_check_interval_days,price_check_note,price_notes",
+      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price,is_active,lifecycle_status,last_price_checked_at,last_price_checked_by,price_check_interval_days,price_check_note,price_notes",
     )
     .order("brand_id", { ascending: true })
     .order("template_name", { ascending: true })
@@ -1879,6 +2068,29 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   });
   const selectedTemplate =
     activeTemplateList.find((template) => template.id === openTemplateId) ?? null;
+  const selectedBrand =
+    brandList.find((brand) => brand.id === selectedBrandFilter) ?? null;
+  const selectedMainCategory =
+    mainCategories.find((category) => category.id === selectedMainFilter) ?? null;
+  const selectedSubCategory =
+    subCategories.find((category) => category.id === selectedSubFilter) ?? null;
+  const selectedCategory = selectedSubCategory ?? selectedMainCategory ?? null;
+  const selectedBrandCategories = selectedBrand
+    ? mainCategories.filter((category) => category.brand_id === selectedBrand.id)
+    : [];
+  const selectedBrandTemplates = selectedBrand
+    ? filteredTemplates.filter((template) => template.brand_id === selectedBrand.id)
+    : [];
+  const selectedCategoryTemplates = selectedCategory
+    ? selectedBrandTemplates.filter((template) =>
+        selectedSubCategory
+          ? template.sub_category_id === selectedSubCategory.id
+          : template.main_category_id === selectedCategory.id
+      )
+    : [];
+  const selectedCategorySubcategories = selectedMainCategory
+    ? subCategories.filter((category) => category.parent_id === selectedMainCategory.id)
+    : [];
 
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
@@ -2052,300 +2264,183 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
             </div>
           </section>
 
-          <section className="mt-6 grid gap-6 2xl:grid-cols-[360px_1fr]">
+          <section className={selectedTemplate ? "mt-6 space-y-6" : "mt-6 grid gap-6 2xl:grid-cols-[360px_1fr]"}>
+            {!selectedTemplate ? (
             <aside className="rounded-lg border border-zinc-200 bg-white shadow-sm">
               <div className="border-b border-zinc-200 p-4">
-                <h2 className="font-semibold text-zinc-950">Library Structure</h2>
-                <p className="mt-1 text-sm text-zinc-500">
-                  {filteredTemplates.length} of {activeTemplateList.length} templates
+                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                  Product Library
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-zinc-500">
+                  <Link href={templatesHref(params, {
+                    brand: null,
+                    main: null,
+                    sub: null,
+                    template: null,
+                    editTemplate: null,
+                  })} className={selectedBrand ? "font-medium text-zinc-500 transition hover:text-zinc-700" : "font-semibold text-zinc-950"}>
+                    Product Library
+                  </Link>
+                  {selectedBrand ? (
+                    <>
+                      <span>/</span>
+                      <Link href={templatesHref(params, {
+                        brand: selectedBrand.id,
+                        main: null,
+                        sub: null,
+                        template: null,
+                        editTemplate: null,
+                      })} className={selectedCategory ? "font-medium text-zinc-500 transition hover:text-zinc-700" : "font-semibold text-zinc-950"}>
+                        {selectedBrand.name}
+                      </Link>
+                    </>
+                  ) : null}
+                  {selectedCategory ? (
+                    <>
+                      <span>/</span>
+                      <span className="font-semibold text-zinc-950">{selectedCategory.name}</span>
+                    </>
+                  ) : null}
+                </div>
+                <p className="mt-2 text-sm text-zinc-500">
+                  {!selectedBrand
+                    ? `${brandList.length} brands`
+                    : !selectedCategory
+                      ? `${selectedBrandCategories.length} categories in ${selectedBrand.name}`
+                      : `${selectedCategoryTemplates.length} templates in ${selectedCategory.name}`}
                 </p>
               </div>
               <div className="max-h-[720px] space-y-3 overflow-auto p-4">
-                {brandList.map((brand) => {
-                    const brandTemplates = filteredTemplates.filter(
-                      (template) => template.brand_id === brand.id,
-                    );
-                    const activeBrandTemplates = activeTemplateList.filter(
-                      (template) => template.brand_id === brand.id,
-                    );
-                    const brandPriceSummary = activeBrandTemplates.reduce(
-                      (summary, template) => {
-                        const key = priceCheckState(
-                          template,
-                          latestPriceListUpdateByBrand.get(template.brand_id),
-                          brand.name,
-                        ).key;
-
-                        return {
-                          ...summary,
-                          [key]: summary[key] + 1,
-                          total: summary.total + 1,
-                        };
-                      },
-                      { checked: 0, due: 0, not_checked: 0, scheduled: 0, total: 0 },
-                    );
-                    const brandMainCategories = mainCategories.filter(
-                      (category) => category.brand_id === brand.id,
-                    );
-                    const uncategorizedCount = brandTemplates.filter(
-                      (template) => !template.main_category_id,
-                    ).length;
+                {!selectedBrand ? (
+                  brandList.map((brand) => {
+                    const allBrandTemplates = templateList.filter((template) => template.brand_id === brand.id);
+                    const activeBrandTemplates = activeTemplateList.filter((template) => template.brand_id === brand.id);
+                    const matchingBrandTemplates = filteredTemplates.filter((template) => template.brand_id === brand.id);
                     const latestPriceListUpdate = latestPriceListUpdateByBrand.get(brand.id) ?? null;
                     const brandStatus = brandPriceCheckState(brand);
-                    const brandStatusLabel =
-                      brandStatus.tone === "ok"
-                        ? "Active"
-                        : brandStatus.label.includes("not checked")
-                          ? "Not checked"
-                          : "Due";
+                    const badgeClass = brandStatus.tone === "ok"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                      : "border-amber-200 bg-amber-50 text-amber-900";
 
                     return (
-                      <details
-                        key={brand.id}
-                        data-state-key={`template-library-brand-${brand.id}`}
-                        className={`rounded-md border ${selectedBrandFilter === brand.id ? "border-emerald-200 bg-emerald-50/40" : "border-zinc-200"}`}
-                      >
-                        <summary className="cursor-pointer bg-zinc-50 px-3 py-2 text-sm font-semibold text-zinc-950">
-                          <span className="flex items-center justify-between gap-3">
-                            <span>
-                              {brand.name}{" "}
-                              <span className="font-medium text-zinc-500">
-                                ({brandTemplates.length})
+                      <div key={brand.id} className="rounded-xl border border-zinc-200 bg-white p-4 transition hover:border-zinc-300 hover:shadow-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <h2 className="truncate text-base font-semibold text-zinc-950">{brand.name}</h2>
+                            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-semibold text-zinc-700">
+                                {allBrandTemplates.length} templates
                               </span>
-                            </span>
+                              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-semibold text-zinc-700">
+                                {activeBrandTemplates.length} active
+                              </span>
+                              <span className={`rounded-full border px-2 py-0.5 font-semibold ${badgeClass}`}>
+                                {brandStatus.label}
+                              </span>
+                            </div>
+                          </div>
+                          <Link
+                            href={templatesHref(params, {
+                              brand: brand.id,
+                              main: null,
+                              sub: null,
+                              template: null,
+                              editTemplate: null,
+                            })}
+                            className="inline-flex h-9 shrink-0 items-center rounded-md border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                          >
+                            View
+                          </Link>
+                        </div>
+                        <div className="mt-3 grid gap-1 text-xs text-zinc-500">
+                          <p>Matching current filters: {matchingBrandTemplates.length}</p>
+                          <p>Last price check: {formatShortDate(brand.last_price_list_checked_at)}</p>
+                          <p>Latest price list: {latestPriceListUpdate?.title ?? "No update recorded"}</p>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <>
+                    <Link
+                      href={templatesHref(params, {
+                        brand: null,
+                        main: null,
+                        sub: null,
+                        template: null,
+                        editTemplate: null,
+                      })}
+                      className="inline-flex text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
+                    >
+                      ← Back to brands
+                    </Link>
+                    <details data-state-key={`template-library-main-category-create-${selectedBrand.id}`}>
+                      <summary className="cursor-pointer text-xs font-semibold text-emerald-900">
+                        + Main Category
+                      </summary>
+                      <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                        <QuickCategoryForm brandId={selectedBrand.id} />
+                      </div>
+                    </details>
+                    {selectedBrandCategories.map((mainCategory) => {
+                      const categoryTemplates = selectedBrandTemplates.filter(
+                        (template) => template.main_category_id === mainCategory.id,
+                      );
+                      const subcategoryCount = subCategories.filter(
+                        (category) => category.parent_id === mainCategory.id,
+                      ).length;
+                      const isActive = selectedMainCategory?.id === mainCategory.id;
+
+                      return (
+                        <div
+                          key={mainCategory.id}
+                          className={`rounded-xl border p-4 transition ${
+                            isActive
+                              ? "border-emerald-200 bg-emerald-50/40"
+                              : "border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-sm"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <h3 className="truncate font-semibold text-zinc-950">{mainCategory.name}</h3>
+                              {categoryTemplates.length > 0 || subcategoryCount > 0 ? (
+                                <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                                  {categoryTemplates.length > 0 ? (
+                                    <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-semibold text-zinc-700">
+                                      {categoryTemplates.length} templates
+                                    </span>
+                                  ) : null}
+                                  {subcategoryCount > 0 ? (
+                                    <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-semibold text-zinc-700">
+                                      {subcategoryCount} subcategories
+                                    </span>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
                             <Link
                               href={templatesHref(params, {
-                                brand: brand.id,
-                                main: null,
+                                brand: selectedBrand.id,
+                                main: mainCategory.id,
                                 sub: null,
                                 template: null,
                                 editTemplate: null,
                               })}
-                              className="text-xs font-semibold text-emerald-900"
+                              className="inline-flex h-9 shrink-0 items-center rounded-md border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
                             >
                               View
                             </Link>
-                          </span>
-                        </summary>
-                        <div className="space-y-2 p-3">
-                          <div className="rounded-md border border-zinc-200 bg-white p-3">
-                            <div className="flex flex-wrap items-center gap-2 text-xs">
-                              <span className="font-semibold text-zinc-600">
-                                Price list:
-                              </span>
-                              <span className={`rounded-full border px-2 py-0.5 font-semibold ${
-                                brandStatus.tone === "ok"
-                                  ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                                  : "border-amber-200 bg-amber-50 text-amber-900"
-                              }`}>
-                                {brandStatusLabel}
-                              </span>
-                              <span className="text-zinc-500">
-                                Templates: {brandPriceSummary.checked} checked, {brandPriceSummary.due + brandPriceSummary.not_checked + brandPriceSummary.scheduled} due
-                              </span>
-                            </div>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              <form action={markBrandPriceListCheckedAction}>
-                                <input type="hidden" name="brand_id" value={brand.id} />
-                                <PendingSubmitButton
-                                  className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50"
-                                  pendingLabel="Applying..."
-                                >
-                                  Check brand prices
-                                </PendingSubmitButton>
-                              </form>
-                              {activeBrandTemplates.length ? (
-                                <form action={markBrandTemplatesPriceChecked}>
-                                  <input type="hidden" name="brand_id" value={brand.id} />
-                                  <ConfirmSubmitButton
-                                    message={`Mark all active templates under ${brand.name} as price checked now?`}
-                                    className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50"
-                                    pendingLabel="Marking checked..."
-                                  >
-                                    Mark templates checked
-                                  </ConfirmSubmitButton>
-                                </form>
-                              ) : null}
-                            </div>
                           </div>
-                          <details
-                            className="rounded-md border border-zinc-200 bg-white p-3"
-                            data-state-key={`template-library-price-updates-${brand.id}`}
-                          >
-                            <summary className="cursor-pointer text-xs font-semibold text-zinc-700">
-                              Price list updates
-                            </summary>
-                            <div className="mt-3 space-y-3 text-xs leading-5 text-zinc-600">
-                              {latestPriceListUpdate ? (
-                                <div>
-                                  <p className="font-semibold text-zinc-950">
-                                    Latest: {latestPriceListUpdate.title}
-                                  </p>
-                                  <p>Effective: {formatShortDate(latestPriceListUpdate.effective_from)}</p>
-                                  <p>Status: {latestPriceListUpdate.status}</p>
-                                  <p>
-                                    Added by {actorDisplayName(actorNameById, latestPriceListUpdate.created_by)}
-                                  </p>
-                                </div>
-                              ) : (
-                                <p>No price list updates recorded yet.</p>
-                              )}
-                              <div className="flex flex-wrap gap-2">
-                                <details data-state-key={`template-library-price-updates-add-${brand.id}`}>
-                                  <summary className="cursor-pointer rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50">
-                                    Add update
-                                  </summary>
-                                  <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                                    <BrandPriceListUpdateForm brandId={brand.id} />
-                                  </div>
-                                </details>
-                                {latestPriceListUpdate ? (
-                                  <details data-state-key={`template-library-price-updates-edit-${brand.id}`}>
-                                    <summary className="cursor-pointer rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50">
-                                      Edit latest
-                                    </summary>
-                                    <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                                      <BrandPriceListUpdateForm brandId={brand.id} update={latestPriceListUpdate} />
-                                    </div>
-                                  </details>
-                                ) : null}
-                                {latestPriceListUpdate && latestPriceListUpdate.status !== "archived" ? (
-                                  <form action={archiveBrandPriceListUpdate}>
-                                    <input type="hidden" name="id" value={latestPriceListUpdate.id} />
-                                    <ConfirmSubmitButton
-                                      message="Archive this price list update?"
-                                      className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50"
-                                    >
-                                      Archive
-                                    </ConfirmSubmitButton>
-                                  </form>
-                                ) : null}
-                              </div>
-                            </div>
-                          </details>
-                          <details data-state-key={`template-library-main-category-create-${brand.id}`}>
-                            <summary className="cursor-pointer text-xs font-semibold text-emerald-900">
-                              + Main Category
-                            </summary>
-                            <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                              <QuickCategoryForm
-                                brandId={brand.id}
-                              />
-                            </div>
-                          </details>
-                          {brandMainCategories.map((mainCategory) => {
-                            const mainTemplates = brandTemplates.filter(
-                              (template) =>
-                                template.main_category_id === mainCategory.id,
-                            );
-                            const mainSubCategories = subCategories.filter(
-                              (category) =>
-                                category.parent_id === mainCategory.id,
-                            );
-                            const withoutSubCount = mainTemplates.filter(
-                              (template) => !template.sub_category_id,
-                            ).length;
-
-                            return (
-                              <details
-                                key={mainCategory.id}
-                                data-state-key={`template-library-main-category-${mainCategory.id}`}
-                              >
-                                <summary className="cursor-pointer text-sm font-medium text-zinc-800">
-                                  <span className="flex items-center justify-between gap-3">
-                                    <span>
-                                      {mainCategory.name}{" "}
-                                      <span className="text-zinc-500">
-                                        ({mainTemplates.length})
-                                      </span>
-                                    </span>
-                                    <Link
-                                      href={templatesHref(params, {
-                                        brand: brand.id,
-                                        main: mainCategory.id,
-                                        sub: null,
-                                        template: null,
-                                        editTemplate: null,
-                                      })}
-                                      className="text-xs font-semibold text-emerald-900"
-                                    >
-                                      View
-                                    </Link>
-                                  </span>
-                                </summary>
-                                <div className="mt-2 space-y-1 border-l border-zinc-200 pl-3">
-                                  <details data-state-key={`template-library-sub-category-create-${mainCategory.id}`}>
-                                    <summary className="cursor-pointer px-2 py-1.5 text-xs font-semibold text-emerald-900">
-                                      + Sub Category
-                                    </summary>
-                                    <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                                      <QuickCategoryForm
-                                        brandId={brand.id}
-                                        parentId={mainCategory.id}
-                                      />
-                                    </div>
-                                  </details>
-                                  {mainSubCategories.map((subCategory) => {
-                                    const count = mainTemplates.filter(
-                                      (template) =>
-                                        template.sub_category_id ===
-                                        subCategory.id,
-                                    ).length;
-
-                                    return (
-                                      <Link
-                                        key={subCategory.id}
-                                        href={templatesHref(params, {
-                                          brand: brand.id,
-                                          main: mainCategory.id,
-                                          sub: subCategory.id,
-                                          template: null,
-                                          editTemplate: null,
-                                        })}
-                                        className="block rounded-md px-2 py-1.5 text-sm text-zinc-600 transition hover:bg-emerald-50 hover:text-emerald-900"
-                                      >
-                                        {subCategory.name} ({count})
-                                      </Link>
-                                      );
-                                  })}
-                                  {!mainSubCategories.length ? (
-                                    <p className="px-2 py-1.5 text-xs text-zinc-500">
-                                      No subcategories yet.
-                                    </p>
-                                  ) : null}
-                                  {withoutSubCount ? (
-                                    <Link
-                                      href={templatesHref(params, {
-                                        brand: brand.id,
-                                        main: mainCategory.id,
-                                        sub: null,
-                                        template: null,
-                                        editTemplate: null,
-                                      })}
-                                      className="block rounded-md px-2 py-1.5 text-sm text-zinc-600 transition hover:bg-emerald-50 hover:text-emerald-900"
-                                    >
-                                      No sub category ({withoutSubCount})
-                                    </Link>
-                                  ) : null}
-                                </div>
-                              </details>
-                            );
-                          })}
-                          {!brandMainCategories.length ? (
-                            <div className="rounded-md border border-dashed border-zinc-200 px-3 py-2 text-xs text-zinc-500">
-                              <p>No main categories yet.</p>
-                              <p className="mt-1 font-semibold text-emerald-900">+ Main Category</p>
-                            </div>
-                          ) : null}
-                          {uncategorizedCount ? (
-                            <p className="rounded-md border border-dashed border-zinc-200 px-3 py-2 text-xs text-zinc-500">
-                              No main category ({uncategorizedCount})
-                            </p>
-                          ) : null}
                         </div>
-                      </details>
-                    );
-                  })}
+                      );
+                    })}
+                    {!selectedBrandCategories.length ? (
+                      <div className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
+                        No main categories yet for {selectedBrand.name}.
+                      </div>
+                    ) : null}
+                  </>
+                )}
                 {!brandList.length ? (
                   <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
                     No brands yet.{" "}
@@ -2359,149 +2454,303 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                 ) : null}
               </div>
             </aside>
+            ) : null}
 
             <div className="space-y-5">
-              <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
-                <div className="border-b border-zinc-200 p-4">
-                  <h2 className="font-semibold text-zinc-950">
-                    Product Templates
-                  </h2>
-                  <p className="mt-1 text-sm text-zinc-500">
-                    Compact rows for the current hierarchy and filters.
-                  </p>
-                </div>
-                <div className="divide-y divide-zinc-100">
-                  {filteredTemplates.map((template) => {
-                    const firstImageValue =
-                      template.proposed_image_url_1 ?? template.default_image_url;
-                    const firstImageSettings =
-                      template.image_settings?.proposed_image_url_1 ??
-                      template.image_settings?.default_image_url;
-                    const path = [
-                      brandMap.get(template.brand_id) ?? "Unknown brand",
-                      template.main_category_id
-                        ? categoryMap.get(template.main_category_id) ??
-                          "Main category"
-                        : "No main category",
-                      template.sub_category_id
-                        ? categoryMap.get(template.sub_category_id) ??
-                          "Sub category"
-                        : "No sub category",
-                    ].join(" / ");
-
-                    return (
-                      <div
-                        key={template.id}
-                        className={`grid gap-4 p-4 md:grid-cols-[auto_1fr_auto] md:items-center ${
-                          template.id === selectedTemplate?.id
-                            ? "bg-emerald-50/60"
-                            : ""
-                        }`}
-                      >
-                        <ProductTemplateImageUploader
-                          imageSettings={firstImageSettings}
-                          label={template.template_name}
-                          templateId={template.id}
-                          value={firstImageValue}
-                        />
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="font-semibold text-zinc-950">
-                              {template.template_name}
-                            </h3>
-                            <TemplateLifecycleBadge status={templateLifecycleById.get(template.id) ?? "active"} />
-                          </div>
-                          <p className="mt-1 text-sm text-zinc-500">{path}</p>
-                          <p className="mt-1 text-xs text-zinc-500">
-                            {template.template_code ?? "No template code"} /{" "}
-                            {template.item_code ?? "No item code"} /{" "}
-                            {formatMoney(
-                              template.currency,
-                              template.default_unit_price,
-                            )}
-                          </p>
-                          <PriceCheckStatus
-                            actorNameById={actorNameById}
-                            brandName={brandMap.get(template.brand_id)}
-                            latestBrandUpdate={latestPriceListUpdateByBrand.get(template.brand_id)}
-                            template={template}
-                          />
-                        </div>
-                        <div className="flex flex-wrap gap-3 md:justify-end">
-                          <Link
-                            href={templatesHref(params, {
-                              template: template.id,
-                              editTemplate: null,
-                              addTemplate: null,
-                            })}
-                            className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
-                          >
-                            Open
-                          </Link>
-                          <Link
-                            href={templatesHref(params, {
-                              template: template.id,
-                              editTemplate: template.id,
-                              addTemplate: null,
-                            })}
-                            className="text-sm font-semibold text-zinc-600 transition hover:text-zinc-950"
-                          >
-                            Edit
-                          </Link>
-                          <form action={markTemplatePriceChecked}>
-                            <input type="hidden" name="id" value={template.id} />
-                          <PendingSubmitButton
-                            className="text-sm font-semibold text-zinc-600 transition hover:text-zinc-950"
+              {!selectedTemplate ? (
+              <>
+              {selectedBrand ? (
+                <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <h2 className="font-semibold text-zinc-950">{selectedBrand.name}</h2>
+                      <p className="mt-1 text-sm text-zinc-500">
+                        {!selectedCategory
+                          ? "Choose a category to open its templates."
+                          : `Showing templates for ${selectedCategory.name}.`}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <form action={markBrandPriceListCheckedAction}>
+                        <input type="hidden" name="brand_id" value={selectedBrand.id} />
+                        <PendingSubmitButton
+                          className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                          pendingLabel="Applying..."
+                        >
+                          Check brand prices
+                        </PendingSubmitButton>
+                      </form>
+                      {selectedBrandTemplates.length ? (
+                        <form action={markBrandTemplatesPriceChecked}>
+                          <input type="hidden" name="brand_id" value={selectedBrand.id} />
+                          <ConfirmSubmitButton
+                            message={`Mark all active templates under ${selectedBrand.name} as price checked now?`}
+                            className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
                             pendingLabel="Marking checked..."
                           >
-                            Mark checked now
-                          </PendingSubmitButton>
-                          </form>
-                          <form action={archiveProductTemplate}>
-                            <input type="hidden" name="id" value={template.id} />
-                            <ConfirmSubmitButton
-                              message="This will move the product template to Archive. You can restore it later."
-                              className="text-sm font-semibold text-zinc-700 transition hover:text-zinc-950"
-                              pendingLabel="Archiving..."
-                            >
-                              Archive
-                            </ConfirmSubmitButton>
-                          </form>
-                          <form action={markProductTemplateDiscontinued}>
-                            <input type="hidden" name="id" value={template.id} />
-                            <ConfirmSubmitButton
-                              message="This will hide the product from active Product Library and future quotations. Existing quotations will not be affected."
-                              className="text-sm font-semibold text-amber-700 transition hover:text-amber-800"
-                              pendingLabel="Discontinuing..."
-                            >
-                              Discontinue
-                            </ConfirmSubmitButton>
-                          </form>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                {!filteredTemplates.length ? (
-                  <div className="p-8 text-center text-sm text-zinc-500">
-                    <p>No product templates in this selection yet.</p>
-                    <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
-                      <Link
-                        href={manageBrandsHref}
-                        className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                      >
-                        + Add Brand
-                      </Link>
-                      <Link
-                        href={templatesHref(params, { addTemplate: "1" })}
-                        className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                      >
-                        + Add Product Template
-                      </Link>
+                            Mark templates checked
+                          </ConfirmSubmitButton>
+                        </form>
+                      ) : null}
                     </div>
                   </div>
-                ) : null}
-              </section>
+                  <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_auto]">
+                    <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-600">
+                      <p>
+                        Brand price list status:{" "}
+                        <span className="font-semibold text-zinc-950">{brandPriceCheckState(selectedBrand).label}</span>
+                      </p>
+                      <p className="mt-1">
+                        Last price check: {formatShortDate(selectedBrand.last_price_list_checked_at)}
+                      </p>
+                      <p className="mt-1">
+                        Latest update: {(latestPriceListUpdateByBrand.get(selectedBrand.id) ?? null)?.title ?? "No update recorded"}
+                      </p>
+                    </div>
+                    <details className="rounded-lg border border-zinc-200 bg-white p-3">
+                      <summary className="cursor-pointer text-xs font-semibold text-zinc-700">
+                        Price list updates
+                      </summary>
+                      <div className="mt-3 space-y-3 text-xs leading-5 text-zinc-600">
+                        <details data-state-key={`template-library-price-updates-add-${selectedBrand.id}`}>
+                          <summary className="cursor-pointer rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50">
+                            Add update
+                          </summary>
+                          <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                            <BrandPriceListUpdateForm brandId={selectedBrand.id} />
+                          </div>
+                        </details>
+                        {(latestPriceListUpdateByBrand.get(selectedBrand.id) ?? null) ? (
+                          <>
+                            <details data-state-key={`template-library-price-updates-edit-${selectedBrand.id}`}>
+                              <summary className="cursor-pointer rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50">
+                                Edit latest
+                              </summary>
+                              <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                                <BrandPriceListUpdateForm
+                                  brandId={selectedBrand.id}
+                                  update={latestPriceListUpdateByBrand.get(selectedBrand.id) ?? undefined}
+                                />
+                              </div>
+                            </details>
+                            {(latestPriceListUpdateByBrand.get(selectedBrand.id) ?? null)?.status !== "archived" ? (
+                              <form action={archiveBrandPriceListUpdate}>
+                                <input type="hidden" name="id" value={(latestPriceListUpdateByBrand.get(selectedBrand.id) ?? null)?.id ?? ""} />
+                                <ConfirmSubmitButton
+                                  message="Archive this price list update?"
+                                  className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50"
+                                >
+                                  Archive latest
+                                </ConfirmSubmitButton>
+                              </form>
+                            ) : null}
+                          </>
+                        ) : (
+                          <p>No price list updates recorded yet.</p>
+                        )}
+                      </div>
+                    </details>
+                  </div>
+                </section>
+              ) : null}
+
+              {!selectedBrand ? (
+                <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-10 text-center shadow-sm">
+                  <h2 className="text-lg font-semibold text-zinc-950">Start from a brand</h2>
+                  <p className="mt-2 text-sm text-zinc-500">
+                    The library now opens in a cleaner drill-down mode. Select a brand to view its categories, then open a category to view product templates.
+                  </p>
+                </section>
+              ) : !selectedCategory ? (
+                <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-10 text-center shadow-sm">
+                  <h2 className="text-lg font-semibold text-zinc-950">Choose a category</h2>
+                  <p className="mt-2 text-sm text-zinc-500">
+                    Showing only {selectedBrand.name} categories. Select one to open its templates.
+                  </p>
+                </section>
+              ) : (
+                <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+                  <div className="border-b border-zinc-200 p-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <h2 className="font-semibold text-zinc-950">{selectedCategory.name}</h2>
+                        <p className="mt-1 text-sm text-zinc-500">
+                          Compact templates for {selectedBrand?.name} / {selectedCategory.name}
+                        </p>
+                      </div>
+                      <Link
+                        href={templatesHref(params, {
+                          brand: selectedBrand?.id ?? null,
+                          main: null,
+                          sub: null,
+                          template: null,
+                          editTemplate: null,
+                        })}
+                        className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                      >
+                        Back to categories
+                      </Link>
+                    </div>
+                    {selectedMainCategory && selectedCategorySubcategories.length ? (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Link
+                          href={templatesHref(params, {
+                            brand: selectedBrand?.id ?? null,
+                            main: selectedMainCategory.id,
+                            sub: null,
+                            template: null,
+                            editTemplate: null,
+                          })}
+                          className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                            !selectedSubCategory
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                              : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50"
+                          }`}
+                        >
+                          All
+                        </Link>
+                        {selectedCategorySubcategories.map((subCategory) => (
+                          <Link
+                            key={subCategory.id}
+                            href={templatesHref(params, {
+                              brand: selectedBrand?.id ?? null,
+                              main: selectedMainCategory.id,
+                              sub: subCategory.id,
+                              template: null,
+                              editTemplate: null,
+                            })}
+                            className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                              selectedSubCategory?.id === subCategory.id
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                                : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50"
+                            }`}
+                          >
+                            {subCategory.name}
+                          </Link>
+                        ))}
+                        <details data-state-key={`template-library-sub-category-create-${selectedMainCategory.id}`}>
+                          <summary className="cursor-pointer rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
+                            + Sub Category
+                          </summary>
+                          <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                            <QuickCategoryForm
+                              brandId={selectedBrand?.id ?? ""}
+                              parentId={selectedMainCategory.id}
+                            />
+                          </div>
+                        </details>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                    {selectedCategoryTemplates.map((template) => {
+                      const firstVisibleImageSlot = proposedImageSlots.find((slot) =>
+                        Boolean(templateImageValue(template, slot.field)),
+                      );
+                      const firstImageValue = firstVisibleImageSlot
+                        ? templateImageValue(template, firstVisibleImageSlot.field)
+                        : template.default_image_url;
+                      const firstImageSettings = firstVisibleImageSlot
+                        ? templateImageDisplaySettings(template, firstVisibleImageSlot.field)
+                        : template.image_settings?.default_image_url;
+                      const path = [
+                        brandMap.get(template.brand_id) ?? "Unknown brand",
+                        template.main_category_id
+                          ? categoryMap.get(template.main_category_id) ?? "Main category"
+                          : "No main category",
+                        template.sub_category_id
+                          ? categoryMap.get(template.sub_category_id) ?? "No sub category"
+                          : "No sub category",
+                      ].join(" / ");
+                      const openHref = templatesHref(params, {
+                        template: template.id,
+                        editTemplate: null,
+                        addTemplate: null,
+                      });
+                      const editHref = templatesHref(params, {
+                        template: template.id,
+                        editTemplate: template.id,
+                        addTemplate: null,
+                      });
+
+                      return (
+                        <article
+                          key={template.id}
+                          className={`flex h-full flex-col overflow-hidden rounded-xl border bg-white shadow-sm transition hover:border-zinc-300 hover:shadow-md ${
+                            template.id === openTemplateId
+                              ? "border-emerald-200 bg-emerald-50/30"
+                              : "border-zinc-200"
+                          }`}
+                        >
+                          <div className="border-b border-zinc-200 bg-zinc-50 p-3">
+                            <div className="flex h-36 items-center justify-center overflow-hidden rounded-lg border border-zinc-200 bg-white">
+                              <ProductTemplateImageUploader
+                                imageSettings={firstImageSettings}
+                                label={template.template_name}
+                                templateId={template.id}
+                                value={firstImageValue}
+                              />
+                            </div>
+                          </div>
+                          <div className="flex flex-1 flex-col gap-3 p-4">
+                            <div className="flex flex-wrap items-start gap-2">
+                              <h3 className="min-w-0 flex-1 text-sm font-semibold text-zinc-950">
+                                {template.template_name}
+                              </h3>
+                              <TemplateLifecycleBadge status={templateLifecycleById.get(template.id) ?? "active"} />
+                            </div>
+                            <p className="text-xs leading-5 text-zinc-500">{path}</p>
+                            <div className="text-sm font-semibold text-zinc-950">
+                              {formatMoney(template.currency, template.default_unit_price)}
+                            </div>
+                            <div className="text-[11px] text-zinc-500">
+                              {template.template_code || template.item_code
+                                ? [template.template_code, template.item_code].filter(Boolean).join(" / ")
+                                : "No template or item code"}
+                            </div>
+                            <div>
+                              <CompactPriceCheckStatus
+                                actorNameById={actorNameById}
+                                brandName={brandMap.get(template.brand_id)}
+                                latestBrandUpdate={latestPriceListUpdateByBrand.get(template.brand_id)}
+                                template={template}
+                              />
+                            </div>
+                            <div className="mt-auto border-t border-zinc-100 pt-3">
+                              <TemplateRowActions
+                                editHref={editHref}
+                                openHref={openHref}
+                                template={template}
+                              />
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                  {!selectedCategoryTemplates.length ? (
+                    <div className="p-8 text-center text-sm text-zinc-500">
+                      <p>No product templates in this category yet.</p>
+                      <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
+                        <Link
+                          href={manageBrandsHref}
+                          className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                        >
+                          Manage Brands
+                        </Link>
+                        <Link
+                          href={templatesHref(params, { addTemplate: "1" })}
+                          className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                        >
+                          + Add Product Template
+                        </Link>
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
+              )}
+              </>
+              ) : null}
 
             {(selectedTemplate ? [selectedTemplate] : []).map((template) => {
               const templateComponents = componentsByTemplate.get(template.id) ?? [];
@@ -2510,8 +2759,29 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
               const templateAuditRows = auditHistoryByTemplate.get(template.id) ?? [];
               const templateBrandPriceListUpdates = priceListUpdatesByBrand.get(template.brand_id) ?? [];
               const templateBaseReturnTo = templatesHref(params, { template: template.id });
+              const templateLibraryReturnTo = templatesHref(params, {
+                template: null,
+                editTemplate: null,
+                addTemplate: null,
+              });
               const templatePriceUpdatesReturnTo = withHash(templateBaseReturnTo, `template-${template.id}-price-updates`);
               const templateMaterialsReturnTo = withHash(templateBaseReturnTo, `template-${template.id}-materials`);
+              const templateEditHref = withHash(
+                templatesHref(params, {
+                  template: template.id,
+                  editTemplate: template.id,
+                  addTemplate: null,
+                }),
+                `template-${template.id}`,
+              );
+              const visibleImageSlots = proposedImageSlots.flatMap((slot) => {
+                const value = templateImageValue(template, slot.field);
+                const settings = templateImageDisplaySettings(template, slot.field);
+
+                return value
+                  ? [{ ...slot, settings, value }]
+                  : [];
+              });
               const priceListUpdateById = new Map(templateBrandPriceListUpdates.map((update) => [update.id, update]));
               const groups = new Map<string, ProductComponent[]>();
               const hasWorkstationSizePricing = Boolean(
@@ -2541,47 +2811,117 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   className="rounded-lg border border-zinc-200 bg-white shadow-sm"
                 >
                   <div className="border-b border-zinc-200 p-5">
-                    <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-                      <div className="flex min-w-0 flex-col gap-4 sm:flex-row">
-                        <div className="flex shrink-0 flex-wrap gap-2">
-                          {proposedImageSlots.map((slot) => {
-                            const value = templateImageValue(template, slot.field);
-                            const settings = templateImageDisplaySettings(template, slot.field);
-
-                            return (
-                              <ProductTemplateImageUploader
-                                key={slot.field}
-                                imageSettings={settings}
-                                label={slot.label}
-                                templateId={template.id}
-                                value={value}
-                              />
-                            );
-                          })}
-                        </div>
+                    <div className="flex flex-col gap-4 border-b border-zinc-200 pb-5">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <Link
+                          href="/products"
+                          className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                        >
+                          Back to products
+                        </Link>
+                        <Link
+                          href={templateLibraryReturnTo}
+                          className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                        >
+                          Back to category
+                        </Link>
+                      </div>
+                      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                         <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h2 className="text-xl font-semibold text-zinc-950">
+                          <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-500">
+                            <Link href={templateLibraryReturnTo} className="transition hover:text-zinc-700">
+                              Product Library
+                            </Link>
+                            <span>/</span>
+                            <Link
+                              href={templatesHref(params, {
+                                brand: template.brand_id,
+                                main: null,
+                                sub: null,
+                                template: null,
+                                editTemplate: null,
+                                addTemplate: null,
+                              })}
+                              className="transition hover:text-zinc-700"
+                            >
+                              {brandMap.get(template.brand_id) ?? "Unknown brand"}
+                            </Link>
+                            {template.main_category_id ? (
+                              <>
+                                <span>/</span>
+                                <Link
+                                  href={templatesHref(params, {
+                                    brand: template.brand_id,
+                                    main: template.main_category_id,
+                                    sub: null,
+                                    template: null,
+                                    editTemplate: null,
+                                    addTemplate: null,
+                                  })}
+                                  className="transition hover:text-zinc-700"
+                                >
+                                  {categoryMap.get(template.main_category_id) ?? "Main category"}
+                                </Link>
+                              </>
+                            ) : null}
+                            {template.sub_category_id ? (
+                              <>
+                                <span>/</span>
+                                <Link
+                                  href={templatesHref(params, {
+                                    brand: template.brand_id,
+                                    main: template.main_category_id,
+                                    sub: template.sub_category_id,
+                                    template: null,
+                                    editTemplate: null,
+                                    addTemplate: null,
+                                  })}
+                                  className="transition hover:text-zinc-700"
+                                >
+                                  {categoryMap.get(template.sub_category_id) ?? "Sub category"}
+                                </Link>
+                              </>
+                            ) : null}
+                            <span>/</span>
+                            <span className="font-semibold text-zinc-950">{template.template_name}</span>
+                          </div>
+                          <div className="mt-3 flex flex-wrap items-start gap-3">
+                            <h2 className="text-2xl font-semibold text-zinc-950">
                               {template.template_name}
                             </h2>
-                          <TemplateLifecycleBadge status={templateLifecycleById.get(template.id) ?? "active"} />
+                            <TemplateLifecycleBadge status={templateLifecycleById.get(template.id) ?? "active"} />
                           </div>
                           <p className="mt-2 text-sm text-zinc-500">
-                          {brandMap.get(template.brand_id) ?? "Unknown brand"}
-                          {template.main_category_id
-                            ? ` / ${categoryMap.get(template.main_category_id) ?? "Main category"}`
-                            : ""}
-                          {template.sub_category_id
-                            ? ` / ${categoryMap.get(template.sub_category_id) ?? "Sub category"}`
-                            : ""}
+                            {brandMap.get(template.brand_id) ?? "Unknown brand"}
+                            {template.main_category_id
+                              ? ` / ${categoryMap.get(template.main_category_id) ?? "Main category"}`
+                              : ""}
+                            {template.sub_category_id
+                              ? ` / ${categoryMap.get(template.sub_category_id) ?? "Sub category"}`
+                              : ""}
                           </p>
-                          <p className="mt-1 text-sm text-zinc-500">
-                          {template.item_code ? `${template.item_code} / ` : ""}
-                          {template.description ?? "No description yet."}
+                          <p className="mt-2 text-sm text-zinc-500">
+                            {template.item_code ? `${template.item_code} / ` : ""}
+                            {template.description ?? "No description yet."}
                           </p>
                         </div>
+                        <TemplateDetailHeaderActions
+                          editHref={templateEditHref}
+                          template={template}
+                        />
                       </div>
-                      <div className="w-full rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-sm xl:w-72">
+                    </div>
+
+                    <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
+                      <div className="min-w-0 space-y-5">
+                        <section>
+                          <TemplateDetailImageGallery
+                            templateId={template.id}
+                            visibleSlots={visibleImageSlots}
+                          />
+                        </section>
+                      </div>
+                      <aside className="w-full rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-sm">
                         <p className="text-xs font-semibold uppercase text-zinc-500">
                           Default U.Price
                         </p>
@@ -2652,7 +2992,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             </div>
                           </div>
                         ) : null}
-                      </div>
+                      </aside>
                     </div>
 
                     <details
@@ -2705,7 +3045,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                 Manual source price changes for components, options, and pricing rows. Future quotations use these source values.
                               </p>
                             </div>
-                            <span className="rounded-md bg-emerald-900 px-3 py-2 text-xs font-semibold text-white">
+                            <span className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700">
                               Show Price Rows
                             </span>
                           </div>
@@ -2928,9 +3268,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         className="shrink-0"
                         data-state-key={`template-material-group-create-${template.id}`}
                       >
-                        <summary className="cursor-pointer rounded-md bg-emerald-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800">
-                          + Link Material Group
-                        </summary>
+                          <summary className="cursor-pointer rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
+                            + Link Material Group
+                          </summary>
                         <div className="mt-3 w-[min(960px,calc(100vw-4rem))] rounded-lg border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
                           <TemplateMaterialGroupForm
                             materials={materialList}
@@ -3015,9 +3355,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         className="shrink-0"
                         data-state-key={`template-linked-family-create-${template.id}`}
                       >
-                        <summary className="cursor-pointer rounded-md bg-emerald-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800">
-                          + Link Product Family
-                        </summary>
+                         <summary className="cursor-pointer rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
+                           + Link Product Family
+                         </summary>
                         <div className="mt-3 w-[min(960px,calc(100vw-4rem))] rounded-lg border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
                           <LinkedProductFamilyForm
                             templateId={template.id}
@@ -3091,7 +3431,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                       </summary>
                       <div className="mt-4 border-t border-zinc-200 pt-4">
                         <details className="mb-4">
-                          <summary className="inline-flex cursor-pointer rounded-md bg-emerald-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800">
+                          <summary className="inline-flex cursor-pointer rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
                             + Add Advanced Option
                           </summary>
                           <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
@@ -3201,7 +3541,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
               );
             })}
 
-            {!selectedTemplate && activeTemplateList.length ? (
+            {selectedCategory && !selectedTemplate && selectedCategoryTemplates.length ? (
               <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
                 Open a product template to manage its images, pricing tables,
                 linked product families, and advanced options.

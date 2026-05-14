@@ -3234,7 +3234,7 @@ export default async function QuotationBuilderPage({
   const { data: productTemplates, error: productTemplatesError } = await supabase
     .from("product_templates")
     .select(
-      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note",
+      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note",
     )
     .eq("is_active", true)
     .eq("lifecycle_status", "active")

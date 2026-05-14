@@ -1014,6 +1014,23 @@ type ProductTemplateSnapshotSource = {
   proposed_image_url_1: string | null;
   proposed_image_url_2: string | null;
   proposed_image_url_3: string | null;
+  proposed_image_url_4: string | null;
+  proposed_image_url_5: string | null;
+  proposed_image_url_6: string | null;
+  proposed_image_url_7: string | null;
+  proposed_image_url_8: string | null;
+  proposed_image_url_9: string | null;
+  proposed_image_url_10: string | null;
+  proposed_image_url_11: string | null;
+  proposed_image_url_12: string | null;
+  proposed_image_url_13: string | null;
+  proposed_image_url_14: string | null;
+  proposed_image_url_15: string | null;
+  proposed_image_url_16: string | null;
+  proposed_image_url_17: string | null;
+  proposed_image_url_18: string | null;
+  proposed_image_url_19: string | null;
+  proposed_image_url_20: string | null;
   image_settings: Record<string, ImageDisplaySettings> | null;
   desking_size_pricing: DeskingSizePricingRow[] | null;
   variant_pricing: VariantPricingRow[] | null;
@@ -3949,7 +3966,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const { data: template, error: templateError } = await supabase
     .from("product_templates")
     .select(
-      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price",
+      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price",
     )
     .eq("id", templateId)
     .eq("is_active", true)
@@ -4020,7 +4037,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     ? await supabase
         .from("product_templates")
         .select(
-          "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price",
+          "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price",
         )
         .eq("is_active", true)
         .eq("lifecycle_status", "active")
@@ -4335,6 +4352,23 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     "proposed_image_url_1",
     "proposed_image_url_2",
     "proposed_image_url_3",
+    "proposed_image_url_4",
+    "proposed_image_url_5",
+    "proposed_image_url_6",
+    "proposed_image_url_7",
+    "proposed_image_url_8",
+    "proposed_image_url_9",
+    "proposed_image_url_10",
+    "proposed_image_url_11",
+    "proposed_image_url_12",
+    "proposed_image_url_13",
+    "proposed_image_url_14",
+    "proposed_image_url_15",
+    "proposed_image_url_16",
+    "proposed_image_url_17",
+    "proposed_image_url_18",
+    "proposed_image_url_19",
+    "proposed_image_url_20",
   ] as const;
   const availableProposedImages = proposedImageFields
     .map((field) => ({
@@ -4531,6 +4565,23 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       proposed_image_url_1: template.proposed_image_url_1,
       proposed_image_url_2: template.proposed_image_url_2,
       proposed_image_url_3: template.proposed_image_url_3,
+      proposed_image_url_4: template.proposed_image_url_4,
+      proposed_image_url_5: template.proposed_image_url_5,
+      proposed_image_url_6: template.proposed_image_url_6,
+      proposed_image_url_7: template.proposed_image_url_7,
+      proposed_image_url_8: template.proposed_image_url_8,
+      proposed_image_url_9: template.proposed_image_url_9,
+      proposed_image_url_10: template.proposed_image_url_10,
+      proposed_image_url_11: template.proposed_image_url_11,
+      proposed_image_url_12: template.proposed_image_url_12,
+      proposed_image_url_13: template.proposed_image_url_13,
+      proposed_image_url_14: template.proposed_image_url_14,
+      proposed_image_url_15: template.proposed_image_url_15,
+      proposed_image_url_16: template.proposed_image_url_16,
+      proposed_image_url_17: template.proposed_image_url_17,
+      proposed_image_url_18: template.proposed_image_url_18,
+      proposed_image_url_19: template.proposed_image_url_19,
+      proposed_image_url_20: template.proposed_image_url_20,
       selected_proposed_image_url: selectedProposedImage,
       selected_options: finalSelectedOptionsWithLinkedProducts,
       selected_options_price: sourceSelectedOptionsPrice,

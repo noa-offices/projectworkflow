@@ -25,13 +25,20 @@ const imageFields = [
   "proposed_image_url_6",
   "proposed_image_url_7",
   "proposed_image_url_8",
+  "proposed_image_url_9",
+  "proposed_image_url_10",
+  "proposed_image_url_11",
+  "proposed_image_url_12",
+  "proposed_image_url_13",
+  "proposed_image_url_14",
+  "proposed_image_url_15",
+  "proposed_image_url_16",
+  "proposed_image_url_17",
+  "proposed_image_url_18",
+  "proposed_image_url_19",
+  "proposed_image_url_20",
 ] as const;
 const imageFieldSet = new Set(imageFields);
-const directImageFieldSet = new Set([
-  "proposed_image_url_1",
-  "proposed_image_url_2",
-  "proposed_image_url_3",
-]);
 const deskingRoles = new Set([
   "none",
   "base_size",
@@ -512,7 +519,7 @@ function extraTemplateImagePathKey(field: string) {
 }
 
 function templateImageMetadataValue(formData: FormData) {
-  const metadata: Record<string, ReturnType<typeof imageDisplaySettingsValue> | string> = {};
+  const metadata: Record<string, ReturnType<typeof imageDisplaySettingsValue>> = {};
 
   for (const field of imageFields) {
     const rawValue = textValue(formData, `image_settings_${field}`);
@@ -536,14 +543,6 @@ function templateImageMetadataValue(formData: FormData) {
       }
     }
 
-    if (directImageFieldSet.has(field)) {
-      continue;
-    }
-
-    const path = optionalTextValue(formData, field);
-    if (path) {
-      metadata[extraTemplateImagePathKey(field)] = path;
-    }
   }
 
   return Object.keys(metadata).length ? metadata : undefined;
@@ -730,6 +729,10 @@ function accessoryPricingValue(formData: FormData) {
 }
 
 function templatePayload(formData: FormData, userId?: string) {
+  const proposedImageValues = Object.fromEntries(
+    imageFields.map((field) => [field, optionalTextValue(formData, field)]),
+  ) as Record<(typeof imageFields)[number], string | null>;
+
   const payload = {
     brand_id: textValue(formData, "brand_id"),
     main_category_id: optionalTextValue(formData, "main_category_id"),
@@ -741,10 +744,8 @@ function templatePayload(formData: FormData, userId?: string) {
     default_specification: optionalTextValue(formData, "default_specification"),
     origin: optionalTextValue(formData, "origin"),
     supplier_name: optionalTextValue(formData, "supplier_name"),
-    default_image_url: optionalTextValue(formData, "proposed_image_url_1"),
-    proposed_image_url_1: optionalTextValue(formData, "proposed_image_url_1"),
-    proposed_image_url_2: optionalTextValue(formData, "proposed_image_url_2"),
-    proposed_image_url_3: optionalTextValue(formData, "proposed_image_url_3"),
+    default_image_url: proposedImageValues.proposed_image_url_1,
+    ...proposedImageValues,
     reference_image_url: optionalTextValue(formData, "reference_image_url"),
     desking_size_pricing: deskingSizePricingValue(formData),
     variant_pricing: variantPricingValue(formData),
@@ -1708,51 +1709,32 @@ export async function updateProductTemplateImage(formData: FormData) {
   }
 
   const supabase = await createClient();
-  let error: { message?: string } | null = null;
+  const { data: currentTemplate, error: readError } = await supabase
+    .from("product_templates")
+    .select("image_settings")
+    .eq("id", id)
+    .single<{ image_settings: Record<string, unknown> | null }>();
 
-  if (directImageFieldSet.has(field)) {
-    const updates = {
+  if (readError || !currentTemplate) {
+    console.error("PRODUCT TEMPLATE IMAGE READ ERROR", readError?.message);
+    return { ok: false, message: "Product template image could not be saved." };
+  }
+
+  const nextImageSettings = { ...(currentTemplate.image_settings ?? {}) };
+  delete nextImageSettings[extraTemplateImagePathKey(field)];
+
+  const response = await supabase
+    .from("product_templates")
+    .update({
       [field]: path,
       ...(field === "proposed_image_url_1" ? { default_image_url: path } : {}),
-    };
-    const response = await supabase
-      .from("product_templates")
-      .update(updates)
-      .eq("id", id);
-    error = response.error;
-  } else {
-    const { data: currentTemplate, error: readError } = await supabase
-      .from("product_templates")
-      .select("image_settings")
-      .eq("id", id)
-      .single<{ image_settings: Record<string, unknown> | null }>();
+      image_settings: Object.keys(nextImageSettings).length
+        ? nextImageSettings
+        : null,
+    })
+    .eq("id", id);
 
-    if (readError || !currentTemplate) {
-      console.error("PRODUCT TEMPLATE IMAGE READ ERROR", readError?.message);
-      return { ok: false, message: "Product template image could not be saved." };
-    }
-
-    const nextImageSettings = { ...(currentTemplate.image_settings ?? {}) };
-    const pathKey = extraTemplateImagePathKey(field);
-
-    if (path) {
-      nextImageSettings[pathKey] = path;
-    } else {
-      delete nextImageSettings[pathKey];
-      delete nextImageSettings[field];
-    }
-
-    const response = await supabase
-      .from("product_templates")
-      .update({
-        image_settings: Object.keys(nextImageSettings).length
-          ? nextImageSettings
-          : null,
-      })
-      .eq("id", id);
-
-    error = response.error;
-  }
+  const error = response.error;
 
   if (error) {
     console.error("PRODUCT TEMPLATE IMAGE UPDATE ERROR", error.message);
