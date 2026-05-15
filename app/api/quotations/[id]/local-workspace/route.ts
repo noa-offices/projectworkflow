@@ -80,6 +80,19 @@ function numericValue(value: unknown, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function itemQtyValue(item: LocalQuotationItem) {
+  const rounded = integerInRange(item.qty, 0, 100000) ?? 0;
+  if (item.item_type === "blank" || item.item_type === "note") {
+    return rounded;
+  }
+
+  return Math.max(rounded, 1);
+}
+
+function discountTypeValue(value: unknown) {
+  return value === "percent" ? "percent" : value === "none" ? "none" : "amount";
+}
+
 function textOrNull(value: unknown) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -296,11 +309,11 @@ export async function POST(
         supplier_name_snapshot: textOrNull(item.supplier_name_snapshot),
         supplier_notes_snapshot: textOrNull(item.supplier_notes_snapshot),
         allow_material_continuation_page: Boolean(item.allow_material_continuation_page),
-        qty: numericValue(item.qty),
+        qty: itemQtyValue(item),
         unit_label: textOrNull(item.unit_label) ?? "Pc",
         unit_price: numericValue(item.unit_price),
-        discount_type: item.discount_type === "percent" ? "percent" : "amount",
-        discount_value: numericValue(item.discount_value),
+        discount_type: discountTypeValue(item.discount_type),
+        discount_value: discountTypeValue(item.discount_type) === "none" ? 0 : numericValue(item.discount_value),
         net_price: numericValue(item.net_price),
         net_total: numericValue(item.net_total),
         currency: textOrNull(item.currency) ?? workspace.currency,

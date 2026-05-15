@@ -1,6 +1,4 @@
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
-import { quotationMoneyValue } from "@/lib/quotation-pricing";
-
 export type LocalQuotationSection = {
   id: string;
   quotation_id: string;
@@ -149,15 +147,29 @@ function exactMoneyValue(value: unknown) {
   return Math.round(safeValue * 100) / 100;
 }
 
+function normalizedLineQty(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(Math.round(parsed), 0) : 0;
+}
+
 export function itemLinePricing(item: Pick<LocalQuotationItem, "qty" | "unit_price" | "discount_type" | "discount_value">) {
-  const qty = Number.isFinite(item.qty) ? Math.max(item.qty, 0) : 0;
-  const unitPrice = quotationMoneyValue(Number.isFinite(item.unit_price) ? item.unit_price : 0);
+  const qty = normalizedLineQty(item.qty);
+  const unitPrice = exactMoneyValue(Number.isFinite(item.unit_price) ? item.unit_price : 0);
   const rawDiscountValue = exactMoneyValue(Number.isFinite(item.discount_value) ? item.discount_value : 0);
-  const discountValue = item.discount_type === "percent"
+  const discountType = item.discount_type === "percent"
+    ? "percent"
+    : item.discount_type === "none"
+      ? "none"
+      : "amount";
+  const discountValue = discountType === "percent"
     ? Math.min(Math.max(rawDiscountValue, 0), 100)
+    : discountType === "none"
+      ? 0
     : Math.min(Math.max(rawDiscountValue, 0), unitPrice);
-  const discountAmount = item.discount_type === "percent"
+  const discountAmount = discountType === "percent"
     ? exactMoneyValue(unitPrice * discountValue / 100)
+    : discountType === "none"
+      ? 0
     : discountValue;
   const netPrice = exactMoneyValue(Math.max(unitPrice - discountAmount, 0));
   const netTotal = exactMoneyValue(netPrice * qty);
@@ -194,7 +206,7 @@ export function workspaceTotals(workspace: Pick<LocalQuotationWorkspace, "items"
       !["heading", "note", "no_quote"].includes(item.line_style),
   );
   const subtotal = exactMoneyValue(
-    pricedItems.reduce((total, item) => total + exactMoneyValue(item.qty * item.unit_price), 0),
+    pricedItems.reduce((total, item) => total + exactMoneyValue(normalizedLineQty(item.qty) * exactMoneyValue(item.unit_price)), 0),
   );
   const netTotal = exactMoneyValue(
     pricedItems.reduce((total, item) => total + exactMoneyValue(item.net_total), 0),
@@ -223,11 +235,16 @@ export function workspaceTotals(workspace: Pick<LocalQuotationWorkspace, "items"
 export function recalculateWorkspace(workspace: LocalQuotationWorkspace): LocalQuotationWorkspace {
   const items = workspace.items.map((item) => {
     const nextLinePricing = itemLinePricing(item);
+    const normalizedQty = item.item_type === "blank" || item.item_type === "note"
+      ? normalizedLineQty(item.qty)
+      : Math.max(normalizedLineQty(item.qty), 1);
 
     return {
       ...item,
       currency: normalizeCurrency(item.currency || workspace.currency || defaultCurrency),
+      qty: normalizedQty,
       unit_price: nextLinePricing.unitPrice,
+      discount_type: item.discount_type === "percent" ? "percent" : item.discount_type === "none" ? "none" : "amount",
       discount_value: nextLinePricing.discountValue,
       net_price: nextLinePricing.netPrice,
       net_total: nextLinePricing.netTotal,
@@ -351,7 +368,7 @@ export function createEmptyItem(workspace: LocalQuotationWorkspace, itemType: "p
     qty: itemType === "blank" || itemType === "note" ? 0 : 1,
     unit_label: "Pc",
     unit_price: 0,
-    discount_type: "amount",
+    discount_type: "none",
     discount_value: 0,
     net_price: 0,
     net_total: 0,

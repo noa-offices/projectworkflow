@@ -600,15 +600,15 @@ export function FinishSelectionsEditor({
   const visibleMaterials = availableMaterials.filter((material) => !activeOnly || material.is_active !== false);
   const groupedFinishes = selectedFinishGroups(finishes);
   const fitSummary = specificationFitSummary(groupedFinishes);
+  const finishMatchesLink = (finish: DraftFinish, link: ProductTemplateMaterialGroupLink) =>
+    finish.product_template_material_group_id === link.id ||
+    (!finish.product_template_material_group_id && finish.material_group_id === link.material_group_id);
+  const linkedGroupForMaterial = (materialGroupId: string) =>
+    linkedGroups.find((link) => link.material_group_id === materialGroupId);
   const missingRequiredLinkedGroups = linkedGroups.filter((link) => {
     if (!link.is_required) return false;
 
-    return !finishes.some(
-      (finish) =>
-        finish.source_scope === "linked" &&
-        (finish.product_template_material_group_id === link.id ||
-          (!finish.product_template_material_group_id && finish.material_group_id === link.material_group_id)),
-    );
+    return !finishes.some((finish) => finishMatchesLink(finish, link));
   });
   const missingRequiredLinkedGroupLabels = missingRequiredLinkedGroups.map(
     (link) => link.label_override?.trim() || groupsById.get(link.material_group_id)?.group_name || "Required material group",
@@ -722,49 +722,58 @@ export function FinishSelectionsEditor({
     };
   }
 
-  function selectLinkedMaterial(link: ProductTemplateMaterialGroupLink, material: FinishMaterial) {
+  function toggleMaterialSelection({
+    link,
+    material,
+    sourceScope,
+  }: {
+    link?: ProductTemplateMaterialGroupLink;
+    material: FinishMaterial;
+    sourceScope: "linked" | "library";
+  }) {
     setFinishes((current) => {
+      const resolvedLink = link ?? linkedGroupForMaterial(material.material_group_id);
       const existingIndex = current.findIndex(
         (finish) =>
-          finish.source_scope === "linked" &&
-          finish.product_template_material_group_id === link.id &&
-          finish.brand_material_id === material.id,
+          finish.brand_material_id === material.id &&
+          (resolvedLink
+            ? finishMatchesLink(finish, resolvedLink)
+            : finish.material_group_id === material.material_group_id),
       );
 
       if (existingIndex >= 0) {
-        if (link.allow_multiple) {
-          return current.filter((_, index) => index !== existingIndex);
-        }
-
-        return current;
+        return current.filter((_, index) => index !== existingIndex);
       }
 
-      const next = materialDraft({ link, material, rowIndex: current.length, sourceScope: "linked" });
-      const hasDuplicateMaterial = current.some((finish) => finish.brand_material_id === material.id);
-      if (link.allow_multiple && hasDuplicateMaterial) return current;
-      if (link.allow_multiple) return [...current, next];
+      const next = materialDraft({
+        link: resolvedLink,
+        material,
+        rowIndex: current.length,
+        sourceScope,
+      });
+      const hasDuplicateMaterial = current.some(
+        (finish) =>
+          finish.brand_material_id === material.id &&
+          (resolvedLink
+            ? finishMatchesLink(finish, resolvedLink)
+            : finish.material_group_id === material.material_group_id),
+      );
+      if (hasDuplicateMaterial) return current;
+      if (!resolvedLink) {
+        if (current.some((finish) => finish.brand_material_id === material.id)) return current;
+        return [...current, next];
+      }
 
-      return [
-        ...current.filter(
-          (finish) =>
-            finish.product_template_material_group_id !== link.id &&
-            finish.material_group_id !== link.material_group_id &&
-            finish.brand_material_id !== material.id,
-        ),
-        next,
-      ];
+      return [...current, next];
     });
   }
 
-  function selectLibraryMaterial(material: FinishMaterial) {
-    setFinishes((current) => {
-      if (current.some((finish) => finish.brand_material_id === material.id)) return current;
+  function selectLinkedMaterial(link: ProductTemplateMaterialGroupLink, material: FinishMaterial) {
+    toggleMaterialSelection({ link, material, sourceScope: "linked" });
+  }
 
-      return [
-        ...current,
-        materialDraft({ material, rowIndex: current.length, sourceScope: "library" }),
-      ];
-    });
+  function selectLibraryMaterial(material: FinishMaterial) {
+    toggleMaterialSelection({ material, sourceScope: "library" });
   }
 
   return (
@@ -914,16 +923,12 @@ export function FinishSelectionsEditor({
             const selectedMaterialIds = new Set(
               finishes
                 .filter(
-                  (finish) =>
-                    finish.source_scope === "linked" &&
-                    (finish.product_template_material_group_id === link.id ||
-                      (!finish.product_template_material_group_id && finish.material_group_id === link.material_group_id)),
+                  (finish) => finishMatchesLink(finish, link),
                 )
                 .map((finish) => finish.brand_material_id)
                 .filter((value): value is string => Boolean(value)),
             );
             const selectedCount = selectedMaterialIds.size;
-            const hasSelection = selectedCount > 0;
 
             return (
               <section key={link.id} className="border border-zinc-200 bg-zinc-50 p-3">
@@ -932,7 +937,7 @@ export function FinishSelectionsEditor({
                     <h4 className="text-sm font-bold text-zinc-900">{label}</h4>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-zinc-500">
                       <span className="border border-zinc-200 bg-white px-1.5 py-0.5 font-bold uppercase text-zinc-600">
-                        {link.allow_multiple ? "MULTIPLE SELECTION" : "SINGLE SELECTION"}
+                        MULTIPLE SELECTION
                       </span>
                       <span>{link.is_required ? "Required" : "Optional"}</span>
                       <span>Spec {link.show_in_specification ? "Yes" : "No"}</span>
@@ -947,8 +952,8 @@ export function FinishSelectionsEditor({
                   <MaterialGrid
                     brandsById={brandsById}
                     getActionLabel={(material) => {
-                      if (selectedMaterialIds.has(material.id)) return link.allow_multiple ? "Remove" : "Selected";
-                      return link.allow_multiple || !hasSelection ? "Select" : "Replace";
+                      if (selectedMaterialIds.has(material.id)) return "SELECTED";
+                      return "SELECT";
                     }}
                     groupLabel={label}
                     isMaterialSelected={(material) => selectedMaterialIds.has(material.id)}

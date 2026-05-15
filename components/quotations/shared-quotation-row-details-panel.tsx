@@ -53,6 +53,11 @@ function checkboxValue(value: boolean | null | undefined) {
   return value === true;
 }
 
+function integerFieldValue(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(Math.round(parsed), 0) : 0;
+}
+
 function SharedField({
   className,
   label,
@@ -233,6 +238,10 @@ export function SharedQuotationRowDetailsPanel({
   basicHint,
   currencyFieldName,
   currencyOptions,
+  discountTypeOptions = [
+    { label: "Amount", value: "amount" },
+    { label: "Percent", value: "percent" },
+  ],
   extraSectionsAfterImages,
   extraSectionsBeforeSpecification,
   imageActions,
@@ -248,6 +257,7 @@ export function SharedQuotationRowDetailsPanel({
   basicHint?: ReactNode;
   currencyFieldName?: string | null;
   currencyOptions: ReadonlyArray<{ code: string; label: string }>;
+  discountTypeOptions?: ReadonlyArray<{ label: string; value: string }>;
   extraSectionsAfterImages?: ReactNode;
   extraSectionsBeforeSpecification?: ReactNode;
   imageActions?: ReactNode;
@@ -293,7 +303,7 @@ export function SharedQuotationRowDetailsPanel({
             label="Qty"
             mode={mode}
             name="qty"
-            onValueChange={(value) => onFieldChange?.({ qty: Number(value) || 0 })}
+            onValueChange={(value) => onFieldChange?.({ qty: integerFieldValue(value) })}
             step="1"
             type="number"
             value={item.qty ?? 0}
@@ -310,6 +320,7 @@ export function SharedQuotationRowDetailsPanel({
             mode={mode}
             name="unit_price"
             onValueChange={(value) => onFieldChange?.({ unit_price: Number(value) || 0 })}
+            step="any"
             type="number"
             value={item.unit_price ?? 0}
           />
@@ -325,12 +336,9 @@ export function SharedQuotationRowDetailsPanel({
             label="Discount type"
             mode={mode}
             name="discount_type"
-            onValueChange={(value) => onFieldChange?.({ discount_type: value })}
-            options={[
-              { label: "Amount", value: "amount" },
-              { label: "Percent", value: "percent" },
-            ]}
-            value={item.discount_type ?? "amount"}
+            onValueChange={(value) => onFieldChange?.({ discount_type: value, discount_value: value === "none" ? 0 : (item.discount_value ?? 0) })}
+            options={discountTypeOptions}
+            value={item.discount_type ?? discountTypeOptions[0]?.value ?? "amount"}
           />
           <SharedField
             label="Discount"

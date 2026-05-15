@@ -1181,7 +1181,6 @@ function TemplateMaterialGroupForm({
       </fieldset>
       <div className="flex flex-wrap items-end gap-4 md:col-span-2 xl:col-span-4">
         <Checkbox name="is_required" label="Required" defaultChecked={link?.is_required ?? false} />
-        <Checkbox name="allow_multiple" label="Allow multiple" defaultChecked={link?.allow_multiple ?? false} />
         <Checkbox name="show_in_specification" label="Show in Specification" defaultChecked={link?.show_in_specification ?? true} />
         <Checkbox name="show_in_quotation" label="Show in Quotation" defaultChecked={link?.show_in_quotation ?? false} />
         {link ? <Checkbox name="is_active" label="Active" defaultChecked={link.is_active} /> : null}
@@ -3290,6 +3289,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         const modeLabel = link.selection_mode === "selected_items"
                           ? `Selected finishes only · ${selectedCount} selected`
                           : "Full group";
+                        const selectionCountLabel = "Multiple selection";
 
                         return (
                           <div
@@ -3302,8 +3302,16 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                 <p className="font-semibold text-zinc-950">
                                   {link.label_override || materialGroup?.group_name || "Material group"}
                                 </p>
+                                <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold uppercase">
+                                  <span className="rounded border border-zinc-200 bg-white px-2 py-1 text-zinc-600">
+                                    {selectionCountLabel}
+                                  </span>
+                                  <span className="rounded border border-zinc-200 bg-white px-2 py-1 text-zinc-500">
+                                    {modeLabel}
+                                  </span>
+                                </div>
                                 <p className="mt-1 text-xs leading-5 text-zinc-500">
-                                  {modeLabel}. {link.is_required ? "Required" : "Optional"}. {link.allow_multiple ? "Allows multiple" : "Single selection"}. {link.show_in_specification ? "Shows in specification" : "Hidden from specification"}. {link.show_in_quotation ? "Shows in quotation" : "Hidden from quotation"}.
+                                  {link.is_required ? "Required" : "Optional"}. {link.show_in_specification ? "Shows in specification" : "Hidden from specification"}. {link.show_in_quotation ? "Shows in quotation" : "Hidden from quotation"}.
                                 </p>
                               </div>
                               <DeactivateTemplateMaterialGroupForm

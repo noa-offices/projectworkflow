@@ -42,9 +42,14 @@ import {
   specificationWithoutDuplicateCode,
 } from "@/lib/quotations/format-quotation-row";
 import { formatMoney } from "@/lib/currencies";
-import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 
 type BuilderView = "client" | "internal";
+type LocalQuotationItemPatch = Partial<Omit<LocalQuotationItem, "qty" | "unit_price" | "discount_type" | "discount_value">> & {
+  qty?: number | string;
+  unit_price?: number | string;
+  discount_type?: string | null;
+  discount_value?: number | string;
+};
 
 const allColumns = [
   { key: "s_no", label: "S. No.", defaultWidth: 54, align: "center" },
@@ -551,13 +556,13 @@ function rowLocalStatus(
 }
 
 function sectionSubtotal(items: LocalQuotationItem[]) {
-  return quotationMoneyValue(
+  return exactMoneyValue(
     items
       .filter((item) => item.is_active !== false)
       .filter((item) => !item.is_rate_only)
       .filter((item) => !["note", "blank", "subtotal"].includes(item.item_type))
       .filter((item) => !["heading", "note", "no_quote"].includes(item.line_style))
-      .reduce((total, item) => total + quotationMoneyValue(item.net_total), 0),
+      .reduce((total, item) => total + exactMoneyValue(item.net_total), 0),
   );
 }
 
@@ -568,15 +573,45 @@ function exactMoneyValue(value: unknown) {
   return Math.round(safeValue * 100) / 100;
 }
 
-function lineDiscountAmountPerUnit(item: LocalQuotationItem) {
-  return exactMoneyValue(Math.max(exactMoneyValue(item.unit_price) - exactMoneyValue(item.net_price), 0));
+function tableNumberValue(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
 }
 
-function formatExactQuotationMoney(currency: string | null | undefined, value: unknown) {
+function formatTableNumber(value: unknown) {
+  return tableNumberValue(value).toLocaleString("en-US", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+  });
+}
+
+function formatWorkspaceMoney(currency: string | null | undefined, value: unknown) {
   return formatMoney(currency, exactMoneyValue(value), {
     maximumFractionDigits: 2,
     minimumFractionDigits: 0,
   });
+}
+
+function normalizedRowQty(item: LocalQuotationItem, value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return item.item_type === "blank" || item.item_type === "note" ? 0 : 1;
+  }
+
+  const wholeNumber = Math.max(Math.round(parsed), 0);
+  if (item.item_type === "blank" || item.item_type === "note") {
+    return wholeNumber;
+  }
+
+  return Math.max(wholeNumber, 1);
+}
+
+function normalizedDiscountType(value: unknown) {
+  return value === "percent" ? "percent" : value === "amount" ? "amount" : "none";
+}
+
+function lineDiscountAmountPerUnit(item: LocalQuotationItem) {
+  return exactMoneyValue(Math.max(exactMoneyValue(item.unit_price) - exactMoneyValue(item.net_price), 0));
 }
 
 function InsertSectionRow({
@@ -614,7 +649,7 @@ function SectionTotalRow({ currency, total, totalColumns }: { currency: string; 
     <tr>
       <td colSpan={totalColumns} className="border border-zinc-300 bg-zinc-50 px-3 py-2 text-right text-xs font-bold uppercase tracking-wide text-zinc-700">
         <span className="mr-4 text-zinc-500">Section Total</span>
-        <span className="text-zinc-950">{formatQuotationMoney(currency, total)}</span>
+        <span className="text-zinc-950">{formatWorkspaceMoney(currency, total)}</span>
       </td>
     </tr>
   );
@@ -625,7 +660,7 @@ function MainSectionTotalRow({ currency, label, total, totalColumns }: { currenc
     <tr>
       <td colSpan={totalColumns} className="border border-zinc-950 bg-zinc-950 px-3 py-2 text-right text-sm font-bold uppercase tracking-wide text-white">
         <span className="mr-4">{label || "Main Section"} Total</span>
-        <span>{formatQuotationMoney(currency, total)}</span>
+        <span>{formatWorkspaceMoney(currency, total)}</span>
       </td>
     </tr>
   );
@@ -845,11 +880,33 @@ export function LocalQuotationBuilder({
     }
   }
 
-  function updateItem(itemId: string, patch: Partial<LocalQuotationItem>) {
+  function updateItem(itemId: string, patch: LocalQuotationItemPatch) {
     const currentItem = workspace.items.find((item) => item.id === itemId);
     if (!currentItem) return;
+    const normalizedPatch = { ...patch };
 
-    const hasMeaningfulChange = Object.entries(patch).some(([key, value]) =>
+    if (Object.prototype.hasOwnProperty.call(normalizedPatch, "qty")) {
+      normalizedPatch.qty = normalizedRowQty(currentItem, normalizedPatch.qty);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(normalizedPatch, "unit_price")) {
+      normalizedPatch.unit_price = exactMoneyValue(Math.max(tableNumberValue(normalizedPatch.unit_price), 0));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(normalizedPatch, "discount_type")) {
+      normalizedPatch.discount_type = normalizedDiscountType(normalizedPatch.discount_type);
+      if (normalizedPatch.discount_type === "none") {
+        normalizedPatch.discount_value = 0;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(normalizedPatch, "discount_value")) {
+      normalizedPatch.discount_value = exactMoneyValue(Math.max(tableNumberValue(normalizedPatch.discount_value), 0));
+    }
+
+    const committedPatch = normalizedPatch as Partial<LocalQuotationItem>;
+
+    const hasMeaningfulChange = Object.entries(committedPatch).some(([key, value]) =>
       !valuesEqual(currentItem[key as keyof LocalQuotationItem], value),
     );
 
@@ -858,7 +915,7 @@ export function LocalQuotationBuilder({
     setRecentEditedRowId(itemId);
     commit((current) => ({
       ...current,
-      items: current.items.map((item) => (item.id === itemId ? { ...item, ...patch, updated_at: localNow() } : item)),
+      items: current.items.map((item) => (item.id === itemId ? { ...item, ...committedPatch, updated_at: localNow() } : item)),
     }));
   }
 
@@ -1094,7 +1151,7 @@ export function LocalQuotationBuilder({
               <button type="button" onClick={() => setView("internal")} className={`border-l border-zinc-300 px-3 py-2 ${view === "internal" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"}`}>Internal View</button>
             </div>
             <div className="border border-emerald-900 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-950">
-              Final Total: {formatQuotationMoney(workspace.currency, workspace.totals.grand_total)}
+              Final Total: {formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total)}
             </div>
           </div>
         </div>
@@ -1371,21 +1428,21 @@ export function LocalQuotationBuilder({
                               </td>}
                               {isColVisible("qty") && <td className={`${compactCellClassName} break-words text-center`}>
                                 <div className="grid h-full items-center">
-                                  <input type="number" min={0} step="0.01" value={item.qty} onChange={(event) => updateItem(item.id, { qty: Number(event.target.value) || 0 })} className="w-full bg-transparent text-center text-xs outline-none" />
+                                  <input type="number" min={item.item_type === "blank" || item.item_type === "note" ? 0 : 1} step="1" value={item.qty} onChange={(event) => updateItem(item.id, { qty: event.target.value })} className="w-full bg-transparent text-center text-xs outline-none" />
                                 </div>
                               </td>}
                               {isColVisible("unit_price") && <td className={`${compactCellClassName} break-words text-center`}>
                                 <div className="grid h-full items-center">
-                                  <input type="number" min={0} step="0.01" value={item.unit_price} onChange={(event) => updateItem(item.id, { unit_price: Number(event.target.value) || 0 })} className="w-full bg-transparent text-center text-xs outline-none" />
+                                  <input type="number" min={0} step="any" value={item.unit_price} onChange={(event) => updateItem(item.id, { unit_price: event.target.value })} className="w-full bg-transparent text-center text-xs outline-none" />
                                 </div>
                               </td>}
                               {isColVisible("discount_amount") && <td className={`${compactCellClassName} break-words text-center`}>
                                 <div className="grid h-full content-center text-center text-xs">
-                                  {formatExactQuotationMoney(item.currency || workspace.currency, lineDiscountAmountPerUnit(item))}
+                                  {formatTableNumber(lineDiscountAmountPerUnit(item))}
                                 </div>
                               </td>}
-                              {isColVisible("net_price") && <td className={`${compactCellClassName} break-words text-center text-xs`}>{formatQuotationMoney(item.currency || workspace.currency, item.net_price)}</td>}
-                              {isColVisible("net_total") && <td className={`${compactCellClassName} break-words text-center text-xs font-semibold`}>{formatQuotationMoney(item.currency || workspace.currency, item.net_total)}</td>}
+                              {isColVisible("net_price") && <td className={`${compactCellClassName} break-words text-center text-xs`}>{formatTableNumber(item.net_price)}</td>}
+                              {isColVisible("net_total") && <td className={`${compactCellClassName} break-words text-center text-xs font-semibold`}>{formatTableNumber(item.net_total)}</td>}
                               {isColVisible("edit") && <td className="border border-zinc-300 px-2 py-2 align-middle text-center">
                                 <div className="grid h-full min-h-full content-center justify-items-center gap-1.5" data-preserve-anchor={`item-${item.id}`}>
                                   <button
@@ -1425,6 +1482,11 @@ export function LocalQuotationBuilder({
                                             { code: "AED", label: "AED" },
                                             { code: "USD", label: "USD" },
                                             { code: "EUR", label: "EUR" },
+                                          ]}
+                                          discountTypeOptions={[
+                                            { label: "None", value: "none" },
+                                            { label: "Percent", value: "percent" },
+                                            { label: "Amount", value: "amount" },
                                           ]}
                                           extraSectionsAfterImages={(
                                             <>
@@ -1476,7 +1538,7 @@ export function LocalQuotationBuilder({
                                                   </div>
                                                   <div>
                                                     <p className="text-[10px] font-semibold uppercase text-zinc-500">Quotation row price</p>
-                                                    <p className="text-zinc-800">{formatQuotationMoney(item.currency || workspace.currency, item.unit_price)}</p>
+                                                    <p className="text-zinc-800">{formatWorkspaceMoney(item.currency || workspace.currency, item.unit_price)}</p>
                                                   </div>
                                                   <div>
                                                     <p className="text-[10px] font-semibold uppercase text-zinc-500">Source type</p>
@@ -1499,7 +1561,7 @@ export function LocalQuotationBuilder({
                                                     <p className="text-zinc-800">
                                                       {snapshotDetails.convertedQuotePrice
                                                         ? `${snapshotDetails.quoteCurrency} ${snapshotDetails.convertedQuotePrice}`
-                                                        : formatQuotationMoney(item.currency || workspace.currency, item.unit_price)}
+                                                        : formatWorkspaceMoney(item.currency || workspace.currency, item.unit_price)}
                                                     </p>
                                                   </div>
                                                   <div className="md:col-span-2 xl:col-span-3">
@@ -1684,11 +1746,11 @@ export function LocalQuotationBuilder({
             </p>
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">Total Price</span>
-              <span>{formatQuotationMoney(workspace.currency, workspace.totals.subtotal)}</span>
+              <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.subtotal)}</span>
             </div>
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">Total Discount</span>
-              <span>{formatQuotationMoney(workspace.currency, workspace.totals.discount_total + workspace.totals.overall_discount_amount)}</span>
+              <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.discount_total + workspace.totals.overall_discount_amount)}</span>
             </div>
             <div className="border-b border-zinc-300 bg-zinc-50 px-3 py-3">
               <div className="grid gap-3 sm:grid-cols-[120px_1fr_120px]">
@@ -1702,11 +1764,11 @@ export function LocalQuotationBuilder({
             </div>
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">VAT {workspace.vat_percent}%</span>
-              <span>{formatQuotationMoney(workspace.currency, workspace.totals.vat_amount)}</span>
+              <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.vat_amount)}</span>
             </div>
             <div className="flex justify-between bg-emerald-950 px-3 py-3 text-base font-bold text-white">
               <span>Final Total</span>
-              <span>{formatQuotationMoney(workspace.currency, workspace.totals.grand_total)}</span>
+              <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total)}</span>
             </div>
           </div>
         </section>

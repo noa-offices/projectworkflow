@@ -304,6 +304,14 @@ function finishSnapshotValue(finishes: FinishSelectionEditorRow[]) {
     .join("\n");
 }
 
+function finishSelectionLabel(finish: FinishSelectionEditorRow) {
+  const itemLabel = [finish.finish_code, finish.finish_name].filter(Boolean).join(" | ").trim() ||
+    finish.finish_description ||
+    "Selected finish";
+
+  return `${finish.group_label || "Finish"} - ${itemLabel}`;
+}
+
 function priceCheckState(template: ProductLibraryTemplate, brandName?: string | null) {
   return productTemplatePriceCheckState({
     brandName,
@@ -407,6 +415,31 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
         },
       ]
     : groups;
+}
+
+function matchesTemplateSearch({
+  brandNameById,
+  categoryNameById,
+  normalizedSearch,
+  template,
+}: {
+  brandNameById: Map<string, string>;
+  categoryNameById: Map<string, string>;
+  normalizedSearch: string;
+  template: ProductLibraryTemplate;
+}) {
+  return [
+    template.template_name,
+    template.item_code,
+    template.template_code,
+    template.description,
+    template.default_specification,
+    brandNameById.get(template.brand_id),
+    template.main_category_id ? categoryNameById.get(template.main_category_id) : null,
+    template.sub_category_id ? categoryNameById.get(template.sub_category_id) : null,
+  ]
+    .filter(Boolean)
+    .some((value) => value?.toLowerCase().includes(normalizedSearch));
 }
 
 function deskingRole(component: ProductLibraryComponent) {
@@ -674,28 +707,27 @@ export function ProductLibrarySelector({
     return map;
   }, [components]);
   const normalizedSearch = search.trim().toLowerCase();
+  const hasSearch = normalizedSearch.length > 0;
   const filteredTemplates = templates.filter((template) => {
+    const matchesSearch = !hasSearch || matchesTemplateSearch({
+      brandNameById,
+      categoryNameById,
+      normalizedSearch,
+      template,
+    });
+
+    if (hasSearch) {
+      return matchesSearch;
+    }
+
     if (brandId && template.brand_id !== brandId) return false;
     if (categoryId && template.main_category_id !== categoryId) return false;
     if (subcategoryId && template.sub_category_id !== subcategoryId) return false;
 
-    if (!normalizedSearch) return true;
-
-    return [
-      template.template_name,
-      template.item_code,
-      template.template_code,
-      template.description,
-      template.default_specification,
-      brandNameById.get(template.brand_id),
-      template.main_category_id ? categoryNameById.get(template.main_category_id) : null,
-      template.sub_category_id ? categoryNameById.get(template.sub_category_id) : null,
-    ]
-      .filter(Boolean)
-      .some((value) => value?.toLowerCase().includes(normalizedSearch));
+    return true;
   });
   const selectedTemplate = selectedTemplateId
-    ? filteredTemplates.find((template) => template.id === selectedTemplateId) ?? null
+    ? templateById.get(selectedTemplateId) ?? null
     : null;
   const finishBrands: FinishMaterialBrand[] = brands;
   const productCountByBrand = useMemo(() => {
@@ -753,74 +785,83 @@ export function ProductLibrarySelector({
               </button>
             </div>
 
-            <div className="grid shrink-0 gap-2 border-b border-zinc-200 bg-zinc-50 p-3 md:grid-cols-[minmax(220px,1fr)_170px_170px_170px_80px]">
-              <input
-                type="search"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search products..."
-                className="h-9 border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-emerald-800"
-              />
-              <select
-                value={brandId}
-                onChange={(event) => {
-                  setBrandId(event.target.value);
-                  setCategoryId("");
-                  setSubcategoryId("");
-                }}
-                className="h-9 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
-              >
-                <option value="">All brands</option>
-                {brands.map((brand) => (
-                  <option key={brand.id} value={brand.id}>
-                    {brand.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={categoryId}
-                onChange={(event) => {
-                  setCategoryId(event.target.value);
-                  setSubcategoryId("");
-                }}
-                className="h-9 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
-              >
-                <option value="">All categories</option>
-                {visibleMainCategories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={subcategoryId}
-                onChange={(event) => setSubcategoryId(event.target.value)}
-                className="h-9 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
-              >
-                <option value="">All subcategories</option>
-                {visibleSubcategories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={() => {
-                  setBrandId("");
-                  setCategoryId("");
-                  setSubcategoryId("");
-                  setSearch("");
-                  setSelectedTemplateId("");
-                }}
-                className="h-9 border border-zinc-300 bg-white px-2 text-xs font-semibold text-zinc-600 transition hover:border-zinc-400"
-              >
-                Reset
-              </button>
-            </div>
+            {!selectedTemplate ? (
+              <>
+                <div className="grid shrink-0 gap-2 border-b border-zinc-200 bg-zinc-50 p-3 md:grid-cols-[minmax(220px,1fr)_170px_170px_170px_80px]">
+                  <input
+                    type="search"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Search products..."
+                    className="h-9 border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-emerald-800"
+                  />
+                  <select
+                    value={brandId}
+                    onChange={(event) => {
+                      setBrandId(event.target.value);
+                      setCategoryId("");
+                      setSubcategoryId("");
+                    }}
+                    className={`h-9 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 ${hasSearch ? "opacity-60" : ""}`}
+                  >
+                    <option value="">All brands</option>
+                    {brands.map((brand) => (
+                      <option key={brand.id} value={brand.id}>
+                        {brand.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={categoryId}
+                    onChange={(event) => {
+                      setCategoryId(event.target.value);
+                      setSubcategoryId("");
+                    }}
+                    className={`h-9 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 ${hasSearch ? "opacity-60" : ""}`}
+                  >
+                    <option value="">All categories</option>
+                    {visibleMainCategories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={subcategoryId}
+                    onChange={(event) => setSubcategoryId(event.target.value)}
+                    className={`h-9 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 ${hasSearch ? "opacity-60" : ""}`}
+                  >
+                    <option value="">All subcategories</option>
+                    {visibleSubcategories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBrandId("");
+                      setCategoryId("");
+                      setSubcategoryId("");
+                      setSearch("");
+                      setSelectedTemplateId("");
+                    }}
+                    className="h-9 border border-zinc-300 bg-white px-2 text-xs font-semibold text-zinc-600 transition hover:border-zinc-400"
+                  >
+                    Reset
+                  </button>
+                </div>
+                {hasSearch ? (
+                  <div className="shrink-0 border-b border-zinc-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900">
+                    Searching across all products
+                  </div>
+                ) : null}
+              </>
+            ) : null}
 
-            <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[220px_minmax(320px,1fr)_420px]">
-              <aside className="min-h-0 overflow-y-auto border-b border-zinc-200 bg-zinc-50 p-3 lg:border-b-0 lg:border-r">
+            <div className={`grid min-h-0 flex-1 overflow-hidden ${selectedTemplate ? "grid-cols-1" : "lg:grid-cols-[220px_minmax(320px,1fr)_420px]"}`}>
+              <aside className={`${selectedTemplate ? "hidden" : "min-h-0 overflow-y-auto border-b border-zinc-200 bg-zinc-50 p-3 lg:border-b-0 lg:border-r"}`}>
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <p className="text-[11px] font-bold uppercase text-zinc-500">Library</p>
                   <span className="text-[11px] font-semibold text-zinc-500">{templates.length} products</span>
@@ -900,7 +941,7 @@ export function ProductLibrarySelector({
                 </div>
               </aside>
 
-              <section className="min-h-0 overflow-y-auto border-b border-zinc-200 p-3 lg:border-b-0 lg:border-r">
+              <section className={`${selectedTemplate ? "hidden" : "min-h-0 overflow-y-auto border-b border-zinc-200 p-3 lg:border-b-0 lg:border-r"}`}>
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <p className="text-[11px] font-bold uppercase text-zinc-500">Products</p>
                   <span className="text-xs font-semibold text-zinc-500">{filteredTemplates.length} found</span>
@@ -977,7 +1018,7 @@ export function ProductLibrarySelector({
                 </div>
               </section>
 
-              <section className="min-h-0 overflow-y-auto bg-white">
+              <section className={`min-h-0 overflow-y-auto bg-white ${selectedTemplate ? "" : ""}`}>
                 {!selectedTemplate ? (
                   <div className="flex min-h-full items-center justify-center p-6 text-center text-sm text-zinc-500">
                     Select a product to configure and add it.
@@ -1636,15 +1677,136 @@ export function ProductLibrarySelector({
                     updated_at: localNow(),
                     source_item_id: null,
                   };
+                  const mainItemCurrency = normalizeCurrency(
+                    usesWorkstationFlow
+                      ? selectedSizeRow?.currency ?? rowCurrency
+                      : rowCurrency,
+                  );
+                  const mainItemUnitPrice = quotationMoneyValue(
+                    usesWorkstationFlow
+                      ? numberValue(selectedSizeRow?.default_price)
+                      : baseProductPrice,
+                  );
+                  const mainItemLabel = usesWorkstationFlow
+                    ? selectedSizeRow?.label ?? selectedSizeRow?.id ?? template.template_name
+                    : selectedCategoryRow
+                      ? `${selectedCategoryRow.variant_name} / ${selectedFabricCategory}`
+                      : selectedVariantRow?.variant_name ?? template.template_name;
+                  const mainItemDimension = usesWorkstationFlow
+                    ? selectedSizeRow?.label ?? derivedDesking?.dimension ?? null
+                    : selectedCategoryRow?.dimension ?? selectedVariantRow?.dimension ?? localDimension;
+                  const additionalClusterLine =
+                    usesWorkstationFlow && selectedSizeRow && additionalClusterQty > 0
+                      ? {
+                          currency: normalizeCurrency(selectedSizeRow.currency ?? rowCurrency),
+                          label: `Additional ${derivedDesking?.clusterName ?? "CL2"}`,
+                          qty: additionalClusterQty,
+                          total: quotationMoneyValue(numberValue(selectedSizeRow.additional_price) * additionalClusterQty),
+                          unitPrice: quotationMoneyValue(numberValue(selectedSizeRow.additional_price)),
+                        }
+                      : null;
+                  const workstationOptionalLine = selectedWorkstationVariantRow
+                    ? {
+                        currency: normalizeCurrency(selectedWorkstationVariantRow.currency ?? rowCurrency),
+                        detail: selectedWorkstationVariantRow.dimension ?? selectedWorkstationVariantRow.specification ?? null,
+                        label: selectedWorkstationVariantRow.variant_name,
+                        qty: 1,
+                        total: quotationMoneyValue(selectedWorkstationVariantPrice),
+                        unitPrice: quotationMoneyValue(selectedWorkstationVariantPrice),
+                      }
+                    : null;
+                  const pricingAccessorySummary = selectedPricingAccessories.map((line) => ({
+                    currency: normalizeCurrency(line.accessory.currency ?? rowCurrency),
+                    detail: line.accessory.specification ?? line.groupName,
+                    label: line.accessory.item_name || "Accessory",
+                    qty: line.qty,
+                    total: quotationMoneyValue(line.qty * numberValue(line.accessory.price)),
+                    unitPrice: quotationMoneyValue(numberValue(line.accessory.price)),
+                  }));
+                  const linkedProductSummary = selectedLinkedProducts
+                    .filter((line) => line.qty > 0)
+                    .map((line) => ({
+                      currency: normalizeCurrency(line.currency),
+                      detail: [
+                        line.childVariantRow?.variant_name ??
+                          (line.childCategoryRow ? `${line.childCategoryRow.variant_name} / ${line.childCategory}` : null),
+                        line.childCategoryRow?.dimension ?? line.childVariantRow?.dimension ?? null,
+                      ]
+                        .filter(Boolean)
+                        .join(" - "),
+                      label: line.childTemplate.template_name,
+                      qty: line.qty,
+                      total: quotationMoneyValue(line.baseLineTotal),
+                      unitPrice: quotationMoneyValue(line.unitPrice),
+                    }));
+                  const linkedAccessorySummary = selectedLinkedProducts.flatMap((line) =>
+                    line.qty > 0
+                      ? line.selectedAccessories.map((accessoryLine) => ({
+                          currency: normalizeCurrency(accessoryLine.accessory.currency ?? line.currency),
+                          detail: line.childTemplate.template_name,
+                          label: accessoryLine.accessory.item_name || "Accessory",
+                          qty: accessoryLine.qty,
+                          total: quotationMoneyValue(accessoryLine.qty * numberValue(accessoryLine.accessory.price)),
+                          unitPrice: quotationMoneyValue(numberValue(accessoryLine.accessory.price)),
+                        }))
+                      : [],
+                  );
+                  const selectedFinishSummary = selectedFinishes
+                    .filter((finish) => Boolean(
+                      finish.finish_code ||
+                      finish.finish_name ||
+                      finish.finish_description,
+                    ))
+                    .map((finish) => finishSelectionLabel(finish));
+                  const sourceTotalsList = Array.from(originalCurrencyTotals.entries())
+                    .filter(([, amount]) => amount > 0)
+                    .map(([currency, amount]) => ({
+                      amount: quotationMoneyValue(amount),
+                      currency: normalizeCurrency(currency),
+                    }));
+                  const specificationPreviewLines = [
+                    localSpecification || null,
+                    localDimension ? `Dimension: ${localDimension}` : null,
+                  ].filter(Boolean);
 
                   return (
                     <article
                       key={template.id}
-                      className="flex min-h-full flex-col gap-3 bg-white p-3"
+                      className="min-h-full bg-zinc-50"
                     >
-                      <ProductThumbnail path={selectedImage || null} selected />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
+                      <div className="sticky top-0 z-10 border-b border-zinc-200 bg-white px-4 py-4 shadow-sm lg:px-6">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTemplateId("")}
+                          className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-700"
+                        >
+                          {"< Back to products"}
+                        </button>
+                        <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                          Product Library / {brandNameById.get(template.brand_id) ?? "Unknown brand"}
+                          {mainCategory ? ` / ${mainCategory}` : ""}
+                          {subCategory ? ` / ${subCategory}` : ""}
+                          {` / ${template.template_name}`}
+                        </p>
+                        <div className="mt-3 flex flex-wrap items-center gap-3">
+                          <h3 className="text-lg font-semibold text-zinc-950">
+                            {template.template_name}
+                          </h3>
+                          <PriceCheckBadge brandName={brandNameById.get(template.brand_id)} template={template} />
+                        </div>
+                      </div>
+                      <form
+                        action={addProductTemplateToQuotation}
+                        className="grid gap-4 p-4 lg:p-6 xl:grid-cols-[minmax(0,1fr)_320px]"
+                      >
+                        <div className="min-w-0 space-y-4">
+                          <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                            <div className="grid gap-4 sm:grid-cols-[80px_minmax(0,1fr)]">
+                              <div className="flex justify-center sm:justify-start">
+                                <ProductThumbnail path={selectedImage || null} selected />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-semibold text-zinc-950">
                             {template.template_name}
                           </h3>
@@ -1664,12 +1826,12 @@ export function ProductLibrarySelector({
                             template.description ??
                             "No specification yet."}
                         </p>
-                        {proposedImages.length ? (
-                          <div className="mt-3">
-                            <p className="text-[10px] font-bold uppercase text-zinc-500">
-                              Proposed Item Reference Images
-                            </p>
-                            <div className="mt-2 flex flex-wrap gap-2">
+                                {proposedImages.length ? (
+                                  <div className="mt-3">
+                                    <p className="text-[10px] font-bold uppercase text-zinc-500">
+                                      Proposed Item Reference Images
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap gap-2">
                               {proposedImages.map((imagePath, imageIndex) => (
                                 <button
                                   key={`${imagePath}-${imageIndex}`}
@@ -1692,9 +1854,24 @@ export function ProductLibrarySelector({
                                   </span>
                                 </button>
                               ))}
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </div>
                             </div>
-                          </div>
-                        ) : null}
+                          </section>
+                          <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                                  Configuration
+                                </p>
+                                <p className="mt-1 text-xs leading-5 text-zinc-500">
+                                  Configure size, pricing, accessories, linked items, and required selections.
+                                </p>
+                              </div>
+                            </div>
+                            <div className="space-y-4">
                         {usesWorkstationFlow ? (
                           <div className="mt-4 space-y-2">
                             <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
@@ -2371,21 +2548,179 @@ export function ProductLibrarySelector({
                               })}
                           </div>
                         ) : null}
-                      </div>
-                      <div className="flex shrink-0 flex-col gap-3 border-t border-zinc-200 pt-3 text-left">
-                        <div className="grid gap-1">
-                          <p className="text-sm font-semibold text-zinc-950">
-                            {formatQuotationMoney(previewCurrency, previewUnitPriceWithConversion)}
-                          </p>
-                          <PriceCheckBadge brandName={brandNameById.get(template.brand_id)} template={template} />
+                            </div>
+                          </section>
+                        </div>
+                        <aside className="xl:sticky xl:top-24 xl:self-start">
+                          <div className="space-y-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                            <div className="grid gap-1">
+                              <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                                Quotation Preview / Summary
+                              </p>
+                              <p className="text-xs leading-5 text-zinc-500">
+                                Review the exact selected items, source totals, conversion, discount, and specification before adding.
+                              </p>
+                            </div>
+                            <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                              <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-600">
+                                Selected items
+                              </p>
+                              <div className="rounded-lg border border-zinc-200 bg-white p-3 text-xs leading-5 text-zinc-700">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p className="font-semibold text-zinc-950">{template.template_name}</p>
+                                    <p>{mainItemLabel}</p>
+                                    {mainItemDimension ? (
+                                      <p className="text-zinc-500">Dimension: {mainItemDimension}</p>
+                                    ) : null}
+                                  </div>
+                                  <div className="shrink-0 text-right">
+                                    <p>{formatMoney(mainItemCurrency, mainItemUnitPrice)} x 1</p>
+                                    <p className="font-semibold text-zinc-950">
+                                      {formatMoney(mainItemCurrency, mainItemUnitPrice)}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                              {additionalClusterLine ? (
+                                <div className="rounded-lg border border-zinc-200 bg-white p-3 text-xs leading-5 text-zinc-700">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <p className="font-semibold text-zinc-950">{additionalClusterLine.label}</p>
+                                      <p>Qty: {additionalClusterLine.qty}</p>
+                                    </div>
+                                    <div className="shrink-0 text-right">
+                                      <p>{formatMoney(additionalClusterLine.currency, additionalClusterLine.unitPrice)} each</p>
+                                      <p className="font-semibold text-zinc-950">
+                                        {formatMoney(additionalClusterLine.currency, additionalClusterLine.total)}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : null}
+                              {workstationOptionalLine ? (
+                                <div className="rounded-lg border border-zinc-200 bg-white p-3 text-xs leading-5 text-zinc-700">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="font-semibold text-zinc-950">Optional item</p>
+                                      <p>{workstationOptionalLine.label}</p>
+                                      {workstationOptionalLine.detail ? (
+                                        <p className="text-zinc-500">{workstationOptionalLine.detail}</p>
+                                      ) : null}
+                                    </div>
+                                    <div className="shrink-0 text-right">
+                                      <p>{formatMoney(workstationOptionalLine.currency, workstationOptionalLine.unitPrice)} x 1</p>
+                                      <p className="font-semibold text-zinc-950">
+                                        {formatMoney(workstationOptionalLine.currency, workstationOptionalLine.total)}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : null}
+                              {pricingAccessorySummary.length ? (
+                                <div className="space-y-2">
+                                  <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">
+                                    Accessories / Optional Items
+                                  </p>
+                                  {pricingAccessorySummary.map((line) => (
+                                    <div
+                                      key={`${line.label}-${line.detail}-${line.qty}`}
+                                      className="rounded-lg border border-zinc-200 bg-white p-3 text-xs leading-5 text-zinc-700"
+                                    >
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                          <p className="font-semibold text-zinc-950">{line.label}</p>
+                                          {line.detail ? <p className="text-zinc-500">{line.detail}</p> : null}
+                                        </div>
+                                        <div className="shrink-0 text-right">
+                                          <p>{formatMoney(line.currency, line.unitPrice)} x {line.qty}</p>
+                                          <p className="font-semibold text-zinc-950">
+                                            {formatMoney(line.currency, line.total)}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {linkedProductSummary.length ? (
+                                <div className="space-y-2">
+                                  <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">
+                                    Linked Products / Screens
+                                  </p>
+                                  {linkedProductSummary.map((line) => (
+                                    <div
+                                      key={`${line.label}-${line.detail}-${line.qty}`}
+                                      className="rounded-lg border border-zinc-200 bg-white p-3 text-xs leading-5 text-zinc-700"
+                                    >
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                          <p className="font-semibold text-zinc-950">{line.label}</p>
+                                          {line.detail ? <p className="text-zinc-500">{line.detail}</p> : null}
+                                        </div>
+                                        <div className="shrink-0 text-right">
+                                          <p>{formatMoney(line.currency, line.unitPrice)} x {line.qty}</p>
+                                          <p className="font-semibold text-zinc-950">
+                                            {formatMoney(line.currency, line.total)}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {linkedAccessorySummary.length ? (
+                                <div className="space-y-2">
+                                  <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">
+                                    Linked Product Accessories
+                                  </p>
+                                  {linkedAccessorySummary.map((line) => (
+                                    <div
+                                      key={`${line.detail}-${line.label}-${line.qty}`}
+                                      className="rounded-lg border border-zinc-200 bg-white p-3 text-xs leading-5 text-zinc-700"
+                                    >
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                          <p className="font-semibold text-zinc-950">{line.label}</p>
+                                          {line.detail ? <p className="text-zinc-500">{line.detail}</p> : null}
+                                        </div>
+                                        <div className="shrink-0 text-right">
+                                          <p>{formatMoney(line.currency, line.unitPrice)} x {line.qty}</p>
+                                          <p className="font-semibold text-zinc-950">
+                                            {formatMoney(line.currency, line.total)}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {selectedFinishSummary.length ? (
+                                <div className="space-y-2">
+                                  <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">
+                                    Materials / Finishes
+                                  </p>
+                                  <div className="rounded-lg border border-zinc-200 bg-white p-3 text-xs leading-5 text-zinc-700">
+                                    {selectedFinishSummary.map((line) => (
+                                      <p key={line}>{line}</p>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="grid gap-1">
+                              <p className="text-sm font-semibold text-zinc-950">
+                                {formatQuotationMoney(previewCurrency, previewUnitPriceWithConversion)}
+                              </p>
+                              <PriceCheckBadge brandName={brandNameById.get(template.brand_id)} template={template} />
                           {priceCheckState(template, brandNameById.get(template.brand_id)).tone === "warning" ? (
                             <p className="max-w-52 text-[11px] leading-4 text-amber-700">
                               Please verify source price before finalizing quotation.
                             </p>
                           ) : null}
                         </div>
-                        {derivedDesking ? (
-                          <div className="max-w-48 space-y-1 text-xs leading-5 text-zinc-600">
+                            {derivedDesking ? (
+                              <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600">
                             {derivedDesking.clusterLabel ? (
                               <p>Selected size: {derivedDesking.sizeLabel}</p>
                             ) : null}
@@ -2405,7 +2740,7 @@ export function ProductLibrarySelector({
                           </div>
                         ) : null}
                         {usesVariantPricing && selectedVariantRow ? (
-                          <div className="max-w-48 space-y-1 text-xs leading-5 text-zinc-600">
+                          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600">
                             <p className="font-semibold text-zinc-950">
                               Model: {selectedVariantRow.variant_name}
                             </p>
@@ -2421,7 +2756,7 @@ export function ProductLibrarySelector({
                           </div>
                         ) : null}
                         {usesWorkstationFlow && selectedWorkstationVariantRow ? (
-                          <div className="max-w-48 space-y-1 text-xs leading-5 text-zinc-600">
+                          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600">
                             <p className="font-semibold text-zinc-950">
                               Optional item: {selectedWorkstationVariantRow.variant_name}
                             </p>
@@ -2437,7 +2772,7 @@ export function ProductLibrarySelector({
                           </div>
                         ) : null}
                         {isDesking && !usesWorkstationFlow ? (
-                          <label className="block max-w-48 text-right">
+                          <label className="block">
                             <span className="text-[10px] font-bold uppercase text-zinc-500">
                               Additional {derivedDesking?.clusterName ?? "CL2"} Quantity
                             </span>
@@ -2460,30 +2795,38 @@ export function ProductLibrarySelector({
                           </label>
                         ) : null}
                         {effectiveSelectedNames.length ? (
-                          <p className="max-w-40 text-xs leading-5 text-zinc-500">
+                          <p className="text-xs leading-5 text-zinc-500">
                             Selected: {effectiveSelectedNames.join(", ")}
                           </p>
                         ) : null}
                         {hasMixedOptionCurrencies ? (
-                          <p className="max-w-44 text-xs leading-5 text-amber-700">
+                          <p className="text-xs leading-5 text-amber-700">
                             Mixed-currency advanced options should be reviewed manually.
                           </p>
                         ) : null}
                         {hasMixedAccessoryCurrencies ? (
-                          <p className="max-w-44 text-xs leading-5 text-amber-700">
+                          <p className="text-xs leading-5 text-amber-700">
                             Mixed-currency add-ons use the conversion rates below.
                           </p>
                         ) : null}
-                        {hasMixedLinkedProductCurrencies ? (
-                          <p className="max-w-44 text-xs leading-5 text-amber-700">
-                            Mixed-currency linked products use the conversion rates below.
-                          </p>
-                        ) : null}
-                        {nonAedCurrencies.length ? (
-                          <div className="max-w-56 space-y-2 border border-amber-200 bg-amber-50 p-2 text-left text-xs leading-5 text-amber-900">
-                            <p className="font-bold uppercase">
-                              {usesWorkstationFlow ? "5. Currency conversion" : "Currency Conversion"}
-                            </p>
+                            {hasMixedLinkedProductCurrencies ? (
+                              <p className="text-xs leading-5 text-amber-700">
+                                Mixed-currency linked products use the conversion rates below.
+                              </p>
+                            ) : null}
+                            <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
+                              <p className="font-bold uppercase text-zinc-500">Source Currency Total</p>
+                              {sourceTotalsList.map((line) => (
+                                <p key={line.currency}>
+                                  {line.currency} subtotal: {formatMoney(line.currency, line.amount)}
+                                </p>
+                              ))}
+                            </div>
+                            {nonAedCurrencies.length ? (
+                              <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-left text-xs leading-5 text-amber-900">
+                                <p className="font-bold uppercase">
+                                  {usesWorkstationFlow ? "5. Currency conversion" : "Currency Conversion"}
+                                </p>
                             {Array.from(originalCurrencyTotals.entries()).map(([currency, amount]) => (
                               <p key={currency}>
                                 {currency} total: {formatMoney(currency, amount)}
@@ -2522,7 +2865,7 @@ export function ProductLibrarySelector({
                             )}
                           </div>
                         ) : null}
-                        <div className="max-w-56 space-y-2 border border-zinc-200 bg-zinc-50 p-2 text-left text-xs leading-5 text-zinc-700">
+                        <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
                           <p className="font-bold uppercase text-zinc-500">
                             {usesWorkstationFlow ? "6. Pricing / Discount" : "Pricing / Discount"}
                           </p>
@@ -2569,7 +2912,57 @@ export function ProductLibrarySelector({
                           <p>Net Price: {formatQuotationMoney(previewCurrency, netPricePreview)}</p>
                           <p>Net Total: {formatQuotationMoney(previewCurrency, netTotalPreview)}</p>
                         </div>
-                        <form action={addProductTemplateToQuotation} className="mt-3 -mx-3 border-t border-zinc-200 bg-white px-3 py-3">
+                            <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
+                              <p className="font-bold uppercase text-zinc-500">Final Specification</p>
+                              <div className="space-y-1 rounded-lg border border-zinc-200 bg-white p-3">
+                                <p className="font-semibold text-zinc-950">{template.template_name}</p>
+                                {specificationPreviewLines.length ? (
+                                  specificationPreviewLines.map((line) => (
+                                    <p key={line}>{line}</p>
+                                  ))
+                                ) : (
+                                  <p className="text-zinc-500">No specification details yet.</p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="sticky bottom-0 -mx-4 -mb-4 mt-1 border-t border-zinc-200 bg-white px-4 py-4">
+                              {isLocalMode ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onAddLocalItem?.(localProductItem);
+                                    setIsOpen(false);
+                                  }}
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection}
+                                  className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                                >
+                                  Add to Local Workspace
+                                </button>
+                              ) : (
+                                <button
+                                  type="submit"
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection}
+                                  className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                                >
+                                  Add
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </aside>
+                        <div className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                                Materials & Finishes
+                              </p>
+                              <p className="mt-1 text-xs leading-5 text-zinc-500">
+                                {selectedFinishes.length
+                                  ? "Review linked finishes, recommendations, and custom finish selections."
+                                  : "No finishes selected yet. Use the compact selector below to add recommendations, browse materials, or set a custom finish."}
+                              </p>
+                            </div>
+                          </div>
                           <input type="hidden" name="quotation_id" value={quotationId} />
                           <input type="hidden" name="section_id" value={sectionId} />
                           <input type="hidden" name="template_id" value={template.id} />
@@ -2678,7 +3071,7 @@ export function ProductLibrarySelector({
                               />
                             ) : null,
                           )}
-                          <div className="text-left">
+                          <div className="max-h-[32rem] overflow-y-auto pr-1 text-left">
                             <FinishSelectionsEditor
                               brands={finishBrands}
                               initialBrandId={template.brand_id}
@@ -2696,31 +3089,8 @@ export function ProductLibrarySelector({
                               templateMaterialGroups={templateMaterialLinks}
                             />
                           </div>
-                          <div className="sticky bottom-0 -mx-3 mt-3 border-t border-zinc-200 bg-white px-3 py-3 text-right">
-                            {isLocalMode ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  onAddLocalItem?.(localProductItem);
-                                  setIsOpen(false);
-                                }}
-                                disabled={missingExchangeRate || missingRequiredWorkstationSelection}
-                                className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
-                              >
-                                Add to Local Workspace
-                              </button>
-                            ) : (
-                              <button
-                                type="submit"
-                                disabled={missingExchangeRate || missingRequiredWorkstationSelection}
-                                className="h-8 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
-                              >
-                                Add
-                              </button>
-                            )}
-                          </div>
-                        </form>
-                      </div>
+                        </div>
+                      </form>
                     </article>
                   );
                 }) : null}
