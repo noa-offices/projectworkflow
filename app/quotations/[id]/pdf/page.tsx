@@ -1125,10 +1125,12 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                 <span>Item Discount</span>
                 <span className="whitespace-nowrap font-semibold">{money(quotation.currency, quotation.discount_total)}</span>
               </div>
-              <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
-                <span>Extra Discount</span>
-                <span className="whitespace-nowrap font-semibold">{money(quotation.currency, overallDiscountAmount(quotation))}</span>
-              </div>
+              {Number(overallDiscountAmount(quotation) || 0) > 0 ? (
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
+                  <span>Extra Discount</span>
+                  <span className="whitespace-nowrap font-semibold">{money(quotation.currency, overallDiscountAmount(quotation))}</span>
+                </div>
+              ) : null}
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-200 px-4 py-2.5 text-xs">
                 <span>VAT {quotation.vat_percent}%</span>
                 <span className="whitespace-nowrap font-semibold">{money(quotation.currency, quotation.vat_amount)}</span>

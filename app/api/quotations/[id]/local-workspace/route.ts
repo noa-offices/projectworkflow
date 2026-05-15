@@ -17,6 +17,17 @@ type QuotationRecord = {
   project_id: string;
 };
 
+type ProjectSnapshotRecord = {
+  project_name: string | null;
+  location: string | null;
+  attention_to: string | null;
+  attention_mobile: string | null;
+  attention_landline: string | null;
+  attention_email: string | null;
+  po_box: string | null;
+  project_address: string | null;
+};
+
 type SupabaseLikeError = {
   code?: string;
   details?: string | null;
@@ -103,6 +114,10 @@ function jsonValue(value: unknown) {
   return value ?? null;
 }
 
+function snapshotRecord(value: unknown) {
+  return (value ?? {}) as Record<string, unknown>;
+}
+
 function errorResponse(error: string, details?: string, status = 500, hint?: string | null, code?: string) {
   return NextResponse.json(
     {
@@ -146,6 +161,7 @@ export async function POST(
     const { id } = await context.params;
     const payload = await request.json() as SavePayload;
     const workspace = recalculateWorkspace(payload.workspace);
+    const projectSnapshot = snapshotRecord(workspace.project_snapshot);
 
     if (!workspace || workspace.server_quotation_id !== id) {
       return errorResponse("Workspace quotation mismatch.", undefined, 400);
@@ -353,6 +369,8 @@ export async function POST(
     const { error: updateQuotationError } = await supabase
       .from("quotations")
       .update({
+        quotation_no: textOrNull(workspace.quotation_no),
+        quotation_date: textOrNull(workspace.quotation_date),
         title: workspace.title,
         status: workspace.status,
         currency: workspace.currency,
@@ -370,6 +388,24 @@ export async function POST(
 
     if (updateQuotationError) {
       return errorResponse("Failed to update quotation totals.", supabaseErrorDetails(updateQuotationError));
+    }
+
+    const { error: updateProjectError } = await supabase
+      .from("projects")
+      .update({
+        project_name: textOrNull(projectSnapshot.project_name) ?? "Project",
+        location: textOrNull(projectSnapshot.location),
+        attention_to: textOrNull(projectSnapshot.attention_to),
+        attention_mobile: textOrNull(projectSnapshot.attention_mobile),
+        attention_landline: textOrNull(projectSnapshot.attention_landline),
+        attention_email: textOrNull(projectSnapshot.attention_email),
+        po_box: textOrNull(projectSnapshot.po_box),
+        project_address: textOrNull(projectSnapshot.project_address),
+      } satisfies ProjectSnapshotRecord)
+      .eq("id", quotation.project_id);
+
+    if (updateProjectError) {
+      return errorResponse("Failed to update project details.", supabaseErrorDetails(updateProjectError));
     }
 
     return NextResponse.json({

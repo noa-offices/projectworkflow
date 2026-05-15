@@ -904,10 +904,12 @@ export default async function QuotationDetailPage({
                   <span className="text-zinc-500">Item Discount</span>
                   <span className="font-medium text-zinc-950">{money(quotation.currency, quotation.discount_total)}</span>
                 </div>
-                <div className="flex justify-between gap-4">
-                  <span className="text-zinc-500">Extra Discount</span>
-                  <span className="font-medium text-zinc-950">{money(quotation.currency, overallDiscountAmount(quotation))}</span>
-                </div>
+                {Number(overallDiscountAmount(quotation) || 0) > 0 ? (
+                  <div className="flex justify-between gap-4">
+                    <span className="text-zinc-500">Extra Discount</span>
+                    <span className="font-medium text-zinc-950">{money(quotation.currency, overallDiscountAmount(quotation))}</span>
+                  </div>
+                ) : null}
                 {canManageRecords ? (
                   <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
                     <ExtraDiscountForm quotation={quotation} returnTo={`/quotations/${quotation.id}`} compact />

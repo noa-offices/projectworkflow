@@ -41,7 +41,18 @@ type Quotation = {
 };
 
 type Client = { id: string; company_name: string };
-type Project = { id: string; project_name: string };
+type Project = {
+  id: string;
+  project_name: string | null;
+  project_year: string | null;
+  location: string | null;
+  attention_to: string | null;
+  attention_mobile: string | null;
+  attention_landline: string | null;
+  attention_email: string | null;
+  po_box: string | null;
+  project_address: string | null;
+};
 type QuotationSection = Parameters<typeof createWorkspaceFromServerSnapshot>[0]["sections"][number];
 type QuotationItem = Parameters<typeof createWorkspaceFromServerSnapshot>[0]["items"][number];
 
@@ -68,7 +79,7 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id,project_name")
+    .select("id,project_name,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
     .eq("id", quotation.project_id)
     .maybeSingle<Project>();
 

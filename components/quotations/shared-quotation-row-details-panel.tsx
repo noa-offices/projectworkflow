@@ -202,7 +202,7 @@ export function SharedQuotationMoreMenu({
   menuClassName = "absolute right-0 z-30 mt-1 w-56 border border-zinc-300 bg-white p-2 text-left shadow-lg",
 }: {
   actionButtons: ReactNode;
-  detailsContent: ReactNode;
+  detailsContent?: ReactNode;
   detailsDefaultOpen?: boolean;
   detailsPanelClassName?: string;
   itemId: string;
@@ -218,16 +218,18 @@ export function SharedQuotationMoreMenu({
         {mergeControl}
         <div className="mt-2 grid gap-2">
           {actionButtons}
-          <details
-            className="relative"
-            data-state-key={`quotation-item-details-${itemId}`}
-            open={detailsDefaultOpen}
-          >
-            <summary className="h-7 cursor-pointer border border-zinc-300 bg-white px-2 py-1.5 text-xs font-semibold text-emerald-900">
-              Details
-            </summary>
-            <div className={detailsPanelClassName}>{detailsContent}</div>
-          </details>
+          {detailsContent ? (
+            <details
+              className="relative"
+              data-state-key={`quotation-item-details-${itemId}`}
+              open={detailsDefaultOpen}
+            >
+              <summary className="h-7 cursor-pointer border border-zinc-300 bg-white px-2 py-1.5 text-xs font-semibold text-emerald-900">
+                Details
+              </summary>
+              <div className={detailsPanelClassName}>{detailsContent}</div>
+            </details>
+          ) : null}
         </div>
       </div>
     </details>

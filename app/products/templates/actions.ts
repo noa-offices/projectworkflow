@@ -242,8 +242,16 @@ function pathWithParams(path: string, params: Record<string, string | null | und
 
 function returnPath(formData: FormData, fallback = "/products/templates") {
   const value = textValue(formData, "return_to");
+  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+    return fallback;
+  }
 
-  return value.startsWith("/products/templates") ? value : fallback;
+  try {
+    const parsed = new URL(value, "http://local.test");
+    return parsed.origin === "http://local.test" ? `${parsed.pathname}${parsed.search}${parsed.hash}` : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function redirectWithMessage(message: string): never {
@@ -927,22 +935,23 @@ export async function createProductTemplate(formData: FormData) {
   });
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Product template created successfully.");
+  redirectWithMessageToPath(redirectPath, "Product template created successfully.");
 }
 
 export async function updateProductTemplate(formData: FormData) {
   const { user, displayName } = await requireSettingsManager();
   const id = textValue(formData, "id");
   const payload = templatePayload(formData);
+  const redirectPath = returnPath(formData);
 
   if (!id || !payload.brand_id || !payload.template_name) {
-    redirectWithMessage("Template id, brand, and template name are required.");
+    redirectWithMessageToPath(redirectPath, "Template id, brand, and template name are required.");
   }
 
   await validateProductTemplateCategories({
     brandId: payload.brand_id,
     mainCategoryId: payload.main_category_id,
-    redirectPath: returnPath(formData),
+    redirectPath,
     subCategoryId: payload.sub_category_id,
   });
 
@@ -955,7 +964,7 @@ export async function updateProductTemplate(formData: FormData) {
 
   if (currentTemplateError || !currentTemplate) {
     console.error("PRODUCT TEMPLATE UPDATE READ ERROR", currentTemplateError?.message);
-    redirectWithMessage("Product template could not be loaded.");
+    redirectWithMessageToPath(redirectPath, "Product template could not be loaded.");
   }
 
   const { error } = await supabase
@@ -965,7 +974,7 @@ export async function updateProductTemplate(formData: FormData) {
 
   if (error) {
     console.error("PRODUCT TEMPLATE UPDATE ERROR", error.message);
-    redirectWithMessage("Product template could not be updated.");
+    redirectWithMessageToPath(redirectPath, "Product template could not be updated.");
   }
 
   await createAuditLog(supabase, {
@@ -983,7 +992,7 @@ export async function updateProductTemplate(formData: FormData) {
   });
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Product template updated.");
+  redirectWithMessageToPath(redirectPath, "Product template updated.");
 }
 
 export async function updateProductTemplateDefaultPrice(formData: FormData) {

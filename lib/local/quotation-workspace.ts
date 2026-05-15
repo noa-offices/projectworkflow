@@ -152,6 +152,12 @@ function normalizedLineQty(value: unknown) {
   return Number.isFinite(parsed) ? Math.max(Math.round(parsed), 0) : 0;
 }
 
+function roundedNetPriceOverrides(workspace: Pick<LocalQuotationWorkspace, "metadata">) {
+  const metadata = (workspace.metadata ?? {}) as Record<string, unknown>;
+  const priceRounding = (metadata.price_rounding ?? {}) as Record<string, unknown>;
+  return (priceRounding.rounded_net_prices ?? {}) as Record<string, unknown>;
+}
+
 export function itemLinePricing(item: Pick<LocalQuotationItem, "qty" | "unit_price" | "discount_type" | "discount_value">) {
   const qty = normalizedLineQty(item.qty);
   const unitPrice = exactMoneyValue(Number.isFinite(item.unit_price) ? item.unit_price : 0);
@@ -182,6 +188,37 @@ export function itemLinePricing(item: Pick<LocalQuotationItem, "qty" | "unit_pri
   };
 }
 
+export function workspaceItemDisplayPricing(
+  workspace: Pick<LocalQuotationWorkspace, "metadata">,
+  item: Pick<LocalQuotationItem, "id" | "qty" | "unit_price" | "discount_type" | "discount_value">,
+) {
+  const basePricing = itemLinePricing(item);
+  const roundedNetPriceOverride = Number(roundedNetPriceOverrides(workspace)[item.id]);
+  const hasRoundedNetOverride = Number.isFinite(roundedNetPriceOverride);
+  const rawDiscountAmount = exactMoneyValue(Math.max(basePricing.unitPrice - basePricing.netPrice, 0));
+  const netPrice = hasRoundedNetOverride
+    ? exactMoneyValue(Math.max(roundedNetPriceOverride, 0))
+    : basePricing.netPrice;
+  const discountAmount = hasRoundedNetOverride
+    ? Math.round(rawDiscountAmount)
+    : rawDiscountAmount;
+  const unitPrice = hasRoundedNetOverride
+    ? exactMoneyValue(netPrice + discountAmount)
+    : basePricing.unitPrice;
+  const qty = normalizedLineQty(item.qty);
+  const netTotal = exactMoneyValue(netPrice * qty);
+
+  return {
+    qty,
+    unitPrice,
+    discountAmount,
+    discountValue: basePricing.discountValue,
+    netPrice,
+    netTotal,
+    hasRoundedNetOverride,
+  };
+}
+
 function overallDiscountAmount(
   subtotal: number,
   netTotal: number,
@@ -197,7 +234,7 @@ function overallDiscountAmount(
   return exactMoneyValue(Math.min(base, netTotal || subtotal));
 }
 
-export function workspaceTotals(workspace: Pick<LocalQuotationWorkspace, "items" | "overall_discount_type" | "overall_discount_value" | "vat_percent">): LocalQuotationTotals {
+export function workspaceTotals(workspace: Pick<LocalQuotationWorkspace, "items" | "overall_discount_type" | "overall_discount_value" | "vat_percent" | "metadata">): LocalQuotationTotals {
   const pricedItems = workspace.items.filter(
     (item) =>
       item.is_active !== false &&
@@ -206,10 +243,10 @@ export function workspaceTotals(workspace: Pick<LocalQuotationWorkspace, "items"
       !["heading", "note", "no_quote"].includes(item.line_style),
   );
   const subtotal = exactMoneyValue(
-    pricedItems.reduce((total, item) => total + exactMoneyValue(normalizedLineQty(item.qty) * exactMoneyValue(item.unit_price)), 0),
+    pricedItems.reduce((total, item) => total + exactMoneyValue(workspaceItemDisplayPricing(workspace, item).unitPrice * normalizedLineQty(item.qty)), 0),
   );
   const netTotal = exactMoneyValue(
-    pricedItems.reduce((total, item) => total + exactMoneyValue(item.net_total), 0),
+    pricedItems.reduce((total, item) => total + exactMoneyValue(workspaceItemDisplayPricing(workspace, item).netTotal), 0),
   );
   const discountTotal = exactMoneyValue(Math.max(subtotal - netTotal, 0));
   const extraDiscount = overallDiscountAmount(
@@ -234,7 +271,7 @@ export function workspaceTotals(workspace: Pick<LocalQuotationWorkspace, "items"
 
 export function recalculateWorkspace(workspace: LocalQuotationWorkspace): LocalQuotationWorkspace {
   const items = workspace.items.map((item) => {
-    const nextLinePricing = itemLinePricing(item);
+    const nextLinePricing = workspaceItemDisplayPricing(workspace, item);
     const normalizedQty = item.item_type === "blank" || item.item_type === "note"
       ? normalizedLineQty(item.qty)
       : Math.max(normalizedLineQty(item.qty), 1);
@@ -243,11 +280,11 @@ export function recalculateWorkspace(workspace: LocalQuotationWorkspace): LocalQ
       ...item,
       currency: normalizeCurrency(item.currency || workspace.currency || defaultCurrency),
       qty: normalizedQty,
-      unit_price: nextLinePricing.unitPrice,
+      unit_price: itemLinePricing(item).unitPrice,
       discount_type: item.discount_type === "percent" ? "percent" : item.discount_type === "none" ? "none" : "amount",
       discount_value: nextLinePricing.discountValue,
       net_price: nextLinePricing.netPrice,
-      net_total: nextLinePricing.netTotal,
+      net_total: exactMoneyValue(nextLinePricing.netPrice * normalizedQty),
     };
   });
   const updated = {
