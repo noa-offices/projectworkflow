@@ -4,6 +4,7 @@ import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { TopBar } from "@/components/top-bar";
 import { requireSettingsManager } from "@/lib/auth";
+import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { createClient } from "@/lib/supabase/server";
 import {
   archiveBrand,
@@ -38,6 +39,7 @@ type Brand = {
   id: string;
   name: string;
   code: string | null;
+  default_currency: string;
   origin: string | null;
   description: string | null;
   website: string | null;
@@ -170,6 +172,35 @@ function ActiveToggle({ defaultChecked = true }: { defaultChecked?: boolean }) {
   );
 }
 
+function CurrencySelect({
+  defaultValue,
+  label = "Default currency",
+  name = "default_currency",
+}: {
+  defaultValue?: string | null;
+  label?: string;
+  name?: string;
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs font-semibold uppercase text-zinc-500">
+        {label}
+      </span>
+      <select
+        name={name}
+        defaultValue={normalizeCurrency(defaultValue ?? defaultCurrency)}
+        className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+      >
+        {supportedCurrencies.map((currency) => (
+          <option key={currency.code} value={currency.code}>
+            {currency.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function SubmitButton({ label, pendingLabel }: { label: string; pendingLabel?: string }) {
   return (
     <PendingSubmitButton
@@ -232,6 +263,7 @@ function BrandForm({ brand, cancelHref }: { brand?: Brand; cancelHref?: string }
       {brand ? <input type="hidden" name="id" value={brand.id} /> : null}
       <TextInput name="name" label="Brand name" defaultValue={brand?.name} required />
       <TextInput name="code" label="Code" defaultValue={brand?.code} />
+      <CurrencySelect defaultValue={brand?.default_currency} />
       <TextInput
         name="origin"
         label="Origin / Country"
@@ -387,7 +419,7 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
 
   const { data: brands, error: brandsError } = await supabase
     .from("brands")
-    .select("id,name,code,origin,description,website,logo_url,is_active")
+    .select("id,name,code,default_currency,origin,description,website,logo_url,is_active")
     .order("name", { ascending: true })
     .returns<Brand[]>();
 
@@ -680,6 +712,12 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
                               Origin
                             </dt>
                             <dd>{selectedBrand.origin ?? "-"}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs font-semibold uppercase text-zinc-400">
+                              Default currency
+                            </dt>
+                            <dd>{selectedBrand.default_currency}</dd>
                           </div>
                           <div>
                             <dt className="text-xs font-semibold uppercase text-zinc-400">

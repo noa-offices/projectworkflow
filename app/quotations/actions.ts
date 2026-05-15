@@ -555,6 +555,20 @@ function activeCategoryRows(rows?: CategoryPricingRow[] | null) {
     .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
 }
 
+function categoryPriceColumns(rows?: CategoryPricingRow[] | null) {
+  const columns = ["Cat A", "Cat B", "Cat C", "Cat D"];
+
+  activeCategoryRows(rows).forEach((row) => {
+    Object.keys(row.prices ?? {}).forEach((category) => {
+      if (!columns.includes(category)) {
+        columns.push(category);
+      }
+    });
+  });
+
+  return columns;
+}
+
 function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
   const sourceRows = Array.isArray(rows) ? rows : [];
   const groups = sourceRows
@@ -1082,6 +1096,8 @@ type VariantPricingRow = {
 
 type CategoryPricingRow = {
   id?: string;
+  pricing_category_id?: string | null;
+  pricing_category_name?: string | null;
   variant_name?: string;
   dimension?: string;
   currency?: string;
@@ -4063,7 +4079,10 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const selectedWorkstationVariantPricingRow = selectedSizePricing
     ? selectedVariantPricing(formData, template.variant_pricing, "workstation_variant_pricing_row_id")
     : null;
-  const selectedCategory = textValue(formData, "category_pricing_category") || "Cat A";
+  const selectedCategory =
+    textValue(formData, "category_pricing_category") ||
+    categoryPriceColumns(template.category_pricing)[0] ||
+    "Cat A";
   const selectedCategoryPrice = selectedCategoryPricingRow
     ? money(calculationNumber(selectedCategoryPricingRow.prices?.[selectedCategory]))
     : 0;
@@ -4168,7 +4187,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
             .find((row) => row.id === selection.variantRowId) ??
           activeVariantRows(linkedTemplate.variant_pricing)[0] ??
           null;
-      const selectedCategoryLabel = selection.category || "Cat A";
+      const selectedCategoryLabel =
+        selection.category || categoryPriceColumns(linkedTemplate.category_pricing)[0] || "Cat A";
       const unitPrice = categoryRow
         ? money(calculationNumber(categoryRow.prices?.[selectedCategoryLabel]))
         : variantRow

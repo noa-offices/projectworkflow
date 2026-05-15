@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSettingsManager } from "@/lib/auth";
+import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import { createClient } from "@/lib/supabase/server";
 
 function textValue(formData: FormData, name: string) {
@@ -46,6 +47,7 @@ export async function createBrand(formData: FormData) {
   const { error } = await supabase.from("brands").insert({
     name,
     code: optionalTextValue(formData, "code"),
+    default_currency: normalizeCurrency(textValue(formData, "default_currency") || defaultCurrency),
     origin: optionalTextValue(formData, "origin"),
     description: optionalTextValue(formData, "description"),
     website: optionalTextValue(formData, "website"),
@@ -78,6 +80,7 @@ export async function updateBrand(formData: FormData) {
     .update({
       name,
       code: optionalTextValue(formData, "code"),
+      default_currency: normalizeCurrency(textValue(formData, "default_currency") || defaultCurrency),
       origin: optionalTextValue(formData, "origin"),
       description: optionalTextValue(formData, "description"),
       website: optionalTextValue(formData, "website"),

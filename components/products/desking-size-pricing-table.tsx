@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import { resolveDefaultPricingCurrency } from "@/components/products/pricing-default-currency";
 
 export type DeskingSizePricingRow = {
   id?: string;
@@ -17,7 +18,7 @@ export type DeskingSizePricingRow = {
   is_active?: boolean;
 };
 
-function newRow(sortOrder: number): DeskingSizePricingRow {
+function newRow(sortOrder: number, currency: string): DeskingSizePricingRow {
   const id =
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
@@ -26,7 +27,7 @@ function newRow(sortOrder: number): DeskingSizePricingRow {
   return {
     id,
     dimension_unit: "cm",
-    currency: defaultCurrency,
+    currency: normalizeCurrency(currency),
     sort_order: sortOrder,
     is_active: true,
   };
@@ -78,8 +79,12 @@ function normalizedRow(row: DeskingSizePricingRow, index: number): DeskingSizePr
 }
 
 export function DeskingSizePricingTable({
+  brandDefaultCurrency,
+  templateCurrency,
   rows,
 }: {
+  brandDefaultCurrency?: string | null;
+  templateCurrency?: string | null;
   rows?: DeskingSizePricingRow[] | null;
 }) {
   const [tableRows, setTableRows] = useState<DeskingSizePricingRow[]>(() =>
@@ -265,8 +270,16 @@ export function DeskingSizePricingTable({
       </div>
       <button
         type="button"
-        onClick={() => {
-          const row = newRow(tableRows.length);
+        onClick={(event) => {
+          const row = newRow(
+            tableRows.length,
+            resolveDefaultPricingCurrency({
+              brandDefaultCurrency,
+              existingRows: tableRows,
+              savedTemplateCurrency: templateCurrency,
+              trigger: event.currentTarget,
+            }),
+          );
           setTableRows((current) => [...current, row]);
           setEditingRows((current) => ({ ...current, [row.id ?? ""]: true }));
           setDraftRows((current) => ({ ...current, [row.id ?? ""]: row }));

@@ -90,6 +90,24 @@ function optionalNumberValue(formData: FormData, name: string) {
   return Number.isFinite(value) ? value : undefined;
 }
 
+function normalizePriceCategoryLabel(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const compact = trimmed.replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  const match = compact.match(/^cat\s*([a-z0-9]+)$/i);
+  if (match) {
+    return `Cat ${match[1].toUpperCase()}`;
+  }
+
+  return compact
+    .split(" ")
+    .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
+    .join(" ");
+}
+
 function selectionModeValue(formData: FormData) {
   return textValue(formData, "selection_mode") === "selected_items" ? "selected_items" : "full_group";
 }
@@ -114,6 +132,10 @@ function detailPriceSourceValue(value: string): DetailPriceSourceTable | null {
 }
 
 function detailPriceFieldIsAllowed(sourceTable: DetailPriceSourceTable, priceField: string) {
+  if (sourceTable === "product_templates.category_pricing" && priceField.startsWith("prices.")) {
+    return true;
+  }
+
   return detailPriceFieldsBySource[sourceTable].has(priceField);
 }
 
@@ -646,18 +668,36 @@ function categoryPricingValue(formData: FormData) {
         const prices = typeof row.prices === "object" && row.prices !== null
           ? row.prices as Record<string, unknown>
           : {};
+        const normalizedPrices = new Map<string, number>([
+          ["Cat A", 0],
+          ["Cat B", 0],
+          ["Cat C", 0],
+          ["Cat D", 0],
+        ]);
+
+        Object.entries(prices).forEach(([key, value]) => {
+          const label = normalizePriceCategoryLabel(key);
+          if (!label) {
+            return;
+          }
+
+          normalizedPrices.set(label, Number.isFinite(Number(value)) ? Number(value) : 0);
+        });
 
         return {
           id: typeof row.id === "string" && row.id ? row.id : `category-${index}`,
+          pricing_category_id:
+            typeof row.pricing_category_id === "string" && row.pricing_category_id.trim()
+              ? row.pricing_category_id.trim()
+              : null,
+          pricing_category_name:
+            typeof row.pricing_category_name === "string" && row.pricing_category_name.trim()
+              ? row.pricing_category_name.trim()
+              : null,
           variant_name: typeof row.variant_name === "string" ? row.variant_name.trim() : "",
           dimension: typeof row.dimension === "string" ? row.dimension.trim() : "",
           currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
-          prices: {
-            "Cat A": Number.isFinite(Number(prices["Cat A"])) ? Number(prices["Cat A"]) : 0,
-            "Cat B": Number.isFinite(Number(prices["Cat B"])) ? Number(prices["Cat B"]) : 0,
-            "Cat C": Number.isFinite(Number(prices["Cat C"])) ? Number(prices["Cat C"]) : 0,
-            "Cat D": Number.isFinite(Number(prices["Cat D"])) ? Number(prices["Cat D"]) : 0,
-          },
+          prices: Object.fromEntries(normalizedPrices.entries()),
           specification: typeof row.specification === "string" ? row.specification.trim() : "",
           sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
           is_active: row.is_active !== false,

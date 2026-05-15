@@ -4,23 +4,18 @@ import type { ReactNode } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
-import {
-  DeskingSizePricingTable,
-  type DeskingSizePricingRow,
-} from "@/components/products/desking-size-pricing-table";
+import { type DeskingSizePricingRow } from "@/components/products/desking-size-pricing-table";
 import {
   DeactivateGroupForm,
   DeactivateOptionForm,
 } from "@/components/products/option-deactivate-controls";
 import {
-  AccessoryPricingTable,
   type AccessoryPricingRow,
-  CategoryPricingTable,
   type CategoryPricingRow,
-  VariantPricingTable,
   type VariantPricingRow,
 } from "@/components/products/variant-pricing-tables";
 import { ProductTemplateImageUploader } from "@/components/products/product-template-image-uploader";
+import { TemplatePricingSections } from "@/components/products/template-pricing-sections";
 import {
   TemplateDetailImageGallery,
   TemplateReferenceImageFieldManager,
@@ -94,6 +89,7 @@ type TemplatesPageProps = {
 type Brand = {
   id: string;
   name: string;
+  default_currency: string;
   last_price_list_checked_at: string | null;
   last_price_list_checked_by: string | null;
   price_list_check_interval_days: number | null;
@@ -689,6 +685,20 @@ function messageTone(message: string): "error" | "success" {
   return "success";
 }
 
+function categoryPricingColumns(rows?: CategoryPricingRow[] | null) {
+  const columns = ["Cat A", "Cat B", "Cat C", "Cat D"];
+
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    Object.keys(row.prices ?? {}).forEach((category) => {
+      if (!columns.includes(category)) {
+        columns.push(category);
+      }
+    });
+  });
+
+  return columns;
+}
+
 function FormSection({
   children,
   description,
@@ -732,6 +742,9 @@ function TemplateForm({
 }) {
   const templateId = template?.id ?? randomUUID();
   const selectedBrandId = template?.brand_id ?? defaultBrandId ?? "";
+  const selectedBrand = brands.find((brand) => brand.id === selectedBrandId) ?? null;
+  const brandDefaultCurrency = selectedBrand?.default_currency ?? defaultCurrency;
+  const templateCurrency = template?.currency ?? brandDefaultCurrency;
   const selectedMainCategoryId =
     template?.main_category_id ?? defaultMainCategoryId ?? "";
   const selectedSubCategoryId =
@@ -810,7 +823,7 @@ function TemplateForm({
             label="Unit"
             defaultValue={template?.unit_label ?? "Pc"}
           />
-          <CurrencySelect defaultValue={template?.currency} />
+          <CurrencySelect defaultValue={templateCurrency} />
           <Field
             name="default_unit_price"
             label="Default U.Price"
@@ -851,39 +864,24 @@ function TemplateForm({
         title="Detailed Pricing"
         description="Maintain workstation pricing, base variants, accessories, and finish-category pricing in one dedicated pricing area."
       >
-        <div className="md:col-span-2 xl:col-span-3">
-          <h4 className="mb-2 text-xs font-bold uppercase text-zinc-500">
-            Workstation Size / Base Price
-          </h4>
-          <p className="mb-2 text-xs leading-5 text-zinc-500">
-            Default price is the base CL2 price. Additional price is for each extra CL2.
-          </p>
-          <DeskingSizePricingTable rows={template?.desking_size_pricing} />
-        </div>
-        <div className="md:col-span-2 xl:col-span-3">
-          <h4 className="mb-2 mt-5 text-xs font-bold uppercase text-zinc-500">
-            Base Size / Main Price
-          </h4>
-          <p className="mb-2 text-xs leading-5 text-zinc-500">
-            Use this for the product&apos;s main size or model pricing for desks, tables, chairs, sofas, and other non-workstation products.
-          </p>
-          <VariantPricingTable rows={template?.variant_pricing} />
-        </div>
-        <div className="md:col-span-2 xl:col-span-3">
-          <h4 className="mb-2 mt-5 text-xs font-bold uppercase text-zinc-500">
-            Accessories / Optional Items
-          </h4>
-          <p className="mb-2 text-xs leading-5 text-zinc-500">
-            Add optional accessories and add-ons such as locks, pedestals, power modules, headrests, cushions, and similar extras.
-          </p>
-          <AccessoryPricingTable rows={template?.accessory_pricing} />
-        </div>
-        <div className="md:col-span-2 xl:col-span-3">
-          <h4 className="mb-2 mt-5 text-xs font-bold uppercase text-zinc-500">
-            Fabric / Leather / Finish Category Pricing
-          </h4>
-          <CategoryPricingTable rows={template?.category_pricing} />
-        </div>
+        <TemplatePricingSections
+          key={[
+            template?.id ?? "new",
+            template?.desking_size_pricing?.length ?? 0,
+            template?.variant_pricing?.length ?? 0,
+            template?.accessory_pricing?.length ?? 0,
+            template?.category_pricing?.length ?? 0,
+            (template?.category_pricing ?? [])
+              .map((row) => Object.keys(row.prices ?? {}).join(","))
+              .join("|"),
+          ].join(":")}
+          deskingSizePricingRows={template?.desking_size_pricing}
+          variantPricingRows={template?.variant_pricing}
+          accessoryPricingRows={template?.accessory_pricing}
+          categoryPricingRows={template?.category_pricing}
+          brandDefaultCurrency={brandDefaultCurrency}
+          templateCurrency={template?.currency}
+        />
       </FormSection>
     </TemplateFormShell>
   );
@@ -1717,7 +1715,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
   const { data: brands, error: brandsError } = await supabase
     .from("brands")
-    .select("id,name,last_price_list_checked_at,last_price_list_checked_by,price_list_check_interval_days,price_list_check_note")
+    .select("id,name,default_currency,last_price_list_checked_at,last_price_list_checked_by,price_list_check_interval_days,price_list_check_note")
     .eq("is_active", true)
     .order("name", { ascending: true })
     .returns<Brand[]>();
@@ -3161,32 +3159,34 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             <section>
                               <h4 className="text-xs font-bold uppercase text-zinc-500">Fabric / Leather / Finish Category Pricing</h4>
                               <div className="mt-2 grid gap-3">
-                                {template.category_pricing.filter((row) => row.is_active !== false).map((row, index) => (
-                                  <DetailPriceRow
-                                    key={row.id ?? `category-${index}`}
-                                    form={
-                                      <div className="grid gap-2">
-                                        {["Cat A", "Cat B", "Cat C", "Cat D"].map((category) => (
-                                          <DetailPriceUpdateForm
-                                            key={category}
-                                            currency={row.currency}
-                                            label={category}
-                                            priceField={`prices.${category}`}
-                                            priceListUpdates={templateBrandPriceListUpdates}
-                                            productTemplateId={template.id}
-                                            returnTo={templatePriceUpdatesReturnTo}
-                                            sourceRecordId={row.id}
-                                            sourceTable="product_templates.category_pricing"
-                                            value={Number(row.prices?.[category] ?? 0)}
-                                          />
-                                        ))}
-                                      </div>
-                                    }
-                                  >
-                                    <p className="font-semibold text-zinc-950">{row.variant_name || "Category row"}</p>
-                                    <p className="mt-1 text-xs">{row.dimension || "No dimension"}</p>
-                                  </DetailPriceRow>
-                                ))}
+                                {template.category_pricing
+                                  .filter((row) => row.is_active !== false)
+                                  .map((row, index) => (
+                                    <DetailPriceRow
+                                      key={row.id ?? `category-${index}`}
+                                      form={
+                                        <div className="grid gap-2">
+                                          {categoryPricingColumns(template.category_pricing).map((category) => (
+                                            <DetailPriceUpdateForm
+                                              key={category}
+                                              currency={row.currency}
+                                              label={category}
+                                              priceField={`prices.${category}`}
+                                              priceListUpdates={templateBrandPriceListUpdates}
+                                              productTemplateId={template.id}
+                                              returnTo={templatePriceUpdatesReturnTo}
+                                              sourceRecordId={row.id}
+                                              sourceTable="product_templates.category_pricing"
+                                              value={Number(row.prices?.[category] ?? 0)}
+                                            />
+                                          ))}
+                                        </div>
+                                      }
+                                    >
+                                      <p className="font-semibold text-zinc-950">{row.variant_name || "Category row"}</p>
+                                      <p className="mt-1 text-xs">{row.dimension || "No dimension"}</p>
+                                    </DetailPriceRow>
+                                  ))}
                               </div>
                             </section>
                           ) : null}

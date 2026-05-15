@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { type MouseEvent, useMemo, useState } from "react";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import { resolveDefaultPricingCurrency } from "@/components/products/pricing-default-currency";
 
 export type VariantPricingRow = {
   id?: string;
@@ -16,6 +17,8 @@ export type VariantPricingRow = {
 
 export type CategoryPricingRow = {
   id?: string;
+  pricing_category_id?: string | null;
+  pricing_category_name?: string | null;
   variant_name?: string;
   dimension?: string;
   currency?: string;
@@ -47,7 +50,7 @@ export type AccessoryPricingItem = {
   sort_order?: number;
 };
 
-const categories = ["Cat A", "Cat B", "Cat C", "Cat D"];
+const defaultPriceCategories = ["Cat A", "Cat B", "Cat C", "Cat D"];
 
 function idFor(prefix: string, sortOrder: number) {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -58,6 +61,57 @@ function idFor(prefix: string, sortOrder: number) {
 function numberValue(value: unknown) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function normalizePriceCategoryLabel(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const compact = trimmed.replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  const match = compact.match(/^cat\s*([a-z0-9]+)$/i);
+  if (match) {
+    return `Cat ${match[1].toUpperCase()}`;
+  }
+
+  return compact
+    .split(" ")
+    .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
+    .join(" ");
+}
+
+function normalizedPriceMap(prices?: Record<string, unknown> | null) {
+  const normalized = new Map<string, number>();
+
+  defaultPriceCategories.forEach((category) => {
+    normalized.set(category, 0);
+  });
+
+  Object.entries(prices ?? {}).forEach(([key, value]) => {
+    const label = normalizePriceCategoryLabel(key);
+    if (!label) {
+      return;
+    }
+
+    normalized.set(label, numberValue(value));
+  });
+
+  return Object.fromEntries(normalized.entries());
+}
+
+function derivedPriceCategories(rows?: CategoryPricingRow[] | null) {
+  const orderedCategories = [...defaultPriceCategories];
+
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    Object.keys(normalizedPriceMap(row.prices)).forEach((category) => {
+      if (!orderedCategories.includes(category)) {
+        orderedCategories.push(category);
+      }
+    });
+  });
+
+  return orderedCategories;
 }
 
 function normalizeVariant(row: VariantPricingRow, index: number): VariantPricingRow {
@@ -76,10 +130,18 @@ function normalizeVariant(row: VariantPricingRow, index: number): VariantPricing
 function normalizeCategory(row: CategoryPricingRow, index: number): CategoryPricingRow {
   return {
     id: row.id || `category-${index}`,
+    pricing_category_id:
+      typeof row.pricing_category_id === "string" && row.pricing_category_id.trim()
+        ? row.pricing_category_id.trim()
+        : null,
+    pricing_category_name:
+      typeof row.pricing_category_name === "string" && row.pricing_category_name.trim()
+        ? row.pricing_category_name.trim()
+        : null,
     variant_name: row.variant_name?.trim() ?? "",
     dimension: row.dimension?.trim() ?? "",
     currency: normalizeCurrency(row.currency ?? defaultCurrency),
-    prices: Object.fromEntries(categories.map((category) => [category, numberValue(row.prices?.[category])])),
+    prices: normalizedPriceMap(row.prices),
     specification: row.specification?.trim() ?? "",
     is_active: row.is_active !== false,
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
@@ -153,7 +215,43 @@ function CurrencySelect({
   );
 }
 
-export function VariantPricingTable({ rows }: { rows?: VariantPricingRow[] | null }) {
+function categoryPricingRowWithColumns(
+  row: CategoryPricingRow,
+  priceCategories: string[],
+): CategoryPricingRow {
+  const normalized = normalizedPriceMap(row.prices);
+
+  return {
+    ...row,
+    prices: Object.fromEntries(
+      priceCategories.map((category) => [category, numberValue(normalized[category])]),
+    ),
+  };
+}
+
+function newCategoryPricingRow(
+  sortOrder: number,
+  priceCategories: string[],
+  currency: string,
+): CategoryPricingRow {
+  return {
+    id: idFor("category", sortOrder),
+    currency: normalizeCurrency(currency),
+    prices: Object.fromEntries(priceCategories.map((category) => [category, 0])),
+    is_active: true,
+    sort_order: sortOrder,
+  };
+}
+
+export function VariantPricingTable({
+  brandDefaultCurrency,
+  rows,
+  templateCurrency,
+}: {
+  brandDefaultCurrency?: string | null;
+  rows?: VariantPricingRow[] | null;
+  templateCurrency?: string | null;
+}) {
   const [tableRows, setTableRows] = useState<VariantPricingRow[]>(() =>
     rows?.length ? rows.map(normalizeVariant) : [],
   );
@@ -195,59 +293,183 @@ export function VariantPricingTable({ rows }: { rows?: VariantPricingRow[] | nul
           </tbody>
         </table>
       </div>
-      <button type="button" onClick={() => setTableRows((current) => [...current, { id: idFor("variant", current.length), currency: defaultCurrency, is_active: true, sort_order: current.length }])} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">+ Add Variant</button>
+      <button type="button" onClick={(event) => setTableRows((current) => [...current, { id: idFor("variant", current.length), currency: resolveDefaultPricingCurrency({ brandDefaultCurrency, existingRows: current, savedTemplateCurrency: templateCurrency, trigger: event.currentTarget }), is_active: true, sort_order: current.length }])} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">+ Add Variant</button>
     </div>
   );
 }
 
-export function CategoryPricingTable({ rows }: { rows?: CategoryPricingRow[] | null }) {
+export function CategoryPricingTable({
+  brandDefaultCurrency,
+  rows,
+  templateCurrency,
+}: {
+  brandDefaultCurrency?: string | null;
+  rows?: CategoryPricingRow[] | null;
+  templateCurrency?: string | null;
+}) {
   const [tableRows, setTableRows] = useState<CategoryPricingRow[]>(() =>
     rows?.length ? rows.map(normalizeCategory) : [],
   );
-  const serialized = useMemo(() => JSON.stringify(tableRows.map(normalizeCategory)), [tableRows]);
+  const [priceCategories, setPriceCategories] = useState<string[]>(() => derivedPriceCategories(rows));
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [showCategoryCreator, setShowCategoryCreator] = useState(false);
+  const serialized = useMemo(
+    () =>
+      JSON.stringify(
+        tableRows.map((row, index) =>
+          normalizeCategory(categoryPricingRowWithColumns(row, priceCategories), index),
+        ),
+      ),
+    [priceCategories, tableRows],
+  );
 
   function update(index: number, patch: Partial<CategoryPricingRow>) {
     setTableRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
   }
 
+  function addPriceCategoryColumn() {
+    const trimmedName = newCategoryName.trim();
+    if (!trimmedName) {
+      return;
+    }
+    const normalizedCategory = normalizePriceCategoryLabel(trimmedName);
+    if (!normalizedCategory || priceCategories.includes(normalizedCategory)) {
+      setNewCategoryName("");
+      setShowCategoryCreator(false);
+      return;
+    }
+
+    setPriceCategories((current) => [...current, normalizedCategory]);
+    setTableRows((current) =>
+      current.map((row) => ({
+        ...row,
+        prices: {
+          ...normalizedPriceMap(row.prices),
+          [normalizedCategory]: numberValue(row.prices?.[normalizedCategory]),
+        },
+      })),
+    );
+    setNewCategoryName("");
+    setShowCategoryCreator(false);
+  }
+
+  function addRow(event: MouseEvent<HTMLButtonElement>) {
+    const currency = resolveDefaultPricingCurrency({
+      brandDefaultCurrency,
+      existingRows: tableRows,
+      savedTemplateCurrency: templateCurrency,
+      trigger: event.currentTarget,
+    });
+    setTableRows((current) => [
+      ...current,
+      newCategoryPricingRow(current.length, priceCategories, currency),
+    ]);
+  }
+
   return (
     <div className="md:col-span-2 xl:col-span-3">
       <input type="hidden" name="category_pricing" value={serialized} />
-      <div className="overflow-x-auto rounded-md border border-zinc-200 bg-white">
-        <table className="min-w-[1120px] w-full text-left text-xs">
-          <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
-            <tr>
-              <th className="px-2 py-2">Product / Variant</th>
-              <th className="px-2 py-2">Dimension</th>
-              {categories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
-              <th className="px-2 py-2">Currency</th>
-              <th className="px-2 py-2">Specification</th>
-              <th className="px-2 py-2">Active</th>
-              <th className="px-2 py-2">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tableRows.map((row, index) => (
-              <tr key={row.id ?? index} className="border-t border-zinc-100">
-                <td className="px-2 py-2"><input value={row.variant_name ?? ""} onChange={(e) => update(index, { variant_name: e.target.value })} className="h-8 w-32 border border-zinc-200 px-2 outline-none focus:border-emerald-800" /></td>
-                <td className="px-2 py-2"><input value={row.dimension ?? ""} onChange={(e) => update(index, { dimension: e.target.value })} className="h-8 w-28 border border-zinc-200 px-2 outline-none focus:border-emerald-800" /></td>
-                {categories.map((category) => <td key={category} className="px-2 py-2"><input type="number" value={row.prices?.[category] ?? ""} onChange={(e) => update(index, { prices: { ...(row.prices ?? {}), [category]: Number(e.target.value) } })} className="h-8 w-20 border border-zinc-200 px-2 outline-none focus:border-emerald-800" /></td>)}
-                <td className="px-2 py-2"><CurrencySelect value={row.currency} onChange={(currency) => update(index, { currency })} /></td>
-                <td className="px-2 py-2"><textarea value={row.specification ?? ""} onChange={(e) => update(index, { specification: e.target.value })} rows={1} className="w-52 rounded-sm border border-zinc-200 px-2 py-1 outline-none focus:border-emerald-800" /></td>
-                <td className="px-2 py-2"><input type="checkbox" checked={row.is_active !== false} onChange={(e) => update(index, { is_active: e.target.checked })} /></td>
-                <td className="px-2 py-2"><button type="button" onClick={() => setTableRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="text-xs font-semibold text-red-700">Remove</button></td>
-              </tr>
-            ))}
-            {!tableRows.length ? <tr><td colSpan={10} className="px-3 py-5 text-center text-zinc-500">No fabric/leather category variants yet.</td></tr> : null}
-          </tbody>
-        </table>
+      <div className="space-y-4">
+        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
+          <p className="text-sm font-semibold text-zinc-950">Finish category pricing</p>
+          <p className="mt-1 text-xs leading-5 text-zinc-500">
+            Manage finish pricing in one table and add more price category columns when needed.
+          </p>
+          {showCategoryCreator ? (
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+              <input
+                value={newCategoryName}
+                onChange={(event) => setNewCategoryName(event.target.value)}
+                placeholder="Cat E"
+                className="h-9 flex-1 rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-800"
+              />
+              <button
+                type="button"
+                onClick={addPriceCategoryColumn}
+                className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
+              >
+                Add column
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewCategoryName("");
+                  setShowCategoryCreator(false);
+                }}
+                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowCategoryCreator(true)}
+              className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
+            >
+              + Add price category column
+            </button>
+          )}
+        </div>
+
+        {tableRows.length ? (
+          <div className="overflow-x-auto rounded-md border border-zinc-200 bg-white">
+            <table className="min-w-[1120px] w-full text-left text-xs">
+              <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
+                <tr>
+                  <th className="px-2 py-2">Product / Variant</th>
+                  <th className="px-2 py-2">Dimension</th>
+                  {priceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
+                  <th className="px-2 py-2">Currency</th>
+                  <th className="px-2 py-2">Specification</th>
+                  <th className="px-2 py-2">Active</th>
+                  <th className="px-2 py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tableRows.map((row, index) => {
+                  const normalizedRow = categoryPricingRowWithColumns(row, priceCategories);
+                  return (
+                    <tr key={row.id ?? index} className="border-t border-zinc-100">
+                      <td className="px-2 py-2"><input value={normalizedRow.variant_name ?? ""} onChange={(e) => update(index, { variant_name: e.target.value })} className="h-8 w-32 border border-zinc-200 px-2 outline-none focus:border-emerald-800" /></td>
+                      <td className="px-2 py-2"><input value={normalizedRow.dimension ?? ""} onChange={(e) => update(index, { dimension: e.target.value })} className="h-8 w-28 border border-zinc-200 px-2 outline-none focus:border-emerald-800" /></td>
+                      {priceCategories.map((category) => <td key={category} className="px-2 py-2"><input type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => update(index, { prices: { ...normalizedRow.prices, [category]: Number(e.target.value) } })} className="h-8 w-20 border border-zinc-200 px-2 outline-none focus:border-emerald-800" /></td>)}
+                      <td className="px-2 py-2"><CurrencySelect value={normalizedRow.currency} onChange={(currency) => update(index, { currency })} /></td>
+                      <td className="px-2 py-2"><textarea value={normalizedRow.specification ?? ""} onChange={(e) => update(index, { specification: e.target.value })} rows={1} className="w-52 rounded-sm border border-zinc-200 px-2 py-1 outline-none focus:border-emerald-800" /></td>
+                      <td className="px-2 py-2"><input type="checkbox" checked={normalizedRow.is_active !== false} onChange={(e) => update(index, { is_active: e.target.checked })} /></td>
+                      <td className="px-2 py-2"><button type="button" onClick={() => setTableRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="text-xs font-semibold text-red-700">Remove</button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="rounded-md border border-dashed border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-500">
+            <p>No pricing rows yet.</p>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={addRow}
+          className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
+        >
+          + Add row
+        </button>
       </div>
-      <button type="button" onClick={() => setTableRows((current) => [...current, { id: idFor("category", current.length), currency: defaultCurrency, prices: {}, is_active: true, sort_order: current.length }])} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">+ Add Fabric/Leather Row</button>
     </div>
   );
 }
 
-export function AccessoryPricingTable({ rows }: { rows?: AccessoryPricingRow[] | null }) {
+export function AccessoryPricingTable({
+  brandDefaultCurrency,
+  rows,
+  templateCurrency,
+}: {
+  brandDefaultCurrency?: string | null;
+  rows?: AccessoryPricingRow[] | null;
+  templateCurrency?: string | null;
+}) {
   const [groups, setGroups] = useState<AccessoryPricingRow[]>(() =>
     normalizeAccessoryGroups(rows),
   );
@@ -313,7 +535,7 @@ export function AccessoryPricingTable({ rows }: { rows?: AccessoryPricingRow[] |
                 </tbody>
               </table>
             </div>
-            <button type="button" onClick={() => updateGroup(groupIndex, { items: [...(group.items ?? []), { id: idFor("add-on", group.items?.length ?? 0), currency: defaultCurrency, is_active: true, sort_order: group.items?.length ?? 0 }] })} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">+ Add Accessory</button>
+            <button type="button" onClick={(event) => updateGroup(groupIndex, { items: [...(group.items ?? []), { id: idFor("add-on", group.items?.length ?? 0), currency: resolveDefaultPricingCurrency({ brandDefaultCurrency, existingRows: group.items ?? groups.flatMap((entry) => entry.items ?? []), savedTemplateCurrency: templateCurrency, trigger: event.currentTarget }), is_active: true, sort_order: group.items?.length ?? 0 }] })} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">+ Add Accessory</button>
           </div>
         ))}
         {!groups.length ? <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">No accessories / optional items yet.</p> : null}

@@ -122,6 +122,8 @@ type VariantPricingRow = {
 
 type CategoryPricingRow = {
   id?: string;
+  pricing_category_id?: string | null;
+  pricing_category_name?: string | null;
   variant_name?: string;
   dimension?: string;
   currency?: string;
@@ -355,6 +357,20 @@ function activeCategoryRows(rows?: CategoryPricingRow[] | null) {
     .filter((row) => row.is_active !== false)
     .filter((row) => row.variant_name || row.dimension || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
+}
+
+function categoryPriceColumns(rows?: CategoryPricingRow[] | null) {
+  const columns = ["Cat A", "Cat B", "Cat C", "Cat D"];
+
+  activeCategoryRows(rows).forEach((row) => {
+    Object.keys(row.prices ?? {}).forEach((category) => {
+      if (!columns.includes(category)) {
+        columns.push(category);
+      }
+    });
+  });
+
+  return columns;
 }
 
 function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
@@ -1003,7 +1019,9 @@ export function ProductLibrarySelector({
                         categoryRows[0] ??
                         null
                       : null;
-                  const selectedFabricCategory = selectedFabricCategories[template.id] ?? "Cat A";
+                  const availableCategoryColumns = categoryPriceColumns(template.category_pricing);
+                  const selectedFabricCategory =
+                    selectedFabricCategories[template.id] ?? availableCategoryColumns[0] ?? "Cat A";
                   const selectedCategoryPrice = selectedCategoryRow
                     ? numberValue(selectedCategoryRow.prices?.[selectedFabricCategory])
                     : 0;
@@ -1088,7 +1106,8 @@ export function ProductLibrarySelector({
                             childVariantRows[0] ??
                             null
                           : null;
-                      const childCategory = selectedLinkedFabricCategories[link.id] ?? "Cat A";
+                      const childCategoryColumns = categoryPriceColumns(childTemplate.category_pricing);
+                      const childCategory = selectedLinkedFabricCategories[link.id] ?? childCategoryColumns[0] ?? "Cat A";
                       const unitPrice = childCategoryRow
                         ? numberValue(childCategoryRow.prices?.[childCategory])
                         : childVariantRow
@@ -1783,7 +1802,7 @@ export function ProductLibrarySelector({
                                 onChange={(event) => setSelectedFabricCategories((current) => ({ ...current, [template.id]: event.target.value }))}
                                 className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                               >
-                                {["Cat A", "Cat B", "Cat C", "Cat D"].map((category) => (
+                                {availableCategoryColumns.map((category) => (
                                   <option key={category} value={category}>
                                     {category} {selectedCategoryRow ? `- ${formatMoney(selectedCategoryRow.currency ?? template.currency, numberValue(selectedCategoryRow.prices?.[category]))}` : ""}
                                   </option>
@@ -2023,7 +2042,7 @@ export function ProductLibrarySelector({
                                         onChange={(event) => setSelectedLinkedFabricCategories((current) => ({ ...current, [line.link.id]: event.target.value }))}
                                         className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                                       >
-                                        {["Cat A", "Cat B", "Cat C", "Cat D"].map((category) => (
+                                        {categoryPriceColumns(line.childTemplate.category_pricing).map((category) => (
                                           <option key={category} value={category}>
                                             {category} - {formatMoney(line.childCategoryRow?.currency ?? line.childTemplate.currency, numberValue(line.childCategoryRow?.prices?.[category]))}
                                           </option>
