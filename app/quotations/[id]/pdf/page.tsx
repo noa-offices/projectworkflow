@@ -117,6 +117,8 @@ type QuotationItem = {
 
 type CellLayout = {
   images?: Record<string, Partial<ImageDisplaySettings> | undefined>;
+  customPrintableColumnValues?: Record<string, unknown>;
+  customPrintableColumnImageSettings?: Record<string, Partial<ImageDisplaySettings> | undefined>;
 };
 
 type LayoutSettings = {
@@ -124,6 +126,15 @@ type LayoutSettings = {
     key?: string;
     visible?: boolean;
     width?: number;
+  }>;
+  columnOrder?: string[];
+  customPrintableColumns?: Array<{
+    id?: string;
+    label?: string;
+    type?: string;
+    width?: number;
+    showInClient?: boolean;
+    showInInternal?: boolean;
   }>;
   specificationMetadata?: {
     title?: boolean;
@@ -143,6 +154,8 @@ type PdfColumn = {
   defaultVisible?: boolean;
   align?: "left" | "center" | "right";
   width?: number;
+  customPrintableColumnId?: string;
+  customPrintableColumnType?: string;
 };
 
 type DisplaySection = QuotationSection & {
@@ -393,8 +406,63 @@ function columnSettingsMap(settings?: LayoutSettings | null) {
   );
 }
 
+function columnOrder(settings?: LayoutSettings | null) {
+  if (!Array.isArray(settings?.columnOrder)) return [];
+  return settings.columnOrder.filter((entry): entry is string => typeof entry === "string" && Boolean(entry));
+}
+
+function orderPdfColumns(columns: PdfColumn[], settings?: LayoutSettings | null) {
+  const savedOrder = columnOrder(settings);
+  if (!savedOrder.length) return columns;
+
+  const columnsByKey = new Map(columns.map((column) => [column.key, column]));
+  const ordered = savedOrder
+    .map((key) => columnsByKey.get(key))
+    .filter((column): column is PdfColumn => Boolean(column));
+  const orderedKeys = new Set(ordered.map((column) => column.key));
+
+  return [
+    ...ordered,
+    ...columns.filter((column) => !orderedKeys.has(column.key)),
+  ];
+}
+
+function customPrintablePdfColumns(settings?: LayoutSettings | null): PdfColumn[] {
+  const entries = settings?.customPrintableColumns;
+  if (!Array.isArray(entries)) return [];
+
+  return entries
+    .filter((entry): entry is NonNullable<NonNullable<LayoutSettings["customPrintableColumns"]>[number]> => Boolean(entry))
+    .filter((entry) => typeof entry.id === "string" && entry.id.trim() && typeof entry.label === "string" && entry.label.trim())
+    .filter((entry) => entry.showInClient !== false)
+    .map((entry) => ({
+      key: `custom_printable:${entry.id!.trim()}`,
+      label: entry.label!.trim(),
+      defaultWidth: typeof entry.width === "number" ? Math.min(Math.max(entry.width, 40), 800) : 160,
+      align: entry.type === "number" || entry.type === "percentage" ? "center" as const : "left" as const,
+      defaultVisible: true,
+      customPrintableColumnId: entry.id!.trim(),
+      customPrintableColumnType: typeof entry.type === "string" ? entry.type : "text",
+    }));
+}
+
+function customPrintableColumnValue(item: QuotationItem, columnId: string) {
+  const values = isRecord(item.cell_layout?.customPrintableColumnValues)
+    ? item.cell_layout?.customPrintableColumnValues
+    : {};
+  const value = values?.[columnId];
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
+}
+
+function customPrintableColumnImageSettings(item: QuotationItem, columnId: string) {
+  return item.cell_layout?.customPrintableColumnImageSettings?.[columnId] ?? null;
+}
+
 function getPdfColumns(layoutMode: string, settings?: LayoutSettings | null) {
   const settingsMap = columnSettingsMap(settings);
+  const printableCustomColumns = customPrintablePdfColumns(settings);
   const serial: PdfColumn = { key: "s_no", label: "S. No.", defaultWidth: 54, align: "center" };
   const manualSerial: PdfColumn = { key: "manual_serial", label: "Manual S.No.", defaultWidth: 90, defaultVisible: false, align: "center" };
   const code: PdfColumn = { key: "code", label: "Code", defaultWidth: 78 };
@@ -473,11 +541,12 @@ function getPdfColumns(layoutMode: string, settings?: LayoutSettings | null) {
     ],
   };
 
-  const columns = [
+  const columns = orderPdfColumns([
     manualSerial,
     ...(byLayout[layoutMode] ?? byLayout.standard_proposal),
+    ...printableCustomColumns,
     ...(layoutMode !== "internal_costing" ? [supplier] : []),
-  ];
+  ], settings);
 
   return columns
     .filter((column) => column.key !== "edit")
@@ -585,6 +654,7 @@ function renderPdfCell({
   proposedImageUrlByItemId,
   specifiedImageUrlByItemId,
   finishImageUrlByItemAndFinishId,
+  customPrintableImageUrlByItemAndColumnId,
   settings,
   visibleColumnKeys,
 }: {
@@ -594,6 +664,7 @@ function renderPdfCell({
   proposedImageUrlByItemId: Map<string, string | null>;
   specifiedImageUrlByItemId: Map<string, string | null>;
   finishImageUrlByItemAndFinishId: Map<string, string | null>;
+  customPrintableImageUrlByItemAndColumnId: Map<string, string | null>;
   settings: ReturnType<typeof specificationMetadataSettings>;
   visibleColumnKeys: Set<string>;
 }) {
@@ -679,6 +750,26 @@ function renderPdfCell({
     case "supplier_notes":
       return [item.notes, item.supplier_notes_snapshot].filter(Boolean).join("\n") || "-";
     default:
+      if (column.customPrintableColumnId) {
+        const value = customPrintableColumnValue(item, column.customPrintableColumnId);
+        if (!value) return "-";
+
+        if (column.customPrintableColumnType === "image") {
+          return (
+            <ImageBox
+              imageSettings={customPrintableColumnImageSettings(item, column.customPrintableColumnId)}
+              src={customPrintableImageUrlByItemAndColumnId.get(`${item.id}:${column.customPrintableColumnId}`) ?? null}
+            />
+          );
+        }
+
+        if (column.customPrintableColumnType === "percentage") {
+          return `${value}%`;
+        }
+
+        return value;
+      }
+
       return "-";
   }
 }
@@ -754,9 +845,20 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
       }),
     ),
   );
+  const customPrintableImageEntries = await Promise.all(
+    activeItems.flatMap((item) =>
+      customPrintablePdfColumns(quotation.layout_settings)
+        .filter((column) => column.customPrintableColumnType === "image" && column.customPrintableColumnId)
+        .map(async (column) => [
+          `${item.id}:${column.customPrintableColumnId}`,
+          await signedImageUrl(customPrintableColumnValue(item, column.customPrintableColumnId!), supabase),
+        ] as const),
+    ),
+  );
   const specifiedImageUrlByItemId = new Map(specifiedImageEntries);
   const proposedImageUrlByItemId = new Map(proposedImageEntries);
   const finishImageUrlByItemAndFinishId = new Map(finishImageEntries);
+  const customPrintableImageUrlByItemAndColumnId = new Map(customPrintableImageEntries);
   const itemsBySection = new Map<string, QuotationItem[]>();
 
   for (const item of activeItems) {
@@ -1013,6 +1115,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                               <td key={`${item.id}-${column.key}`} className={tableCellClass(column)}>
                                 {renderPdfCell({
                                   column,
+                                  customPrintableImageUrlByItemAndColumnId,
                                   item,
                                   finishImageUrlByItemAndFinishId,
                                   proposedImageUrlByItemId,
@@ -1053,6 +1156,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
                             <td key={`${item.id}-${column.key}`} className={tableCellClass(column)}>
                               {renderPdfCell({
                                 column,
+                                customPrintableImageUrlByItemAndColumnId,
                                 item,
                                 finishImageUrlByItemAndFinishId,
                                 proposedImageUrlByItemId,

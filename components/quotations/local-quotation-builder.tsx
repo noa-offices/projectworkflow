@@ -10,7 +10,7 @@ import {
   type ProductLibraryLinkedFamily,
   type ProductLibraryTemplate,
 } from "@/components/quotations/product-library-selector";
-import { LocalQuotationImageCell } from "@/components/quotations/local-quotation-image-cell";
+import { LocalQuotationCustomPrintableImageCell, LocalQuotationImageCell } from "@/components/quotations/local-quotation-image-cell";
 import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
 import { FinishImagePreview } from "@/components/quotations/finish-image-uploader";
 import { SharedQuotationMoreMenu } from "@/components/quotations/shared-quotation-row-details-panel";
@@ -87,21 +87,52 @@ const allColumns = [
   { key: "supplier_name", label: "Supplier", defaultWidth: 128, align: "left", defaultVisible: false },
   { key: "edit", label: "Edit / Actions", defaultWidth: 132, align: "center", defaultVisible: true },
   { key: "internal_notes", label: "Internal Notes", defaultWidth: 220, align: "left", defaultVisible: true },
-  { key: "cost_price", label: "Cost Price", defaultWidth: 100, align: "center", defaultVisible: true },
-  { key: "margin_percent", label: "Margin %", defaultWidth: 90, align: "center", defaultVisible: true },
+  { key: "cost_price", label: "Cost Price", defaultWidth: 100, align: "center", defaultVisible: false },
+  { key: "margin_percent", label: "Margin %", defaultWidth: 90, align: "center", defaultVisible: false },
   { key: "margin_amount", label: "Margin Amt.", defaultWidth: 110, align: "center", defaultVisible: false },
-  { key: "supplier_notes", label: "Supplier Notes", defaultWidth: 200, align: "left", defaultVisible: true },
+  { key: "supplier_notes", label: "Supplier Notes", defaultWidth: 200, align: "left", defaultVisible: false },
   { key: "delivery_lead_time", label: "Lead Time", defaultWidth: 120, align: "left", defaultVisible: false },
   { key: "internal_status", label: "Internal Status", defaultWidth: 130, align: "left", defaultVisible: false },
 ];
+type LocalBuilderColumn = {
+  key: string;
+  label: string;
+  defaultWidth: number;
+  align: string;
+  defaultVisible: boolean;
+  internalCustomColumnId?: string;
+  internalCustomColumnType?: LocalInternalCustomColumnType;
+  customPrintableColumnId?: string;
+  customPrintableColumnType?: LocalCustomPrintableColumnType;
+};
 type LocalLayoutColumnSetting = {
   key: string;
   visible?: boolean;
   width?: number;
 };
+type LocalInternalCustomColumnType = "text" | "number" | "date";
+type LocalInternalCustomColumn = {
+  id: string;
+  label: string;
+  type: LocalInternalCustomColumnType;
+  width?: number;
+  visible?: boolean;
+};
+type LocalCustomPrintableColumnType = "text" | "number" | "percentage" | "image";
+type LocalCustomPrintableColumn = {
+  id: string;
+  label: string;
+  type: LocalCustomPrintableColumnType;
+  width?: number;
+  showInClient?: boolean;
+  showInInternal?: boolean;
+};
 type LocalSpecificationMetadataKey = "title" | "size" | "finish" | "warranty";
 type LocalLayoutSettings = {
   columns?: LocalLayoutColumnSetting[];
+  columnOrder?: string[];
+  internalColumns?: LocalInternalCustomColumn[];
+  customPrintableColumns?: LocalCustomPrintableColumn[];
   specificationMetadata?: Partial<Record<LocalSpecificationMetadataKey, boolean>>;
 };
 type HistoryCommitMode = "push" | "merge" | "skip";
@@ -146,14 +177,47 @@ const specificationMetadataFields: Array<[LocalSpecificationMetadataKey, string]
   ["finish", "Show finish in specification"],
   ["warranty", "Show warranty in specification"],
 ];
-const internalColumnKeys = [
+const internalDefaultColumnKeys = [
   "internal_notes",
+] as const;
+const legacyInternalColumnKeys = [
   "cost_price",
   "margin_percent",
   "margin_amount",
   "supplier_notes",
   "delivery_lead_time",
   "internal_status",
+] as const;
+const columnSettingsGroups: Array<{
+  title: string;
+  keys: string[];
+  internalOnly?: boolean;
+}> = [
+  {
+    title: "Identity / Reference Columns",
+    keys: ["manual_serial", "s_no", "code", "specified_image", "proposed_image", "specification"],
+  },
+  {
+    title: "Product Detail Columns",
+    keys: ["origin", "model", "finish", "size", "warranty", "supplier_name"],
+  },
+  {
+    title: "Pricing Columns",
+    keys: ["qty", "unit_price", "discount", "discount_percentage", "discount_amount", "net_price", "net_total"],
+  },
+  {
+    title: "Custom Printable Columns",
+    keys: [],
+  },
+  {
+    title: "Internal View Columns",
+    keys: ["internal_notes"],
+    internalOnly: true,
+  },
+  {
+    title: "Actions",
+    keys: ["edit"],
+  },
 ] as const;
 
 function clampColumnWidth(width: number) {
@@ -570,6 +634,137 @@ function layoutColumnSettings(value: unknown) {
     );
 }
 
+function layoutColumnOrder(value: unknown) {
+  const order = localLayoutSettings(value).columnOrder;
+  if (!Array.isArray(order)) return [];
+  return order.filter((entry): entry is string => typeof entry === "string" && Boolean(entry));
+}
+
+function orderedColumnsBySettings(columns: LocalBuilderColumn[], settingsValue: unknown) {
+  const order = layoutColumnOrder(settingsValue);
+  if (!order.length) {
+    const defaultColumns = [...columns];
+    const editIndex = defaultColumns.findIndex((column) => column.key === "edit");
+    if (editIndex >= 0) {
+      const [editColumn] = defaultColumns.splice(editIndex, 1);
+      defaultColumns.push(editColumn);
+    }
+    return defaultColumns;
+  }
+
+  const columnsByKey = new Map(columns.map((column) => [column.key, column]));
+  const ordered = order
+    .map((key) => columnsByKey.get(key))
+    .filter((column): column is LocalBuilderColumn => Boolean(column));
+  const orderedKeys = new Set(ordered.map((column) => column.key));
+
+  const nextColumns = [
+    ...ordered,
+    ...columns.filter((column) => !orderedKeys.has(column.key)),
+  ];
+  const editIndex = nextColumns.findIndex((column) => column.key === "edit");
+  if (editIndex >= 0) {
+    const [editColumn] = nextColumns.splice(editIndex, 1);
+    nextColumns.push(editColumn);
+  }
+
+  return nextColumns;
+}
+
+function normalizeInternalCustomColumnType(value: unknown): LocalInternalCustomColumnType {
+  return value === "number" ? "number" : value === "date" ? "date" : "text";
+}
+
+function internalCustomColumnKey(columnId: string) {
+  return `internal_custom:${columnId}`;
+}
+
+function normalizeCustomPrintableColumnType(value: unknown): LocalCustomPrintableColumnType {
+  return value === "number"
+    ? "number"
+    : value === "percentage"
+      ? "percentage"
+      : value === "image"
+        ? "image"
+        : "text";
+}
+
+function printableCustomColumnKey(columnId: string) {
+  return `custom_printable:${columnId}`;
+}
+
+function customPrintableColumns(settingsValue: unknown): LocalCustomPrintableColumn[] {
+  const entries = localLayoutSettings(settingsValue).customPrintableColumns;
+  if (!Array.isArray(entries)) return [];
+
+  return (entries as unknown[])
+    .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+    .map((entry) => {
+      const id = typeof entry.id === "string" && entry.id.trim()
+        ? entry.id.trim()
+        : createLocalId("printable-column");
+      const label = typeof entry.label === "string" && entry.label.trim()
+        ? entry.label.trim()
+        : "Printable Column";
+
+      return {
+        id,
+        label,
+        type: normalizeCustomPrintableColumnType(entry.type),
+        width: typeof entry.width === "number" ? clampColumnWidth(entry.width) : 160,
+        showInClient: entry.showInClient !== false,
+        showInInternal: entry.showInInternal !== false,
+      };
+    });
+}
+
+function customPrintableColumnTableColumn(column: LocalCustomPrintableColumn): LocalBuilderColumn {
+  return {
+    key: printableCustomColumnKey(column.id),
+    label: column.label,
+    defaultWidth: column.width ?? 160,
+    align: column.type === "number" || column.type === "percentage" ? "center" : "left",
+    defaultVisible: true,
+    customPrintableColumnId: column.id,
+    customPrintableColumnType: column.type,
+  };
+}
+
+function internalCustomColumns(settingsValue: unknown): LocalInternalCustomColumn[] {
+  const entries = localLayoutSettings(settingsValue).internalColumns;
+  if (!Array.isArray(entries)) return [];
+
+  return (entries as unknown[])
+    .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+    .map((entry) => {
+      const id = typeof entry.id === "string" && entry.id.trim()
+        ? entry.id.trim()
+        : createLocalId("internal-column");
+      const label = typeof entry.label === "string" && entry.label.trim()
+        ? entry.label.trim()
+        : "Internal Column";
+      return {
+        id,
+        label,
+        type: normalizeInternalCustomColumnType(entry.type),
+        width: typeof entry.width === "number" ? clampColumnWidth(entry.width) : undefined,
+        visible: entry.visible !== false,
+      };
+    });
+}
+
+function customInternalColumnTableColumn(column: LocalInternalCustomColumn) {
+  return {
+    key: internalCustomColumnKey(column.id),
+    label: column.label,
+    defaultWidth: column.width ?? 180,
+    align: column.type === "number" ? "center" as const : "left" as const,
+    defaultVisible: column.visible !== false,
+    internalCustomColumnId: column.id,
+    internalCustomColumnType: column.type,
+  };
+}
+
 function updateItemMergeMode(item: LocalQuotationItem, mergeMode: string): LocalQuotationItem {
   const currentLayout = (item.cell_layout as Record<string, unknown> | null | undefined) ?? {};
   return {
@@ -875,7 +1070,7 @@ function columnsForLayoutMode(layoutMode: string) {
 
   const selectedKeys = byLayout[layoutMode] ?? byLayout.standard_proposal;
 
-  return selectedKeys.map((key) => {
+  return selectedKeys.map((key): LocalBuilderColumn => {
     const baseColumn = allColumns.find((column) => column.key === key);
     if (!baseColumn) {
       throw new Error(`Unknown local quotation column: ${key}`);
@@ -916,7 +1111,7 @@ function columnByKey(key: string) {
   return column;
 }
 
-function combineColumns(columns: Array<(typeof allColumns)[number]>) {
+function combineColumns(columns: LocalBuilderColumn[]) {
   const seen = new Set<string>();
   return columns.filter((column) => {
     if (seen.has(column.key)) return false;
@@ -931,19 +1126,53 @@ type LocalInternalItemMetadata = {
   costPrice?: number | null;
   deliveryLeadTime?: string | null;
   internalStatus?: string | null;
+  internalColumnValues?: Record<string, string | null>;
 };
+
+function customPrintableColumnValues(item: LocalQuotationItem) {
+  const cellLayout = recordEntries(item.cell_layout);
+  const printableValues = recordEntries(cellLayout.customPrintableColumnValues);
+
+  return Object.fromEntries(
+    Object.entries(printableValues).map(([key, value]) => {
+      if (typeof value === "string") return [key, value];
+      if (typeof value === "number" && Number.isFinite(value)) return [key, String(value)];
+      return [key, ""];
+    }),
+  ) as Record<string, string>;
+}
+
+function internalMetadataTextValue(record: Record<string, unknown>, key: string) {
+  if (!Object.prototype.hasOwnProperty.call(record, key)) {
+    return null;
+  }
+
+  const value = record[key];
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+}
 
 function internalItemMetadata(item: LocalQuotationItem): LocalInternalItemMetadata {
   const cellLayout = recordEntries(item.cell_layout);
   const internal = recordEntries(cellLayout.internal);
   const costPrice = Number(internal.costPrice);
+  const rawInternalColumnValues = recordEntries(internal.internalColumnValues);
+  const internalColumnValues = Object.fromEntries(
+    Object.entries(rawInternalColumnValues).map(([key, value]) => {
+      if (typeof value === "string") return [key, value];
+      if (typeof value === "number" && Number.isFinite(value)) return [key, String(value)];
+      return [key, null];
+    }),
+  );
 
   return {
-    internalNotes: stringValue(internal, "internalNotes") ?? item.notes ?? null,
-    supplierNotes: stringValue(internal, "supplierNotes") ?? item.supplier_notes_snapshot ?? null,
+    internalNotes: internalMetadataTextValue(internal, "internalNotes") ?? item.notes ?? null,
+    supplierNotes: internalMetadataTextValue(internal, "supplierNotes") ?? item.supplier_notes_snapshot ?? null,
     costPrice: Number.isFinite(costPrice) ? costPrice : (Number.isFinite(Number(item.internal_cost)) ? Number(item.internal_cost) : null),
-    deliveryLeadTime: stringValue(internal, "deliveryLeadTime") || null,
-    internalStatus: stringValue(internal, "internalStatus") || null,
+    deliveryLeadTime: internalMetadataTextValue(internal, "deliveryLeadTime"),
+    internalStatus: internalMetadataTextValue(internal, "internalStatus"),
+    internalColumnValues,
   };
 }
 
@@ -953,8 +1182,12 @@ function updateItemInternalMetadata(
 ): Partial<LocalQuotationItem> {
   const cellLayout = recordEntries(item.cell_layout);
   const internal = recordEntries(cellLayout.internal);
+  const internalColumnValues = recordEntries(internal.internalColumnValues);
 
   return {
+    ...(Object.prototype.hasOwnProperty.call(patch, "internalNotes")
+      ? { notes: patch.internalNotes ?? null }
+      : {}),
     cell_layout: {
       ...cellLayout,
       internal: {
@@ -974,6 +1207,59 @@ function updateItemInternalMetadata(
         ...(Object.prototype.hasOwnProperty.call(patch, "internalStatus")
           ? { internalStatus: patch.internalStatus ?? null }
           : {}),
+        ...(Object.prototype.hasOwnProperty.call(patch, "internalColumnValues")
+          ? {
+            internalColumnValues: {
+              ...internalColumnValues,
+              ...patch.internalColumnValues,
+            },
+          }
+          : {}),
+      },
+    },
+  };
+}
+
+function internalCustomColumnValue(
+  item: LocalQuotationItem,
+  columnId: string,
+) {
+  return internalItemMetadata(item).internalColumnValues?.[columnId] ?? "";
+}
+
+function updateItemInternalCustomColumnValue(
+  item: LocalQuotationItem,
+  columnId: string,
+  value: string,
+): Partial<LocalQuotationItem> {
+  return updateItemInternalMetadata(item, {
+    internalColumnValues: {
+      [columnId]: value,
+    },
+  });
+}
+
+function customPrintableColumnValue(
+  item: LocalQuotationItem,
+  columnId: string,
+) {
+  return customPrintableColumnValues(item)[columnId] ?? "";
+}
+
+function updateItemCustomPrintableColumnValue(
+  item: LocalQuotationItem,
+  columnId: string,
+  value: string,
+): Partial<LocalQuotationItem> {
+  const cellLayout = recordEntries(item.cell_layout);
+  const printableValues = recordEntries(cellLayout.customPrintableColumnValues);
+
+  return {
+    cell_layout: {
+      ...cellLayout,
+      customPrintableColumnValues: {
+        ...printableValues,
+        [columnId]: value,
       },
     },
   };
@@ -1173,11 +1459,21 @@ export function LocalQuotationBuilder({
   const [saveLibraryTemplateSearch, setSaveLibraryTemplateSearch] = useState("");
   const [saveLibraryTemplateId, setSaveLibraryTemplateId] = useState("");
   const [quoteDetailsOpen, setQuoteDetailsOpen] = useState(false);
+  const [addInternalColumnOpen, setAddInternalColumnOpen] = useState(false);
+  const [newInternalColumnName, setNewInternalColumnName] = useState("");
+  const [newInternalColumnType, setNewInternalColumnType] = useState<LocalInternalCustomColumnType>("text");
+  const [addPrintableColumnOpen, setAddPrintableColumnOpen] = useState(false);
+  const [newPrintableColumnName, setNewPrintableColumnName] = useState("");
+  const [newPrintableColumnType, setNewPrintableColumnType] = useState<LocalCustomPrintableColumnType>("text");
+  const [newPrintableColumnWidth, setNewPrintableColumnWidth] = useState("160");
+  const [newPrintableColumnShowInClient, setNewPrintableColumnShowInClient] = useState(true);
+  const [newPrintableColumnShowInInternal, setNewPrintableColumnShowInInternal] = useState(true);
   const [roundingStepInput, setRoundingStepInput] = useState("5");
   const [copiedRowClipboard, setCopiedRowClipboard] = useState<LocalRowClipboardPayload | null>(null);
   const [copiedRowId, setCopiedRowId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const importRef = useRef<HTMLInputElement | null>(null);
+  const columnSettingsRef = useRef<HTMLDetailsElement | null>(null);
   const lastPersistedSignatureRef = useRef<string | null>(null);
   const historyGroupRef = useRef<{ key: string; timestamp: number } | null>(null);
   const clientSnapshot = (workspace.client_snapshot ?? {}) as Record<string, unknown>;
@@ -1310,12 +1606,29 @@ export function LocalQuotationBuilder({
 
   const layoutSettings = localLayoutSettings(workspace.layout_settings);
   const layoutColumns = columnsForLayoutMode(workspace.layout_mode);
-  const activeColumns = view === "internal"
-    ? combineColumns([
-        ...layoutColumns,
-        ...internalColumnKeys.map((key) => columnByKey(key)),
-      ])
-    : layoutColumns;
+  const customPrintableColumnDefs = customPrintableColumns(workspace.layout_settings);
+  const customInternalColumns = internalCustomColumns(workspace.layout_settings);
+  const editColumn = layoutColumns.find((column) => column.key === "edit");
+  const layoutColumnsWithoutEdit = layoutColumns.filter((column) => column.key !== "edit");
+  const printableColumnsForView = customPrintableColumnDefs
+    .filter((column) => view === "internal" ? column.showInInternal !== false : column.showInClient !== false)
+    .map((column) => customPrintableColumnTableColumn(column));
+  const activeColumns = orderedColumnsBySettings(combineColumns(
+    view === "internal"
+      ? [
+        ...layoutColumnsWithoutEdit,
+        ...printableColumnsForView,
+        ...(editColumn ? [editColumn] : []),
+        ...internalDefaultColumnKeys.map((key) => columnByKey(key)),
+        ...customInternalColumns.map((column) => customInternalColumnTableColumn(column)),
+        ...legacyInternalColumnKeys.map((key) => columnByKey(key)),
+      ]
+      : [
+        ...layoutColumnsWithoutEdit,
+        ...printableColumnsForView,
+        ...(editColumn ? [editColumn] : []),
+      ],
+  ), workspace.layout_settings);
   const columnSettings = new Map(
     layoutColumnSettings(layoutSettings.columns).map((column) => [column.key, column])
   );
@@ -1327,6 +1640,7 @@ export function LocalQuotationBuilder({
     visible: columnSettings.get(c.key)?.visible ?? c.defaultVisible ?? true,
   })).filter(c => c.visible);
   const visibleColumnKeys = new Set(visibleColumns.map((column) => column.key));
+  const activeColumnByKey = new Map(activeColumns.map((column) => [column.key, column]));
 
   const tableWidth = visibleColumns.reduce((sum, c) => sum + c.width, 0);
   const totalColumns = visibleColumns.length;
@@ -1375,6 +1689,197 @@ export function LocalQuotationBuilder({
       }
       return { ...current, layout_settings: { ...currentLayout, columns: nextCols } };
     }, { groupKey: "layout-settings", mode: "merge" });
+  }
+
+  function moveColumnOrder(key: string, direction: -1 | 1) {
+    if (key === "edit") return;
+    const activeKeys = activeColumns.map((column) => column.key);
+    const currentIndex = activeKeys.indexOf(key);
+    const targetIndex = currentIndex + direction;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= activeKeys.length) return;
+
+    const nextActiveKeys = [...activeKeys];
+    const [movedKey] = nextActiveKeys.splice(currentIndex, 1);
+    nextActiveKeys.splice(targetIndex, 0, movedKey);
+
+    commit((current) => {
+      const currentLayout = localLayoutSettings(current.layout_settings);
+      const existingOrder = layoutColumnOrder(current.layout_settings).filter((entry) => !nextActiveKeys.includes(entry));
+      return {
+        ...current,
+        layout_settings: {
+          ...currentLayout,
+          columnOrder: [...nextActiveKeys, ...existingOrder],
+        },
+      };
+    }, { groupKey: "layout-settings", mode: "merge" });
+  }
+
+  function updateInternalCustomColumn(
+    columnId: string,
+    patch: Partial<LocalInternalCustomColumn>,
+  ) {
+    commit((current) => {
+      const currentLayout = localLayoutSettings(current.layout_settings);
+      const currentColumns = internalCustomColumns(current.layout_settings);
+      const nextColumns = currentColumns.map((column) => {
+        if (column.id !== columnId) return column;
+
+        return {
+          ...column,
+          ...patch,
+          label: typeof patch.label === "string" ? patch.label : column.label,
+          type: patch.type ? normalizeInternalCustomColumnType(patch.type) : column.type,
+          width: typeof patch.width === "number"
+            ? clampColumnWidth(patch.width)
+            : patch.width === undefined
+              ? column.width
+              : undefined,
+        };
+      });
+
+      return {
+        ...current,
+        layout_settings: {
+          ...currentLayout,
+          internalColumns: nextColumns,
+        },
+      };
+    }, { groupKey: "layout-settings", mode: "merge" });
+  }
+
+  function updateCustomPrintableColumn(
+    columnId: string,
+    patch: Partial<LocalCustomPrintableColumn>,
+  ) {
+    commit((current) => {
+      const currentLayout = localLayoutSettings(current.layout_settings);
+      const currentColumns = customPrintableColumns(current.layout_settings);
+      const nextColumns = currentColumns.map((column) => {
+        if (column.id !== columnId) return column;
+
+        return {
+          ...column,
+          ...patch,
+          label: typeof patch.label === "string" ? patch.label : column.label,
+          type: patch.type ? normalizeCustomPrintableColumnType(patch.type) : column.type,
+          width: typeof patch.width === "number"
+            ? clampColumnWidth(patch.width)
+            : patch.width === undefined
+              ? column.width
+              : undefined,
+        };
+      });
+
+      return {
+        ...current,
+        layout_settings: {
+          ...currentLayout,
+          customPrintableColumns: nextColumns,
+        },
+      };
+    }, { groupKey: "layout-settings", mode: "merge" });
+  }
+
+  function removeCustomPrintableColumn(columnId: string) {
+    commit((current) => {
+      const currentLayout = localLayoutSettings(current.layout_settings);
+      return {
+        ...current,
+        layout_settings: {
+          ...currentLayout,
+          customPrintableColumns: customPrintableColumns(current.layout_settings).filter((column) => column.id !== columnId),
+        },
+      };
+    }, { groupKey: "layout-settings", mode: "merge" });
+  }
+
+  function removeInternalCustomColumn(columnId: string) {
+    commit((current) => {
+      const currentLayout = localLayoutSettings(current.layout_settings);
+      return {
+        ...current,
+        layout_settings: {
+          ...currentLayout,
+          internalColumns: internalCustomColumns(current.layout_settings).filter((column) => column.id !== columnId),
+        },
+      };
+    }, { groupKey: "layout-settings", mode: "merge" });
+  }
+
+  function createInternalCustomColumn() {
+    const label = newInternalColumnName.trim();
+    if (!label) return;
+
+    commit((current) => {
+      const currentLayout = localLayoutSettings(current.layout_settings);
+      const nextColumn: LocalInternalCustomColumn = {
+        id: createLocalId("internal-column"),
+        label,
+        type: newInternalColumnType,
+        width: 180,
+        visible: true,
+      };
+
+      return {
+        ...current,
+        layout_settings: {
+          ...currentLayout,
+          internalColumns: [
+            ...internalCustomColumns(current.layout_settings),
+            nextColumn,
+          ],
+        },
+      };
+    }, { groupKey: "layout-settings", mode: "merge" });
+
+    setNewInternalColumnName("");
+    setNewInternalColumnType("text");
+    setAddInternalColumnOpen(false);
+    setView("internal");
+  }
+
+  function createPrintableCustomColumn() {
+    const label = newPrintableColumnName.trim();
+    if (!label) return;
+
+    commit((current) => {
+      const currentLayout = localLayoutSettings(current.layout_settings);
+      const nextColumn: LocalCustomPrintableColumn = {
+        id: createLocalId("printable-column"),
+        label,
+        type: newPrintableColumnType,
+        width: clampColumnWidth(Number(newPrintableColumnWidth) || 160),
+        showInClient: newPrintableColumnShowInClient,
+        showInInternal: newPrintableColumnShowInInternal,
+      };
+
+      return {
+        ...current,
+        layout_settings: {
+          ...currentLayout,
+          customPrintableColumns: [
+            ...customPrintableColumns(current.layout_settings),
+            nextColumn,
+          ],
+        },
+      };
+    }, { groupKey: "layout-settings", mode: "merge" });
+
+    setNewPrintableColumnName("");
+    setNewPrintableColumnType("text");
+    setNewPrintableColumnWidth("160");
+    setNewPrintableColumnShowInClient(true);
+    setNewPrintableColumnShowInInternal(true);
+    setAddPrintableColumnOpen(false);
+  }
+
+  function saveColumnSettingsPanel() {
+    setSaveMessage("Column settings saved locally");
+    window.setTimeout(() => setSaveMessage((current) => current === "Column settings saved locally" ? "" : current), 1800);
+    if (columnSettingsRef.current) {
+      columnSettingsRef.current.open = false;
+    }
   }
 
   function updateSpecificationMetadataSetting(key: LocalSpecificationMetadataKey, checked: boolean) {
@@ -2038,43 +2543,107 @@ export function LocalQuotationBuilder({
 
           <fieldset className="border border-zinc-300 bg-white p-3">
             <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Internal</legend>
-            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-              <label className="grid gap-1 md:col-span-2">
+            <div className="grid gap-2">
+              <label className="grid gap-1">
                 <span className="text-[10px] font-semibold uppercase text-zinc-500">Internal Notes</span>
-                <textarea value={internalMetadata.internalNotes ?? ""} onChange={(event) => updateItem(item.id, updateItemInternalMetadata(item, { internalNotes: event.target.value }))} rows={3} className="w-full resize-y border border-zinc-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-emerald-800" />
+                <textarea
+                  value={internalMetadata.internalNotes ?? ""}
+                  onChange={(event) => updateItem(item.id, updateItemInternalMetadata(item, { internalNotes: event.target.value }))}
+                  rows={4}
+                  placeholder="Add internal note"
+                  className="w-full resize-y border border-zinc-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-emerald-800"
+                />
               </label>
-              <label className="grid gap-1">
-                <span className="text-[10px] font-semibold uppercase text-zinc-500">Supplier Notes</span>
-                <textarea value={internalMetadata.supplierNotes ?? ""} onChange={(event) => updateItem(item.id, updateItemInternalMetadata(item, { supplierNotes: event.target.value }))} rows={3} className="w-full resize-y border border-zinc-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-emerald-800" />
-              </label>
-              <label className="grid gap-1">
-                <span className="text-[10px] font-semibold uppercase text-zinc-500">Cost Price</span>
-                <input type="number" min={0} step="any" value={internalMetadata.costPrice ?? ""} onChange={(event) => updateItem(item.id, updateItemInternalMetadata(item, { costPrice: event.target.value === "" ? null : Number(event.target.value) }))} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
-              </label>
-              <label className="grid gap-1">
-                <span className="text-[10px] font-semibold uppercase text-zinc-500">Margin %</span>
-                <input value={(() => {
-                  const margin = internalMarginValues(displayPricing.netPrice, internalMetadata.costPrice ?? null);
-                  return margin.percent === null ? "-" : `${formatTableNumber(margin.percent)}%`;
-                })()} readOnly className="h-8 border border-zinc-300 bg-zinc-50 px-2 text-xs text-zinc-500 outline-none" />
-              </label>
-              <label className="grid gap-1">
-                <span className="text-[10px] font-semibold uppercase text-zinc-500">Margin Amt.</span>
-                <input value={(() => {
-                  const margin = internalMarginValues(displayPricing.netPrice, internalMetadata.costPrice ?? null);
-                  return margin.amount === null ? "-" : formatTableNumber(margin.amount);
-                })()} readOnly className="h-8 border border-zinc-300 bg-zinc-50 px-2 text-xs text-zinc-500 outline-none" />
-              </label>
-              <label className="grid gap-1">
-                <span className="text-[10px] font-semibold uppercase text-zinc-500">Delivery / Lead Time</span>
-                <input value={internalMetadata.deliveryLeadTime ?? ""} onChange={(event) => updateItem(item.id, updateItemInternalMetadata(item, { deliveryLeadTime: event.target.value }))} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
-              </label>
-              <label className="grid gap-1">
-                <span className="text-[10px] font-semibold uppercase text-zinc-500">Internal Status</span>
-                <input value={internalMetadata.internalStatus ?? ""} onChange={(event) => updateItem(item.id, updateItemInternalMetadata(item, { internalStatus: event.target.value }))} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
-              </label>
+              {customInternalColumns.length ? (
+                <div className="grid gap-2 md:grid-cols-2">
+                  {customInternalColumns.map((column) => {
+                    const fieldValue = internalCustomColumnValue(item, column.id);
+                    if (column.type === "date") {
+                      return (
+                        <label key={column.id} className="grid gap-1">
+                          <span className="text-[10px] font-semibold uppercase text-zinc-500">{column.label}</span>
+                          <input
+                            type="date"
+                            value={fieldValue}
+                            onChange={(event) => updateItem(item.id, updateItemInternalCustomColumnValue(item, column.id, event.target.value))}
+                            className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                          />
+                        </label>
+                      );
+                    }
+
+                    return (
+                      <label key={column.id} className="grid gap-1">
+                        <span className="text-[10px] font-semibold uppercase text-zinc-500">{column.label}</span>
+                        <input
+                          type={column.type === "number" ? "number" : "text"}
+                          step={column.type === "number" ? "any" : undefined}
+                          value={fieldValue}
+                          onChange={(event) => updateItem(item.id, updateItemInternalCustomColumnValue(item, column.id, event.target.value))}
+                          className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
           </fieldset>
+
+          {customPrintableColumnDefs.length ? (
+            <fieldset className="border border-zinc-300 bg-white p-3">
+              <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Custom Printable Columns</legend>
+              <div className="grid gap-2 md:grid-cols-2">
+                {customPrintableColumnDefs.map((column) => {
+                  const fieldValue = customPrintableColumnValue(item, column.id);
+
+                  if (column.type === "image") {
+                    return (
+                      <label key={column.id} className="grid gap-1 md:col-span-2">
+                        <span className="text-[10px] font-semibold uppercase text-zinc-500">{column.label}</span>
+                        <LocalQuotationCustomPrintableImageCell
+                          columnId={column.id}
+                          item={item}
+                          quotationId={workspace.server_quotation_id}
+                          updateItem={(patch) => updateItem(item.id, patch)}
+                        />
+                        {fieldValue ? (
+                          <details className="border border-zinc-200 bg-zinc-50">
+                            <summary className="cursor-pointer px-3 py-2 text-[11px] font-semibold uppercase text-zinc-500">Advanced image value</summary>
+                            <div className="border-t border-zinc-200 p-3">
+                              <input
+                                value={fieldValue}
+                                onChange={(event) => updateItem(item.id, updateItemCustomPrintableColumnValue(item, column.id, event.target.value))}
+                                className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                              />
+                            </div>
+                          </details>
+                        ) : null}
+                      </label>
+                    );
+                  }
+
+                  return (
+                    <label key={column.id} className="grid gap-1">
+                      <span className="text-[10px] font-semibold uppercase text-zinc-500">{column.label}</span>
+                      <div className="relative">
+                        <input
+                          type={column.type === "number" || column.type === "percentage" ? "number" : "text"}
+                          step={column.type === "number" || column.type === "percentage" ? "any" : undefined}
+                          value={fieldValue}
+                          onChange={(event) => updateItem(item.id, updateItemCustomPrintableColumnValue(item, column.id, event.target.value))}
+                          className={`h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 ${column.type === "percentage" ? "pr-6" : ""}`}
+                        />
+                        {column.type === "percentage" ? (
+                          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-zinc-500">%</span>
+                        ) : null}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </fieldset>
+          ) : null}
 
           <fieldset className="border border-zinc-300 bg-white p-3">
             <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Image</legend>
@@ -2304,6 +2873,9 @@ export function LocalQuotationBuilder({
                   Downloads
                 </summary>
                 <div className="absolute right-0 z-30 mt-2 grid min-w-[220px] gap-2 border border-zinc-300 bg-white p-2 text-xs shadow-lg">
+                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/presentation`} target="_blank">
+                    Preview Presentation
+                  </LocalServerViewLink>
                   <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/pdf`} target="_blank">
                     Preview PDF
                   </LocalServerViewLink>
@@ -2318,72 +2890,382 @@ export function LocalQuotationBuilder({
                   </LocalServerViewLink>
                 </div>
               </details>
-              <details className="relative">
+              <details ref={columnSettingsRef} className="relative">
                 <summary className="inline-flex h-9 cursor-pointer items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
                   Columns
                 </summary>
-                <div className="absolute right-0 z-30 mt-2 w-[400px] max-w-[calc(100vw-2rem)] border border-zinc-300 bg-white p-3 text-xs text-zinc-600 shadow-lg">
-                  <p className="mb-2 text-[10px] font-bold uppercase text-zinc-500">Local Column Settings</p>
-                  <p className="mb-3 text-xs text-zinc-500">
-                    Column changes stay in this IndexedDB workspace until you use Save to Software.
-                  </p>
-                  <fieldset className="mb-3 border border-zinc-200 bg-zinc-50 p-2">
-                    <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
-                      Specification details
-                    </legend>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {specificationMetadataFields.map(([key, label]) => (
-                        <label key={key} className="flex items-center gap-2 text-xs font-semibold text-zinc-700">
-                          <input
-                            type="checkbox"
-                            checked={metadataSettings[key]}
-                            onChange={(event) => updateSpecificationMetadataSetting(key, event.target.checked)}
-                            className="h-4 w-4 rounded border-zinc-300"
-                          />
-                          <span>{label}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
-                  <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
-                  {activeColumns.map((column) => {
-                      const setting = columnSettings.get(column.key);
-                      const isVisible = setting?.visible ?? column.defaultVisible ?? true;
-                      const currentWidth = setting?.width ?? column.defaultWidth;
-                      return (
-                        <div key={column.key} className="grid grid-cols-[1fr_86px] gap-2 border border-zinc-200 bg-zinc-50 p-2">
-                          <label className="flex items-center gap-2 text-xs font-semibold text-zinc-700">
-                            <input type="checkbox" checked={isVisible} onChange={(e) => updateColumnSetting(column.key, { visible: e.target.checked })} className="h-4 w-4 rounded border-zinc-300" />
-                            <span className="truncate" title={column.label}>Show: {column.label}</span>
-                          </label>
-                          <label className="block">
-                            <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Width px</span>
-                            <input type="number" min={40} max={800} value={currentWidth} onChange={(e) => updateColumnSetting(column.key, { width: Number(e.target.value) || column.defaultWidth })} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
-                          </label>
+                <div className="absolute right-0 z-30 mt-2 flex w-[760px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden border border-zinc-300 bg-white text-xs text-zinc-600 shadow-lg">
+                  <div className="border-b border-zinc-200 px-4 py-3">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500">Local Column Settings</p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      Column changes stay in this IndexedDB workspace until you use Save to Software.
+                    </p>
+                  </div>
+                  <div className="max-h-[68vh] overflow-y-auto px-4 py-3">
+                    <div className="grid gap-3 xl:grid-cols-2">
+                      <fieldset className="border border-zinc-200 bg-zinc-50 p-3">
+                        <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
+                          Specification Display
+                        </legend>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {specificationMetadataFields.map(([key, label]) => (
+                            <label key={key} className="flex items-center gap-2 text-xs font-semibold text-zinc-700">
+                              <input
+                                type="checkbox"
+                                checked={metadataSettings[key]}
+                                onChange={(event) => updateSpecificationMetadataSetting(key, event.target.checked)}
+                                className="h-4 w-4 rounded border-zinc-300"
+                              />
+                              <span>{label}</span>
+                            </label>
+                          ))}
                         </div>
-                      );
-                    })}
+                      </fieldset>
+
+                      {columnSettingsGroups.map((group) => {
+                        if (group.title === "Custom Printable Columns") {
+                          return (
+                            <fieldset key={group.title} className="border border-zinc-200 bg-zinc-50 p-3 xl:col-span-2">
+                              <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
+                                {group.title}
+                              </legend>
+                              <p className="mb-2 text-[11px] text-zinc-500">Shown in Client View and PDF only when enabled per column.</p>
+                              <div className="grid gap-2">
+                                {customPrintableColumnDefs.length ? customPrintableColumnDefs.map((column) => {
+                                  const tableColumn = activeColumnByKey.get(printableCustomColumnKey(column.id)) ?? customPrintableColumnTableColumn(column);
+                                  const columnIndex = activeColumns.findIndex((entry) => entry.key === tableColumn.key);
+                                  return (
+                                    <div key={column.id} className="grid gap-2 rounded border border-zinc-200 bg-white p-2 lg:grid-cols-[minmax(0,1fr)_88px]">
+                                      <div className="grid gap-2">
+                                        <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_120px_auto]">
+                                          <label className="grid gap-1">
+                                            <span className="text-[10px] font-semibold uppercase text-zinc-500">Column name</span>
+                                            <input
+                                              value={column.label}
+                                              onChange={(event) => updateCustomPrintableColumn(column.id, { label: event.target.value || "Printable Column" })}
+                                              className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                            />
+                                          </label>
+                                          <label className="grid gap-1">
+                                            <span className="text-[10px] font-semibold uppercase text-zinc-500">Type</span>
+                                            <select
+                                              value={column.type}
+                                              onChange={(event) => updateCustomPrintableColumn(column.id, { type: normalizeCustomPrintableColumnType(event.target.value) })}
+                                              className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                            >
+                                              <option value="text">Text</option>
+                                              <option value="number">Number</option>
+                                              <option value="percentage">Percentage</option>
+                                              <option value="image">Image</option>
+                                            </select>
+                                          </label>
+                                          <div className="grid content-end">
+                                            <button
+                                              type="button"
+                                              onClick={() => removeCustomPrintableColumn(column.id)}
+                                              className="h-8 border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:text-red-800"
+                                            >
+                                              Remove
+                                            </button>
+                                          </div>
+                                        </div>
+                                        <div className="grid gap-2 sm:grid-cols-2">
+                                          <label className="flex items-center gap-2 text-xs font-semibold text-zinc-700">
+                                            <input
+                                              type="checkbox"
+                                              checked={column.showInClient !== false}
+                                              onChange={(event) => updateCustomPrintableColumn(column.id, { showInClient: event.target.checked })}
+                                              className="h-4 w-4 rounded border-zinc-300"
+                                            />
+                                            <span>Show in Client View / PDF</span>
+                                          </label>
+                                          <label className="flex items-center gap-2 text-xs font-semibold text-zinc-700">
+                                            <input
+                                              type="checkbox"
+                                              checked={column.showInInternal !== false}
+                                              onChange={(event) => updateCustomPrintableColumn(column.id, { showInInternal: event.target.checked })}
+                                              className="h-4 w-4 rounded border-zinc-300"
+                                            />
+                                            <span>Show in Internal View</span>
+                                          </label>
+                                        </div>
+                                      </div>
+                                      <label className="grid gap-1">
+                                        <div className="flex items-center justify-between gap-1">
+                                          <span className="text-[10px] font-semibold uppercase text-zinc-500">Width</span>
+                                          <div className="flex gap-1">
+                                            <button
+                                              type="button"
+                                              onClick={() => moveColumnOrder(tableColumn.key, -1)}
+                                              disabled={columnIndex <= 0}
+                                              className="h-5 w-5 border border-zinc-300 bg-white text-[10px] font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
+                                            >
+                                              ↑
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => moveColumnOrder(tableColumn.key, 1)}
+                                              disabled={columnIndex < 0 || columnIndex >= activeColumns.length - 1}
+                                              className="h-5 w-5 border border-zinc-300 bg-white text-[10px] font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
+                                            >
+                                              ↓
+                                            </button>
+                                          </div>
+                                        </div>
+                                        <input
+                                          type="number"
+                                          min={40}
+                                          max={800}
+                                          value={column.width ?? tableColumn.defaultWidth}
+                                          onChange={(event) => updateCustomPrintableColumn(column.id, { width: Number(event.target.value) || tableColumn.defaultWidth })}
+                                          className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                        />
+                                      </label>
+                                    </div>
+                                  );
+                                }) : (
+                                  <p className="text-xs text-zinc-500">No custom printable columns yet.</p>
+                                )}
+                                <div className="flex justify-start pt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setAddPrintableColumnOpen(true)}
+                                    className="border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:border-emerald-900 hover:text-emerald-900"
+                                  >
+                                    + Add printable column
+                                  </button>
+                                </div>
+                              </div>
+                            </fieldset>
+                          );
+                        }
+
+                        const groupColumns = group.keys
+                          .map((key) => activeColumnByKey.get(key))
+                          .filter((column): column is LocalBuilderColumn => Boolean(column));
+                        if (!groupColumns.length) return null;
+
+                        return (
+                          <fieldset key={group.title} className="border border-zinc-200 bg-zinc-50 p-3">
+                            <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
+                              {group.title}
+                            </legend>
+                            {group.internalOnly ? (
+                              <p className="mb-2 text-[11px] text-zinc-500">Internal View only</p>
+                            ) : null}
+                            <div className="grid gap-2">
+                              {groupColumns.map((column) => {
+                                const setting = columnSettings.get(column.key);
+                                const isVisible = setting?.visible ?? column.defaultVisible ?? true;
+                                const currentWidth = setting?.width ?? column.defaultWidth;
+                                const columnIndex = activeColumns.findIndex((entry) => entry.key === column.key);
+
+                                return (
+                                  <div key={column.key} className="grid grid-cols-[1fr_88px] items-center gap-2 rounded border border-zinc-200 bg-white px-2 py-2">
+                                    <label className="flex min-w-0 items-center gap-2 text-xs font-semibold text-zinc-700">
+                                      <input
+                                        type="checkbox"
+                                        checked={isVisible}
+                                        onChange={(event) => updateColumnSetting(column.key, { visible: event.target.checked })}
+                                        className="h-4 w-4 rounded border-zinc-300"
+                                      />
+                                      <span className="truncate" title={column.label}>{column.label}</span>
+                                    </label>
+                                    <label className="grid gap-1">
+                                      <div className="flex items-center justify-between gap-1">
+                                        <span className="text-[10px] font-semibold uppercase text-zinc-500">Width</span>
+                                        <div className="flex gap-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => moveColumnOrder(column.key, -1)}
+                                            disabled={columnIndex <= 0}
+                                            className="h-5 w-5 border border-zinc-300 bg-white text-[10px] font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
+                                          >
+                                            ↑
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => moveColumnOrder(column.key, 1)}
+                                            disabled={columnIndex < 0 || columnIndex >= activeColumns.length - 1}
+                                            className="h-5 w-5 border border-zinc-300 bg-white text-[10px] font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
+                                          >
+                                            ↓
+                                          </button>
+                                        </div>
+                                      </div>
+                                      <input
+                                        type="number"
+                                        min={40}
+                                        max={800}
+                                        value={currentWidth}
+                                        onChange={(event) => updateColumnSetting(column.key, { width: Number(event.target.value) || column.defaultWidth })}
+                                        className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                      />
+                                    </label>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </fieldset>
+                        );
+                      })}
+
+                      <fieldset className="border border-zinc-200 bg-zinc-50 p-3 xl:col-span-2">
+                        <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
+                          Internal View Columns
+                        </legend>
+                        <p className="mb-2 text-[11px] text-zinc-500">Internal View only. Hidden in Client View and PDF/Preview.</p>
+                        <div className="grid gap-2">
+                          {["internal_notes", ...customInternalColumns.map((column) => internalCustomColumnKey(column.id))]
+                            .map((key) => activeColumnByKey.get(key))
+                            .filter((column): column is LocalBuilderColumn => Boolean(column))
+                            .map((column) => {
+                              const customColumnId = column.internalCustomColumnId ?? null;
+                              const customColumn = customColumnId
+                                ? customInternalColumns.find((entry) => entry.id === customColumnId) ?? null
+                                : null;
+                              const setting = columnSettings.get(column.key);
+                              const columnIndex = activeColumns.findIndex((entry) => entry.key === column.key);
+                              const isVisible = customColumn
+                                ? customColumn.visible !== false
+                                : setting?.visible ?? column.defaultVisible ?? true;
+                              const currentWidth = customColumn
+                                ? customColumn.width ?? column.defaultWidth
+                                : setting?.width ?? column.defaultWidth;
+
+                              return (
+                                <div key={column.key} className="grid gap-2 rounded border border-zinc-200 bg-white p-2 lg:grid-cols-[minmax(0,1fr)_88px]">
+                                  <div className="grid gap-2">
+                                    <label className="flex min-w-0 items-center gap-2 text-xs font-semibold text-zinc-700">
+                                      <input
+                                        type="checkbox"
+                                        checked={isVisible}
+                                        onChange={(event) => customColumn
+                                          ? updateInternalCustomColumn(customColumn.id, { visible: event.target.checked })
+                                          : updateColumnSetting(column.key, { visible: event.target.checked })}
+                                        className="h-4 w-4 rounded border-zinc-300"
+                                      />
+                                      <span className="truncate" title={column.label}>{column.label}</span>
+                                    </label>
+                                    {customColumn ? (
+                                      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_120px_auto]">
+                                        <label className="grid gap-1">
+                                          <span className="text-[10px] font-semibold uppercase text-zinc-500">Column name</span>
+                                          <input
+                                            value={customColumn.label}
+                                            onChange={(event) => updateInternalCustomColumn(customColumn.id, { label: event.target.value || "Internal Column" })}
+                                            className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                          />
+                                        </label>
+                                        <label className="grid gap-1">
+                                          <span className="text-[10px] font-semibold uppercase text-zinc-500">Type</span>
+                                          <select
+                                            value={customColumn.type}
+                                            onChange={(event) => updateInternalCustomColumn(customColumn.id, { type: normalizeInternalCustomColumnType(event.target.value) })}
+                                            className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                          >
+                                            <option value="text">Text</option>
+                                            <option value="number">Number</option>
+                                            <option value="date">Date</option>
+                                          </select>
+                                        </label>
+                                        <div className="grid content-end">
+                                          <button
+                                            type="button"
+                                            onClick={() => removeInternalCustomColumn(customColumn.id)}
+                                            className="h-8 border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:text-red-800"
+                                          >
+                                            Remove
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                  <label className="grid gap-1">
+                                    <div className="flex items-center justify-between gap-1">
+                                      <span className="text-[10px] font-semibold uppercase text-zinc-500">Width</span>
+                                      <div className="flex gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => moveColumnOrder(column.key, -1)}
+                                          disabled={columnIndex <= 0}
+                                          className="h-5 w-5 border border-zinc-300 bg-white text-[10px] font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
+                                        >
+                                          ↑
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => moveColumnOrder(column.key, 1)}
+                                          disabled={columnIndex < 0 || columnIndex >= activeColumns.length - 1}
+                                          className="h-5 w-5 border border-zinc-300 bg-white text-[10px] font-semibold text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
+                                        >
+                                          ↓
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <input
+                                      type="number"
+                                      min={40}
+                                      max={800}
+                                      value={currentWidth}
+                                      onChange={(event) => customColumn
+                                        ? updateInternalCustomColumn(customColumn.id, { width: Number(event.target.value) || column.defaultWidth })
+                                        : updateColumnSetting(column.key, { width: Number(event.target.value) || column.defaultWidth })}
+                                      className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                    />
+                                  </label>
+                                </div>
+                              );
+                            })}
+                          <div className="flex justify-start pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setAddInternalColumnOpen(true)}
+                              className="border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:border-emerald-900 hover:text-emerald-900"
+                            >
+                              + Add internal column
+                            </button>
+                          </div>
+                        </div>
+                      </fieldset>
+                    </div>
                   </div>
-                  <div className="mt-3 flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => commit((current) => ({
-                        ...current,
-                        layout_settings: {
-                          ...localLayoutSettings(current.layout_settings),
-                          columns: [],
-                          specificationMetadata: {},
-                        },
-                      }), { groupKey: "layout-settings", mode: "merge" })}
-                      className="border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
-                    >
-                      Reset Defaults
-                    </button>
+                  <div className="sticky bottom-0 flex items-center justify-between gap-2 border-t border-zinc-200 bg-white px-4 py-3">
+                    <p className="text-[11px] text-zinc-500">
+                      Internal columns stay local to this quotation and do not appear in Client View or PDF.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAddInternalColumnOpen(true)}
+                        className="border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:border-emerald-900 hover:text-emerald-900"
+                      >
+                        + Add internal column
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => commit((current) => ({
+                          ...current,
+                          layout_settings: {
+                            ...localLayoutSettings(current.layout_settings),
+                            columns: [],
+                            columnOrder: [],
+                            specificationMetadata: {},
+                          },
+                        }), { groupKey: "layout-settings", mode: "merge" })}
+                        className="border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
+                      >
+                        Reset defaults
+                      </button>
+                      <button
+                        type="button"
+                        onClick={saveColumnSettingsPanel}
+                        className="border border-emerald-900 bg-emerald-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800"
+                      >
+                        Save columns
+                      </button>
+                    </div>
                   </div>
-                  <p className="mt-3 text-[11px] text-zinc-500">
-                    Client View hides internal-only columns. Internal View exposes internal notes, costing, margin, and
-                    supplier review fields on screen only. Preview/PDF stays client-facing.
-                  </p>
                 </div>
               </details>
               <Link href={`/quotations/${workspace.server_quotation_id}`} className="inline-flex h-9 items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Summary</Link>
@@ -2547,6 +3429,184 @@ export function LocalQuotationBuilder({
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {addInternalColumnOpen ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/45 px-4 py-6">
+          <div className="w-full max-w-md border border-zinc-300 bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-5 py-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Internal Column</p>
+                <p className="text-sm font-semibold text-zinc-950">Add internal column</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setAddInternalColumnOpen(false);
+                  setNewInternalColumnName("");
+                  setNewInternalColumnType("text");
+                }}
+                className="h-9 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+              >
+                Cancel
+              </button>
+            </div>
+            <div className="grid gap-3 p-5">
+              <label className="grid gap-1">
+                <span className="text-[10px] font-semibold uppercase text-zinc-500">Column name</span>
+                <input
+                  autoFocus
+                  value={newInternalColumnName}
+                  onChange={(event) => setNewInternalColumnName(event.target.value)}
+                  placeholder="Factory Remark"
+                  className="h-9 border border-zinc-300 bg-white px-3 text-xs outline-none focus:border-emerald-800"
+                />
+              </label>
+              <label className="grid gap-1">
+                <span className="text-[10px] font-semibold uppercase text-zinc-500">Column type</span>
+                <select
+                  value={newInternalColumnType}
+                  onChange={(event) => setNewInternalColumnType(normalizeInternalCustomColumnType(event.target.value))}
+                  className="h-9 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                >
+                  <option value="text">Text</option>
+                  <option value="number">Number</option>
+                  <option value="date">Date</option>
+                </select>
+              </label>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddInternalColumnOpen(false);
+                    setNewInternalColumnName("");
+                    setNewInternalColumnType("text");
+                  }}
+                  className="h-9 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={createInternalCustomColumn}
+                  disabled={!newInternalColumnName.trim()}
+                  className="h-9 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-600"
+                >
+                  Add column
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {addPrintableColumnOpen ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/45 px-4 py-6">
+          <div className="w-full max-w-md border border-zinc-300 bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-5 py-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Printable Column</p>
+                <p className="text-sm font-semibold text-zinc-950">Add printable column</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setAddPrintableColumnOpen(false);
+                  setNewPrintableColumnName("");
+                  setNewPrintableColumnType("text");
+                  setNewPrintableColumnWidth("160");
+                  setNewPrintableColumnShowInClient(true);
+                  setNewPrintableColumnShowInInternal(true);
+                }}
+                className="h-9 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+              >
+                Cancel
+              </button>
+            </div>
+            <div className="grid gap-3 p-5">
+              <label className="grid gap-1">
+                <span className="text-[10px] font-semibold uppercase text-zinc-500">Column name</span>
+                <input
+                  autoFocus
+                  value={newPrintableColumnName}
+                  onChange={(event) => setNewPrintableColumnName(event.target.value)}
+                  placeholder="Factory Remark"
+                  className="h-9 border border-zinc-300 bg-white px-3 text-xs outline-none focus:border-emerald-800"
+                />
+              </label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1">
+                  <span className="text-[10px] font-semibold uppercase text-zinc-500">Column type</span>
+                  <select
+                    value={newPrintableColumnType}
+                    onChange={(event) => setNewPrintableColumnType(normalizeCustomPrintableColumnType(event.target.value))}
+                    className="h-9 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                  >
+                    <option value="text">Text</option>
+                    <option value="number">Number</option>
+                    <option value="percentage">Percentage</option>
+                    <option value="image">Image</option>
+                  </select>
+                </label>
+                <label className="grid gap-1">
+                  <span className="text-[10px] font-semibold uppercase text-zinc-500">Width px</span>
+                  <input
+                    type="number"
+                    min={40}
+                    max={800}
+                    value={newPrintableColumnWidth}
+                    onChange={(event) => setNewPrintableColumnWidth(event.target.value)}
+                    className="h-9 border border-zinc-300 bg-white px-3 text-xs outline-none focus:border-emerald-800"
+                  />
+                </label>
+              </div>
+              <div className="grid gap-2">
+                <label className="flex items-center gap-2 text-xs font-semibold text-zinc-700">
+                  <input
+                    type="checkbox"
+                    checked={newPrintableColumnShowInClient}
+                    onChange={(event) => setNewPrintableColumnShowInClient(event.target.checked)}
+                    className="h-4 w-4 rounded border-zinc-300"
+                  />
+                  <span>Show in Client View / PDF</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs font-semibold text-zinc-700">
+                  <input
+                    type="checkbox"
+                    checked={newPrintableColumnShowInInternal}
+                    onChange={(event) => setNewPrintableColumnShowInInternal(event.target.checked)}
+                    className="h-4 w-4 rounded border-zinc-300"
+                  />
+                  <span>Show in Internal View</span>
+                </label>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddPrintableColumnOpen(false);
+                    setNewPrintableColumnName("");
+                    setNewPrintableColumnType("text");
+                    setNewPrintableColumnWidth("160");
+                    setNewPrintableColumnShowInClient(true);
+                    setNewPrintableColumnShowInInternal(true);
+                  }}
+                  className="h-9 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={createPrintableCustomColumn}
+                  disabled={!newPrintableColumnName.trim()}
+                  className="h-9 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-600"
+                >
+                  Add column
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -2779,8 +3839,35 @@ export function LocalQuotationBuilder({
                       </tr>
                       <tr className="bg-zinc-100 text-[11px] font-bold uppercase text-zinc-700">
                         {visibleColumns.map((col) => (
-                          <th key={col.key} className={`relative border border-zinc-300 px-2 py-2 pr-4 ${col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left"}`}>
-                            {col.label}
+                          <th
+                            key={col.key}
+                            className={`group relative border border-zinc-300 px-2 py-2 pr-4 ${col.key !== "edit" ? "pb-8" : ""} ${col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left"}`}
+                          >
+                            <span className="block break-words">{col.label}</span>
+                              {col.key !== "edit" ? (
+                                <div className="pointer-events-none absolute inset-x-2 bottom-2 flex justify-center opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+                                <span className="pointer-events-auto flex items-center gap-1 text-[10px] font-semibold normal-case">
+                                  <button
+                                    type="button"
+                                    onClick={() => moveColumnOrder(col.key, -1)}
+                                    className="h-5 w-5 border border-zinc-300 bg-white text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                                    title={`Move ${col.label} left`}
+                                    aria-label={`Move ${col.label} left`}
+                                  >
+                                    ←
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => moveColumnOrder(col.key, 1)}
+                                    className="h-5 w-5 border border-zinc-300 bg-white text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                                    title={`Move ${col.label} right`}
+                                    aria-label={`Move ${col.label} right`}
+                                  >
+                                    →
+                                  </button>
+                                </span>
+                                </div>
+                              ) : null}
                             <span aria-hidden="true" data-resize-column={col.key} className="absolute right-0 top-0 h-full w-2 cursor-col-resize border-r-2 border-transparent transition hover:border-emerald-700" />
                           </th>
                         ))}
@@ -2884,320 +3971,147 @@ export function LocalQuotationBuilder({
                             const marginAmountLabel = margin.amount === null
                               ? "-"
                               : formatTableNumber(margin.amount);
+                            const renderOrderedItemCell = (column: typeof visibleColumns[number]) => {
+                              if (column.customPrintableColumnId) {
+                                const customColumn = customPrintableColumnDefs.find((entry) => entry.id === column.customPrintableColumnId);
+                                if (!customColumn) return null;
+
+                                return (
+                                  <td key={column.key} className={`${compactCellClassName} break-words`}>
+                                    {customColumn.type === "text" ? (
+                                      <LocalAutoResizeTextarea
+                                        value={customPrintableColumnValue(item, customColumn.id)}
+                                        onChange={(value) => updateItem(item.id, updateItemCustomPrintableColumnValue(item, customColumn.id, value))}
+                                        placeholder={`Add ${customColumn.label.toLowerCase()}`}
+                                        className="w-full resize-none overflow-hidden bg-transparent text-xs leading-5 outline-none focus:bg-emerald-50"
+                                      />
+                                    ) : customColumn.type === "image" ? (
+                                      <LocalQuotationCustomPrintableImageCell
+                                        columnId={customColumn.id}
+                                        item={item}
+                                        quotationId={workspace.server_quotation_id}
+                                        rowHeight={item.row_height}
+                                        updateItem={(patch) => updateItem(item.id, patch)}
+                                      />
+                                    ) : (
+                                      <div className="relative grid h-full items-center">
+                                        <input
+                                          type="number"
+                                          step="any"
+                                          value={customPrintableColumnValue(item, customColumn.id)}
+                                          onChange={(event) => updateItem(item.id, updateItemCustomPrintableColumnValue(item, customColumn.id, event.target.value))}
+                                          className={`w-full bg-transparent text-xs outline-none ${customColumn.type === "percentage" ? "pr-5 text-center" : "text-center"}`}
+                                        />
+                                        {customColumn.type === "percentage" ? (
+                                          <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-xs text-zinc-500">%</span>
+                                        ) : null}
+                                      </div>
+                                    )}
+                                  </td>
+                                );
+                              }
+
+                              if (column.internalCustomColumnId) {
+                                const customColumn = customInternalColumns.find((entry) => entry.id === column.internalCustomColumnId);
+                                if (!customColumn) return null;
+
+                                return (
+                                  <td key={column.key} className={`${compactCellClassName} break-words`}>
+                                    {customColumn.type === "text" ? (
+                                      <LocalAutoResizeTextarea
+                                        value={internalCustomColumnValue(item, customColumn.id)}
+                                        onChange={(value) => updateItem(item.id, updateItemInternalCustomColumnValue(item, customColumn.id, value))}
+                                        placeholder={`Add ${customColumn.label.toLowerCase()}`}
+                                        className="w-full resize-none overflow-hidden bg-transparent text-xs leading-5 outline-none focus:bg-emerald-50"
+                                      />
+                                    ) : (
+                                      <div className="grid h-full items-center">
+                                        <input
+                                          type={customColumn.type === "date" ? "date" : "number"}
+                                          step={customColumn.type === "number" ? "any" : undefined}
+                                          value={internalCustomColumnValue(item, customColumn.id)}
+                                          onChange={(event) => updateItem(item.id, updateItemInternalCustomColumnValue(item, customColumn.id, event.target.value))}
+                                          className={`w-full bg-transparent text-xs outline-none ${customColumn.type === "number" ? "text-center" : ""}`}
+                                        />
+                                      </div>
+                                    )}
+                                  </td>
+                                );
+                              }
+
+                              switch (column.key) {
+                                case "manual_serial":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs`}><div className="grid h-full content-center"><input value={item.manual_serial ?? ""} onChange={(event) => updateItem(item.id, { manual_serial: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-center text-xs outline-none" /></div></td>;
+                                case "s_no":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs`}>{rowSerial || "-"}</td>;
+                                case "code":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.item_code_snapshot ?? ""} onChange={(event) => updateItem(item.id, { item_code_snapshot: event.target.value || null })} className="w-full bg-transparent text-xs font-semibold outline-none" /></div></td>;
+                                case "specified_image":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="flex h-full items-center"><LocalQuotationImageCell field="specified_image_url_snapshot" item={item} quotationId={workspace.server_quotation_id} rowHeight={imageCellHeight} updateItem={(patch) => updateItem(item.id, patch)} /></div></td>;
+                                case "proposed_image":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="flex h-full items-center"><LocalQuotationImageCell field="proposed_image_url_snapshot" item={item} quotationId={workspace.server_quotation_id} rowHeight={imageCellHeight} updateItem={(patch) => updateItem(item.id, patch)} /></div></td>;
+                                case "specification":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words whitespace-pre-wrap`}><div className="flex h-full min-h-full flex-col justify-center py-0.5 text-left">{showSpecificationTitle ? (<input value={item.item_name_snapshot ?? specificationTitle} onChange={(event) => updateItem(item.id, { item_name_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50" />) : (<span className="text-[10px] font-semibold uppercase text-zinc-400">Title hidden in specification</span>)}<LocalAutoResizeTextarea value={cleanedSpecification ?? ""} onChange={(value) => updateItem(item.id, { specification_snapshot: cleanInlineValue(value) })} placeholder="Click to add specification" className="mt-1 w-full resize-none overflow-hidden bg-transparent text-xs leading-5 text-zinc-700 outline-none focus:bg-emerald-50" />{showSpecificationDimension ? (<label className="mt-1 flex items-center gap-1 text-xs leading-4 text-zinc-500"><span className="font-semibold">Dimension:</span><input value={showDimensionLine ? (dimensionValue ?? "") : (item.size_snapshot ?? dimensionValue ?? "")} onChange={(event) => updateItem(item.id, { size_snapshot: cleanInlineValue(event.target.value) })} placeholder="Click to add dimension" className="min-w-0 flex-1 bg-transparent text-xs text-zinc-600 outline-none focus:bg-emerald-50" /></label>) : null}{specificationDetailRows.length ? (<dl className="mt-2 grid gap-0.5 border-t border-zinc-200 pt-1.5 text-[11px] leading-4 text-zinc-500">{specificationDetailRows.map(([label, value]) => (<div key={label} className="grid grid-cols-[88px_1fr] gap-1"><dt className="font-semibold text-zinc-500">{label}:</dt><dd className="text-zinc-600">{value}</dd></div>))}</dl>) : null}</div></td>;
+                                case "origin":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="flex h-full min-h-full flex-col justify-center gap-1.5 py-0.5 text-center leading-5" onBlur={(event) => { const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null; if (!event.currentTarget.contains(nextTarget)) { setEditingOriginCellId((current) => (current === item.id ? null : current)); } }}>{isEditingOriginCell ? (<><input autoFocus value={item.brand_name_snapshot ?? (originDisplay.brand ?? "")} onChange={(event) => updateItem(item.id, { brand_name_snapshot: cleanInlineValue(event.target.value) })} placeholder="Brand" className="w-full bg-transparent text-center text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50" /><input value={item.origin_snapshot ?? (originDisplay.origin ?? "")} onChange={(event) => updateItem(item.id, { origin_snapshot: cleanInlineValue(event.target.value) })} placeholder="Origin" className="w-full bg-transparent text-center text-xs text-zinc-700 outline-none focus:bg-emerald-50" /><input value={item.supplier_name_snapshot ?? (originDisplay.supplier ?? "")} onChange={(event) => updateItem(item.id, { supplier_name_snapshot: cleanInlineValue(event.target.value) })} placeholder="Supplier" className="w-full bg-transparent text-center text-xs text-zinc-500 outline-none focus:bg-emerald-50" /></>) : (<button type="button" onClick={() => setEditingOriginCellId(item.id)} className="w-full bg-transparent text-center outline-none">{originDisplay.primaryLine ? (<span className="block text-xs font-semibold uppercase text-zinc-950">{originDisplay.primaryLine}</span>) : (<span className="block text-xs text-zinc-400">Click to add origin / supplier</span>)}{originDisplay.supplier ? (<span className="mt-1 block text-[11px] text-zinc-500">Supplier: {originDisplay.supplier}</span>) : null}</button>)}</div></td>;
+                                case "model":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.model_snapshot ?? ""} onChange={(event) => updateItem(item.id, { model_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" /></div></td>;
+                                case "finish":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><LocalAutoResizeTextarea value={item.finish_snapshot ?? ""} onChange={(value) => updateItem(item.id, { finish_snapshot: cleanInlineValue(value) })} placeholder="Click to add finish" className="w-full resize-none overflow-hidden bg-transparent text-xs leading-5 outline-none focus:bg-emerald-50" /></td>;
+                                case "size":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.size_snapshot ?? dimensionValue ?? ""} onChange={(event) => updateItem(item.id, { size_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" /></div></td>;
+                                case "warranty":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.warranty_snapshot ?? ""} onChange={(event) => updateItem(item.id, { warranty_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" /></div></td>;
+                                case "qty":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center`}><div className="grid h-full items-center"><input type="number" min={item.item_type === "blank" || item.item_type === "note" ? 0 : 1} step="1" value={item.qty} onChange={(event) => updateItem(item.id, { qty: event.target.value })} className="w-full bg-transparent text-center text-xs outline-none" /></div></td>;
+                                case "unit_price":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center`}><div className="grid h-full items-center"><input type="number" min={0} step="any" value={displayPricing.unitPrice} onChange={(event) => updateItem(item.id, { unit_price: event.target.value })} className="w-full bg-transparent text-center text-xs outline-none" /></div></td>;
+                                case "discount":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center`}><div className="grid h-full content-center"><input type="number" min={0} step="any" value={item.discount_value} onChange={(event) => updateItem(item.id, { discount_value: event.target.value })} className="w-full bg-transparent text-center text-xs outline-none" /><span className="mt-1 text-[10px] text-zinc-500">{normalizedDiscountType(item.discount_type) === "percent" ? "%" : normalizedDiscountType(item.discount_type) === "amount" ? workspace.currency : "No discount"}</span></div></td>;
+                                case "discount_percentage":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs`}>{displayPricing.discountAmount > 0 ? `${formatTableNumber(discountPercentValue)}%` : "-"}</td>;
+                                case "discount_amount":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center`}><div className="grid h-full content-center text-center text-xs">{formatTableNumber(displayPricing.discountAmount)}</div></td>;
+                                case "net_price":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs`}>{formatTableNumber(displayPricing.netPrice)}</td>;
+                                case "net_total":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs font-semibold`}>{formatTableNumber(displayPricing.netTotal)}</td>;
+                                case "supplier_name":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.supplier_name_snapshot ?? ""} onChange={(event) => updateItem(item.id, { supplier_name_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" /></div></td>;
+                                case "internal_notes":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><LocalAutoResizeTextarea value={internalMetadata.internalNotes ?? ""} onChange={(value) => updateItem(item.id, updateItemInternalMetadata(item, { internalNotes: value }))} placeholder="Add internal note" className="w-full resize-none overflow-hidden bg-transparent text-xs leading-5 outline-none focus:bg-emerald-50" /></td>;
+                                case "cost_price":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center`}><div className="grid h-full items-center"><input type="number" min={0} step="any" value={internalMetadata.costPrice ?? ""} onChange={(event) => updateItem(item.id, updateItemInternalMetadata(item, { costPrice: event.target.value === "" ? null : Number(event.target.value) }))} className="w-full bg-transparent text-center text-xs outline-none" /></div></td>;
+                                case "margin_percent":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs`}>{marginPercentLabel}</td>;
+                                case "margin_amount":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs`}>{marginAmountLabel}</td>;
+                                case "supplier_notes":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><LocalAutoResizeTextarea value={internalMetadata.supplierNotes ?? ""} onChange={(value) => updateItem(item.id, updateItemInternalMetadata(item, { supplierNotes: value }))} placeholder="Add supplier note" className="w-full resize-none overflow-hidden bg-transparent text-xs leading-5 outline-none focus:bg-emerald-50" /></td>;
+                                case "delivery_lead_time":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={internalMetadata.deliveryLeadTime ?? ""} onChange={(event) => updateItem(item.id, updateItemInternalMetadata(item, { deliveryLeadTime: event.target.value }))} className="w-full bg-transparent text-xs outline-none" /></div></td>;
+                                case "internal_status":
+                                  return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={internalMetadata.internalStatus ?? ""} onChange={(event) => updateItem(item.id, updateItemInternalMetadata(item, { internalStatus: event.target.value }))} className="w-full bg-transparent text-xs outline-none" /></div></td>;
+                                case "edit":
+                                  return <td key={column.key} className="border border-zinc-300 px-2 py-2 align-middle text-center">
+                                    <div className="grid h-full min-h-full content-center justify-items-center gap-1.5" data-preserve-anchor={`item-${item.id}`}>
+                                      <button type="button" onClick={() => void saveLocalDraftNow(item.id)} className="h-6 min-w-14 border border-emerald-900 bg-emerald-900 px-2 text-[11px] font-semibold text-white transition hover:bg-emerald-800">Save</button>
+                                      <button type="button" onClick={() => setDetailsModalRowId(item.id)} className="h-6 min-w-20 border border-zinc-300 bg-white px-2 text-[11px] font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Edit Details</button>
+                                      <span className={`text-[10px] font-semibold ${workspace.has_unsaved_changes && recentEditedRowId === item.id ? "text-zinc-500" : "text-emerald-800"}`}>{rowLocalStatus(item.id, recentEditedRowId, localDraftSaved, workspace.has_unsaved_changes)}</span>
+                                      {copiedRowId === item.id ? (<span className="text-[10px] font-semibold text-emerald-800">Copied</span>) : null}
+                                      <div className="flex items-center gap-1"><button type="button" onClick={() => moveItem(section.id, item.id, -1)} className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">^</button><button type="button" onClick={() => moveItem(section.id, item.id, 1)} className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">v</button></div>
+                                      <SharedQuotationMoreMenu actionButtons={(<>{copiedRowClipboard ? (<><button type="button" onClick={() => pasteCopiedRowRelative(item.id, "above")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Paste copied row above</button><button type="button" onClick={() => pasteCopiedRowRelative(item.id, "below")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Paste copied row below</button></>) : null}<button type="button" onClick={() => copyItem(item.id)} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">Copy row</button><button type="button" onClick={() => duplicateItem(item.id)} className="h-7 w-full border border-zinc-300 bg-white px-2 text-left text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Duplicate below</button><button type="button" onClick={() => removeItem(item.id)} className="h-7 w-full border border-red-200 bg-white px-2 text-left text-xs font-semibold text-red-700 transition hover:border-red-300 hover:text-red-800">Remove</button></>)} itemId={item.id} menuClassName="absolute right-0 z-30 mt-1 w-56 border border-zinc-300 bg-white p-2 text-left shadow-lg" mergeControl={(<><label className="grid gap-1"><span className="text-[10px] font-semibold uppercase text-zinc-500">Merge</span><select value={mergeModeForItem(item)} onChange={(event) => updateItem(item.id, updateItemMergeMode(item, event.target.value))} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"><option value="none">No merge</option><option value="merge_specification">Merge spec</option><option value="merge_full_row">Merge full row</option></select></label><label className="grid gap-1 mt-2"><span className="text-[10px] font-semibold uppercase text-zinc-500">Row Height (px)</span><input type="number" min={40} value={item.row_height || ""} onChange={(event) => updateItem(item.id, { row_height: event.target.value ? clampRowHeight(Number(event.target.value)) : null })} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" placeholder="Auto" /></label></>)} />
+                                    </div>
+                                  </td>;
+                                default:
+                                  return null;
+                              }
+                            };
 
                             return (
                             <>
                               <tr className="align-middle" style={{ minHeight: `${itemRowMinHeight(item.row_height)}px` }}>
-                              {isColVisible("manual_serial") && <td className={`${compactCellClassName} break-words text-center text-xs`}>
-                                <div className="grid h-full content-center">
-                                  <input value={item.manual_serial ?? ""} onChange={(event) => updateItem(item.id, { manual_serial: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-center text-xs outline-none" />
-                                </div>
-                              </td>}
-                              {isColVisible("s_no") && <td className={`${compactCellClassName} break-words text-center text-xs`}>{rowSerial || "-"}</td>}
-                              {isColVisible("code") && <td className={`${compactCellClassName} break-words`}>
-                                <div className="grid h-full content-center">
-                                  <input value={item.item_code_snapshot ?? ""} onChange={(event) => updateItem(item.id, { item_code_snapshot: event.target.value || null })} className="w-full bg-transparent text-xs font-semibold outline-none" />
-                                </div>
-                              </td>}
-                              {isColVisible("specified_image") && <td className={`${compactCellClassName} break-words`}>
-                                <div className="flex h-full items-center">
-                                  <LocalQuotationImageCell
-                                    field="specified_image_url_snapshot"
-                                    item={item}
-                                    quotationId={workspace.server_quotation_id}
-                                    rowHeight={imageCellHeight}
-                                    updateItem={(patch) => updateItem(item.id, patch)}
-                                  />
-                                </div>
-                              </td>}
-                              {isColVisible("proposed_image") && <td className={`${compactCellClassName} break-words`}>
-                                <div className="flex h-full items-center">
-                                  <LocalQuotationImageCell
-                                    field="proposed_image_url_snapshot"
-                                    item={item}
-                                    quotationId={workspace.server_quotation_id}
-                                    rowHeight={imageCellHeight}
-                                    updateItem={(patch) => updateItem(item.id, patch)}
-                                  />
-                                </div>
-                              </td>}
-                              {isColVisible("specification") && <td className={`${compactCellClassName} break-words whitespace-pre-wrap`}>
-                                <div className="flex h-full min-h-full flex-col justify-center py-0.5 text-left">
-                                  {showSpecificationTitle ? (
-                                    <input
-                                      value={item.item_name_snapshot ?? specificationTitle}
-                                      onChange={(event) => updateItem(item.id, { item_name_snapshot: cleanInlineValue(event.target.value) })}
-                                      className="w-full bg-transparent text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50"
-                                    />
-                                  ) : (
-                                    <span className="text-[10px] font-semibold uppercase text-zinc-400">
-                                      Title hidden in specification
-                                    </span>
-                                  )}
-                                  <LocalAutoResizeTextarea
-                                    value={cleanedSpecification ?? ""}
-                                    onChange={(value) => updateItem(item.id, { specification_snapshot: cleanInlineValue(value) })}
-                                    placeholder="Click to add specification"
-                                    className="mt-1 w-full resize-none overflow-hidden bg-transparent text-xs leading-5 text-zinc-700 outline-none focus:bg-emerald-50"
-                                  />
-                                  {showSpecificationDimension ? (
-                                    <label className="mt-1 flex items-center gap-1 text-xs leading-4 text-zinc-500">
-                                      <span className="font-semibold">Dimension:</span>
-                                      <input
-                                        value={showDimensionLine ? (dimensionValue ?? "") : (item.size_snapshot ?? dimensionValue ?? "")}
-                                        onChange={(event) => updateItem(item.id, { size_snapshot: cleanInlineValue(event.target.value) })}
-                                        placeholder="Click to add dimension"
-                                        className="min-w-0 flex-1 bg-transparent text-xs text-zinc-600 outline-none focus:bg-emerald-50"
-                                      />
-                                    </label>
-                                  ) : null}
-                                  {specificationDetailRows.length ? (
-                                    <dl className="mt-2 grid gap-0.5 border-t border-zinc-200 pt-1.5 text-[11px] leading-4 text-zinc-500">
-                                      {specificationDetailRows.map(([label, value]) => (
-                                        <div key={label} className="grid grid-cols-[88px_1fr] gap-1">
-                                          <dt className="font-semibold text-zinc-500">{label}:</dt>
-                                          <dd className="text-zinc-600">{value}</dd>
-                                        </div>
-                                      ))}
-                                    </dl>
-                                  ) : null}
-                                </div>
-                              </td>}
-                              {isColVisible("origin") && <td className={`${compactCellClassName} break-words`}>
-                                <div
-                                  className="flex h-full min-h-full flex-col justify-center gap-1.5 py-0.5 text-center leading-5"
-                                  onBlur={(event) => {
-                                    const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
-                                    if (!event.currentTarget.contains(nextTarget)) {
-                                      setEditingOriginCellId((current) => (current === item.id ? null : current));
-                                    }
-                                  }}
-                                >
-                                  {isEditingOriginCell ? (
-                                    <>
-                                      <input
-                                        autoFocus
-                                        value={item.brand_name_snapshot ?? (originDisplay.brand ?? "")}
-                                        onChange={(event) => updateItem(item.id, { brand_name_snapshot: cleanInlineValue(event.target.value) })}
-                                        placeholder="Brand"
-                                        className="w-full bg-transparent text-center text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50"
-                                      />
-                                      <input
-                                        value={item.origin_snapshot ?? (originDisplay.origin ?? "")}
-                                        onChange={(event) => updateItem(item.id, { origin_snapshot: cleanInlineValue(event.target.value) })}
-                                        placeholder="Origin"
-                                        className="w-full bg-transparent text-center text-xs text-zinc-700 outline-none focus:bg-emerald-50"
-                                      />
-                                      <input
-                                        value={item.supplier_name_snapshot ?? (originDisplay.supplier ?? "")}
-                                        onChange={(event) => updateItem(item.id, { supplier_name_snapshot: cleanInlineValue(event.target.value) })}
-                                        placeholder="Supplier"
-                                        className="w-full bg-transparent text-center text-xs text-zinc-500 outline-none focus:bg-emerald-50"
-                                      />
-                                    </>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => setEditingOriginCellId(item.id)}
-                                      className="w-full bg-transparent text-center outline-none"
-                                    >
-                                      {originDisplay.primaryLine ? (
-                                        <span className="block text-xs font-semibold uppercase text-zinc-950">
-                                          {originDisplay.primaryLine}
-                                        </span>
-                                      ) : (
-                                        <span className="block text-xs text-zinc-400">Click to add origin / supplier</span>
-                                      )}
-                                      {originDisplay.supplier ? (
-                                        <span className="mt-1 block text-[11px] text-zinc-500">
-                                          Supplier: {originDisplay.supplier}
-                                        </span>
-                                      ) : null}
-                                    </button>
-                                  )}
-                                </div>
-                              </td>}
-                              {isColVisible("model") && <td className={`${compactCellClassName} break-words`}>
-                                <div className="grid h-full content-center">
-                                  <input value={item.model_snapshot ?? ""} onChange={(event) => updateItem(item.id, { model_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" />
-                                </div>
-                              </td>}
-                              {isColVisible("finish") && <td className={`${compactCellClassName} break-words`}>
-                                <LocalAutoResizeTextarea
-                                  value={item.finish_snapshot ?? ""}
-                                  onChange={(value) => updateItem(item.id, { finish_snapshot: cleanInlineValue(value) })}
-                                  placeholder="Click to add finish"
-                                  className="w-full resize-none overflow-hidden bg-transparent text-xs leading-5 outline-none focus:bg-emerald-50"
-                                />
-                              </td>}
-                              {isColVisible("size") && <td className={`${compactCellClassName} break-words`}>
-                                <div className="grid h-full content-center">
-                                  <input value={item.size_snapshot ?? dimensionValue ?? ""} onChange={(event) => updateItem(item.id, { size_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" />
-                                </div>
-                              </td>}
-                              {isColVisible("warranty") && <td className={`${compactCellClassName} break-words`}>
-                                <div className="grid h-full content-center">
-                                  <input value={item.warranty_snapshot ?? ""} onChange={(event) => updateItem(item.id, { warranty_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" />
-                                </div>
-                              </td>}
-                              {isColVisible("qty") && <td className={`${compactCellClassName} break-words text-center`}>
-                                <div className="grid h-full items-center">
-                                  <input type="number" min={item.item_type === "blank" || item.item_type === "note" ? 0 : 1} step="1" value={item.qty} onChange={(event) => updateItem(item.id, { qty: event.target.value })} className="w-full bg-transparent text-center text-xs outline-none" />
-                                </div>
-                              </td>}
-                              {isColVisible("unit_price") && <td className={`${compactCellClassName} break-words text-center`}>
-                                <div className="grid h-full items-center">
-                                  <input type="number" min={0} step="any" value={displayPricing.unitPrice} onChange={(event) => updateItem(item.id, { unit_price: event.target.value })} className="w-full bg-transparent text-center text-xs outline-none" />
-                                </div>
-                              </td>}
-                              {isColVisible("discount") && <td className={`${compactCellClassName} break-words text-center`}>
-                                <div className="grid h-full content-center">
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    step="any"
-                                    value={item.discount_value}
-                                    onChange={(event) => updateItem(item.id, { discount_value: event.target.value })}
-                                    className="w-full bg-transparent text-center text-xs outline-none"
-                                  />
-                                  <span className="mt-1 text-[10px] text-zinc-500">
-                                    {normalizedDiscountType(item.discount_type) === "percent" ? "%" : normalizedDiscountType(item.discount_type) === "amount" ? workspace.currency : "No discount"}
-                                  </span>
-                                </div>
-                              </td>}
-                              {isColVisible("discount_percentage") && <td className={`${compactCellClassName} break-words text-center text-xs`}>
-                                {displayPricing.discountAmount > 0 ? `${formatTableNumber(discountPercentValue)}%` : "-"}
-                              </td>}
-                              {isColVisible("discount_amount") && <td className={`${compactCellClassName} break-words text-center`}>
-                                <div className="grid h-full content-center text-center text-xs">
-                                  {formatTableNumber(displayPricing.discountAmount)}
-                                </div>
-                              </td>}
-                              {isColVisible("net_price") && <td className={`${compactCellClassName} break-words text-center text-xs`}>{formatTableNumber(displayPricing.netPrice)}</td>}
-                              {isColVisible("net_total") && <td className={`${compactCellClassName} break-words text-center text-xs font-semibold`}>{formatTableNumber(displayPricing.netTotal)}</td>}
-                              {isColVisible("supplier_name") && <td className={`${compactCellClassName} break-words`}>
-                                <div className="grid h-full content-center">
-                                  <input value={item.supplier_name_snapshot ?? ""} onChange={(event) => updateItem(item.id, { supplier_name_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" />
-                                </div>
-                              </td>}
-                              {isColVisible("internal_notes") && <td className={`${compactCellClassName} break-words`}>
-                                <LocalAutoResizeTextarea
-                                  value={internalMetadata.internalNotes ?? ""}
-                                  onChange={(value) => updateItem(item.id, updateItemInternalMetadata(item, { internalNotes: value }))}
-                                  placeholder="Add internal note"
-                                  className="w-full resize-none overflow-hidden bg-transparent text-xs leading-5 outline-none focus:bg-emerald-50"
-                                />
-                              </td>}
-                              {isColVisible("cost_price") && <td className={`${compactCellClassName} break-words text-center`}>
-                                <div className="grid h-full items-center">
-                                  <input type="number" min={0} step="any" value={internalMetadata.costPrice ?? ""} onChange={(event) => updateItem(item.id, updateItemInternalMetadata(item, { costPrice: event.target.value === "" ? null : Number(event.target.value) }))} className="w-full bg-transparent text-center text-xs outline-none" />
-                                </div>
-                              </td>}
-                              {isColVisible("margin_percent") && <td className={`${compactCellClassName} break-words text-center text-xs`}>
-                                {marginPercentLabel}
-                              </td>}
-                              {isColVisible("margin_amount") && <td className={`${compactCellClassName} break-words text-center text-xs`}>
-                                {marginAmountLabel}
-                              </td>}
-                              {isColVisible("supplier_notes") && <td className={`${compactCellClassName} break-words`}>
-                                <LocalAutoResizeTextarea
-                                  value={internalMetadata.supplierNotes ?? ""}
-                                  onChange={(value) => updateItem(item.id, updateItemInternalMetadata(item, { supplierNotes: value }))}
-                                  placeholder="Add supplier note"
-                                  className="w-full resize-none overflow-hidden bg-transparent text-xs leading-5 outline-none focus:bg-emerald-50"
-                                />
-                              </td>}
-                              {isColVisible("delivery_lead_time") && <td className={`${compactCellClassName} break-words`}>
-                                <div className="grid h-full content-center">
-                                  <input value={internalMetadata.deliveryLeadTime ?? ""} onChange={(event) => updateItem(item.id, updateItemInternalMetadata(item, { deliveryLeadTime: event.target.value }))} className="w-full bg-transparent text-xs outline-none" />
-                                </div>
-                              </td>}
-                              {isColVisible("internal_status") && <td className={`${compactCellClassName} break-words`}>
-                                <div className="grid h-full content-center">
-                                  <input value={internalMetadata.internalStatus ?? ""} onChange={(event) => updateItem(item.id, updateItemInternalMetadata(item, { internalStatus: event.target.value }))} className="w-full bg-transparent text-xs outline-none" />
-                                </div>
-                              </td>}
-                              {isColVisible("edit") && <td className="border border-zinc-300 px-2 py-2 align-middle text-center">
-                                <div className="grid h-full min-h-full content-center justify-items-center gap-1.5" data-preserve-anchor={`item-${item.id}`}>
-                                  <button
-                                    type="button"
-                                    onClick={() => void saveLocalDraftNow(item.id)}
-                                    className="h-6 min-w-14 border border-emerald-900 bg-emerald-900 px-2 text-[11px] font-semibold text-white transition hover:bg-emerald-800"
-                                  >
-                                    Save
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setDetailsModalRowId(item.id)}
-                                    className="h-6 min-w-20 border border-zinc-300 bg-white px-2 text-[11px] font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
-                                  >
-                                    Edit Details
-                                  </button>
-                                  <span className={`text-[10px] font-semibold ${workspace.has_unsaved_changes && recentEditedRowId === item.id ? "text-zinc-500" : "text-emerald-800"}`}>
-                                    {rowLocalStatus(item.id, recentEditedRowId, localDraftSaved, workspace.has_unsaved_changes)}
-                                  </span>
-                                  {copiedRowId === item.id ? (
-                                    <span className="text-[10px] font-semibold text-emerald-800">Copied</span>
-                                  ) : null}
-                                  <div className="flex items-center gap-1">
-                                    <button type="button" onClick={() => moveItem(section.id, item.id, -1)} className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">^</button>
-                                    <button type="button" onClick={() => moveItem(section.id, item.id, 1)} className="h-6 min-w-6 border border-zinc-300 bg-white px-1.5 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">v</button>
-                                  </div>
-                                  <SharedQuotationMoreMenu
-                                    actionButtons={(
-                                      <>
-                                        {copiedRowClipboard ? (
-                                          <>
-                                            <button type="button" onClick={() => pasteCopiedRowRelative(item.id, "above")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">
-                                              Paste copied row above
-                                            </button>
-                                            <button type="button" onClick={() => pasteCopiedRowRelative(item.id, "below")} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">
-                                              Paste copied row below
-                                            </button>
-                                          </>
-                                        ) : null}
-                                        <button type="button" onClick={() => copyItem(item.id)} className="h-7 w-full border border-emerald-200 bg-emerald-50 px-2 text-left text-xs font-semibold text-emerald-900 transition hover:border-emerald-300">
-                                          Copy row
-                                        </button>
-                                        <button type="button" onClick={() => duplicateItem(item.id)} className="h-7 w-full border border-zinc-300 bg-white px-2 text-left text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
-                                          Duplicate below
-                                        </button>
-                                        <button type="button" onClick={() => removeItem(item.id)} className="h-7 w-full border border-red-200 bg-white px-2 text-left text-xs font-semibold text-red-700 transition hover:border-red-300 hover:text-red-800">
-                                          Remove
-                                        </button>
-                                      </>
-                                    )}
-                                    itemId={item.id}
-                                    menuClassName="absolute right-0 z-30 mt-1 w-56 border border-zinc-300 bg-white p-2 text-left shadow-lg"
-                                    mergeControl={(
-                                      <>
-                                        <label className="grid gap-1">
-                                          <span className="text-[10px] font-semibold uppercase text-zinc-500">Merge</span>
-                                          <select
-                                            value={mergeModeForItem(item)}
-                                            onChange={(event) => updateItem(item.id, updateItemMergeMode(item, event.target.value))}
-                                            className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
-                                          >
-                                            <option value="none">No merge</option>
-                                            <option value="merge_specification">Merge spec</option>
-                                            <option value="merge_full_row">Merge full row</option>
-                                          </select>
-                                        </label>
-                                        <label className="grid gap-1 mt-2">
-                                          <span className="text-[10px] font-semibold uppercase text-zinc-500">Row Height (px)</span>
-                                          <input
-                                            type="number" min={40}
-                                            value={item.row_height || ""}
-                                            onChange={(event) => updateItem(item.id, { row_height: event.target.value ? clampRowHeight(Number(event.target.value)) : null })}
-                                            className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
-                                            placeholder="Auto"
-                                          />
-                                        </label>
-                                      </>
-                                    )}
-                                  />
-                                </div>
-                              </td>}
+                              {visibleColumns.map((column) => renderOrderedItemCell(column))}
                             </tr>
                             <ItemRowResizeHandle item={item} totalColumns={totalColumns} />
                             </>
