@@ -21,6 +21,11 @@ import {
   TemplateReferenceImageFieldManager,
 } from "@/components/products/template-image-galleries";
 import {
+  TemplateImportActionButton,
+  TemplateImportBanner,
+  type QuotationRowImportDraft as ClientQuotationRowImportDraft,
+} from "@/components/products/template-import-controls";
+import {
   QuickCategoryForm,
   TemplateCategoryFields,
 } from "@/components/products/template-category-fields";
@@ -37,6 +42,7 @@ import {
   latestBrandPriceListUpdate,
   productTemplatePriceCheckState,
 } from "@/lib/product-price-check";
+import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import { createClient } from "@/lib/supabase/server";
 import { profileDisplayName } from "@/lib/user-display";
 import {
@@ -535,135 +541,23 @@ function appendedImportSpecification(
   return lines.join("\n");
 }
 
-function importedVariantPricingRow(draft: QuotationRowImportDraft): VariantPricingRow {
-  return {
-    id: `variant-${randomUUID()}`,
-    variant_name: draft.item_name_snapshot || draft.model_snapshot || "Imported row",
-    dimension: draft.size_snapshot || "",
-    price: Number(draft.unit_price) || 0,
-    currency: normalizeCurrency(draft.currency || defaultCurrency),
-    specification: draft.specification_snapshot || "",
-    is_active: true,
-    sort_order: Date.now(),
-  };
-}
+function cancelTemplateImportHref({
+  returnTo,
+  templateId,
+}: {
+  returnTo?: string;
+  templateId: string;
+}) {
+  const search = new URLSearchParams({
+    template: templateId,
+    editTemplate: templateId,
+  });
 
-function importedDeskingPricingRow(draft: QuotationRowImportDraft): DeskingSizePricingRow {
-  return {
-    id: `size-${randomUUID()}`,
-    label: draft.size_snapshot || draft.item_name_snapshot || "Imported size",
-    default_price: Number(draft.unit_price) || 0,
-    additional_price: 0,
-    currency: normalizeCurrency(draft.currency || defaultCurrency),
-    dimension_unit: "cm",
-    is_active: true,
-    sort_order: Date.now(),
-  };
-}
-
-function importedAccessoryPricingGroup(draft: QuotationRowImportDraft): AccessoryPricingRow {
-  return {
-    id: `accessory-group-${randomUUID()}`,
-    group_name: "Imported accessories",
-    is_active: true,
-    sort_order: Date.now(),
-    items: [
-      {
-        id: `accessory-${randomUUID()}`,
-        item_name: draft.item_name_snapshot || draft.model_snapshot || "Imported accessory",
-        price: Number(draft.unit_price) || 0,
-        currency: normalizeCurrency(draft.currency || defaultCurrency),
-        specification: draft.specification_snapshot || "",
-        is_active: true,
-        sort_order: 0,
-      },
-    ],
-  };
-}
-
-function importedCategoryPricingRow(draft: QuotationRowImportDraft): CategoryPricingRow {
-  const price = Number(draft.unit_price) || 0;
-
-  return {
-    id: `category-${randomUUID()}`,
-    variant_name: draft.item_name_snapshot || draft.model_snapshot || "Imported finish row",
-    dimension: draft.size_snapshot || "",
-    currency: normalizeCurrency(draft.currency || defaultCurrency),
-    prices: {
-      "Cat A": price,
-      "Cat B": price,
-      "Cat C": price,
-      "Cat D": price,
-    },
-    specification: draft.specification_snapshot || "",
-    is_active: true,
-    sort_order: Date.now(),
-  };
-}
-
-function templateWithImportedQuotationRow(
-  template: ProductTemplate,
-  draft: QuotationRowImportDraft | null,
-  action: string,
-) {
-  if (!draft || !action) return template;
-
-  if (action === "basic") {
-    return {
-      ...template,
-      default_specification: appendedImportSpecification(
-        draft.specification_snapshot,
-        draft.size_snapshot,
-      ),
-      origin: draft.origin_snapshot || template.origin,
-      supplier_name: draft.supplier_name_snapshot || template.supplier_name,
-      description: quotationRowImportDescription(draft) || template.description,
-    };
+  if (returnTo) {
+    search.set("returnTo", returnTo);
   }
 
-  if (action === "image") {
-    const imageValue =
-      draft.proposed_image_url_snapshot ||
-      draft.specified_image_url_snapshot ||
-      template.proposed_image_url_1;
-
-    return {
-      ...template,
-      proposed_image_url_1: imageValue,
-      default_image_url: imageValue,
-      reference_image_url: draft.specified_image_url_snapshot || template.reference_image_url,
-    };
-  }
-
-  if (action === "variant") {
-    return {
-      ...template,
-      variant_pricing: [...(template.variant_pricing ?? []), importedVariantPricingRow(draft)],
-    };
-  }
-
-  if (action === "workstation") {
-    return {
-      ...template,
-      desking_size_pricing: [...(template.desking_size_pricing ?? []), importedDeskingPricingRow(draft)],
-    };
-  }
-
-  if (action === "accessory") {
-    return {
-      ...template,
-      accessory_pricing: [...(template.accessory_pricing ?? []), importedAccessoryPricingGroup(draft)],
-    };
-  }
-
-  if (action === "finish") {
-    return {
-      ...template,
-      category_pricing: [...(template.category_pricing ?? []), importedCategoryPricingRow(draft)],
-    };
-  }
-
-  return template;
+  return `/products/templates?${search.toString()}`;
 }
 
 function templatesHref(
@@ -927,6 +821,7 @@ function TemplateForm({
   defaultBrandId,
   defaultMainCategoryId,
   defaultSubCategoryId,
+  existingImportDraft,
   importDraft,
   importMode,
   initialMessage,
@@ -938,6 +833,7 @@ function TemplateForm({
   defaultBrandId?: string;
   defaultMainCategoryId?: string;
   defaultSubCategoryId?: string;
+  existingImportDraft?: ClientQuotationRowImportDraft | null;
   importDraft?: QuotationRowImportDraft | null;
   importMode?: "new" | "existing" | "";
   initialMessage?: string;
@@ -948,18 +844,22 @@ function TemplateForm({
   const selectedBrandId = template?.brand_id ?? defaultBrandId ?? "";
   const selectedBrand = brands.find((brand) => brand.id === selectedBrandId) ?? null;
   const brandDefaultCurrency = selectedBrand?.default_currency ?? defaultCurrency;
-  const templateCurrency = template?.currency ?? importDraft?.currency ?? brandDefaultCurrency;
+  const allowImportPrefill = !template && importMode === "new";
+  const templateCurrency = template?.currency ?? (allowImportPrefill ? importDraft?.currency : null) ?? brandDefaultCurrency;
   const selectedMainCategoryId =
     template?.main_category_id ?? defaultMainCategoryId ?? "";
   const selectedSubCategoryId =
     template?.sub_category_id ?? defaultSubCategoryId ?? "";
   const allowQuickCreate = !template;
-  const importedDescription = quotationRowImportDescription(importDraft ?? null);
+  const importedDescription = allowImportPrefill
+    ? quotationRowImportDescription(importDraft ?? null)
+    : "";
+  const showExistingImportBanner = Boolean(template && existingImportDraft);
 
   return (
     <TemplateFormShell
       action={template ? updateProductTemplate : createProductTemplate}
-      cancelHref="/products/templates"
+      cancelHref={returnTo || "/products/templates"}
       initialMessage={initialMessage}
       pendingLabel={template ? "Saving template..." : "Adding template..."}
       pendingMessage={template ? "Saving template..." : "Adding product to library..."}
@@ -975,10 +875,30 @@ function TemplateForm({
           </p>
         </section>
       ) : null}
+      {showExistingImportBanner && existingImportDraft ? (
+        <TemplateImportBanner
+          cancelHref={cancelTemplateImportHref({
+            returnTo,
+            templateId,
+          })}
+          importDraft={existingImportDraft}
+          templateId={templateId}
+        />
+      ) : null}
       <FormSection
         title="Template Details"
         description="Set the core product identity, category placement, quotation defaults, and internal notes for this template."
       >
+        {existingImportDraft ? (
+          <div className="md:col-span-2 xl:col-span-3">
+            <TemplateImportActionButton
+              action="basic"
+              draft={existingImportDraft}
+              label="Use specification / dimension"
+              templateId={templateId}
+            />
+          </div>
+        ) : null}
         <TemplateCategoryFields
           allowQuickCreate={allowQuickCreate}
           brands={brands}
@@ -990,35 +910,45 @@ function TemplateForm({
         <Field
           name="template_name"
           label="Item Name / Template Name"
-          defaultValue={template?.template_name ?? importDraft?.item_name_snapshot ?? importDraft?.model_snapshot}
+          defaultValue={template?.template_name ?? (allowImportPrefill ? importDraft?.item_name_snapshot ?? importDraft?.model_snapshot : null)}
           required
         />
         <Field
           name="template_code"
           label="Template Code"
-          defaultValue={template?.template_code ?? importDraft?.item_code_snapshot}
+          defaultValue={template?.template_code ?? (allowImportPrefill ? importDraft?.item_code_snapshot : null)}
         />
-        <Field name="item_code" label="Item Code" defaultValue={template?.item_code ?? importDraft?.item_code_snapshot} />
+        <Field
+          name="item_code"
+          label="Item Code"
+          defaultValue={template?.item_code ?? (allowImportPrefill ? importDraft?.item_code_snapshot : null)}
+        />
         <TextArea
           name="default_specification"
           label="Specifications"
-          defaultValue={template?.default_specification ?? appendedImportSpecification(importDraft?.specification_snapshot, importDraft?.size_snapshot)}
+          defaultValue={template?.default_specification ?? (allowImportPrefill
+            ? appendedImportSpecification(importDraft?.specification_snapshot, importDraft?.size_snapshot)
+            : null)}
         />
         <Field
           name="origin"
           label="Origin override"
-          defaultValue={template?.origin ?? importDraft?.origin_snapshot}
+          defaultValue={template?.origin ?? (allowImportPrefill ? importDraft?.origin_snapshot : null)}
         />
         <Field
           name="supplier_name"
           label="Supplier override"
-          defaultValue={template?.supplier_name ?? importDraft?.supplier_name_snapshot}
+          defaultValue={template?.supplier_name ?? (allowImportPrefill ? importDraft?.supplier_name_snapshot : null)}
         />
         <div className="rounded-md border border-dashed border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-500 md:col-span-2 xl:col-span-1">
           Dimension is calculated from workstation size pricing when available.
           Finish and accessory choices still come from Template Options.
         </div>
-        <TextArea name="description" label="Description" defaultValue={template?.description ?? importedDescription} />
+        <TextArea
+          name="description"
+          label="Description"
+          defaultValue={template?.description ?? importedDescription}
+        />
         <TextArea
           name="price_notes"
           label="Pricing / Formula Notes"
@@ -1034,14 +964,14 @@ function TemplateForm({
           <Field
             name="unit_label"
             label="Unit"
-            defaultValue={template?.unit_label ?? importDraft?.unit_label ?? "Pc"}
+            defaultValue={template?.unit_label ?? (allowImportPrefill ? importDraft?.unit_label : null) ?? "Pc"}
           />
           <CurrencySelect defaultValue={templateCurrency} />
           <Field
             name="default_unit_price"
             label="Default U.Price"
             type="number"
-            defaultValue={template?.default_unit_price ?? importDraft?.unit_price ?? 0}
+            defaultValue={template?.default_unit_price ?? (allowImportPrefill ? importDraft?.unit_price : null) ?? 0}
           />
           <div className="flex items-end">
             <p className="text-xs leading-5 text-zinc-500">
@@ -1054,17 +984,32 @@ function TemplateForm({
           title="Reference Images"
           description="Add product reference images. Click an image card or paste a PNG, JPG, JPEG, or WebP image from the clipboard."
         >
+          {existingImportDraft ? (
+            <div className="md:col-span-2 xl:col-span-3">
+              <TemplateImportActionButton
+                action="image"
+                draft={existingImportDraft}
+                label="Add row image to gallery"
+                templateId={templateId}
+              />
+            </div>
+          ) : null}
           <input
             type="hidden"
             name="reference_image_url"
-            defaultValue={template?.reference_image_url ?? importDraft?.specified_image_url_snapshot ?? ""}
+            defaultValue={template?.reference_image_url ?? (allowImportPrefill ? importDraft?.specified_image_url_snapshot : null) ?? ""}
           />
           <div className="md:col-span-2 xl:col-span-3">
             <TemplateReferenceImageFieldManager
+              importDraft={existingImportDraft}
               initialSlots={proposedImageSlots.map((slot) => ({
                 ...slot,
                 settings: templateImageDisplaySettings(template, slot.field),
-                value: templateImageValue(template, slot.field) ?? (slot.field === "proposed_image_url_1" && !template ? importDraft?.proposed_image_url_snapshot ?? importDraft?.specified_image_url_snapshot ?? null : null),
+                value: templateImageValue(template, slot.field) ?? (
+                  slot.field === "proposed_image_url_1" && allowImportPrefill
+                    ? importDraft?.proposed_image_url_snapshot ?? importDraft?.specified_image_url_snapshot ?? null
+                    : null
+                ),
               }))}
               templateExists={Boolean(template)}
               templateId={templateId}
@@ -1093,6 +1038,8 @@ function TemplateForm({
           accessoryPricingRows={template?.accessory_pricing}
           categoryPricingRows={template?.category_pricing}
           brandDefaultCurrency={brandDefaultCurrency}
+          importDraft={existingImportDraft}
+          templateId={templateId}
           templateCurrency={template?.currency}
         />
       </FormSection>
@@ -1925,7 +1872,6 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const editTemplateId = stringParam(params.editTemplate);
   const returnTo = safeInternalReturnTo(stringParam(params.returnTo));
   const quoteImportMode = stringParam(params.quoteImportMode);
-  const quoteImportAction = stringParam(params.quoteImportAction);
   const quoteImportDraft = parseQuotationRowImportDraft(stringParam(params.quoteImportDraft));
   const supabase = await createClient();
 
@@ -1935,6 +1881,18 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     .eq("is_active", true)
     .order("name", { ascending: true })
     .returns<Brand[]>();
+
+  if ((brands ?? []).length) {
+    try {
+      await ensureDefaultProductCategoryTree({
+        supabase,
+        brandIds: (brands ?? []).map((brand) => brand.id),
+        userId: user.id,
+      });
+    } catch (seedError) {
+      console.error("DEFAULT PRODUCT CATEGORY BACKFILL ERROR", seedError);
+    }
+  }
 
   const { data: categories, error: categoriesError } = await supabase
     .from("product_categories")
@@ -2282,9 +2240,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   });
   const selectedTemplateBase =
     activeTemplateList.find((template) => template.id === openTemplateId) ?? null;
-  const selectedTemplate = selectedTemplateBase && quoteImportMode === "existing"
-    ? templateWithImportedQuotationRow(selectedTemplateBase, quoteImportDraft, quoteImportAction)
-    : selectedTemplateBase;
+  const selectedTemplate = selectedTemplateBase;
   const selectedBrand =
     brandList.find((brand) => brand.id === selectedBrandFilter) ?? null;
   const selectedMainCategory =
@@ -3223,51 +3179,13 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         Edit template details
                       </summary>
                       <div className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-                        {quoteImportMode === "existing" && quoteImportDraft ? (
-                          <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-                            <p className="text-sm font-semibold text-emerald-950">Import quotation row data</p>
-                            <p className="mt-1 text-xs leading-5 text-emerald-900">
-                              Choose how this quotation row should be brought into the existing template, then review the normal template form below and save when ready.
-                            </p>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {([
-                                ["basic", "Use specification / dimension"],
-                                ["image", "Use image as reference image"],
-                                ["variant", "Add as base/model row"],
-                                ["workstation", "Add as workstation size row"],
-                                ["accessory", "Add as accessory row"],
-                                ["finish", "Add as finish pricing row"],
-                              ] as const).map(([action, label]) => (
-                                <Link
-                                  key={action}
-                                  href={withHash(
-                                    `/products/templates?template=${template.id}&editTemplate=${template.id}&quoteImportMode=existing&quoteImportAction=${action}&quoteImportDraft=${encodeURIComponent(stringParam(params.quoteImportDraft))}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}`,
-                                    `template-${template.id}`,
-                                  )}
-                                  className={`rounded-md border px-3 py-2 text-xs font-semibold transition ${
-                                    quoteImportAction === action
-                                      ? "border-emerald-400 bg-white text-emerald-900"
-                                      : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300"
-                                  }`}
-                                >
-                                  {label}
-                                </Link>
-                              ))}
-                              <Link
-                                href={withHash(`/products/templates?template=${template.id}&editTemplate=${template.id}&quoteImportMode=existing&quoteImportDraft=${encodeURIComponent(stringParam(params.quoteImportDraft))}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}`, `template-${template.id}`)}
-                                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300"
-                              >
-                                Reset import choices
-                              </Link>
-                            </div>
-                          </div>
-                        ) : null}
                         <TemplateForm
                           brands={brandList}
                           categories={categoryList}
                           defaultBrandId={selectedBrandFilter}
                           defaultMainCategoryId={selectedMainFilter}
                           defaultSubCategoryId={selectedSubFilter}
+                          existingImportDraft={quoteImportMode === "existing" ? quoteImportDraft as ClientQuotationRowImportDraft | null : null}
                           importDraft={quoteImportMode === "existing" ? quoteImportDraft : null}
                           importMode={quoteImportMode === "existing" ? "existing" : ""}
                           returnTo={returnTo || withHash(

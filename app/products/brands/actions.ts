@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSettingsManager } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
+import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import { createClient } from "@/lib/supabase/server";
 
 function textValue(formData: FormData, name: string) {
@@ -44,21 +45,36 @@ export async function createBrand(formData: FormData) {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.from("brands").insert({
-    name,
-    code: optionalTextValue(formData, "code"),
-    default_currency: normalizeCurrency(textValue(formData, "default_currency") || defaultCurrency),
-    origin: optionalTextValue(formData, "origin"),
-    description: optionalTextValue(formData, "description"),
-    website: optionalTextValue(formData, "website"),
-    logo_url: optionalTextValue(formData, "logo_url"),
-    is_active: boolValue(formData, "is_active"),
-    created_by: user.id,
-  });
+  const { data: brand, error } = await supabase
+    .from("brands")
+    .insert({
+      name,
+      code: optionalTextValue(formData, "code"),
+      default_currency: normalizeCurrency(textValue(formData, "default_currency") || defaultCurrency),
+      origin: optionalTextValue(formData, "origin"),
+      description: optionalTextValue(formData, "description"),
+      website: optionalTextValue(formData, "website"),
+      logo_url: optionalTextValue(formData, "logo_url"),
+      is_active: boolValue(formData, "is_active"),
+      created_by: user.id,
+    })
+    .select("id")
+    .single<{ id: string }>();
 
-  if (error) {
-    console.error("BRAND CREATE ERROR", error.message);
+  if (error || !brand) {
+    console.error("BRAND CREATE ERROR", error?.message);
     redirectWithMessage("Brand could not be created.");
+  }
+
+  try {
+    await ensureDefaultProductCategoryTree({
+      supabase,
+      brandIds: [brand.id],
+      userId: user.id,
+    });
+  } catch (seedError) {
+    console.error("BRAND DEFAULT CATEGORY SEED ERROR", seedError);
+    redirectWithMessage("Brand was created, but default categories could not be seeded.");
   }
 
   revalidatePath("/products/brands");

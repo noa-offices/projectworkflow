@@ -1,7 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ProductTemplateImageUploader } from "@/components/products/product-template-image-uploader";
+import {
+  TEMPLATE_IMPORT_APPLY_EVENT,
+  TEMPLATE_IMPORT_RESET_EVENT,
+  TEMPLATE_IMPORT_STATUS_EVENT,
+  type QuotationRowImportDraft,
+} from "@/components/products/template-import-controls";
 
 type ProductTemplateImageField =
   | "proposed_image_url_1"
@@ -110,17 +116,132 @@ function visibleFormSlots(slots: ImageSlotState[]) {
 
 export function TemplateReferenceImageFieldManager({
   initialSlots,
+  importDraft,
   templateExists,
   templateId,
 }: {
   initialSlots: ImageSlotState[];
+  importDraft?: QuotationRowImportDraft | null;
   templateExists: boolean;
   templateId: string;
 }) {
-  const [slots, setSlots] = useState(() => normalizeFormSlots(initialSlots));
+  void importDraft;
+  const normalizedInitialSlots = useMemo(() => normalizeFormSlots(initialSlots), [initialSlots]);
+  const initialSlotsRef = useRef(normalizedInitialSlots);
+  const importedFieldsRef = useRef<Set<ProductTemplateImageField>>(new Set());
+  const [slots, setSlots] = useState(() => normalizedInitialSlots);
   const renderedSlots = useMemo(() => visibleFormSlots(slots), [slots]);
   const filledImageCount = slots.filter((slot) => slot.value).length;
   const hasReachedImageLimit = filledImageCount >= maxTemplateImages;
+
+  useEffect(() => {
+    const handleApply = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        action: string;
+        draft: QuotationRowImportDraft;
+        templateId: string;
+      }>).detail;
+
+      if (!detail || detail.templateId !== templateId || detail.action !== "image") {
+        return;
+      }
+
+      const imageValue =
+        detail.draft.proposed_image_url_snapshot ||
+        detail.draft.specified_image_url_snapshot;
+
+      if (!imageValue) {
+        window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
+          detail: {
+            action: "image",
+            status: "No quotation row image was available to import.",
+            templateId,
+          },
+        }));
+        return;
+      }
+
+      setSlots((current) => {
+        if (current.some((slot) => slot.value === imageValue)) {
+          window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
+            detail: {
+              action: "image",
+              status: "Row image already exists in the gallery.",
+              templateId,
+            },
+          }));
+          return current;
+        }
+
+        const targetField = current.find((slot) => !slot.value)?.field ?? null;
+        if (!targetField) {
+          window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
+            detail: {
+              action: "image",
+              status: "No empty image slot is available.",
+              templateId,
+            },
+          }));
+          return current;
+        }
+
+        importedFieldsRef.current.add(targetField);
+        window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
+          detail: {
+            action: "image",
+            status: "Row image added to gallery.",
+            templateId,
+          },
+        }));
+
+        return current.map((slot) => (
+          slot.field === targetField ? { ...slot, value: imageValue } : slot
+        ));
+      });
+    };
+
+    const handleReset = (event: Event) => {
+      const detail = (event as CustomEvent<{ templateId: string }>).detail;
+      if (!detail || detail.templateId !== templateId) {
+        return;
+      }
+
+      if (!importedFieldsRef.current.size) {
+        window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
+          detail: {
+            action: "image",
+            status: "",
+            templateId,
+          },
+        }));
+        return;
+      }
+
+      const importedFields = new Set(importedFieldsRef.current);
+      setSlots((current) => current.map((slot) => {
+        if (!importedFields.has(slot.field)) {
+          return slot;
+        }
+
+        return initialSlotsRef.current.find((initialSlot) => initialSlot.field === slot.field) ?? slot;
+      }));
+      importedFieldsRef.current = new Set();
+      window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
+        detail: {
+          action: "image",
+          status: "",
+          templateId,
+        },
+      }));
+    };
+
+    window.addEventListener(TEMPLATE_IMPORT_APPLY_EVENT, handleApply);
+    window.addEventListener(TEMPLATE_IMPORT_RESET_EVENT, handleReset);
+    return () => {
+      window.removeEventListener(TEMPLATE_IMPORT_APPLY_EVENT, handleApply);
+      window.removeEventListener(TEMPLATE_IMPORT_RESET_EVENT, handleReset);
+    };
+  }, [templateId]);
 
   function updateSlotValue(field: ProductTemplateImageField, value: string | null) {
     setSlots((current) =>
@@ -135,7 +256,8 @@ export function TemplateReferenceImageFieldManager({
           key={`hidden-${slot.field}`}
           type="hidden"
           name={slot.field}
-          defaultValue={slot.value ?? ""}
+          value={slot.value ?? ""}
+          readOnly
         />
       ))}
       {slots.map((slot) => (
@@ -143,7 +265,8 @@ export function TemplateReferenceImageFieldManager({
           key={`settings-${slot.field}`}
           type="hidden"
           name={`image_settings_${slot.field}`}
-          defaultValue={slot.settings ? JSON.stringify(slot.settings) : ""}
+          value={slot.settings ? JSON.stringify(slot.settings) : ""}
+          readOnly
         />
       ))}
       {renderedSlots.map((slot, index) => {
@@ -161,6 +284,7 @@ export function TemplateReferenceImageFieldManager({
                 field={slot.field}
                 formOnly={!templateExists}
                 imageSettings={slot.settings}
+                key={`${slot.field}:${slot.value ?? ""}`}
                 label={isEmptyAddSlot ? "Add product reference image" : `${label} product reference image`}
                 onValueChange={(value) => updateSlotValue(slot.field, value)}
                 templateId={templateId}
@@ -209,6 +333,7 @@ export function TemplateDetailImageGallery({
             </p>
             <ProductTemplateImageUploader
               imageSettings={slot.settings}
+              key={`${slot.field}:${slot.value}`}
               label={`Image ${index + 1}`}
               templateId={templateId}
               value={slot.value}

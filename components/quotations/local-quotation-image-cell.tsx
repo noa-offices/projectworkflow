@@ -38,11 +38,13 @@ function updateItemImageSettings(
 }
 
 export function LocalQuotationImageCell({
+  field: fieldOverride,
   item,
   quotationId,
   rowHeight,
   updateItem,
 }: {
+  field?: ImageField;
   item: LocalQuotationItem;
   quotationId: string;
   rowHeight?: number | null;
@@ -50,10 +52,12 @@ export function LocalQuotationImageCell({
 }) {
   const [errorMessage, setErrorMessage] = useState("");
   const [status, setStatus] = useState<"idle" | "uploading" | "failed">("idle");
-  const field: ImageField = item.proposed_image_url_snapshot || !item.specified_image_url_snapshot
-    ? "proposed_image_url_snapshot"
-    : "specified_image_url_snapshot";
-  const value = item.proposed_image_url_snapshot || item.specified_image_url_snapshot || null;
+  const field: ImageField = fieldOverride ?? (
+    item.proposed_image_url_snapshot || !item.specified_image_url_snapshot
+      ? "proposed_image_url_snapshot"
+      : "specified_image_url_snapshot"
+  );
+  const value = item[field] ?? null;
 
   async function handleFileSelected(file: File) {
     setStatus("uploading");

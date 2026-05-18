@@ -6,7 +6,11 @@ type CurrencyLikeRow = {
   currency?: string | null;
 };
 
-function formCurrencyFromTrigger(trigger: HTMLElement) {
+function formCurrencyFromTrigger(trigger?: HTMLElement | null) {
+  if (!trigger) {
+    return null;
+  }
+
   const form = trigger.closest("form");
   if (!form) {
     return null;
@@ -48,7 +52,7 @@ export function resolveDefaultPricingCurrency({
   brandDefaultCurrency?: string | null;
   existingRows?: CurrencyLikeRow[];
   savedTemplateCurrency?: string | null;
-  trigger: HTMLElement;
+  trigger?: HTMLElement | null;
 }) {
   return (
     formCurrencyFromTrigger(trigger) ||

@@ -5,6 +5,7 @@ import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { TopBar } from "@/components/top-bar";
 import { requireSettingsManager } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import { createClient } from "@/lib/supabase/server";
 import {
   archiveBrand,
@@ -422,6 +423,18 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
     .select("id,name,code,default_currency,origin,description,website,logo_url,is_active")
     .order("name", { ascending: true })
     .returns<Brand[]>();
+
+  if ((brands ?? []).length) {
+    try {
+      await ensureDefaultProductCategoryTree({
+        supabase,
+        brandIds: (brands ?? []).map((brand) => brand.id),
+        userId: user.id,
+      });
+    } catch (seedError) {
+      console.error("DEFAULT PRODUCT CATEGORY BACKFILL ERROR", seedError);
+    }
+  }
 
   const { data: categories, error: categoriesError } = await supabase
     .from("product_categories")

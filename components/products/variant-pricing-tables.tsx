@@ -1,8 +1,14 @@
 "use client";
 
-import { type MouseEvent, useMemo, useState } from "react";
+import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { resolveDefaultPricingCurrency } from "@/components/products/pricing-default-currency";
+import {
+  TEMPLATE_IMPORT_APPLY_EVENT,
+  TEMPLATE_IMPORT_RESET_EVENT,
+  TEMPLATE_IMPORT_STATUS_EVENT,
+  type QuotationRowImportDraft,
+} from "@/components/products/template-import-controls";
 
 export type VariantPricingRow = {
   id?: string;
@@ -246,16 +252,79 @@ function newCategoryPricingRow(
 export function VariantPricingTable({
   brandDefaultCurrency,
   rows,
+  templateId,
   templateCurrency,
 }: {
   brandDefaultCurrency?: string | null;
   rows?: VariantPricingRow[] | null;
+  templateId: string;
   templateCurrency?: string | null;
 }) {
-  const [tableRows, setTableRows] = useState<VariantPricingRow[]>(() =>
-    rows?.length ? rows.map(normalizeVariant) : [],
-  );
+  const initialRows = useMemo(() => rows?.length ? rows.map(normalizeVariant) : [], [rows]);
+  const importedIdsRef = useRef<Set<string>>(new Set());
+  const [tableRows, setTableRows] = useState<VariantPricingRow[]>(() => initialRows);
   const serialized = useMemo(() => JSON.stringify(tableRows.map(normalizeVariant)), [tableRows]);
+
+  useEffect(() => {
+    const handleApply = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        action: string;
+        draft: QuotationRowImportDraft;
+        templateId: string;
+      }>).detail;
+
+      if (!detail || detail.templateId !== templateId || detail.action !== "variant") {
+        return;
+      }
+
+      const row = normalizeVariant({
+        id: idFor("variant", tableRows.length),
+        variant_name: detail.draft.item_name_snapshot || detail.draft.model_snapshot || "Imported row",
+        dimension: detail.draft.size_snapshot || "",
+        price: Number(detail.draft.unit_price) || 0,
+        currency: normalizeCurrency(detail.draft.currency ?? templateCurrency ?? brandDefaultCurrency ?? defaultCurrency),
+        specification: detail.draft.specification_snapshot || "",
+        is_active: true,
+        sort_order: tableRows.length,
+      }, tableRows.length);
+
+      importedIdsRef.current.add(row.id ?? "");
+      setTableRows((current) => [...current, row]);
+      window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
+        detail: {
+          action: "variant",
+          status: "Base/model row added.",
+          templateId,
+        },
+      }));
+    };
+
+    const handleReset = (event: Event) => {
+      const detail = (event as CustomEvent<{ templateId: string }>).detail;
+      if (!detail || detail.templateId !== templateId) {
+        return;
+      }
+
+      if (importedIdsRef.current.size) {
+        setTableRows((current) => current.filter((row) => !importedIdsRef.current.has(row.id ?? "")));
+      }
+      importedIdsRef.current = new Set();
+      window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
+        detail: {
+          action: "variant",
+          status: "",
+          templateId,
+        },
+      }));
+    };
+
+    window.addEventListener(TEMPLATE_IMPORT_APPLY_EVENT, handleApply);
+    window.addEventListener(TEMPLATE_IMPORT_RESET_EVENT, handleReset);
+    return () => {
+      window.removeEventListener(TEMPLATE_IMPORT_APPLY_EVENT, handleApply);
+      window.removeEventListener(TEMPLATE_IMPORT_RESET_EVENT, handleReset);
+    };
+  }, [brandDefaultCurrency, tableRows.length, templateCurrency, templateId]);
 
   function update(index: number, patch: Partial<VariantPricingRow>) {
     setTableRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
@@ -301,15 +370,17 @@ export function VariantPricingTable({
 export function CategoryPricingTable({
   brandDefaultCurrency,
   rows,
+  templateId,
   templateCurrency,
 }: {
   brandDefaultCurrency?: string | null;
   rows?: CategoryPricingRow[] | null;
+  templateId: string;
   templateCurrency?: string | null;
 }) {
-  const [tableRows, setTableRows] = useState<CategoryPricingRow[]>(() =>
-    rows?.length ? rows.map(normalizeCategory) : [],
-  );
+  const initialRows = useMemo(() => rows?.length ? rows.map(normalizeCategory) : [], [rows]);
+  const importedIdsRef = useRef<Set<string>>(new Set());
+  const [tableRows, setTableRows] = useState<CategoryPricingRow[]>(() => initialRows);
   const [priceCategories, setPriceCategories] = useState<string[]>(() => derivedPriceCategories(rows));
   const [newCategoryName, setNewCategoryName] = useState("");
   const [showCategoryCreator, setShowCategoryCreator] = useState(false);
@@ -322,6 +393,73 @@ export function CategoryPricingTable({
       ),
     [priceCategories, tableRows],
   );
+
+  useEffect(() => {
+    const handleApply = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        action: string;
+        draft: QuotationRowImportDraft;
+        templateId: string;
+      }>).detail;
+
+      if (!detail || detail.templateId !== templateId || detail.action !== "finish") {
+        return;
+      }
+
+      const price = Number(detail.draft.unit_price) || 0;
+      const row = normalizeCategory({
+        id: idFor("category", tableRows.length),
+        variant_name: detail.draft.item_name_snapshot || detail.draft.model_snapshot || "Imported finish row",
+        dimension: detail.draft.size_snapshot || "",
+        currency: normalizeCurrency(detail.draft.currency ?? templateCurrency ?? brandDefaultCurrency ?? defaultCurrency),
+        prices: {
+          "Cat A": price,
+          "Cat B": price,
+          "Cat C": price,
+          "Cat D": price,
+        },
+        specification: detail.draft.specification_snapshot || "",
+        is_active: true,
+        sort_order: tableRows.length,
+      }, tableRows.length);
+
+      importedIdsRef.current.add(row.id ?? "");
+      setTableRows((current) => [...current, row]);
+      window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
+        detail: {
+          action: "finish",
+          status: "Finish pricing row added.",
+          templateId,
+        },
+      }));
+    };
+
+    const handleReset = (event: Event) => {
+      const detail = (event as CustomEvent<{ templateId: string }>).detail;
+      if (!detail || detail.templateId !== templateId) {
+        return;
+      }
+
+      if (importedIdsRef.current.size) {
+        setTableRows((current) => current.filter((row) => !importedIdsRef.current.has(row.id ?? "")));
+      }
+      importedIdsRef.current = new Set();
+      window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
+        detail: {
+          action: "finish",
+          status: "",
+          templateId,
+        },
+      }));
+    };
+
+    window.addEventListener(TEMPLATE_IMPORT_APPLY_EVENT, handleApply);
+    window.addEventListener(TEMPLATE_IMPORT_RESET_EVENT, handleReset);
+    return () => {
+      window.removeEventListener(TEMPLATE_IMPORT_APPLY_EVENT, handleApply);
+      window.removeEventListener(TEMPLATE_IMPORT_RESET_EVENT, handleReset);
+    };
+  }, [brandDefaultCurrency, tableRows.length, templateCurrency, templateId]);
 
   function update(index: number, patch: Partial<CategoryPricingRow>) {
     setTableRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
@@ -464,16 +602,86 @@ export function CategoryPricingTable({
 export function AccessoryPricingTable({
   brandDefaultCurrency,
   rows,
+  templateId,
   templateCurrency,
 }: {
   brandDefaultCurrency?: string | null;
   rows?: AccessoryPricingRow[] | null;
+  templateId: string;
   templateCurrency?: string | null;
 }) {
-  const [groups, setGroups] = useState<AccessoryPricingRow[]>(() =>
-    normalizeAccessoryGroups(rows),
-  );
+  const initialGroups = useMemo(() => normalizeAccessoryGroups(rows), [rows]);
+  const importedIdsRef = useRef<Set<string>>(new Set());
+  const [groups, setGroups] = useState<AccessoryPricingRow[]>(() => initialGroups);
   const serialized = useMemo(() => JSON.stringify(groups.map(normalizeAccessoryGroup)), [groups]);
+
+  useEffect(() => {
+    const handleApply = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        action: string;
+        draft: QuotationRowImportDraft;
+        templateId: string;
+      }>).detail;
+
+      if (!detail || detail.templateId !== templateId || detail.action !== "accessory") {
+        return;
+      }
+
+      const group = normalizeAccessoryGroup({
+        id: idFor("add-on-group", groups.length),
+        group_name: "Imported accessories",
+        is_active: true,
+        sort_order: groups.length,
+        items: [
+          {
+            id: idFor("add-on", 0),
+            item_name: detail.draft.item_name_snapshot || detail.draft.model_snapshot || "Imported accessory",
+            price: Number(detail.draft.unit_price) || 0,
+            currency: normalizeCurrency(detail.draft.currency ?? templateCurrency ?? brandDefaultCurrency ?? defaultCurrency),
+            specification: detail.draft.specification_snapshot || "",
+            is_active: true,
+            sort_order: 0,
+          },
+        ],
+      }, groups.length);
+
+      importedIdsRef.current.add(group.id ?? "");
+      setGroups((current) => [...current, group]);
+      window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
+        detail: {
+          action: "accessory",
+          status: "Accessory row added.",
+          templateId,
+        },
+      }));
+    };
+
+    const handleReset = (event: Event) => {
+      const detail = (event as CustomEvent<{ templateId: string }>).detail;
+      if (!detail || detail.templateId !== templateId) {
+        return;
+      }
+
+      if (importedIdsRef.current.size) {
+        setGroups((current) => current.filter((group) => !importedIdsRef.current.has(group.id ?? "")));
+      }
+      importedIdsRef.current = new Set();
+      window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
+        detail: {
+          action: "accessory",
+          status: "",
+          templateId,
+        },
+      }));
+    };
+
+    window.addEventListener(TEMPLATE_IMPORT_APPLY_EVENT, handleApply);
+    window.addEventListener(TEMPLATE_IMPORT_RESET_EVENT, handleReset);
+    return () => {
+      window.removeEventListener(TEMPLATE_IMPORT_APPLY_EVENT, handleApply);
+      window.removeEventListener(TEMPLATE_IMPORT_RESET_EVENT, handleReset);
+    };
+  }, [brandDefaultCurrency, groups.length, templateCurrency, templateId]);
 
   function updateGroup(index: number, patch: Partial<AccessoryPricingRow>) {
     setGroups((current) => current.map((group, groupIndex) => groupIndex === index ? { ...group, ...patch } : group));

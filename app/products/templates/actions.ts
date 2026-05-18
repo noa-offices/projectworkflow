@@ -63,6 +63,108 @@ type JsonPriceRow = Record<string, unknown> & {
   prices?: Record<string, unknown>;
 };
 
+type ProductLibraryImageReference =
+  | { kind: "empty"; value: null }
+  | { kind: "direct"; value: string }
+  | { kind: "product"; path: string }
+  | { kind: "quote"; path: string };
+
+function isDirectImagePath(value: string) {
+  return /^(https?:|blob:|data:|\/)/i.test(value);
+}
+
+function isQuoteStoragePath(value: string) {
+  return value.startsWith("quotation-items/") || value.startsWith("quotation-finishes/");
+}
+
+function isProductStoragePath(value: string) {
+  return value.startsWith("product-templates/") || value.startsWith("brand-materials/");
+}
+
+function parseProductLibraryImageReference(value: string | null): ProductLibraryImageReference {
+  if (!value) {
+    return { kind: "empty", value: null };
+  }
+
+  if (isDirectImagePath(value)) {
+    return { kind: "direct", value };
+  }
+
+  if (value.startsWith("product-images:")) {
+    return { kind: "product", path: value.slice("product-images:".length) };
+  }
+
+  if (value.startsWith("quote-images:")) {
+    return { kind: "quote", path: value.slice("quote-images:".length) };
+  }
+
+  if (isQuoteStoragePath(value)) {
+    return { kind: "quote", path: value };
+  }
+
+  if (isProductStoragePath(value)) {
+    return { kind: "product", path: value };
+  }
+
+  return { kind: "product", path: value };
+}
+
+function safeStorageFilename(path: string) {
+  const rawFilename = path.split("/").at(-1) ?? "image";
+  const dotIndex = rawFilename.lastIndexOf(".");
+  const extension = dotIndex >= 0 ? rawFilename.slice(dotIndex + 1).toLowerCase() : "";
+  const basename = (dotIndex >= 0 ? rawFilename.slice(0, dotIndex) : rawFilename)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+
+  return extension ? `${basename || "image"}.${extension}` : basename || "image";
+}
+
+function contentTypeFromPath(path: string) {
+  const extension = path.split(".").pop()?.toLowerCase();
+
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "png") return "image/png";
+  if (extension === "webp") return "image/webp";
+
+  return undefined;
+}
+
+async function copyQuoteImageToProductImages({
+  sourcePath,
+  supabase,
+  templateId,
+}: {
+  sourcePath: string;
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  templateId: string;
+}) {
+  const { data, error } = await supabase.storage.from("quote-images").download(sourcePath);
+
+  if (error || !data) {
+    throw new Error(error?.message || "Source image could not be downloaded.");
+  }
+
+  const targetPath = `product-templates/${templateId}/${Date.now()}-${safeStorageFilename(sourcePath)}`;
+  const body = new Uint8Array(await data.arrayBuffer());
+  const contentType = data.type || contentTypeFromPath(sourcePath);
+  const { data: uploadData, error: uploadError } = await supabase.storage
+    .from("product-images")
+    .upload(targetPath, body, {
+      cacheControl: "3600",
+      contentType,
+      upsert: false,
+    });
+
+  if (uploadError || !uploadData?.path) {
+    throw new Error(uploadError?.message || "Image could not be uploaded.");
+  }
+
+  return uploadData.path;
+}
+
 function textValue(formData: FormData, name: string) {
   const value = formData.get(name);
   return typeof value === "string" ? value.trim() : "";
@@ -776,6 +878,60 @@ function accessoryPricingValue(formData: FormData) {
   }
 }
 
+async function normalizeTemplateImagePayload<
+  T extends {
+    default_image_url?: string | null;
+    reference_image_url?: string | null;
+  } & Partial<Record<(typeof imageFields)[number], string | null>>,
+>(
+  payload: T,
+  templateId: string,
+) {
+  const supabase = await createClient();
+  const copiedImagePaths = new Map<string, string | null>();
+
+  const resolveImageValue = async (value: string | null | undefined) => {
+    const reference = parseProductLibraryImageReference(value ?? null);
+
+    if (reference.kind === "empty") return null;
+    if (reference.kind === "direct") return reference.value;
+    if (reference.kind === "product") return reference.path;
+
+    if (copiedImagePaths.has(reference.path)) {
+      return copiedImagePaths.get(reference.path) ?? reference.path;
+    }
+
+    try {
+      const copiedPath = await copyQuoteImageToProductImages({
+        sourcePath: reference.path,
+        supabase,
+        templateId,
+      });
+      copiedImagePaths.set(reference.path, copiedPath);
+      return copiedPath;
+    } catch (error) {
+      console.error(
+        "PRODUCT TEMPLATE IMAGE COPY ERROR",
+        error instanceof Error ? error.message : error,
+      );
+      copiedImagePaths.set(reference.path, reference.path);
+      return reference.path;
+    }
+  };
+
+  const normalizedEntries = await Promise.all(
+    imageFields.map(async (field) => [field, await resolveImageValue(payload[field] ?? null)] as const),
+  );
+  const normalizedImages = Object.fromEntries(normalizedEntries) as Partial<Record<(typeof imageFields)[number], string | null>>;
+
+  return {
+    ...payload,
+    ...normalizedImages,
+    default_image_url: normalizedImages.proposed_image_url_1 ?? null,
+    reference_image_url: await resolveImageValue(payload.reference_image_url ?? null),
+  };
+}
+
 function templatePayload(formData: FormData, userId?: string) {
   const proposedImageValues = Object.fromEntries(
     imageFields.map((field) => [field, optionalTextValue(formData, field)]),
@@ -888,10 +1044,11 @@ function componentPayload(formData: FormData, userId?: string) {
 
 export async function createProductTemplate(formData: FormData) {
   const { user, displayName } = await requireSettingsManager();
-  const payload = createTemplatePayload(formData, user.id);
+  const initialPayload = createTemplatePayload(formData, user.id);
+  const templateId = textValue(formData, "id");
   const redirectPath = returnPath(formData, "/products/templates?addTemplate=1");
 
-  if (!payload.brand_id || !payload.template_name) {
+  if (!initialPayload.brand_id || !initialPayload.template_name) {
     redirectWithMessageToPath(
       redirectPath,
       "Brand and item name/template name are required.",
@@ -899,11 +1056,12 @@ export async function createProductTemplate(formData: FormData) {
   }
 
   await validateProductTemplateCategories({
-    brandId: payload.brand_id,
-    mainCategoryId: payload.main_category_id,
+    brandId: initialPayload.brand_id,
+    mainCategoryId: initialPayload.main_category_id,
     redirectPath,
-    subCategoryId: payload.sub_category_id,
+    subCategoryId: initialPayload.sub_category_id,
   });
+  const payload = await normalizeTemplateImagePayload(initialPayload, templateId);
 
   const supabase = await createClient();
   const { data: template, error } = await supabase
@@ -941,19 +1099,20 @@ export async function createProductTemplate(formData: FormData) {
 export async function updateProductTemplate(formData: FormData) {
   const { user, displayName } = await requireSettingsManager();
   const id = textValue(formData, "id");
-  const payload = templatePayload(formData);
+  const initialPayload = templatePayload(formData);
   const redirectPath = returnPath(formData);
 
-  if (!id || !payload.brand_id || !payload.template_name) {
+  if (!id || !initialPayload.brand_id || !initialPayload.template_name) {
     redirectWithMessageToPath(redirectPath, "Template id, brand, and template name are required.");
   }
 
   await validateProductTemplateCategories({
-    brandId: payload.brand_id,
-    mainCategoryId: payload.main_category_id,
+    brandId: initialPayload.brand_id,
+    mainCategoryId: initialPayload.main_category_id,
     redirectPath,
-    subCategoryId: payload.sub_category_id,
+    subCategoryId: initialPayload.sub_category_id,
   });
+  const payload = await normalizeTemplateImagePayload(initialPayload, id);
 
   const supabase = await createClient();
   const { data: currentTemplate, error: currentTemplateError } = await supabase

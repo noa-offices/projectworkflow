@@ -14,6 +14,7 @@ import {
   type ProductTemplateMaterialGroupLink,
 } from "@/components/quotations/finish-selections-editor";
 import { requireActiveUser } from "@/lib/auth";
+import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import { latestBrandPriceListUpdate } from "@/lib/product-price-check";
 import { createWorkspaceFromServerSnapshot } from "@/lib/local/quotation-workspace";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
@@ -58,7 +59,7 @@ type QuotationItem = Parameters<typeof createWorkspaceFromServerSnapshot>[0]["it
 
 export default async function LocalQuotationBuilderPage({ params }: PageProps) {
   const { id } = await params;
-  const { profile } = await requireActiveUser();
+  const { profile, user } = await requireActiveUser();
   const canManageProductLibrary =
     profile?.role === "system_owner" || profile?.role === "admin_manager";
   const supabase = await createSupabaseClient();
@@ -105,6 +106,18 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
     .eq("is_active", true)
     .order("name", { ascending: true })
     .returns<ProductLibraryBrand[]>();
+
+  if ((productBrands ?? []).length) {
+    try {
+      await ensureDefaultProductCategoryTree({
+        supabase,
+        brandIds: (productBrands ?? []).map((brand) => brand.id),
+        userId: user.id,
+      });
+    } catch (seedError) {
+      console.error("DEFAULT PRODUCT CATEGORY BACKFILL ERROR", seedError);
+    }
+  }
 
   const { data: productCategories } = await supabase
     .from("product_categories")

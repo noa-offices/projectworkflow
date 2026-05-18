@@ -13,12 +13,18 @@ import {
   type VariantPricingRow,
   VariantPricingTable,
 } from "@/components/products/variant-pricing-tables";
+import {
+  TemplateImportActionButton,
+  type QuotationRowImportDraft,
+} from "@/components/products/template-import-controls";
 
 type TemplatePricingSectionsProps = {
   accessoryPricingRows?: AccessoryPricingRow[] | null;
   brandDefaultCurrency?: string | null;
   categoryPricingRows?: CategoryPricingRow[] | null;
   deskingSizePricingRows?: DeskingSizePricingRow[] | null;
+  importDraft?: QuotationRowImportDraft | null;
+  templateId: string;
   templateCurrency?: string | null;
   variantPricingRows?: VariantPricingRow[] | null;
 };
@@ -75,6 +81,8 @@ export function TemplatePricingSections({
   brandDefaultCurrency,
   categoryPricingRows,
   deskingSizePricingRows,
+  importDraft,
+  templateId,
   templateCurrency,
   variantPricingRows,
 }: TemplatePricingSectionsProps) {
@@ -83,10 +91,10 @@ export function TemplatePricingSections({
   const hasAccessoriesPricing = hasRows(accessoryPricingRows);
   const hasFinishPricing = hasRows(categoryPricingRows);
 
-  const [showWorkstationPricing, setShowWorkstationPricing] = useState(hasWorkstationPricing);
-  const [showBasePricing, setShowBasePricing] = useState(hasBasePricing);
-  const [showAccessoriesPricing, setShowAccessoriesPricing] = useState(hasAccessoriesPricing);
-  const [showFinishPricing, setShowFinishPricing] = useState(hasFinishPricing);
+  const [showWorkstationPricing, setShowWorkstationPricing] = useState(hasWorkstationPricing || Boolean(importDraft));
+  const [showBasePricing, setShowBasePricing] = useState(hasBasePricing || Boolean(importDraft));
+  const [showAccessoriesPricing, setShowAccessoriesPricing] = useState(hasAccessoriesPricing || Boolean(importDraft));
+  const [showFinishPricing, setShowFinishPricing] = useState(hasFinishPricing || Boolean(importDraft));
 
   const hiddenSectionCount = [
     showWorkstationPricing,
@@ -147,7 +155,22 @@ export function TemplatePricingSections({
           title="Workstation Size / Base Price"
           helperText="Default price is the base CL2 price. Additional price is for each extra CL2."
         >
-          <DeskingSizePricingTable rows={deskingSizePricingRows} templateCurrency={templateCurrency} brandDefaultCurrency={brandDefaultCurrency} />
+          {importDraft ? (
+            <div className="mb-3">
+              <TemplateImportActionButton
+                action="workstation"
+                draft={importDraft}
+                label="Add as workstation size row"
+                templateId={templateId}
+              />
+            </div>
+          ) : null}
+          <DeskingSizePricingTable
+            brandDefaultCurrency={brandDefaultCurrency}
+            rows={deskingSizePricingRows}
+            templateCurrency={templateCurrency}
+            templateId={templateId}
+          />
         </PricingSectionCard>
       ) : null}
 
@@ -156,7 +179,22 @@ export function TemplatePricingSections({
           title="Base Size / Main Price"
           helperText="Use this for the product's main size or model pricing for desks, tables, chairs, sofas, and other non-workstation products."
         >
-          <VariantPricingTable rows={variantPricingRows} templateCurrency={templateCurrency} brandDefaultCurrency={brandDefaultCurrency} />
+          {importDraft ? (
+            <div className="mb-3">
+              <TemplateImportActionButton
+                action="variant"
+                draft={importDraft}
+                label="Add as base/model row"
+                templateId={templateId}
+              />
+            </div>
+          ) : null}
+          <VariantPricingTable
+            brandDefaultCurrency={brandDefaultCurrency}
+            rows={variantPricingRows}
+            templateCurrency={templateCurrency}
+            templateId={templateId}
+          />
         </PricingSectionCard>
       ) : null}
 
@@ -165,13 +203,43 @@ export function TemplatePricingSections({
           title="Accessories / Optional Items"
           helperText="Add optional accessories and add-ons such as locks, pedestals, power modules, headrests, cushions, and similar extras."
         >
-          <AccessoryPricingTable rows={accessoryPricingRows} templateCurrency={templateCurrency} brandDefaultCurrency={brandDefaultCurrency} />
+          {importDraft ? (
+            <div className="mb-3">
+              <TemplateImportActionButton
+                action="accessory"
+                draft={importDraft}
+                label="Add as accessory row"
+                templateId={templateId}
+              />
+            </div>
+          ) : null}
+          <AccessoryPricingTable
+            brandDefaultCurrency={brandDefaultCurrency}
+            rows={accessoryPricingRows}
+            templateCurrency={templateCurrency}
+            templateId={templateId}
+          />
         </PricingSectionCard>
       ) : null}
 
       {showFinishPricing ? (
         <PricingSectionCard title="Fabric / Leather / Finish Category Pricing">
-          <CategoryPricingTable rows={categoryPricingRows} templateCurrency={templateCurrency} brandDefaultCurrency={brandDefaultCurrency} />
+          {importDraft ? (
+            <div className="mb-3">
+              <TemplateImportActionButton
+                action="finish"
+                draft={importDraft}
+                label="Add as finish pricing row"
+                templateId={templateId}
+              />
+            </div>
+          ) : null}
+          <CategoryPricingTable
+            brandDefaultCurrency={brandDefaultCurrency}
+            rows={categoryPricingRows}
+            templateCurrency={templateCurrency}
+            templateId={templateId}
+          />
         </PricingSectionCard>
       ) : null}
     </>

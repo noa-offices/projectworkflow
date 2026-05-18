@@ -687,14 +687,7 @@ export function ProductLibrarySelector({
     [categories],
   );
   const mainCategories = categories.filter((category) => !category.parent_id);
-  const visibleMainCategories = mainCategories.filter((category) => !brandId || category.brand_id === brandId);
   const subcategories = categories.filter((category) => category.parent_id);
-  const visibleSubcategories = subcategories.filter((category) => {
-    if (brandId && category.brand_id !== brandId) return false;
-    if (categoryId && category.parent_id !== categoryId) return false;
-
-    return true;
-  });
   const componentsByTemplate = useMemo(() => {
     const map = new Map<string, ProductLibraryComponent[]>();
 
@@ -753,6 +746,17 @@ export function ProductLibrarySelector({
 
     return map;
   }, [templates]);
+  const visibleMainCategories = mainCategories.filter((category) => {
+    if (brandId && category.brand_id !== brandId) return false;
+
+    return (productCountByCategory.get(category.id) ?? 0) > 0;
+  });
+  const visibleSubcategories = subcategories.filter((category) => {
+    if (brandId && category.brand_id !== brandId) return false;
+    if (categoryId && category.parent_id !== categoryId) return false;
+
+    return (productCountByCategory.get(category.id) ?? 0) > 0;
+  });
 
   return (
     <>
@@ -868,7 +872,10 @@ export function ProductLibrarySelector({
                 </div>
                 <div className="space-y-2">
                   {brands.map((brand) => {
-                    const brandCategories = mainCategories.filter((category) => category.brand_id === brand.id);
+                    const brandCategories = mainCategories.filter(
+                      (category) =>
+                        category.brand_id === brand.id && (productCountByCategory.get(category.id) ?? 0) > 0,
+                    );
                     const brandCount = productCountByBrand.get(brand.id) ?? 0;
 
                     if (!brandCount && !brandCategories.length) return null;
@@ -887,7 +894,10 @@ export function ProductLibrarySelector({
                         </summary>
                         <div className="border-t border-zinc-100 py-1">
                           {brandCategories.map((category) => {
-                            const categorySubcategories = subcategories.filter((child) => child.parent_id === category.id);
+                            const categorySubcategories = subcategories.filter(
+                              (child) =>
+                                child.parent_id === category.id && (productCountByCategory.get(child.id) ?? 0) > 0,
+                            );
                             const categoryCount = productCountByCategory.get(category.id) ?? 0;
 
                             return (

@@ -55,6 +55,7 @@ import {
 } from "@/components/quotations/shared-quotation-row-details-panel";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import {
   formatBrandOriginSupplier,
   specificationWithoutDuplicateCode,
@@ -3116,7 +3117,7 @@ export default async function QuotationBuilderPage({
   const view = query?.view === "internal" ? "internal" : "client";
   const showInternal = view === "internal" || query?.view === "internal";
   const builderPath = `/quotations/${id}/builder?view=${view}`;
-  const { profile } = await requireActiveUser();
+  const { profile, user } = await requireActiveUser();
   const canManageRecords =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
@@ -3221,6 +3222,18 @@ export default async function QuotationBuilderPage({
     .eq("is_active", true)
     .order("name", { ascending: true })
     .returns<ProductLibraryBrand[]>();
+
+  if ((productBrands ?? []).length) {
+    try {
+      await ensureDefaultProductCategoryTree({
+        supabase,
+        brandIds: (productBrands ?? []).map((brand) => brand.id),
+        userId: user.id,
+      });
+    } catch (seedError) {
+      console.error("DEFAULT PRODUCT CATEGORY BACKFILL ERROR", seedError);
+    }
+  }
 
   const { data: productCategories, error: productCategoriesError } = await supabase
     .from("product_categories")

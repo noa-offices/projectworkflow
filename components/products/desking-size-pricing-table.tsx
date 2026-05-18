@@ -1,8 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { resolveDefaultPricingCurrency } from "@/components/products/pricing-default-currency";
+import {
+  TEMPLATE_IMPORT_APPLY_EVENT,
+  TEMPLATE_IMPORT_RESET_EVENT,
+  TEMPLATE_IMPORT_STATUS_EVENT,
+  type QuotationRowImportDraft,
+} from "@/components/products/template-import-controls";
 
 export type DeskingSizePricingRow = {
   id?: string;
@@ -81,15 +87,17 @@ function normalizedRow(row: DeskingSizePricingRow, index: number): DeskingSizePr
 export function DeskingSizePricingTable({
   brandDefaultCurrency,
   templateCurrency,
+  templateId,
   rows,
 }: {
   brandDefaultCurrency?: string | null;
   templateCurrency?: string | null;
+  templateId: string;
   rows?: DeskingSizePricingRow[] | null;
 }) {
-  const [tableRows, setTableRows] = useState<DeskingSizePricingRow[]>(() =>
-    rows?.length ? rows.map(normalizedRow) : [],
-  );
+  const initialRows = useMemo(() => rows?.length ? rows.map(normalizedRow) : [], [rows]);
+  const importedIdsRef = useRef<Set<string>>(new Set());
+  const [tableRows, setTableRows] = useState<DeskingSizePricingRow[]>(() => initialRows);
   const [draftRows, setDraftRows] = useState<Record<string, DeskingSizePricingRow>>({});
   const [editingRows, setEditingRows] = useState<Record<string, boolean>>({});
   const serializedRows = useMemo(
@@ -102,6 +110,72 @@ export function DeskingSizePricingTable({
       ),
     [draftRows, tableRows],
   );
+
+  useEffect(() => {
+    const handleApply = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        action: string;
+        draft: QuotationRowImportDraft;
+        templateId: string;
+      }>).detail;
+
+      if (!detail || detail.templateId !== templateId || detail.action !== "workstation") {
+        return;
+      }
+
+      const row = normalizedRow({
+        id:
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `size-import-${Date.now()}`,
+        label: detail.draft.size_snapshot || detail.draft.item_name_snapshot || "Imported size",
+        default_price: Number(detail.draft.unit_price) || 0,
+        additional_price: 0,
+        currency: normalizeCurrency(detail.draft.currency ?? templateCurrency ?? brandDefaultCurrency ?? defaultCurrency),
+        dimension_unit: "cm",
+        is_active: true,
+        sort_order: tableRows.length,
+      }, tableRows.length);
+
+      importedIdsRef.current.add(row.id ?? "");
+      setTableRows((current) => [...current, row]);
+      window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
+        detail: {
+          action: "workstation",
+          status: "Workstation size row added.",
+          templateId,
+        },
+      }));
+    };
+
+    const handleReset = (event: Event) => {
+      const detail = (event as CustomEvent<{ templateId: string }>).detail;
+      if (!detail || detail.templateId !== templateId) {
+        return;
+      }
+
+      if (importedIdsRef.current.size) {
+        setTableRows((current) =>
+          current.filter((row) => !importedIdsRef.current.has(row.id ?? "")),
+        );
+      }
+      importedIdsRef.current = new Set();
+      window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
+        detail: {
+          action: "workstation",
+          status: "",
+          templateId,
+        },
+      }));
+    };
+
+    window.addEventListener(TEMPLATE_IMPORT_APPLY_EVENT, handleApply);
+    window.addEventListener(TEMPLATE_IMPORT_RESET_EVENT, handleReset);
+    return () => {
+      window.removeEventListener(TEMPLATE_IMPORT_APPLY_EVENT, handleApply);
+      window.removeEventListener(TEMPLATE_IMPORT_RESET_EVENT, handleReset);
+    };
+  }, [brandDefaultCurrency, tableRows.length, templateCurrency, templateId]);
 
   function rowKey(row: DeskingSizePricingRow, index: number) {
     return row.id ?? `size-${index}`;

@@ -54,6 +54,14 @@ function isDirectImageUrl(value: string) {
   return /^(https?:|blob:|data:|\/)/i.test(value);
 }
 
+function isQuoteStoragePath(value: string) {
+  return value.startsWith("quotation-items/") || value.startsWith("quotation-finishes/");
+}
+
+function isProductStoragePath(value: string) {
+  return value.startsWith("product-templates/") || value.startsWith("brand-materials/");
+}
+
 function filenameForClipboardImage(type: string) {
   return `pasted-template-${Date.now()}.${extensionByType[type] ?? "png"}`;
 }
@@ -83,10 +91,20 @@ function clipboardImageFile(event: ClipboardEvent<HTMLDivElement>) {
 async function signedProductImageUrl(path: string) {
   if (isDirectImageUrl(path)) return path;
 
+  const bucketAndPath = path.startsWith("quote-images:")
+    ? { bucket: "quote-images", objectPath: path.slice("quote-images:".length) }
+    : path.startsWith("product-images:")
+      ? { bucket: "product-images", objectPath: path.slice("product-images:".length) }
+      : isQuoteStoragePath(path)
+        ? { bucket: "quote-images", objectPath: path }
+        : isProductStoragePath(path)
+          ? { bucket: "product-images", objectPath: path }
+          : { bucket: "product-images", objectPath: path };
+
   const supabase = createClient();
   const { data, error } = await supabase.storage
-    .from("product-images")
-    .createSignedUrl(path, 60 * 60);
+    .from(bucketAndPath.bucket)
+    .createSignedUrl(bucketAndPath.objectPath, 60 * 60);
 
   if (error) {
     throw new Error(error.message || "Image could not be loaded.");
