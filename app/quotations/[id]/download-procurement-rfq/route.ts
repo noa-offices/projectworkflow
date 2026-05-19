@@ -64,7 +64,7 @@ export async function GET(request: NextRequest, { params }: DownloadProcurementR
       pdfOptions: {
         displayHeaderFooter: false,
         format: "A4",
-        landscape: false,
+        landscape: true,
         margin: {
           top: "0",
           right: "0",
@@ -73,7 +73,7 @@ export async function GET(request: NextRequest, { params }: DownloadProcurementR
         },
       },
       sourceUrl,
-      viewport: { width: 1280, height: 900, deviceScaleFactor: 2, hasTouch: false, isLandscape: false, isMobile: false },
+      viewport: { width: 1600, height: 900, deviceScaleFactor: 2, hasTouch: false, isLandscape: true, isMobile: false },
     });
     const filename = `${procurementRfqFilename(quotation)}.pdf`;
     const pdfBody = pdfBuffer.buffer.slice(
