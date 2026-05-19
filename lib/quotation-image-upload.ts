@@ -80,6 +80,36 @@ export async function uploadQuotationFinishImage({
   return uploadImage("quote-images", path, file);
 }
 
+export async function uploadQuotationPresentationSectionImage({
+  file,
+  quotationId,
+  sectionId,
+  variant,
+}: {
+  file: File;
+  quotationId: string;
+  sectionId: string;
+  variant: "area" | "section-layout";
+}): Promise<QuotationImageUploadResult> {
+  const path = `quotation-presentations/${quotationId}/sections/${sectionId}/${variant}/${Date.now()}-${safeFilename(file.name)}`;
+
+  return uploadImage("quote-images", path, file);
+}
+
+export async function uploadQuotationPresentationMainLayoutImage({
+  file,
+  layoutId,
+  quotationId,
+}: {
+  file: File;
+  layoutId?: string | null;
+  quotationId: string;
+}): Promise<QuotationImageUploadResult> {
+  const path = `quotation-presentations/${quotationId}/main-layout/${layoutId || "pending"}/${Date.now()}-${safeFilename(file.name)}`;
+
+  return uploadImage("quote-images", path, file);
+}
+
 export async function uploadProductTemplateImage({
   file,
   templateId,

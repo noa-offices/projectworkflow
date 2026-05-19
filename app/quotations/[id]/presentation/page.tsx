@@ -78,6 +78,43 @@ type PresentationSettingsRecord = {
   updated_at: string;
 };
 
+function migratedMainSectionOverridesFromLegacy(
+  settings: ReturnType<typeof normalizePresentationSettings>,
+  sections: QuotationSection[],
+) {
+  if (Object.keys(settings.mainSectionOverrides).length) return settings;
+
+  const mainSections = sections
+    .filter((section) => section.is_active !== false && section.section_kind === "main")
+    .sort((left, right) => left.sort_order - right.sort_order || left.id.localeCompare(right.id));
+
+  if (!mainSections.length || !settings.presentationVisuals.mainLayouts.length) return settings;
+
+  const normalizedTitle = (value: string | null | undefined) => value?.trim().toLowerCase() ?? "";
+  const nextOverrides = { ...settings.mainSectionOverrides };
+
+  settings.presentationVisuals.mainLayouts.forEach((layout) => {
+    const matchedSection = mainSections.find((section) => normalizedTitle(section.section_title) === normalizedTitle(layout.title));
+    if (!matchedSection) return;
+    if (nextOverrides[matchedSection.id]) return;
+
+    nextOverrides[matchedSection.id] = {
+      title: layout.title,
+      note: layout.note,
+      layoutImageUrl: layout.imageUrl,
+    };
+  });
+
+  return {
+    ...settings,
+    mainSectionOverrides: nextOverrides,
+    presentationVisuals: {
+      ...settings.presentationVisuals,
+      mainLayouts: [],
+    },
+  };
+}
+
 function presentationDocumentTitle(quotation?: Pick<Quotation, "quotation_no" | "title"> | null) {
   const quotationNo = quotation?.quotation_no ?? "Draft";
   const title = quotation?.title ?? "Furniture Presentation";
@@ -232,11 +269,38 @@ export default async function QuotationPresentationPage({ params }: Presentation
     ]);
 
   const activeItems = (items ?? []).filter((item) => item.is_active !== false);
+  const initialSettings = migratedMainSectionOverridesFromLegacy(normalizePresentationSettings(presentationSettings?.settings_json, {
+    updatedAt: presentationSettings?.updated_at ?? null,
+  }), sections ?? []);
   const imageEntries = await Promise.all(
     activeItems.map(async (item) => [
       item.id,
       await signedImageUrl(item.proposed_image_url_snapshot ?? item.specified_image_url_snapshot, supabase),
     ] as const),
+  );
+  const presentationOverrideImageEntries = await Promise.all(
+    activeItems.map(async (item) => [
+      item.id,
+      await signedImageUrl(initialSettings.itemOverrides[item.id]?.imageUrl ?? null, supabase),
+    ] as const),
+  );
+  const mainLayoutImageEntries = await Promise.all(
+    Object.entries(initialSettings.mainSectionOverrides).map(async ([sectionId, override]) => [
+      sectionId,
+      await signedImageUrl(override.layoutImageUrl ?? null, supabase),
+    ] as const),
+  );
+  const sectionOverrideImageEntries = await Promise.all(
+    (sections ?? []).flatMap((section) => {
+      const override = initialSettings.sectionOverrides[section.id];
+      return ([
+        ["areaImageUrl", override?.areaImageUrl ?? null],
+        ["sectionLayoutImageUrl", override?.sectionLayoutImageUrl ?? null],
+      ] as const).map(async ([field, value]) => [
+        `${section.id}:${field}`,
+        await signedImageUrl(value, supabase),
+      ] as const);
+    }),
   );
   const finishImageEntries = await Promise.all(
     activeItems.flatMap((item) =>
@@ -256,9 +320,6 @@ export default async function QuotationPresentationPage({ params }: Presentation
     ...companyProfile,
     logoUrl: hasUsableCompanyLogo(companyProfile.logoUrl) ? companyProfile.logoUrl : null,
   };
-  const initialSettings = normalizePresentationSettings(presentationSettings?.settings_json, {
-    updatedAt: presentationSettings?.updated_at ?? null,
-  });
 
   return (
     <QuotationPresentation
@@ -266,6 +327,9 @@ export default async function QuotationPresentationPage({ params }: Presentation
       companyProfile={normalizedCompanyProfile}
       finishImageUrlByItemAndFinishId={Object.fromEntries(finishImageEntries)}
       imageUrlByItemId={Object.fromEntries(imageEntries)}
+      mainLayoutImageUrlById={Object.fromEntries(mainLayoutImageEntries)}
+      presentationOverrideImageUrlByItemId={Object.fromEntries(presentationOverrideImageEntries)}
+      sectionOverrideImageUrlBySectionAndField={Object.fromEntries(sectionOverrideImageEntries)}
       initialSettings={initialSettings}
       items={items ?? []}
       project={project ?? null}
