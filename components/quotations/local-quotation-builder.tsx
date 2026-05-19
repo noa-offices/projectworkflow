@@ -2873,8 +2873,26 @@ export function LocalQuotationBuilder({
                   Downloads
                 </summary>
                 <div className="absolute right-0 z-30 mt-2 grid min-w-[220px] gap-2 border border-zinc-300 bg-white p-2 text-xs shadow-lg">
+                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/procurement-rfq`} target="_blank">
+                    Preview Procurement RFQ
+                  </LocalServerViewLink>
+                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/download-procurement-rfq`}>
+                    Download Procurement RFQ PDF
+                  </LocalServerViewLink>
+                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/order-confirmation`} target="_blank">
+                    Preview Order Confirmation
+                  </LocalServerViewLink>
+                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/download-order-confirmation`}>
+                    Download Order Confirmation PDF
+                  </LocalServerViewLink>
                   <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/presentation`} target="_blank">
                     Preview Presentation
+                  </LocalServerViewLink>
+                  <LocalServerViewLink
+                    disabled={workspace.has_unsaved_changes}
+                    href={`/quotations/${workspace.server_quotation_id}/download-presentation`}
+                  >
+                    Download Presentation PDF
                   </LocalServerViewLink>
                   <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/pdf`} target="_blank">
                     Preview PDF

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition, type ClipboardEvent, type ReactNode } from "react";
 import { QuotationImageFrame } from "@/components/quotations/quotation-image-frame";
+import { PresentationPptxExportButton } from "@/components/quotations/presentation-pptx-export-button";
 import { PrintActions } from "@/components/quotations/print-actions";
 import type { CompanyProfile } from "@/lib/company-profile";
 import type { ImageDisplaySettings } from "@/lib/image-display-settings";
@@ -10,13 +11,16 @@ import {
   DEFAULT_PRESENTATION_CONTENT_VISIBILITY,
   DEFAULT_PRESENTATION_CLOSING_OVERRIDES,
   DEFAULT_PRESENTATION_COVER_OVERRIDES,
+  DEFAULT_PRESENTATION_FLOW_ORDER,
   DEFAULT_PRESENTATION_ITEM_OVERRIDE,
   DEFAULT_PRESENTATION_PAGE_VISIBILITY,
   DEFAULT_PRESENTATION_VISUALS,
+  normalizeFlowOrder,
   normalizePresentationSettings,
   type PresentationClosingOverrides,
   type PresentationContentVisibility,
   type PresentationCoverOverrides,
+  type PresentationFlowOrder,
   type PresentationImageFit,
   type PresentationItemOverride,
   type PresentationLayoutMode,
@@ -114,7 +118,8 @@ type VisibilityField = keyof PresentationContentVisibility;
 type PageVisibilityField = keyof PresentationPageVisibility;
 type CoverOverrideField = keyof PresentationCoverOverrides;
 type ClosingOverrideField = keyof PresentationClosingOverrides;
-type SettingsSectionKey = "items" | "layout" | "content" | "pages" | "sections" | "mainLayouts" | "cover" | "closing";
+type SettingsSectionKey = "flow" | "items" | "layout" | "content" | "pages" | "mainLayouts" | "sections" | "cover" | "closing" | "presets";
+type PresentationPresetKey = "detailed" | "image_first" | "compact" | "client_review";
 type ProductPageData = {
   item: PresentationItem;
   heading: string;
@@ -134,6 +139,29 @@ type SaveResponsePayload = {
   code?: string;
 };
 type SectionImageField = "areaImageUrl" | "sectionLayoutImageUrl";
+type FlowGroup = {
+  id: string;
+  mainSection: PresentationSection | null;
+  sections: PresentationSection[];
+};
+
+type OrderedPresentationHierarchy = {
+  allPresentableItemsBySection: Map<string, PresentationItem[]>;
+  childrenByParent: Map<string, PresentationSection[]>;
+  displaySections: DisplaySection[];
+  flowGroups: FlowGroup[];
+  mainSections: PresentationSection[];
+  sectionsById: Map<string, PresentationSection>;
+  sectionsByMainId: Map<string, PresentationSection[]>;
+};
+
+type PresentationSlide =
+  | { type: "cover"; key: string; title: string }
+  | { type: "design"; key: string; title: string }
+  | { type: "main-area"; key: string; title: string; mainSection: PresentationSection }
+  | { type: "section"; key: string; title: string; section: DisplaySection }
+  | { type: "product"; key: string; title: string; section: DisplaySection; itemIds: string[] }
+  | { type: "thank-you"; key: string; title: string };
 
 const designConsiderations = [
   {
@@ -209,6 +237,7 @@ const defaultClosingText = {
   officeDetails: "Dubai / Abu Dhabi, United Arab Emirates",
 } as const;
 const settingsSections: Array<{ key: SettingsSectionKey; label: string }> = [
+  { key: "flow", label: "Flow" },
   { key: "items", label: "Items" },
   { key: "layout", label: "Layout" },
   { key: "content", label: "Slide Content" },
@@ -217,6 +246,109 @@ const settingsSections: Array<{ key: SettingsSectionKey; label: string }> = [
   { key: "sections", label: "Section Settings" },
   { key: "cover", label: "Cover" },
   { key: "closing", label: "Closing" },
+  { key: "presets", label: "Presets" },
+];
+const presentationPresets: Array<{
+  key: PresentationPresetKey;
+  name: string;
+  description: string;
+  changes: string;
+  layoutMode: PresentationLayoutMode;
+  contentVisibility: PresentationContentVisibility;
+  pageVisibility: PresentationPageVisibility;
+}> = [
+  {
+    key: "detailed",
+    name: "Detailed Presentation",
+    description: "Full technical product slides with all available details.",
+    changes: "Single-item pages, all product details visible, all major page types enabled.",
+    layoutMode: "single",
+    contentVisibility: {
+      specification: true,
+      dimensions: true,
+      finishes: true,
+      brand: true,
+      origin: true,
+      model: true,
+      code: true,
+    },
+    pageVisibility: {
+      cover: true,
+      designConsiderations: true,
+      mainLayoutPages: true,
+      sectionDividers: true,
+      thankYou: true,
+    },
+  },
+  {
+    key: "image_first",
+    name: "Image-First Presentation",
+    description: "Premium visual proposal with cleaner product details.",
+    changes: "Single-item pages, keeps visuals rich, hides model values only.",
+    layoutMode: "single",
+    contentVisibility: {
+      specification: true,
+      dimensions: true,
+      finishes: true,
+      brand: true,
+      origin: true,
+      model: false,
+      code: true,
+    },
+    pageVisibility: {
+      cover: true,
+      designConsiderations: true,
+      mainLayoutPages: true,
+      sectionDividers: true,
+      thankYou: true,
+    },
+  },
+  {
+    key: "compact",
+    name: "Compact Presentation",
+    description: "Shorter deck using two products per page and minimal metadata.",
+    changes: "Two products per page, no design page, compact brand/origin/code metadata.",
+    layoutMode: "two_per_page",
+    contentVisibility: {
+      specification: false,
+      dimensions: false,
+      finishes: false,
+      brand: true,
+      origin: true,
+      model: false,
+      code: true,
+    },
+    pageVisibility: {
+      cover: true,
+      designConsiderations: false,
+      mainLayoutPages: true,
+      sectionDividers: true,
+      thankYou: true,
+    },
+  },
+  {
+    key: "client_review",
+    name: "Client Review",
+    description: "Clean approval deck with product details but less internal coding.",
+    changes: "Single-item pages, hides design page, removes code and model values.",
+    layoutMode: "single",
+    contentVisibility: {
+      specification: true,
+      dimensions: true,
+      finishes: true,
+      brand: true,
+      origin: true,
+      model: false,
+      code: false,
+    },
+    pageVisibility: {
+      cover: true,
+      designConsiderations: false,
+      mainLayoutPages: true,
+      sectionDividers: true,
+      thankYou: true,
+    },
+  },
 ];
 
 function formatPresentationDate(value: string | null | undefined) {
@@ -352,35 +484,130 @@ function orderedPresentationItems(items: PresentationItem[], sectionId: string |
     .sort((left, right) => left.sort_order - right.sort_order || left.id.localeCompare(right.id));
 }
 
-function buildDisplaySections(sections: PresentationSection[]) {
+function applyCustomOrder<T extends { id: string }>(entries: T[], orderedIds: string[]) {
+  const entriesById = new Map(entries.map((entry) => [entry.id, entry] as const));
+  const usedIds = new Set<string>();
+  const orderedEntries: T[] = [];
+
+  orderedIds.forEach((id) => {
+    const entry = entriesById.get(id);
+    if (!entry || usedIds.has(id)) return;
+    orderedEntries.push(entry);
+    usedIds.add(id);
+  });
+
+  entries.forEach((entry) => {
+    if (usedIds.has(entry.id)) return;
+    orderedEntries.push(entry);
+  });
+
+  return orderedEntries;
+}
+
+function moveOrderedEntry(ids: string[], entryId: string, direction: "up" | "down") {
+  const currentIndex = ids.indexOf(entryId);
+  if (currentIndex < 0) return ids;
+
+  const nextIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+  if (nextIndex < 0 || nextIndex >= ids.length) return ids;
+
+  const nextIds = [...ids];
+  const [entry] = nextIds.splice(currentIndex, 1);
+  nextIds.splice(nextIndex, 0, entry);
+  return nextIds;
+}
+
+function canonicalFlowOrderSignature(flowOrder: PresentationFlowOrder) {
+  return {
+    mainSectionKeys: flowOrder.mainSectionKeys,
+    sectionKeysByMain: Object.fromEntries(
+      Object.entries(flowOrder.sectionKeysByMain)
+        .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey)),
+    ),
+    itemIdsBySection: Object.fromEntries(
+      Object.entries(flowOrder.itemIdsBySection)
+        .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey)),
+    ),
+  };
+}
+
+function buildOrderedPresentationHierarchy(
+  sections: PresentationSection[],
+  items: PresentationItem[],
+  flowOrder: PresentationFlowOrder,
+): OrderedPresentationHierarchy {
   const orderedSectionRows = orderedPresentationSections(sections);
   const sectionsById = new Map(orderedSectionRows.map((section) => [section.id, section]));
-  const childrenByParent = new Map<string, PresentationSection[]>();
+  const childSectionsByMain = new Map<string, PresentationSection[]>();
+  const orphanSections: PresentationSection[] = [];
 
   for (const section of orderedSectionRows) {
-    if (section.section_kind !== "sub" || !section.parent_section_id) continue;
-    childrenByParent.set(section.parent_section_id, [...(childrenByParent.get(section.parent_section_id) ?? []), section]);
+    if (section.section_kind !== "sub") continue;
+
+    const parentSection = section.parent_section_id ? sectionsById.get(section.parent_section_id) ?? null : null;
+    if (parentSection?.section_kind === "main" && section.parent_section_id) {
+      childSectionsByMain.set(section.parent_section_id, [...(childSectionsByMain.get(section.parent_section_id) ?? []), section]);
+      continue;
+    }
+
+    orphanSections.push(section);
   }
 
+  const mainSections = applyCustomOrder(
+    orderedSectionRows.filter((section) => section.section_kind === "main"),
+    flowOrder.mainSectionKeys,
+  );
+  const sectionsByMainId = new Map(
+    mainSections.map((section) => [
+      section.id,
+      applyCustomOrder(childSectionsByMain.get(section.id) ?? [], flowOrder.sectionKeysByMain[section.id] ?? []),
+    ] as const),
+  );
   const rows: DisplaySection[] = [];
+  const childrenByParent = new Map<string, PresentationSection[]>();
+  const allPresentableItemsBySection = new Map(
+    orderedSectionRows.map((section) => [
+      section.id,
+      applyCustomOrder(
+        orderedPresentationItems(items, section.id).filter(isPresentationItem),
+        flowOrder.itemIdsBySection[section.id] ?? [],
+      ),
+    ] as const),
+  );
+  const flowGroups: FlowGroup[] = [];
 
-  for (const section of orderedSectionRows) {
-    if (section.section_kind === "main") {
-      rows.push({ ...section, renderAsMainOnly: true });
-      for (const child of childrenByParent.get(section.id) ?? []) {
-        rows.push(child);
-      }
-      continue;
-    }
-
-    if (section.parent_section_id && sectionsById.get(section.parent_section_id)?.section_kind === "main") {
-      continue;
-    }
-
-    rows.push(section);
+  for (const section of mainSections) {
+    const orderedChildren = sectionsByMainId.get(section.id) ?? [];
+    childrenByParent.set(section.id, orderedChildren);
+    rows.push({ ...section, renderAsMainOnly: true });
+    orderedChildren.forEach((child) => rows.push(child));
+    flowGroups.push({
+      id: `main:${section.id}`,
+      mainSection: section,
+      sections: (allPresentableItemsBySection.get(section.id) ?? []).length
+        ? [section, ...orderedChildren]
+        : orderedChildren,
+    });
   }
 
-  return { displaySections: rows, childrenByParent, sectionsById };
+  orphanSections.forEach((section) => {
+    rows.push(section);
+    flowGroups.push({
+      id: `section:${section.id}`,
+      mainSection: null,
+      sections: [section],
+    });
+  });
+
+  return {
+    allPresentableItemsBySection,
+    childrenByParent,
+    displaySections: rows,
+    flowGroups,
+    mainSections,
+    sectionsById,
+    sectionsByMainId,
+  };
 }
 
 function productTitle(item: PresentationItem) {
@@ -433,6 +660,7 @@ function productSummary(
 function settingsSignature(value: QuotationPresentationSettings) {
   return JSON.stringify({
     hiddenItemIds: [...value.hiddenItemIds].sort(),
+    flowOrder: canonicalFlowOrderSignature(value.flowOrder),
     contentVisibility: value.contentVisibility,
     layoutMode: value.layoutMode,
     pageVisibility: value.pageVisibility,
@@ -596,15 +824,124 @@ function formatSaveError(payload: SaveResponsePayload | null, fallback: string) 
   return suffix ? `${error}: ${suffix}` : error;
 }
 
+function slideTypeLabel(type: PresentationSlide["type"]) {
+  switch (type) {
+    case "cover":
+      return "Cover";
+    case "design":
+      return "Design";
+    case "main-area":
+      return "Main Area";
+    case "section":
+      return "Section";
+    case "product":
+      return "Product";
+    case "thank-you":
+      return "Thank You";
+    default:
+      return "Slide";
+  }
+}
+
+function slideDomId(index: number) {
+  return `presentation-slide-${index + 1}`;
+}
+
+function buildPresentationSlides({
+  closingTitle,
+  coverTitle,
+  dividerSections,
+  mainSectionTitlesById,
+  productPagesBySection,
+  sectionTitlesById,
+  settings,
+}: {
+  closingTitle: string | null;
+  coverTitle: string | null;
+  dividerSections: DisplaySection[];
+  mainSectionTitlesById: Map<string, string>;
+  productPagesBySection: Map<string, PresentationItem[][]>;
+  sectionTitlesById: Map<string, string>;
+  settings: QuotationPresentationSettings;
+}) {
+  const slides: PresentationSlide[] = [];
+
+  if (settings.pageVisibility.cover) {
+    slides.push({
+      type: "cover",
+      key: "cover",
+      title: coverTitle ?? "Cover",
+    });
+  }
+
+  if (settings.pageVisibility.designConsiderations) {
+    slides.push({
+      type: "design",
+      key: "design-considerations",
+      title: "Design Considerations",
+    });
+  }
+
+  dividerSections.forEach((section) => {
+    if (section.section_kind === "main" && settings.pageVisibility.mainLayoutPages) {
+      slides.push({
+        type: "main-area",
+        key: `main-area:${section.id}`,
+        title: mainSectionTitlesById.get(section.id) ?? section.section_title,
+        mainSection: section,
+      });
+    }
+
+    if (section.section_kind !== "main" && settings.pageVisibility.sectionDividers) {
+      slides.push({
+        type: "section",
+        key: `section:${section.id}`,
+        title: sectionTitlesById.get(section.id) ?? section.section_title,
+        section,
+      });
+    }
+
+    (productPagesBySection.get(section.id) ?? []).forEach((pageItems, pageIndex) => {
+      const firstItem = pageItems[0];
+      if (!firstItem) return;
+
+      slides.push({
+        type: "product",
+        key: `product:${section.id}:${pageIndex + 1}`,
+        title: productTitle(firstItem),
+        section,
+        itemIds: pageItems.map((item) => item.id),
+      });
+    });
+  });
+
+  if (settings.pageVisibility.thankYou) {
+    slides.push({
+      type: "thank-you",
+      key: "thank-you",
+      title: closingTitle ?? "Thank You",
+    });
+  }
+
+  return slides;
+}
+
 function PresentationPage({
   children,
   className = "",
+  id,
+  slideIndex,
 }: {
   children: ReactNode;
   className?: string;
+  id?: string;
+  slideIndex?: number;
 }) {
   return (
     <section
+      id={id}
+      data-presentation-slide="true"
+      data-slide-index={typeof slideIndex === "number" ? slideIndex : undefined}
       className={`presentation-page overflow-hidden break-after-page bg-white text-zinc-900 shadow-[0_24px_80px_rgba(15,23,42,0.12)] print:shadow-none ${className}`}
       style={{ width: "297mm", height: "210mm" }}
     >
@@ -646,6 +983,51 @@ function ContactLine({ label, value }: { label: string; value: string | null | u
   );
 }
 
+function presentationLogoUrl(value: string | null | undefined) {
+  if (!value) return "/noa-logo.png";
+
+  try {
+    const url = new URL(value, typeof window !== "undefined" ? window.location.origin : "https://example.com");
+    if (["noaoffices.com", "www.noaoffices.com"].includes(url.hostname.toLowerCase())) {
+      return "/noa-logo.png";
+    }
+  } catch {
+    // Keep original value for invalid-but-displayable relative paths.
+  }
+
+  return value;
+}
+
+function PresentationBrandLogo({
+  logoUrl,
+  fallbackText,
+  className = "max-h-14 max-w-[150px] object-contain brightness-0 invert",
+  fallbackClassName = "text-2xl font-light leading-tight text-white",
+}: {
+  logoUrl: string | null | undefined;
+  fallbackText: string;
+  className?: string;
+  fallbackClassName?: string;
+}) {
+  const safeLogoUrl = presentationLogoUrl(logoUrl);
+  const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null);
+  const hasError = safeLogoUrl === failedLogoUrl;
+
+  if (!safeLogoUrl || hasError) {
+    return <p className={fallbackClassName}>{fallbackText}</p>;
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={safeLogoUrl}
+      alt={fallbackText}
+      className={className}
+      onError={() => setFailedLogoUrl(safeLogoUrl)}
+    />
+  );
+}
+
 function ProductDetail({ label, value }: { label: string; value: string | null }) {
   if (!value) return null;
 
@@ -655,6 +1037,10 @@ function ProductDetail({ label, value }: { label: string; value: string | null }
       <dd className="text-sm font-medium leading-5 text-zinc-900 [overflow-wrap:anywhere]" style={clampStyle(2)}>{value}</dd>
     </div>
   );
+}
+
+function EmptySectionVisualState() {
+  return <div aria-hidden="true" className="mt-8 min-h-0 flex-1" />;
 }
 
 function chunkItems<T>(items: T[], size: number) {
@@ -788,6 +1174,41 @@ function SectionVisibilityCheckbox({
       onChange={(event) => onChange(event.target.checked)}
       type="checkbox"
     />
+  );
+}
+
+function FlowMoveButtons({
+  disableDown,
+  disableUp,
+  onMoveDown,
+  onMoveUp,
+}: {
+  disableDown: boolean;
+  disableUp: boolean;
+  onMoveDown: () => void;
+  onMoveUp: () => void;
+}) {
+  const buttonClassName = "inline-flex h-7 items-center rounded-full border border-zinc-300 px-2.5 text-[11px] font-semibold text-zinc-600 transition hover:border-zinc-400 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-40";
+
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        onClick={onMoveUp}
+        disabled={disableUp}
+        className={buttonClassName}
+      >
+        Up
+      </button>
+      <button
+        type="button"
+        onClick={onMoveDown}
+        disabled={disableDown}
+        className={buttonClassName}
+      >
+        Down
+      </button>
+    </div>
   );
 }
 
@@ -981,6 +1402,7 @@ function PresentationImageInput({
   onFileSelected,
   onReset,
   status,
+  uploadDisabled = false,
 }: {
   description: string;
   fieldLabel: string;
@@ -989,11 +1411,13 @@ function PresentationImageInput({
   onFileSelected: (file: File) => Promise<void>;
   onReset: () => void;
   status: { status: "idle" | "uploading" | "failed"; error: string | null };
+  uploadDisabled?: boolean;
 }) {
   const [pasteMessage, setPasteMessage] = useState<string | null>(null);
   const pasteTargetRef = useRef<HTMLDivElement | null>(null);
 
   async function handlePaste(event: ClipboardEvent<HTMLDivElement>) {
+    if (uploadDisabled) return;
     event.preventDefault();
     setPasteMessage(null);
 
@@ -1032,7 +1456,9 @@ function PresentationImageInput({
         type="file"
         accept="image/png,image/jpeg,image/webp"
         className="sr-only"
+        disabled={uploadDisabled}
         onChange={async (event) => {
+          if (uploadDisabled) return;
           setPasteMessage(null);
           const file = event.target.files?.[0];
           event.target.value = "";
@@ -1046,17 +1472,34 @@ function PresentationImageInput({
         tabIndex={0}
         role="button"
         aria-label={`${fieldLabel} paste target`}
-        onClick={() => pasteTargetRef.current?.focus()}
+        onClick={() => {
+          if (uploadDisabled) return;
+          pasteTargetRef.current?.focus();
+        }}
         onPaste={handlePaste}
-        className="mt-3 cursor-text rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-3 text-left outline-none transition focus:border-zinc-500 focus:bg-white"
+        className={`mt-3 rounded-2xl border border-dashed px-4 py-3 text-left outline-none transition ${
+          uploadDisabled
+            ? "cursor-not-allowed border-zinc-200 bg-zinc-100 text-zinc-400"
+            : "cursor-text border-zinc-300 bg-zinc-50 focus:border-zinc-500 focus:bg-white"
+        }`}
       >
         <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Paste Image</p>
-        <p className="mt-1 text-xs leading-5 text-zinc-500">Click here, then press Ctrl+V / Cmd+V to paste an image from your clipboard.</p>
+        <p className="mt-1 text-xs leading-5 text-zinc-500">
+          {uploadDisabled
+            ? "Image upload is disabled in the development preview."
+            : "Click here, then press Ctrl+V / Cmd+V to paste an image from your clipboard."}
+        </p>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <label htmlFor={inputId} className={`cursor-pointer text-[10px] font-semibold uppercase tracking-[0.18em] ${status.status === "uploading" ? "text-zinc-400" : "text-zinc-700 hover:text-zinc-950"}`}>
-          {status.status === "uploading" ? "Uploading..." : imageUrl ? "Change image" : "Upload image"}
+        <label htmlFor={uploadDisabled ? undefined : inputId} className={`text-[10px] font-semibold uppercase tracking-[0.18em] ${
+          uploadDisabled
+            ? "cursor-not-allowed text-zinc-400"
+            : status.status === "uploading"
+              ? "cursor-pointer text-zinc-400"
+              : "cursor-pointer text-zinc-700 hover:text-zinc-950"
+        }`}>
+          {uploadDisabled ? "Upload disabled" : status.status === "uploading" ? "Uploading..." : imageUrl ? "Change image" : "Upload image"}
         </label>
         {imageUrl ? (
           <button
@@ -1086,6 +1529,7 @@ function PresentationItemImageControl({
   onResetImage,
   previewUrl,
   status,
+  uploadDisabled = false,
 }: {
   fit: PresentationImageFit;
   hasOverrideImage: boolean;
@@ -1097,6 +1541,7 @@ function PresentationItemImageControl({
   onResetImage: () => void;
   previewUrl: string | null;
   status: { status: "idle" | "uploading" | "failed"; error: string | null };
+  uploadDisabled?: boolean;
 }) {
   const [inputKey, setInputKey] = useState(0);
   const inputId = `presentation-image-upload-${itemId}-${inputKey}`;
@@ -1129,7 +1574,9 @@ function PresentationItemImageControl({
         accept="image/png,image/jpeg,image/webp"
         className="sr-only"
         id={inputId}
+        disabled={uploadDisabled}
         onChange={async (event) => {
+          if (uploadDisabled) return;
           const file = event.target.files?.[0];
           if (!file) return;
           await onFileSelected(file);
@@ -1139,12 +1586,16 @@ function PresentationItemImageControl({
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <label
-          htmlFor={inputId}
+          htmlFor={uploadDisabled ? undefined : inputId}
           className={`cursor-pointer text-[10px] font-semibold uppercase tracking-[0.18em] ${
-            status.status === "uploading" ? "text-zinc-400" : "text-zinc-700 hover:text-zinc-950"
+            uploadDisabled
+              ? "cursor-not-allowed text-zinc-400"
+              : status.status === "uploading"
+                ? "text-zinc-400"
+                : "text-zinc-700 hover:text-zinc-950"
           }`}
         >
-          {status.status === "uploading" ? "Uploading..." : "Change image"}
+          {uploadDisabled ? "Upload disabled" : status.status === "uploading" ? "Uploading..." : "Change image"}
         </label>
         {hasOverrideImage ? (
           <button
@@ -1209,6 +1660,8 @@ export function QuotationPresentation({
   quotation,
   sections,
   items,
+  previewMode,
+  printMode = false,
 }: {
   client: PresentationClient;
   companyProfile: CompanyProfile;
@@ -1222,9 +1675,16 @@ export function QuotationPresentation({
   quotation: PresentationQuotation;
   sections: PresentationSection[];
   items: PresentationItem[];
+  previewMode?: {
+    disablePersistence?: boolean;
+    disableUploads?: boolean;
+  };
+  printMode?: boolean;
 }) {
   const [settings, setSettings] = useState(initialSettings);
   const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionKey>("items");
+  const [expandedFlowGroupIds, setExpandedFlowGroupIds] = useState<string[] | null>(null);
+  const [expandedFlowSectionIds, setExpandedFlowSectionIds] = useState<string[] | null>(null);
   const [expandedSectionKeys, setExpandedSectionKeys] = useState<string[] | null>(null);
   const [activeItemImageSettingsId, setActiveItemImageSettingsId] = useState<string | null>(null);
   const [expandedMainSectionLayoutIds, setExpandedMainSectionLayoutIds] = useState<string[] | null>(null);
@@ -1238,7 +1698,10 @@ export function QuotationPresentation({
   const [savedSignature, setSavedSignature] = useState(() => settingsSignature(initialSettings));
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [isSlideNavigatorOpen, setIsSlideNavigatorOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const persistenceDisabled = previewMode?.disablePersistence === true;
+  const uploadsDisabled = previewMode?.disableUploads === true;
 
   useEffect(() => {
     Object.entries(settings.itemOverrides).forEach(([itemId, override]) => {
@@ -1302,13 +1765,15 @@ export function QuotationPresentation({
       : []),
   ];
 
-  const { displaySections, childrenByParent, sectionsById } = buildDisplaySections(activeSections);
-  const allPresentableItemsBySection = new Map(
-    activeSections.map((section) => [
-      section.id,
-      orderedPresentationItems(activeItems, section.id).filter(isPresentationItem),
-    ] as const),
-  );
+  const {
+    allPresentableItemsBySection,
+    childrenByParent,
+    displaySections,
+    flowGroups,
+    mainSections,
+    sectionsById,
+    sectionsByMainId,
+  } = buildOrderedPresentationHierarchy(activeSections, activeItems, settings.flowOrder);
   const presentableItemsBySection = new Map(
     activeSections.map((section) => [
       section.id,
@@ -1322,15 +1787,12 @@ export function QuotationPresentation({
   const updatedAtLabel = formatUpdatedAt(settings.updatedAt);
   const isCompactLayout = settings.layoutMode === "two_per_page";
   const visibleContentOptions = isCompactLayout ? compactContentVisibilityOptions : fullContentVisibilityOptions;
-  const mainSections = activeSections
-    .filter((section) => section.section_kind === "main")
-    .sort((left, right) => left.sort_order - right.sort_order || left.id.localeCompare(right.id));
   const controlSections = displaySections
     .map((section) => ({
       section,
       items: allPresentableItemsBySection.get(section.id) ?? [],
     }))
-    .filter((entry) => entry.items.length > 0 && entry.section.section_kind !== "main");
+    .filter((entry) => entry.items.length > 0);
   const orderedPresentationItemsForSettings = controlSections.flatMap((entry) => entry.items);
   const orderedVisiblePresentationItems = controlSections.flatMap((entry) => (
     entry.items.filter((item) => !hiddenItemIds.has(item.id))
@@ -1340,6 +1802,12 @@ export function QuotationPresentation({
   const defaultExpandedSectionId = controlSections[0]?.section.id ?? null;
   const titledSectionsById = new Map(
     activeSections.map((section) => [section.id, sectionPresentationTitle(section, settings)] as const),
+  );
+  const mainSectionTitlesById = new Map(
+    mainSections.map((section) => {
+      const override = normalizedPresentationMainSectionOverride(settings.mainSectionOverrides[section.id]);
+      return [section.id, resolvedOverrideValue(override.title, section.section_title) ?? section.section_title] as const;
+    }),
   );
   const notedSectionsById = new Map(
     activeSections.map((section) => [section.id, sectionPresentationNote(section, settings)] as const),
@@ -1381,6 +1849,21 @@ export function QuotationPresentation({
       return [section.id, groups] as const;
     }),
   );
+  const presentationSlides = buildPresentationSlides({
+    closingTitle,
+    coverTitle,
+    dividerSections,
+    mainSectionTitlesById,
+    productPagesBySection,
+    sectionTitlesById: titledSectionsById,
+    settings,
+  });
+  const visibleSlideCount = presentationSlides.length;
+  const sectionsWithoutVisibleItemsCount = displaySections.filter((section) => {
+    const totalItems = allPresentableItemsBySection.get(section.id) ?? [];
+    const visibleItems = presentableItemsBySection.get(section.id) ?? [];
+    return totalItems.length > 0 && visibleItems.length === 0;
+  }).length;
 
   function updateSettings(next: QuotationPresentationSettings) {
     setSettings(next);
@@ -1404,6 +1887,25 @@ export function QuotationPresentation({
   function toggleSectionExpanded(sectionId: string) {
     setExpandedSectionKeys((current) => {
       const base = current ?? (defaultExpandedSectionId ? [defaultExpandedSectionId] : []);
+      return base.includes(sectionId)
+        ? base.filter((entry) => entry !== sectionId)
+        : [...base, sectionId];
+    });
+  }
+
+  function toggleFlowGroupExpanded(groupId: string) {
+    setExpandedFlowGroupIds((current) => {
+      const base = current ?? (flowGroups[0] ? [flowGroups[0].id] : []);
+      return base.includes(groupId)
+        ? base.filter((entry) => entry !== groupId)
+        : [...base, groupId];
+    });
+  }
+
+  function toggleFlowSectionExpanded(sectionId: string) {
+    setExpandedFlowSectionIds((current) => {
+      const defaultSectionId = flowGroups[0]?.sections[0]?.id ?? null;
+      const base = current ?? (defaultSectionId ? [defaultSectionId] : []);
       return base.includes(sectionId)
         ? base.filter((entry) => entry !== sectionId)
         : [...base, sectionId];
@@ -1440,6 +1942,14 @@ export function QuotationPresentation({
     });
   }
 
+  function toggleMainAreaItems(sectionIds: string[], include: boolean) {
+    const itemIds = sectionIds.flatMap((sectionId) => (
+      allPresentableItemsBySection.get(sectionId) ?? []
+    )).map((item) => item.id);
+
+    toggleSectionItems(itemIds, include);
+  }
+
   function updateContentVisibility(field: VisibilityField, checked: boolean) {
     updateSettings({
       ...settings,
@@ -1455,6 +1965,57 @@ export function QuotationPresentation({
       ...settings,
       hiddenItemIds: [],
     });
+  }
+
+  function updateFlowOrder(nextFlowOrder: PresentationFlowOrder) {
+    updateSettings({
+      ...settings,
+      flowOrder: normalizeFlowOrder(nextFlowOrder),
+    });
+  }
+
+  function moveMainSection(sectionId: string, direction: "up" | "down") {
+    const orderedIds = mainSections.map((section) => section.id);
+    const nextIds = moveOrderedEntry(orderedIds, sectionId, direction);
+    if (nextIds.join("|") === orderedIds.join("|")) return;
+
+    updateFlowOrder({
+      ...settings.flowOrder,
+      mainSectionKeys: nextIds,
+    });
+  }
+
+  function moveSectionWithinMain(mainSectionId: string, sectionId: string, direction: "up" | "down") {
+    const orderedSections = sectionsByMainId.get(mainSectionId) ?? [];
+    const orderedIds = orderedSections.map((section) => section.id);
+    const nextIds = moveOrderedEntry(orderedIds, sectionId, direction);
+    if (nextIds.join("|") === orderedIds.join("|")) return;
+
+    updateFlowOrder({
+      ...settings.flowOrder,
+      sectionKeysByMain: {
+        ...settings.flowOrder.sectionKeysByMain,
+        [mainSectionId]: nextIds,
+      },
+    });
+  }
+
+  function moveItemWithinSection(sectionId: string, itemId: string, direction: "up" | "down") {
+    const orderedIds = (allPresentableItemsBySection.get(sectionId) ?? []).map((item) => item.id);
+    const nextIds = moveOrderedEntry(orderedIds, itemId, direction);
+    if (nextIds.join("|") === orderedIds.join("|")) return;
+
+    updateFlowOrder({
+      ...settings.flowOrder,
+      itemIdsBySection: {
+        ...settings.flowOrder.itemIdsBySection,
+        [sectionId]: nextIds,
+      },
+    });
+  }
+
+  function resetFlowOrder() {
+    updateFlowOrder(DEFAULT_PRESENTATION_FLOW_ORDER);
   }
 
   function resetSlideFields() {
@@ -1479,6 +2040,34 @@ export function QuotationPresentation({
         [field]: checked,
       },
     });
+  }
+
+  function applyPresentationPreset(presetKey: PresentationPresetKey) {
+    const preset = presentationPresets.find((entry) => entry.key === presetKey);
+    if (!preset) return;
+
+    const confirmed = window.confirm(
+      `Apply ${preset.name} preset? This will update layout, slide content, and page visibility only. It will not change hidden items, images, titles, flow order, or quotation data.`,
+    );
+    if (!confirmed) return;
+
+    updateSettings({
+      ...settings,
+      layoutMode: preset.layoutMode,
+      contentVisibility: {
+        ...DEFAULT_PRESENTATION_CONTENT_VISIBILITY,
+        ...settings.contentVisibility,
+        ...preset.contentVisibility,
+      },
+      pageVisibility: {
+        ...DEFAULT_PRESENTATION_PAGE_VISIBILITY,
+        ...settings.pageVisibility,
+        ...preset.pageVisibility,
+      },
+    });
+    setSaveState("idle");
+    setSaveMessage("Preset applied. Save to keep these changes.");
+    setActiveSettingsSection("presets");
   }
 
   function updateSectionOverride(sectionId: string, patch: Partial<PresentationSectionOverride>) {
@@ -1726,11 +2315,19 @@ export function QuotationPresentation({
     setSectionOverridePreviewUrlBySectionAndField({});
     setItemOverrideStatusByItemId({});
     setMainLayoutStatusById({});
+    setExpandedFlowGroupIds(null);
+    setExpandedFlowSectionIds(null);
     setExpandedMainSectionLayoutIds(null);
     setSectionOverrideStatusByKey({});
   }
 
   function saveSettings() {
+    if (persistenceDisabled) {
+      setSaveState("idle");
+      setSaveMessage("Development preview only. Saving is disabled.");
+      return;
+    }
+
     startTransition(async () => {
       setSaveState("saving");
       setSaveMessage(null);
@@ -1759,6 +2356,12 @@ export function QuotationPresentation({
     });
   }
 
+  function jumpToSlide(index: number) {
+    const element = document.getElementById(slideDomId(index));
+    element?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setIsSlideNavigatorOpen(false);
+  }
+
   return (
     <main className="min-h-screen bg-[#edf0f3] px-4 py-6 print:bg-white print:px-0 print:py-0">
       <style>{`
@@ -1767,34 +2370,42 @@ export function QuotationPresentation({
         @media print {
           html, body { background: #ffffff; }
           .presentation-page { width: 297mm !important; height: 210mm !important; break-after: page; page-break-after: always; overflow: hidden !important; }
+          .presentation-page:last-child { break-after: auto !important; page-break-after: auto !important; }
           .presentation-stack { gap: 0 !important; }
         }
       `}</style>
 
-      <div className="mx-auto mb-5 flex w-[297mm] max-w-full items-center justify-between gap-4 print:hidden">
+      <div className={`mx-auto mb-5 w-[297mm] max-w-full items-center justify-between gap-4 print:hidden ${printMode ? "hidden" : "flex"}`}>
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Quotation Presentation</p>
+          <p className="mt-1 text-sm text-zinc-600">{visibleSlideCount} visible {visibleSlideCount === 1 ? "slide" : "slides"}.</p>
           <p className="mt-1 text-sm text-zinc-600">Landscape presentation preview. Use browser print to save as PDF.</p>
+          <p className={`mt-2 text-xs ${isDirty ? "text-amber-700" : "text-zinc-500"}`}>
+            {isDirty ? "Preview includes unsaved changes. Save to keep them." : "Preview matches the latest saved presentation settings."}
+          </p>
         </div>
-        <PrintActions />
+        <PrintActions>
+          <PresentationPptxExportButton />
+        </PrintActions>
       </div>
 
-      <section className="mx-auto mb-6 w-[297mm] max-w-full print:hidden">
+      <section className={`mx-auto mb-6 w-[297mm] max-w-full print:hidden ${printMode ? "hidden" : "block"}`}>
         <div className="rounded-[28px] border border-zinc-200 bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Presentation Settings</p>
               <p className="mt-2 text-lg font-semibold text-zinc-950">{visibleCount} visible / {totalCount} total items</p>
               <p className="mt-1 text-sm text-zinc-500">Manage presentation-only item visibility, layout, pages, and cover/closing text.</p>
+              <p className="mt-1 text-sm text-zinc-500">{visibleSlideCount} visible {visibleSlideCount === 1 ? "slide" : "slides"} generated.</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                disabled={isPending || !isDirty}
+                disabled={persistenceDisabled || isPending || !isDirty}
                 onClick={saveSettings}
                 className="inline-flex h-10 items-center rounded-full bg-zinc-950 px-5 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
               >
-                {isPending ? "Saving..." : "Save"}
+                {persistenceDisabled ? "Preview only" : isPending ? "Saving..." : "Save"}
               </button>
               <button
                 type="button"
@@ -1808,6 +2419,7 @@ export function QuotationPresentation({
 
           <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-zinc-500">
             {updatedAtLabel ? <p>Last saved: {updatedAtLabel}</p> : <p>Not saved yet</p>}
+            {persistenceDisabled || uploadsDisabled ? <p className="text-amber-700">Development preview only. Saving and uploads are disabled.</p> : null}
             {saveMessage ? (
               <p className={saveState === "error" ? "text-red-600" : "text-emerald-700"}>
                 {saveMessage}
@@ -1829,6 +2441,203 @@ export function QuotationPresentation({
           </div>
 
           <div className="mt-5 rounded-[24px] border border-zinc-200 bg-zinc-50/70 p-4">
+            {activeSettingsSection === "flow" ? (
+              <>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Presentation Flow</p>
+                    <p className="mt-1 text-sm text-zinc-500">Review the real presentation hierarchy, control visibility, and adjust presentation-only order.</p>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={resetFlowOrder}
+                      className="inline-flex h-9 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                    >
+                      Reset flow order
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetHiddenItems}
+                      className="inline-flex h-9 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                    >
+                      Show all items
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid max-h-[520px] gap-4 overflow-y-auto pr-1">
+                  {flowGroups.map((group, groupIndex) => {
+                    const groupSectionIds = [
+                      ...(group.mainSection ? [group.mainSection.id] : []),
+                      ...group.sections.map((section) => section.id),
+                    ];
+                    const groupedChildSections = group.mainSection
+                      ? (sectionsByMainId.get(group.mainSection.id) ?? [])
+                      : group.sections;
+                    const mainSectionIndex = group.mainSection
+                      ? mainSections.findIndex((section) => section.id === group.mainSection!.id)
+                      : -1;
+                    const groupItems = groupSectionIds.flatMap((sectionId) => allPresentableItemsBySection.get(sectionId) ?? []);
+                    const groupVisibleCount = groupItems.filter((item) => !hiddenItemIds.has(item.id)).length;
+                    const groupTotalCount = groupItems.length;
+                    const groupAllVisible = groupTotalCount > 0 && groupVisibleCount === groupTotalCount;
+                    const groupSomeVisible = groupVisibleCount > 0 && groupVisibleCount < groupTotalCount;
+                    const groupExpanded = expandedFlowGroupIds
+                      ? expandedFlowGroupIds.includes(group.id)
+                      : groupIndex === 0;
+                    const groupTitle = group.mainSection?.section_title ?? group.sections[0]?.section_title ?? "Area";
+                    const groupTypeLabel = group.mainSection ? "Main Area" : "Area";
+
+                    return (
+                      <div key={group.id} className="rounded-2xl border border-zinc-200 bg-white">
+                        <div className="flex items-center gap-3 px-3 py-3">
+                          <SectionVisibilityCheckbox
+                            checked={groupAllVisible}
+                            indeterminate={groupSomeVisible}
+                            onChange={(checked) => toggleMainAreaItems(groupSectionIds, checked)}
+                          />
+                          {group.mainSection ? (
+                            <FlowMoveButtons
+                              disableUp={mainSectionIndex <= 0}
+                              disableDown={mainSectionIndex >= mainSections.length - 1}
+                              onMoveUp={() => moveMainSection(group.mainSection!.id, "up")}
+                              onMoveDown={() => moveMainSection(group.mainSection!.id, "down")}
+                            />
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => toggleFlowGroupExpanded(group.id)}
+                            className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-zinc-400">{groupExpanded ? "v" : ">"}</span>
+                                <p className="truncate text-sm font-semibold text-zinc-900">{groupTitle}</p>
+                              </div>
+                              <p className="mt-1 pl-5 text-xs uppercase tracking-[0.18em] text-zinc-400">{groupTypeLabel}</p>
+                            </div>
+                            <p className="shrink-0 text-xs text-zinc-500">
+                              {group.sections.length} sections • {groupVisibleCount} visible / {groupTotalCount} total
+                            </p>
+                          </button>
+                        </div>
+
+                        {groupExpanded ? (
+                          <div className="grid gap-2 border-t border-zinc-100 px-3 py-3">
+                            {group.sections.map((section, sectionIndex) => {
+                              const sectionItems = allPresentableItemsBySection.get(section.id) ?? [];
+                              const visibleSectionItemCount = sectionItems.filter((item) => !hiddenItemIds.has(item.id)).length;
+                              const totalSectionItemCount = sectionItems.length;
+                              const sectionAllVisible = totalSectionItemCount > 0 && visibleSectionItemCount === totalSectionItemCount;
+                              const sectionSomeVisible = visibleSectionItemCount > 0 && visibleSectionItemCount < totalSectionItemCount;
+                              const sectionExpanded = expandedFlowSectionIds
+                                ? expandedFlowSectionIds.includes(section.id)
+                                : groupIndex === 0 && sectionIndex === 0;
+                              const sectionOrderIndex = group.mainSection
+                                ? groupedChildSections.findIndex((entry) => entry.id === section.id)
+                                : -1;
+
+                              return (
+                                <div key={section.id} className="rounded-2xl border border-zinc-200 bg-zinc-50/60">
+                                  <div className="flex items-center gap-3 px-3 py-3">
+                                    <SectionVisibilityCheckbox
+                                      checked={sectionAllVisible}
+                                      indeterminate={sectionSomeVisible}
+                                      onChange={(checked) => toggleSectionItems(sectionItems.map((item) => item.id), checked)}
+                                    />
+                                    {group.mainSection && section.id !== group.mainSection.id ? (
+                                      <FlowMoveButtons
+                                        disableUp={sectionOrderIndex <= 0}
+                                        disableDown={sectionOrderIndex >= groupedChildSections.length - 1}
+                                        onMoveUp={() => moveSectionWithinMain(group.mainSection!.id, section.id, "up")}
+                                        onMoveDown={() => moveSectionWithinMain(group.mainSection!.id, section.id, "down")}
+                                      />
+                                    ) : null}
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleFlowSectionExpanded(section.id)}
+                                      className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+                                    >
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs text-zinc-400">{sectionExpanded ? "v" : ">"}</span>
+                                          <p className="truncate text-sm font-semibold text-zinc-900">{section.section_title}</p>
+                                        </div>
+                                        <p className="mt-1 pl-5 text-xs uppercase tracking-[0.18em] text-zinc-400">Section / Area</p>
+                                      </div>
+                                      <p className="shrink-0 text-xs text-zinc-500">{visibleSectionItemCount} visible / {totalSectionItemCount} total</p>
+                                    </button>
+                                  </div>
+
+                                  {sectionExpanded ? (
+                                    <div className="grid gap-2 border-t border-zinc-100 px-3 py-3">
+                                      {sectionItems.map((item, itemIndex) => {
+                                        const included = !hiddenItemIds.has(item.id);
+                                        const thumbnailUrl = effectivePresentationImageUrlByItemId[item.id] ?? null;
+                                        const title = productTitle(item);
+                                        const itemNumber = String(settingsItemNumberById.get(item.id) ?? 0).padStart(2, "0");
+                                        const subline = detailValue([
+                                          item.item_code_snapshot,
+                                          item.model_snapshot,
+                                          item.brand_name_snapshot,
+                                        ]);
+
+                                        return (
+                                          <div
+                                            key={item.id}
+                                            className={`rounded-2xl border px-3 py-2.5 transition ${
+                                              included
+                                                ? "border-zinc-200 bg-white"
+                                                : "border-zinc-200 bg-zinc-50 text-zinc-500"
+                                            }`}
+                                          >
+                                            <div className="flex items-center gap-3">
+                                              <input
+                                                checked={included}
+                                                className="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-400"
+                                                onChange={(event) => toggleHiddenItem(item.id, event.target.checked)}
+                                                type="checkbox"
+                                              />
+                                              <FlowMoveButtons
+                                                disableUp={itemIndex <= 0}
+                                                disableDown={itemIndex >= sectionItems.length - 1}
+                                                onMoveUp={() => moveItemWithinSection(section.id, item.id, "up")}
+                                                onMoveDown={() => moveItemWithinSection(section.id, item.id, "down")}
+                                              />
+                                              <div className="ml-5 flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+                                                {thumbnailUrl ? (
+                                                  // eslint-disable-next-line @next/next/no-img-element
+                                                  <img src={thumbnailUrl} alt={title} className="h-full w-full object-contain" />
+                                                ) : (
+                                                  <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-zinc-400">No Image</span>
+                                                )}
+                                              </div>
+                                              <div className="min-w-0 flex-1">
+                                                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-400">Item {itemNumber}</p>
+                                                <p className="mt-1 text-sm font-semibold text-zinc-900" style={clampStyle(2)}>{title}</p>
+                                                {subline ? (
+                                                  <p className="mt-1 text-xs leading-5 text-zinc-500" style={clampStyle(2)}>{subline}</p>
+                                                ) : null}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : null}
+
             {activeSettingsSection === "items" ? (
               <>
                 <div className="flex items-start justify-between gap-3">
@@ -1950,6 +2759,7 @@ export function QuotationPresentation({
                                       onResetImage={() => resetPresentationItemImage(item.id)}
                                       previewUrl={effectivePresentationImageUrlByItemId[item.id] ?? null}
                                       status={itemStatus}
+                                      uploadDisabled={uploadsDisabled}
                                     />
                                   ) : null}
                                 </div>
@@ -2123,6 +2933,7 @@ export function QuotationPresentation({
                                 onFileSelected={(file) => handleSectionOverrideImageUpload(section.id, "areaImageUrl", file)}
                                 onReset={() => resetSectionOverrideImage(section.id, "areaImageUrl")}
                                 status={sectionOverrideStatusByKey[`${section.id}:areaImageUrl`] ?? { status: "idle", error: null }}
+                                uploadDisabled={uploadsDisabled}
                               />
                               <PresentationImageInput
                                 description="Upload or paste the cropped layout or floor-plan snapshot for this specific area."
@@ -2132,6 +2943,7 @@ export function QuotationPresentation({
                                 onFileSelected={(file) => handleSectionOverrideImageUpload(section.id, "sectionLayoutImageUrl", file)}
                                 onReset={() => resetSectionOverrideImage(section.id, "sectionLayoutImageUrl")}
                                 status={sectionOverrideStatusByKey[`${section.id}:sectionLayoutImageUrl`] ?? { status: "idle", error: null }}
+                                uploadDisabled={uploadsDisabled}
                               />
                             </div>
                           </div>
@@ -2177,7 +2989,7 @@ export function QuotationPresentation({
                           >
                             <div>
                               <div className="flex items-center gap-2">
-                                <span className="text-xs text-zinc-400">{isExpanded ? "â–¾" : "â–¸"}</span>
+                                <span className="text-xs text-zinc-400">{isExpanded ? "v" : ">"}</span>
                                 <p className="text-sm font-semibold text-zinc-900">{displayTitle}</p>
                               </div>
                               <p className="mt-1 pl-5 text-xs uppercase tracking-[0.18em] text-zinc-400">
@@ -2213,6 +3025,7 @@ export function QuotationPresentation({
                                 onFileSelected={(file) => handleMainLayoutImageUpload(section.id, file)}
                                 onReset={() => resetMainLayoutImage(section.id)}
                                 status={status}
+                                uploadDisabled={uploadsDisabled}
                               />
                             </div>
                           </div>
@@ -2354,6 +3167,41 @@ export function QuotationPresentation({
                 </div>
               </>
             ) : null}
+
+            {activeSettingsSection === "presets" ? (
+              <>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Presentation Presets</p>
+                    <p className="mt-1 text-sm text-zinc-500">Presets quickly update layout, slide content, and page visibility. They do not change hidden items, images, titles, flow order, or quotation data.</p>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                  {presentationPresets.map((preset) => (
+                    <div key={preset.key} className="rounded-2xl border border-zinc-200 bg-white p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-zinc-900">{preset.name}</p>
+                          <p className="mt-1 text-sm leading-6 text-zinc-500">{preset.description}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => applyPresentationPreset(preset.key)}
+                          className="inline-flex h-9 shrink-0 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                        >
+                          Apply
+                        </button>
+                      </div>
+                      <div className="mt-4 rounded-2xl border border-zinc-100 bg-zinc-50 px-4 py-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">What It Changes</p>
+                        <p className="mt-2 text-sm leading-6 text-zinc-700">{preset.changes}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : null}
           </div>
         </div>
 
@@ -2365,183 +3213,251 @@ export function QuotationPresentation({
         ) : null}
       </section>
 
+      <section className={`mx-auto mb-6 w-[297mm] max-w-full print:hidden ${printMode ? "hidden" : "block"}`}>
+        <div className="rounded-[28px] border border-zinc-200 bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Slide Navigator</p>
+              <p className="mt-2 text-lg font-semibold text-zinc-950">{visibleSlideCount} visible {visibleSlideCount === 1 ? "slide" : "slides"}</p>
+              <p className="mt-1 text-sm text-zinc-500">Jump to generated slides without opening a long page list.</p>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsSlideNavigatorOpen((current) => !current)}
+                className="inline-flex h-10 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-800 transition hover:border-zinc-400 hover:text-zinc-950"
+              >
+                {isSlideNavigatorOpen ? "Hide Slide Navigator" : `Slide Navigator - ${visibleSlideCount} visible ${visibleSlideCount === 1 ? "slide" : "slides"}`}
+              </button>
+              {isSlideNavigatorOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setIsSlideNavigatorOpen(false)}
+                  className="inline-flex h-10 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                >
+                  Close
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {visibleCount === 0 ? (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              No presentation items selected.
+            </div>
+          ) : null}
+
+          {sectionsWithoutVisibleItemsCount > 0 ? (
+            <div className="mt-3 rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700">
+              Some sections have no visible items.
+            </div>
+          ) : null}
+
+          {isSlideNavigatorOpen ? (
+            <div className="mt-4 rounded-2xl border border-zinc-200 bg-zinc-50/70 p-3">
+              <div className="mb-3 flex items-center justify-between gap-3 px-1">
+                <p className="text-sm font-semibold text-zinc-900">Jump to generated slides</p>
+                <p className="text-xs text-zinc-500">List scrolls here, not on the full page.</p>
+              </div>
+              <div className="grid max-h-[420px] gap-2 overflow-y-auto pr-1">
+                {presentationSlides.map((slide, index) => (
+                  <button
+                    key={slide.key}
+                    type="button"
+                    onClick={() => jumpToSlide(index)}
+                    className="grid grid-cols-[56px_120px_minmax(0,1fr)] items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-left transition hover:border-zinc-300 hover:bg-zinc-50"
+                  >
+                    <span className="text-sm font-semibold text-zinc-900">{String(index + 1).padStart(2, "0")}</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">{slideTypeLabel(slide.type)}</span>
+                    <span className="truncate text-sm text-zinc-800">
+                      {slide.type === "product"
+                        ? `Item ${String(visibleSlideItemNumberById.get(slide.itemIds[0] ?? "") ?? 0).padStart(2, "0")} - ${slide.title}`
+                        : slide.title}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </section>
+
       <div className="presentation-stack mx-auto flex w-fit max-w-full flex-col gap-5">
-        {settings.pageVisibility.cover ? (
-          <PresentationPage className="relative overflow-hidden">
-          <div className="absolute inset-0 bg-[linear-gradient(130deg,_#eef2f5_0%,_#f8fafc_44%,_#ffffff_44%,_#ffffff_100%)]" />
-          <div className="absolute inset-y-0 right-0 w-[30%] bg-zinc-950" />
-          <div className="absolute left-0 top-0 h-full w-[44%] bg-[radial-gradient(circle_at_top_left,_rgba(39,39,42,0.08),_transparent_55%)]" />
-          <div className="relative grid h-full grid-cols-[1.5fr_0.7fr]">
-            <div className="flex h-full flex-col justify-between px-12 py-12">
-              <div>
-                <div className="flex items-center gap-3">
-                  <div className="h-px w-14 bg-zinc-400" />
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">Client Presentation</p>
-                </div>
-                <h1 className="mt-10 max-w-4xl text-[56px] font-light leading-[1.02] tracking-[-0.04em] text-zinc-950">
-                  {coverTitle}
-                </h1>
-                {coverSubtitle ? (
-                  <p className="mt-8 max-w-2xl text-lg leading-8 text-zinc-600" style={clampStyle(3)}>
-                    {coverSubtitle}
-                  </p>
-                ) : null}
-              </div>
+        {presentationSlides.map((slide, slideIndex) => {
+          const pageId = slideDomId(slideIndex);
 
-              <div className="grid grid-cols-[1.1fr_0.9fr] gap-10 border-t border-zinc-200 pt-8">
-                <div>
-                  {coverProjectDisplayName ? <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Project</p> : null}
-                  {coverProjectDisplayName ? (
-                    <p className="mt-2 text-2xl font-light leading-tight text-zinc-950">
-                      {coverProjectDisplayName}
-                    </p>
-                  ) : null}
-                  {coverClientDisplayName ? (
-                    <p className="mt-4 text-sm font-medium uppercase tracking-[0.16em] text-zinc-500">
-                      Prepared for {coverClientDisplayName}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="grid gap-3 self-end">
-                  <MetaCard label="Quotation No." value={quotation.quotation_no} />
-                  <MetaCard label="Date" value={formatPresentationDate(quotation.quotation_date)} />
-                </div>
-              </div>
-            </div>
+          if (slide.type === "cover") {
+            return (
+              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden">
+                <div className="absolute inset-0 bg-[linear-gradient(130deg,_#eef2f5_0%,_#f8fafc_44%,_#ffffff_44%,_#ffffff_100%)]" />
+                <div className="absolute inset-y-0 right-0 w-[30%] bg-zinc-950" />
+                <div className="absolute left-0 top-0 h-full w-[44%] bg-[radial-gradient(circle_at_top_left,_rgba(39,39,42,0.08),_transparent_55%)]" />
+                <div className="relative grid h-full grid-cols-[1.5fr_0.7fr]">
+                  <div className="flex h-full flex-col justify-between px-12 py-12">
+                    <div>
+                      <div className="flex items-center gap-3">
+                        <div className="h-px w-14 bg-zinc-400" />
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">Client Presentation</p>
+                      </div>
+                      <h1 className="mt-10 max-w-4xl text-[56px] font-light leading-[1.02] tracking-[-0.04em] text-zinc-950">
+                        {coverTitle}
+                      </h1>
+                      {coverSubtitle ? (
+                        <p className="mt-8 max-w-2xl text-lg leading-8 text-zinc-600" style={clampStyle(3)}>
+                          {coverSubtitle}
+                        </p>
+                      ) : null}
+                    </div>
 
-            <div className="relative flex h-full flex-col justify-between px-9 py-10 text-white">
-              <div>
-                <div className="flex items-center justify-between gap-4">
-                  {companyProfile.logoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={companyProfile.logoUrl}
-                      alt={companyProfile.displayName}
-                      className="max-h-14 max-w-[150px] object-contain brightness-0 invert"
-                    />
-                  ) : null}
-                </div>
-                {!companyProfile.logoUrl ? (
-                  <p className="mt-8 text-2xl font-light leading-tight text-white">{coverPreparedBy}</p>
-                ) : null}
-                {coverWebsite ? <p className="mt-4 text-sm leading-6 text-white/70">{coverWebsite}</p> : null}
-              </div>
-
-              <div className="grid gap-4 border-t border-white/10 pt-7">
-                <MetaLine label="Prepared By" value={coverPreparedBy} />
-              </div>
-            </div>
-          </div>
-          </PresentationPage>
-        ) : null}
-
-        {settings.pageVisibility.designConsiderations ? (
-          <PresentationPage className="overflow-hidden bg-[linear-gradient(130deg,_#eef2f5_0%,_#f8fafc_44%,_#ffffff_44%,_#ffffff_100%)]">
-          <div className="grid h-full grid-cols-[0.9fr_1.1fr] gap-12 px-12 py-11">
-            <div className="flex h-full flex-col justify-between border-r border-zinc-200 pr-10">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">Design Considerations</p>
-                <h2 className="mt-5 text-5xl font-light tracking-[-0.04em] text-zinc-950">Design
-                  <span className="block text-zinc-600">Considerations</span>
-                </h2>
-                <div className="mt-8 h-px w-20 bg-zinc-300" />
-              </div>
-
-              <div>
-                <p className="max-w-sm text-base leading-7 text-zinc-600" style={clampStyle(5)}>
-                  Core principles reviewed when aligning furniture choices with workflow, brand expression, and long-term performance.
-                </p>
-                <p className="mt-8 text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
-                  Editorial Overview
-                </p>
-              </div>
-            </div>
-
-            <div className="grid content-center grid-cols-2 gap-x-8 gap-y-5">
-              {designConsiderations.map((block, index) => (
-                <article key={block.title} className="border-t border-zinc-200 pt-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400">
-                    {String(index + 1).padStart(2, "0")}
-                  </p>
-                  <p className="mt-2 text-base font-semibold uppercase tracking-[0.12em] text-zinc-900">{block.title}</p>
-                  <p className="mt-3 text-sm leading-6 text-zinc-600" style={clampStyle(4)}>{block.body}</p>
-                </article>
-              ))}
-            </div>
-          </div>
-          </PresentationPage>
-        ) : null}
-
-        {dividerSections.map((section) => {
-          const mainSection = section.section_kind === "main"
-            ? section
-            : (section.parent_section_id ? sectionsById.get(section.parent_section_id) ?? null : null);
-          const sectionPageGroups = productPagesBySection.get(section.id) ?? [];
-          const mainSectionOverride = normalizedPresentationMainSectionOverride(settings.mainSectionOverrides[section.id]);
-          const mainSectionTitle = resolvedOverrideValue(mainSectionOverride.title, section.section_title);
-          const mainSectionNote = resolvedOverrideValue(mainSectionOverride.note, section.section_notes ?? null);
-          const mainSectionPreviewUrl = mainSectionOverride.layoutImageUrl ? (mainLayoutPreviewUrlById[section.id] ?? null) : null;
-          const sectionTitle = titledSectionsById.get(section.id) ?? section.section_title;
-          const sectionNote = notedSectionsById.get(section.id) ?? null;
-          const parentMainSectionTitle = mainSection
-            ? (titledSectionsById.get(mainSection.id) ?? mainSection.section_title)
-            : null;
-          const sectionVisuals = [
-            { key: "area", label: "Area Image", imageUrl: sectionOverridePreviewUrlBySectionAndField[`${section.id}:areaImageUrl`] ?? null },
-            { key: "section-layout", label: "Section Layout Snapshot", imageUrl: sectionOverridePreviewUrlBySectionAndField[`${section.id}:sectionLayoutImageUrl`] ?? null },
-          ].filter((entry) => Boolean(entry.imageUrl));
-
-          return (
-            <div key={section.id} className="contents">
-              {section.section_kind === "main" ? (
-                settings.pageVisibility.mainLayoutPages ? (
-                  <PresentationPage className="relative overflow-hidden bg-[#f4f6f8]">
-                    <div className="absolute left-0 top-0 h-full w-24 bg-zinc-950" />
-                    <div className="absolute left-24 top-0 h-full w-[1px] bg-zinc-200/80" />
-                    <div className="relative flex h-full flex-col justify-between px-14 py-12 pl-36">
+                    <div className="grid grid-cols-[1.1fr_0.9fr] gap-10 border-t border-zinc-200 pt-8">
                       <div>
-                        <div className="flex items-center gap-4">
-                          <span className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">MAIN AREA</span>
-                          <span className="h-px w-16 bg-zinc-300" />
-                        </div>
-                        <h2 className="mt-7 max-w-5xl text-6xl font-light leading-[1.02] tracking-[-0.045em] text-zinc-950">
-                          {mainSectionTitle}
-                        </h2>
-                        {mainSectionNote ? (
-                          <p className="mt-7 max-w-3xl text-lg leading-8 text-zinc-600" style={clampStyle(4)}>{mainSectionNote}</p>
+                        {coverProjectDisplayName ? <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Project</p> : null}
+                        {coverProjectDisplayName ? (
+                          <p className="mt-2 text-2xl font-light leading-tight text-zinc-950">{coverProjectDisplayName}</p>
+                        ) : null}
+                        {coverClientDisplayName ? (
+                          <p className="mt-4 text-sm font-medium uppercase tracking-[0.16em] text-zinc-500">
+                            Prepared for {coverClientDisplayName}
+                          </p>
                         ) : null}
                       </div>
+                      <div className="grid gap-3 self-end">
+                        <MetaCard label="Quotation No." value={quotation.quotation_no} />
+                        <MetaCard label="Date" value={formatPresentationDate(quotation.quotation_date)} />
+                      </div>
+                    </div>
+                  </div>
 
-                      {mainSectionPreviewUrl ? (
-                        <div className="mt-8 grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-4">
-                          <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3 border border-zinc-200 bg-white/80 p-4">
-                            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Full Floor Layout</p>
-                            <div className="min-h-0 overflow-hidden bg-white">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={mainSectionPreviewUrl} alt={`${mainSectionTitle} Full Floor Layout`} className="h-full w-full object-contain" />
-                            </div>
-                          </div>
-                        </div>
-                      ) : null}
+                  <div className="relative flex h-full flex-col justify-between px-9 py-10 text-white">
+                    <div>
+                      <div className="flex items-center justify-between gap-4">
+                        <PresentationBrandLogo
+                          logoUrl={companyProfile.logoUrl}
+                          fallbackText={coverPreparedBy ?? companyProfile.displayName}
+                        />
+                      </div>
+                      {coverWebsite ? <p className="mt-4 text-sm leading-6 text-white/70">{coverWebsite}</p> : null}
+                    </div>
 
-                      <div className="flex items-end justify-between gap-6 border-t border-zinc-200 pt-8">
-                        <div>
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
-                            Main Area {String(mainSections.findIndex((entry) => entry.id === section.id) + 1).padStart(2, "0")}
-                          </p>
-                          <p className="mt-2 text-sm text-zinc-500">
-                            {mainSectionPreviewUrl ? "Floor layout overview" : "Main area overview"}
-                          </p>
-                        </div>
-                        <div className="border border-zinc-300 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">
-                          {project?.project_name ?? quotation.title}
+                    <div className="grid gap-4 border-t border-white/10 pt-7">
+                      <MetaLine label="Prepared By" value={coverPreparedBy} />
+                    </div>
+                  </div>
+                </div>
+              </PresentationPage>
+            );
+          }
+
+          if (slide.type === "design") {
+            return (
+              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="overflow-hidden bg-[linear-gradient(130deg,_#eef2f5_0%,_#f8fafc_44%,_#ffffff_44%,_#ffffff_100%)]">
+                <div className="grid h-full grid-cols-[0.9fr_1.1fr] gap-12 px-12 py-11">
+                  <div className="flex h-full flex-col justify-between border-r border-zinc-200 pr-10">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">Design Considerations</p>
+                      <h2 className="mt-5 text-5xl font-light tracking-[-0.04em] text-zinc-950">Design
+                        <span className="block text-zinc-600">Considerations</span>
+                      </h2>
+                      <div className="mt-8 h-px w-20 bg-zinc-300" />
+                    </div>
+
+                    <div>
+                      <p className="max-w-sm text-base leading-7 text-zinc-600" style={clampStyle(5)}>
+                        Core principles reviewed when aligning furniture choices with workflow, brand expression, and long-term performance.
+                      </p>
+                      <p className="mt-8 text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
+                        Editorial Overview
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid content-center grid-cols-2 gap-x-8 gap-y-5">
+                    {designConsiderations.map((block, index) => (
+                      <article key={block.title} className="border-t border-zinc-200 pt-4">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400">
+                          {String(index + 1).padStart(2, "0")}
+                        </p>
+                        <p className="mt-2 text-base font-semibold uppercase tracking-[0.12em] text-zinc-900">{block.title}</p>
+                        <p className="mt-3 text-sm leading-6 text-zinc-600" style={clampStyle(4)}>{block.body}</p>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              </PresentationPage>
+            );
+          }
+
+          if (slide.type === "main-area") {
+            const section = slide.mainSection;
+            const mainSectionOverride = normalizedPresentationMainSectionOverride(settings.mainSectionOverrides[section.id]);
+            const mainSectionTitle = resolvedOverrideValue(mainSectionOverride.title, section.section_title);
+            const mainSectionNote = resolvedOverrideValue(mainSectionOverride.note, section.section_notes ?? null);
+            const mainSectionPreviewUrl = mainSectionOverride.layoutImageUrl ? (mainLayoutPreviewUrlById[section.id] ?? null) : null;
+
+            return (
+              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden bg-[#f4f6f8]">
+                <div className="absolute left-0 top-0 h-full w-24 bg-zinc-950" />
+                <div className="absolute left-24 top-0 h-full w-[1px] bg-zinc-200/80" />
+                <div className="relative flex h-full flex-col justify-between px-14 py-12 pl-36">
+                  <div>
+                    <div className="flex items-center gap-4">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">MAIN AREA</span>
+                      <span className="h-px w-16 bg-zinc-300" />
+                    </div>
+                    <h2 className="mt-7 max-w-5xl text-6xl font-light leading-[1.02] tracking-[-0.045em] text-zinc-950">
+                      {mainSectionTitle}
+                    </h2>
+                    {mainSectionNote ? (
+                      <p className="mt-7 max-w-3xl text-lg leading-8 text-zinc-600" style={clampStyle(4)}>{mainSectionNote}</p>
+                    ) : null}
+                  </div>
+
+                  {mainSectionPreviewUrl ? (
+                    <div className="mt-8 grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-4">
+                      <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3 border border-zinc-200 bg-white/80 p-4">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Full Floor Layout</p>
+                        <div className="min-h-0 overflow-hidden bg-white">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={mainSectionPreviewUrl} alt={`${mainSectionTitle} Full Floor Layout`} className="h-full w-full object-contain" />
                         </div>
                       </div>
                     </div>
-                  </PresentationPage>
-                ) : null
-              ) : settings.pageVisibility.sectionDividers ? (
-                <PresentationPage className="relative overflow-hidden bg-[#f4f6f8]">
+                  ) : null}
+
+                  <div className="flex items-end justify-between gap-6 border-t border-zinc-200 pt-8">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
+                        Main Area {String(mainSections.findIndex((entry) => entry.id === section.id) + 1).padStart(2, "0")}
+                      </p>
+                      <p className="mt-2 text-sm text-zinc-500">
+                        {mainSectionPreviewUrl ? "Floor layout overview" : "Main area overview"}
+                      </p>
+                    </div>
+                    <div className="border border-zinc-300 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">
+                      {project?.project_name ?? quotation.title}
+                    </div>
+                  </div>
+                </div>
+              </PresentationPage>
+            );
+          }
+
+          if (slide.type === "section") {
+            const section = slide.section;
+            const mainSection = section.parent_section_id ? sectionsById.get(section.parent_section_id) ?? null : null;
+            const sectionTitle = titledSectionsById.get(section.id) ?? section.section_title;
+            const sectionNote = notedSectionsById.get(section.id) ?? null;
+            const parentMainSectionTitle = mainSection
+              ? (titledSectionsById.get(mainSection.id) ?? mainSection.section_title)
+              : null;
+            const sectionPageGroups = productPagesBySection.get(section.id) ?? [];
+            const sectionVisuals = [
+              { key: "area", label: "Area Image", imageUrl: sectionOverridePreviewUrlBySectionAndField[`${section.id}:areaImageUrl`] ?? null },
+              { key: "section-layout", label: "Section Layout Snapshot", imageUrl: sectionOverridePreviewUrlBySectionAndField[`${section.id}:sectionLayoutImageUrl`] ?? null },
+            ].filter((entry) => Boolean(entry.imageUrl));
+
+            return (
+              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden bg-[#f4f6f8]">
                 <div className="absolute left-0 top-0 h-full w-24 bg-zinc-950" />
                 <div className="absolute left-24 top-0 h-full w-[1px] bg-zinc-200/80" />
                 <div className="relative flex h-full flex-col justify-between px-14 py-12 pl-36">
@@ -2572,7 +3488,9 @@ export function QuotationPresentation({
                         </div>
                       ))}
                     </div>
-                  ) : null}
+                  ) : (
+                    <EmptySectionVisualState />
+                  )}
 
                   <div className="flex items-end justify-between gap-6 border-t border-zinc-200 pt-8">
                     <div>
@@ -2589,264 +3507,261 @@ export function QuotationPresentation({
                     <div className="border border-zinc-300 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">
                       {project?.project_name ?? quotation.title}
                     </div>
+                  </div>
+                </div>
+              </PresentationPage>
+            );
+          }
+
+          if (slide.type === "product") {
+            const section = slide.section;
+            const sectionTitle = titledSectionsById.get(section.id) ?? section.section_title;
+            const pageItems = slide.itemIds
+              .map((itemId) => (presentableItemsBySection.get(section.id) ?? []).find((item) => item.id === itemId) ?? null)
+              .filter((item): item is PresentationItem => Boolean(item));
+
+            if (settings.layoutMode === "two_per_page") {
+              const pageData = pageItems.map((item) => buildProductPageData({
+                contentVisibility: settings.contentVisibility,
+                finishImageUrlByItemAndFinishId,
+                imageUrl: effectivePresentationImageUrlByItemId[item.id] ?? null,
+                itemOverride: settings.itemOverrides[item.id],
+                item,
+                project,
+              }));
+
+              return (
+                <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="overflow-hidden bg-white">
+                  <div className="flex h-full flex-col px-8 py-7">
+                    <div className="border-b border-zinc-200 pb-4">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">{sectionTitle}</p>
+                        <p className="mt-2 text-2xl font-light tracking-tight text-zinc-950">
+                          {pageItems.length === 2 ? "Selected Products" : "Selected Product"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className={`mt-5 grid min-h-0 flex-1 gap-5 ${pageData.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
+                      {pageData.map((data) => (
+                        <TwoPerPageCard
+                          key={data.item.id}
+                          data={data}
+                          itemNumber={visibleSlideItemNumberById.get(data.item.id) ?? null}
+                          sectionTitle={sectionTitle}
+                        />
+                      ))}
+                    </div>
+
+                    <div className="mt-5 flex items-end justify-between gap-4 border-t border-zinc-200 pt-4">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Prepared By</p>
+                        <p className="mt-1 text-sm font-semibold text-zinc-900">{companyProfile.displayName}</p>
+                      </div>
+                      {quotation.quotation_no ? <p className="text-sm font-semibold text-zinc-900">{quotation.quotation_no}</p> : null}
                     </div>
                   </div>
                 </PresentationPage>
-              ) : null}
+              );
+            }
 
-              {sectionPageGroups.map((pageItems, pageIndex) => {
-                if (settings.layoutMode === "two_per_page") {
-                  const pageData = pageItems.map((item) => buildProductPageData({
-                    contentVisibility: settings.contentVisibility,
-                    finishImageUrlByItemAndFinishId,
-                    imageUrl: effectivePresentationImageUrlByItemId[item.id] ?? null,
-                    itemOverride: settings.itemOverrides[item.id],
-                    item,
-                    project,
-                  }));
+            const item = pageItems[0];
+            if (!item) return null;
 
-                  return (
-                    <PresentationPage key={`${section.id}-page-${pageIndex + 1}`} className="overflow-hidden bg-white">
-                      <div className="flex h-full flex-col px-8 py-7">
-                        <div className="border-b border-zinc-200 pb-4">
-                          <div>
-                            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">{sectionTitle}</p>
-                            <p className="mt-2 text-2xl font-light tracking-tight text-zinc-950">
-                              {pageItems.length === 2 ? "Selected Products" : "Selected Product"}
-                            </p>
-                          </div>
-                        </div>
+            const data = buildProductPageData({
+              contentVisibility: settings.contentVisibility,
+              finishImageUrlByItemAndFinishId,
+              imageUrl: effectivePresentationImageUrlByItemId[item.id] ?? null,
+              itemOverride: settings.itemOverrides[item.id],
+              item,
+              project,
+            });
+            const compactFinishes = compactFinishRows(data.finishGroups);
+            const visibleCompactFinishes = compactFinishes.slice(0, 4);
+            const hiddenFinishCount = Math.max(compactFinishes.length - visibleCompactFinishes.length, 0);
 
-                        <div className={`mt-5 grid min-h-0 flex-1 gap-5 ${pageData.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
-                          {pageData.map((data) => (
-                            <TwoPerPageCard
-                              key={data.item.id}
-                              data={data}
-                              itemNumber={visibleSlideItemNumberById.get(data.item.id) ?? null}
-                              sectionTitle={sectionTitle}
-                            />
-                          ))}
-                        </div>
-
-                        <div className="mt-5 flex items-end justify-between gap-4 border-t border-zinc-200 pt-4">
-                          <div>
-                            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Prepared By</p>
-                            <p className="mt-1 text-sm font-semibold text-zinc-900">{companyProfile.displayName}</p>
-                          </div>
-                          {quotation.quotation_no ? <p className="text-sm font-semibold text-zinc-900">{quotation.quotation_no}</p> : null}
-                        </div>
+            return (
+              <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="overflow-hidden bg-white">
+                <div className="grid h-full grid-cols-[1.65fr_0.9fr]">
+                  <div className="relative grid h-full grid-rows-[auto_minmax(0,1fr)_96px] bg-white px-9 py-8">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">{sectionTitle}</p>
+                        <p className="mt-2 text-2xl font-light tracking-tight text-zinc-950" style={clampStyle(2)}>{data.heading}</p>
                       </div>
-                    </PresentationPage>
-                  );
-                }
-
-                const item = pageItems[0];
-                if (!item) return null;
-                const data = buildProductPageData({
-                  contentVisibility: settings.contentVisibility,
-                  finishImageUrlByItemAndFinishId,
-                  imageUrl: effectivePresentationImageUrlByItemId[item.id] ?? null,
-                  itemOverride: settings.itemOverrides[item.id],
-                  item,
-                  project,
-                });
-                const compactFinishes = compactFinishRows(data.finishGroups);
-                const visibleCompactFinishes = compactFinishes.slice(0, 4);
-                const hiddenFinishCount = Math.max(compactFinishes.length - visibleCompactFinishes.length, 0);
-
-                return (
-                  <PresentationPage key={item.id} className="overflow-hidden bg-white">
-                    <div className="grid h-full grid-cols-[1.65fr_0.9fr]">
-                      <div className="relative grid h-full grid-rows-[auto_minmax(0,1fr)_96px] bg-white px-9 py-8">
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="min-w-0">
-                            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
-                              {sectionTitle}
-                            </p>
-                            <p className="mt-2 text-2xl font-light tracking-tight text-zinc-950" style={clampStyle(2)}>{data.heading}</p>
-                          </div>
-                          <div className="rounded-full border border-zinc-300 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                            Item {visibleSlideItemNumberById.get(item.id) ?? pageIndex + 1}
-                          </div>
-                        </div>
-
-                        <div className="mt-5 flex min-h-0 items-center justify-center overflow-hidden bg-white">
-                          <PresentationImageStage
-                            alt={data.heading}
-                            boundsClassName="h-[72%] w-[82%]"
-                            emptyContent={(
-                              <div className="flex h-full min-h-[120mm] w-full flex-col items-center justify-center gap-5 bg-white px-10 text-center">
-                                <div className="border border-dashed border-zinc-300 px-4 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
-                                  Visual pending
-                                </div>
-                                <p className="max-w-md text-sm leading-6 text-zinc-500" style={clampStyle(3)}>
-                                  No quotation image is available for this item yet. The item remains included so the presentation sequence stays complete.
-                                </p>
-                              </div>
-                            )}
-                            fit={data.imageSettings?.fit === "cover" ? "cover" : "contain"}
-                            imageUrl={data.imageUrl}
-                            scale={data.imageScale}
-                          />
-                        </div>
-
-                        <div className="mt-5 grid h-[96px] grid-cols-[minmax(0,1fr)_auto] items-end gap-6">
-                          <div className="min-w-0 self-end border-t border-zinc-200 pt-3">
-                            {data.summary ? (
-                              <>
-                                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Product Summary</p>
-                                <p className="mt-1 text-sm font-medium leading-6 text-zinc-700" style={clampStyle(2)}>{data.summary}</p>
-                              </>
-                            ) : (
-                              <div className="h-[40px]" />
-                            )}
-                          </div>
-                          <div className="self-end">
-                            {item.room_name_snapshot ? (
-                              <div className="border border-zinc-200 bg-white px-4 py-3 text-right">
-                                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Area Tag</p>
-                                <p className="mt-1 text-sm font-semibold text-zinc-900">{item.room_name_snapshot}</p>
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="grid h-full grid-rows-[220px_96px_1fr_96px] bg-[#f3f4f6] px-8 py-9">
-                        <div className="min-h-0 border-b border-zinc-900/10 pb-5">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-500">Technical Details</p>
-                          <h3 className="mt-3 text-3xl font-light tracking-tight text-zinc-950" style={clampStyle(2)}>{data.heading}</h3>
-                          {settings.contentVisibility.specification ? (
-                            data.cleanedSpecification ? (
-                              <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-zinc-600" style={clampStyle(5)}>
-                                {data.cleanedSpecification}
-                              </p>
-                            ) : (
-                              <p className="mt-4 text-sm leading-7 text-zinc-400">Specification details not added yet.</p>
-                            )
-                          ) : null}
-                        </div>
-
-                        {data.meta.length ? (
-                          <dl className="mt-5 grid min-h-0 grid-cols-2 content-start gap-x-5 gap-y-3 overflow-hidden">
-                            {data.meta.map((row) => (
-                              <ProductDetail key={row.label} label={row.label} value={row.value ?? null} />
-                            ))}
-                          </dl>
-                        ) : <div className="mt-5" />}
-
-                        {compactFinishes.length ? (
-                          <div className="mt-5 min-h-0 overflow-hidden border-t border-zinc-900/10 pt-5">
-                            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-500">Finishes</p>
-                            <div className="mt-4 grid grid-cols-2 gap-2">
-                              {visibleCompactFinishes.map((finish) => (
-                                <div key={finish.id} className="grid grid-cols-[28px_1fr] gap-2 rounded-lg border border-zinc-900/10 bg-white/55 p-2">
-                                  <div className="h-7 w-7 overflow-hidden bg-zinc-50">
-                                    {finish.imageUrl ? (
-                                      // eslint-disable-next-line @next/next/no-img-element
-                                      <img src={finish.imageUrl} alt={finish.name || finish.code || finish.label} className="h-full w-full object-cover" />
-                                    ) : (
-                                      <div className="h-full w-full bg-[linear-gradient(135deg,_#f4f4f5,_#e4e4e7)]" />
-                                    )}
-                                  </div>
-                                  <div className="min-w-0">
-                                    <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500" style={clampStyle(1)}>{finish.label}</p>
-                                    <p className="mt-0.5 text-[11px] font-semibold leading-4 text-zinc-900" style={clampStyle(2)}>
-                                      {[finish.code, finish.name].filter(Boolean).join(" | ") || finish.description || "Selected finish"}
-                                    </p>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                            {hiddenFinishCount ? (
-                              <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-400">+{hiddenFinishCount} more</p>
-                            ) : null}
-                          </div>
-                        ) : <div className="mt-5 border-t border-zinc-900/10 pt-5" />}
-
-                        <div className="mt-5 self-end border-t border-zinc-900/10 pt-3">
-                          <div className="grid h-full grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto] items-start gap-x-6 gap-y-1">
-                            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Prepared By</p>
-                            {quotation.quotation_no ? (
-                              <p className="text-right text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Quotation No.</p>
-                            ) : (
-                              <div />
-                            )}
-                            <p className="text-sm font-semibold text-zinc-900">{companyProfile.displayName}</p>
-                            {quotation.quotation_no ? (
-                              <p className="text-right text-sm font-semibold text-zinc-900">{quotation.quotation_no}</p>
-                            ) : (
-                              <div />
-                            )}
-                          </div>
-                        </div>
+                      <div className="rounded-full border border-zinc-300 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                        Item {visibleSlideItemNumberById.get(item.id) ?? 1}
                       </div>
                     </div>
-                  </PresentationPage>
-                );
-              })}
-            </div>
+
+                    <div className="mt-5 flex min-h-0 items-center justify-center overflow-hidden bg-white">
+                      <PresentationImageStage
+                        alt={data.heading}
+                        boundsClassName="h-[72%] w-[82%]"
+                        emptyContent={(
+                          <div className="flex h-full min-h-[120mm] w-full flex-col items-center justify-center gap-5 bg-white px-10 text-center">
+                            <div className="border border-dashed border-zinc-300 px-4 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
+                              Visual pending
+                            </div>
+                            <p className="max-w-md text-sm leading-6 text-zinc-500" style={clampStyle(3)}>
+                              No quotation image is available for this item yet. The item remains included so the presentation sequence stays complete.
+                            </p>
+                          </div>
+                        )}
+                        fit={data.imageSettings?.fit === "cover" ? "cover" : "contain"}
+                        imageUrl={data.imageUrl}
+                        scale={data.imageScale}
+                      />
+                    </div>
+
+                    <div className="mt-5 grid h-[96px] grid-cols-[minmax(0,1fr)_auto] items-end gap-6">
+                      <div className="min-w-0 self-end border-t border-zinc-200 pt-3">
+                        {data.summary ? (
+                          <>
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Product Summary</p>
+                            <p className="mt-1 text-sm font-medium leading-6 text-zinc-700" style={clampStyle(2)}>{data.summary}</p>
+                          </>
+                        ) : (
+                          <div className="h-[40px]" />
+                        )}
+                      </div>
+                      <div className="self-end">
+                        {item.room_name_snapshot ? (
+                          <div className="border border-zinc-200 bg-white px-4 py-3 text-right">
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Area Tag</p>
+                            <p className="mt-1 text-sm font-semibold text-zinc-900">{item.room_name_snapshot}</p>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid h-full grid-rows-[220px_auto_1fr_96px] bg-[#f3f4f6] px-8 py-9">
+                    <div className="min-h-0 border-b border-zinc-900/10 pb-5">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-500">Technical Details</p>
+                      <h3 className="mt-3 text-3xl font-light tracking-tight text-zinc-950" style={clampStyle(2)}>{data.heading}</h3>
+                      {settings.contentVisibility.specification ? (
+                        data.cleanedSpecification ? (
+                          <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-zinc-600" style={clampStyle(5)}>
+                            {data.cleanedSpecification}
+                          </p>
+                        ) : (
+                          <p className="mt-4 text-sm leading-7 text-zinc-400">Specification details not added yet.</p>
+                        )
+                      ) : null}
+                    </div>
+
+                    {data.meta.length ? (
+                      <dl className="mt-5 grid min-h-0 grid-cols-2 content-start gap-x-5 gap-y-3 overflow-hidden">
+                        {data.meta.map((row) => (
+                          <ProductDetail key={row.label} label={row.label} value={row.value ?? null} />
+                        ))}
+                      </dl>
+                    ) : <div className="mt-5" />}
+
+                    {compactFinishes.length ? (
+                      <div className="mt-5 min-h-0 overflow-hidden border-t border-zinc-900/10 pt-5">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-500">Finishes</p>
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                          {visibleCompactFinishes.map((finish) => (
+                            <div key={finish.id} className="grid grid-cols-[28px_1fr] gap-2 rounded-lg border border-zinc-900/10 bg-white/55 p-2">
+                              <div className="h-7 w-7 overflow-hidden bg-zinc-50">
+                                {finish.imageUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={finish.imageUrl} alt={finish.name || finish.code || finish.label} className="h-full w-full object-cover" />
+                                ) : (
+                                  <div className="h-full w-full bg-[linear-gradient(135deg,_#f4f4f5,_#e4e4e7)]" />
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500" style={clampStyle(1)}>{finish.label}</p>
+                                <p className="mt-0.5 text-[11px] font-semibold leading-4 text-zinc-900" style={clampStyle(2)}>
+                                  {[finish.code, finish.name].filter(Boolean).join(" | ") || finish.description || "Selected finish"}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {hiddenFinishCount ? (
+                          <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-400">+{hiddenFinishCount} more</p>
+                        ) : null}
+                      </div>
+                    ) : <div className="mt-5 border-t border-zinc-900/10 pt-5" />}
+
+                    <div className="mt-5 self-end border-t border-zinc-900/10 pt-3">
+                      <div className="grid h-full grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto] items-start gap-x-6 gap-y-1">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Prepared By</p>
+                        {quotation.quotation_no ? (
+                          <p className="text-right text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Quotation No.</p>
+                        ) : (
+                          <div />
+                        )}
+                        <p className="text-sm font-semibold text-zinc-900">{companyProfile.displayName}</p>
+                        {quotation.quotation_no ? (
+                          <p className="text-right text-sm font-semibold text-zinc-900">{quotation.quotation_no}</p>
+                        ) : (
+                          <div />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </PresentationPage>
+            );
+          }
+
+          return (
+            <PresentationPage key={slide.key} id={pageId} slideIndex={slideIndex} className="relative overflow-hidden">
+              <div className="absolute inset-0 bg-[linear-gradient(130deg,_#eef2f5_0%,_#f8fafc_44%,_#ffffff_44%,_#ffffff_100%)]" />
+              <div className="absolute inset-y-0 right-0 w-[30%] bg-zinc-950" />
+              <div className="absolute left-0 top-0 h-full w-[44%] bg-[radial-gradient(circle_at_top_left,_rgba(39,39,42,0.08),_transparent_55%)]" />
+              <div className="relative grid h-full grid-cols-[1.5fr_0.7fr]">
+                <div className="flex h-full flex-col justify-between px-12 py-12">
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <div className="h-px w-14 bg-zinc-400" />
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">Closing Slide</p>
+                    </div>
+                    <h2 className="mt-10 max-w-4xl text-[56px] font-light leading-[1.02] tracking-[-0.04em] text-zinc-950">
+                      {closingTitle}
+                    </h2>
+                    {closingMessage ? (
+                      <p className="mt-8 max-w-2xl text-lg leading-8 text-zinc-600" style={clampStyle(4)}>
+                        {closingMessage}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="grid grid-cols-[1.1fr_0.9fr] gap-10 border-t border-zinc-200 pt-8">
+                    <div />
+                    <div className="grid gap-3 self-end">
+                      {quotation.quotation_no ? <MetaCard label="Quotation No." value={quotation.quotation_no} /> : null}
+                      {quotation.quotation_date ? <MetaCard label="Date" value={formatPresentationDate(quotation.quotation_date)} /> : null}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="relative flex h-full flex-col justify-between px-9 py-10 text-white">
+                  <div>
+                    <div className="flex items-center justify-between gap-4">
+                      <PresentationBrandLogo
+                        logoUrl={companyProfile.logoUrl}
+                        fallbackText={companyProfile.displayName}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 border-t border-white/10 pt-7">
+                    <ContactLine label="Website" value={closingWebsite} />
+                    <ContactLine label="Email" value={closingEmail} />
+                    <ContactLine label="Phone" value={closingPhone} />
+                    <ContactLine label="Office" value={closingOfficeDetails} />
+                  </div>
+                </div>
+              </div>
+            </PresentationPage>
           );
         })}
-
-        {settings.pageVisibility.thankYou ? (
-          <PresentationPage className="relative overflow-hidden">
-          <div className="absolute inset-0 bg-[linear-gradient(130deg,_#eef2f5_0%,_#f8fafc_44%,_#ffffff_44%,_#ffffff_100%)]" />
-          <div className="absolute inset-y-0 right-0 w-[30%] bg-zinc-950" />
-          <div className="absolute left-0 top-0 h-full w-[44%] bg-[radial-gradient(circle_at_top_left,_rgba(39,39,42,0.08),_transparent_55%)]" />
-          <div className="relative grid h-full grid-cols-[1.5fr_0.7fr]">
-            <div className="flex h-full flex-col justify-between px-12 py-12">
-              <div>
-                <div className="flex items-center gap-3">
-                  <div className="h-px w-14 bg-zinc-400" />
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">Closing Slide</p>
-                </div>
-                <h2 className="mt-10 max-w-4xl text-[56px] font-light leading-[1.02] tracking-[-0.04em] text-zinc-950">
-                  {closingTitle}
-                </h2>
-                {closingMessage ? (
-                  <p className="mt-8 max-w-2xl text-lg leading-8 text-zinc-600" style={clampStyle(4)}>
-                    {closingMessage}
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="grid grid-cols-[1.1fr_0.9fr] gap-10 border-t border-zinc-200 pt-8">
-                <div />
-                <div className="grid gap-3 self-end">
-                  {quotation.quotation_no ? <MetaCard label="Quotation No." value={quotation.quotation_no} /> : null}
-                  {quotation.quotation_date ? <MetaCard label="Date" value={formatPresentationDate(quotation.quotation_date)} /> : null}
-                </div>
-              </div>
-            </div>
-
-            <div className="relative flex h-full flex-col justify-between px-9 py-10 text-white">
-              <div>
-                <div className="flex items-center justify-between gap-4">
-                  {companyProfile.logoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={companyProfile.logoUrl}
-                      alt={companyProfile.displayName}
-                      className="max-h-14 max-w-[150px] object-contain brightness-0 invert"
-                    />
-                  ) : null}
-                </div>
-                {!companyProfile.logoUrl ? (
-                  <p className="mt-8 text-2xl font-light leading-tight text-white">{companyProfile.displayName}</p>
-                ) : null}
-              </div>
-
-              <div className="grid gap-4 border-t border-white/10 pt-7">
-                <ContactLine label="Website" value={closingWebsite} />
-                <ContactLine label="Email" value={closingEmail} />
-                <ContactLine label="Phone" value={closingPhone} />
-                <ContactLine label="Office" value={closingOfficeDetails} />
-              </div>
-            </div>
-          </div>
-          </PresentationPage>
-        ) : null}
       </div>
     </main>
   );

@@ -63,6 +63,12 @@ export type PresentationClosingOverrides = {
 export type PresentationImageFit = "contain" | "cover";
 export type PresentationImagePosition = "center";
 
+export type PresentationFlowOrder = {
+  mainSectionKeys: string[];
+  sectionKeysByMain: Record<string, string[]>;
+  itemIdsBySection: Record<string, string[]>;
+};
+
 export type PresentationItemOverride = {
   imageUrl: string;
   imageFit: PresentationImageFit;
@@ -72,6 +78,7 @@ export type PresentationItemOverride = {
 
 export type QuotationPresentationSettings = {
   hiddenItemIds: string[];
+  flowOrder: PresentationFlowOrder;
   contentVisibility: PresentationContentVisibility;
   layoutMode: PresentationLayoutMode;
   pageVisibility: PresentationPageVisibility;
@@ -127,6 +134,12 @@ export const DEFAULT_PRESENTATION_ITEM_OVERRIDE: PresentationItemOverride = {
   imageScale: 1,
 };
 
+export const DEFAULT_PRESENTATION_FLOW_ORDER: PresentationFlowOrder = {
+  mainSectionKeys: [],
+  sectionKeysByMain: {},
+  itemIdsBySection: {},
+};
+
 export const DEFAULT_PRESENTATION_SECTION_OVERRIDE: PresentationSectionOverride = {
   title: "",
   note: "",
@@ -146,6 +159,7 @@ export const DEFAULT_PRESENTATION_VISUALS: PresentationVisuals = {
 
 export const DEFAULT_QUOTATION_PRESENTATION_SETTINGS: QuotationPresentationSettings = {
   hiddenItemIds: [],
+  flowOrder: DEFAULT_PRESENTATION_FLOW_ORDER,
   contentVisibility: DEFAULT_PRESENTATION_CONTENT_VISIBILITY,
   layoutMode: "single",
   pageVisibility: DEFAULT_PRESENTATION_PAGE_VISIBILITY,
@@ -174,10 +188,19 @@ function normalizedBoolean(
 function normalizedPageBoolean(
   source: Record<string, unknown> | undefined,
   key: keyof PresentationPageVisibility,
+  aliases: string[] = [],
 ) {
-  return typeof source?.[key] === "boolean"
-    ? source[key] as boolean
-    : DEFAULT_PRESENTATION_PAGE_VISIBILITY[key];
+  if (typeof source?.[key] === "boolean") {
+    return source[key] as boolean;
+  }
+
+  for (const alias of aliases) {
+    if (typeof source?.[alias] === "boolean") {
+      return source[alias] as boolean;
+    }
+  }
+
+  return DEFAULT_PRESENTATION_PAGE_VISIBILITY[key];
 }
 
 function normalizedString(
@@ -191,6 +214,39 @@ function normalizedItemImageScale(source: Record<string, unknown> | undefined) {
   const rawValue = Number(source?.imageScale);
   if (!Number.isFinite(rawValue)) return 1;
   return Math.min(Math.max(rawValue, 0.6), 1.2);
+}
+
+function normalizedStringArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(
+    value
+      .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      .map((entry) => entry.trim()),
+  ));
+}
+
+export function normalizeFlowOrder(value: unknown): PresentationFlowOrder {
+  const record = isRecord(value) ? value : {};
+  const sectionKeysByMainRecord = isRecord(record.sectionKeysByMain)
+    ? record.sectionKeysByMain
+    : undefined;
+  const itemIdsBySectionRecord = isRecord(record.itemIdsBySection)
+    ? record.itemIdsBySection
+    : undefined;
+
+  return {
+    mainSectionKeys: normalizedStringArray(record.mainSectionKeys),
+    sectionKeysByMain: Object.fromEntries(
+      Object.entries(sectionKeysByMainRecord ?? {})
+        .map(([key, entry]) => [key, normalizedStringArray(entry)] as const)
+        .filter(([, entry]) => entry.length > 0),
+    ),
+    itemIdsBySection: Object.fromEntries(
+      Object.entries(itemIdsBySectionRecord ?? {})
+        .map(([key, entry]) => [key, normalizedStringArray(entry)] as const)
+        .filter(([, entry]) => entry.length > 0),
+    ),
+  };
 }
 
 function normalizedMainLayout(
@@ -209,6 +265,24 @@ function normalizedMainLayout(
   return { id, title, note, imageUrl };
 }
 
+function normalizedLegacyMainLayout(
+  primarySource: Record<string, unknown> | undefined,
+  fallbackSource: Record<string, unknown> | undefined,
+) {
+  return normalizedMainLayout({
+    id: "main-layout-1",
+    title:
+      normalizedString(primarySource, "mainLayoutTitle") ||
+      normalizedString(fallbackSource, "mainLayoutTitle"),
+    note:
+      normalizedString(primarySource, "mainLayoutNote") ||
+      normalizedString(fallbackSource, "mainLayoutNote"),
+    imageUrl:
+      normalizedString(primarySource, "mainLayoutImageUrl") ||
+      normalizedString(fallbackSource, "mainLayoutImageUrl"),
+  }, "main-layout-1");
+}
+
 export function normalizePresentationSettings(
   value: unknown,
   options?: { updatedAt?: string | null },
@@ -217,6 +291,7 @@ export function normalizePresentationSettings(
   const hiddenItemIds = Array.isArray(record.hiddenItemIds)
     ? record.hiddenItemIds.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
     : [];
+  const flowOrder = normalizeFlowOrder(record.flowOrder);
   const contentVisibility = isRecord(record.contentVisibility)
     ? record.contentVisibility
     : undefined;
@@ -243,17 +318,16 @@ export function normalizePresentationSettings(
     : undefined;
 
   const layoutMode = record.layoutMode === "two_per_page" ? "two_per_page" : "single";
-  const mainLayouts = Array.isArray(presentationVisualsRecord?.mainLayouts)
+  const rootMainLayouts = Array.isArray(record.mainLayouts) ? record.mainLayouts : undefined;
+  const mainLayoutsSource = Array.isArray(presentationVisualsRecord?.mainLayouts)
     ? presentationVisualsRecord.mainLayouts
+    : rootMainLayouts;
+  const mainLayouts = Array.isArray(mainLayoutsSource)
+    ? mainLayoutsSource
       .map((entry, index) => normalizedMainLayout(entry, `main-layout-${index + 1}`))
       .filter((entry): entry is PresentationMainLayout => Boolean(entry))
     : [];
-  const legacyMainLayout = normalizedMainLayout({
-    id: "main-layout-1",
-    title: normalizedString(presentationVisualsRecord, "mainLayoutTitle"),
-    note: normalizedString(presentationVisualsRecord, "mainLayoutNote"),
-    imageUrl: normalizedString(presentationVisualsRecord, "mainLayoutImageUrl"),
-  }, "main-layout-1");
+  const legacyMainLayout = normalizedLegacyMainLayout(presentationVisualsRecord, record);
   const sectionOverrides = Object.fromEntries(
     Object.entries(sectionOverridesRecord ?? {})
       .map(([key, overrideValue]) => {
@@ -302,6 +376,7 @@ export function normalizePresentationSettings(
 
   return {
     hiddenItemIds: Array.from(new Set(hiddenItemIds)),
+    flowOrder,
     contentVisibility: {
       specification: normalizedBoolean(contentVisibility, "specification"),
       dimensions: normalizedBoolean(contentVisibility, "dimensions"),
@@ -315,7 +390,7 @@ export function normalizePresentationSettings(
     pageVisibility: {
       cover: normalizedPageBoolean(pageVisibility, "cover"),
       designConsiderations: normalizedPageBoolean(pageVisibility, "designConsiderations"),
-      mainLayoutPages: normalizedPageBoolean(pageVisibility, "mainLayoutPages"),
+      mainLayoutPages: normalizedPageBoolean(pageVisibility, "mainLayoutPages", ["mainAreaLayouts", "mainAreaLayoutPages"]),
       sectionDividers: normalizedPageBoolean(pageVisibility, "sectionDividers"),
       thankYou: normalizedPageBoolean(pageVisibility, "thankYou"),
     },

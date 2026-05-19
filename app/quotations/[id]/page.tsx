@@ -825,6 +825,45 @@ export default async function QuotationDetailPage({
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Link
+                    href={`/quotations/${quotation.id}/procurement-rfq`}
+                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                  >
+                    Preview Procurement RFQ
+                  </Link>
+                  <PendingLinkButton
+                    href={`/quotations/${quotation.id}/download-procurement-rfq`}
+                    pendingLabel="Preparing RFQ..."
+                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                  >
+                    Download Procurement RFQ PDF
+                  </PendingLinkButton>
+                  <Link
+                    href={`/quotations/${quotation.id}/order-confirmation`}
+                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                  >
+                    Preview Order Confirmation
+                  </Link>
+                  <PendingLinkButton
+                    href={`/quotations/${quotation.id}/download-order-confirmation`}
+                    pendingLabel="Preparing Confirmation..."
+                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                  >
+                    Download Order Confirmation PDF
+                  </PendingLinkButton>
+                  <Link
+                    href={`/quotations/${quotation.id}/presentation`}
+                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                  >
+                    Preview Presentation
+                  </Link>
+                  <PendingLinkButton
+                    href={`/quotations/${quotation.id}/download-presentation`}
+                    pendingLabel="Preparing Presentation..."
+                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                  >
+                    Download Presentation PDF
+                  </PendingLinkButton>
+                  <Link
                     href={`/quotations/${quotation.id}/pdf`}
                     className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
                   >
