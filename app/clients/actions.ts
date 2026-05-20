@@ -296,12 +296,14 @@ export async function permanentlyDeleteProject(formData: FormData) {
     }, "warning");
   }
 
-  const adminSupabase = createSupabaseAdminClient();
+  const adminClientResult = createSupabaseAdminClient();
 
-  if (!adminSupabase) {
-    console.error("PROJECT PERMANENT DELETE ADMIN CONFIG ERROR", "SUPABASE_SERVICE_ROLE_KEY is not configured.");
-    redirectToClients("Server admin delete is not configured.", { tab: "archive" }, "error");
+  if (adminClientResult.error || !adminClientResult.client) {
+    console.error("PROJECT PERMANENT DELETE ADMIN CONFIG ERROR", adminClientResult.error);
+    redirectToClients(adminClientResult.error ?? "Server admin delete is not configured.", { tab: "archive" }, "error");
   }
+
+  const adminSupabase = adminClientResult.client;
 
   const { error } = await adminSupabase.from("projects").delete().eq("id", id).eq("is_active", false);
 
@@ -447,12 +449,14 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
     redirectToClients("Archive this project before permanently deleting it.", { tab: "archive" }, "warning");
   }
 
-  const adminSupabase = createSupabaseAdminClient();
+  const adminClientResult = createSupabaseAdminClient();
 
-  if (!adminSupabase) {
-    console.error("PROJECT CASCADE DELETE ADMIN CONFIG ERROR", "SUPABASE_SERVICE_ROLE_KEY is not configured.");
-    redirectToClients("Server admin delete is not configured.", { tab: "archive" }, "error");
+  if (adminClientResult.error || !adminClientResult.client) {
+    console.error("PROJECT CASCADE DELETE ADMIN CONFIG ERROR", adminClientResult.error);
+    redirectToClients(adminClientResult.error ?? "Server admin delete is not configured.", { tab: "archive" }, "error");
   }
+
+  const adminSupabase = adminClientResult.client;
 
   const { data: quotations, error: quotationsError } = await adminSupabase
     .from("quotations")
