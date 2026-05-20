@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { loadProjectQuotationDependencyCount } from "@/lib/clients/project-dependencies";
 import { requireRecordsManager } from "@/lib/auth";
 import { createAdminClient as createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
@@ -280,6 +281,21 @@ export async function permanentlyDeleteProject(formData: FormData) {
     redirectToClients("Archive this project before permanently deleting it.", { tab: "archive" }, "warning");
   }
 
+  const dependencyResult = await loadProjectQuotationDependencyCount(id);
+
+  if (dependencyResult.error) {
+    redirectToClients(dependencyResult.error, { tab: "archive" }, "error");
+  }
+
+  if ((dependencyResult.count ?? 0) > 0) {
+    const quotationLabel = dependencyResult.count === 1 ? "quotation" : "quotations";
+    redirectToClients(
+      `This project still has ${dependencyResult.count} linked ${quotationLabel}. Permanently delete or unlink the ${quotationLabel} first.`,
+      { tab: "archive" },
+      "warning",
+    );
+  }
+
   const adminClientResult = createSupabaseAdminClient();
 
   if (adminClientResult.error || !adminClientResult.client) {
@@ -288,30 +304,6 @@ export async function permanentlyDeleteProject(formData: FormData) {
   }
 
   const adminSupabase = adminClientResult.client;
-  const { count, error: countError } = await adminSupabase
-    .from("quotations")
-    .select("id", { count: "exact", head: true })
-    .eq("project_id", id);
-
-  if (countError) {
-    const safeReason = safeSupabaseErrorReason(countError);
-    console.error("PROJECT QUOTATION DEPENDENCY CHECK ERROR", {
-      code: countError.code ?? null,
-      message: countError.message ?? null,
-      details: countError.details ?? null,
-      projectId: id,
-    });
-    redirectToClients(`Project dependencies could not be checked: ${safeReason}`, { tab: "archive" }, "error");
-  }
-
-  if ((count ?? 0) > 0) {
-    const quotationLabel = count === 1 ? "quotation" : "quotations";
-    redirectToClients(
-      `This project still has ${count} linked ${quotationLabel}. Permanently delete or unlink the ${quotationLabel} first.`,
-      { tab: "archive" },
-      "warning",
-    );
-  }
 
   const { error } = await adminSupabase.from("projects").delete().eq("id", id).eq("is_active", false);
 

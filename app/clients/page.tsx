@@ -4,6 +4,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { TopBar } from "@/components/top-bar";
+import { loadProjectQuotationDependencyCounts } from "@/lib/clients/project-dependencies";
 import { requireActiveUser } from "@/lib/auth";
 import { formatQuotationDisplayNo, quotationRootBaseNo } from "@/lib/quotation-options";
 import {
@@ -90,6 +91,11 @@ type ProjectQuotation = {
   quotation_date: string | null;
   created_at: string;
   is_active: boolean;
+};
+
+type ArchivedProjectDependencyState = {
+  linkedQuotationCount: number | null;
+  error: string | null;
 };
 
 const projectStatusOptions = [
@@ -604,6 +610,29 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
 
     return true;
   };
+
+  const archivedProjectDependencyById = new Map<string, ArchivedProjectDependencyState>();
+  const archivedProjectIds = archivedProjectList.map((project) => project.id);
+
+  if (canManageRecords && archivedProjectIds.length) {
+    const dependencyResult = await loadProjectQuotationDependencyCounts(archivedProjectIds);
+
+    if (dependencyResult.error) {
+      archivedProjectIds.forEach((projectId) => {
+        archivedProjectDependencyById.set(projectId, {
+          linkedQuotationCount: null,
+          error: dependencyResult.error,
+        });
+      });
+    } else {
+      archivedProjectIds.forEach((projectId) => {
+        archivedProjectDependencyById.set(projectId, {
+          linkedQuotationCount: dependencyResult.countsByProjectId.get(projectId) ?? 0,
+          error: null,
+        });
+      });
+    }
+  }
 
   const filteredProjects = activeProjectList.filter((project) => {
     const clientName = clientNameById.get(project.client_id);
@@ -1372,8 +1401,11 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                 </div>
                 <div className="divide-y divide-zinc-100">
                   {archivedProjectList.map((project) => {
-                    const linkedQuotations = allQuotationsByProject.get(project.id) ?? [];
-                    const linkedQuotationCount = linkedQuotations.length;
+                    const dependencyState = archivedProjectDependencyById.get(project.id) ?? {
+                      linkedQuotationCount: null,
+                      error: null,
+                    };
+                    const linkedQuotationCount = dependencyState.linkedQuotationCount ?? 0;
 
                     return (
                       <div
@@ -1387,7 +1419,11 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                           <p className="mt-1 text-sm text-zinc-500">
                             {clientNameById.get(project.client_id) ?? "Unknown client"} / {project.project_year ?? "No year"}
                           </p>
-                          {linkedQuotationCount ? (
+                          {dependencyState.error ? (
+                            <p className="mt-1 text-xs font-semibold text-red-700">
+                              {dependencyState.error}
+                            </p>
+                          ) : linkedQuotationCount ? (
                             <p className="mt-1 text-xs font-semibold text-zinc-500">
                               This project has linked quotations.
                             </p>
@@ -1403,7 +1439,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                                 Restore
                               </PendingSubmitButton>
                             </form>
-                            {linkedQuotationCount ? (
+                            {dependencyState.error ? null : linkedQuotationCount ? (
                               <DeleteProjectWithQuotationsDialog
                                 projectId={project.id}
                                 projectName={project.project_name}
