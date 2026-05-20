@@ -838,6 +838,19 @@ export default async function QuotationDetailPage({
                     Download Procurement RFQ PDF
                   </PendingLinkButton>
                   <Link
+                    href={`/quotations/${quotation.id}/purchase-order`}
+                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                  >
+                    Preview Purchase Order
+                  </Link>
+                  <PendingLinkButton
+                    href={`/quotations/${quotation.id}/download-purchase-order`}
+                    pendingLabel="Preparing PO..."
+                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                  >
+                    Download Purchase Order PDF
+                  </PendingLinkButton>
+                  <Link
                     href={`/quotations/${quotation.id}/order-confirmation`}
                     className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
                   >

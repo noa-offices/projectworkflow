@@ -2879,6 +2879,12 @@ export function LocalQuotationBuilder({
                   <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/download-procurement-rfq`}>
                     Download Procurement RFQ PDF
                   </LocalServerViewLink>
+                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/purchase-order`} target="_blank">
+                    Preview Purchase Order
+                  </LocalServerViewLink>
+                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/download-purchase-order`}>
+                    Download Purchase Order PDF
+                  </LocalServerViewLink>
                   <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/order-confirmation`} target="_blank">
                     Preview Order Confirmation
                   </LocalServerViewLink>
