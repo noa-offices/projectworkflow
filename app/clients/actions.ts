@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireRecordsManager } from "@/lib/auth";
+import { createAdminClient as createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 const projectStatuses = new Set(["active", "on_hold", "completed", "cancelled"]);
@@ -245,6 +247,25 @@ export async function permanentlyDeleteProject(formData: FormData) {
   }
 
   const supabase = await createSupabaseClient();
+  const { data: project, error: projectError } = await supabase
+    .from("projects")
+    .select("id,is_active")
+    .eq("id", id)
+    .maybeSingle<{ id: string; is_active: boolean }>();
+
+  if (projectError) {
+    console.error("PROJECT PERMANENT DELETE READ ERROR", projectError.message);
+    redirectToClients("Project could not be loaded for deletion.", { tab: "archive" });
+  }
+
+  if (!project) {
+    redirectToClients("Project could not be deleted because it was not found.", { tab: "archive" });
+  }
+
+  if (project.is_active) {
+    redirectToClients("Archive this project before permanently deleting it.", { tab: "archive" });
+  }
+
   const { count, error: countError } = await supabase
     .from("quotations")
     .select("id", { count: "exact", head: true })
@@ -261,7 +282,14 @@ export async function permanentlyDeleteProject(formData: FormData) {
     });
   }
 
-  const { error } = await supabase.from("projects").delete().eq("id", id);
+  const adminSupabase = createSupabaseAdminClient();
+
+  if (!adminSupabase) {
+    console.error("PROJECT PERMANENT DELETE ADMIN CONFIG ERROR", "SUPABASE_SERVICE_ROLE_KEY is not configured.");
+    redirectToClients("Server admin delete is not configured.", { tab: "archive" });
+  }
+
+  const { error } = await adminSupabase.from("projects").delete().eq("id", id).eq("is_active", false);
 
   if (error) {
     console.error("PROJECT PERMANENT DELETE ERROR", error.message);
@@ -275,7 +303,7 @@ export async function permanentlyDeleteProject(formData: FormData) {
 async function deleteQuotationsByIds(
   quotationIds: string[],
   projectId: string,
-  supabase: Awaited<ReturnType<typeof createSupabaseClient>>,
+  supabase: SupabaseClient,
 ) {
   if (!quotationIds.length) {
     return;
@@ -301,6 +329,10 @@ async function deleteQuotationsByIds(
     label: string;
     run: () => Promise<{ error: { message: string } | null }>;
   }> = [
+    {
+      label: "quotation_item_price_history",
+      run: async () => await supabase.from("quotation_item_price_history").delete().in("quotation_id", quotationIds),
+    },
     {
       label: "quotation_presentations",
       run: async () => await supabase.from("quotation_presentations").delete().in("quotation_id", quotationIds),
@@ -399,7 +431,14 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
     redirectToClients("Archive this project before permanently deleting it.", { tab: "archive" });
   }
 
-  const { data: quotations, error: quotationsError } = await supabase
+  const adminSupabase = createSupabaseAdminClient();
+
+  if (!adminSupabase) {
+    console.error("PROJECT CASCADE DELETE ADMIN CONFIG ERROR", "SUPABASE_SERVICE_ROLE_KEY is not configured.");
+    redirectToClients("Server admin delete is not configured.", { tab: "archive" });
+  }
+
+  const { data: quotations, error: quotationsError } = await adminSupabase
     .from("quotations")
     .select("id")
     .eq("project_id", id)
@@ -412,9 +451,9 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
 
   const quotationIds = (quotations ?? []).map((quotation) => quotation.id);
 
-  await deleteQuotationsByIds(quotationIds, id, supabase);
+  await deleteQuotationsByIds(quotationIds, id, adminSupabase);
 
-  const { error: projectAuditError } = await supabase
+  const { error: projectAuditError } = await adminSupabase
     .from("audit_activity_log")
     .delete()
     .eq("entity_type", "project")
@@ -428,7 +467,7 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
     );
   }
 
-  const { error: deleteProjectError } = await supabase
+  const { error: deleteProjectError } = await adminSupabase
     .from("projects")
     .delete()
     .eq("id", id)
