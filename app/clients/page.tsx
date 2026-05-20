@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DeleteProjectWithQuotationsDialog } from "@/components/clients/delete-project-with-quotations-dialog";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
@@ -87,6 +88,7 @@ type ProjectQuotation = {
   title: string;
   quotation_date: string | null;
   created_at: string;
+  is_active: boolean;
 };
 
 const projectStatusOptions = [
@@ -524,8 +526,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
 
   const { data: quotations, error: quotationsError } = await supabase
     .from("quotations")
-    .select("id,project_id,quotation_no,option_no,revision_no,status,title,quotation_date,created_at")
-    .eq("is_active", true)
+    .select("id,project_id,quotation_no,option_no,revision_no,status,title,quotation_date,created_at,is_active")
     .order("quotation_date", { ascending: false })
     .order("created_at", { ascending: false })
     .returns<ProjectQuotation[]>();
@@ -552,15 +553,23 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
   const clientNameById = new Map(
     clientList.map((client) => [client.id, client.company_name]),
   );
+  const activeQuotationList = quotationList.filter((quotation) => quotation.is_active);
   const quotationsByProject = new Map<string, ProjectQuotation[]>();
+  const allQuotationsByProject = new Map<string, ProjectQuotation[]>();
 
   for (const quotation of quotationList) {
+    const allProjectQuotations = allQuotationsByProject.get(quotation.project_id) ?? [];
+    allProjectQuotations.push(quotation);
+    allQuotationsByProject.set(quotation.project_id, allProjectQuotations);
+  }
+
+  for (const quotation of activeQuotationList) {
     const projectQuotations = quotationsByProject.get(quotation.project_id) ?? [];
     projectQuotations.push(quotation);
     quotationsByProject.set(quotation.project_id, projectQuotations);
   }
   const optionCountByProjectRoot = new Map<string, number>();
-  for (const quotation of quotationList) {
+  for (const quotation of activeQuotationList) {
     const rootBase = quotationRootBaseNo(quotation.quotation_no);
     if (!rootBase) continue;
 
@@ -1347,42 +1356,60 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                   </p>
                 </div>
                 <div className="divide-y divide-zinc-100">
-                  {archivedProjectList.map((project) => (
-                    <div
-                      key={project.id}
-                      className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"
-                    >
-                      <div>
-                        <h3 className="font-semibold text-zinc-950">
-                          {project.project_name}
-                        </h3>
-                        <p className="mt-1 text-sm text-zinc-500">
-                          {clientNameById.get(project.client_id) ?? "Unknown client"} / {project.project_year ?? "No year"}
-                        </p>
-                      </div>
-                      {canManageRecords ? (
-                        <div className="flex flex-wrap gap-2 md:justify-end">
-                          <form action={restoreProject}>
-                            <input type="hidden" name="id" value={project.id} />
-                            <PendingSubmitButton
-                              className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                            >
-                              Restore
-                            </PendingSubmitButton>
-                          </form>
-                          <form action={permanentlyDeleteProject}>
-                            <input type="hidden" name="id" value={project.id} />
-                            <ConfirmSubmitButton
-                              message="Permanently delete this project? This cannot be undone."
-                              className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
-                            >
-                              Delete permanently
-                            </ConfirmSubmitButton>
-                          </form>
+                  {archivedProjectList.map((project) => {
+                    const linkedQuotations = allQuotationsByProject.get(project.id) ?? [];
+                    const linkedQuotationCount = linkedQuotations.length;
+
+                    return (
+                      <div
+                        key={project.id}
+                        className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"
+                      >
+                        <div>
+                          <h3 className="font-semibold text-zinc-950">
+                            {project.project_name}
+                          </h3>
+                          <p className="mt-1 text-sm text-zinc-500">
+                            {clientNameById.get(project.client_id) ?? "Unknown client"} / {project.project_year ?? "No year"}
+                          </p>
+                          {linkedQuotationCount ? (
+                            <p className="mt-1 text-xs font-semibold text-zinc-500">
+                              This project has linked quotations.
+                            </p>
+                          ) : null}
                         </div>
-                      ) : null}
-                    </div>
-                  ))}
+                        {canManageRecords ? (
+                          <div className="flex flex-wrap gap-2 md:justify-end">
+                            <form action={restoreProject}>
+                              <input type="hidden" name="id" value={project.id} />
+                              <PendingSubmitButton
+                                className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                              >
+                                Restore
+                              </PendingSubmitButton>
+                            </form>
+                            {linkedQuotationCount ? (
+                              <DeleteProjectWithQuotationsDialog
+                                projectId={project.id}
+                                projectName={project.project_name}
+                                quotationCount={linkedQuotationCount}
+                              />
+                            ) : (
+                              <form action={permanentlyDeleteProject}>
+                                <input type="hidden" name="id" value={project.id} />
+                                <ConfirmSubmitButton
+                                  message="Permanently delete this project? This cannot be undone."
+                                  className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
+                                >
+                                  Delete permanently
+                                </ConfirmSubmitButton>
+                              </form>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                   {!archivedProjectList.length ? (
                     <p className="p-6 text-sm text-zinc-500">No archived projects.</p>
                   ) : null}

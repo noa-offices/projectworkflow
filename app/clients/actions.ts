@@ -272,6 +272,192 @@ export async function permanentlyDeleteProject(formData: FormData) {
   redirectToClients("Project permanently deleted.", { tab: "archive" });
 }
 
+async function deleteQuotationsByIds(
+  quotationIds: string[],
+  projectId: string,
+  supabase: Awaited<ReturnType<typeof createSupabaseClient>>,
+) {
+  if (!quotationIds.length) {
+    return;
+  }
+
+  const { data: sections, error: sectionsReadError } = await supabase
+    .from("quotation_sections")
+    .select("id")
+    .in("quotation_id", quotationIds)
+    .returns<Array<{ id: string }>>();
+
+  if (sectionsReadError) {
+    console.error("PROJECT DELETE QUOTATION SECTIONS READ ERROR", sectionsReadError.message);
+    redirectToClients(
+      `Could not delete because linked quotation data still exists in quotation_sections: ${sectionsReadError.message}`,
+      { tab: "archive" },
+    );
+  }
+
+  const sectionIds = (sections ?? []).map((section) => section.id);
+
+  const deleteSteps: Array<{
+    label: string;
+    run: () => Promise<{ error: { message: string } | null }>;
+  }> = [
+    {
+      label: "quotation_presentations",
+      run: async () => await supabase.from("quotation_presentations").delete().in("quotation_id", quotationIds),
+    },
+    {
+      label: "quotation_procurement_rfqs",
+      run: async () => await supabase.from("quotation_procurement_rfqs").delete().in("quotation_id", quotationIds),
+    },
+    {
+      label: "quotation_purchase_orders",
+      run: async () => await supabase.from("quotation_purchase_orders").delete().in("quotation_id", quotationIds),
+    },
+    {
+      label: "quotation_order_confirmations",
+      run: async () => await supabase.from("quotation_order_confirmations").delete().in("quotation_id", quotationIds),
+    },
+    {
+      label: "audit_activity_log",
+      run: async () => await supabase
+        .from("audit_activity_log")
+        .delete()
+        .in("parent_entity_id", quotationIds)
+        .eq("parent_entity_type", "quotation"),
+    },
+    {
+      label: "audit_activity_log",
+      run: async () => await supabase
+        .from("audit_activity_log")
+        .delete()
+        .in("entity_id", quotationIds)
+        .eq("entity_type", "quotation"),
+    },
+    {
+      label: "quotation_items",
+      run: async () => sectionIds.length
+        ? supabase.from("quotation_items").delete().in("section_id", sectionIds)
+        : Promise.resolve({ error: null }),
+    },
+    {
+      label: "quotation_items",
+      run: async () => await supabase.from("quotation_items").delete().in("quotation_id", quotationIds),
+    },
+    {
+      label: "quotation_sections",
+      run: async () => await supabase.from("quotation_sections").delete().in("quotation_id", quotationIds),
+    },
+    {
+      label: "quotations",
+      run: async () => await supabase.from("quotations").delete().eq("project_id", projectId),
+    },
+  ];
+
+  for (const step of deleteSteps) {
+    const { error } = await step.run();
+
+    if (error) {
+      console.error(`PROJECT DELETE ${step.label.toUpperCase()} ERROR`, error.message);
+      redirectToClients(
+        `Could not delete because linked quotation data still exists in ${step.label}: ${error.message}`,
+        { tab: "archive" },
+      );
+    }
+  }
+}
+
+export async function permanentlyDeleteProjectAndLinkedQuotations(formData: FormData) {
+  await requireRecordsManager();
+  const id = textValue(formData, "id");
+  const confirmationText = textValue(formData, "confirmation_text");
+
+  if (!id) {
+    redirectToClients("Project id is required.", { tab: "archive" });
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: project, error: projectError } = await supabase
+    .from("projects")
+    .select("id,project_name,is_active")
+    .eq("id", id)
+    .maybeSingle<{ id: string; is_active: boolean; project_name: string }>();
+
+  if (projectError) {
+    console.error("PROJECT CASCADE DELETE READ ERROR", projectError.message);
+    redirectToClients("Project could not be loaded for deletion.", { tab: "archive" });
+  }
+
+  if (!project) {
+    redirectToClients("Project could not be deleted because it was not found.", { tab: "archive" });
+  }
+
+  if (confirmationText !== project.project_name && confirmationText !== "DELETE PROJECT") {
+    redirectToClients("Type the project name exactly or DELETE PROJECT to continue.", { tab: "archive" });
+  }
+
+  if (project.is_active) {
+    redirectToClients("Archive this project before permanently deleting it.", { tab: "archive" });
+  }
+
+  const { data: quotations, error: quotationsError } = await supabase
+    .from("quotations")
+    .select("id")
+    .eq("project_id", id)
+    .returns<Array<{ id: string }>>();
+
+  if (quotationsError) {
+    console.error("PROJECT CASCADE DELETE QUOTATIONS READ ERROR", quotationsError.message);
+    redirectToClients("Linked quotations could not be loaded for deletion.", { tab: "archive" });
+  }
+
+  const quotationIds = (quotations ?? []).map((quotation) => quotation.id);
+
+  await deleteQuotationsByIds(quotationIds, id, supabase);
+
+  const { error: projectAuditError } = await supabase
+    .from("audit_activity_log")
+    .delete()
+    .eq("entity_type", "project")
+    .eq("entity_id", id);
+
+  if (projectAuditError) {
+    console.error("PROJECT CASCADE DELETE PROJECT AUDIT ERROR", projectAuditError.message);
+    redirectToClients(
+      `Could not delete because linked quotation data still exists in audit_activity_log: ${projectAuditError.message}`,
+      { tab: "archive" },
+    );
+  }
+
+  const { error: deleteProjectError } = await supabase
+    .from("projects")
+    .delete()
+    .eq("id", id)
+    .eq("is_active", false);
+
+  if (deleteProjectError) {
+    console.error("PROJECT CASCADE DELETE ERROR", deleteProjectError.message);
+    redirectToClients(
+      `Project could not be permanently deleted: ${deleteProjectError.message}`,
+      { tab: "archive" },
+    );
+  }
+
+  revalidatePath("/clients");
+  revalidatePath("/quotations");
+  revalidatePath(`/clients/projects/${id}`);
+  quotationIds.forEach((quotationId) => {
+    revalidatePath(`/quotations/${quotationId}`);
+    revalidatePath(`/quotations/${quotationId}/builder`);
+    revalidatePath(`/quotations/${quotationId}/local-builder`);
+    revalidatePath(`/quotations/${quotationId}/procurement-rfq`);
+    revalidatePath(`/quotations/${quotationId}/purchase-order`);
+    revalidatePath(`/quotations/${quotationId}/order-confirmation`);
+    revalidatePath(`/quotations/${quotationId}/presentation`);
+    revalidatePath(`/quotations/${quotationId}/specification`);
+  });
+  redirectToClients("Project and linked quotations were permanently deleted.", { tab: "archive" });
+}
+
 export async function deactivateClient(formData: FormData) {
   await requireRecordsManager();
   const id = textValue(formData, "id");
