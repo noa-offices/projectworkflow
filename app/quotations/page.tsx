@@ -33,6 +33,7 @@ type Project = {
   id: string;
   client_id: string;
   project_name: string;
+  project_number: string | null;
   project_code: string | null;
   project_year: number | null;
 };
@@ -147,7 +148,14 @@ function QuotationForm({ clients, projects }: { clients: Client[]; projects: Pro
     <form action={createQuotation} className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       <ProjectSelectByClient clients={clients} projects={projects} />
       <Field name="title" label="Title" required />
-      <Field name="quotation_no" label="Quotation no" />
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Project / Quote No.</span>
+        <input
+          value="Generated automatically from the selected project"
+          readOnly
+          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-500 outline-none"
+        />
+      </label>
       <Field name="quotation_date" label="Quotation date" type="date" defaultValue={new Date().toISOString().slice(0, 10)} />
       <label className="block">
         <span className="text-xs font-semibold uppercase text-zinc-500">Layout Mode</span>
@@ -207,7 +215,7 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
 
   const { data: projects, error: projectsError } = await supabase
     .from("projects")
-    .select("id,client_id,project_name,project_code,project_year")
+    .select("id,client_id,project_name,project_number,project_code,project_year")
     .order("project_name", { ascending: true })
     .returns<Project[]>();
 
@@ -245,6 +253,7 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
           quotation.title,
           clientName,
           project?.project_name,
+          project?.project_number,
           project?.project_code,
           project?.project_year,
         ],
@@ -363,7 +372,7 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
               <table className="w-full min-w-[1040px] text-left text-sm">
                 <thead>
                   <tr className="border-b border-zinc-200 text-xs font-semibold uppercase text-zinc-500">
-                    <th className="py-3 pr-4">Quotation No</th>
+                    <th className="py-3 pr-4">Project / Quote No</th>
                     <th className="py-3 pr-4">Title</th>
                     <th className="py-3 pr-4">Client</th>
                     <th className="py-3 pr-4">Project</th>

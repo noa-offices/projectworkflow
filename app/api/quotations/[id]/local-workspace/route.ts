@@ -369,7 +369,6 @@ export async function POST(
     const { error: updateQuotationError } = await supabase
       .from("quotations")
       .update({
-        quotation_no: textOrNull(workspace.quotation_no),
         quotation_date: textOrNull(workspace.quotation_date),
         title: workspace.title,
         status: workspace.status,

@@ -3322,7 +3322,7 @@ export function QuotationPresentation({
                         ) : null}
                       </div>
                       <div className="grid gap-3 self-end">
-                        <MetaCard label="Quotation No." value={quotation.quotation_no} />
+                        <MetaCard label="Project / Quote No." value={quotation.quotation_no} />
                         <MetaCard label="Date" value={formatPresentationDate(quotation.quotation_date)} />
                       </div>
                     </div>
@@ -3692,7 +3692,7 @@ export function QuotationPresentation({
                       <div className="grid h-full grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto] items-start gap-x-6 gap-y-1">
                         <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Prepared By</p>
                         {quotation.quotation_no ? (
-                          <p className="text-right text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Quotation No.</p>
+                          <p className="text-right text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">Project / Quote No.</p>
                         ) : (
                           <div />
                         )}
@@ -3735,7 +3735,7 @@ export function QuotationPresentation({
                   <div className="grid grid-cols-[1.1fr_0.9fr] gap-10 border-t border-zinc-200 pt-8">
                     <div />
                     <div className="grid gap-3 self-end">
-                      {quotation.quotation_no ? <MetaCard label="Quotation No." value={quotation.quotation_no} /> : null}
+                      {quotation.quotation_no ? <MetaCard label="Project / Quote No." value={quotation.quotation_no} /> : null}
                       {quotation.quotation_date ? <MetaCard label="Date" value={formatPresentationDate(quotation.quotation_date)} /> : null}
                     </div>
                   </div>

@@ -9,6 +9,7 @@ import {
   normalizeImageDisplaySettings,
   type ImageDisplaySettings,
 } from "@/lib/image-display-settings";
+import { formatProjectReferenceWithYearDisplay } from "@/lib/project-reference";
 import {
   formatBrandOriginSupplier,
   specificationWithoutDuplicateCode,
@@ -30,6 +31,7 @@ type Client = {
 type Project = {
   id: string;
   project_name: string;
+  project_number: string | null;
   project_year: number | null;
   project_code: string | null;
   location: string | null;
@@ -970,7 +972,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
         .single<Client>(),
       supabase
         .from("projects")
-        .select("id,project_name,project_year,project_code,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
+        .select("id,project_name,project_number,project_year,project_code,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
         .eq("id", quotation.project_id)
         .single<Project>(),
       supabase
@@ -1263,7 +1265,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
                 </dl>
                 <dl className="grid content-start gap-7">
                   <InfoLine label="Project" value={project?.project_name ?? "Unknown project"} />
-                  <InfoLine label="Project No. / Year" value={[project?.project_code, project?.project_year].filter(Boolean).join(" / ")} />
+                  <InfoLine label="Project No. / Year" value={formatProjectReferenceWithYearDisplay(project)} />
                   <InfoLine label="Project Address" value={project?.project_address} />
                 </dl>
               </div>

@@ -10,6 +10,7 @@ import {
   normalizeImageDisplaySettings,
   type ImageDisplaySettings,
 } from "@/lib/image-display-settings";
+import { formatProjectReferenceWithYearDisplay } from "@/lib/project-reference";
 import { QuotationImageFrame } from "@/components/quotations/quotation-image-frame";
 import {
   formatBrandOriginSupplier,
@@ -32,6 +33,7 @@ type Client = {
 type Project = {
   id: string;
   project_name: string;
+  project_number: string | null;
   project_year: number | null;
   project_code: string | null;
   location: string | null;
@@ -798,7 +800,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
         .single<Client>(),
       supabase
         .from("projects")
-        .select("id,project_name,project_year,project_code,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
+        .select("id,project_name,project_number,project_year,project_code,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
         .eq("id", quotation.project_id)
         .single<Project>(),
       supabase
@@ -1011,7 +1013,7 @@ export default async function QuotationPdfPage({ params }: QuotationPdfPageProps
               <InfoLine label="Client" value={client?.company_name ?? "Unknown client"} />
               <InfoLine label="Project" value={project?.project_name ?? "Unknown project"} />
               <InfoLine label="Location" value={project?.location} />
-              <InfoLine label="Project No. / Year" value={[project?.project_code, project?.project_year].filter(Boolean).join(" / ")} />
+              <InfoLine label="Project No. / Year" value={formatProjectReferenceWithYearDisplay(project)} />
               <InfoLine label="Attention / Contact" value={projectContactLine(project)} />
               <InfoLine label="Project Address" value={project?.project_address} />
             </dl>

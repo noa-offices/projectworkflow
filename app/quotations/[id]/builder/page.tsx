@@ -56,6 +56,7 @@ import {
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
+import { formatProjectReferenceDisplay } from "@/lib/project-reference";
 import {
   formatBrandOriginSupplier,
   specificationWithoutDuplicateCode,
@@ -104,6 +105,8 @@ type Client = { id: string; company_name: string };
 type Project = {
   id: string;
   project_name: string;
+  project_number: string | null;
+  project_code: string | null;
   project_year: number | null;
   location: string | null;
   attention_to: string | null;
@@ -3142,7 +3145,7 @@ export default async function QuotationBuilderPage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id,project_name,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
+    .select("id,project_name,project_number,project_code,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
     .eq("id", quotation.project_id)
     .single<Project>();
 
@@ -3749,7 +3752,11 @@ export default async function QuotationBuilderPage({
               <SheetInfo label="Attn" value={project?.attention_to} />
               <SheetInfo
                 label="Project"
-                value={[project?.project_name, project?.project_year, project?.location].filter(Boolean).join(" - ")}
+                value={[
+                  project?.project_name,
+                  formatProjectReferenceDisplay(project),
+                  project?.location,
+                ].filter(Boolean).join(" - ")}
               />
               <SheetInfo label="PO Box" value={project?.po_box} />
               <SheetInfo label="Mob" value={project?.attention_mobile} />

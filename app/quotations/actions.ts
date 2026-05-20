@@ -11,6 +11,7 @@ import {
 import { createAuditLog } from "@/lib/audit-log";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import {
+  buildQuotationDocumentNumber,
   quotationOptionLabel,
   quotationOptionNoFromQuotationNo,
   quotationRevisionBaseNo,
@@ -1882,12 +1883,12 @@ export async function createQuotation(formData: FormData) {
 
     const { data: project, error: projectError } = await supabase
       .from("projects")
-      .select("id,client_id,project_name,project_code")
+      .select("id,client_id,project_name,project_number")
       .eq("id", payload.project_id)
       .maybeSingle<{
         id: string;
         client_id: string;
-        project_code: string | null;
+        project_number: string | null;
         project_name: string | null;
       }>();
 
@@ -1914,7 +1915,11 @@ export async function createQuotation(formData: FormData) {
     }
 
     payload.title = payload.title || safeProjectQuotationTitle(project.project_name);
-    payload.quotation_no = payload.quotation_no || safeProjectQuotationNo(project.project_code);
+    payload.quotation_no = buildQuotationDocumentNumber({
+      projectNumber: project.project_number,
+      optionNo: 1,
+      revisionNo: 0,
+    }) || safeProjectQuotationNo(project.project_number);
 
     if (payload.quotation_no) {
       const { data: duplicateQuotation, error: duplicateQuotationError } = await supabase
@@ -1938,7 +1943,7 @@ export async function createQuotation(formData: FormData) {
         const duplicateMessage =
           duplicateQuotation.client_id === payload.client_id &&
           duplicateQuotation.project_id === payload.project_id
-            ? "Quotation number already exists for this project."
+            ? "This project already has a quotation number. Create a revision or option from the project screen."
             : "Could not create quotation because this quotation number already exists.";
         redirectQuotationCreateError(formData, redirectPath, duplicateMessage);
       }
@@ -2559,7 +2564,7 @@ function baseRevisionTitle(title: string) {
 }
 
 function baseOptionTitle(title: string) {
-  return baseRevisionTitle(title).replace(/\s+-\s+Option\s+\d+$/i, "").trim();
+  return baseRevisionTitle(title).replace(/\s+-\s+Option\s+[A-Z0-9]+$/i, "").trim();
 }
 
 type QuotationRevisionChainMember = {
@@ -2595,7 +2600,11 @@ function normalizedOptionNo(quotation: Pick<ProjectQuotationOptionMember, "optio
 }
 
 function optionQuotationNo(baseNo: string, optionNo: number) {
-  return optionNo > 1 ? `${baseNo} ${quotationOptionLabel(optionNo)}` : baseNo;
+  return buildQuotationDocumentNumber({
+    projectNumber: baseNo,
+    optionNo,
+    revisionNo: 0,
+  }) ?? baseNo;
 }
 
 async function resolveProjectOptionBaseNo({
@@ -2626,9 +2635,9 @@ async function resolveProjectOptionBaseNo({
 
   const { data: project, error: projectError } = await supabase
     .from("projects")
-    .select("project_code")
+    .select("project_number")
     .eq("id", projectId)
-    .maybeSingle<{ project_code: string | null }>();
+    .maybeSingle<{ project_number: string | null }>();
 
   if (projectError) {
     console.error("PROJECT QUOTATION BASE READ ERROR", projectError.message);
@@ -2640,7 +2649,7 @@ async function resolveProjectOptionBaseNo({
   const baseNo =
     quotationRootBaseNo(sourceQuotationNo) ??
     siblingBaseNo ??
-    project?.project_code?.trim() ??
+    project?.project_number?.trim() ??
     null;
 
   return {
@@ -2776,7 +2785,11 @@ async function copyQuotation(
     );
     const nextRevisionNo = highestRevisionNo + 1;
     title = `${baseRevisionTitle(source.title)} Rev ${nextRevisionNo}`;
-    quotationNo = `${chainInfo.baseNo}-R${nextRevisionNo}`;
+    quotationNo = buildQuotationDocumentNumber({
+      projectNumber: chainInfo.baseNo,
+      optionNo: Math.max(chainInfo.sourceQuotation.option_no || source.option_no || 1, 1),
+      revisionNo: nextRevisionNo,
+    });
     optionNo = Math.max(chainInfo.sourceQuotation.option_no || source.option_no || 1, 1);
     revisionNo = nextRevisionNo;
   }

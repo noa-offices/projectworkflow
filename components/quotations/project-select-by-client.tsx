@@ -11,6 +11,7 @@ type ProjectOption = {
   id: string;
   client_id: string;
   project_name: string;
+  project_number: string | null;
   project_code: string | null;
   project_year: number | null;
 };
@@ -60,7 +61,7 @@ export function ProjectSelectByClient({
           {visibleProjects.map((project) => (
             <option key={project.id} value={project.id}>
               {project.project_name}
-              {project.project_code ? ` - ${project.project_code}` : ""}
+              {project.project_number ? ` - ${project.project_number}` : project.project_code ? ` - ${project.project_code}` : ""}
               {project.project_year ? ` (${project.project_year})` : ""}
             </option>
           ))}

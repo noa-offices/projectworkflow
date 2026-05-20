@@ -46,6 +46,7 @@ type ClientsPageProps = {
 type Client = {
   id: string;
   company_name: string;
+  client_number: string | null;
   client_code: string | null;
   contact_person: string | null;
   email: string | null;
@@ -62,6 +63,8 @@ type Client = {
 type Project = {
   id: string;
   client_id: string;
+  project_number: string | null;
+  project_sequence: number | null;
   project_name: string;
   project_year: number | null;
   project_code: string | null;
@@ -215,7 +218,7 @@ function quoteNoLabel(quotation?: ProjectQuotation) {
 
 // TODO: Future phase: auto-generate project numbers by year/company sequence.
 function projectNoLabel(project: Project) {
-  return project.project_code ?? "-";
+  return project.project_number ?? project.project_code ?? "-";
 }
 
 function TextInput({
@@ -314,9 +317,19 @@ function ClientForm({ client }: { client?: Client }) {
       />
       <TextInput
         name="client_code"
-        label="Client code"
+        label="Legacy client code"
         defaultValue={client?.client_code}
       />
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">
+          Client No.
+        </span>
+        <input
+          value={client?.client_number ?? "Generated automatically after save"}
+          readOnly
+          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-500 outline-none"
+        />
+      </label>
       <TextInput
         name="contact_person"
         label="Contact person"
@@ -430,9 +443,19 @@ function ProjectForm({
       />
       <TextInput
         name="project_code"
-        label="Project code"
+        label="Legacy project code"
         defaultValue={project?.project_code}
       />
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">
+          Project / Quote No.
+        </span>
+        <input
+          value={project?.project_number ?? "Generated automatically after save"}
+          readOnly
+          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-500 outline-none"
+        />
+      </label>
       <TextInput name="location" label="Location" defaultValue={project?.location} />
       <TextInput
         name="consultant"
@@ -524,7 +547,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
   const { data: clients, error: clientsError } = await supabase
     .from("clients")
     .select(
-      "id,company_name,client_code,contact_person,email,phone,website,address,city,country,trn,notes,is_active",
+      "id,company_name,client_number,client_code,contact_person,email,phone,website,address,city,country,trn,notes,is_active",
     )
     .order("company_name", { ascending: true })
     .returns<Client[]>();
@@ -532,7 +555,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
   const { data: projects, error: projectsError } = await supabase
     .from("projects")
     .select(
-      "id,client_id,project_name,project_year,project_code,location,consultant,contractor,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address,project_status,notes,is_active,created_at",
+      "id,client_id,project_name,project_number,project_sequence,project_year,project_code,location,consultant,contractor,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address,project_status,notes,is_active,created_at",
     )
     .order("created_at", { ascending: false })
     .returns<Project[]>();
@@ -645,6 +668,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
       matchesSearch(
         [
           project.project_name,
+          project.project_number,
           project.project_year ? String(project.project_year) : null,
           project.project_code,
           project.location,
@@ -687,6 +711,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
         [
           client.company_name,
           client.client_code,
+          client.client_number,
           client.contact_person,
           client.email,
           client.phone,
@@ -1150,7 +1175,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                       </div>
                       <div>
                         <dt className="text-xs font-semibold uppercase text-zinc-400">Code / Year</dt>
-                        <dd>{selectedProject.project_code ?? "-"} / {selectedProject.project_year ?? "-"}</dd>
+                        <dd>{selectedProject.project_number ?? selectedProject.project_code ?? "-"} / {selectedProject.project_year ?? "-"}</dd>
                       </div>
                       <div>
                         <dt className="text-xs font-semibold uppercase text-zinc-400">Location</dt>

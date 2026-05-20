@@ -61,6 +61,7 @@ type Client = {
 type Project = {
   id: string;
   client_id: string;
+  project_number: string | null;
   project_name: string;
   project_year: number | null;
   project_code: string | null;
@@ -243,12 +244,10 @@ function NewQuotationForm({
   };
   project: Project;
 }) {
-  const projectCode = project.project_code?.trim() ?? "";
+  const projectNumber = project.project_number?.trim() ?? project.project_code?.trim() ?? "";
   const rawProjectName = project.project_name?.trim() ?? "";
   const projectName = rawProjectName || "New quotation";
-  const quotationNoValue = defaultValues?.quotation_no ?? projectCode;
   const titleValue = defaultValues?.title ?? projectName;
-  const quotationNoAutofilled = !defaultValues?.quotation_no && Boolean(projectCode);
   const titleAutofilled = !defaultValues?.title;
 
   return (
@@ -275,21 +274,21 @@ function NewQuotationForm({
         ) : null}
       </label>
       <label className="block">
-        <span className="text-xs font-semibold uppercase text-zinc-500">Quotation no</span>
+        <span className="text-xs font-semibold uppercase text-zinc-500">Project / Quote No.</span>
         <input
-          name="quotation_no"
-          defaultValue={quotationNoValue}
-          className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+          value={projectNumber || "Generated automatically after project save"}
+          readOnly
+          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-500 outline-none"
         />
-        {quotationNoAutofilled ? (
+        {projectNumber ? (
           <span className="mt-1 block text-xs text-zinc-500">
-            Defaulted from project code.
+            Revisions and options will use this project number as the base document number.
           </span>
-        ) : !projectCode ? (
+        ) : (
           <span className="mt-1 block text-xs text-zinc-500">
-            Add project code to auto-fill quotation number.
+            Save the project first to generate its Project / Quote No.
           </span>
-        ) : null}
+        )}
       </label>
       <Field
         name="quotation_date"
@@ -409,7 +408,7 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
 
   const { data: project, error: projectError } = await supabase
     .from("projects")
-    .select("id,client_id,project_name,project_year,project_code,location,consultant,contractor,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address,project_status,notes,is_active")
+    .select("id,client_id,project_name,project_number,project_year,project_code,location,consultant,contractor,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address,project_status,notes,is_active")
     .eq("id", id)
     .single<Project>();
 
@@ -525,7 +524,7 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                   {project.project_name}
                 </h1>
                 <p className="mt-2 text-sm text-zinc-500">
-                  {[project.project_code, project.project_year, project.location]
+                  {[project.project_number ?? project.project_code, project.project_year, project.location]
                     .filter(Boolean)
                     .join(" - ") || "Project folder"}
                 </p>
@@ -542,7 +541,7 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
             <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <InfoValue label="Client" value={client?.company_name} />
               <InfoValue label="Project year" value={project.project_year} />
-              <InfoValue label="Project code" value={project.project_code} />
+              <InfoValue label="Project / Quote No." value={project.project_number ?? project.project_code} />
               <InfoValue label="Location" value={project.location} />
               <InfoValue label="Attention" value={project.attention_to} />
               <InfoValue label="Mobile" value={project.attention_mobile} />
@@ -607,7 +606,7 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
               <table className="w-full min-w-[820px] text-left text-sm">
                 <thead>
                   <tr className="border-b border-zinc-200 text-xs font-semibold uppercase text-zinc-500">
-                    <th className="py-3 pr-4">Quotation No</th>
+                    <th className="py-3 pr-4">Project / Quote No</th>
                     <th className="py-3 pr-4">Title</th>
                     <th className="py-3 pr-4">Date</th>
                     <th className="py-3 pr-4">Status</th>

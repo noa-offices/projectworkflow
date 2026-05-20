@@ -1017,7 +1017,7 @@ export async function exportQuotationPresentationPptx(data: LoadedQuotationPrese
         addMetaField(slide, "Prepared By", coverPreparedBy, 4.15, 5.72, 1.7);
       }
       if (data.quotation.quotation_no) {
-        addMetaCard(slide, "Quotation No.", data.quotation.quotation_no, 6.0, 5.88, 1.95);
+        addMetaCard(slide, "Project / Quote No.", data.quotation.quotation_no, 6.0, 5.88, 1.95);
       }
       if (data.quotation.quotation_date) {
         addMetaCard(slide, "Date", data.quotation.quotation_date, 6.0, 6.61, 1.95);

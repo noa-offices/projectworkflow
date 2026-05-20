@@ -114,8 +114,11 @@ export type ServerQuotationWorkspaceSource = {
   quotation: {
     id: string;
     client_id: string;
+    legacy_reference?: string | null;
+    option_no?: number | null;
     project_id: string;
     quotation_no: string | null;
+    revision_no?: number | null;
     title: string;
     status: string;
     quotation_date: string;
@@ -347,6 +350,35 @@ export function createWorkspaceFromServerSnapshot(source: ServerQuotationWorkspa
   };
 
   return recalculateWorkspace(workspace);
+}
+
+export function syncWorkspaceWithServerSnapshot(
+  workspace: LocalQuotationWorkspace,
+  source: ServerQuotationWorkspaceSource,
+): LocalQuotationWorkspace {
+  const serverWorkspace = createWorkspaceFromServerSnapshot(source);
+  const serverProjectSnapshot = (source.project ?? {}) as Record<string, unknown>;
+  const currentProjectSnapshot = (workspace.project_snapshot ?? {}) as Record<string, unknown>;
+  const currentClientSnapshot = (workspace.client_snapshot ?? {}) as Record<string, unknown>;
+
+  return recalculateWorkspace({
+    ...workspace,
+    server_quotation_id: serverWorkspace.server_quotation_id,
+    project_id: serverWorkspace.project_id,
+    client_id: serverWorkspace.client_id,
+    quotation_no: serverWorkspace.quotation_no,
+    header_snapshot: serverWorkspace.header_snapshot,
+    project_snapshot: {
+      ...currentProjectSnapshot,
+      ...(serverProjectSnapshot.project_number !== undefined ? { project_number: serverProjectSnapshot.project_number } : {}),
+      ...(serverProjectSnapshot.project_code !== undefined ? { project_code: serverProjectSnapshot.project_code } : {}),
+      ...(serverProjectSnapshot.project_year !== undefined ? { project_year: serverProjectSnapshot.project_year } : {}),
+    },
+    client_snapshot: {
+      ...currentClientSnapshot,
+      ...(source.client && "company_name" in source.client ? { company_name: source.client.company_name } : {}),
+    },
+  });
 }
 
 export function createEmptySection(workspace: LocalQuotationWorkspace, sectionKind: "main" | "sub", parentSectionId?: string | null): LocalQuotationSection {

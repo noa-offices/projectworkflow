@@ -28,8 +28,11 @@ type PageProps = {
 type Quotation = {
   id: string;
   client_id: string;
+  legacy_reference: string | null;
+  option_no: number | null;
   project_id: string;
   quotation_no: string | null;
+  revision_no: number | null;
   title: string;
   status: string;
   quotation_date: string;
@@ -45,6 +48,8 @@ type Client = { id: string; company_name: string };
 type Project = {
   id: string;
   project_name: string | null;
+  project_number: string | null;
+  project_code: string | null;
   project_year: string | null;
   location: string | null;
   attention_to: string | null;
@@ -66,7 +71,7 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
 
   const { data: quotation, error: quotationError } = await supabase
     .from("quotations")
-    .select("id,client_id,project_id,quotation_no,title,status,quotation_date,currency,vat_percent,layout_mode,layout_settings,overall_discount_type,overall_discount_value")
+    .select("id,client_id,project_id,quotation_no,legacy_reference,option_no,revision_no,title,status,quotation_date,currency,vat_percent,layout_mode,layout_settings,overall_discount_type,overall_discount_value")
     .eq("id", id)
     .single<Quotation>();
 
@@ -80,7 +85,7 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id,project_name,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
+    .select("id,project_name,project_number,project_code,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
     .eq("id", quotation.project_id)
     .maybeSingle<Project>();
 

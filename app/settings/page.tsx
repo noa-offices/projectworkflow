@@ -2,7 +2,7 @@ import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { TopBar } from "@/components/top-bar";
-import { updateCompanySettings } from "@/app/settings/actions";
+import { resetTestData, updateCompanySettings } from "@/app/settings/actions";
 import { requireActiveUser } from "@/lib/auth";
 import { getCompanyProfile, getCompanySettingsRecord, companyAddressLines } from "@/lib/company-profile";
 import { createClient } from "@/lib/supabase/server";
@@ -213,6 +213,37 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                   </div>
                 </div>
               </section>
+
+              {profile?.role === "system_owner" && process.env.NODE_ENV !== "production" ? (
+                <section className="rounded-lg border border-red-200 bg-white p-5 shadow-sm">
+                  <h2 className="text-base font-semibold text-zinc-950">Danger Zone</h2>
+                  <p className="mt-2 text-sm leading-6 text-zinc-600">
+                    Reset test data in non-production. This deletes projects, linked quotations,
+                    quotation items, quotation sections, presentation/RFQ/PO/order confirmation settings,
+                    and linked audit rows. It does not delete clients, product templates, brands,
+                    materials, company settings, or users.
+                  </p>
+                  <form action={resetTestData} className="mt-4 grid gap-3">
+                    <label className="block">
+                      <span className="text-xs font-semibold uppercase text-zinc-500">
+                        Type RESET TEST DATA
+                      </span>
+                      <input
+                        name="confirmation_text"
+                        className="mt-1 h-10 w-full rounded-md border border-red-200 px-3 text-sm outline-none transition focus:border-red-500 focus:ring-2 focus:ring-red-500/10"
+                      />
+                    </label>
+                    <div className="flex justify-end">
+                      <PendingSubmitButton
+                        className="rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
+                        pendingLabel="Resetting test data..."
+                      >
+                        Reset test data
+                      </PendingSubmitButton>
+                    </div>
+                  </form>
+                </section>
+              ) : null}
             </div>
           </div>
         </main>

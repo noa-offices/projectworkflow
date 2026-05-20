@@ -31,11 +31,16 @@ import {
   orderedItems,
   orderedSections,
   recalculateWorkspace,
+  syncWorkspaceWithServerSnapshot,
   workspaceItemDisplayPricing,
   type LocalQuotationItem,
   type LocalQuotationSection,
   type LocalQuotationWorkspace,
 } from "@/lib/local/quotation-workspace";
+import {
+  formatProjectReferenceDisplay,
+  formatQuotationDocumentNumberDisplay,
+} from "@/lib/project-reference";
 import {
   formatBrandOriginSupplier,
   specificationWithoutDuplicateCode,
@@ -1522,8 +1527,18 @@ export function LocalQuotationBuilder({
   const historyGroupRef = useRef<{ key: string; timestamp: number } | null>(null);
   const clientSnapshot = (workspace.client_snapshot ?? {}) as Record<string, unknown>;
   const projectSnapshot = (workspace.project_snapshot ?? {}) as Record<string, unknown>;
+  const quotationSnapshot = ((workspace.header_snapshot ?? {}) as { quotation?: Record<string, unknown> }).quotation ?? {};
   const currentClientName = clientName || stringValue(clientSnapshot, "company_name") || "Unknown client";
   const currentProjectName = stringValue(projectSnapshot, "project_name") || projectName || "Unknown project";
+  const currentDocumentNumber = formatQuotationDocumentNumberDisplay({
+    quotation_no: workspace.quotation_no,
+    legacy_reference: stringValue(quotationSnapshot, "legacy_reference"),
+    option_no: tableNumberValue(quotationSnapshot.option_no) || undefined,
+    revision_no: tableNumberValue(quotationSnapshot.revision_no) || undefined,
+    project_number: stringValue(projectSnapshot, "project_number"),
+    project_code: stringValue(projectSnapshot, "project_code"),
+    project_year: stringValue(projectSnapshot, "project_year"),
+  });
   const workspaceSignature = useMemo(() => stableSerialize(workspace), [workspace]);
 
   useEffect(() => {
@@ -1535,8 +1550,9 @@ export function LocalQuotationBuilder({
       if (cancelled) return;
 
       if (existing) {
-        lastPersistedSignatureRef.current = stableSerialize(existing);
-        setWorkspace(existing);
+        const syncedWorkspace = syncWorkspaceWithServerSnapshot(existing, initialWorkspace);
+        lastPersistedSignatureRef.current = stableSerialize(syncedWorkspace);
+        setWorkspace(syncedWorkspace);
         setHistoryPast([]);
         setHistoryFuture([]);
         historyGroupRef.current = null;
@@ -2177,7 +2193,7 @@ export function LocalQuotationBuilder({
       copied_at: localNow(),
       source_item_id: source.source_item_id ?? source.id,
       source_quotation_id: workspace.server_quotation_id,
-      source_quotation_label: workspace.quotation_no || workspace.title || currentProjectName,
+      source_quotation_label: currentDocumentNumber || workspace.title || currentProjectName,
       source_section_id: source.section_id,
       row_snapshot: cloneUnknown(source),
     };
@@ -2353,7 +2369,7 @@ export function LocalQuotationBuilder({
     const href = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = href;
-    anchor.download = `${workspace.quotation_no ?? workspace.server_quotation_id}-local-backup.json`;
+    anchor.download = `${currentDocumentNumber ?? workspace.server_quotation_id}-local-backup.json`;
     anchor.click();
     URL.revokeObjectURL(href);
   }
@@ -2361,14 +2377,14 @@ export function LocalQuotationBuilder({
   async function importBackup(file: File) {
     const text = await file.text();
     const parsed = JSON.parse(text) as LocalQuotationWorkspace;
-    commit({
+    commit(syncWorkspaceWithServerSnapshot({
       ...parsed,
       local_id: workspace.local_id,
       server_quotation_id: workspace.server_quotation_id,
       project_id: workspace.project_id,
       client_id: workspace.client_id,
       quotation_no: workspace.quotation_no,
-    });
+    }, initialWorkspace));
   }
 
   function saveToSoftware() {
@@ -2894,7 +2910,7 @@ export function LocalQuotationBuilder({
             <div className="flex min-w-0 flex-wrap items-center gap-3">
               <Link href={`/clients/projects/${workspace.project_id}`} className="inline-flex h-9 items-center border border-zinc-300 px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Back</Link>
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-zinc-950">{workspace.quotation_no ?? "Draft quotation"} - {workspace.title}</p>
+                <p className="truncate text-sm font-semibold text-zinc-950">{currentDocumentNumber ?? "Draft quotation"} - {workspace.title}</p>
                 <p className="truncate text-xs text-zinc-500">{currentClientName} / {currentProjectName}</p>
               </div>
               <StatusBadge status={workspace.status} />
@@ -3730,7 +3746,7 @@ export function LocalQuotationBuilder({
             <div className="flex items-start justify-between gap-4 border-b border-zinc-300 bg-white px-4 py-3">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Quotation Details</p>
-                <p className="text-sm font-semibold text-zinc-950">{workspace.quotation_no ?? "Draft quotation"} / {currentProjectName}</p>
+                <p className="text-sm font-semibold text-zinc-950">{currentDocumentNumber ?? "Draft quotation"} / {currentProjectName}</p>
                 <p className="text-xs text-zinc-500">Client company name stays read-only here. Quotation and linked project details save back when you use Save to Software.</p>
               </div>
               <div className="flex items-center gap-2">
@@ -3760,8 +3776,9 @@ export function LocalQuotationBuilder({
                       <input value={currentClientName} readOnly className="h-8 border border-zinc-300 bg-zinc-50 px-2 text-xs text-zinc-500 outline-none" />
                     </label>
                     <label className="grid gap-1">
-                      <span className="text-[10px] font-semibold uppercase text-zinc-500">Quote No</span>
-                      <input value={workspace.quotation_no ?? ""} onChange={(event) => updateQuotationDetails({ quotation_no: cleanOptionalDetailValue(event.target.value) })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800" />
+                      <span className="text-[10px] font-semibold uppercase text-zinc-500">Project / Quote No</span>
+                      <input value={currentDocumentNumber ?? ""} readOnly className="h-8 border border-zinc-300 bg-zinc-50 px-2 text-xs text-zinc-700 outline-none" />
+                      <span className="text-[10px] text-zinc-500">Generated automatically from client/project numbering.</span>
                     </label>
                     <label className="grid gap-1">
                       <span className="text-[10px] font-semibold uppercase text-zinc-500">Date</span>
@@ -3872,7 +3889,18 @@ export function LocalQuotationBuilder({
               <div className="border-b border-zinc-300 px-3 py-2 text-center text-sm font-bold uppercase tracking-wide">Quotation</div>
               <SheetInfo label="Client" value={currentClientName} />
               <SheetInfo label="Attn" value={stringValue(projectSnapshot, "attention_to")} />
-              <SheetInfo label="Project" value={[currentProjectName, stringValue(projectSnapshot, "project_year"), stringValue(projectSnapshot, "location")].filter(Boolean).join(" - ")} />
+              <SheetInfo
+                label="Project"
+                value={[
+                  currentProjectName,
+                  formatProjectReferenceDisplay({
+                    project_number: stringValue(projectSnapshot, "project_number"),
+                    project_code: stringValue(projectSnapshot, "project_code"),
+                    project_year: stringValue(projectSnapshot, "project_year"),
+                  }),
+                  stringValue(projectSnapshot, "location"),
+                ].filter(Boolean).join(" - ")}
+              />
               <SheetInfo label="PO Box" value={stringValue(projectSnapshot, "po_box")} />
               <SheetInfo label="Mob" value={stringValue(projectSnapshot, "attention_mobile")} />
               <SheetInfo label="Tel" value={stringValue(projectSnapshot, "attention_landline")} />
@@ -3880,7 +3908,7 @@ export function LocalQuotationBuilder({
             </div>
             <div>
               <div className="border-b border-zinc-300 px-3 py-2 text-center text-sm font-bold uppercase tracking-wide">Reference</div>
-              <SheetInfo label="Quote No" value={workspace.quotation_no ?? "Draft"} />
+              <SheetInfo label="Project / Quote No" value={currentDocumentNumber ?? "Draft"} />
               <SheetInfo label="Date" value={workspace.quotation_date} />
               <SheetInfo label="Status" value={statusLabel(workspace.status)} />
               <SheetInfo label="Layout" value={layoutLabels.get(workspace.layout_mode) ?? workspace.layout_mode} />
