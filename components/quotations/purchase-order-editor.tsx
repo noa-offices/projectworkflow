@@ -3,7 +3,9 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useState, useTransition } from "react";
-import { QuotationImageFrame } from "@/components/quotations/quotation-image-frame";
+import { buildEffectiveDocumentGroups, type EffectiveDocumentGroup } from "@/lib/quotations/document-grouping";
+import { normalizePurchaseOrderCurrency, purchaseOrderCurrencies } from "@/lib/quotations/purchase-order-currency";
+import { PurchaseOrderDocument } from "@/components/quotations/purchase-order-document";
 import {
   DEFAULT_PURCHASE_ORDER_ITEM_OVERRIDE,
   DEFAULT_PURCHASE_ORDER_SUPPLIER_OVERRIDE,
@@ -63,6 +65,7 @@ type PurchaseOrderItem = {
   origin_snapshot: string | null;
   supplier_name_snapshot: string | null;
   qty: number;
+  currency: string;
   imageUrl: string | null;
 };
 
@@ -83,13 +86,7 @@ type PurchaseOrderEditorProps = {
   printMode: boolean;
 };
 
-type EffectiveGroup = {
-  dedupeKey: string;
-  displayLabel: string;
-  displayType: string;
-  keys: string[];
-  items: PurchaseOrderItem[];
-};
+type EffectiveGroup = EffectiveDocumentGroup<PurchaseOrderItem>;
 
 type PurchaseOrderPreviewItem = {
   item: PurchaseOrderItem;
@@ -124,14 +121,6 @@ function stringFromRecord(record: Record<string, unknown>, keys: string[]) {
   }
 
   return null;
-}
-
-function formatDate(value: string | null | undefined) {
-  if (!value) return "-";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric" }).format(date);
 }
 
 function compactSpecification(value: string | null | undefined) {
@@ -176,71 +165,8 @@ function documentItemTitle(item: Pick<PurchaseOrderItem, "item_name_snapshot" | 
   return item.item_name_snapshot || item.model_snapshot || item.item_code_snapshot || "Quotation Item";
 }
 
-function normalizeGroupName(value: string | null | undefined) {
-  return (value ?? "")
-    .replace(/\s+/g, " ")
-    .replace(/[^a-zA-Z0-9]/g, "")
-    .trim()
-    .toLowerCase();
-}
-
-function itemGroupInfo(item: Pick<PurchaseOrderItem, "supplier_name_snapshot" | "brand_name_snapshot">) {
-  const supplier = item.supplier_name_snapshot?.trim();
-  if (supplier) {
-    return { key: `supplier:${supplier}`, label: supplier, type: "Supplier" };
-  }
-
-  const brand = item.brand_name_snapshot?.trim();
-  if (brand) {
-    return { key: `brand:${brand}`, label: brand, type: "Brand" };
-  }
-
-  return { key: "unassigned", label: "Unassigned Supplier", type: "Unassigned Supplier" };
-}
-
 function buildEffectiveGroups(items: PurchaseOrderItem[]) {
-  const rawGroups = Array.from(
-    items.reduce((map, item) => {
-      const group = itemGroupInfo(item);
-      const existing = map.get(group.key);
-
-      if (existing) {
-        existing.items.push(item);
-        return map;
-      }
-
-      map.set(group.key, { ...group, items: [item] });
-      return map;
-    }, new Map<string, { key: string; label: string; type: string; items: PurchaseOrderItem[] }>()),
-  ).map(([, group]) => group);
-
-  const effectiveMap = new Map<string, EffectiveGroup>();
-
-  for (const group of rawGroups) {
-    const normalizedLabel = normalizeGroupName(group.label) || group.key;
-    const dedupeKey = normalizedLabel === "unassignedsupplier" ? "unassigned" : normalizedLabel;
-    const existing = effectiveMap.get(dedupeKey);
-
-    if (existing) {
-      existing.keys.push(group.key);
-      existing.items.push(...group.items);
-      if (existing.displayType !== "Supplier" && group.type === "Supplier") {
-        existing.displayType = "Supplier";
-        existing.displayLabel = group.label;
-      }
-      continue;
-    }
-
-    effectiveMap.set(dedupeKey, {
-      dedupeKey,
-      displayLabel: group.label,
-      displayType: group.type,
-      keys: [group.key],
-      items: [...group.items],
-    });
-  }
-
-  return Array.from(effectiveMap.values());
+  return buildEffectiveDocumentGroups(items);
 }
 
 function groupOrderForKeys(settings: QuotationPurchaseOrderSettings, groupKeys: string[]) {
@@ -281,13 +207,6 @@ function sectionContext(sectionId: string | null, sectionsById: Map<string, Purc
   };
 }
 
-function splitMultiline(value: string) {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
 function sanitizeSettingsForCompare(settings: QuotationPurchaseOrderSettings) {
   return JSON.stringify({
     documentDetails: settings.documentDetails,
@@ -320,17 +239,6 @@ function lineTotalFromOverride(override: PurchaseOrderItemOverride, quantity: nu
 
   const unitPrice = numericAmount(override.unitPrice);
   return unitPrice === null ? null : unitPrice * quantity;
-}
-
-function currencyAmount(value: number | null, currency: string) {
-  if (value === null) return "-";
-
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
 }
 
 function Field({
@@ -436,41 +344,6 @@ function SetupPanel({
   );
 }
 
-function BrandBlock({
-  companyDisplayName,
-  defaultLogoUrl,
-  logoDisplayMode,
-  showLogo,
-}: {
-  companyDisplayName: string;
-  defaultLogoUrl: string | null;
-  logoDisplayMode: PurchaseOrderDocumentDetails["logoDisplayMode"];
-  showLogo: boolean;
-}) {
-  const [logoFailed, setLogoFailed] = useState(false);
-  const shouldUseText = !showLogo || logoDisplayMode === "text_wordmark_fallback" || !defaultLogoUrl || logoFailed;
-
-  if (shouldUseText) {
-    return showLogo ? (
-      <div className="max-w-[180px] text-right">
-        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-900">{companyDisplayName || "Noa Offices"}</p>
-      </div>
-    ) : null;
-  }
-
-  return (
-    <div className="flex justify-end">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={defaultLogoUrl}
-        alt={companyDisplayName || "Noa Offices"}
-        className="max-h-[55px] max-w-[180px] w-auto object-contain"
-        onError={() => setLogoFailed(true)}
-      />
-    </div>
-  );
-}
-
 export function PurchaseOrderEditor({
   data,
   defaultLogoUrl,
@@ -491,6 +364,7 @@ export function PurchaseOrderEditor({
   const effectiveGroups = buildEffectiveGroups(data.items);
   const activeSupplierKey = settings.selectedSupplierKey || effectiveGroups[0]?.dedupeKey || "";
   const selectedGroup = effectiveGroups.find((group) => group.dedupeKey === activeSupplierKey) ?? effectiveGroups[0] ?? null;
+  const poCurrency = normalizePurchaseOrderCurrency(settings.documentDetails.currency);
   const selectedSupplier = selectedGroup
     ? effectiveSupplierOverride(settings, selectedGroup.keys)
     : DEFAULT_PURCHASE_ORDER_SUPPLIER_OVERRIDE;
@@ -523,6 +397,24 @@ export function PurchaseOrderEditor({
 
   const subtotal = previewItems.reduce((sum, item) => sum + (item.lineTotal ?? 0), 0);
   const hasPriceValues = previewItems.some((item) => item.unitPrice !== null || item.lineTotal !== null);
+  const documentItems = previewItems.map((entry) => {
+    const context = sectionContext(entry.item.section_id, sectionsById);
+    return {
+      id: entry.item.id,
+      description: entry.description,
+      context: (context.area || context.section) ? [context.area, context.section].filter(Boolean).join(" / ") : null,
+      code: entry.item.item_code_snapshot,
+      model: entry.item.model_snapshot,
+      brandOrigin: [entry.item.brand_name_snapshot, entry.item.origin_snapshot].filter(Boolean).join(" / ") || null,
+      specification: compactSpecification(entry.item.specification_snapshot),
+      finish: entry.finish,
+      quantity: entry.quantity,
+      remark: entry.remark,
+      imageUrl: entry.item.imageUrl,
+      lineTotal: entry.lineTotal,
+      unitPrice: entry.unitPrice,
+    };
+  });
 
   function updateDocumentDetails<K extends keyof PurchaseOrderDocumentDetails>(key: K, value: PurchaseOrderDocumentDetails[K]) {
     setSettings((current) => ({
@@ -663,12 +555,15 @@ export function PurchaseOrderEditor({
   return (
     <main className="min-h-screen bg-stone-100 px-4 py-6 print:bg-white print:px-0 print:py-0">
       <style>{`
-        @page { size: A4 landscape; margin: 10mm; }
+        @page { size: A4 landscape; margin: 0; }
         html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .doc-page + .doc-page { margin-top: 24px; }
         @media print {
           html, body { background: #ffffff; }
-          .po-table thead { display: table-header-group; }
-          .po-table tr, .po-terms, .po-signature { break-inside: avoid; page-break-inside: avoid; }
+          html, body { margin: 0 !important; padding: 0 !important; width: 297mm !important; background: #fff !important; }
+          .doc-page { break-after: page; page-break-after: always; margin: 0 !important; }
+          .doc-page:last-child { break-after: auto; page-break-after: auto; }
+          .doc-page + .doc-page { margin-top: 0 !important; }
         }
       `}</style>
 
@@ -696,6 +591,24 @@ export function PurchaseOrderEditor({
               {isDirty ? "You have unsaved PO changes." : "PO settings match latest saved version."}
             </div>
             {feedback ? <p className="mt-2 text-sm font-medium text-zinc-900">{feedback}</p> : null}
+            {effectiveGroups.length > 0 ? (
+              <div className="mt-4 max-w-md">
+                <label className="grid gap-1">
+                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Purchase Order For</span>
+                  <select
+                    value={activeSupplierKey}
+                    onChange={(event) => updateSupplierSelection(event.target.value)}
+                    className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+                  >
+                    {effectiveGroups.map((group) => (
+                      <option key={group.dedupeKey} value={group.dedupeKey}>
+                        {group.displayLabel}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -708,6 +621,18 @@ export function PurchaseOrderEditor({
                 <Field label="PO Title" value={settings.documentDetails.title} onChange={(value) => updateDocumentDetails("title", value)} />
                 <Field label="PO Number" value={settings.documentDetails.poNumber} onChange={(value) => updateDocumentDetails("poNumber", value)} />
                 <Field label="PO Date" type="date" value={settings.documentDetails.poDate} onChange={(value) => updateDocumentDetails("poDate", value)} />
+                <label className="grid gap-1">
+                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Currency</span>
+                  <select
+                    value={poCurrency}
+                    onChange={(event) => updateDocumentDetails("currency", event.target.value)}
+                    className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+                  >
+                    {purchaseOrderCurrencies.map((currency) => (
+                      <option key={currency.code} value={currency.code}>{currency.label}</option>
+                    ))}
+                  </select>
+                </label>
                 <Field label="Quotation Reference" value={settings.documentDetails.quotationReference} onChange={(value) => updateDocumentDetails("quotationReference", value)} />
                 <Field label="Project Display Name" value={settings.documentDetails.projectDisplayName} onChange={(value) => updateDocumentDetails("projectDisplayName", value)} />
                 <Field label="Client / Project Owner" value={settings.documentDetails.clientDisplayName} onChange={(value) => updateDocumentDetails("clientDisplayName", value)} />
@@ -906,173 +831,20 @@ export function PurchaseOrderEditor({
         </div>
       ) : null}
 
-      <section className="mx-auto w-[297mm] max-w-full rounded-2xl border border-zinc-200 bg-white px-6 py-6 shadow-[0_20px_60px_rgba(15,23,42,0.08)] print:w-auto print:max-w-none print:rounded-none print:border-0 print:px-0 print:py-0 print:shadow-none">
-        <header className="border-b border-zinc-200 pb-5">
-          <div className="flex items-start justify-between gap-6">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">
-                {settings.documentDetails.title || "Purchase Order"}
-              </p>
-              <h1 className="mt-2 text-2xl font-semibold text-zinc-950">{selectedSupplier.displayName || selectedGroup?.displayLabel || "Supplier"}</h1>
-              <p className="mt-1 text-sm text-zinc-500">{selectedGroup?.displayType ?? "Supplier"}</p>
-            </div>
-            <BrandBlock
-              companyDisplayName={settings.documentDetails.companyDisplayName}
-              defaultLogoUrl={defaultLogoUrl}
-              logoDisplayMode={settings.documentDetails.logoDisplayMode}
-              showLogo={settings.documentDetails.showLogo}
-            />
-          </div>
-          <div className="mt-4 grid gap-4 xl:grid-cols-[1.2fr_1fr_1fr]">
-            <div className="grid gap-2 text-xs text-zinc-600">
-              <p><span className="font-semibold text-zinc-900">Supplier:</span> {selectedSupplier.displayName || selectedGroup?.displayLabel || "-"}</p>
-              {selectedSupplier.contactPerson ? <p><span className="font-semibold text-zinc-900">Contact:</span> {selectedSupplier.contactPerson}</p> : null}
-              {selectedSupplier.phone ? <p><span className="font-semibold text-zinc-900">Phone:</span> {selectedSupplier.phone}</p> : null}
-              {selectedSupplier.email ? <p><span className="font-semibold text-zinc-900">Email:</span> {selectedSupplier.email}</p> : null}
-              {selectedSupplier.address ? <p><span className="font-semibold text-zinc-900">Address:</span> {selectedSupplier.address}</p> : null}
-              {selectedSupplier.trn ? <p><span className="font-semibold text-zinc-900">TRN:</span> {selectedSupplier.trn}</p> : null}
-              {selectedSupplier.deliveryContact ? <p><span className="font-semibold text-zinc-900">Delivery Contact:</span> {selectedSupplier.deliveryContact}</p> : null}
-            </div>
-            <div className="grid gap-2 text-xs text-zinc-600">
-              <p><span className="font-semibold text-zinc-900">PO No:</span> {settings.documentDetails.poNumber || "-"}</p>
-              <p><span className="font-semibold text-zinc-900">PO Date:</span> {formatDate(settings.documentDetails.poDate)}</p>
-              <p><span className="font-semibold text-zinc-900">Quotation Ref:</span> {settings.documentDetails.quotationReference || "-"}</p>
-              <p><span className="font-semibold text-zinc-900">Project:</span> {settings.documentDetails.projectDisplayName || data.project?.project_name || data.quotation.title}</p>
-              <p><span className="font-semibold text-zinc-900">Client:</span> {settings.documentDetails.clientDisplayName || data.client?.company_name || "-"}</p>
-            </div>
-            <div className="grid gap-2 text-xs text-zinc-600">
-              <p><span className="font-semibold text-zinc-900">Prepared By:</span> {settings.documentDetails.preparedBy || data.companyProfile.displayName || "Noa Offices"}</p>
-              <p><span className="font-semibold text-zinc-900">Company:</span> {settings.documentDetails.companyDisplayName || "Noa Offices"}</p>
-              {settings.documentDetails.phone ? <p><span className="font-semibold text-zinc-900">Phone:</span> {settings.documentDetails.phone}</p> : null}
-              {settings.documentDetails.email ? <p><span className="font-semibold text-zinc-900">Email:</span> {settings.documentDetails.email}</p> : null}
-              {settings.documentDetails.address ? <p><span className="font-semibold text-zinc-900">Address:</span> {settings.documentDetails.address}</p> : null}
-              {settings.documentDetails.trn ? <p><span className="font-semibold text-zinc-900">TRN / VAT:</span> {settings.documentDetails.trn}</p> : null}
-            </div>
-          </div>
-        </header>
-
-        <div className="mt-5 overflow-hidden border border-zinc-200">
-          <table className="po-table w-full border-collapse text-left text-[11px] text-zinc-700">
-            <thead className="bg-zinc-50 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
-              <tr>
-                <th className="w-[6%] border-b border-zinc-200 px-3 py-3">S.No</th>
-                {settings.columnVisibility.image ? <th className="w-[10%] border-b border-zinc-200 px-3 py-3">Image</th> : null}
-                <th className="border-b border-zinc-200 px-3 py-3">Description</th>
-                {settings.columnVisibility.size ? <th className="w-[12%] border-b border-zinc-200 px-3 py-3">Size</th> : null}
-                {settings.columnVisibility.finish ? <th className="w-[14%] border-b border-zinc-200 px-3 py-3">Finish</th> : null}
-                <th className="w-[8%] border-b border-zinc-200 px-3 py-3 text-center">Qty</th>
-                {settings.columnVisibility.unitPrice ? <th className="w-[12%] border-b border-zinc-200 px-3 py-3 text-right">Unit Price</th> : null}
-                {settings.columnVisibility.lineTotal ? <th className="w-[12%] border-b border-zinc-200 px-3 py-3 text-right">Total</th> : null}
-              </tr>
-            </thead>
-            <tbody>
-              {previewItems.map((entry, itemIndex) => {
-                const context = sectionContext(entry.item.section_id, sectionsById);
-                const specification = compactSpecification(entry.item.specification_snapshot);
-                const finishLines = splitMultiline(entry.finish);
-
-                return (
-                  <tr key={entry.item.id} className={itemIndex % 2 === 0 ? "bg-white" : "bg-zinc-50/50"}>
-                    <td className="align-top border-b border-zinc-200 px-3 py-3 text-xs font-semibold text-zinc-900">{String(itemIndex + 1).padStart(2, "0")}</td>
-                    {settings.columnVisibility.image ? (
-                      <td className="align-top border-b border-zinc-200 px-3 py-3">
-                        <div className="h-20 w-20 overflow-hidden border border-zinc-200 bg-white">
-                          <QuotationImageFrame
-                            alt={entry.description}
-                            className="h-full w-full overflow-hidden"
-                            emptyContent={<span className="flex h-full items-center justify-center px-2 text-center text-[10px] text-zinc-400">No image</span>}
-                            imageUrl={entry.item.imageUrl}
-                          />
-                        </div>
-                      </td>
-                    ) : null}
-                    <td className="align-top border-b border-zinc-200 px-3 py-3">
-                      <p className="font-semibold text-zinc-900">{entry.description}</p>
-                      <div className="mt-2 grid gap-1 text-[11px] leading-5">
-                        {(context.area || context.section) ? <p className="text-zinc-500">{[context.area, context.section].filter(Boolean).join(" / ")}</p> : null}
-                        {settings.columnVisibility.code && entry.item.item_code_snapshot ? <p><span className="font-semibold text-zinc-900">Code:</span> {entry.item.item_code_snapshot}</p> : null}
-                        {settings.columnVisibility.model && entry.item.model_snapshot ? <p><span className="font-semibold text-zinc-900">Model:</span> {entry.item.model_snapshot}</p> : null}
-                        {settings.columnVisibility.brandOrigin && (entry.item.brand_name_snapshot || entry.item.origin_snapshot) ? (
-                          <p><span className="font-semibold text-zinc-900">Brand / Origin:</span> {[entry.item.brand_name_snapshot, entry.item.origin_snapshot].filter(Boolean).join(" / ")}</p>
-                        ) : null}
-                        {specification ? <p className="text-zinc-600">{specification}</p> : null}
-                        {settings.columnVisibility.remarks && entry.remark ? <p className="text-zinc-600"><span className="font-semibold text-zinc-900">Remark:</span> {entry.remark}</p> : null}
-                      </div>
-                    </td>
-                    {settings.columnVisibility.size ? <td className="align-top border-b border-zinc-200 px-3 py-3">{entry.size || "-"}</td> : null}
-                    {settings.columnVisibility.finish ? (
-                      <td className="align-top border-b border-zinc-200 px-3 py-3">
-                        {finishLines.length ? (
-                          <div className="grid gap-1">
-                            {finishLines.map((finish, finishIndex) => (
-                              <p key={`${entry.item.id}-finish-${finishIndex}`}>{finish}</p>
-                            ))}
-                          </div>
-                        ) : (
-                          <p>-</p>
-                        )}
-                      </td>
-                    ) : null}
-                    <td className="align-top border-b border-zinc-200 px-3 py-3 text-center font-semibold text-zinc-900">{entry.quantity}</td>
-                    {settings.columnVisibility.unitPrice ? <td className="align-top border-b border-zinc-200 px-3 py-3 text-right">{currencyAmount(entry.unitPrice, data.quotation.currency)}</td> : null}
-                    {settings.columnVisibility.lineTotal ? <td className="align-top border-b border-zinc-200 px-3 py-3 text-right font-semibold text-zinc-900">{currencyAmount(entry.lineTotal, data.quotation.currency)}</td> : null}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-5 grid gap-5 xl:grid-cols-[1.3fr_0.7fr]">
-          <section className="po-terms border border-zinc-200 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Terms / Notes</p>
-            <div className="mt-3 grid gap-2 text-sm text-zinc-700">
-              {settings.terms.deliveryLocation ? <p><span className="font-semibold text-zinc-900">Delivery Location:</span> {settings.terms.deliveryLocation}</p> : null}
-              {settings.terms.deliveryDate ? <p><span className="font-semibold text-zinc-900">Delivery Date:</span> {formatDate(settings.terms.deliveryDate)}</p> : null}
-              {settings.terms.paymentTerms ? <p><span className="font-semibold text-zinc-900">Payment Terms:</span> {settings.terms.paymentTerms}</p> : null}
-              {settings.terms.warrantyNote ? <p><span className="font-semibold text-zinc-900">Warranty:</span> {settings.terms.warrantyNote}</p> : null}
-              {settings.terms.installationNote ? <p><span className="font-semibold text-zinc-900">Installation:</span> {settings.terms.installationNote}</p> : null}
-              {splitMultiline(settings.terms.generalNote).map((line, index) => (
-                <p key={`po-term-${index}`}>{line}</p>
-              ))}
-            </div>
-          </section>
-
-          <section className="border border-zinc-200 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Totals</p>
-            <div className="mt-4 grid gap-3 text-sm text-zinc-700">
-              <div className="flex items-center justify-between gap-4">
-                <span>Subtotal</span>
-                <span className="font-semibold text-zinc-900">{hasPriceValues ? currencyAmount(subtotal, data.quotation.currency) : "-"}</span>
-              </div>
-              <div className="flex items-center justify-between gap-4 border-t border-zinc-200 pt-3">
-                <span className="font-semibold text-zinc-900">Grand Total</span>
-                <span className="font-semibold text-zinc-900">{hasPriceValues ? currencyAmount(subtotal, data.quotation.currency) : "-"}</span>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <section className="po-signature mt-5 grid gap-4 md:grid-cols-4">
-          <div className="border border-zinc-200 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-400">Prepared By</p>
-            <p className="mt-6 text-sm font-semibold text-zinc-900">{settings.documentDetails.preparedBy || "-"}</p>
-          </div>
-          <div className="border border-zinc-200 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-400">Authorized Signature</p>
-            <p className="mt-6 text-sm font-semibold text-zinc-900">{settings.terms.authorizedBy || "-"}</p>
-            {settings.terms.authorizedDesignation ? <p className="mt-1 text-xs text-zinc-500">{settings.terms.authorizedDesignation}</p> : null}
-          </div>
-          <div className="border border-zinc-200 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-400">Date</p>
-            <p className="mt-6 text-sm font-semibold text-zinc-900">{formatDate(settings.documentDetails.poDate)}</p>
-          </div>
-          <div className="border border-zinc-200 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-400">Company Stamp</p>
-            <div className="mt-6 h-8 border-b border-zinc-300" />
-          </div>
-        </section>
-      </section>
+      <PurchaseOrderDocument
+        companyLogoUrl={defaultLogoUrl}
+        hasPriceValues={hasPriceValues}
+        items={documentItems}
+        poCurrency={poCurrency}
+        settings={{
+          columnVisibility: settings.columnVisibility,
+          documentDetails: settings.documentDetails,
+          terms: settings.terms,
+        }}
+        subtotal={subtotal}
+        supplier={selectedSupplier}
+        supplierLabel={selectedGroup?.displayLabel || "Supplier"}
+      />
     </main>
   );
 }

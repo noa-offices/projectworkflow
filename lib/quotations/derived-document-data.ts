@@ -73,6 +73,7 @@ export type DerivedDocumentItem = {
   unit_label: string;
   unit_price: number;
   net_total: number;
+  currency: string;
   sort_order: number;
   line_style: string;
   is_active: boolean;
@@ -242,7 +243,7 @@ export async function loadQuotationDerivedDocumentData(id: string): Promise<Deri
       .returns<DerivedDocumentSection[]>(),
     supabase
       .from("quotation_items")
-      .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,supplier_name_snapshot,qty,unit_label,unit_price,net_total,sort_order,line_style,is_active,notes")
+      .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,supplier_name_snapshot,qty,unit_label,unit_price,net_total,currency,sort_order,line_style,is_active,notes")
       .eq("quotation_id", id)
       .eq("is_active", true)
       .order("sort_order", { ascending: true })

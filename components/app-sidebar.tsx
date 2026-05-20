@@ -15,6 +15,7 @@ const navigationGroups = [
     label: "Products",
     items: [
       { href: "/products/templates", label: "Product Library" },
+      { href: "/products/management", label: "Product Management" },
       { href: "/products/brands", label: "Brands" },
       { href: "/products/materials", label: "Material Library" },
       { href: "/products/templates?priceStatus=due", label: "Price Updates" },
@@ -42,8 +43,12 @@ export function AppSidebar() {
       return pathname === "/products/templates" && searchParams.get("priceStatus") === "due";
     }
 
+    if (href === "/products/management") {
+      return pathname === "/products/templates" && searchParams.get("manage") === "1";
+    }
+
     if (href === "/products/templates") {
-      return pathname === "/products/templates" && searchParams.get("priceStatus") !== "due";
+      return pathname === "/products/templates" && searchParams.get("priceStatus") !== "due" && searchParams.get("manage") !== "1";
     }
 
     if (href === "/products/brands") {

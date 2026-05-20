@@ -8,9 +8,11 @@ import type { LocalQuotationWorkspaceIndex } from "@/lib/local/quotation-workspa
 export function LocalDraftLink({
   quotationId,
   className = "",
+  showLink = true,
 }: {
   quotationId: string;
   className?: string;
+  showLink?: boolean;
 }) {
   const [draft, setDraft] = useState<LocalQuotationWorkspaceIndex | null>(null);
 
@@ -30,12 +32,14 @@ export function LocalDraftLink({
 
   return (
     <div className={`flex flex-wrap items-center gap-2 ${className}`}>
-      <Link
-        href={`/quotations/${quotationId}/local-builder`}
-        className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
-      >
-        Open Local Builder
-      </Link>
+      {showLink ? (
+        <Link
+          href={`/quotations/${quotationId}/local-builder`}
+          className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+        >
+          Open Local Builder
+        </Link>
+      ) : null}
       {draft ? (
         <span
           className={`rounded-md px-2.5 py-1 text-xs font-semibold ${

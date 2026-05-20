@@ -6,6 +6,8 @@ import {
   DEFAULT_PURCHASE_ORDER_SETTINGS,
   type QuotationPurchaseOrderSettings,
 } from "@/lib/quotations/purchase-order-settings";
+import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
+import { normalizePurchaseOrderCurrency } from "@/lib/quotations/purchase-order-currency";
 import { loadPurchaseOrderSettings } from "@/lib/quotations/purchase-order-settings-store";
 import { loadQuotationDerivedDocumentData } from "@/lib/quotations/derived-document-data";
 
@@ -30,25 +32,8 @@ function todayDateInput() {
   return `${year}-${month}-${day}`;
 }
 
-function normalizeGroupName(value: string | null | undefined) {
-  return (value ?? "")
-    .replace(/\s+/g, " ")
-    .replace(/[^a-zA-Z0-9]/g, "")
-    .trim()
-    .toLowerCase();
-}
-
 function selectedSupplierKeyFromItems(items: Array<{ supplier_name_snapshot: string | null; brand_name_snapshot: string | null }>) {
-  const keys = new Set<string>();
-
-  for (const item of items) {
-    const label = item.supplier_name_snapshot?.trim() || item.brand_name_snapshot?.trim() || "Unassigned Supplier";
-    const normalizedLabel = normalizeGroupName(label) || "unassigned";
-    const dedupeKey = normalizedLabel === "unassignedsupplier" ? "unassigned" : normalizedLabel;
-    keys.add(dedupeKey);
-  }
-
-  return Array.from(keys)[0] ?? "";
+  return buildEffectiveDocumentGroups(items)[0]?.dedupeKey ?? "";
 }
 
 function defaultPurchaseOrderNumber(quotationNo: string | null, quotationId: string) {
@@ -56,18 +41,33 @@ function defaultPurchaseOrderNumber(quotationNo: string | null, quotationId: str
   return `PO-${quotationId.slice(0, 8).toUpperCase()}`;
 }
 
+function defaultPurchaseOrderCurrency(
+  data: NonNullable<Awaited<ReturnType<typeof loadQuotationDerivedDocumentData>>>,
+  selectedSupplierKey: string,
+) {
+  if (data.quotation.currency?.trim()) {
+    return normalizePurchaseOrderCurrency(data.quotation.currency);
+  }
+
+  const selectedGroup = buildEffectiveDocumentGroups(data.items).find((group) => group.dedupeKey === selectedSupplierKey) ?? null;
+  const groupCurrency = selectedGroup?.items.find((item) => item.currency?.trim())?.currency ?? null;
+  return normalizePurchaseOrderCurrency(groupCurrency);
+}
+
 function buildDefaultSettings(data: NonNullable<Awaited<ReturnType<typeof loadQuotationDerivedDocumentData>>>): QuotationPurchaseOrderSettings {
   const address = [data.companyProfile.addressLine1, data.companyProfile.addressLine2, data.companyProfile.city, data.companyProfile.country]
     .filter(Boolean)
     .join(", ");
+  const selectedSupplierKey = selectedSupplierKeyFromItems(data.items);
 
   return {
     ...DEFAULT_PURCHASE_ORDER_SETTINGS,
-    selectedSupplierKey: selectedSupplierKeyFromItems(data.items),
+    selectedSupplierKey,
     documentDetails: {
       ...DEFAULT_PURCHASE_ORDER_SETTINGS.documentDetails,
       poNumber: defaultPurchaseOrderNumber(data.quotation.quotation_no, data.quotation.id),
       poDate: todayDateInput(),
+      currency: defaultPurchaseOrderCurrency(data, selectedSupplierKey),
       quotationReference: data.quotation.quotation_no ?? "",
       projectDisplayName: data.project?.project_name ?? data.quotation.title,
       clientDisplayName: data.client?.company_name ?? "",
@@ -107,8 +107,20 @@ export default async function PurchaseOrderPage({ params, searchParams }: Purcha
 
   const defaultSettings = buildDefaultSettings(data);
   const storedSettingsResult = await loadPurchaseOrderSettings(id);
+  const availableGroupKeys = new Set(buildEffectiveDocumentGroups(data.items).map((group) => group.dedupeKey));
   const initialSettings = storedSettingsResult.success && storedSettingsResult.hasStoredSettings
-    ? storedSettingsResult.settings
+    ? {
+        ...storedSettingsResult.settings,
+        selectedSupplierKey: availableGroupKeys.has(storedSettingsResult.settings.selectedSupplierKey)
+          ? storedSettingsResult.settings.selectedSupplierKey
+          : defaultSettings.selectedSupplierKey,
+        documentDetails: {
+          ...storedSettingsResult.settings.documentDetails,
+          currency: normalizePurchaseOrderCurrency(
+            storedSettingsResult.settings.documentDetails.currency || defaultSettings.documentDetails.currency,
+          ),
+        },
+      }
     : defaultSettings;
 
   return (
@@ -137,6 +149,7 @@ export default async function PurchaseOrderPage({ params, searchParams }: Purcha
           origin_snapshot: item.origin_snapshot,
           supplier_name_snapshot: item.supplier_name_snapshot,
           qty: item.qty,
+          currency: item.currency,
           imageUrl: data.imageUrlByItemId.get(item.id) ?? null,
         })),
         project: data.project

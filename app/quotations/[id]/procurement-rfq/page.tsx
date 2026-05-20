@@ -7,6 +7,7 @@ import {
   type QuotationProcurementRfqSettings,
 } from "@/lib/quotations/procurement-rfq-settings";
 import { loadProcurementRfqSettings } from "@/lib/quotations/procurement-rfq-settings-store";
+import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
 import {
   loadQuotationDerivedDocumentData,
 } from "@/lib/quotations/derived-document-data";
@@ -64,6 +65,7 @@ function defaultProjectPhone(project?: {
 function buildDefaultSettings(data: NonNullable<Awaited<ReturnType<typeof loadQuotationDerivedDocumentData>>>): QuotationProcurementRfqSettings {
   return {
     ...DEFAULT_PROCUREMENT_RFQ_SETTINGS,
+    selectedGroupKey: "all",
     documentDetails: {
       ...DEFAULT_PROCUREMENT_RFQ_SETTINGS.documentDetails,
       rfqNumber: defaultRfqNumber(data.quotation.quotation_no, data.quotation.id),
@@ -106,8 +108,14 @@ export default async function ProcurementRfqPage({ params, searchParams }: Procu
 
   const defaultSettings = buildDefaultSettings(data);
   const storedSettingsResult = await loadProcurementRfqSettings(id);
+  const availableGroupKeys = new Set(buildEffectiveDocumentGroups(data.items).map((group) => group.dedupeKey));
   const initialSettings = storedSettingsResult.success && storedSettingsResult.hasStoredSettings
-    ? storedSettingsResult.settings
+    ? {
+        ...storedSettingsResult.settings,
+        selectedGroupKey: storedSettingsResult.settings.selectedGroupKey === "all" || availableGroupKeys.has(storedSettingsResult.settings.selectedGroupKey)
+          ? storedSettingsResult.settings.selectedGroupKey
+          : "all",
+      }
     : defaultSettings;
 
   return (

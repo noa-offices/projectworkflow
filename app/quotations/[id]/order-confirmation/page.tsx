@@ -1,15 +1,15 @@
-import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { QuotationImageFrame } from "@/components/quotations/quotation-image-frame";
+import { OrderConfirmationEditor } from "@/components/quotations/order-confirmation-editor";
 import { requireActiveUser } from "@/lib/auth";
 import {
-  documentItemTitle,
+  DEFAULT_ORDER_CONFIRMATION_SETTINGS,
+  type QuotationOrderConfirmationSettings,
+} from "@/lib/quotations/order-confirmation-settings";
+import { loadOrderConfirmationSettings } from "@/lib/quotations/order-confirmation-settings-store";
+import {
   loadQuotationDerivedDocumentData,
-  preferredItemImageUrl,
   projectContactLine,
-  selectedFinishSummaries,
-  type DerivedDocumentSection,
 } from "@/lib/quotations/derived-document-data";
 
 export const dynamic = "force-dynamic";
@@ -25,20 +25,65 @@ function orderConfirmationTitle(quotation?: { quotation_no: string | null; title
   return `${quotationNo} - ${title} Order Confirmation`.replace(/[\\/:*?"<>|]/g, "-");
 }
 
-function formatDate(value: string | null | undefined) {
-  if (!value) return "-";
+function formatDateInput(value: string | null | undefined) {
+  if (!value) return "";
 
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric" }).format(date);
+  if (Number.isNaN(date.getTime())) {
+    return value.slice(0, 10);
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
-function sectionContext(sectionId: string | null, sectionsById: Map<string, DerivedDocumentSection>) {
-  const section = sectionId ? sectionsById.get(sectionId) ?? null : null;
-  const mainSection = section?.parent_section_id ? sectionsById.get(section.parent_section_id) ?? null : null;
+function todayDateInput() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function defaultConfirmationNumber(quotationNo: string | null, quotationId: string) {
+  if (quotationNo?.trim()) {
+    return `OC-${quotationNo.trim()}`;
+  }
+
+  return `OC-${quotationId.slice(0, 8).toUpperCase()}`;
+}
+
+function buildDefaultSettings(data: NonNullable<Awaited<ReturnType<typeof loadQuotationDerivedDocumentData>>>): QuotationOrderConfirmationSettings {
+  const address = [data.companyProfile.addressLine1, data.companyProfile.addressLine2, data.companyProfile.city, data.companyProfile.country]
+    .filter(Boolean)
+    .join(", ");
+
   return {
-    area: mainSection?.section_title ?? (section?.section_kind === "main" ? section.section_title : null),
-    section: section && section.section_kind !== "main" ? section.section_title : null,
+    ...DEFAULT_ORDER_CONFIRMATION_SETTINGS,
+    documentDetails: {
+      ...DEFAULT_ORDER_CONFIRMATION_SETTINGS.documentDetails,
+      confirmationNumber: defaultConfirmationNumber(data.quotation.quotation_no, data.quotation.id),
+      confirmationDate: formatDateInput(data.quotation.quotation_date) || todayDateInput(),
+      quotationReference: data.quotation.quotation_no ?? "",
+      projectDisplayName: data.project?.project_name ?? data.quotation.title,
+      clientDisplayName: data.client?.company_name ?? "",
+      location: data.project?.location?.trim() || "",
+      attentionContact: projectContactLine(data.project),
+      preparedBy: data.companyProfile.displayName || "Noa Offices",
+      companyDisplayName: data.companyProfile.displayName || "Noa Offices",
+      companyPhone: data.companyProfile.phone || "",
+      companyEmail: data.companyProfile.email || "",
+      companyWebsite: data.companyProfile.website || "www.noaoffices.com",
+      companyAddress: address,
+    },
+    terms: {
+      ...DEFAULT_ORDER_CONFIRMATION_SETTINGS.terms,
+      deliveryInstallationNote: data.quotation.delivery_terms?.trim() || DEFAULT_ORDER_CONFIRMATION_SETTINGS.terms.deliveryInstallationNote,
+      paymentTerms: data.quotation.payment_terms?.trim() || DEFAULT_ORDER_CONFIRMATION_SETTINGS.terms.paymentTerms,
+      clientName: data.client?.company_name ?? "",
+    },
   };
 }
 
@@ -62,145 +107,84 @@ export default async function OrderConfirmationPage({ params, searchParams }: Or
     notFound();
   }
 
-  const sectionsById = new Map(data.sections.map((section) => [section.id, section]));
+  const defaultSettings = buildDefaultSettings(data);
+  const storedSettingsResult = await loadOrderConfirmationSettings(id);
+  const initialSettings = storedSettingsResult.success && storedSettingsResult.hasStoredSettings
+    ? {
+        ...defaultSettings,
+        ...storedSettingsResult.settings,
+        documentDetails: {
+          ...defaultSettings.documentDetails,
+          ...storedSettingsResult.settings.documentDetails,
+        },
+        columnVisibility: {
+          ...defaultSettings.columnVisibility,
+          ...storedSettingsResult.settings.columnVisibility,
+        },
+        terms: {
+          ...defaultSettings.terms,
+          ...storedSettingsResult.settings.terms,
+        },
+      }
+    : defaultSettings;
 
   return (
-    <main className="min-h-screen bg-stone-100 px-4 py-6 print:bg-white print:px-0 print:py-0">
-      <style>{`
-        @page { size: A4 portrait; margin: 10mm; }
-        html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      `}</style>
-
-      <div className={`mx-auto mb-5 w-[210mm] max-w-full print:hidden ${printMode ? "hidden" : "block"}`}>
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white px-5 py-4 shadow-sm">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">Order Confirmation</p>
-            <p className="mt-1 text-sm text-zinc-600">Client-facing approved item confirmation generated from the current quotation.</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Link href={`/quotations/${data.quotation.id}`} className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50">
-              Back to Quotation
-            </Link>
-            <Link href={`/quotations/${data.quotation.id}/download-order-confirmation`} className="rounded-md bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800">
-              Download PDF
-            </Link>
-          </div>
-        </div>
-      </div>
-
-      <section className="mx-auto w-[210mm] max-w-full rounded-2xl border border-zinc-200 bg-white px-6 py-6 shadow-[0_20px_60px_rgba(15,23,42,0.08)] print:w-auto print:max-w-none print:rounded-none print:border-0 print:px-0 print:py-0 print:shadow-none">
-        <header className="border-b border-zinc-200 pb-6">
-          <div className="flex items-start justify-between gap-6">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">Order Confirmation</p>
-              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-950">{data.project?.project_name ?? data.quotation.title}</h1>
-              <p className="mt-2 text-sm text-zinc-600">{data.client?.company_name ?? "-"}</p>
-            </div>
-            <div className="grid gap-2 text-right text-xs text-zinc-600">
-              <p><span className="font-semibold text-zinc-900">Quotation:</span> {data.quotation.quotation_no ?? "Draft"}</p>
-              <p><span className="font-semibold text-zinc-900">Date:</span> {formatDate(data.quotation.quotation_date)}</p>
-              <p><span className="font-semibold text-zinc-900">Prepared By:</span> {data.companyProfile.displayName}</p>
-            </div>
-          </div>
-          <div className="mt-4 grid gap-2 text-xs text-zinc-600 sm:grid-cols-2">
-            {data.project?.location ? <p><span className="font-semibold text-zinc-900">Location:</span> {data.project.location}</p> : null}
-            {projectContactLine(data.project) ? <p><span className="font-semibold text-zinc-900">Attention / Contact:</span> {projectContactLine(data.project)}</p> : null}
-          </div>
-        </header>
-
-        <div className="mt-6 grid gap-4">
-          {data.items.map((item, index) => {
-            const context = sectionContext(item.section_id, sectionsById);
-            const finishes = selectedFinishSummaries(item);
-            const imageUrl = preferredItemImageUrl(item, data.imageUrlByItemId);
-
-            return (
-              <article key={item.id} className="grid gap-4 border border-zinc-200 p-4 md:grid-cols-[120px_minmax(0,1fr)]">
-                <div className="h-[120px] w-[120px] overflow-hidden border border-zinc-200 bg-white">
-                  <QuotationImageFrame
-                    alt={documentItemTitle(item)}
-                    className="h-full w-full overflow-hidden"
-                    emptyContent={<span className="flex h-full items-center justify-center px-2 text-center text-[10px] text-zinc-400">No image</span>}
-                    imageUrl={imageUrl}
-                  />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-400">Approved Item {String(index + 1).padStart(2, "0")}</p>
-                      <h2 className="mt-1 text-xl font-semibold text-zinc-950">{documentItemTitle(item)}</h2>
-                    </div>
-                    <div className="text-right text-xs text-zinc-600">
-                      <p><span className="font-semibold text-zinc-900">Qty:</span> {item.qty}</p>
-                      {context.area ? <p className="mt-1"><span className="font-semibold text-zinc-900">Area:</span> {context.area}</p> : null}
-                      {context.section ? <p className="mt-1"><span className="font-semibold text-zinc-900">Section:</span> {context.section}</p> : null}
-                    </div>
-                  </div>
-                  <div className="mt-3 grid gap-x-6 gap-y-2 text-sm text-zinc-700 sm:grid-cols-2">
-                    {item.item_code_snapshot ? <p><span className="font-semibold text-zinc-900">Code:</span> {item.item_code_snapshot}</p> : null}
-                    {item.model_snapshot ? <p><span className="font-semibold text-zinc-900">Model:</span> {item.model_snapshot}</p> : null}
-                    {item.brand_name_snapshot ? <p><span className="font-semibold text-zinc-900">Brand:</span> {item.brand_name_snapshot}</p> : null}
-                    {item.origin_snapshot ? <p><span className="font-semibold text-zinc-900">Origin:</span> {item.origin_snapshot}</p> : null}
-                    {item.size_snapshot ? <p><span className="font-semibold text-zinc-900">Dimensions:</span> {item.size_snapshot}</p> : null}
-                    {finishes.length ? <p><span className="font-semibold text-zinc-900">Selected Finishes:</span> {finishes.join(" | ")}</p> : null}
-                  </div>
-                  {item.specification_snapshot ? (
-                    <p className="mt-3 text-sm leading-6 text-zinc-600">
-                      <span className="font-semibold text-zinc-900">Specification:</span> {item.specification_snapshot}
-                    </p>
-                  ) : null}
-                </div>
-              </article>
-            );
-          })}
-        </div>
-
-        <div className="mt-8 grid gap-4 md:grid-cols-2">
-          <div className="border border-zinc-200 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-400">Delivery / Installation Notes</p>
-            <div className="mt-4 grid gap-3">
-              <div className="h-8 border-b border-zinc-200" />
-              <div className="h-8 border-b border-zinc-200" />
-              <div className="h-8 border-b border-zinc-200" />
-            </div>
-            {data.quotation.delivery_terms ? (
-              <p className="mt-4 text-sm text-zinc-600">
-                <span className="font-semibold text-zinc-900">Current Delivery Terms:</span> {data.quotation.delivery_terms}
-              </p>
-            ) : null}
-          </div>
-          <div className="border border-zinc-200 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-400">Payment Terms</p>
-            <p className="mt-4 text-sm leading-6 text-zinc-700">{data.quotation.payment_terms || "To be confirmed."}</p>
-          </div>
-        </div>
-
-        <div className="mt-8 border border-zinc-200 p-5">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-400">Approval / Signature</p>
-          <div className="mt-6 grid gap-5 sm:grid-cols-2">
-            <div className="grid gap-8">
-              <div>
-                <p className="text-xs font-semibold text-zinc-900">Client Name</p>
-                <div className="mt-6 border-b border-zinc-300" />
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-zinc-900">Signature</p>
-                <div className="mt-6 border-b border-zinc-300" />
-              </div>
-            </div>
-            <div className="grid gap-8">
-              <div>
-                <p className="text-xs font-semibold text-zinc-900">Date</p>
-                <div className="mt-6 border-b border-zinc-300" />
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-zinc-900">Company Stamp</p>
-                <div className="mt-6 border-b border-zinc-300" />
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-    </main>
+    <OrderConfirmationEditor
+      data={{
+        client: data.client,
+        companyProfile: {
+          address: [data.companyProfile.addressLine1, data.companyProfile.addressLine2, data.companyProfile.city, data.companyProfile.country].filter(Boolean).join(", "),
+          displayName: data.companyProfile.displayName,
+          email: data.companyProfile.email,
+          phone: data.companyProfile.phone,
+          website: data.companyProfile.website,
+        },
+        items: data.items.map((item) => ({
+          id: item.id,
+          section_id: item.section_id,
+          manual_serial: item.manual_serial,
+          item_code_snapshot: item.item_code_snapshot,
+          item_name_snapshot: item.item_name_snapshot,
+          brand_name_snapshot: item.brand_name_snapshot,
+          specification_snapshot: item.specification_snapshot,
+          finish_selections_snapshot: item.finish_selections_snapshot,
+          model_snapshot: item.model_snapshot,
+          finish_snapshot: item.finish_snapshot,
+          size_snapshot: item.size_snapshot,
+          origin_snapshot: item.origin_snapshot,
+          qty: item.qty,
+          imageUrl: data.imageUrlByItemId.get(item.id) ?? null,
+        })),
+        project: data.project
+          ? {
+              id: data.project.id,
+              project_name: data.project.project_name,
+              location: data.project.location,
+              attention_to: data.project.attention_to,
+              attention_mobile: data.project.attention_mobile,
+              attention_landline: data.project.attention_landline,
+              attention_email: data.project.attention_email,
+            }
+          : null,
+        quotation: {
+          id: data.quotation.id,
+          quotation_no: data.quotation.quotation_no,
+          title: data.quotation.title,
+          quotation_date: data.quotation.quotation_date,
+          payment_terms: data.quotation.payment_terms,
+          delivery_terms: data.quotation.delivery_terms,
+        },
+        sections: data.sections.map((section) => ({
+          id: section.id,
+          section_title: section.section_title,
+          parent_section_id: section.parent_section_id,
+          section_kind: section.section_kind,
+        })),
+      }}
+      defaultLogoUrl="/noa-logo.png"
+      defaultSettings={defaultSettings}
+      initialSettings={initialSettings}
+      printMode={printMode}
+    />
   );
 }

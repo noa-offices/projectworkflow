@@ -55,6 +55,7 @@ export type ProcurementRfqNotes = {
 
 export type QuotationProcurementRfqSettings = {
   documentDetails: ProcurementRfqDocumentDetails;
+  selectedGroupKey: string;
   supplierOverrides: Record<string, ProcurementRfqSupplierOverride>;
   itemOverrides: Record<string, ProcurementRfqItemOverride>;
   columnVisibility: ProcurementRfqColumnVisibility;
@@ -125,6 +126,7 @@ export const DEFAULT_PROCUREMENT_RFQ_NOTES: ProcurementRfqNotes = {
 
 export const DEFAULT_PROCUREMENT_RFQ_SETTINGS: QuotationProcurementRfqSettings = {
   documentDetails: DEFAULT_PROCUREMENT_RFQ_DOCUMENT_DETAILS,
+  selectedGroupKey: "all",
   supplierOverrides: {},
   itemOverrides: {},
   columnVisibility: DEFAULT_PROCUREMENT_RFQ_COLUMN_VISIBILITY,
@@ -247,6 +249,7 @@ export function normalizeProcurementRfqSettings(
         : "logo_if_available",
       companyDisplayName: normalizedString(documentDetailsRecord, "companyDisplayName", DEFAULT_PROCUREMENT_RFQ_DOCUMENT_DETAILS.companyDisplayName),
     },
+    selectedGroupKey: normalizedString(record, "selectedGroupKey", DEFAULT_PROCUREMENT_RFQ_SETTINGS.selectedGroupKey),
     supplierOverrides,
     itemOverrides,
     columnVisibility: {

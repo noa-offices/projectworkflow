@@ -3,7 +3,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useState, useTransition } from "react";
-import { QuotationImageFrame } from "@/components/quotations/quotation-image-frame";
+import { ProcurementRfqDocument } from "@/components/quotations/procurement-rfq-document";
+import { buildEffectiveDocumentGroups, type EffectiveDocumentGroup } from "@/lib/quotations/document-grouping";
 import {
   type ProcurementRfqColumnVisibility,
   type ProcurementRfqDocumentDetails,
@@ -99,13 +100,7 @@ type PreviewGroup = {
   }>;
 };
 
-type EffectiveGroup = {
-  dedupeKey: string;
-  displayLabel: string;
-  displayType: string;
-  keys: string[];
-  items: ProcurementRfqItem[];
-};
+type EffectiveGroup = EffectiveDocumentGroup<ProcurementRfqItem>;
 
 type EditorTab = "document" | "suppliers" | "items" | "columns" | "notes";
 
@@ -129,14 +124,6 @@ function stringFromRecord(record: Record<string, unknown>, keys: string[]) {
   }
 
   return null;
-}
-
-function formatDate(value: string | null | undefined) {
-  if (!value) return "-";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric" }).format(date);
 }
 
 function compactSpecification(value: string | null | undefined) {
@@ -181,28 +168,6 @@ function documentItemTitle(item: Pick<ProcurementRfqItem, "item_name_snapshot" |
   return item.item_name_snapshot || item.model_snapshot || item.item_code_snapshot || "Quotation Item";
 }
 
-function normalizeGroupName(value: string | null | undefined) {
-  return (value ?? "")
-    .replace(/\s+/g, " ")
-    .replace(/[^a-zA-Z0-9]/g, "")
-    .trim()
-    .toLowerCase();
-}
-
-function itemGroupInfo(item: Pick<ProcurementRfqItem, "supplier_name_snapshot" | "brand_name_snapshot">) {
-  const supplier = item.supplier_name_snapshot?.trim();
-  if (supplier) {
-    return { key: `supplier:${supplier}`, label: supplier, type: "Supplier" };
-  }
-
-  const brand = item.brand_name_snapshot?.trim();
-  if (brand) {
-    return { key: `brand:${brand}`, label: brand, type: "Brand" };
-  }
-
-  return { key: "unassigned", label: "Unassigned Supplier", type: "Unassigned Supplier" };
-}
-
 function sectionContext(sectionId: string | null, sectionsById: Map<string, ProcurementRfqSection>) {
   const section = sectionId ? sectionsById.get(sectionId) ?? null : null;
   const mainSection = section?.parent_section_id ? sectionsById.get(section.parent_section_id) ?? null : null;
@@ -212,16 +177,10 @@ function sectionContext(sectionId: string | null, sectionsById: Map<string, Proc
   };
 }
 
-function splitMultiline(value: string) {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
 function sanitizeSettingsForCompare(settings: QuotationProcurementRfqSettings) {
   return JSON.stringify({
     documentDetails: settings.documentDetails,
+    selectedGroupKey: settings.selectedGroupKey,
     supplierOverrides: settings.supplierOverrides,
     itemOverrides: settings.itemOverrides,
     columnVisibility: settings.columnVisibility,
@@ -246,50 +205,7 @@ function effectiveSupplierOverride(settings: QuotationProcurementRfqSettings, gr
 }
 
 function buildEffectiveGroups(items: ProcurementRfqItem[]) {
-  const rawGroups = Array.from(
-    items.reduce((map, item) => {
-      const group = itemGroupInfo(item);
-      const existing = map.get(group.key);
-
-      if (existing) {
-        existing.items.push(item);
-        return map;
-      }
-
-      map.set(group.key, { ...group, items: [item] });
-      return map;
-    }, new Map<string, { key: string; label: string; type: string; items: ProcurementRfqItem[] }>()),
-  ).map(([, group]) => group);
-
-  const effectiveMap = new Map<string, EffectiveGroup>();
-
-  for (const group of rawGroups) {
-    const normalizedLabel = normalizeGroupName(group.label) || group.key;
-    const dedupeKey = normalizedLabel === "unassignedsupplier"
-      ? "unassigned"
-      : normalizedLabel;
-    const existing = effectiveMap.get(dedupeKey);
-
-    if (existing) {
-      existing.keys.push(group.key);
-      existing.items.push(...group.items);
-      if (existing.displayType !== "Supplier" && group.type === "Supplier") {
-        existing.displayType = "Supplier";
-        existing.displayLabel = group.label;
-      }
-      continue;
-    }
-
-    effectiveMap.set(dedupeKey, {
-      dedupeKey,
-      displayLabel: group.label,
-      displayType: group.type,
-      keys: [group.key],
-      items: [...group.items],
-    });
-  }
-
-  return Array.from(effectiveMap.values());
+  return buildEffectiveDocumentGroups(items);
 }
 
 function groupOrderForKeys(settings: QuotationProcurementRfqSettings, groupKeys: string[]) {
@@ -450,41 +366,6 @@ function SupplierSummary({
   );
 }
 
-function BrandBlock({
-  companyDisplayName,
-  defaultLogoUrl,
-  logoDisplayMode,
-  showLogo,
-}: {
-  companyDisplayName: string;
-  defaultLogoUrl: string | null;
-  logoDisplayMode: ProcurementRfqDocumentDetails["logoDisplayMode"];
-  showLogo: boolean;
-}) {
-  const [logoFailed, setLogoFailed] = useState(false);
-  const shouldUseText = !showLogo || logoDisplayMode === "text_wordmark_fallback" || !defaultLogoUrl || logoFailed;
-
-  if (shouldUseText) {
-    return showLogo ? (
-      <div className="max-w-[180px] text-right">
-        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-900">{companyDisplayName || "Noa Offices"}</p>
-      </div>
-    ) : null;
-  }
-
-  return (
-    <div className="flex justify-end">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={defaultLogoUrl}
-        alt={companyDisplayName || "Noa Offices"}
-        className="max-h-[58px] max-w-[190px] w-auto object-contain"
-        onError={() => setLogoFailed(true)}
-      />
-    </div>
-  );
-}
-
 export function ProcurementRfqEditor({
   data,
   defaultLogoUrl,
@@ -504,8 +385,11 @@ export function ProcurementRfqEditor({
 
   const sectionsById = new Map(data.sections.map((section) => [section.id, section]));
   const effectiveGroups = buildEffectiveGroups(data.items);
+  const activeGroupKey = settings.selectedGroupKey || "all";
 
-  const previewGroups: PreviewGroup[] = effectiveGroups.map((group) => {
+  const previewGroups: PreviewGroup[] = effectiveGroups
+    .filter((group) => activeGroupKey === "all" || group.dedupeKey === activeGroupKey)
+    .map((group) => {
     const supplier = effectiveSupplierOverride(settings, group.keys);
     const orderedItems = orderedItemsForGroup(group, settings);
     const items = orderedItems
@@ -531,7 +415,34 @@ export function ProcurementRfqEditor({
       supplier,
       items,
     };
-  }).filter((group) => group.items.length > 0);
+  })
+    .filter((group) => group.items.length > 0);
+  const currentScopeLabel = activeGroupKey === "all"
+    ? "All Supplier Groups"
+    : effectiveGroups.find((group) => group.dedupeKey === activeGroupKey)?.displayLabel ?? "All Supplier Groups";
+  const documentGroups = previewGroups.map((group) => ({
+    key: group.key,
+    label: group.label,
+    type: group.type,
+    supplier: group.supplier,
+    items: group.items.map((entry) => {
+      const context = sectionContext(entry.item.section_id, sectionsById);
+      return {
+        id: entry.item.id,
+        description: entry.description,
+        context: (context.area || context.section) ? [context.area, context.section].filter(Boolean).join(" / ") : null,
+        code: entry.item.item_code_snapshot,
+        model: entry.item.model_snapshot,
+        brandOrigin: [entry.item.brand_name_snapshot, entry.item.origin_snapshot].filter(Boolean).join(" / ") || null,
+        specification: compactSpecification(entry.item.specification_snapshot),
+        size: entry.size,
+        finish: entry.finish,
+        quantity: entry.quantity,
+        remark: entry.remark,
+        imageUrl: entry.item.imageUrl,
+      };
+    }),
+  }));
 
   function updateDocumentDetails<K extends keyof ProcurementRfqDocumentDetails>(key: K, value: ProcurementRfqDocumentDetails[K]) {
     setSettings((current) => ({
@@ -541,6 +452,15 @@ export function ProcurementRfqEditor({
         [key]: value,
       },
     }));
+  }
+
+  function updateSelectedGroupKey(value: string) {
+    setSettings((current) => ({
+      ...current,
+      selectedGroupKey: value,
+    }));
+    setExpandedItemGroupKey(null);
+    setExpandedItemId(null);
   }
 
   function updateSupplierOverride(groupKeys: string[], key: keyof ProcurementRfqSupplierOverride, value: string) {
@@ -669,14 +589,15 @@ export function ProcurementRfqEditor({
   return (
     <main className="min-h-screen bg-stone-100 px-4 py-6 print:bg-white print:px-0 print:py-0">
       <style>{`
-        @page { size: A4 landscape; margin: 10mm; }
+        @page { size: A4 landscape; margin: 0; }
         html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .doc-page + .doc-page { margin-top: 24px; }
         @media print {
           html, body { background: #ffffff; }
-          .rfq-group { break-before: page; page-break-before: always; }
-          .rfq-group:first-of-type { break-before: auto; page-break-before: auto; }
-          .rfq-table thead { display: table-header-group; }
-          .rfq-table tr, .rfq-response, .rfq-notes { break-inside: avoid; page-break-inside: avoid; }
+          html, body { margin: 0 !important; padding: 0 !important; width: 297mm !important; background: #fff !important; }
+          .doc-page { break-after: page; page-break-after: always; margin: 0 !important; }
+          .doc-page:last-child { break-after: auto; page-break-after: auto; }
+          .doc-page + .doc-page { margin-top: 0 !important; }
         }
       `}</style>
 
@@ -720,6 +641,9 @@ export function ProcurementRfqEditor({
               {isDirty ? "You have unsaved RFQ changes." : "RFQ settings match latest saved version."}
             </div>
             {feedback ? <p className="mt-2 text-sm font-medium text-zinc-900">{feedback}</p> : null}
+            <p className="mt-3 text-sm text-zinc-600">
+              Showing: {currentScopeLabel}
+            </p>
           </div>
         </div>
       ) : null}
@@ -728,37 +652,54 @@ export function ProcurementRfqEditor({
         <div className="mx-auto mb-5 w-[297mm] max-w-full print:hidden">
           <SetupPanel activeTab={activeTab} onTabChange={setActiveTab}>
             {activeTab === "document" ? (
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                <Field label="RFQ Title" value={settings.documentDetails.title} onChange={(value) => updateDocumentDetails("title", value)} />
-                <Field label="RFQ Number" value={settings.documentDetails.rfqNumber} onChange={(value) => updateDocumentDetails("rfqNumber", value)} />
-                <Field label="RFQ Date" type="date" value={settings.documentDetails.rfqDate} onChange={(value) => updateDocumentDetails("rfqDate", value)} />
-                <Field label="Quotation Date" type="date" value={settings.documentDetails.quotationDate} onChange={(value) => updateDocumentDetails("quotationDate", value)} />
-                <Field label="Project Display Name" value={settings.documentDetails.projectDisplayName} onChange={(value) => updateDocumentDetails("projectDisplayName", value)} />
-                <Field label="Client Display Name" value={settings.documentDetails.clientDisplayName} onChange={(value) => updateDocumentDetails("clientDisplayName", value)} />
-                <Field label="Prepared By" value={settings.documentDetails.preparedBy} onChange={(value) => updateDocumentDetails("preparedBy", value)} />
-                <Field label="Project Contact" value={settings.documentDetails.projectContact} onChange={(value) => updateDocumentDetails("projectContact", value)} />
-                <Field label="Phone" value={settings.documentDetails.phone} onChange={(value) => updateDocumentDetails("phone", value)} />
-                <Field label="Email" type="email" value={settings.documentDetails.email} onChange={(value) => updateDocumentDetails("email", value)} />
-                <Field label="PO Box" value={settings.documentDetails.poBox} onChange={(value) => updateDocumentDetails("poBox", value)} />
-                <Field label="Company Display Name" value={settings.documentDetails.companyDisplayName} onChange={(value) => updateDocumentDetails("companyDisplayName", value)} />
-                <div className="xl:col-span-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  <ToggleField
-                    checked={settings.documentDetails.showLogo}
-                    label="Show Company Logo"
-                    description="Uses the local same-origin RFQ logo asset."
-                    onChange={(value) => updateDocumentDetails("showLogo", value)}
-                  />
-                  <label className="grid gap-1">
-                    <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Logo Display Mode</span>
-                    <select
-                      value={settings.documentDetails.logoDisplayMode}
-                      onChange={(event) => updateDocumentDetails("logoDisplayMode", event.target.value as ProcurementRfqDocumentDetails["logoDisplayMode"])}
-                      className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                    >
-                      <option value="logo_if_available">Logo if available</option>
-                      <option value="text_wordmark_fallback">Text wordmark fallback</option>
-                    </select>
-                  </label>
+              <div className="grid gap-4">
+                <label className="grid gap-1 md:max-w-md">
+                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Supplier / Brand Scope</span>
+                  <select
+                    value={activeGroupKey}
+                    onChange={(event) => updateSelectedGroupKey(event.target.value)}
+                    className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+                  >
+                    <option value="all">All Supplier Groups</option>
+                    {effectiveGroups.map((group) => (
+                      <option key={group.dedupeKey} value={group.dedupeKey}>
+                        {group.displayLabel}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <Field label="RFQ Title" value={settings.documentDetails.title} onChange={(value) => updateDocumentDetails("title", value)} />
+                  <Field label="RFQ Number" value={settings.documentDetails.rfqNumber} onChange={(value) => updateDocumentDetails("rfqNumber", value)} />
+                  <Field label="RFQ Date" type="date" value={settings.documentDetails.rfqDate} onChange={(value) => updateDocumentDetails("rfqDate", value)} />
+                  <Field label="Quotation Date" type="date" value={settings.documentDetails.quotationDate} onChange={(value) => updateDocumentDetails("quotationDate", value)} />
+                  <Field label="Project Display Name" value={settings.documentDetails.projectDisplayName} onChange={(value) => updateDocumentDetails("projectDisplayName", value)} />
+                  <Field label="Client Display Name" value={settings.documentDetails.clientDisplayName} onChange={(value) => updateDocumentDetails("clientDisplayName", value)} />
+                  <Field label="Prepared By" value={settings.documentDetails.preparedBy} onChange={(value) => updateDocumentDetails("preparedBy", value)} />
+                  <Field label="Project Contact" value={settings.documentDetails.projectContact} onChange={(value) => updateDocumentDetails("projectContact", value)} />
+                  <Field label="Phone" value={settings.documentDetails.phone} onChange={(value) => updateDocumentDetails("phone", value)} />
+                  <Field label="Email" type="email" value={settings.documentDetails.email} onChange={(value) => updateDocumentDetails("email", value)} />
+                  <Field label="PO Box" value={settings.documentDetails.poBox} onChange={(value) => updateDocumentDetails("poBox", value)} />
+                  <Field label="Company Display Name" value={settings.documentDetails.companyDisplayName} onChange={(value) => updateDocumentDetails("companyDisplayName", value)} />
+                  <div className="xl:col-span-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <ToggleField
+                      checked={settings.documentDetails.showLogo}
+                      label="Show Company Logo"
+                      description="Uses the local same-origin RFQ logo asset."
+                      onChange={(value) => updateDocumentDetails("showLogo", value)}
+                    />
+                    <label className="grid gap-1">
+                      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Logo Display Mode</span>
+                      <select
+                        value={settings.documentDetails.logoDisplayMode}
+                        onChange={(event) => updateDocumentDetails("logoDisplayMode", event.target.value as ProcurementRfqDocumentDetails["logoDisplayMode"])}
+                        className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+                      >
+                        <option value="logo_if_available">Logo if available</option>
+                        <option value="text_wordmark_fallback">Text wordmark fallback</option>
+                      </select>
+                    </label>
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -952,156 +893,16 @@ export function ProcurementRfqEditor({
         </div>
       ) : null}
 
-      {previewGroups.map((group, groupIndex) => (
-        <section
-          key={group.key}
-          className={`rfq-group mx-auto mb-6 w-[297mm] max-w-full rounded-2xl border border-zinc-200 bg-white px-6 py-6 shadow-[0_20px_60px_rgba(15,23,42,0.08)] print:mb-0 print:w-auto print:max-w-none print:rounded-none print:border-0 print:px-0 print:py-0 print:shadow-none ${groupIndex === 0 ? "" : "print:mt-0"}`}
-        >
-          <header className="border-b border-zinc-200 pb-5">
-            <div className="flex items-start justify-between gap-6">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">
-                  {settings.documentDetails.title || "Request for Quotation"}
-                </p>
-                <h1 className="mt-2 text-2xl font-semibold text-zinc-950">{group.label}</h1>
-                <p className="mt-1 text-sm text-zinc-500">{group.type}</p>
-              </div>
-              <BrandBlock
-                companyDisplayName={settings.documentDetails.companyDisplayName}
-                defaultLogoUrl={defaultLogoUrl}
-                logoDisplayMode={settings.documentDetails.logoDisplayMode}
-                showLogo={settings.documentDetails.showLogo}
-              />
-            </div>
-            <div className="mt-4 grid gap-4 xl:grid-cols-[1.3fr_1fr]">
-              <div className="grid gap-3 text-xs text-zinc-600 md:grid-cols-2 xl:grid-cols-3">
-                <p><span className="font-semibold text-zinc-900">Client:</span> {settings.documentDetails.clientDisplayName || data.client?.company_name || "-"}</p>
-                <p><span className="font-semibold text-zinc-900">Prepared By:</span> {settings.documentDetails.preparedBy || data.companyProfile.displayName || "Noa Offices"}</p>
-                {settings.documentDetails.phone ? <p><span className="font-semibold text-zinc-900">Phone:</span> {settings.documentDetails.phone}</p> : null}
-                {settings.documentDetails.email ? <p><span className="font-semibold text-zinc-900">Email:</span> {settings.documentDetails.email}</p> : null}
-                {settings.documentDetails.projectContact ? <p><span className="font-semibold text-zinc-900">Project Contact:</span> {settings.documentDetails.projectContact}</p> : null}
-                {settings.documentDetails.poBox ? <p><span className="font-semibold text-zinc-900">PO Box:</span> {settings.documentDetails.poBox}</p> : null}
-              </div>
-              <div className="grid gap-2 text-right text-xs text-zinc-600">
-                <p><span className="font-semibold text-zinc-900">RFQ No:</span> {settings.documentDetails.rfqNumber || "-"}</p>
-                <p><span className="font-semibold text-zinc-900">RFQ Date:</span> {formatDate(settings.documentDetails.rfqDate)}</p>
-                <p><span className="font-semibold text-zinc-900">Quotation Date:</span> {formatDate(settings.documentDetails.quotationDate)}</p>
-                <p><span className="font-semibold text-zinc-900">Project:</span> {settings.documentDetails.projectDisplayName || data.project?.project_name || data.quotation.title}</p>
-              </div>
-            </div>
-            {(group.supplier.contactPerson || group.supplier.email || group.supplier.phone || group.supplier.address) ? (
-              <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-xs text-zinc-600">
-                <p className="font-semibold uppercase tracking-[0.18em] text-zinc-500">Supplier Details</p>
-                <div className="mt-2 grid gap-2 md:grid-cols-2">
-                  {group.supplier.contactPerson ? <p><span className="font-semibold text-zinc-900">Contact:</span> {group.supplier.contactPerson}</p> : null}
-                  {group.supplier.email ? <p><span className="font-semibold text-zinc-900">Email:</span> {group.supplier.email}</p> : null}
-                  {group.supplier.phone ? <p><span className="font-semibold text-zinc-900">Phone:</span> {group.supplier.phone}</p> : null}
-                  {group.supplier.address ? <p><span className="font-semibold text-zinc-900">Address:</span> {group.supplier.address}</p> : null}
-                </div>
-              </div>
-            ) : null}
-          </header>
-
-          <div className="mt-5 overflow-hidden border border-zinc-200">
-            <table className="rfq-table w-full border-collapse text-left text-[11px] text-zinc-700">
-              <thead className="bg-zinc-50 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                <tr>
-                  <th className="w-[6%] border-b border-zinc-200 px-3 py-3">SR</th>
-                  {settings.columnVisibility.image ? <th className="w-[12%] border-b border-zinc-200 px-3 py-3">Image</th> : null}
-                  <th className="border-b border-zinc-200 px-3 py-3">Description</th>
-                  {settings.columnVisibility.size ? <th className="w-[15%] border-b border-zinc-200 px-3 py-3">Size</th> : null}
-                  {settings.columnVisibility.finish ? <th className="w-[15%] border-b border-zinc-200 px-3 py-3">Finish</th> : null}
-                  {settings.columnVisibility.quantity ? <th className="w-[8%] border-b border-zinc-200 px-3 py-3 text-center">Total Qty</th> : null}
-                </tr>
-              </thead>
-              <tbody>
-                {group.items.map((entry, itemIndex) => {
-                  const context = sectionContext(entry.item.section_id, sectionsById);
-                  const specification = compactSpecification(entry.item.specification_snapshot);
-                  const finishLines = splitMultiline(entry.finish);
-
-                  return (
-                    <tr key={entry.item.id} className={itemIndex % 2 === 0 ? "bg-white" : "bg-zinc-50/50"}>
-                      <td className="align-top border-b border-zinc-200 px-3 py-3 text-xs font-semibold text-zinc-900">
-                        {String(itemIndex + 1).padStart(2, "0")}
-                      </td>
-                      {settings.columnVisibility.image ? (
-                        <td className="align-top border-b border-zinc-200 px-3 py-3">
-                          <div className="h-24 w-24 overflow-hidden border border-zinc-200 bg-white">
-                            <QuotationImageFrame
-                              alt={entry.description}
-                              className="h-full w-full overflow-hidden"
-                              emptyContent={<span className="flex h-full items-center justify-center px-2 text-center text-[10px] text-zinc-400">No image</span>}
-                              imageUrl={entry.item.imageUrl}
-                            />
-                          </div>
-                        </td>
-                      ) : null}
-                      <td className="align-top border-b border-zinc-200 px-3 py-3">
-                        <p className="font-semibold text-zinc-900">{entry.description}</p>
-                        <div className="mt-2 grid gap-1 text-[11px] leading-5">
-                          {(context.area || context.section) ? <p className="text-zinc-500">{[context.area, context.section].filter(Boolean).join(" / ")}</p> : null}
-                          {settings.columnVisibility.code && entry.item.item_code_snapshot ? <p><span className="font-semibold text-zinc-900">Code:</span> {entry.item.item_code_snapshot}</p> : null}
-                          {settings.columnVisibility.model && entry.item.model_snapshot ? <p><span className="font-semibold text-zinc-900">Model:</span> {entry.item.model_snapshot}</p> : null}
-                          {settings.columnVisibility.brandOrigin && (entry.item.brand_name_snapshot || entry.item.origin_snapshot) ? (
-                            <p>
-                              <span className="font-semibold text-zinc-900">Brand / Origin:</span>{" "}
-                              {[entry.item.brand_name_snapshot, entry.item.origin_snapshot].filter(Boolean).join(" / ")}
-                            </p>
-                          ) : null}
-                          {settings.columnVisibility.specification && specification ? <p className="text-zinc-600">{specification}</p> : null}
-                          {entry.remark ? <p className="text-zinc-600"><span className="font-semibold text-zinc-900">Supplier Note:</span> {entry.remark}</p> : null}
-                        </div>
-                      </td>
-                      {settings.columnVisibility.size ? <td className="align-top border-b border-zinc-200 px-3 py-3 text-zinc-700"><p className="leading-5">{entry.size || "-"}</p></td> : null}
-                      {settings.columnVisibility.finish ? (
-                        <td className="align-top border-b border-zinc-200 px-3 py-3 text-zinc-700">
-                          {finishLines.length ? (
-                            <div className="grid gap-1 leading-5">
-                              {finishLines.map((finish, finishIndex) => (
-                                <p key={`${entry.item.id}-finish-${finishIndex}`}>{finish}</p>
-                              ))}
-                            </div>
-                          ) : (
-                            <p>-</p>
-                          )}
-                        </td>
-                      ) : null}
-                      {settings.columnVisibility.quantity ? <td className="align-top border-b border-zinc-200 px-3 py-3 text-center font-semibold text-zinc-900">{entry.quantity}</td> : null}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {settings.columnVisibility.supplierResponseFields ? (
-            <section className="rfq-response mt-5 border border-zinc-200 bg-zinc-50/60 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Supplier Response</p>
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <div><p className="text-xs font-semibold text-zinc-900">Supplier Price</p><div className="mt-3 h-8 border-b border-zinc-300" /></div>
-                <div><p className="text-xs font-semibold text-zinc-900">Lead Time</p><div className="mt-3 h-8 border-b border-zinc-300" /></div>
-                <div><p className="text-xs font-semibold text-zinc-900">Availability</p><div className="mt-3 h-8 border-b border-zinc-300" /></div>
-                <div><p className="text-xs font-semibold text-zinc-900">Remarks</p><div className="mt-3 h-8 border-b border-zinc-300" /></div>
-              </div>
-            </section>
-          ) : null}
-
-          {(settings.notes.generalNote || settings.notes.submissionDate || settings.notes.deliveryLocation || settings.notes.terms) ? (
-            <section className="rfq-notes mt-5 border border-zinc-200 bg-white p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Notes / Terms</p>
-              <div className="mt-3 grid gap-2 text-sm text-zinc-700">
-                {splitMultiline(settings.notes.generalNote).map((line, index) => (
-                  <p key={`${group.key}-note-${index}`}>{line}</p>
-                ))}
-                {settings.notes.submissionDate ? <p><span className="font-semibold text-zinc-900">Required Submission Date:</span> {formatDate(settings.notes.submissionDate)}</p> : null}
-                {settings.notes.deliveryLocation ? <p><span className="font-semibold text-zinc-900">Delivery Location:</span> {settings.notes.deliveryLocation}</p> : null}
-                {settings.notes.terms ? <p><span className="font-semibold text-zinc-900">Terms / Remarks:</span> {settings.notes.terms}</p> : null}
-              </div>
-            </section>
-          ) : null}
-        </section>
-      ))}
+      <ProcurementRfqDocument
+        companyLogoUrl={defaultLogoUrl}
+        currentScopeLabel={currentScopeLabel}
+        groups={documentGroups}
+        notes={settings.notes}
+        settings={{
+          columnVisibility: settings.columnVisibility,
+          documentDetails: settings.documentDetails,
+        }}
+      />
     </main>
   );
 }

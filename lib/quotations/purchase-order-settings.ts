@@ -1,9 +1,12 @@
+import { normalizePurchaseOrderCurrency } from "@/lib/quotations/purchase-order-currency";
+
 export type PurchaseOrderLogoDisplayMode = "logo_if_available" | "text_wordmark_fallback";
 
 export type PurchaseOrderDocumentDetails = {
   title: string;
   poNumber: string;
   poDate: string;
+  currency: string;
   quotationReference: string;
   projectDisplayName: string;
   clientDisplayName: string;
@@ -76,6 +79,7 @@ export const DEFAULT_PURCHASE_ORDER_DOCUMENT_DETAILS: PurchaseOrderDocumentDetai
   title: "Purchase Order",
   poNumber: "",
   poDate: "",
+  currency: "AED",
   quotationReference: "",
   projectDisplayName: "",
   clientDisplayName: "",
@@ -251,6 +255,9 @@ export function normalizePurchaseOrderSettings(
       title: normalizedString(documentDetailsRecord, "title", DEFAULT_PURCHASE_ORDER_DOCUMENT_DETAILS.title),
       poNumber: normalizedString(documentDetailsRecord, "poNumber"),
       poDate: normalizedString(documentDetailsRecord, "poDate"),
+      currency: normalizePurchaseOrderCurrency(
+        normalizedString(documentDetailsRecord, "currency", DEFAULT_PURCHASE_ORDER_DOCUMENT_DETAILS.currency),
+      ),
       quotationReference: normalizedString(documentDetailsRecord, "quotationReference"),
       projectDisplayName: normalizedString(documentDetailsRecord, "projectDisplayName"),
       clientDisplayName: normalizedString(documentDetailsRecord, "clientDisplayName"),

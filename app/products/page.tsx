@@ -5,9 +5,15 @@ import { requireActiveUser } from "@/lib/auth";
 
 const productCards = [
   {
-    title: "Product Templates",
-    description: "Manage reusable product templates, source pricing, images, and template options.",
+    title: "Product Library",
+    description: "Browse reusable product templates, images, finishes, and category-organized product information.",
     href: "/products/templates",
+    action: "Browse",
+  },
+  {
+    title: "Product Management",
+    description: "Add, edit, archive, and maintain reusable product templates and their source pricing setup.",
+    href: "/products/management",
     action: "Manage",
   },
   {
@@ -39,7 +45,7 @@ export default async function ProductsPage() {
       <div className="flex-1">
         <TopBar
           title="Products & Templates"
-          description="Maintain the product library, materials, categories, and price-control workflows used by quotations."
+          description="Browse the product library, maintain reusable templates, and manage brand material workflows."
           userDisplayName={displayName}
           userEmail={user.email}
         />

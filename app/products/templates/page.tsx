@@ -15,6 +15,7 @@ import {
   type VariantPricingRow,
 } from "@/components/products/variant-pricing-tables";
 import { ProductTemplateImageUploader } from "@/components/products/product-template-image-uploader";
+import { ProductLibraryPreviewImage } from "@/components/products/product-library-preview-image";
 import { TemplatePricingSections } from "@/components/products/template-pricing-sections";
 import {
   TemplateDetailImageGallery,
@@ -29,6 +30,7 @@ import {
   QuickCategoryForm,
   TemplateCategoryFields,
 } from "@/components/products/template-category-fields";
+import { ProductLibraryBrowseControls } from "@/components/products/product-library-browse-controls";
 import { TemplateFormShell } from "@/components/products/template-form-shell";
 import { TopBar } from "@/components/top-bar";
 import { requireSettingsManager } from "@/lib/auth";
@@ -78,6 +80,7 @@ export const dynamic = "force-dynamic";
 
 type TemplatesSearchParams = {
   message?: string | string[];
+  manage?: string | string[];
   q?: string | string[];
   brand?: string | string[];
   main?: string | string[];
@@ -564,6 +567,7 @@ function templatesHref(
   params: TemplatesSearchParams,
   updates: Partial<
     Record<
+      | "manage"
       | "q"
       | "brand"
       | "main"
@@ -579,6 +583,7 @@ function templatesHref(
   const next = new URLSearchParams();
 
   for (const key of [
+    "manage",
     "q",
     "brand",
     "main",
@@ -647,6 +652,26 @@ function TemplateLifecycleBadge({
       {status}
     </span>
   );
+}
+
+function productLibraryPrimaryImage(template: ProductTemplate) {
+  return templateImageValue(template, "proposed_image_url_1")
+    || template.default_image_url
+    || template.reference_image_url
+    || null;
+}
+
+function productLibraryImageCount(template: ProductTemplate) {
+  const values = new Set<string>();
+  const primary = productLibraryPrimaryImage(template);
+  if (primary) values.add(primary);
+
+  for (const slot of proposedImageSlots) {
+    const value = templateImageValue(template, slot.field);
+    if (value) values.add(value);
+  }
+
+  return values.size;
 }
 
 function Field({
@@ -1511,13 +1536,13 @@ function TemplateRowActions({
         href={openHref}
         className="inline-flex h-9 items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100"
       >
-        Open
+        View
       </Link>
       <Link
         href={editHref}
         className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
       >
-        Edit
+        Edit Template
       </Link>
       <details className="relative">
         <summary className="inline-flex h-9 cursor-pointer list-none items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
@@ -1862,6 +1887,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const { user, displayName } = await requireSettingsManager();
   const params = (await searchParams) ?? {};
   const message = stringParam(params.message);
+  const isManagementView = stringParam(params.manage) === "1";
   const searchQuery = stringParam(params.q).trim();
   const selectedBrandFilter = stringParam(params.brand);
   const selectedMainFilter = stringParam(params.main);
@@ -2202,7 +2228,10 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
       !normalizedSearch ||
       template.template_name.toLowerCase().includes(normalizedSearch) ||
       (template.template_code ?? "").toLowerCase().includes(normalizedSearch) ||
-      (template.item_code ?? "").toLowerCase().includes(normalizedSearch);
+      (template.item_code ?? "").toLowerCase().includes(normalizedSearch) ||
+      (template.description ?? "").toLowerCase().includes(normalizedSearch) ||
+      (template.default_specification ?? "").toLowerCase().includes(normalizedSearch) ||
+      (template.origin ?? "").toLowerCase().includes(normalizedSearch);
     const matchesBrand =
       !selectedBrandFilter || template.brand_id === selectedBrandFilter;
     const matchesMain =
@@ -2264,14 +2293,297 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const selectedCategorySubcategories = selectedMainCategory
     ? subCategories.filter((category) => category.parent_id === selectedMainCategory.id)
     : [];
+  const searchMatchedActiveTemplates = activeTemplateList.filter((template) => {
+    return (
+      !normalizedSearch ||
+      template.template_name.toLowerCase().includes(normalizedSearch) ||
+      (template.template_code ?? "").toLowerCase().includes(normalizedSearch) ||
+      (template.item_code ?? "").toLowerCase().includes(normalizedSearch) ||
+      (template.description ?? "").toLowerCase().includes(normalizedSearch) ||
+      (template.default_specification ?? "").toLowerCase().includes(normalizedSearch) ||
+      (template.origin ?? "").toLowerCase().includes(normalizedSearch)
+    );
+  });
+  const brandScopedLibraryTemplates = searchMatchedActiveTemplates.filter((template) =>
+    !selectedBrandFilter || template.brand_id === selectedBrandFilter,
+  );
+  const libraryCategoryOptions = visibleMainCategories
+    .map((category) => ({
+      id: category.id,
+      label: category.name,
+      count: brandScopedLibraryTemplates.filter((template) => template.main_category_id === category.id).length,
+    }))
+    .filter((category) => category.count > 0);
+  const librarySubCategoryOptions = visibleSubCategories
+    .map((category) => ({
+      id: category.id,
+      label: category.name,
+      count: brandScopedLibraryTemplates.filter((template) => {
+        if (selectedMainFilter && template.main_category_id !== selectedMainFilter) {
+          return false;
+        }
+        return template.sub_category_id === category.id;
+      }).length,
+    }))
+    .filter((category) => category.count > 0);
+  const libraryBrandOptions = brandList
+    .map((brand) => ({
+      id: brand.id,
+      label: brand.name,
+      count: searchMatchedActiveTemplates.filter((template) => template.brand_id === brand.id).length,
+    }))
+    .filter((brand) => brand.count > 0);
+  const libraryResultTemplates = templatesMatchingStructure;
+
+  if (!isManagementView) {
+    return (
+      <div className="min-h-screen bg-stone-50 lg:flex">
+        <AppSidebar />
+        <div className="flex-1">
+          <TopBar
+            title="Product Library"
+            description="Browse reusable product templates by brand, category, or search."
+            userDisplayName={displayName}
+            userEmail={user.email}
+          />
+          <main className="px-5 py-6 sm:px-8">
+            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <Link
+                href="/products"
+                className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
+              >
+                Back to products
+              </Link>
+              {message ? (
+                <p className={`rounded-md border px-3 py-2 text-sm ${
+                  messageTone(message) === "error"
+                    ? "border-red-200 bg-red-50 text-red-900"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-950"
+                }`}>
+                  {message}
+                </p>
+              ) : null}
+            </div>
+
+            <ProductLibraryBrowseControls
+              key={`${selectedBrandFilter}:${selectedMainFilter}:${selectedSubFilter}:${searchQuery}`}
+              brandOptions={libraryBrandOptions}
+              categoryOptions={libraryCategoryOptions}
+              subCategoryOptions={librarySubCategoryOptions}
+              selectedBrandId={selectedBrandFilter}
+              selectedCategoryId={selectedMainFilter}
+              selectedSubCategoryId={selectedSubFilter}
+              searchQuery={searchQuery}
+              resultCount={libraryResultTemplates.length}
+            />
+
+            {selectedTemplate ? (
+              <section className="mt-6 rounded-xl border border-zinc-200 bg-white shadow-sm">
+                <div className="flex flex-col gap-5 p-5 lg:flex-row">
+                  <div className="flex h-64 w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 lg:w-72">
+                    <ProductLibraryPreviewImage
+                      alt={selectedTemplate.template_name}
+                      className="flex h-full w-full items-center justify-center"
+                      path={productLibraryPrimaryImage(selectedTemplate)}
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Product Details</p>
+                        <h2 className="mt-1 text-2xl font-semibold text-zinc-950">{selectedTemplate.template_name}</h2>
+                        <p className="mt-2 text-sm text-zinc-500">
+                          {brandMap.get(selectedTemplate.brand_id) ?? "Unknown brand"}
+                          {selectedTemplate.main_category_id ? ` / ${categoryMap.get(selectedTemplate.main_category_id) ?? "Main category"}` : ""}
+                          {selectedTemplate.sub_category_id ? ` / ${categoryMap.get(selectedTemplate.sub_category_id) ?? "Sub category"}` : ""}
+                        </p>
+                      </div>
+                      <TemplateLifecycleBadge status={templateLifecycleById.get(selectedTemplate.id) ?? "active"} />
+                    </div>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Template Code</p>
+                        <p className="mt-1 text-sm text-zinc-900">{selectedTemplate.template_code ?? "Not set"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Item Code</p>
+                        <p className="mt-1 text-sm text-zinc-900">{selectedTemplate.item_code ?? "Not set"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Origin</p>
+                        <p className="mt-1 text-sm text-zinc-900">{selectedTemplate.origin ?? "Not set"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Images</p>
+                        <p className="mt-1 text-sm text-zinc-900">{productLibraryImageCount(selectedTemplate)} available</p>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Description</p>
+                        <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-zinc-700">
+                          {selectedTemplate.description ?? "No description available."}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Specification</p>
+                        <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-zinc-700">
+                          {selectedTemplate.default_specification ?? "No specification available."}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-5 flex flex-wrap gap-2">
+                      <Link
+                        href={templatesHref(params, {
+                          template: null,
+                          editTemplate: null,
+                        })}
+                        className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                      >
+                        Back to results
+                      </Link>
+                      <Link
+                        href={templatesHref(params, {
+                          manage: "1",
+                          template: selectedTemplate.id,
+                          editTemplate: null,
+                          addTemplate: null,
+                        })}
+                        className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                      >
+                        Open Full Detail
+                      </Link>
+                      <Link
+                        href={templatesHref(params, {
+                          manage: "1",
+                          template: selectedTemplate.id,
+                          editTemplate: selectedTemplate.id,
+                          addTemplate: null,
+                        })}
+                        className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                      >
+                        Edit Template
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
+            {!selectedBrand && !searchQuery ? (
+              <section className="mt-6 rounded-xl border border-dashed border-zinc-200 bg-white p-10 text-center shadow-sm">
+                <h2 className="text-lg font-semibold text-zinc-950">Select a brand or search to start.</h2>
+                <p className="mt-2 text-sm text-zinc-500">
+                  Use the brand strip above or search by product name, item code, origin, or template code.
+                </p>
+              </section>
+            ) : libraryResultTemplates.length ? (
+              <section className="mt-6">
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  {libraryResultTemplates.map((template) => {
+                    const openHref = templatesHref(params, {
+                      template: template.id,
+                      editTemplate: null,
+                      addTemplate: null,
+                    });
+                    const editHref = templatesHref(params, {
+                      manage: "1",
+                      template: template.id,
+                      editTemplate: template.id,
+                      addTemplate: null,
+                    });
+                    const primaryImage = productLibraryPrimaryImage(template);
+
+                    return (
+                      <article
+                        key={template.id}
+                        className={`overflow-hidden rounded-xl border bg-white shadow-sm transition hover:border-zinc-300 hover:shadow-md ${
+                          selectedTemplate?.id === template.id
+                            ? "border-emerald-200 bg-emerald-50/30"
+                            : "border-zinc-200"
+                        }`}
+                      >
+                        <div className="flex h-44 items-center justify-center overflow-hidden border-b border-zinc-200 bg-zinc-50">
+                          <ProductLibraryPreviewImage
+                            alt={template.template_name}
+                            className="flex h-full w-full items-center justify-center"
+                            path={primaryImage}
+                          />
+                        </div>
+                        <div className="flex flex-col gap-3 p-4">
+                          <div className="flex items-start gap-2">
+                            <h3 className="min-w-0 flex-1 text-sm font-semibold text-zinc-950">
+                              {template.template_name}
+                            </h3>
+                            <TemplateLifecycleBadge status={templateLifecycleById.get(template.id) ?? "active"} />
+                          </div>
+                          <div className="grid gap-1 text-xs text-zinc-500">
+                            <p>{brandMap.get(template.brand_id) ?? "Unknown brand"}</p>
+                            <p>
+                              {[template.template_code, template.item_code].filter(Boolean).join(" / ") || "No template or item code"}
+                            </p>
+                            <p>
+                              {[template.main_category_id ? categoryMap.get(template.main_category_id) : null, template.sub_category_id ? categoryMap.get(template.sub_category_id) : null].filter(Boolean).join(" / ") || "No category"}
+                            </p>
+                            {template.origin ? <p>Origin: {template.origin}</p> : null}
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-[11px] font-semibold text-zinc-500">
+                            <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-1">
+                              {productLibraryImageCount(template)} images
+                            </span>
+                          </div>
+                          <p className="line-clamp-3 text-sm leading-6 text-zinc-600">
+                            {template.description || template.default_specification || "No description available."}
+                          </p>
+                          <div className="mt-auto flex flex-wrap gap-2">
+                            <Link
+                              href={openHref}
+                              className="inline-flex h-9 items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100"
+                            >
+                              View Details
+                            </Link>
+                            <Link
+                              href={editHref}
+                              className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                            >
+                              Edit Template
+                            </Link>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : (
+              <section className="mt-6 rounded-xl border border-dashed border-zinc-200 bg-white p-10 text-center shadow-sm">
+                <h2 className="text-lg font-semibold text-zinc-950">No products found.</h2>
+                <p className="mt-2 text-sm text-zinc-500">
+                  Try a different search term, another brand, or clear the current filters.
+                </p>
+                <Link
+                  href="/products/templates"
+                  className="mt-4 inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                >
+                  Clear filters
+                </Link>
+              </section>
+            )}
+          </main>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
       <AppSidebar />
       <div className="flex-1">
         <TopBar
-          title="Product Templates"
-          description="Manage reusable product templates and configurable options."
+          title={isManagementView ? "Product Management" : "Product Library"}
+          description={isManagementView
+            ? "Add, edit, archive, and maintain reusable product templates and configurable options."
+            : "Browse reusable product templates, search by brand or category, and open product details when you need them."}
           userDisplayName={displayName}
           userEmail={user.email}
         />
@@ -2300,6 +2612,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                 action="/products/templates"
                 className="grid gap-3 xl:grid-cols-[minmax(180px,1fr)_170px_180px_180px_190px_auto]"
               >
+                {isManagementView ? <input type="hidden" name="manage" value="1" /> : null}
                 <input
                   name="q"
                   defaultValue={searchQuery}
@@ -2360,18 +2673,29 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   >
                     Apply
                   </PendingSubmitButton>
-                  <Link
-                    href={manageBrandsHref}
-                    className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                  >
-                    + Add Brand
-                  </Link>
-                  <Link
-                    href={templatesHref(params, { addTemplate: "1" })}
-                    className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                  >
-                    + Add Product Template
-                  </Link>
+                  {isManagementView ? (
+                    <>
+                      <Link
+                        href={manageBrandsHref}
+                        className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                      >
+                        + Add Brand
+                      </Link>
+                      <Link
+                        href={templatesHref(params, { addTemplate: "1" })}
+                        className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                      >
+                        + Add Product Template
+                      </Link>
+                    </>
+                  ) : (
+                    <Link
+                      href="/products/management"
+                      className="inline-flex h-10 items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-4 text-sm font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100"
+                    >
+                      Open Product Management
+                    </Link>
+                  )}
                 </div>
               </form>
 
@@ -2410,6 +2734,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
             </div>
           </section>
 
+          {isManagementView ? (
           <section className="mt-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
@@ -2438,6 +2763,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
               ) : null}
             </div>
           </section>
+          ) : null}
 
           <section className={selectedTemplate ? "mt-6 space-y-6" : "mt-6 grid gap-6 2xl:grid-cols-[360px_1fr]"}>
             {!selectedTemplate ? (
@@ -2907,18 +3233,29 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                     <div className="p-8 text-center text-sm text-zinc-500">
                       <p>No product templates in this category yet.</p>
                       <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
-                        <Link
-                          href={manageBrandsHref}
-                          className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                        >
-                          Manage Brands
-                        </Link>
-                        <Link
-                          href={templatesHref(params, { addTemplate: "1" })}
-                          className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                        >
-                          + Add Product Template
-                        </Link>
+                        {isManagementView ? (
+                          <>
+                            <Link
+                              href={manageBrandsHref}
+                              className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                            >
+                              Manage Brands
+                            </Link>
+                            <Link
+                              href={templatesHref(params, { addTemplate: "1" })}
+                              className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                            >
+                              + Add Product Template
+                            </Link>
+                          </>
+                        ) : (
+                          <Link
+                            href="/products/management"
+                            className="inline-flex h-10 items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-4 text-sm font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100"
+                          >
+                            Open Product Management
+                          </Link>
+                        )}
                       </div>
                     </div>
                   ) : null}

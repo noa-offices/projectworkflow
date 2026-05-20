@@ -7,6 +7,15 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+const A4_PORTRAIT_VIEWPORT = {
+  width: 794,
+  height: 1123,
+  deviceScaleFactor: 2,
+  hasTouch: false,
+  isLandscape: false,
+  isMobile: false,
+} as const;
+
 type DownloadOrderConfirmationRouteContext = {
   params: Promise<{ id: string }>;
 };
@@ -73,7 +82,7 @@ export async function GET(request: NextRequest, { params }: DownloadOrderConfirm
         },
       },
       sourceUrl,
-      viewport: { width: 1280, height: 900, deviceScaleFactor: 2, hasTouch: false, isLandscape: false, isMobile: false },
+      viewport: A4_PORTRAIT_VIEWPORT,
     });
     const filename = `${orderConfirmationFilename(quotation)}.pdf`;
     const pdfBody = pdfBuffer.buffer.slice(

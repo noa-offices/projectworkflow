@@ -261,6 +261,78 @@ function InfoValue({ label, value }: { label: string; value?: string | number | 
   );
 }
 
+function SecondaryActionLink({
+  href,
+  label,
+}: {
+  href: string;
+  label: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+    >
+      {label}
+    </Link>
+  );
+}
+
+function SecondaryPendingActionLink({
+  href,
+  label,
+  pendingLabel,
+}: {
+  href: string;
+  label: string;
+  pendingLabel: string;
+}) {
+  return (
+    <PendingLinkButton
+      href={href}
+      pendingLabel={pendingLabel}
+      className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+    >
+      {label}
+    </PendingLinkButton>
+  );
+}
+
+function DocumentActionRow({
+  title,
+  description,
+  previewHref,
+  previewLabel,
+  downloadHref,
+  downloadLabel,
+  pendingLabel,
+}: {
+  title: string;
+  description: string;
+  previewHref: string;
+  previewLabel: string;
+  downloadHref: string;
+  downloadLabel: string;
+  pendingLabel: string;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <h3 className="text-sm font-semibold text-zinc-950">{title}</h3>
+        <p className="mt-1 text-sm text-zinc-500">{description}</p>
+      </div>
+      <div className="flex flex-wrap gap-2 sm:justify-end">
+        <SecondaryActionLink href={previewHref} label={previewLabel} />
+        <SecondaryPendingActionLink
+          href={downloadHref}
+          label={downloadLabel}
+          pendingLabel={pendingLabel}
+        />
+      </div>
+    </div>
+  );
+}
+
 function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
   return (
     <label className="block">
@@ -738,9 +810,9 @@ export default async function QuotationDetailPage({
   if (activityActorIds.length) {
     const { data: activityProfiles, error: activityProfilesError } = await supabase
       .from("profiles")
-      .select("id,display_name,name,full_name,email")
+      .select("id,name,full_name,email")
       .in("id", activityActorIds)
-      .returns<Array<{ id: string; display_name: string | null; name: string | null; full_name: string | null; email: string | null }>>();
+      .returns<Array<{ id: string; name: string | null; full_name: string | null; email: string | null }>>();
 
     if (activityProfilesError) {
       console.error("QUOTATION ACTIVITY PROFILES ERROR", activityProfilesError.message);
@@ -814,7 +886,7 @@ export default async function QuotationDetailPage({
 
           <section className="grid gap-5 xl:grid-cols-[1fr_340px]">
             <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-zinc-500">
                     {displayQuotationNo ?? quotation.quotation_no ?? "Draft quotation"}
@@ -822,97 +894,31 @@ export default async function QuotationDetailPage({
                   <h1 className="mt-1 text-2xl font-semibold text-zinc-950">
                     {quotation.title}
                   </h1>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {showOptionNumber ? <OptionBadge optionNo={quotation.option_no} /> : null}
+                    <StatusBadge status={quotation.status} />
+                    <LocalDraftLink quotationId={quotation.id} showLink={false} />
+                  </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Link
-                    href={`/quotations/${quotation.id}/procurement-rfq`}
-                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                  >
-                    Preview Procurement RFQ
-                  </Link>
-                  <PendingLinkButton
-                    href={`/quotations/${quotation.id}/download-procurement-rfq`}
-                    pendingLabel="Preparing RFQ..."
-                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                  >
-                    Download Procurement RFQ PDF
-                  </PendingLinkButton>
-                  <Link
-                    href={`/quotations/${quotation.id}/purchase-order`}
-                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                  >
-                    Preview Purchase Order
-                  </Link>
-                  <PendingLinkButton
-                    href={`/quotations/${quotation.id}/download-purchase-order`}
-                    pendingLabel="Preparing PO..."
-                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                  >
-                    Download Purchase Order PDF
-                  </PendingLinkButton>
-                  <Link
-                    href={`/quotations/${quotation.id}/order-confirmation`}
-                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                  >
-                    Preview Order Confirmation
-                  </Link>
-                  <PendingLinkButton
-                    href={`/quotations/${quotation.id}/download-order-confirmation`}
-                    pendingLabel="Preparing Confirmation..."
-                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                  >
-                    Download Order Confirmation PDF
-                  </PendingLinkButton>
-                  <Link
-                    href={`/quotations/${quotation.id}/presentation`}
-                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                  >
-                    Preview Presentation
-                  </Link>
-                  <PendingLinkButton
-                    href={`/quotations/${quotation.id}/download-presentation`}
-                    pendingLabel="Preparing Presentation..."
-                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                  >
-                    Download Presentation PDF
-                  </PendingLinkButton>
-                  <Link
-                    href={`/quotations/${quotation.id}/pdf`}
-                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                  >
-                    Preview PDF
-                  </Link>
-                  <PendingLinkButton
-                    href={`/quotations/${quotation.id}/download-pdf`}
-                    pendingLabel="Preparing PDF..."
-                    className="rounded-md border border-emerald-900 bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                  >
-                    Download PDF
-                  </PendingLinkButton>
-                  <Link
-                    href={`/quotations/${id}/specification`}
-                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                  >
-                    Specification Sheet
-                  </Link>
-                  <PendingLinkButton
-                    href={`/quotations/${quotation.id}/download-specification`}
-                    pendingLabel="Preparing Specification..."
-                    className="rounded-md border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                  >
-                    Download Specification
-                  </PendingLinkButton>
-                  <Link
-                    href={`/quotations/${quotation.id}/builder`}
-                    className="rounded-md bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                  >
-                    Open Builder
-                  </Link>
-                  <LocalDraftLink quotationId={quotation.id} />
-                  {showOptionNumber ? <OptionBadge optionNo={quotation.option_no} /> : null}
-                  <StatusBadge status={quotation.status} />
+                <div className="flex flex-col gap-3 xl:items-end">
+                  <div className="flex flex-wrap gap-2">
+                    <Link
+                      href={`/quotations/${quotation.id}/local-builder`}
+                      className="inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                    >
+                      Open Builder
+                    </Link>
+                    <SecondaryActionLink href={`/quotations/${quotation.id}/pdf`} label="Preview Quotation" />
+                    <SecondaryPendingActionLink
+                      href={`/quotations/${quotation.id}/download-pdf`}
+                      label="Download Quotation PDF"
+                      pendingLabel="Preparing PDF..."
+                    />
+                  </div>
+                  <p className="text-xs text-zinc-500">Builder now opens the local workflow by default.</p>
                 </div>
               </div>
+
               <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                 <InfoValue label="Date" value={quotation.quotation_date} />
                 <InfoValue label="Client" value={client?.company_name ?? "Unknown client"} />
@@ -927,6 +933,73 @@ export default async function QuotationDetailPage({
                   {projectContactLine(project)}
                 </p>
               ) : null}
+
+              <section className="mt-6 rounded-lg border border-zinc-200 bg-zinc-50/60 p-4">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-zinc-950">Documents & Exports</h2>
+                    <p className="mt-1 text-sm text-zinc-500">
+                      Preview, edit, and download quotation documents from one place.
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3">
+                  <DocumentActionRow
+                    title="Quotation"
+                    description="Client-facing commercial quotation."
+                    previewHref={`/quotations/${quotation.id}/pdf`}
+                    previewLabel="Preview"
+                    downloadHref={`/quotations/${quotation.id}/download-pdf`}
+                    downloadLabel="Download PDF"
+                    pendingLabel="Preparing PDF..."
+                  />
+                  <DocumentActionRow
+                    title="Specification Sheet"
+                    description="Technical product specification."
+                    previewHref={`/quotations/${id}/specification`}
+                    previewLabel="Preview"
+                    downloadHref={`/quotations/${quotation.id}/download-specification`}
+                    downloadLabel="Download PDF"
+                    pendingLabel="Preparing Specification..."
+                  />
+                  <DocumentActionRow
+                    title="Presentation"
+                    description="Visual client presentation."
+                    previewHref={`/quotations/${quotation.id}/presentation`}
+                    previewLabel="Preview"
+                    downloadHref={`/quotations/${quotation.id}/download-presentation`}
+                    downloadLabel="Download PDF"
+                    pendingLabel="Preparing Presentation..."
+                  />
+                  <DocumentActionRow
+                    title="Procurement RFQ"
+                    description="Supplier request for quotation."
+                    previewHref={`/quotations/${quotation.id}/procurement-rfq`}
+                    previewLabel="Preview / Edit"
+                    downloadHref={`/quotations/${quotation.id}/download-procurement-rfq`}
+                    downloadLabel="Download PDF"
+                    pendingLabel="Preparing RFQ..."
+                  />
+                  <DocumentActionRow
+                    title="Purchase Order"
+                    description="Supplier purchase order."
+                    previewHref={`/quotations/${quotation.id}/purchase-order`}
+                    previewLabel="Preview / Edit"
+                    downloadHref={`/quotations/${quotation.id}/download-purchase-order`}
+                    downloadLabel="Download PDF"
+                    pendingLabel="Preparing PO..."
+                  />
+                  <DocumentActionRow
+                    title="Order Confirmation"
+                    description="Client order confirmation document."
+                    previewHref={`/quotations/${quotation.id}/order-confirmation`}
+                    previewLabel="Preview"
+                    downloadHref={`/quotations/${quotation.id}/download-order-confirmation`}
+                    downloadLabel="Download PDF"
+                    pendingLabel="Preparing Confirmation..."
+                  />
+                </div>
+              </section>
 
               {canManageRecords ? (
                 <details className="mt-5" data-state-key={`quotation-details-${quotation.id}`}>
@@ -1150,7 +1223,7 @@ export default async function QuotationDetailPage({
                   </p>
                 </div>
                 <Link
-                  href={`/quotations/${quotation.id}/builder`}
+                  href={`/quotations/${quotation.id}/local-builder`}
                   className="inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
                 >
                   Open Builder

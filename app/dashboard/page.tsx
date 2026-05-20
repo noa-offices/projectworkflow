@@ -14,8 +14,14 @@ const modules = [
   {
     title: "Product Library",
     description:
-      "Manage product templates, source pricing, images, and configurable options.",
+      "Browse product templates, images, finishes, and reusable product information.",
     href: "/products/templates",
+  },
+  {
+    title: "Product Management",
+    description:
+      "Add, edit, archive, and maintain reusable product templates and source price setup.",
+    href: "/products/management",
   },
   {
     title: "Brand Material Library",

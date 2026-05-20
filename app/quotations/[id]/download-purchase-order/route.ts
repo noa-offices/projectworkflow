@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireActiveUser } from "@/lib/auth";
+import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
 import { loadPurchaseOrderSettings } from "@/lib/quotations/purchase-order-settings-store";
 import { loadQuotationDerivedDocumentData } from "@/lib/quotations/derived-document-data";
 import { generatePdfBuffer } from "@/lib/server/generate-pdf-buffer";
@@ -8,29 +9,23 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+const A4_LANDSCAPE_VIEWPORT = {
+  width: 1404,
+  height: 993,
+  deviceScaleFactor: 2,
+  hasTouch: false,
+  isLandscape: true,
+  isMobile: false,
+} as const;
+
 type DownloadPurchaseOrderRouteContext = {
   params: Promise<{ id: string }>;
 };
 
-function normalizeGroupName(value: string | null | undefined) {
-  return (value ?? "")
-    .replace(/\s+/g, " ")
-    .replace(/[^a-zA-Z0-9]/g, "")
-    .trim()
-    .toLowerCase();
-}
-
 function effectiveSupplierLabel(items: Array<{ supplier_name_snapshot: string | null; brand_name_snapshot: string | null }>, selectedKey: string) {
-  for (const item of items) {
-    const label = item.supplier_name_snapshot?.trim() || item.brand_name_snapshot?.trim() || "Unassigned Supplier";
-    const normalizedLabel = normalizeGroupName(label) || "unassigned";
-    const dedupeKey = normalizedLabel === "unassignedsupplier" ? "unassigned" : normalizedLabel;
-    if (dedupeKey === selectedKey) {
-      return label;
-    }
-  }
-
-  return "Supplier";
+  const groups = buildEffectiveDocumentGroups(items);
+  const group = groups.find((entry) => entry.dedupeKey === selectedKey) ?? groups[0] ?? null;
+  return group?.displayLabel || "Supplier";
 }
 
 function purchaseOrderFilename(poNumber: string, supplierName: string) {
@@ -62,9 +57,15 @@ export async function GET(request: NextRequest, { params }: DownloadPurchaseOrde
   }
 
   const poNumber = settingsResult.success ? settingsResult.settings.documentDetails.poNumber || `PO-${data.quotation.quotation_no ?? "Draft"}` : `PO-${data.quotation.quotation_no ?? "Draft"}`;
-  const selectedKey = settingsResult.success ? settingsResult.settings.selectedSupplierKey : "";
-  const savedSupplierOverride = settingsResult.success && selectedKey
-    ? settingsResult.settings.supplierOverrides[Object.keys(settingsResult.settings.supplierOverrides).find((key) => normalizeGroupName(key.split(":")[1] ?? key) === selectedKey) ?? ""]
+  const availableGroups = buildEffectiveDocumentGroups(data.items);
+  const selectedKey = settingsResult.success && availableGroups.some((group) => group.dedupeKey === settingsResult.settings.selectedSupplierKey)
+    ? settingsResult.settings.selectedSupplierKey
+    : availableGroups[0]?.dedupeKey ?? "";
+  const selectedGroup = availableGroups.find((group) => group.dedupeKey === selectedKey) ?? availableGroups[0] ?? null;
+  const savedSupplierOverride = settingsResult.success && selectedGroup
+    ? selectedGroup.keys
+      .map((key) => settingsResult.settings.supplierOverrides[key])
+      .find(Boolean)
     : null;
   const supplierName = savedSupplierOverride?.displayName || effectiveSupplierLabel(data.items, selectedKey) || "Supplier";
 
@@ -88,7 +89,7 @@ export async function GET(request: NextRequest, { params }: DownloadPurchaseOrde
         },
       },
       sourceUrl,
-      viewport: { width: 1600, height: 900, deviceScaleFactor: 2, hasTouch: false, isLandscape: true, isMobile: false },
+      viewport: A4_LANDSCAPE_VIEWPORT,
     });
     const filename = `${purchaseOrderFilename(poNumber, supplierName)}.pdf`;
     const pdfBody = pdfBuffer.buffer.slice(

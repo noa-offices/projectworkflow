@@ -397,12 +397,14 @@ function statusText(workspace: LocalQuotationWorkspace, localDraftSaved: boolean
 
 function LocalServerViewLink({
   children,
+  className: classNameOverride,
   disabled,
   href,
   primary = false,
   target,
 }: {
   children: ReactNode;
+  className?: string;
   disabled: boolean;
   href: string;
   primary?: boolean;
@@ -414,7 +416,7 @@ function LocalServerViewLink({
   const disabledClassName = primary
     ? "cursor-not-allowed bg-zinc-300 text-zinc-600"
     : "cursor-not-allowed border border-zinc-200 bg-zinc-100 text-zinc-400";
-  const className = `px-3 py-2 text-xs font-semibold ${disabled ? disabledClassName : enabledClassName}`;
+  const className = `${classNameOverride ?? "px-3 py-2 text-xs font-semibold"} ${disabled ? disabledClassName : enabledClassName}`;
 
   if (disabled) {
     return (
@@ -632,6 +634,48 @@ function layoutColumnSettings(value: unknown) {
       entry !== null &&
       typeof (entry as LocalLayoutColumnSetting).key === "string",
     );
+}
+
+function DownloadMenuRow({
+  description,
+  disabled,
+  downloadHref,
+  previewHref,
+  previewLabel,
+  title,
+}: {
+  description: string;
+  disabled: boolean;
+  downloadHref: string;
+  previewHref: string;
+  previewLabel: string;
+  title: string;
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-3">
+      <div className="min-w-0">
+        <p className="text-xs font-semibold text-zinc-950">{title}</p>
+        <p className="mt-1 text-[11px] leading-4 text-zinc-500">{description}</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <LocalServerViewLink
+          disabled={disabled}
+          href={previewHref}
+          target="_blank"
+          className="inline-flex h-8 items-center rounded-md px-3 text-[11px] font-semibold"
+        >
+          {previewLabel}
+        </LocalServerViewLink>
+        <LocalServerViewLink
+          disabled={disabled}
+          href={downloadHref}
+          className="inline-flex h-8 items-center rounded-md px-3 text-[11px] font-semibold"
+        >
+          Download PDF
+        </LocalServerViewLink>
+      </div>
+    </div>
+  );
 }
 
 function layoutColumnOrder(value: unknown) {
@@ -2377,6 +2421,9 @@ export function LocalQuotationBuilder({
     const snapshotDetails = sourceSnapshotDetails(item);
     const templateLinkedGroups = templateMaterialGroups.filter((group) => group.product_template_id === item.source_template_id);
     const linkedGroupIds = new Set(templateLinkedGroups.map((group) => group.id));
+    const editTemplateHref = item.source_template_id
+      ? `/products/templates?manage=1&template=${encodeURIComponent(item.source_template_id)}&editTemplate=${encodeURIComponent(item.source_template_id)}&returnTo=${encodeURIComponent(`/quotations/${workspace.server_quotation_id}/local-builder`)}`
+      : null;
     const selectedFinishes = finishSelectionRows(item.finish_selections_snapshot);
     const displayPricing = workspaceItemDisplayPricing(workspace, item);
     const selectedFinishChips = selectedFinishes.map((finish, index) => ({
@@ -2783,6 +2830,18 @@ export function LocalQuotationBuilder({
           {sourceSummaryRows.length ? (
             <fieldset className="border border-zinc-300 bg-white p-3">
               <legend className="px-1 text-[11px] font-bold uppercase text-zinc-500">Source / Library Price</legend>
+              {editTemplateHref ? (
+                <div className="mb-3 flex justify-end">
+                  <Link
+                    href={editTemplateHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-8 items-center justify-center border border-zinc-300 bg-white px-3 text-[11px] font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                  >
+                    Edit Product Template
+                  </Link>
+                </div>
+              ) : null}
               <div className="grid gap-2 text-xs">
                 {sourceSummaryRows.map((row) => (
                   <div key={row.label}>
@@ -2872,46 +2931,75 @@ export function LocalQuotationBuilder({
                 <summary className="inline-flex h-9 cursor-pointer items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
                   Downloads
                 </summary>
-                <div className="absolute right-0 z-30 mt-2 grid min-w-[220px] gap-2 border border-zinc-300 bg-white p-2 text-xs shadow-lg">
-                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/procurement-rfq`} target="_blank">
-                    Preview Procurement RFQ
-                  </LocalServerViewLink>
-                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/download-procurement-rfq`}>
-                    Download Procurement RFQ PDF
-                  </LocalServerViewLink>
-                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/purchase-order`} target="_blank">
-                    Preview Purchase Order
-                  </LocalServerViewLink>
-                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/download-purchase-order`}>
-                    Download Purchase Order PDF
-                  </LocalServerViewLink>
-                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/order-confirmation`} target="_blank">
-                    Preview Order Confirmation
-                  </LocalServerViewLink>
-                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/download-order-confirmation`}>
-                    Download Order Confirmation PDF
-                  </LocalServerViewLink>
-                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/presentation`} target="_blank">
-                    Preview Presentation
-                  </LocalServerViewLink>
-                  <LocalServerViewLink
-                    disabled={workspace.has_unsaved_changes}
-                    href={`/quotations/${workspace.server_quotation_id}/download-presentation`}
-                  >
-                    Download Presentation PDF
-                  </LocalServerViewLink>
-                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/pdf`} target="_blank">
-                    Preview PDF
-                  </LocalServerViewLink>
-                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/download-pdf`} primary>
-                    Download PDF
-                  </LocalServerViewLink>
-                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/specification`} target="_blank">
-                    Specification Sheet
-                  </LocalServerViewLink>
-                  <LocalServerViewLink disabled={workspace.has_unsaved_changes} href={`/quotations/${workspace.server_quotation_id}/download-specification`}>
-                    Download Specification
-                  </LocalServerViewLink>
+                <div className="absolute right-0 z-30 mt-2 flex w-[560px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-lg border border-zinc-300 bg-white text-xs shadow-lg">
+                  <div className="border-b border-zinc-200 px-4 py-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Downloads</p>
+                    <p className="mt-1 text-[11px] text-zinc-500">
+                      Preview and export client and supplier documents from the current saved server quotation.
+                    </p>
+                  </div>
+                  <div className="max-h-[68vh] overflow-y-auto px-4 py-3">
+                    <div className="grid gap-4">
+                      <section>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Client Documents</p>
+                        <div className="mt-2 grid gap-2">
+                          <DownloadMenuRow
+                            disabled={workspace.has_unsaved_changes}
+                            title="Quotation"
+                            description="Client-facing commercial quote."
+                            previewHref={`/quotations/${workspace.server_quotation_id}/pdf`}
+                            previewLabel="Preview"
+                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-pdf`}
+                          />
+                          <DownloadMenuRow
+                            disabled={workspace.has_unsaved_changes}
+                            title="Specification Sheet"
+                            description="Technical product specification."
+                            previewHref={`/quotations/${workspace.server_quotation_id}/specification`}
+                            previewLabel="Preview"
+                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-specification`}
+                          />
+                          <DownloadMenuRow
+                            disabled={workspace.has_unsaved_changes}
+                            title="Presentation"
+                            description="Visual client presentation."
+                            previewHref={`/quotations/${workspace.server_quotation_id}/presentation`}
+                            previewLabel="Preview"
+                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-presentation`}
+                          />
+                          <DownloadMenuRow
+                            disabled={workspace.has_unsaved_changes}
+                            title="Order Confirmation"
+                            description="Client approval confirmation."
+                            previewHref={`/quotations/${workspace.server_quotation_id}/order-confirmation`}
+                            previewLabel="Preview / Edit"
+                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-order-confirmation`}
+                          />
+                        </div>
+                      </section>
+                      <section>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Supplier Documents</p>
+                        <div className="mt-2 grid gap-2">
+                          <DownloadMenuRow
+                            disabled={workspace.has_unsaved_changes}
+                            title="Procurement RFQ"
+                            description="Supplier request for quotation."
+                            previewHref={`/quotations/${workspace.server_quotation_id}/procurement-rfq`}
+                            previewLabel="Preview / Edit"
+                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-procurement-rfq`}
+                          />
+                          <DownloadMenuRow
+                            disabled={workspace.has_unsaved_changes}
+                            title="Purchase Order"
+                            description="Supplier purchase order."
+                            previewHref={`/quotations/${workspace.server_quotation_id}/purchase-order`}
+                            previewLabel="Preview / Edit"
+                            downloadHref={`/quotations/${workspace.server_quotation_id}/download-purchase-order`}
+                          />
+                        </div>
+                      </section>
+                    </div>
+                  </div>
                 </div>
               </details>
               <details ref={columnSettingsRef} className="relative">

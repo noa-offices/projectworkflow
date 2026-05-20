@@ -1,26 +1,29 @@
 import type { NextRequest } from "next/server";
 import { requireActiveUser } from "@/lib/auth";
+import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
+import { loadProcurementRfqSettings } from "@/lib/quotations/procurement-rfq-settings-store";
+import { loadQuotationDerivedDocumentData } from "@/lib/quotations/derived-document-data";
 import { generatePdfBuffer } from "@/lib/server/generate-pdf-buffer";
-import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+const A4_LANDSCAPE_VIEWPORT = {
+  width: 1404,
+  height: 993,
+  deviceScaleFactor: 2,
+  hasTouch: false,
+  isLandscape: true,
+  isMobile: false,
+} as const;
+
 type DownloadProcurementRfqRouteContext = {
   params: Promise<{ id: string }>;
 };
 
-type QuotationFilenameData = {
-  quotation_no: string | null;
-  title: string;
-};
-
-function procurementRfqFilename(quotation: QuotationFilenameData) {
-  const quotationNo = quotation.quotation_no ?? "Draft";
-  const title = quotation.title || "Quotation";
-
-  return `${quotationNo} - ${title} - Procurement RFQ`.replace(/[\\/:*?"<>|]/g, "-");
+function procurementRfqFilename(rfqNumber: string, scopeLabel: string) {
+  return `${rfqNumber} - ${scopeLabel}`.replace(/[\\/:*?"<>|]/g, "-");
 }
 
 function requestOrigin(request: NextRequest) {
@@ -38,20 +41,31 @@ export async function GET(request: NextRequest, { params }: DownloadProcurementR
   await requireActiveUser();
 
   const { id } = await params;
-  const supabase = await createSupabaseClient();
-  const { data: quotation, error } = await supabase
-    .from("quotations")
-    .select("quotation_no,title")
-    .eq("id", id)
-    .maybeSingle<QuotationFilenameData>();
+  const [data, settingsResult] = await Promise.all([
+    loadQuotationDerivedDocumentData(id),
+    loadProcurementRfqSettings(id),
+  ]);
 
-  if (error) {
-    console.error("PROCUREMENT RFQ DOWNLOAD LOOKUP ERROR", error.message);
-  }
-
-  if (!quotation) {
+  if (!data) {
     return new Response("Quotation not found.", { status: 404 });
   }
+
+  const savedGroupKey = settingsResult.success ? settingsResult.settings.selectedGroupKey : "all";
+  const effectiveGroups = buildEffectiveDocumentGroups(data.items);
+  const selectedGroup = savedGroupKey !== "all"
+    ? effectiveGroups.find((group) => group.dedupeKey === savedGroupKey) ?? null
+    : null;
+  const savedSupplierOverride = settingsResult.success && selectedGroup
+    ? selectedGroup.keys
+      .map((key) => settingsResult.settings.supplierOverrides[key])
+      .find((entry) => entry?.displayName)
+    : null;
+  const rfqNumber = settingsResult.success
+    ? settingsResult.settings.documentDetails.rfqNumber || `RFQ-${data.quotation.quotation_no ?? "Draft"}`
+    : `RFQ-${data.quotation.quotation_no ?? "Draft"}`;
+  const scopeLabel = savedGroupKey === "all"
+    ? "All Suppliers"
+    : savedSupplierOverride?.displayName || selectedGroup?.displayLabel || "All Suppliers";
 
   const origin = requestOrigin(request);
   const sourceUrl = `${origin}/quotations/${id}/procurement-rfq?print=1`;
@@ -73,9 +87,9 @@ export async function GET(request: NextRequest, { params }: DownloadProcurementR
         },
       },
       sourceUrl,
-      viewport: { width: 1600, height: 900, deviceScaleFactor: 2, hasTouch: false, isLandscape: true, isMobile: false },
+      viewport: A4_LANDSCAPE_VIEWPORT,
     });
-    const filename = `${procurementRfqFilename(quotation)}.pdf`;
+    const filename = `${procurementRfqFilename(rfqNumber, scopeLabel)}.pdf`;
     const pdfBody = pdfBuffer.buffer.slice(
       pdfBuffer.byteOffset,
       pdfBuffer.byteOffset + pdfBuffer.byteLength,
