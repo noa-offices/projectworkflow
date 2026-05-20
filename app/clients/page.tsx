@@ -33,6 +33,7 @@ type ClientsPageProps = {
     addProject?: string;
     client?: string;
     message?: string;
+    messageType?: string;
     project?: string;
     q?: string;
     status?: string;
@@ -488,6 +489,12 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
   const resolvedSearchParams = await searchParams;
   const pageParams = resolvedSearchParams ?? {};
   const message = resolvedSearchParams?.message;
+  const messageType =
+    resolvedSearchParams?.messageType === "error"
+      ? "error"
+      : resolvedSearchParams?.messageType === "warning"
+        ? "warning"
+        : "success";
   const query = resolvedSearchParams?.q?.trim() ?? "";
   const selectedStatus = resolvedSearchParams?.status ?? "";
   const selectedClientId = resolvedSearchParams?.client ?? "";
@@ -702,7 +709,15 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
               Coming next: quotations will be linked to projects.
             </p>
             {message ? (
-              <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
+              <p
+                className={`rounded-md border px-3 py-2 text-sm ${
+                  messageType === "error"
+                    ? "border-red-200 bg-red-50 text-red-900"
+                    : messageType === "warning"
+                      ? "border-amber-200 bg-amber-50 text-amber-900"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-950"
+                }`}
+              >
                 {message}
               </p>
             ) : null}

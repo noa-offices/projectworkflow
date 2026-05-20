@@ -8,6 +8,7 @@ import { createAdminClient as createSupabaseAdminClient } from "@/lib/supabase/a
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 const projectStatuses = new Set(["active", "on_hold", "completed", "cancelled"]);
+type ClientsMessageTone = "success" | "error" | "warning";
 
 function textValue(formData: FormData, name: string) {
   const value = formData.get(name);
@@ -34,14 +35,27 @@ function optionalNumberValue(formData: FormData, name: string) {
   return Number.isFinite(number) ? number : null;
 }
 
-function redirectWithMessage(message: string): never {
-  redirect(`/clients?message=${encodeURIComponent(message)}`);
+function redirectWithMessage(message: string, tone: ClientsMessageTone = "success"): never {
+  const query = new URLSearchParams();
+  query.set("message", message);
+  query.set("messageType", tone);
+  redirect(`/clients?${query.toString()}`);
 }
 
-function redirectToClients(message: string, params: Record<string, string> = {}): never {
+function redirectToClients(
+  message: string,
+  params: Record<string, string> = {},
+  tone: ClientsMessageTone = "success",
+): never {
   const query = new URLSearchParams(params);
   query.set("message", message);
+  query.set("messageType", tone);
   redirect(`/clients?${query.toString()}`);
+}
+
+function safeSupabaseErrorReason(error: { code?: string | null; message?: string | null; details?: string | null }) {
+  const detail = [error.code, error.message, error.details].filter(Boolean).join(" - ");
+  return detail || "unknown server error";
 }
 
 function clientPayload(formData: FormData, userId?: string) {
@@ -94,7 +108,7 @@ function validateProjectYear(formData: FormData, projectYear: number | null) {
   }
 
   if (projectYear === null || projectYear < 2000 || projectYear > 2100) {
-    redirectWithMessage("Project year must be between 2000 and 2100.");
+    redirectWithMessage("Project year must be between 2000 and 2100.", "error");
   }
 }
 
@@ -103,7 +117,7 @@ export async function createClient(formData: FormData) {
   const payload = clientPayload(formData, user.id);
 
   if (!payload.company_name) {
-    redirectWithMessage("Company name is required.");
+    redirectWithMessage("Company name is required.", "error");
   }
 
   const supabase = await createSupabaseClient();
@@ -111,7 +125,7 @@ export async function createClient(formData: FormData) {
 
   if (error) {
     console.error("CLIENT CREATE ERROR", error.message);
-    redirectWithMessage("Client could not be created.");
+    redirectWithMessage("Client could not be created.", "error");
   }
 
   revalidatePath("/clients");
@@ -124,7 +138,7 @@ export async function updateClient(formData: FormData) {
   const payload = clientPayload(formData);
 
   if (!id || !payload.company_name) {
-    redirectWithMessage("Client id and company name are required.");
+    redirectWithMessage("Client id and company name are required.", "error");
   }
 
   const supabase = await createSupabaseClient();
@@ -132,7 +146,7 @@ export async function updateClient(formData: FormData) {
 
   if (error) {
     console.error("CLIENT UPDATE ERROR", error.message);
-    redirectWithMessage("Client could not be updated.");
+    redirectWithMessage("Client could not be updated.", "error");
   }
 
   revalidatePath("/clients");
@@ -144,11 +158,11 @@ export async function createProject(formData: FormData) {
   const payload = projectPayload(formData, user.id);
 
   if (!payload.client_id || !payload.project_name) {
-    redirectWithMessage("Client and project name are required.");
+    redirectWithMessage("Client and project name are required.", "error");
   }
 
   if (!projectStatuses.has(payload.project_status)) {
-    redirectWithMessage("Select a valid project status.");
+    redirectWithMessage("Select a valid project status.", "error");
   }
 
   validateProjectYear(formData, payload.project_year);
@@ -158,7 +172,7 @@ export async function createProject(formData: FormData) {
 
   if (error) {
     console.error("PROJECT CREATE ERROR", error.message);
-    redirectWithMessage("Project could not be created.");
+    redirectWithMessage("Project could not be created.", "error");
   }
 
   revalidatePath("/clients");
@@ -171,11 +185,11 @@ export async function updateProject(formData: FormData) {
   const payload = projectPayload(formData);
 
   if (!id || !payload.client_id || !payload.project_name) {
-    redirectWithMessage("Project id, client, and project name are required.");
+    redirectWithMessage("Project id, client, and project name are required.", "error");
   }
 
   if (!projectStatuses.has(payload.project_status)) {
-    redirectWithMessage("Select a valid project status.");
+    redirectWithMessage("Select a valid project status.", "error");
   }
 
   validateProjectYear(formData, payload.project_year);
@@ -185,7 +199,7 @@ export async function updateProject(formData: FormData) {
 
   if (error) {
     console.error("PROJECT UPDATE ERROR", error.message);
-    redirectWithMessage("Project could not be updated.");
+    redirectWithMessage("Project could not be updated.", "error");
   }
 
   revalidatePath("/clients");
@@ -197,7 +211,7 @@ export async function deactivateProject(formData: FormData) {
   const id = textValue(formData, "id");
 
   if (!id) {
-    redirectWithMessage("Project id is required.");
+    redirectWithMessage("Project id is required.", "error");
   }
 
   const supabase = await createSupabaseClient();
@@ -208,11 +222,11 @@ export async function deactivateProject(formData: FormData) {
 
   if (error) {
     console.error("PROJECT DEACTIVATE ERROR", error.message);
-    redirectWithMessage("Project could not be deactivated.");
+    redirectWithMessage("Project could not be deactivated.", "error");
   }
 
   revalidatePath("/clients");
-  redirectWithMessage("Project moved to Archive. Linked quotations were not deleted.");
+  redirectWithMessage("Project moved to Archive. Linked quotations were not deleted.", "warning");
 }
 
 export async function restoreProject(formData: FormData) {
@@ -220,7 +234,7 @@ export async function restoreProject(formData: FormData) {
   const id = textValue(formData, "id");
 
   if (!id) {
-    redirectToClients("Project id is required.", { tab: "archive" });
+    redirectToClients("Project id is required.", { tab: "archive" }, "error");
   }
 
   const supabase = await createSupabaseClient();
@@ -231,7 +245,7 @@ export async function restoreProject(formData: FormData) {
 
   if (error) {
     console.error("PROJECT RESTORE ERROR", error.message);
-    redirectToClients("Project could not be restored.", { tab: "archive" });
+    redirectToClients("Project could not be restored.", { tab: "archive" }, "error");
   }
 
   revalidatePath("/clients");
@@ -243,7 +257,7 @@ export async function permanentlyDeleteProject(formData: FormData) {
   const id = textValue(formData, "id");
 
   if (!id) {
-    redirectToClients("Project id is required.", { tab: "archive" });
+    redirectToClients("Project id is required.", { tab: "archive" }, "error");
   }
 
   const supabase = await createSupabaseClient();
@@ -255,15 +269,15 @@ export async function permanentlyDeleteProject(formData: FormData) {
 
   if (projectError) {
     console.error("PROJECT PERMANENT DELETE READ ERROR", projectError.message);
-    redirectToClients("Project could not be loaded for deletion.", { tab: "archive" });
+    redirectToClients("Project could not be loaded for deletion.", { tab: "archive" }, "error");
   }
 
   if (!project) {
-    redirectToClients("Project could not be deleted because it was not found.", { tab: "archive" });
+    redirectToClients("Project could not be deleted because it was not found.", { tab: "archive" }, "error");
   }
 
   if (project.is_active) {
-    redirectToClients("Archive this project before permanently deleting it.", { tab: "archive" });
+    redirectToClients("Archive this project before permanently deleting it.", { tab: "archive" }, "warning");
   }
 
   const { count, error: countError } = await supabase
@@ -273,27 +287,27 @@ export async function permanentlyDeleteProject(formData: FormData) {
 
   if (countError) {
     console.error("PROJECT QUOTATION DEPENDENCY CHECK ERROR", countError.message);
-    redirectToClients("Project dependencies could not be checked.", { tab: "archive" });
+    redirectToClients("Project dependencies could not be checked.", { tab: "archive" }, "error");
   }
 
   if ((count ?? 0) > 0) {
     redirectToClients("This project has linked quotations. Keep it archived.", {
       tab: "archive",
-    });
+    }, "warning");
   }
 
   const adminSupabase = createSupabaseAdminClient();
 
   if (!adminSupabase) {
     console.error("PROJECT PERMANENT DELETE ADMIN CONFIG ERROR", "SUPABASE_SERVICE_ROLE_KEY is not configured.");
-    redirectToClients("Server admin delete is not configured.", { tab: "archive" });
+    redirectToClients("Server admin delete is not configured.", { tab: "archive" }, "error");
   }
 
   const { error } = await adminSupabase.from("projects").delete().eq("id", id).eq("is_active", false);
 
   if (error) {
     console.error("PROJECT PERMANENT DELETE ERROR", error.message);
-    redirectToClients("Project could not be permanently deleted.", { tab: "archive" });
+    redirectToClients("Project could not be permanently deleted.", { tab: "archive" }, "error");
   }
 
   revalidatePath("/clients");
@@ -320,6 +334,7 @@ async function deleteQuotationsByIds(
     redirectToClients(
       `Could not delete because linked quotation data still exists in quotation_sections: ${sectionsReadError.message}`,
       { tab: "archive" },
+      "error",
     );
   }
 
@@ -393,6 +408,7 @@ async function deleteQuotationsByIds(
       redirectToClients(
         `Could not delete because linked quotation data still exists in ${step.label}: ${error.message}`,
         { tab: "archive" },
+        "error",
       );
     }
   }
@@ -404,7 +420,7 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
   const confirmationText = textValue(formData, "confirmation_text");
 
   if (!id) {
-    redirectToClients("Project id is required.", { tab: "archive" });
+    redirectToClients("Project id is required.", { tab: "archive" }, "error");
   }
 
   const supabase = await createSupabaseClient();
@@ -416,26 +432,26 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
 
   if (projectError) {
     console.error("PROJECT CASCADE DELETE READ ERROR", projectError.message);
-    redirectToClients("Project could not be loaded for deletion.", { tab: "archive" });
+    redirectToClients("Project could not be loaded for deletion.", { tab: "archive" }, "error");
   }
 
   if (!project) {
-    redirectToClients("Project could not be deleted because it was not found.", { tab: "archive" });
+    redirectToClients("Project could not be deleted because it was not found.", { tab: "archive" }, "error");
   }
 
   if (confirmationText !== project.project_name && confirmationText !== "DELETE PROJECT") {
-    redirectToClients("Type the project name exactly or DELETE PROJECT to continue.", { tab: "archive" });
+    redirectToClients("Type the project name exactly or DELETE PROJECT to continue.", { tab: "archive" }, "warning");
   }
 
   if (project.is_active) {
-    redirectToClients("Archive this project before permanently deleting it.", { tab: "archive" });
+    redirectToClients("Archive this project before permanently deleting it.", { tab: "archive" }, "warning");
   }
 
   const adminSupabase = createSupabaseAdminClient();
 
   if (!adminSupabase) {
     console.error("PROJECT CASCADE DELETE ADMIN CONFIG ERROR", "SUPABASE_SERVICE_ROLE_KEY is not configured.");
-    redirectToClients("Server admin delete is not configured.", { tab: "archive" });
+    redirectToClients("Server admin delete is not configured.", { tab: "archive" }, "error");
   }
 
   const { data: quotations, error: quotationsError } = await adminSupabase
@@ -445,8 +461,9 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
     .returns<Array<{ id: string }>>();
 
   if (quotationsError) {
-    console.error("PROJECT CASCADE DELETE QUOTATIONS READ ERROR", quotationsError.message);
-    redirectToClients("Linked quotations could not be loaded for deletion.", { tab: "archive" });
+    const safeReason = safeSupabaseErrorReason(quotationsError);
+    console.error("PROJECT CASCADE DELETE QUOTATIONS READ ERROR", safeReason);
+    redirectToClients(`Linked quotations could not be loaded for deletion: ${safeReason}`, { tab: "archive" }, "error");
   }
 
   const quotationIds = (quotations ?? []).map((quotation) => quotation.id);
@@ -464,6 +481,7 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
     redirectToClients(
       `Could not delete because linked quotation data still exists in audit_activity_log: ${projectAuditError.message}`,
       { tab: "archive" },
+      "error",
     );
   }
 
@@ -478,6 +496,7 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
     redirectToClients(
       `Project could not be permanently deleted: ${deleteProjectError.message}`,
       { tab: "archive" },
+      "error",
     );
   }
 
@@ -502,7 +521,7 @@ export async function deactivateClient(formData: FormData) {
   const id = textValue(formData, "id");
 
   if (!id) {
-    redirectWithMessage("Client id is required.");
+    redirectWithMessage("Client id is required.", "error");
   }
 
   const supabase = await createSupabaseClient();
@@ -513,11 +532,11 @@ export async function deactivateClient(formData: FormData) {
 
   if (error) {
     console.error("CLIENT DEACTIVATE ERROR", error.message);
-    redirectWithMessage("Client could not be moved to Archive.");
+    redirectWithMessage("Client could not be moved to Archive.", "error");
   }
 
   revalidatePath("/clients");
-  redirectWithMessage("Client moved to Archive. Linked projects and quotations were not deleted.");
+  redirectWithMessage("Client moved to Archive. Linked projects and quotations were not deleted.", "warning");
 }
 
 export async function restoreClient(formData: FormData) {
@@ -525,7 +544,7 @@ export async function restoreClient(formData: FormData) {
   const id = textValue(formData, "id");
 
   if (!id) {
-    redirectToClients("Client id is required.", { tab: "archive" });
+    redirectToClients("Client id is required.", { tab: "archive" }, "error");
   }
 
   const supabase = await createSupabaseClient();
@@ -536,7 +555,7 @@ export async function restoreClient(formData: FormData) {
 
   if (error) {
     console.error("CLIENT RESTORE ERROR", error.message);
-    redirectToClients("Client could not be restored.", { tab: "archive" });
+    redirectToClients("Client could not be restored.", { tab: "archive" }, "error");
   }
 
   revalidatePath("/clients");
@@ -548,7 +567,7 @@ export async function permanentlyDeleteClient(formData: FormData) {
   const id = textValue(formData, "id");
 
   if (!id) {
-    redirectToClients("Client id is required.", { tab: "archive" });
+    redirectToClients("Client id is required.", { tab: "archive" }, "error");
   }
 
   const supabase = await createSupabaseClient();
@@ -566,20 +585,20 @@ export async function permanentlyDeleteClient(formData: FormData) {
       "CLIENT DEPENDENCY CHECK ERROR",
       projectCountError?.message ?? quotationCountError?.message,
     );
-    redirectToClients("Client dependencies could not be checked.", { tab: "archive" });
+    redirectToClients("Client dependencies could not be checked.", { tab: "archive" }, "error");
   }
 
   if ((projectCount ?? 0) > 0 || (quotationCount ?? 0) > 0) {
     redirectToClients("This client has linked projects or quotations. Keep it archived.", {
       tab: "archive",
-    });
+    }, "warning");
   }
 
   const { error } = await supabase.from("clients").delete().eq("id", id);
 
   if (error) {
     console.error("CLIENT PERMANENT DELETE ERROR", error.message);
-    redirectToClients("Client could not be permanently deleted.", { tab: "archive" });
+    redirectToClients("Client could not be permanently deleted.", { tab: "archive" }, "error");
   }
 
   revalidatePath("/clients");
