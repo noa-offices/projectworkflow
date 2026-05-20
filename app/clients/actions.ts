@@ -280,22 +280,6 @@ export async function permanentlyDeleteProject(formData: FormData) {
     redirectToClients("Archive this project before permanently deleting it.", { tab: "archive" }, "warning");
   }
 
-  const { count, error: countError } = await supabase
-    .from("quotations")
-    .select("id", { count: "exact", head: true })
-    .eq("project_id", id);
-
-  if (countError) {
-    console.error("PROJECT QUOTATION DEPENDENCY CHECK ERROR", countError.message);
-    redirectToClients("Project dependencies could not be checked.", { tab: "archive" }, "error");
-  }
-
-  if ((count ?? 0) > 0) {
-    redirectToClients("This project has linked quotations. Keep it archived.", {
-      tab: "archive",
-    }, "warning");
-  }
-
   const adminClientResult = createSupabaseAdminClient();
 
   if (adminClientResult.error || !adminClientResult.client) {
@@ -304,12 +288,42 @@ export async function permanentlyDeleteProject(formData: FormData) {
   }
 
   const adminSupabase = adminClientResult.client;
+  const { count, error: countError } = await adminSupabase
+    .from("quotations")
+    .select("id", { count: "exact", head: true })
+    .eq("project_id", id);
+
+  if (countError) {
+    const safeReason = safeSupabaseErrorReason(countError);
+    console.error("PROJECT QUOTATION DEPENDENCY CHECK ERROR", {
+      code: countError.code ?? null,
+      message: countError.message ?? null,
+      details: countError.details ?? null,
+      projectId: id,
+    });
+    redirectToClients(`Project dependencies could not be checked: ${safeReason}`, { tab: "archive" }, "error");
+  }
+
+  if ((count ?? 0) > 0) {
+    const quotationLabel = count === 1 ? "quotation" : "quotations";
+    redirectToClients(
+      `This project still has ${count} linked ${quotationLabel}. Permanently delete or unlink the ${quotationLabel} first.`,
+      { tab: "archive" },
+      "warning",
+    );
+  }
 
   const { error } = await adminSupabase.from("projects").delete().eq("id", id).eq("is_active", false);
 
   if (error) {
-    console.error("PROJECT PERMANENT DELETE ERROR", error.message);
-    redirectToClients("Project could not be permanently deleted.", { tab: "archive" }, "error");
+    const safeReason = safeSupabaseErrorReason(error);
+    console.error("PROJECT PERMANENT DELETE ERROR", {
+      code: error.code ?? null,
+      message: error.message ?? null,
+      details: error.details ?? null,
+      projectId: id,
+    });
+    redirectToClients(`Project delete failed because related records still exist: ${safeReason}`, { tab: "archive" }, "error");
   }
 
   revalidatePath("/clients");
