@@ -2520,15 +2520,11 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
               </section>
             ) : null}
 
-            {!selectedBrand && !searchQuery ? (
-              <section className="mt-6 rounded-xl border border-dashed border-zinc-200 bg-white p-10 text-center shadow-sm">
-                <h2 className="text-lg font-semibold text-zinc-950">Select a brand or search to start.</h2>
-                <p className="mt-2 text-sm text-zinc-500">
-                  Use the brand strip above or search by product name, item code, origin, or template code.
-                </p>
-              </section>
-            ) : libraryResultTemplates.length ? (
+            {libraryResultTemplates.length ? (
               <section className="mt-6">
+                <div className="mb-4 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-500 shadow-sm">
+                  Browse all products or narrow by brand/category.
+                </div>
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                   {libraryResultTemplates.map((template) => {
                     const openHref = templatesHref(params, {
@@ -2609,7 +2605,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
               <section className="mt-6 rounded-xl border border-dashed border-zinc-200 bg-white p-10 text-center shadow-sm">
                 <h2 className="text-lg font-semibold text-zinc-950">No products found.</h2>
                 <p className="mt-2 text-sm text-zinc-500">
-                  Try a different search term, another brand, or clear the current filters.
+                  Try another product name, item code, brand, category, or model.
                 </p>
                 <Link
                   href="/products/templates"
