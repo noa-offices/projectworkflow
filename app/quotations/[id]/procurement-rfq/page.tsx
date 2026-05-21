@@ -10,6 +10,7 @@ import { loadProcurementRfqSettings } from "@/lib/quotations/procurement-rfq-set
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
 import {
   loadQuotationDerivedDocumentData,
+  supplierPriceListCodeFromSourceData,
 } from "@/lib/quotations/derived-document-data";
 
 export const dynamic = "force-dynamic";
@@ -141,6 +142,7 @@ export default async function ProcurementRfqPage({ params, searchParams }: Procu
           size_snapshot: item.size_snapshot,
           origin_snapshot: item.origin_snapshot,
           supplier_name_snapshot: item.supplier_name_snapshot,
+          supplier_price_list_code_snapshot: supplierPriceListCodeFromSourceData(item.source_component_data),
           qty: item.qty,
           imageUrl: data.imageUrlByItemId.get(item.id) ?? null,
         })),

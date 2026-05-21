@@ -9,7 +9,11 @@ import { DEFAULT_QUOTATION_NOTES } from "@/lib/quotations/quotation-pdf-settings
 import { createClient } from "@/lib/supabase/server";
 
 type SettingsPageProps = {
-  searchParams?: Promise<{ message?: string }>;
+  searchParams?: Promise<{
+    message?: string;
+    messageScope?: string;
+    messageType?: string;
+  }>;
 };
 
 function Field({
@@ -93,6 +97,10 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
     : { data: null };
   const lastUpdatedBy =
     updatedByProfile?.full_name?.trim() || updatedByProfile?.email?.trim() || "Unknown user";
+  const showMessage = params.messageScope !== "profile" && typeof params.message === "string";
+  const messageClassName = params.messageType === "error"
+    ? "border-red-200 bg-red-50 text-red-900"
+    : "border-emerald-200 bg-emerald-50 text-emerald-950";
 
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
@@ -105,8 +113,8 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
           userEmail={user.email}
         />
         <main className="px-5 py-6 sm:px-8">
-          {params.message ? (
-            <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950">
+          {showMessage ? (
+            <div className={`mb-4 rounded-lg border px-4 py-3 text-sm ${messageClassName}`}>
               {params.message}
             </div>
           ) : null}
@@ -229,6 +237,23 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
             </div>
 
             <div className="grid gap-4">
+              <Link
+                href="/settings/profile"
+                className="group rounded-lg border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-emerald-900/25 hover:shadow-md"
+              >
+                <div className="flex h-full flex-col justify-between gap-6">
+                  <div>
+                    <h2 className="text-base font-semibold text-zinc-950">My Profile</h2>
+                    <p className="mt-2 text-sm leading-6 text-zinc-500">
+                      Review your account details and keep your internal profile information current.
+                    </p>
+                  </div>
+                  <span className="text-sm font-semibold text-emerald-900 transition group-hover:text-emerald-800">
+                    Open profile
+                  </span>
+                </div>
+              </Link>
+
               {profile?.role === "system_owner" ? (
                 <Link
                   href="/settings/users"
@@ -279,6 +304,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                     <p className="text-xs font-semibold uppercase text-zinc-500">Current</p>
                     <ul className="mt-2 space-y-1 text-zinc-700">
                       <li>Company Profile metadata for quotation and specification documents</li>
+                      <li>My Profile for internal user details and contact metadata</li>
                       <li>User Management for account approval and role control</li>
                     </ul>
                   </div>

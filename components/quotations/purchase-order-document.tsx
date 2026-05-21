@@ -158,6 +158,7 @@ function ItemTable({
               <p className="font-semibold text-zinc-900">{item.description}</p>
               {item.context ? <p className="mt-0.5 text-[7.5px] text-zinc-500">{item.context}</p> : null}
               {columnVisibility.code && item.code ? <p className="mt-0.5 text-[7.5px]"><span className="font-semibold text-zinc-900">Code:</span> {item.code}</p> : null}
+              {columnVisibility.supplierPriceListCode && item.supplierPriceListCode ? <p className="text-[7.5px]"><span className="font-semibold text-zinc-900">Supplier Code:</span> {item.supplierPriceListCode}</p> : null}
               {columnVisibility.model && item.model ? <p className="text-[7.5px]"><span className="font-semibold text-zinc-900">Model:</span> {item.model}</p> : null}
               {columnVisibility.brandOrigin && item.brandOrigin ? <p className="text-[7.5px]"><span className="font-semibold text-zinc-900">Brand / Origin:</span> {item.brandOrigin}</p> : null}
               {item.specification ? <p className="mt-0.5 line-clamp-2 text-[7.5px] leading-3.5 text-zinc-600">{item.specification}</p> : null}

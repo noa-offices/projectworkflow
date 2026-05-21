@@ -1073,6 +1073,7 @@ type LinkedProductFamilySource = {
 type DeskingSizePricingRow = {
   id?: string;
   label?: string;
+  supplier_price_list_code?: string;
   length?: number;
   depth?: number;
   height?: number;
@@ -1087,6 +1088,8 @@ type DeskingSizePricingRow = {
 type VariantPricingRow = {
   id?: string;
   variant_name?: string;
+  display_name?: string;
+  supplier_price_list_code?: string;
   dimension?: string;
   price?: number;
   currency?: string;
@@ -1100,6 +1103,8 @@ type CategoryPricingRow = {
   pricing_category_id?: string | null;
   pricing_category_name?: string | null;
   variant_name?: string;
+  display_name?: string;
+  supplier_price_list_code?: string;
   dimension?: string;
   currency?: string;
   prices?: Record<string, number>;
@@ -1113,6 +1118,7 @@ type AccessoryPricingRow = {
   group_name?: string;
   items?: AccessoryPricingItem[];
   item_name?: string;
+  supplier_price_list_code?: string;
   price?: number;
   currency?: string;
   specification?: string;
@@ -1123,6 +1129,7 @@ type AccessoryPricingRow = {
 type AccessoryPricingItem = {
   id?: string;
   item_name?: string;
+  supplier_price_list_code?: string;
   price?: number;
   currency?: string;
   specification?: string;
@@ -4564,6 +4571,12 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     converted_quotation_price: unitPrice,
     quotation_currency: rowOutputCurrency,
   };
+  const selectedSupplierPriceListCode =
+    selectedCategoryPricingRow?.supplier_price_list_code?.trim() ||
+    selectedVariantPricingRow?.supplier_price_list_code?.trim() ||
+    selectedSizePricing?.supplier_price_list_code?.trim() ||
+    selectedWorkstationVariantPricingRow?.supplier_price_list_code?.trim() ||
+    null;
   const submittedFinishSelections = finishSelectionsValue(formData);
   const payload = {
     quotation_id: quotationId,
@@ -4579,6 +4592,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       origin_country: originSnapshot,
       country_of_origin: originSnapshot,
       supplier_name: supplierNameSnapshot,
+      supplier_price_list_code: selectedSupplierPriceListCode,
       default_specification: template.default_specification,
       description: template.description,
       specification: specificationSnapshot,

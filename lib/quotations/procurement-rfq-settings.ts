@@ -37,6 +37,7 @@ export type ProcurementRfqItemOverride = {
 export type ProcurementRfqColumnVisibility = {
   image: boolean;
   code: boolean;
+  supplierPriceListCode: boolean;
   model: boolean;
   brandOrigin: boolean;
   specification: boolean;
@@ -101,6 +102,7 @@ export const DEFAULT_PROCUREMENT_RFQ_ITEM_OVERRIDE: ProcurementRfqItemOverride =
 export const DEFAULT_PROCUREMENT_RFQ_COLUMN_VISIBILITY: ProcurementRfqColumnVisibility = {
   image: true,
   code: true,
+  supplierPriceListCode: false,
   model: true,
   brandOrigin: true,
   specification: true,
@@ -255,6 +257,7 @@ export function normalizeProcurementRfqSettings(
     columnVisibility: {
       image: normalizedBoolean(columnVisibilityRecord, "image", DEFAULT_PROCUREMENT_RFQ_COLUMN_VISIBILITY.image),
       code: normalizedBoolean(columnVisibilityRecord, "code", DEFAULT_PROCUREMENT_RFQ_COLUMN_VISIBILITY.code),
+      supplierPriceListCode: normalizedBoolean(columnVisibilityRecord, "supplierPriceListCode", DEFAULT_PROCUREMENT_RFQ_COLUMN_VISIBILITY.supplierPriceListCode),
       model: normalizedBoolean(columnVisibilityRecord, "model", DEFAULT_PROCUREMENT_RFQ_COLUMN_VISIBILITY.model),
       brandOrigin: normalizedBoolean(columnVisibilityRecord, "brandOrigin", DEFAULT_PROCUREMENT_RFQ_COLUMN_VISIBILITY.brandOrigin),
       specification: normalizedBoolean(columnVisibilityRecord, "specification", DEFAULT_PROCUREMENT_RFQ_COLUMN_VISIBILITY.specification),

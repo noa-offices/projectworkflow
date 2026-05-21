@@ -13,6 +13,8 @@ import {
 export type VariantPricingRow = {
   id?: string;
   variant_name?: string;
+  display_name?: string;
+  supplier_price_list_code?: string;
   dimension?: string;
   price?: number;
   currency?: string;
@@ -26,6 +28,8 @@ export type CategoryPricingRow = {
   pricing_category_id?: string | null;
   pricing_category_name?: string | null;
   variant_name?: string;
+  display_name?: string;
+  supplier_price_list_code?: string;
   dimension?: string;
   currency?: string;
   prices?: Record<string, number>;
@@ -39,6 +43,7 @@ export type AccessoryPricingRow = {
   group_name?: string;
   items?: AccessoryPricingItem[];
   item_name?: string;
+  supplier_price_list_code?: string;
   price?: number;
   currency?: string;
   specification?: string;
@@ -49,6 +54,7 @@ export type AccessoryPricingRow = {
 export type AccessoryPricingItem = {
   id?: string;
   item_name?: string;
+  supplier_price_list_code?: string;
   price?: number;
   currency?: string;
   specification?: string;
@@ -124,6 +130,8 @@ function normalizeVariant(row: VariantPricingRow, index: number): VariantPricing
   return {
     id: row.id || `variant-${index}`,
     variant_name: row.variant_name?.trim() ?? "",
+    display_name: row.display_name?.trim() ?? "",
+    supplier_price_list_code: row.supplier_price_list_code?.trim() ?? "",
     dimension: row.dimension?.trim() ?? "",
     price: numberValue(row.price),
     currency: normalizeCurrency(row.currency ?? defaultCurrency),
@@ -145,6 +153,8 @@ function normalizeCategory(row: CategoryPricingRow, index: number): CategoryPric
         ? row.pricing_category_name.trim()
         : null,
     variant_name: row.variant_name?.trim() ?? "",
+    display_name: row.display_name?.trim() ?? "",
+    supplier_price_list_code: row.supplier_price_list_code?.trim() ?? "",
     dimension: row.dimension?.trim() ?? "",
     currency: normalizeCurrency(row.currency ?? defaultCurrency),
     prices: normalizedPriceMap(row.prices),
@@ -158,6 +168,7 @@ function normalizeAccessoryItem(row: AccessoryPricingItem, index: number): Acces
   return {
     id: row.id || `add-on-${index}`,
     item_name: row.item_name?.trim() ?? "",
+    supplier_price_list_code: row.supplier_price_list_code?.trim() ?? "",
     price: numberValue(row.price),
     currency: normalizeCurrency(row.currency ?? defaultCurrency),
     specification: row.specification?.trim() ?? "",
@@ -167,7 +178,7 @@ function normalizeAccessoryItem(row: AccessoryPricingItem, index: number): Acces
 }
 
 function normalizeAccessoryGroup(row: AccessoryPricingRow, index: number): AccessoryPricingRow {
-  const flatItem = row.item_name || row.price || row.specification
+  const flatItem = row.item_name || row.supplier_price_list_code || row.price || row.specification
     ? [normalizeAccessoryItem(row, 0)]
     : [];
 
@@ -218,6 +229,42 @@ function CurrencySelect({
         </option>
       ))}
     </select>
+  );
+}
+
+function AutoGrowTextarea({
+  minHeightClass = "min-h-[56px]",
+  onChange,
+  placeholder,
+  rows = 2,
+  value,
+  widthClass = "min-w-[320px]",
+}: {
+  minHeightClass?: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  rows?: number;
+  value: string;
+  widthClass?: string;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "0px";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      value={value}
+      rows={rows}
+      placeholder={placeholder}
+      onChange={(event) => onChange(event.target.value)}
+      className={`${minHeightClass} ${widthClass} resize-y overflow-hidden rounded-sm border border-zinc-200 px-3 py-2 leading-5 outline-none focus:border-emerald-800`}
+    />
   );
 }
 
@@ -279,7 +326,8 @@ export function VariantPricingTable({
 
       const row = normalizeVariant({
         id: idFor("variant", tableRows.length),
-        variant_name: detail.draft.item_name_snapshot || detail.draft.model_snapshot || "Imported row",
+        variant_name: detail.draft.model_snapshot || detail.draft.item_name_snapshot || "Imported row",
+        display_name: detail.draft.item_name_snapshot || detail.draft.model_snapshot || "Imported row",
         dimension: detail.draft.size_snapshot || "",
         price: Number(detail.draft.unit_price) || 0,
         currency: normalizeCurrency(detail.draft.currency ?? templateCurrency ?? brandDefaultCurrency ?? defaultCurrency),
@@ -334,10 +382,12 @@ export function VariantPricingTable({
     <div className="md:col-span-2 xl:col-span-3">
       <input type="hidden" name="variant_pricing" value={serialized} />
       <div className="overflow-x-auto rounded-md border border-zinc-200 bg-white">
-        <table className="min-w-[980px] w-full text-left text-xs">
+        <table className="min-w-[1760px] w-full text-left text-xs">
           <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
             <tr>
-              <th className="px-2 py-2">Product / Variant</th>
+              <th className="px-2 py-2">Variant Code / Short Name</th>
+              <th className="px-2 py-2">Display Name</th>
+              <th className="px-2 py-2">Supplier / Price List Code</th>
               <th className="px-2 py-2">Dimension</th>
               <th className="px-2 py-2">Price</th>
               <th className="px-2 py-2">Currency</th>
@@ -348,17 +398,19 @@ export function VariantPricingTable({
           </thead>
           <tbody>
             {tableRows.map((row, index) => (
-              <tr key={row.id ?? index} className="border-t border-zinc-100">
-                <td className="px-2 py-2"><input value={row.variant_name ?? ""} onChange={(e) => update(index, { variant_name: e.target.value })} className="h-8 w-32 border border-zinc-200 px-2 outline-none focus:border-emerald-800" /></td>
-                <td className="px-2 py-2"><input value={row.dimension ?? ""} onChange={(e) => update(index, { dimension: e.target.value })} className="h-8 w-28 border border-zinc-200 px-2 outline-none focus:border-emerald-800" /></td>
-                <td className="px-2 py-2"><input type="number" value={row.price ?? ""} onChange={(e) => update(index, { price: Number(e.target.value) })} className="h-8 w-24 border border-zinc-200 px-2 outline-none focus:border-emerald-800" /></td>
-                <td className="px-2 py-2"><CurrencySelect value={row.currency} onChange={(currency) => update(index, { currency })} /></td>
-                <td className="px-2 py-2"><textarea value={row.specification ?? ""} onChange={(e) => update(index, { specification: e.target.value })} rows={1} className="w-56 rounded-sm border border-zinc-200 px-2 py-1 outline-none focus:border-emerald-800" /></td>
-                <td className="px-2 py-2"><input type="checkbox" checked={row.is_active !== false} onChange={(e) => update(index, { is_active: e.target.checked })} /></td>
-                <td className="px-2 py-2"><button type="button" onClick={() => setTableRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="text-xs font-semibold text-red-700">Remove</button></td>
+              <tr key={row.id ?? index} className="border-t border-zinc-100 align-top">
+                <td className="px-2 py-2 align-top"><input value={row.variant_name ?? ""} onChange={(e) => update(index, { variant_name: e.target.value })} className="h-10 min-w-[160px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                <td className="px-2 py-2 align-top"><AutoGrowTextarea value={row.display_name ?? ""} onChange={(value) => update(index, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
+                <td className="px-2 py-2 align-top"><input value={row.supplier_price_list_code ?? ""} onChange={(e) => update(index, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                <td className="px-2 py-2 align-top"><input value={row.dimension ?? ""} onChange={(e) => update(index, { dimension: e.target.value })} className="h-10 min-w-[140px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                <td className="px-2 py-2 align-top"><input type="number" value={row.price ?? ""} onChange={(e) => update(index, { price: Number(e.target.value) })} className="h-10 min-w-[120px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={row.currency} onChange={(currency) => update(index, { currency })} /></div></td>
+                <td className="px-2 py-2 align-top"><AutoGrowTextarea value={row.specification ?? ""} onChange={(value) => update(index, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /></td>
+                <td className="px-2 py-2 align-top"><input type="checkbox" checked={row.is_active !== false} onChange={(e) => update(index, { is_active: e.target.checked })} /></td>
+                <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => setTableRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="text-xs font-semibold text-red-700">Remove</button></div></td>
               </tr>
             ))}
-            {!tableRows.length ? <tr><td colSpan={7} className="px-3 py-5 text-center text-zinc-500">No size/model variants yet.</td></tr> : null}
+            {!tableRows.length ? <tr><td colSpan={9} className="px-3 py-5 text-center text-zinc-500">No size/model variants yet.</td></tr> : null}
           </tbody>
         </table>
       </div>
@@ -409,7 +461,8 @@ export function CategoryPricingTable({
       const price = Number(detail.draft.unit_price) || 0;
       const row = normalizeCategory({
         id: idFor("category", tableRows.length),
-        variant_name: detail.draft.item_name_snapshot || detail.draft.model_snapshot || "Imported finish row",
+        variant_name: detail.draft.model_snapshot || detail.draft.item_name_snapshot || "Imported finish row",
+        display_name: detail.draft.item_name_snapshot || detail.draft.model_snapshot || "Imported finish row",
         dimension: detail.draft.size_snapshot || "",
         currency: normalizeCurrency(detail.draft.currency ?? templateCurrency ?? brandDefaultCurrency ?? defaultCurrency),
         prices: {
@@ -552,10 +605,12 @@ export function CategoryPricingTable({
 
         {tableRows.length ? (
           <div className="overflow-x-auto rounded-md border border-zinc-200 bg-white">
-            <table className="min-w-[1120px] w-full text-left text-xs">
+            <table className="min-w-[1960px] w-full text-left text-xs">
               <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
                 <tr>
-                  <th className="px-2 py-2">Product / Variant</th>
+                  <th className="px-2 py-2">Variant Code / Short Name</th>
+                  <th className="px-2 py-2">Display Name</th>
+                  <th className="px-2 py-2">Supplier / Price List Code</th>
                   <th className="px-2 py-2">Dimension</th>
                   {priceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
                   <th className="px-2 py-2">Currency</th>
@@ -568,14 +623,16 @@ export function CategoryPricingTable({
                 {tableRows.map((row, index) => {
                   const normalizedRow = categoryPricingRowWithColumns(row, priceCategories);
                   return (
-                    <tr key={row.id ?? index} className="border-t border-zinc-100">
-                      <td className="px-2 py-2"><input value={normalizedRow.variant_name ?? ""} onChange={(e) => update(index, { variant_name: e.target.value })} className="h-8 w-32 border border-zinc-200 px-2 outline-none focus:border-emerald-800" /></td>
-                      <td className="px-2 py-2"><input value={normalizedRow.dimension ?? ""} onChange={(e) => update(index, { dimension: e.target.value })} className="h-8 w-28 border border-zinc-200 px-2 outline-none focus:border-emerald-800" /></td>
-                      {priceCategories.map((category) => <td key={category} className="px-2 py-2"><input type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => update(index, { prices: { ...normalizedRow.prices, [category]: Number(e.target.value) } })} className="h-8 w-20 border border-zinc-200 px-2 outline-none focus:border-emerald-800" /></td>)}
-                      <td className="px-2 py-2"><CurrencySelect value={normalizedRow.currency} onChange={(currency) => update(index, { currency })} /></td>
-                      <td className="px-2 py-2"><textarea value={normalizedRow.specification ?? ""} onChange={(e) => update(index, { specification: e.target.value })} rows={1} className="w-52 rounded-sm border border-zinc-200 px-2 py-1 outline-none focus:border-emerald-800" /></td>
-                      <td className="px-2 py-2"><input type="checkbox" checked={normalizedRow.is_active !== false} onChange={(e) => update(index, { is_active: e.target.checked })} /></td>
-                      <td className="px-2 py-2"><button type="button" onClick={() => setTableRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="text-xs font-semibold text-red-700">Remove</button></td>
+                    <tr key={row.id ?? index} className="border-t border-zinc-100 align-top">
+                      <td className="px-2 py-2 align-top"><input value={normalizedRow.variant_name ?? ""} onChange={(e) => update(index, { variant_name: e.target.value })} className="h-10 min-w-[160px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                      <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.display_name ?? ""} onChange={(value) => update(index, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
+                      <td className="px-2 py-2 align-top"><input value={normalizedRow.supplier_price_list_code ?? ""} onChange={(e) => update(index, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                      <td className="px-2 py-2 align-top"><input value={normalizedRow.dimension ?? ""} onChange={(e) => update(index, { dimension: e.target.value })} className="h-10 min-w-[140px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                      {priceCategories.map((category) => <td key={category} className="px-2 py-2 align-top"><input type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => update(index, { prices: { ...normalizedRow.prices, [category]: Number(e.target.value) } })} className="h-10 min-w-[116px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>)}
+                      <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={normalizedRow.currency} onChange={(currency) => update(index, { currency })} /></div></td>
+                      <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => update(index, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /></td>
+                      <td className="px-2 py-2 align-top"><input type="checkbox" checked={normalizedRow.is_active !== false} onChange={(e) => update(index, { is_active: e.target.checked })} /></td>
+                      <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => setTableRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="text-xs font-semibold text-red-700">Remove</button></div></td>
                     </tr>
                   );
                 })}
@@ -717,10 +774,11 @@ export function AccessoryPricingTable({
               <button type="button" onClick={() => setGroups((current) => current.filter((_, index) => index !== groupIndex))} className="ml-auto text-xs font-semibold text-red-700">Remove group</button>
             </div>
             <div className="mt-3 overflow-x-auto">
-              <table className="min-w-[760px] w-full text-left text-xs">
+              <table className="min-w-[1460px] w-full text-left text-xs">
                 <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
                   <tr>
                     <th className="px-2 py-2">Accessory name</th>
+                    <th className="px-2 py-2">Supplier / Price List Code</th>
                     <th className="px-2 py-2">Price</th>
                     <th className="px-2 py-2">Currency</th>
                     <th className="px-2 py-2">Specification / Notes</th>
@@ -730,16 +788,17 @@ export function AccessoryPricingTable({
                 </thead>
                 <tbody>
                   {(group.items ?? []).map((item, itemIndex) => (
-                    <tr key={item.id ?? itemIndex} className="border-t border-zinc-100">
-                      <td className="px-2 py-2"><input value={item.item_name ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { item_name: e.target.value })} className="h-8 w-36 border border-zinc-200 px-2 outline-none focus:border-emerald-800" /></td>
-                      <td className="px-2 py-2"><input type="number" value={item.price ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { price: Number(e.target.value) })} className="h-8 w-24 border border-zinc-200 px-2 outline-none focus:border-emerald-800" /></td>
-                      <td className="px-2 py-2"><CurrencySelect value={item.currency} onChange={(currency) => updateItem(groupIndex, itemIndex, { currency })} /></td>
-                      <td className="px-2 py-2"><textarea value={item.specification ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { specification: e.target.value })} rows={1} className="w-64 rounded-sm border border-zinc-200 px-2 py-1 outline-none focus:border-emerald-800" /></td>
-                      <td className="px-2 py-2"><input type="checkbox" checked={item.is_active !== false} onChange={(e) => updateItem(groupIndex, itemIndex, { is_active: e.target.checked })} /></td>
-                      <td className="px-2 py-2"><button type="button" onClick={() => updateGroup(groupIndex, { items: (group.items ?? []).filter((_, index) => index !== itemIndex) })} className="text-xs font-semibold text-red-700">Remove item</button></td>
+                    <tr key={item.id ?? itemIndex} className="border-t border-zinc-100 align-top">
+                      <td className="px-2 py-2 align-top"><AutoGrowTextarea value={item.item_name ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { item_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[260px]" /></td>
+                      <td className="px-2 py-2 align-top"><input value={item.supplier_price_list_code ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                      <td className="px-2 py-2 align-top"><input type="number" value={item.price ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { price: Number(e.target.value) })} className="h-10 min-w-[120px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                      <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={item.currency} onChange={(currency) => updateItem(groupIndex, itemIndex, { currency })} /></div></td>
+                      <td className="px-2 py-2 align-top"><AutoGrowTextarea value={item.specification ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /></td>
+                      <td className="px-2 py-2 align-top"><input type="checkbox" checked={item.is_active !== false} onChange={(e) => updateItem(groupIndex, itemIndex, { is_active: e.target.checked })} /></td>
+                      <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => updateGroup(groupIndex, { items: (group.items ?? []).filter((_, index) => index !== itemIndex) })} className="text-xs font-semibold text-red-700">Remove item</button></div></td>
                     </tr>
                   ))}
-                  {!(group.items ?? []).length ? <tr><td colSpan={6} className="px-3 py-5 text-center text-zinc-500">No items in this group yet.</td></tr> : null}
+                  {!(group.items ?? []).length ? <tr><td colSpan={7} className="px-3 py-5 text-center text-zinc-500">No items in this group yet.</td></tr> : null}
                 </tbody>
               </table>
             </div>

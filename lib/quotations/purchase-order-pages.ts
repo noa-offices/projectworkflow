@@ -5,6 +5,7 @@ export type PurchaseOrderDocumentItem = {
   description: string;
   context: string | null;
   code: string | null;
+  supplierPriceListCode: string | null;
   model: string | null;
   brandOrigin: string | null;
   specification: string | null;
@@ -71,6 +72,7 @@ function estimateItemUnits(item: PurchaseOrderDocumentItem, columnVisibility: Pu
   const contextLines = item.context ? 1 : 0;
   const metadataLines = [
     columnVisibility.code && item.code ? 1 : 0,
+    columnVisibility.supplierPriceListCode && item.supplierPriceListCode ? 1 : 0,
     columnVisibility.model && item.model ? 1 : 0,
     columnVisibility.brandOrigin && item.brandOrigin ? 1 : 0,
   ].reduce((sum, value) => sum + value, 0);

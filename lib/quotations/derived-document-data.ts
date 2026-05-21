@@ -53,6 +53,7 @@ export type DerivedDocumentItem = {
   id: string;
   section_id: string | null;
   item_type: string;
+  source_component_data: unknown;
   manual_serial: string | null;
   item_code_snapshot: string | null;
   item_name_snapshot: string | null;
@@ -165,6 +166,22 @@ export function documentItemTitle(item: Pick<DerivedDocumentItem, "item_name_sna
   return item.item_name_snapshot || item.model_snapshot || item.item_code_snapshot || "Quotation Item";
 }
 
+export function supplierPriceListCodeFromSourceData(sourceData: unknown) {
+  const sourceRecord = isRecord(sourceData) ? sourceData : null;
+  if (!sourceRecord) return null;
+
+  const topLevelCode = stringFromRecord(sourceRecord, ["supplier_price_list_code"]);
+  if (topLevelCode) return topLevelCode;
+
+  const variantPricing = isRecord(sourceRecord.variant_pricing) ? sourceRecord.variant_pricing : null;
+  const variantCode = variantPricing ? stringFromRecord(variantPricing, ["supplier_price_list_code"]) : null;
+  if (variantCode) return variantCode;
+
+  const categoryPricing = isRecord(sourceRecord.category_pricing) ? sourceRecord.category_pricing : null;
+  const selectedRow = categoryPricing && isRecord(categoryPricing.selected_row) ? categoryPricing.selected_row : null;
+  return selectedRow ? stringFromRecord(selectedRow, ["supplier_price_list_code"]) : null;
+}
+
 export function isDocumentItem(item: Pick<DerivedDocumentItem, "item_type" | "line_style" | "is_active">) {
   if (!item.is_active) return false;
   if (["heading", "note", "blank", "subtotal"].includes(item.item_type)) return false;
@@ -243,7 +260,7 @@ export async function loadQuotationDerivedDocumentData(id: string): Promise<Deri
       .returns<DerivedDocumentSection[]>(),
     supabase
       .from("quotation_items")
-      .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,supplier_name_snapshot,qty,unit_label,unit_price,net_total,currency,sort_order,line_style,is_active,notes")
+      .select("id,section_id,item_type,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,supplier_name_snapshot,qty,unit_label,unit_price,net_total,currency,sort_order,line_style,is_active,notes")
       .eq("quotation_id", id)
       .eq("is_active", true)
       .order("sort_order", { ascending: true })

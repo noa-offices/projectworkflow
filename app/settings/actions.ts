@@ -2,11 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireSettingsManager, requireSystemOwner } from "@/lib/auth";
+import { requireActiveUser, requireSettingsManager, requireSystemOwner } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit-log";
 import { DEFAULT_QUOTATION_NOTES } from "@/lib/quotations/quotation-pdf-settings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+
+type SettingsMessageType = "success" | "error";
+type SettingsMessageScope = "settings" | "profile";
 
 function textValue(formData: FormData, name: string) {
   const value = formData.get(name);
@@ -23,8 +26,20 @@ function numberValue(formData: FormData, name: string, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-function redirectWithMessage(message: string): never {
-  redirect(`/settings?message=${encodeURIComponent(message)}`);
+function redirectToSettings(message: string, messageType: SettingsMessageType = "success"): never {
+  const query = new URLSearchParams();
+  query.set("message", message);
+  query.set("messageType", messageType);
+  query.set("messageScope", "settings" satisfies SettingsMessageScope);
+  redirect(`/settings?${query.toString()}`);
+}
+
+function redirectToProfile(message: string, messageType: SettingsMessageType = "success"): never {
+  const query = new URLSearchParams();
+  query.set("message", message);
+  query.set("messageType", messageType);
+  query.set("messageScope", "profile" satisfies SettingsMessageScope);
+  redirect(`/settings/profile?${query.toString()}`);
 }
 
 async function latestCompanySettingsId(supabase: Awaited<ReturnType<typeof createClient>>) {
@@ -37,7 +52,7 @@ async function latestCompanySettingsId(supabase: Awaited<ReturnType<typeof creat
 
   if (readError) {
     console.error("COMPANY SETTINGS LOOKUP ERROR", readError.message);
-    redirectWithMessage("Company settings could not be loaded.");
+    redirectToSettings("Company settings could not be loaded.", "error");
   }
 
   return existingSettings?.id ?? null;
@@ -56,7 +71,7 @@ async function saveCompanySettingsRecord(
 
   if (error) {
     console.error("COMPANY SETTINGS SAVE ERROR", error.message);
-    redirectWithMessage("Company settings could not be saved.");
+    redirectToSettings("Company settings could not be saved.", "error");
   }
 
   return existingSettingsId;
@@ -103,7 +118,7 @@ export async function updateCompanySettings(formData: FormData) {
   revalidatePath("/quotations/[id]", "page");
   revalidatePath("/quotations/[id]/pdf", "page");
   revalidatePath("/quotations/[id]/specification", "page");
-  redirectWithMessage("Company profile saved.");
+  redirectToSettings("Company profile saved.");
 }
 
 export async function updateDocumentDefaults(formData: FormData) {
@@ -132,7 +147,53 @@ export async function updateDocumentDefaults(formData: FormData) {
   revalidatePath("/settings");
   revalidatePath("/quotations/[id]/pdf", "page");
   revalidatePath("/quotations/[id]/download-pdf", "page");
-  redirectWithMessage("Document defaults saved.");
+  redirectToSettings("Document defaults saved.");
+}
+
+export async function updateMyProfile(formData: FormData) {
+  const { user, displayName } = await requireActiveUser();
+  const supabase = await createClient();
+
+  const fullName = optionalTextValue(formData, "full_name");
+  const phone = optionalTextValue(formData, "phone");
+  const jobTitle = optionalTextValue(formData, "job_title");
+  const department = optionalTextValue(formData, "department");
+  const profileUpdate = {
+    department,
+    full_name: fullName,
+    job_title: jobTitle,
+    phone,
+  };
+
+  const { error } = await supabase
+    .from("profiles")
+    .update(profileUpdate as never)
+    .eq("id", user.id);
+
+  if (error) {
+    console.error("MY PROFILE UPDATE ERROR", error.message);
+    redirectToProfile("Profile could not be updated.", "error");
+  }
+
+  await createAuditLog(supabase, {
+    entityType: "profile",
+    entityId: user.id,
+    action: "profile_updated",
+    title: "Profile updated",
+    description: fullName ?? user.email ?? "Profile details updated.",
+    metadata: {
+      department,
+      fullName,
+      jobTitle,
+      phone,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  revalidatePath("/settings");
+  revalidatePath("/settings/profile");
+  redirectToProfile("Profile updated.");
 }
 
 export async function resetTestData(formData: FormData) {
@@ -140,17 +201,17 @@ export async function resetTestData(formData: FormData) {
   const confirmationText = textValue(formData, "confirmation_text");
 
   if (process.env.NODE_ENV === "production") {
-    redirectWithMessage("Reset test data is disabled in production.");
+    redirectToSettings("Reset test data is disabled in production.", "error");
   }
 
   if (confirmationText !== "RESET TEST DATA") {
-    redirectWithMessage("Type RESET TEST DATA to continue.");
+    redirectToSettings("Type RESET TEST DATA to continue.", "error");
   }
 
   const adminClientResult = createAdminClient();
 
   if (adminClientResult.error || !adminClientResult.client) {
-    redirectWithMessage(adminClientResult.error ?? "Server admin delete is not configured.");
+    redirectToSettings(adminClientResult.error ?? "Server admin delete is not configured.", "error");
   }
 
   const adminSupabase = adminClientResult.client;
@@ -161,7 +222,7 @@ export async function resetTestData(formData: FormData) {
 
   if (quotationsError) {
     console.error("RESET TEST DATA QUOTATIONS ERROR", quotationsError.message);
-    redirectWithMessage("Test quotations could not be loaded for reset.");
+    redirectToSettings("Test quotations could not be loaded for reset.", "error");
   }
 
   const quotationIds = (quotations ?? []).map((quotation) => quotation.id);
@@ -176,7 +237,7 @@ export async function resetTestData(formData: FormData) {
 
     if (sectionsError) {
       console.error("RESET TEST DATA SECTIONS ERROR", sectionsError.message);
-      redirectWithMessage("Test quotation sections could not be loaded for reset.");
+      redirectToSettings("Test quotation sections could not be loaded for reset.", "error");
     }
 
     const sectionIds = (sections ?? []).map((section) => section.id);
@@ -245,7 +306,7 @@ export async function resetTestData(formData: FormData) {
 
       if (error) {
         console.error("RESET TEST DATA DELETE ERROR", step.label, error.message);
-        redirectWithMessage(`Test data reset failed in ${step.label}.`);
+        redirectToSettings(`Test data reset failed in ${step.label}.`, "error");
       }
     }
   }
@@ -259,7 +320,7 @@ export async function resetTestData(formData: FormData) {
 
     if (projectAuditError) {
       console.error("RESET TEST DATA PROJECT AUDIT ERROR", projectAuditError.message);
-      redirectWithMessage("Project audit records could not be deleted.");
+      redirectToSettings("Project audit records could not be deleted.", "error");
     }
   }
 
@@ -270,7 +331,7 @@ export async function resetTestData(formData: FormData) {
 
   if (projectsError) {
     console.error("RESET TEST DATA PROJECTS ERROR", projectsError.message);
-    redirectWithMessage("Projects could not be deleted during reset.");
+    redirectToSettings("Projects could not be deleted during reset.", "error");
   }
 
   const supabase = await createClient();
@@ -291,5 +352,5 @@ export async function resetTestData(formData: FormData) {
   revalidatePath("/clients");
   revalidatePath("/quotations");
   revalidatePath("/settings");
-  redirectWithMessage("Test project and quotation data reset.");
+  redirectToSettings("Test project and quotation data reset.");
 }

@@ -98,6 +98,7 @@ export type ProductLibraryTemplate = {
 type DeskingSizePricingRow = {
   id?: string;
   label?: string;
+  supplier_price_list_code?: string;
   length?: number;
   depth?: number;
   height?: number;
@@ -112,6 +113,8 @@ type DeskingSizePricingRow = {
 type VariantPricingRow = {
   id?: string;
   variant_name?: string;
+  display_name?: string;
+  supplier_price_list_code?: string;
   dimension?: string;
   price?: number;
   currency?: string;
@@ -125,6 +128,8 @@ type CategoryPricingRow = {
   pricing_category_id?: string | null;
   pricing_category_name?: string | null;
   variant_name?: string;
+  display_name?: string;
+  supplier_price_list_code?: string;
   dimension?: string;
   currency?: string;
   prices?: Record<string, number>;
@@ -138,6 +143,7 @@ type AccessoryPricingRow = {
   group_name?: string;
   items?: AccessoryPricingItem[];
   item_name?: string;
+  supplier_price_list_code?: string;
   price?: number;
   currency?: string;
   specification?: string;
@@ -148,6 +154,7 @@ type AccessoryPricingRow = {
 type AccessoryPricingItem = {
   id?: string;
   item_name?: string;
+  supplier_price_list_code?: string;
   price?: number;
   currency?: string;
   specification?: string;
@@ -356,15 +363,56 @@ function activeSizePricingRows(rows?: DeskingSizePricingRow[] | null) {
 function activeVariantRows(rows?: VariantPricingRow[] | null) {
   return (Array.isArray(rows) ? rows : [])
     .filter((row) => row.is_active !== false)
-    .filter((row) => row.variant_name || row.dimension || numberValue(row.price) > 0)
+    .filter((row) => row.variant_name || row.display_name || row.dimension || numberValue(row.price) > 0)
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
 }
 
 function activeCategoryRows(rows?: CategoryPricingRow[] | null) {
   return (Array.isArray(rows) ? rows : [])
     .filter((row) => row.is_active !== false)
-    .filter((row) => row.variant_name || row.dimension || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
+    .filter((row) => row.variant_name || row.display_name || row.dimension || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
+}
+
+function pricingDisplayName(row?: { display_name?: string; variant_name?: string } | null) {
+  return row?.display_name?.trim() || row?.variant_name?.trim() || "";
+}
+
+function pricingOptionLabel({
+  currency,
+  dimension,
+  displayName,
+  price,
+}: {
+  currency: string;
+  dimension?: string | null;
+  displayName: string;
+  price?: number;
+}) {
+  const parts = [
+    displayName,
+    dimension?.trim() || "",
+    typeof price === "number" ? formatMoney(currency, price) : "",
+  ].filter(Boolean);
+  return parts.join(" - ");
+}
+
+function InternalMetaLine({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | null | undefined;
+}) {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  return (
+    <p className="text-xs leading-5 text-zinc-500">
+      <span className="font-semibold text-zinc-700">{label}:</span> {value}
+    </p>
+  );
 }
 
 function categoryPriceColumns(rows?: CategoryPricingRow[] | null) {
@@ -392,7 +440,7 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
       sort_order: numberValue(group.sort_order, groupIndex),
       items: (group.items ?? [])
         .filter((item) => item.is_active !== false)
-        .filter((item) => item.item_name || numberValue(item.price) > 0)
+        .filter((item) => item.item_name || item.supplier_price_list_code || numberValue(item.price) > 0)
         .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order)),
     }))
     .filter((group) => group.is_active && group.items.length)
@@ -598,6 +646,138 @@ function ProductThumbnail({
   );
 }
 
+function ProductImagePreviewDialog({
+  currentIndex,
+  images,
+  onClose,
+  onNavigate,
+  onSelect,
+  templateName,
+}: {
+  currentIndex: number;
+  images: Array<{ label: string; path: string }>;
+  onClose: () => void;
+  onNavigate: (nextIndex: number) => void;
+  onSelect: (path: string) => void;
+  templateName: string;
+}) {
+  const [previewUrl, setPreviewUrl] = useState("");
+  const currentImage = images[currentIndex] ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+    const path = currentImage?.path ?? null;
+
+    if (!path) {
+      window.queueMicrotask(() => {
+        if (!cancelled) setPreviewUrl("");
+      });
+      return;
+    }
+
+    void resolveQuotationImageUrl(normalizeProductImageSnapshotPath(path) ?? path)
+      .then((url) => {
+        if (!cancelled) setPreviewUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setPreviewUrl("");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentImage?.path]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+
+      if (event.key === "ArrowLeft" && currentIndex > 0) {
+        event.preventDefault();
+        onNavigate(currentIndex - 1);
+        return;
+      }
+
+      if (event.key === "ArrowRight" && currentIndex < images.length - 1) {
+        event.preventDefault();
+        onNavigate(currentIndex + 1);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [currentIndex, images.length, onClose, onNavigate]);
+
+  if (!currentImage) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/75 px-4 py-6">
+      <div className="w-full max-w-6xl rounded-2xl border border-zinc-800 bg-zinc-950 text-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-zinc-800 px-5 py-4">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-400">{currentImage.label}</p>
+            <h3 className="mt-1 truncate text-lg font-semibold text-white">{templateName}</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:border-zinc-500 hover:text-white"
+          >
+            Close
+          </button>
+        </div>
+        <div className="flex flex-col gap-4 p-5">
+          <div className="flex items-center justify-center overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-4">
+            {previewUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={previewUrl}
+                alt={`${templateName} ${currentImage.label}`}
+                className="max-h-[72vh] w-full object-contain"
+              />
+            ) : (
+              <div className="flex h-[360px] w-full items-center justify-center text-sm text-zinc-400">Image preview unavailable</div>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => onNavigate(currentIndex - 1)}
+                disabled={currentIndex === 0}
+                className="rounded-md border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:border-zinc-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate(currentIndex + 1)}
+                disabled={currentIndex >= images.length - 1}
+                className="rounded-md border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:border-zinc-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => onSelect(currentImage.path)}
+              className="rounded-md bg-emerald-900 px-4 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800"
+            >
+              Use this image
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ProductLibrarySelector({
   brands,
   categories,
@@ -636,6 +816,7 @@ export function ProductLibrarySelector({
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [selectedOptions, setSelectedOptions] = useState<Record<string, Record<string, string | string[]>>>({});
   const [selectedImages, setSelectedImages] = useState<Record<string, string>>({});
+  const [imagePreview, setImagePreview] = useState<{ templateId: string; imageIndex: number } | null>(null);
   const [additionalClusterQuantities, setAdditionalClusterQuantities] = useState<Record<string, number>>({});
   const [accessoryQuantities, setAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [selectedDeskingSizes, setSelectedDeskingSizes] = useState<Record<string, string>>({});
@@ -1323,12 +1504,13 @@ export function ProductLibrarySelector({
                   const availableProposedImages = proposedImageFields
                     .map((field) => ({
                       field,
+                      label: `Image ${field.replace("proposed_image_url_", "")}`,
                       path:
                         field === "proposed_image_url_1"
                           ? template.proposed_image_url_1 ?? template.default_image_url
                           : template[field],
                     }))
-                    .filter((image): image is { field: (typeof proposedImageFields)[number]; path: string } =>
+                    .filter((image): image is { field: (typeof proposedImageFields)[number]; label: string; path: string } =>
                       Boolean(image.path),
                     );
                   const proposedImages = availableProposedImages.map((image) => image.path);
@@ -1494,10 +1676,10 @@ export function ProductLibrarySelector({
                           : selectedOptionSnapshots.length
                             ? "component_options"
                             : "template_default",
-                    source_price_label: derivedDesking?.sizeLabel ??
-                      selectedCategoryRow?.variant_name ??
-                      selectedVariantRow?.variant_name ??
-                      (effectiveSelectedNames.join(", ") || undefined) ??
+                    source_price_label: derivedDesking?.sizeLabel ||
+                      pricingDisplayName(selectedCategoryRow) ||
+                      pricingDisplayName(selectedVariantRow) ||
+                      effectiveSelectedNames.join(", ") ||
                       template.template_name,
                     converted_quotation_price: previewUnitPriceWithConversion,
                     quotation_currency: previewCurrency,
@@ -1528,6 +1710,12 @@ export function ProductLibrarySelector({
                     selectedVariantDimension: selectedVariantRow?.dimension,
                     selectedWorkstationVariantDimension: selectedWorkstationVariantRow?.dimension ?? null,
                   });
+                  const selectedSupplierPriceListCode =
+                    selectedCategoryRow?.supplier_price_list_code?.trim() ||
+                    selectedVariantRow?.supplier_price_list_code?.trim() ||
+                    selectedSizeRow?.supplier_price_list_code?.trim() ||
+                    selectedWorkstationVariantRow?.supplier_price_list_code?.trim() ||
+                    null;
                   const localProductItem: LocalQuotationItem = {
                     id: createLocalId("item"),
                     quotation_id: quotationId,
@@ -1545,6 +1733,7 @@ export function ProductLibrarySelector({
                       country_of_origin: originSnapshot,
                       supplier_name: supplierNameSnapshot,
                       supplier: supplierNameSnapshot,
+                      supplier_price_list_code: selectedSupplierPriceListCode,
                       specification: localSpecification,
                       description: template.description ?? null,
                       default_specification: template.default_specification ?? null,
@@ -1700,8 +1889,8 @@ export function ProductLibrarySelector({
                   const mainItemLabel = usesWorkstationFlow
                     ? selectedSizeRow?.label ?? selectedSizeRow?.id ?? template.template_name
                     : selectedCategoryRow
-                      ? `${selectedCategoryRow.variant_name} / ${selectedFabricCategory}`
-                      : selectedVariantRow?.variant_name ?? template.template_name;
+                      ? `${pricingDisplayName(selectedCategoryRow)} / ${selectedFabricCategory}`
+                      : pricingDisplayName(selectedVariantRow) || template.template_name;
                   const mainItemDimension = usesWorkstationFlow
                     ? selectedSizeRow?.label ?? derivedDesking?.dimension ?? null
                     : selectedCategoryRow?.dimension ?? selectedVariantRow?.dimension ?? localDimension;
@@ -1719,7 +1908,8 @@ export function ProductLibrarySelector({
                     ? {
                         currency: normalizeCurrency(selectedWorkstationVariantRow.currency ?? rowCurrency),
                         detail: selectedWorkstationVariantRow.dimension ?? selectedWorkstationVariantRow.specification ?? null,
-                        label: selectedWorkstationVariantRow.variant_name,
+                        label: pricingDisplayName(selectedWorkstationVariantRow) || selectedWorkstationVariantRow.variant_name || "Optional item",
+                        supplierCode: selectedWorkstationVariantRow.supplier_price_list_code ?? null,
                         qty: 1,
                         total: quotationMoneyValue(selectedWorkstationVariantPrice),
                         unitPrice: quotationMoneyValue(selectedWorkstationVariantPrice),
@@ -1729,6 +1919,7 @@ export function ProductLibrarySelector({
                     currency: normalizeCurrency(line.accessory.currency ?? rowCurrency),
                     detail: line.accessory.specification ?? line.groupName,
                     label: line.accessory.item_name || "Accessory",
+                    supplierCode: line.accessory.supplier_price_list_code ?? null,
                     qty: line.qty,
                     total: quotationMoneyValue(line.qty * numberValue(line.accessory.price)),
                     unitPrice: quotationMoneyValue(numberValue(line.accessory.price)),
@@ -1738,13 +1929,17 @@ export function ProductLibrarySelector({
                     .map((line) => ({
                       currency: normalizeCurrency(line.currency),
                       detail: [
-                        line.childVariantRow?.variant_name ??
-                          (line.childCategoryRow ? `${line.childCategoryRow.variant_name} / ${line.childCategory}` : null),
+                        pricingDisplayName(line.childVariantRow) ||
+                          (line.childCategoryRow ? `${pricingDisplayName(line.childCategoryRow)} / ${line.childCategory}` : null),
                         line.childCategoryRow?.dimension ?? line.childVariantRow?.dimension ?? null,
                       ]
                         .filter(Boolean)
                         .join(" - "),
                       label: line.childTemplate.template_name,
+                      supplierCode:
+                        line.childCategoryRow?.supplier_price_list_code ??
+                        line.childVariantRow?.supplier_price_list_code ??
+                        null,
                       qty: line.qty,
                       total: quotationMoneyValue(line.baseLineTotal),
                       unitPrice: quotationMoneyValue(line.unitPrice),
@@ -1755,6 +1950,7 @@ export function ProductLibrarySelector({
                           currency: normalizeCurrency(accessoryLine.accessory.currency ?? line.currency),
                           detail: line.childTemplate.template_name,
                           label: accessoryLine.accessory.item_name || "Accessory",
+                          supplierCode: accessoryLine.accessory.supplier_price_list_code ?? null,
                           qty: accessoryLine.qty,
                           total: quotationMoneyValue(accessoryLine.qty * numberValue(accessoryLine.accessory.price)),
                           unitPrice: quotationMoneyValue(numberValue(accessoryLine.accessory.price)),
@@ -1813,7 +2009,19 @@ export function ProductLibrarySelector({
                           <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
                             <div className="grid gap-4 sm:grid-cols-[80px_minmax(0,1fr)]">
                               <div className="flex justify-center sm:justify-start">
-                                <ProductThumbnail path={selectedImage || null} selected />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const selectedIndex = availableProposedImages.findIndex((image) => image.path === selectedImage);
+                                    if (selectedIndex >= 0) {
+                                      setImagePreview({ templateId: template.id, imageIndex: selectedIndex });
+                                    }
+                                  }}
+                                  className="rounded-md text-left transition hover:opacity-90"
+                                  disabled={!selectedImage}
+                                >
+                                  <ProductThumbnail path={selectedImage || null} selected />
+                                </button>
                               </div>
                               <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-2">
@@ -1843,26 +2051,34 @@ export function ProductLibrarySelector({
                                     </p>
                                     <div className="mt-2 flex flex-wrap gap-2">
                               {proposedImages.map((imagePath, imageIndex) => (
-                                <button
-                                  key={`${imagePath}-${imageIndex}`}
-                                  type="button"
-                                  onClick={() =>
-                                    setSelectedImages((current) => ({
-                                      ...current,
-                                      [template.id]: imagePath,
-                                    }))
-                                  }
-                                  className="text-left"
-                                >
-                                  <ProductThumbnail
-                                    label={`Image ${imageIndex + 1}`}
-                                    path={imagePath}
-                                    selected={selectedImage === imagePath}
-                                  />
+                                <div key={`${imagePath}-${imageIndex}`} className="text-left">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setSelectedImages((current) => ({
+                                        ...current,
+                                        [template.id]: imagePath,
+                                      }))
+                                    }
+                                    className="block"
+                                  >
+                                    <ProductThumbnail
+                                      label={`Image ${imageIndex + 1}`}
+                                      path={imagePath}
+                                      selected={selectedImage === imagePath}
+                                    />
+                                  </button>
                                   <span className="mt-1 block text-center text-[10px] font-semibold text-zinc-500">
                                     Image {imageIndex + 1}
                                   </span>
-                                </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setImagePreview({ templateId: template.id, imageIndex })}
+                                    className="mt-1 block w-full text-center text-[10px] font-semibold text-emerald-900 transition hover:text-emerald-700"
+                                  >
+                                    View larger
+                                  </button>
+                                </div>
                               ))}
                                     </div>
                                   </div>
@@ -1977,7 +2193,11 @@ export function ProductLibrarySelector({
                               >
                                 {categoryRows.map((row, index) => (
                                   <option key={row.id ?? index} value={row.id ?? `category-${index}`}>
-                                    {row.variant_name} {row.dimension ? `- ${row.dimension}` : ""}
+                                    {pricingOptionLabel({
+                                      currency: row.currency ?? template.currency,
+                                      dimension: row.dimension,
+                                      displayName: pricingDisplayName(row),
+                                    })}
                                   </option>
                                 ))}
                               </select>
@@ -1996,6 +2216,24 @@ export function ProductLibrarySelector({
                                 ))}
                               </select>
                             </label>
+                            {selectedCategoryRow ? (
+                              <div className="md:col-span-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                                <p className="text-xs font-semibold text-zinc-900">
+                                  {pricingDisplayName(selectedCategoryRow) || selectedCategoryRow.variant_name}
+                                </p>
+                                <InternalMetaLine label="Dimension" value={selectedCategoryRow.dimension} />
+                                <InternalMetaLine
+                                  label="Price"
+                                  value={formatMoney(selectedCategoryRow.currency ?? template.currency, numberValue(selectedCategoryRow.prices?.[selectedFabricCategory]))}
+                                />
+                                <InternalMetaLine
+                                  label="Variant Code"
+                                  value={selectedCategoryRow.variant_name && pricingDisplayName(selectedCategoryRow) !== selectedCategoryRow.variant_name ? selectedCategoryRow.variant_name : null}
+                                />
+                                <InternalMetaLine label="Supplier Code" value={selectedCategoryRow.supplier_price_list_code} />
+                                <InternalMetaLine label="Specification" value={selectedCategoryRow.specification} />
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                         {usesVariantPricing ? (
@@ -2012,18 +2250,32 @@ export function ProductLibrarySelector({
                               >
                                   {variantRows.map((row, index) => (
                                     <option key={row.id ?? index} value={row.id ?? `variant-${index}`}>
-                                      {row.variant_name} {row.dimension ? `- ${row.dimension}` : ""} - {formatMoney(row.currency ?? template.currency, numberValue(row.price))}
+                                      {pricingOptionLabel({
+                                        currency: row.currency ?? template.currency,
+                                        dimension: row.dimension,
+                                        displayName: pricingDisplayName(row),
+                                        price: numberValue(row.price),
+                                      })}
                                     </option>
                                   ))}
                                 </select>
                               {selectedVariantRow ? (
-                                <span className="mt-1 block text-xs leading-5 text-zinc-500">
-                                  {selectedVariantRow.variant_name}
-                                  {selectedVariantRow.dimension ? ` - ${selectedVariantRow.dimension}` : ""}
-                                  {" - "}
-                                  {formatMoney(selectedVariantRow.currency ?? template.currency, numberValue(selectedVariantRow.price))}
-                                  {selectedVariantRow.specification ? ` - ${selectedVariantRow.specification}` : ""}
-                                </span>
+                                <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                                  <p className="text-xs font-semibold text-zinc-900">
+                                    {pricingDisplayName(selectedVariantRow) || selectedVariantRow.variant_name}
+                                  </p>
+                                  <InternalMetaLine label="Dimension" value={selectedVariantRow.dimension} />
+                                  <InternalMetaLine
+                                    label="Price"
+                                    value={formatMoney(selectedVariantRow.currency ?? template.currency, numberValue(selectedVariantRow.price))}
+                                  />
+                                  <InternalMetaLine
+                                    label="Variant Code"
+                                    value={selectedVariantRow.variant_name && pricingDisplayName(selectedVariantRow) !== selectedVariantRow.variant_name ? selectedVariantRow.variant_name : null}
+                                  />
+                                  <InternalMetaLine label="Supplier Code" value={selectedVariantRow.supplier_price_list_code} />
+                                  <InternalMetaLine label="Specification" value={selectedVariantRow.specification} />
+                                </div>
                               ) : null}
                             </label>
                           </div>
@@ -2051,7 +2303,12 @@ export function ProductLibrarySelector({
                                   <option value="">No optional item</option>
                                   {variantRows.map((row, index) => (
                                     <option key={row.id ?? index} value={row.id ?? `workstation-variant-${index}`}>
-                                      {row.variant_name} {row.dimension ? `- ${row.dimension}` : ""} - {formatMoney(row.currency ?? template.currency, numberValue(row.price))}
+                                      {pricingOptionLabel({
+                                        currency: row.currency ?? template.currency,
+                                        dimension: row.dimension,
+                                        displayName: pricingDisplayName(row),
+                                        price: numberValue(row.price),
+                                      })}
                                     </option>
                                   ))}
                                 </select>
@@ -2059,13 +2316,22 @@ export function ProductLibrarySelector({
                                   Optional workstation add-ons stay separate from the base workstation size.
                                 </span>
                                 {selectedWorkstationVariantRow ? (
-                                  <span className="mt-1 block text-xs leading-5 text-zinc-600">
-                                    Selected add-on: {selectedWorkstationVariantRow.variant_name}
-                                    {selectedWorkstationVariantRow.dimension ? ` - ${selectedWorkstationVariantRow.dimension}` : ""}
-                                    {" - "}
-                                    {formatMoney(selectedWorkstationVariantRow.currency ?? template.currency, numberValue(selectedWorkstationVariantRow.price))}
-                                    {selectedWorkstationVariantRow.specification ? ` - ${selectedWorkstationVariantRow.specification}` : ""}
-                                  </span>
+                                  <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                                    <p className="text-xs font-semibold text-zinc-900">
+                                      {pricingDisplayName(selectedWorkstationVariantRow) || selectedWorkstationVariantRow.variant_name}
+                                    </p>
+                                    <InternalMetaLine label="Dimension" value={selectedWorkstationVariantRow.dimension} />
+                                    <InternalMetaLine
+                                      label="Price"
+                                      value={formatMoney(selectedWorkstationVariantRow.currency ?? template.currency, numberValue(selectedWorkstationVariantRow.price))}
+                                    />
+                                    <InternalMetaLine
+                                      label="Variant Code"
+                                      value={selectedWorkstationVariantRow.variant_name && pricingDisplayName(selectedWorkstationVariantRow) !== selectedWorkstationVariantRow.variant_name ? selectedWorkstationVariantRow.variant_name : null}
+                                    />
+                                    <InternalMetaLine label="Supplier Code" value={selectedWorkstationVariantRow.supplier_price_list_code} />
+                                    <InternalMetaLine label="Specification" value={selectedWorkstationVariantRow.specification} />
+                                  </div>
                                 ) : null}
                               </label>
                             ) : null}
@@ -2083,7 +2349,7 @@ export function ProductLibrarySelector({
 
                                         return (
                                           <label key={id} className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
-                                            <span>
+                                            <span className="min-w-0">
                                               <input
                                                 type="checkbox"
                                                 checked={qty > 0}
@@ -2098,7 +2364,12 @@ export function ProductLibrarySelector({
                                                 }
                                                 className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle"
                                               />
-                                              {accessory.item_name}
+                                              <span className="font-medium text-zinc-900">{accessory.item_name}</span>
+                                              {accessory.supplier_price_list_code ? (
+                                                <span className="mt-1 block text-[11px] text-zinc-500">
+                                                  <span className="font-semibold text-zinc-700">Supplier Code:</span> {accessory.supplier_price_list_code}
+                                                </span>
+                                              ) : null}
                                             </span>
                                             <span className="font-semibold">
                                               {formatMoney(accessory.currency ?? rowCurrency, numberValue(accessory.price))}
@@ -2147,7 +2418,7 @@ export function ProductLibrarySelector({
 
                                     return (
                                       <label key={id} className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
-                                        <span>
+                                        <span className="min-w-0">
                                           <input
                                             type="checkbox"
                                             checked={qty > 0}
@@ -2162,7 +2433,12 @@ export function ProductLibrarySelector({
                                             }
                                             className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle"
                                           />
-                                          {accessory.item_name}
+                                          <span className="font-medium text-zinc-900">{accessory.item_name}</span>
+                                          {accessory.supplier_price_list_code ? (
+                                            <span className="mt-1 block text-[11px] text-zinc-500">
+                                              <span className="font-semibold text-zinc-700">Supplier Code:</span> {accessory.supplier_price_list_code}
+                                            </span>
+                                          ) : null}
                                         </span>
                                         <span className="font-semibold">
                                           {formatMoney(accessory.currency ?? rowCurrency, numberValue(accessory.price))}
@@ -2217,7 +2493,11 @@ export function ProductLibrarySelector({
                                       >
                                         {activeCategoryRows(line.childTemplate.category_pricing).map((row, index) => (
                                           <option key={row.id ?? index} value={row.id ?? `linked-category-${index}`}>
-                                            {row.variant_name} {row.dimension ? `- ${row.dimension}` : ""}
+                                            {pricingOptionLabel({
+                                              currency: row.currency ?? line.childTemplate.currency,
+                                              dimension: row.dimension,
+                                              displayName: pricingDisplayName(row),
+                                            })}
                                           </option>
                                         ))}
                                       </select>
@@ -2247,7 +2527,12 @@ export function ProductLibrarySelector({
                                     >
                                       {activeVariantRows(line.childTemplate.variant_pricing).map((row, index) => (
                                         <option key={row.id ?? index} value={row.id ?? `linked-variant-${index}`}>
-                                          {row.variant_name} {row.dimension ? `- ${row.dimension}` : ""} - {formatMoney(row.currency ?? line.childTemplate.currency, numberValue(row.price))}
+                                          {pricingOptionLabel({
+                                            currency: row.currency ?? line.childTemplate.currency,
+                                            dimension: row.dimension,
+                                            displayName: pricingDisplayName(row),
+                                            price: numberValue(row.price),
+                                          })}
                                         </option>
                                       ))}
                                     </select>
@@ -2614,6 +2899,11 @@ export function ProductLibrarySelector({
                                     <div className="min-w-0">
                                       <p className="font-semibold text-zinc-950">Optional item</p>
                                       <p>{workstationOptionalLine.label}</p>
+                                      {workstationOptionalLine.supplierCode ? (
+                                        <p className="text-zinc-500">
+                                          <span className="font-semibold text-zinc-700">Supplier Code:</span> {workstationOptionalLine.supplierCode}
+                                        </p>
+                                      ) : null}
                                       {workstationOptionalLine.detail ? (
                                         <p className="text-zinc-500">{workstationOptionalLine.detail}</p>
                                       ) : null}
@@ -2640,6 +2930,11 @@ export function ProductLibrarySelector({
                                       <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
                                           <p className="font-semibold text-zinc-950">{line.label}</p>
+                                          {line.supplierCode ? (
+                                            <p className="text-zinc-500">
+                                              <span className="font-semibold text-zinc-700">Supplier Code:</span> {line.supplierCode}
+                                            </p>
+                                          ) : null}
                                           {line.detail ? <p className="text-zinc-500">{line.detail}</p> : null}
                                         </div>
                                         <div className="shrink-0 text-right">
@@ -2666,6 +2961,11 @@ export function ProductLibrarySelector({
                                       <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
                                           <p className="font-semibold text-zinc-950">{line.label}</p>
+                                          {line.supplierCode ? (
+                                            <p className="text-zinc-500">
+                                              <span className="font-semibold text-zinc-700">Supplier Code:</span> {line.supplierCode}
+                                            </p>
+                                          ) : null}
                                           {line.detail ? <p className="text-zinc-500">{line.detail}</p> : null}
                                         </div>
                                         <div className="shrink-0 text-right">
@@ -2692,6 +2992,11 @@ export function ProductLibrarySelector({
                                       <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
                                           <p className="font-semibold text-zinc-950">{line.label}</p>
+                                          {line.supplierCode ? (
+                                            <p className="text-zinc-500">
+                                              <span className="font-semibold text-zinc-700">Supplier Code:</span> {line.supplierCode}
+                                            </p>
+                                          ) : null}
                                           {line.detail ? <p className="text-zinc-500">{line.detail}</p> : null}
                                         </div>
                                         <div className="shrink-0 text-right">
@@ -2752,8 +3057,14 @@ export function ProductLibrarySelector({
                         {usesVariantPricing && selectedVariantRow ? (
                           <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600">
                             <p className="font-semibold text-zinc-950">
-                              Model: {selectedVariantRow.variant_name}
+                              Model: {pricingDisplayName(selectedVariantRow) || selectedVariantRow.variant_name}
                             </p>
+                            {selectedVariantRow.variant_name && pricingDisplayName(selectedVariantRow) !== selectedVariantRow.variant_name ? (
+                              <p>Variant Code: {selectedVariantRow.variant_name}</p>
+                            ) : null}
+                            {selectedVariantRow.supplier_price_list_code ? (
+                              <p>Supplier Code: {selectedVariantRow.supplier_price_list_code}</p>
+                            ) : null}
                             {selectedVariantRow.dimension ? (
                               <p>Dimension: {selectedVariantRow.dimension}</p>
                             ) : null}
@@ -2768,8 +3079,14 @@ export function ProductLibrarySelector({
                         {usesWorkstationFlow && selectedWorkstationVariantRow ? (
                           <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600">
                             <p className="font-semibold text-zinc-950">
-                              Optional item: {selectedWorkstationVariantRow.variant_name}
+                              Optional item: {pricingDisplayName(selectedWorkstationVariantRow) || selectedWorkstationVariantRow.variant_name}
                             </p>
+                            {selectedWorkstationVariantRow.variant_name && pricingDisplayName(selectedWorkstationVariantRow) !== selectedWorkstationVariantRow.variant_name ? (
+                              <p>Variant Code: {selectedWorkstationVariantRow.variant_name}</p>
+                            ) : null}
+                            {selectedWorkstationVariantRow.supplier_price_list_code ? (
+                              <p>Supplier Code: {selectedWorkstationVariantRow.supplier_price_list_code}</p>
+                            ) : null}
                             {selectedWorkstationVariantRow.dimension ? (
                               <p>Dimension: {selectedWorkstationVariantRow.dimension}</p>
                             ) : null}
@@ -3101,6 +3418,25 @@ export function ProductLibrarySelector({
                           </div>
                         </div>
                       </form>
+                      {imagePreview?.templateId === template.id ? (
+                        <ProductImagePreviewDialog
+                          currentIndex={imagePreview.imageIndex}
+                          images={availableProposedImages.map((image) => ({ label: image.label, path: image.path }))}
+                          onClose={() => setImagePreview(null)}
+                          onNavigate={(nextIndex) => {
+                            if (nextIndex < 0 || nextIndex >= availableProposedImages.length) return;
+                            setImagePreview({ templateId: template.id, imageIndex: nextIndex });
+                          }}
+                          onSelect={(path) => {
+                            setSelectedImages((current) => ({
+                              ...current,
+                              [template.id]: path,
+                            }));
+                            setImagePreview(null);
+                          }}
+                          templateName={template.template_name}
+                        />
+                      ) : null}
                     </article>
                   );
                 }) : null}

@@ -9,7 +9,7 @@ import {
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
 import { normalizePurchaseOrderCurrency } from "@/lib/quotations/purchase-order-currency";
 import { loadPurchaseOrderSettings } from "@/lib/quotations/purchase-order-settings-store";
-import { loadQuotationDerivedDocumentData } from "@/lib/quotations/derived-document-data";
+import { loadQuotationDerivedDocumentData, supplierPriceListCodeFromSourceData } from "@/lib/quotations/derived-document-data";
 
 export const dynamic = "force-dynamic";
 
@@ -148,6 +148,7 @@ export default async function PurchaseOrderPage({ params, searchParams }: Purcha
           size_snapshot: item.size_snapshot,
           origin_snapshot: item.origin_snapshot,
           supplier_name_snapshot: item.supplier_name_snapshot,
+          supplier_price_list_code_snapshot: supplierPriceListCodeFromSourceData(item.source_component_data),
           qty: item.qty,
           currency: item.currency,
           imageUrl: data.imageUrlByItemId.get(item.id) ?? null,

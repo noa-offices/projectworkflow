@@ -44,6 +44,7 @@ export type PurchaseOrderItemOverride = {
 export type PurchaseOrderColumnVisibility = {
   image: boolean;
   code: boolean;
+  supplierPriceListCode: boolean;
   model: boolean;
   brandOrigin: boolean;
   size: boolean;
@@ -117,6 +118,7 @@ export const DEFAULT_PURCHASE_ORDER_ITEM_OVERRIDE: PurchaseOrderItemOverride = {
 export const DEFAULT_PURCHASE_ORDER_COLUMN_VISIBILITY: PurchaseOrderColumnVisibility = {
   image: true,
   code: true,
+  supplierPriceListCode: false,
   model: true,
   brandOrigin: true,
   size: true,
@@ -278,6 +280,7 @@ export function normalizePurchaseOrderSettings(
     columnVisibility: {
       image: normalizedBoolean(columnVisibilityRecord, "image", DEFAULT_PURCHASE_ORDER_COLUMN_VISIBILITY.image),
       code: normalizedBoolean(columnVisibilityRecord, "code", DEFAULT_PURCHASE_ORDER_COLUMN_VISIBILITY.code),
+      supplierPriceListCode: normalizedBoolean(columnVisibilityRecord, "supplierPriceListCode", DEFAULT_PURCHASE_ORDER_COLUMN_VISIBILITY.supplierPriceListCode),
       model: normalizedBoolean(columnVisibilityRecord, "model", DEFAULT_PURCHASE_ORDER_COLUMN_VISIBILITY.model),
       brandOrigin: normalizedBoolean(columnVisibilityRecord, "brandOrigin", DEFAULT_PURCHASE_ORDER_COLUMN_VISIBILITY.brandOrigin),
       size: normalizedBoolean(columnVisibilityRecord, "size", DEFAULT_PURCHASE_ORDER_COLUMN_VISIBILITY.size),

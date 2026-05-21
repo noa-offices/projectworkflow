@@ -1897,6 +1897,14 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const showAddTemplate = stringParam(params.addTemplate) === "1";
   const editTemplateId = stringParam(params.editTemplate);
   const returnTo = safeInternalReturnTo(stringParam(params.returnTo));
+  const managementListHref = templatesHref(params, {
+    template: null,
+    editTemplate: null,
+    addTemplate: null,
+  });
+  const managementBackHref = managementListHref === "/products/templates?manage=1"
+    ? "/products/management"
+    : managementListHref;
   const quoteImportMode = stringParam(params.quoteImportMode);
   const quoteImportDraft = parseQuotationRowImportDraft(stringParam(params.quoteImportDraft));
   const supabase = await createClient();
@@ -2579,22 +2587,24 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     <div className="min-h-screen bg-stone-50 lg:flex">
       <AppSidebar />
       <div className="flex-1">
-        <TopBar
-          title={isManagementView ? "Product Management" : "Product Library"}
-          description={isManagementView
-            ? "Add, edit, archive, and maintain reusable product templates and configurable options."
-            : "Browse reusable product templates, search by brand or category, and open product details when you need them."}
+          <TopBar
+            title={isManagementView ? "Product Management" : "Product Library"}
+            description={isManagementView
+              ? "Add, edit, archive, and maintain reusable product templates and configurable options."
+              : "Browse reusable product templates, search by brand or category, and open product details when you need them."}
           userDisplayName={displayName}
           userEmail={user.email}
         />
         <main className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <Link
-              href="/products"
-              className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
-            >
-              Back to products
-            </Link>
+            {isManagementView ? <div /> : (
+              <Link
+                href="/products"
+                className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
+              >
+                Back to products
+              </Link>
+            )}
             {message ? (
               <p className={`rounded-md border px-3 py-2 text-sm ${
                 messageTone(message) === "error"
@@ -3324,16 +3334,16 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                 >
                   <div className="border-b border-zinc-200 p-5">
                     <div className="flex flex-col gap-4 border-b border-zinc-200 pb-5">
-                      <div className="flex flex-wrap items-center gap-3">
-                        <Link
-                          href="/products"
-                          className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                        >
-                          Back to products
-                        </Link>
-                        <Link
-                          href={templateLibraryReturnTo}
-                          className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Link
+                        href={isManagementView ? managementBackHref : "/products/templates"}
+                        className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                      >
+                        {isManagementView ? "Back to Product Management" : "Back to Product Library"}
+                      </Link>
+                      <Link
+                        href={templateLibraryReturnTo}
+                        className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
                         >
                           Back to category
                         </Link>
@@ -3342,7 +3352,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-500">
                             <Link href={templateLibraryReturnTo} className="transition hover:text-zinc-700">
-                              Product Library
+                              {isManagementView ? "Product Management" : "Product Library"}
                             </Link>
                             <span>/</span>
                             <Link
@@ -3651,7 +3661,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                     form={
                                       <DetailPriceUpdateForm
                                         currency={row.currency}
-                                        label={row.variant_name || "Variant price"}
+                                        label={row.display_name || row.variant_name || "Variant price"}
                                         priceField="price"
                                         priceListUpdates={templateBrandPriceListUpdates}
                                         productTemplateId={template.id}
@@ -3662,7 +3672,13 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                       />
                                     }
                                   >
-                                    <p className="font-semibold text-zinc-950">{row.variant_name || "Variant"}</p>
+                                    <p className="font-semibold text-zinc-950">{row.display_name || row.variant_name || "Variant"}</p>
+                                    {row.variant_name && row.display_name && row.variant_name !== row.display_name ? (
+                                      <p className="mt-1 text-[11px] uppercase tracking-wide text-zinc-500">Ref: {row.variant_name}</p>
+                                    ) : null}
+                                    {row.supplier_price_list_code ? (
+                                      <p className="mt-1 text-[11px] text-zinc-500">Supplier code: {row.supplier_price_list_code}</p>
+                                    ) : null}
                                     <p className="mt-1 text-xs">
                                       {row.dimension || "No dimension"} / {formatMoney(row.currency, Number(row.price ?? 0))}
                                     </p>
@@ -3700,7 +3716,13 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                         </div>
                                       }
                                     >
-                                      <p className="font-semibold text-zinc-950">{row.variant_name || "Category row"}</p>
+                                      <p className="font-semibold text-zinc-950">{row.display_name || row.variant_name || "Category row"}</p>
+                                      {row.variant_name && row.display_name && row.variant_name !== row.display_name ? (
+                                        <p className="mt-1 text-[11px] uppercase tracking-wide text-zinc-500">Ref: {row.variant_name}</p>
+                                      ) : null}
+                                      {row.supplier_price_list_code ? (
+                                        <p className="mt-1 text-[11px] text-zinc-500">Supplier code: {row.supplier_price_list_code}</p>
+                                      ) : null}
                                       <p className="mt-1 text-xs">{row.dimension || "No dimension"}</p>
                                     </DetailPriceRow>
                                   ))}

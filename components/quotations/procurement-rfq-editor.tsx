@@ -64,6 +64,7 @@ type ProcurementRfqItem = {
   size_snapshot: string | null;
   origin_snapshot: string | null;
   supplier_name_snapshot: string | null;
+  supplier_price_list_code_snapshot: string | null;
   qty: number;
   imageUrl: string | null;
 };
@@ -432,6 +433,7 @@ export function ProcurementRfqEditor({
         description: entry.description,
         context: (context.area || context.section) ? [context.area, context.section].filter(Boolean).join(" / ") : null,
         code: entry.item.item_code_snapshot,
+        supplierPriceListCode: entry.item.supplier_price_list_code_snapshot,
         model: entry.item.model_snapshot,
         brandOrigin: [entry.item.brand_name_snapshot, entry.item.origin_snapshot].filter(Boolean).join(" / ") || null,
         specification: compactSpecification(entry.item.specification_snapshot),
@@ -867,6 +869,7 @@ export function ProcurementRfqEditor({
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 <ToggleField checked={settings.columnVisibility.image} label="Show Image" onChange={(value) => updateColumnVisibility("image", value)} />
                 <ToggleField checked={settings.columnVisibility.code} label="Show Code inside Description" onChange={(value) => updateColumnVisibility("code", value)} />
+                <ToggleField checked={settings.columnVisibility.supplierPriceListCode} label="Show Supplier Price List Code" onChange={(value) => updateColumnVisibility("supplierPriceListCode", value)} />
                 <ToggleField checked={settings.columnVisibility.model} label="Show Model inside Description" onChange={(value) => updateColumnVisibility("model", value)} />
                 <ToggleField checked={settings.columnVisibility.brandOrigin} label="Show Brand / Origin inside Description" onChange={(value) => updateColumnVisibility("brandOrigin", value)} />
                 <ToggleField checked={settings.columnVisibility.specification} label="Show Specification inside Description" onChange={(value) => updateColumnVisibility("specification", value)} />

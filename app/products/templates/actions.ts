@@ -708,6 +708,8 @@ function deskingSizePricingValue(formData: FormData) {
               : Number.isFinite(length) && Number.isFinite(depth) && Number.isFinite(height)
                 ? `${length} x ${depth} x ${height}`
                 : "",
+          supplier_price_list_code:
+            typeof row.supplier_price_list_code === "string" ? row.supplier_price_list_code.trim() : "",
           length: Number.isFinite(length) ? length : 0,
           depth: Number.isFinite(depth) ? depth : 0,
           height: Number.isFinite(height) ? height : 0,
@@ -733,7 +735,8 @@ function deskingSizePricingValue(formData: FormData) {
           row.depth > 0 ||
           row.height > 0 ||
           row.default_price > 0 ||
-          row.additional_price > 0,
+          row.additional_price > 0 ||
+          row.supplier_price_list_code,
       );
   } catch {
     return [];
@@ -752,6 +755,8 @@ function variantPricingValue(formData: FormData) {
       .map((row, index) => ({
         id: typeof row.id === "string" && row.id ? row.id : `variant-${index}`,
         variant_name: typeof row.variant_name === "string" ? row.variant_name.trim() : "",
+        display_name: typeof row.display_name === "string" ? row.display_name.trim() : "",
+        supplier_price_list_code: typeof row.supplier_price_list_code === "string" ? row.supplier_price_list_code.trim() : "",
         dimension: typeof row.dimension === "string" ? row.dimension.trim() : "",
         price: Number.isFinite(Number(row.price)) ? Number(row.price) : 0,
         currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
@@ -759,7 +764,7 @@ function variantPricingValue(formData: FormData) {
         sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
         is_active: row.is_active !== false,
       }))
-      .filter((row) => row.variant_name || row.dimension || row.price > 0 || row.specification);
+      .filter((row) => row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || row.price > 0 || row.specification);
   } catch {
     return [];
   }
@@ -805,6 +810,8 @@ function categoryPricingValue(formData: FormData) {
               ? row.pricing_category_name.trim()
               : null,
           variant_name: typeof row.variant_name === "string" ? row.variant_name.trim() : "",
+          display_name: typeof row.display_name === "string" ? row.display_name.trim() : "",
+          supplier_price_list_code: typeof row.supplier_price_list_code === "string" ? row.supplier_price_list_code.trim() : "",
           dimension: typeof row.dimension === "string" ? row.dimension.trim() : "",
           currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
           prices: Object.fromEntries(normalizedPrices.entries()),
@@ -813,7 +820,7 @@ function categoryPricingValue(formData: FormData) {
           is_active: row.is_active !== false,
         };
       })
-      .filter((row) => row.variant_name || row.dimension || Object.values(row.prices).some((price) => price > 0) || row.specification);
+      .filter((row) => row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price > 0) || row.specification);
   } catch {
     return [];
   }
@@ -830,6 +837,7 @@ function accessoryPricingValue(formData: FormData) {
     const normalizeItem = (row: Record<string, unknown>, index: number) => ({
       id: typeof row.id === "string" && row.id ? row.id : `add-on-${index}`,
       item_name: typeof row.item_name === "string" ? row.item_name.trim() : "",
+      supplier_price_list_code: typeof row.supplier_price_list_code === "string" ? row.supplier_price_list_code.trim() : "",
       price: Number.isFinite(Number(row.price)) ? Number(row.price) : 0,
       currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
       specification: typeof row.specification === "string" ? row.specification.trim() : "",
@@ -845,7 +853,7 @@ function accessoryPricingValue(formData: FormData) {
           ? row.items
               .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
               .map(normalizeItem)
-              .filter((item) => item.item_name || item.price > 0 || item.specification)
+              .filter((item) => item.item_name || item.supplier_price_list_code || item.price > 0 || item.specification)
           : [];
 
         return {
@@ -868,7 +876,7 @@ function accessoryPricingValue(formData: FormData) {
         is_active: true,
         items: flatRows
           .map(normalizeItem)
-          .filter((item) => item.item_name || item.price > 0 || item.specification),
+          .filter((item) => item.item_name || item.supplier_price_list_code || item.price > 0 || item.specification),
       });
     }
 

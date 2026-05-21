@@ -13,6 +13,7 @@ import {
 export type DeskingSizePricingRow = {
   id?: string;
   label?: string;
+  supplier_price_list_code?: string;
   length?: number;
   depth?: number;
   height?: number;
@@ -72,6 +73,7 @@ function normalizedRow(row: DeskingSizePricingRow, index: number): DeskingSizePr
   return {
     id: row.id || `size-${index}`,
     label: row.label?.trim() || fallbackLabel,
+    supplier_price_list_code: row.supplier_price_list_code?.trim() || "",
     length,
     depth,
     height,
@@ -129,6 +131,7 @@ export function DeskingSizePricingTable({
             ? crypto.randomUUID()
             : `size-import-${Date.now()}`,
         label: detail.draft.size_snapshot || detail.draft.item_name_snapshot || "Imported size",
+        supplier_price_list_code: "",
         default_price: Number(detail.draft.unit_price) || 0,
         additional_price: 0,
         currency: normalizeCurrency(detail.draft.currency ?? templateCurrency ?? brandDefaultCurrency ?? defaultCurrency),
@@ -221,6 +224,7 @@ export function DeskingSizePricingTable({
           <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
             <tr>
               <th className="px-2 py-2">Size / Dimension</th>
+              <th className="px-2 py-2">Supplier / Price List Code</th>
               <th className="px-2 py-2">Default Price</th>
               <th className="px-2 py-2">Additional Price</th>
               <th className="px-2 py-2">Currency</th>
@@ -246,6 +250,17 @@ export function DeskingSizePricingTable({
                       />
                     ) : (
                       <span className="font-medium text-zinc-900">{row.label}</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-2">
+                    {isEditing ? (
+                      <input
+                        value={draft.supplier_price_list_code ?? ""}
+                        onChange={(event) => updateDraft(key, { supplier_price_list_code: event.target.value })}
+                        className="h-8 w-36 border border-zinc-200 px-2 outline-none focus:border-emerald-800"
+                      />
+                    ) : (
+                      <span>{row.supplier_price_list_code || "-"}</span>
                     )}
                   </td>
                   {(["default_price", "additional_price"] as const).map((field) => (
@@ -334,7 +349,7 @@ export function DeskingSizePricingTable({
             })}
             {!tableRows.length ? (
               <tr>
-                <td colSpan={6} className="px-3 py-5 text-center text-zinc-500">
+                <td colSpan={7} className="px-3 py-5 text-center text-zinc-500">
                   No workstation sizes yet.
                 </td>
               </tr>
