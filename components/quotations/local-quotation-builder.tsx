@@ -3411,6 +3411,9 @@ export function LocalQuotationBuilder({
                   <Link href={`/quotations/${workspace.server_quotation_id}/builder`} className="inline-flex h-9 items-center border border-zinc-300 bg-white px-3 font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
                     Open Legacy Builder
                   </Link>
+                  <p className="px-3 text-[11px] leading-5 text-zinc-500">
+                    Fallback only
+                  </p>
                 </div>
               </details>
               <div className="inline-flex h-9 items-center border border-emerald-900 bg-emerald-50 px-3 text-xs font-semibold text-emerald-950">

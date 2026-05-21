@@ -62,7 +62,6 @@ function safeSupabaseErrorReason(error: { code?: string | null; message?: string
 function clientPayload(formData: FormData, userId?: string) {
   const payload = {
     company_name: textValue(formData, "company_name"),
-    client_code: optionalTextValue(formData, "client_code"),
     contact_person: optionalTextValue(formData, "contact_person"),
     email: optionalTextValue(formData, "email"),
     phone: optionalTextValue(formData, "phone"),

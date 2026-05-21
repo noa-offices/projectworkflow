@@ -37,7 +37,7 @@ export function LocalDraftLink({
           href={`/quotations/${quotationId}/local-builder`}
           className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
         >
-          Open Local Builder
+          Open Builder
         </Link>
       ) : null}
       {draft ? (

@@ -14,8 +14,12 @@ import {
   type CategoryPricingRow,
   type VariantPricingRow,
 } from "@/components/products/variant-pricing-tables";
-import { ProductTemplateImageUploader } from "@/components/products/product-template-image-uploader";
 import { ProductLibraryPreviewImage } from "@/components/products/product-library-preview-image";
+import { ProductManagementFilterBar } from "@/components/products/product-management-filter-bar";
+import {
+  ProductManagementTemplateResults,
+  type ProductManagementTemplateResult,
+} from "@/components/products/product-management-template-results";
 import { TemplatePricingSections } from "@/components/products/template-pricing-sections";
 import {
   TemplateDetailImageGallery,
@@ -85,6 +89,9 @@ type TemplatesSearchParams = {
   brand?: string | string[];
   main?: string | string[];
   sub?: string | string[];
+  panelBrand?: string | string[];
+  panelMain?: string | string[];
+  panelSub?: string | string[];
   priceStatus?: string | string[];
   template?: string | string[];
   addTemplate?: string | string[];
@@ -572,6 +579,9 @@ function templatesHref(
       | "brand"
       | "main"
       | "sub"
+      | "panelBrand"
+      | "panelMain"
+      | "panelSub"
       | "priceStatus"
       | "template"
       | "addTemplate"
@@ -588,6 +598,9 @@ function templatesHref(
     "brand",
     "main",
     "sub",
+    "panelBrand",
+    "panelMain",
+    "panelSub",
     "priceStatus",
     "template",
     "addTemplate",
@@ -610,6 +623,72 @@ function withHash(path: string, hash: string) {
   const hashIndex = path.indexOf("#");
   const basePath = hashIndex >= 0 ? path.slice(0, hashIndex) : path;
   return `${basePath}#${hash}`;
+}
+
+function templateSearchText(
+  template: ProductTemplate,
+  brandMap: Map<string, string>,
+  categoryMap: Map<string, string>,
+) {
+  const tokens = [
+    template.template_name,
+    template.template_code,
+    template.item_code,
+    template.description,
+    template.default_specification,
+    template.origin,
+    template.supplier_name,
+    template.price_notes,
+    template.price_check_note,
+    brandMap.get(template.brand_id),
+    template.main_category_id ? categoryMap.get(template.main_category_id) : null,
+    template.sub_category_id ? categoryMap.get(template.sub_category_id) : null,
+  ];
+
+  for (const row of template.desking_size_pricing ?? []) {
+    tokens.push(row.label, row.supplier_price_list_code, row.dimension_unit);
+  }
+
+  for (const row of template.variant_pricing ?? []) {
+    tokens.push(
+      row.variant_name,
+      row.display_name,
+      row.supplier_price_list_code,
+      row.dimension,
+      row.specification,
+    );
+  }
+
+  for (const row of template.category_pricing ?? []) {
+    tokens.push(
+      row.pricing_category_name,
+      row.variant_name,
+      row.display_name,
+      row.supplier_price_list_code,
+      row.dimension,
+      row.specification,
+    );
+  }
+
+  for (const row of template.accessory_pricing ?? []) {
+    tokens.push(
+      row.group_name,
+      row.item_name,
+      row.supplier_price_list_code,
+      row.specification,
+      ...(row.items ?? []).flatMap((item) => [
+        item.item_name,
+        item.supplier_price_list_code,
+        item.specification,
+      ]),
+    );
+  }
+
+  return tokens.filter(Boolean).join(" ").toLowerCase();
+}
+
+function templateCountLabel(count: number) {
+  return `${count} ${count === 1 ? "product" : "products"} found`;
 }
 
 function StatusBadge({ active }: { active: boolean }) {
@@ -1489,104 +1568,6 @@ function PriceCheckStatus({
   );
 }
 
-function CompactPriceCheckStatus({
-  actorNameById,
-  brandName,
-  latestBrandUpdate,
-  template,
-}: {
-  actorNameById: Map<string, string>;
-  brandName?: string | null;
-  latestBrandUpdate?: BrandPriceListUpdate | null;
-  template: ProductTemplate;
-}) {
-  const status = priceCheckState(template, latestBrandUpdate, brandName);
-  const className = status.tone === "ok"
-    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-    : status.tone === "notice"
-      ? "border-sky-200 bg-sky-50 text-sky-900"
-      : "border-amber-200 bg-amber-50 text-amber-900";
-
-  return (
-    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-      <span className={`inline-flex rounded-full border px-2 py-0.5 font-semibold ${className}`}>
-        {status.label}
-      </span>
-      <span>
-        {template.last_price_checked_at
-          ? `Checked ${formatShortDate(template.last_price_checked_at)} by ${actorDisplayName(actorNameById, template.last_price_checked_by)}`
-          : status.detail}
-      </span>
-    </div>
-  );
-}
-
-function TemplateRowActions({
-  editHref,
-  openHref,
-  template,
-}: {
-  editHref: string;
-  openHref: string;
-  template: ProductTemplate;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-2 md:justify-end">
-      <Link
-        href={openHref}
-        className="inline-flex h-9 items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100"
-      >
-        View
-      </Link>
-      <Link
-        href={editHref}
-        className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-      >
-        Edit Template
-      </Link>
-      <details className="relative">
-        <summary className="inline-flex h-9 cursor-pointer list-none items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
-          More
-        </summary>
-        <div className="absolute right-0 z-20 mt-2 w-56 rounded-lg border border-zinc-200 bg-white p-2 shadow-lg">
-          <div className="mb-2 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-            Template actions
-          </div>
-          <form action={markTemplatePriceChecked} className="mb-1">
-            <input type="hidden" name="id" value={template.id} />
-            <PendingSubmitButton
-              className="flex w-full items-center justify-start rounded-md px-2 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
-              pendingLabel="Marking checked..."
-            >
-              Mark price checked
-            </PendingSubmitButton>
-          </form>
-          <form action={archiveProductTemplate} className="mb-1">
-            <input type="hidden" name="id" value={template.id} />
-            <ConfirmSubmitButton
-              message="This will move the product template to Archive. You can restore it later."
-              className="flex w-full items-center justify-start rounded-md px-2 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
-              pendingLabel="Archiving..."
-            >
-              Archive
-            </ConfirmSubmitButton>
-          </form>
-          <form action={markProductTemplateDiscontinued}>
-            <input type="hidden" name="id" value={template.id} />
-            <ConfirmSubmitButton
-              message="This will hide the product from active Product Library and future quotations. Existing quotations will not be affected."
-              className="flex w-full items-center justify-start rounded-md px-2 py-2 text-sm font-medium text-amber-700 transition hover:bg-amber-50"
-              pendingLabel="Discontinuing..."
-            >
-              Discontinue
-            </ConfirmSubmitButton>
-          </form>
-        </div>
-      </details>
-    </div>
-  );
-}
-
 function TemplateDetailHeaderActions({
   editHref,
   template,
@@ -1892,6 +1873,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const selectedBrandFilter = stringParam(params.brand);
   const selectedMainFilter = stringParam(params.main);
   const selectedSubFilter = stringParam(params.sub);
+  const selectedPanelBrandId = stringParam(params.panelBrand);
+  const selectedPanelMainId = stringParam(params.panelMain);
+  const selectedPanelSubId = stringParam(params.panelSub);
   const selectedPriceStatusFilter = stringParam(params.priceStatus);
   const openTemplateId = stringParam(params.template);
   const showAddTemplate = stringParam(params.addTemplate) === "1";
@@ -2191,6 +2175,61 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     }
   }
 
+  function buildManagementTemplateResult(template: ProductTemplate): ProductManagementTemplateResult {
+    const firstVisibleImageSlot = proposedImageSlots.find((slot) =>
+      Boolean(templateImageValue(template, slot.field)),
+    );
+    const firstImageValue = firstVisibleImageSlot
+      ? templateImageValue(template, firstVisibleImageSlot.field)
+      : template.default_image_url;
+    const firstImageSettings = firstVisibleImageSlot
+      ? templateImageDisplaySettings(template, firstVisibleImageSlot.field)
+      : template.image_settings?.default_image_url;
+    const status = priceCheckState(
+      template,
+      latestPriceListUpdateByBrand.get(template.brand_id),
+      brandMap.get(template.brand_id),
+    );
+
+    return {
+      id: template.id,
+      editHref: templatesHref(params, {
+        template: template.id,
+        editTemplate: template.id,
+        addTemplate: null,
+      }),
+      imageSettings: firstImageSettings,
+      imageValue: firstImageValue,
+      isSelected: template.id === openTemplateId,
+      lifecycleStatus: templateLifecycleById.get(template.id) ?? "active",
+      openHref: templatesHref(params, {
+        template: template.id,
+        editTemplate: null,
+        addTemplate: null,
+      }),
+      path: [
+        brandMap.get(template.brand_id) ?? "Unknown brand",
+        template.main_category_id
+          ? categoryMap.get(template.main_category_id) ?? "Main category"
+          : "No main category",
+        template.sub_category_id
+          ? categoryMap.get(template.sub_category_id) ?? "No sub category"
+          : "No sub category",
+      ].join(" / "),
+      priceStatusDetail: template.last_price_checked_at
+        ? `Checked ${formatShortDate(template.last_price_checked_at)} by ${actorDisplayName(actorNameById, template.last_price_checked_by)}`
+        : status.detail,
+      priceStatusLabel: status.label,
+      priceStatusTone: status.tone === "ok" || status.tone === "notice" ? status.tone : "warning",
+      priceText: formatMoney(template.currency, template.default_unit_price),
+      searchText: templateSearchText(template, brandMap, categoryMap),
+      templateCodeText: template.template_code || template.item_code
+        ? [template.template_code, template.item_code].filter(Boolean).join(" / ")
+        : "No template or item code",
+      templateName: template.template_name,
+    };
+  }
+
   const templateIds = new Set(templateList.map((template) => template.id));
   const priceListUpdateIds = new Set(brandPriceListUpdateList.map((update) => update.id));
 
@@ -2234,12 +2273,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const templatesMatchingStructure = activeTemplateList.filter((template) => {
     const matchesSearch =
       !normalizedSearch ||
-      template.template_name.toLowerCase().includes(normalizedSearch) ||
-      (template.template_code ?? "").toLowerCase().includes(normalizedSearch) ||
-      (template.item_code ?? "").toLowerCase().includes(normalizedSearch) ||
-      (template.description ?? "").toLowerCase().includes(normalizedSearch) ||
-      (template.default_specification ?? "").toLowerCase().includes(normalizedSearch) ||
-      (template.origin ?? "").toLowerCase().includes(normalizedSearch);
+      templateSearchText(template, brandMap, categoryMap).includes(normalizedSearch);
     const matchesBrand =
       !selectedBrandFilter || template.brand_id === selectedBrandFilter;
     const matchesMain =
@@ -2278,18 +2312,28 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const selectedTemplateBase =
     activeTemplateList.find((template) => template.id === openTemplateId) ?? null;
   const selectedTemplate = selectedTemplateBase;
+  const hasGlobalSearchOrFilters = Boolean(
+    searchQuery ||
+    selectedBrandFilter ||
+    selectedMainFilter ||
+    selectedSubFilter ||
+    selectedPriceStatusFilter,
+  );
   const selectedBrand =
-    brandList.find((brand) => brand.id === selectedBrandFilter) ?? null;
+    brandList.find((brand) => brand.id === selectedPanelBrandId) ?? null;
   const selectedMainCategory =
-    mainCategories.find((category) => category.id === selectedMainFilter) ?? null;
+    mainCategories.find((category) => category.id === selectedPanelMainId) ?? null;
   const selectedSubCategory =
-    subCategories.find((category) => category.id === selectedSubFilter) ?? null;
+    subCategories.find((category) => category.id === selectedPanelSubId) ?? null;
   const selectedCategory = selectedSubCategory ?? selectedMainCategory ?? null;
+  const templateFormDefaultBrandId = selectedBrandFilter || selectedBrand?.id || "";
+  const templateFormDefaultMainCategoryId = selectedMainFilter || selectedMainCategory?.id || "";
+  const templateFormDefaultSubCategoryId = selectedSubFilter || selectedSubCategory?.id || "";
   const selectedBrandCategories = selectedBrand
     ? mainCategories.filter((category) => category.brand_id === selectedBrand.id)
     : [];
   const selectedBrandTemplates = selectedBrand
-    ? filteredTemplates.filter((template) => template.brand_id === selectedBrand.id)
+    ? activeTemplateList.filter((template) => template.brand_id === selectedBrand.id)
     : [];
   const selectedCategoryTemplates = selectedCategory
     ? selectedBrandTemplates.filter((template) =>
@@ -2304,12 +2348,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const searchMatchedActiveTemplates = activeTemplateList.filter((template) => {
     return (
       !normalizedSearch ||
-      template.template_name.toLowerCase().includes(normalizedSearch) ||
-      (template.template_code ?? "").toLowerCase().includes(normalizedSearch) ||
-      (template.item_code ?? "").toLowerCase().includes(normalizedSearch) ||
-      (template.description ?? "").toLowerCase().includes(normalizedSearch) ||
-      (template.default_specification ?? "").toLowerCase().includes(normalizedSearch) ||
-      (template.origin ?? "").toLowerCase().includes(normalizedSearch)
+      templateSearchText(template, brandMap, categoryMap).includes(normalizedSearch)
     );
   });
   const brandScopedLibraryTemplates = searchMatchedActiveTemplates.filter((template) =>
@@ -2342,6 +2381,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     }))
     .filter((brand) => brand.count > 0);
   const libraryResultTemplates = templatesMatchingStructure;
+  const globalManagementResults = filteredTemplates.map(buildManagementTemplateResult);
+  const localBrandResults = selectedBrandTemplates.map(buildManagementTemplateResult);
+  const localCategoryResults = selectedCategoryTemplates.map(buildManagementTemplateResult);
 
   if (!isManagementView) {
     return (
@@ -2618,96 +2660,19 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
           <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3">
-              <form
-                action="/products/templates"
-                className="grid gap-3 xl:grid-cols-[minmax(180px,1fr)_170px_180px_180px_190px_auto]"
-              >
-                {isManagementView ? <input type="hidden" name="manage" value="1" /> : null}
-                <input
-                  name="q"
-                  defaultValue={searchQuery}
-                  placeholder="Search name, item code, or template code"
-                  className="h-10 rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                />
-                <select
-                  name="brand"
-                  defaultValue={selectedBrandFilter}
-                  className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                >
-                  <option value="">All brands</option>
-                  {brandList.map((brand) => (
-                    <option key={brand.id} value={brand.id}>
-                      {brand.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  name="main"
-                  defaultValue={selectedMainFilter}
-                  className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                >
-                  <option value="">All main categories</option>
-                  {visibleMainCategories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  name="sub"
-                  defaultValue={selectedSubFilter}
-                  className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                >
-                  <option value="">All sub categories</option>
-                  {visibleSubCategories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  name="priceStatus"
-                  defaultValue={selectedPriceStatusFilter}
-                  className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                >
-                  <option value="">All price statuses</option>
-                  <option value="not_checked">Price not checked yet</option>
-                  <option value="due">Price check due</option>
-                  <option value="scheduled">New price list scheduled</option>
-                  <option value="checked">Price checked</option>
-                </select>
-                <div className="flex gap-2">
-                  <PendingSubmitButton
-                    className="h-10 rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                    pendingLabel="Applying..."
-                  >
-                    Apply
-                  </PendingSubmitButton>
-                  {isManagementView ? (
-                    <>
-                      <Link
-                        href={manageBrandsHref}
-                        className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                      >
-                        + Add Brand
-                      </Link>
-                      <Link
-                        href={templatesHref(params, { addTemplate: "1" })}
-                        className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                      >
-                        + Add Product Template
-                      </Link>
-                    </>
-                  ) : (
-                    <Link
-                      href="/products/management"
-                      className="inline-flex h-10 items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-4 text-sm font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100"
-                    >
-                      Open Product Management
-                    </Link>
-                  )}
-                </div>
-              </form>
+              <ProductManagementFilterBar
+                key={`${selectedBrandFilter}:${selectedMainFilter}:${selectedSubFilter}:${selectedPriceStatusFilter}:${searchQuery}`}
+                addBrandHref={manageBrandsHref}
+                addTemplateHref={templatesHref(params, { addTemplate: "1" })}
+                brandOptions={brandList}
+                mainCategoryOptions={visibleMainCategories}
+                priceStatus={selectedPriceStatusFilter}
+                searchQuery={searchQuery}
+                selectedBrandId={selectedBrandFilter}
+                selectedMainCategoryId={selectedMainFilter}
+                selectedSubCategoryId={selectedSubFilter}
+                subCategoryOptions={visibleSubCategories}
+              />
 
               {showAddTemplate ? (
                 <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
@@ -2731,9 +2696,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   <TemplateForm
                     brands={brandList}
                     categories={categoryList}
-                    defaultBrandId={selectedBrandFilter}
-                    defaultMainCategoryId={selectedMainFilter}
-                    defaultSubCategoryId={selectedSubFilter}
+                    defaultBrandId={templateFormDefaultBrandId}
+                    defaultMainCategoryId={templateFormDefaultMainCategoryId}
+                    defaultSubCategoryId={templateFormDefaultSubCategoryId}
                     importDraft={quoteImportMode === "new" ? quoteImportDraft : null}
                     importMode={quoteImportMode === "new" ? "new" : ""}
                     initialMessage={message}
@@ -2784,9 +2749,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                 </p>
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-zinc-500">
                   <Link href={templatesHref(params, {
-                    brand: null,
-                    main: null,
-                    sub: null,
+                    panelBrand: null,
+                    panelMain: null,
+                    panelSub: null,
                     template: null,
                     editTemplate: null,
                   })} className={selectedBrand ? "font-medium text-zinc-500 transition hover:text-zinc-700" : "font-semibold text-zinc-950"}>
@@ -2796,9 +2761,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                     <>
                       <span>/</span>
                       <Link href={templatesHref(params, {
-                        brand: selectedBrand.id,
-                        main: null,
-                        sub: null,
+                        panelBrand: selectedBrand.id,
+                        panelMain: null,
+                        panelSub: null,
                         template: null,
                         editTemplate: null,
                       })} className={selectedCategory ? "font-medium text-zinc-500 transition hover:text-zinc-700" : "font-semibold text-zinc-950"}>
@@ -2852,9 +2817,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           </div>
                           <Link
                             href={templatesHref(params, {
-                              brand: brand.id,
-                              main: null,
-                              sub: null,
+                              panelBrand: brand.id,
+                              panelMain: null,
+                              panelSub: null,
                               template: null,
                               editTemplate: null,
                             })}
@@ -2875,9 +2840,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   <>
                     <Link
                       href={templatesHref(params, {
-                        brand: null,
-                        main: null,
-                        sub: null,
+                        panelBrand: null,
+                        panelMain: null,
+                        panelSub: null,
                         template: null,
                         editTemplate: null,
                       })}
@@ -2931,9 +2896,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                             </div>
                             <Link
                               href={templatesHref(params, {
-                                brand: selectedBrand.id,
-                                main: mainCategory.id,
-                                sub: null,
+                                panelBrand: selectedBrand.id,
+                                panelMain: mainCategory.id,
+                                panelSub: null,
                                 template: null,
                                 editTemplate: null,
                               })}
@@ -2970,7 +2935,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
             <div className="space-y-5">
               {!selectedTemplate ? (
               <>
-              {selectedBrand ? (
+              {selectedBrand && !hasGlobalSearchOrFilters ? (
                 <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div>
@@ -3065,7 +3030,22 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                 </section>
               ) : null}
 
-              {!selectedBrand ? (
+              {hasGlobalSearchOrFilters ? (
+                <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                  <div className="border-b border-zinc-200 pb-4">
+                    <h2 className="text-lg font-semibold text-zinc-950">Search Results</h2>
+                    <p className="mt-1 text-sm text-zinc-500">{templateCountLabel(globalManagementResults.length)}</p>
+                  </div>
+                  <div className="pt-4">
+                    <ProductManagementTemplateResults
+                      emptyDescription="Try another name, code, brand, category, or supplier code."
+                      emptyTitle="No products found."
+                      showCount={false}
+                      templates={globalManagementResults}
+                    />
+                  </div>
+                </section>
+              ) : !selectedBrand ? (
                 <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-10 text-center shadow-sm">
                   <h2 className="text-lg font-semibold text-zinc-950">Start from a brand</h2>
                   <p className="mt-2 text-sm text-zinc-500">
@@ -3073,12 +3053,31 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   </p>
                 </section>
               ) : !selectedCategory ? (
-                <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-10 text-center shadow-sm">
-                  <h2 className="text-lg font-semibold text-zinc-950">Choose a category</h2>
-                  <p className="mt-2 text-sm text-zinc-500">
-                    Showing only {selectedBrand.name} categories. Select one to open its templates.
-                  </p>
-                </section>
+                <>
+                  <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-10 text-center shadow-sm">
+                    <h2 className="text-lg font-semibold text-zinc-950">Choose a category</h2>
+                    <p className="mt-2 text-sm text-zinc-500">
+                      Showing only {selectedBrand.name} categories. Select one to open its templates.
+                    </p>
+                  </section>
+                  <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+                    <div className="border-b border-zinc-200 p-4">
+                      <h2 className="font-semibold text-zinc-950">{selectedBrand.name}</h2>
+                      <p className="mt-1 text-sm text-zinc-500">
+                        Search within {selectedBrand.name} without changing the global top search.
+                      </p>
+                    </div>
+                    <div className="p-4">
+                      <ProductManagementTemplateResults
+                        key={`brand-local:${selectedBrand.id}`}
+                        emptyDescription="No products found in this brand."
+                        emptyTitle="No products found in this brand."
+                        searchPlaceholder={`Search within ${selectedBrand.name}...`}
+                        templates={localBrandResults}
+                      />
+                    </div>
+                  </section>
+                </>
               ) : (
                 <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
                   <div className="border-b border-zinc-200 p-4">
@@ -3091,9 +3090,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                       </div>
                       <Link
                         href={templatesHref(params, {
-                          brand: selectedBrand?.id ?? null,
-                          main: null,
-                          sub: null,
+                          panelBrand: selectedBrand?.id ?? null,
+                          panelMain: null,
+                          panelSub: null,
                           template: null,
                           editTemplate: null,
                         })}
@@ -3106,9 +3105,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                       <div className="mt-4 flex flex-wrap gap-2">
                         <Link
                           href={templatesHref(params, {
-                            brand: selectedBrand?.id ?? null,
-                            main: selectedMainCategory.id,
-                            sub: null,
+                            panelBrand: selectedBrand?.id ?? null,
+                            panelMain: selectedMainCategory.id,
+                            panelSub: null,
                             template: null,
                             editTemplate: null,
                           })}
@@ -3124,9 +3123,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           <Link
                             key={subCategory.id}
                             href={templatesHref(params, {
-                              brand: selectedBrand?.id ?? null,
-                              main: selectedMainCategory.id,
-                              sub: subCategory.id,
+                              panelBrand: selectedBrand?.id ?? null,
+                              panelMain: selectedMainCategory.id,
+                              panelSub: subCategory.id,
                               template: null,
                               editTemplate: null,
                             })}
@@ -3153,122 +3152,35 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                       </div>
                     ) : null}
                   </div>
-                  <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                    {selectedCategoryTemplates.map((template) => {
-                      const firstVisibleImageSlot = proposedImageSlots.find((slot) =>
-                        Boolean(templateImageValue(template, slot.field)),
-                      );
-                      const firstImageValue = firstVisibleImageSlot
-                        ? templateImageValue(template, firstVisibleImageSlot.field)
-                        : template.default_image_url;
-                      const firstImageSettings = firstVisibleImageSlot
-                        ? templateImageDisplaySettings(template, firstVisibleImageSlot.field)
-                        : template.image_settings?.default_image_url;
-                      const path = [
-                        brandMap.get(template.brand_id) ?? "Unknown brand",
-                        template.main_category_id
-                          ? categoryMap.get(template.main_category_id) ?? "Main category"
-                          : "No main category",
-                        template.sub_category_id
-                          ? categoryMap.get(template.sub_category_id) ?? "No sub category"
-                          : "No sub category",
-                      ].join(" / ");
-                      const openHref = templatesHref(params, {
-                        template: template.id,
-                        editTemplate: null,
-                        addTemplate: null,
-                      });
-                      const editHref = templatesHref(params, {
-                        template: template.id,
-                        editTemplate: template.id,
-                        addTemplate: null,
-                      });
-
-                      return (
-                        <article
-                          key={template.id}
-                          className={`flex h-full flex-col overflow-hidden rounded-xl border bg-white shadow-sm transition hover:border-zinc-300 hover:shadow-md ${
-                            template.id === openTemplateId
-                              ? "border-emerald-200 bg-emerald-50/30"
-                              : "border-zinc-200"
-                          }`}
+                  <div className="p-4">
+                    <ProductManagementTemplateResults
+                      key={`category-local:${selectedBrand.id}:${selectedCategory.id}`}
+                      emptyDescription="No products found in this category."
+                      emptyTitle="No products found in this category."
+                      searchPlaceholder={selectedSubCategory
+                        ? `Search within ${selectedSubCategory.name}...`
+                        : selectedMainCategory
+                          ? `Search within ${selectedMainCategory.name}...`
+                          : "Search within this category..."}
+                      templates={localCategoryResults}
+                    />
+                    {!localCategoryResults.length ? (
+                      <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+                        <Link
+                          href={manageBrandsHref}
+                          className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
                         >
-                          <div className="border-b border-zinc-200 bg-zinc-50 p-3">
-                            <div className="flex h-36 items-center justify-center overflow-hidden rounded-lg border border-zinc-200 bg-white">
-                              <ProductTemplateImageUploader
-                                imageSettings={firstImageSettings}
-                                label={template.template_name}
-                                templateId={template.id}
-                                value={firstImageValue}
-                              />
-                            </div>
-                          </div>
-                          <div className="flex flex-1 flex-col gap-3 p-4">
-                            <div className="flex flex-wrap items-start gap-2">
-                              <h3 className="min-w-0 flex-1 text-sm font-semibold text-zinc-950">
-                                {template.template_name}
-                              </h3>
-                              <TemplateLifecycleBadge status={templateLifecycleById.get(template.id) ?? "active"} />
-                            </div>
-                            <p className="text-xs leading-5 text-zinc-500">{path}</p>
-                            <div className="text-sm font-semibold text-zinc-950">
-                              {formatMoney(template.currency, template.default_unit_price)}
-                            </div>
-                            <div className="text-[11px] text-zinc-500">
-                              {template.template_code || template.item_code
-                                ? [template.template_code, template.item_code].filter(Boolean).join(" / ")
-                                : "No template or item code"}
-                            </div>
-                            <div>
-                              <CompactPriceCheckStatus
-                                actorNameById={actorNameById}
-                                brandName={brandMap.get(template.brand_id)}
-                                latestBrandUpdate={latestPriceListUpdateByBrand.get(template.brand_id)}
-                                template={template}
-                              />
-                            </div>
-                            <div className="mt-auto border-t border-zinc-100 pt-3">
-                              <TemplateRowActions
-                                editHref={editHref}
-                                openHref={openHref}
-                                template={template}
-                              />
-                            </div>
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                  {!selectedCategoryTemplates.length ? (
-                    <div className="p-8 text-center text-sm text-zinc-500">
-                      <p>No product templates in this category yet.</p>
-                      <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
-                        {isManagementView ? (
-                          <>
-                            <Link
-                              href={manageBrandsHref}
-                              className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                            >
-                              Manage Brands
-                            </Link>
-                            <Link
-                              href={templatesHref(params, { addTemplate: "1" })}
-                              className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                            >
-                              + Add Product Template
-                            </Link>
-                          </>
-                        ) : (
-                          <Link
-                            href="/products/management"
-                            className="inline-flex h-10 items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-4 text-sm font-semibold text-emerald-900 transition hover:border-emerald-300 hover:bg-emerald-100"
-                          >
-                            Open Product Management
-                          </Link>
-                        )}
+                          Manage Brands
+                        </Link>
+                        <Link
+                          href={templatesHref(params, { addTemplate: "1" })}
+                          className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                        >
+                          + Add Product Template
+                        </Link>
                       </div>
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
                 </section>
               )}
               </>
@@ -3529,9 +3441,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         <TemplateForm
                           brands={brandList}
                           categories={categoryList}
-                          defaultBrandId={selectedBrandFilter}
-                          defaultMainCategoryId={selectedMainFilter}
-                          defaultSubCategoryId={selectedSubFilter}
+                          defaultBrandId={templateFormDefaultBrandId}
+                          defaultMainCategoryId={templateFormDefaultMainCategoryId}
+                          defaultSubCategoryId={templateFormDefaultSubCategoryId}
                           existingImportDraft={quoteImportMode === "existing" ? quoteImportDraft as ClientQuotationRowImportDraft | null : null}
                           importDraft={quoteImportMode === "existing" ? quoteImportDraft : null}
                           importMode={quoteImportMode === "existing" ? "existing" : ""}

@@ -95,6 +95,8 @@ type QuotationSection = {
   section_title: string;
   section_notes: string | null;
   section_type: string;
+  parent_section_id: string | null;
+  section_kind: "main" | "sub";
   title_align: string;
   title_bold: boolean;
   title_bg: string;
@@ -533,32 +535,6 @@ function entriesByDay<T extends { created_at?: string; latestAt?: string }>(
   return Array.from(groups.entries()).sort((left, right) => right[0].localeCompare(left[0]));
 }
 
-function isDirectImageUrl(value: string) {
-  return /^(https?:|data:|\/)/i.test(value);
-}
-
-async function signedImageUrl(value: string | null, supabase: Awaited<ReturnType<typeof createSupabaseClient>>) {
-  if (!value) return null;
-  if (isDirectImageUrl(value)) return value;
-
-  const bucket = value.startsWith("product-images:") ? "product-images" : "quote-images";
-  const storagePath = value.startsWith("product-images:")
-    ? value.slice("product-images:".length)
-    : value.startsWith("quote-images:")
-      ? value.slice("quote-images:".length)
-      : value;
-  const { data, error } = await supabase.storage
-    .from(bucket)
-    .createSignedUrl(storagePath, 60 * 60);
-
-  if (error) {
-    console.error("QUOTATION DETAIL IMAGE SIGN ERROR", error.message);
-    return null;
-  }
-
-  return data.signedUrl;
-}
-
 function ExtraDiscountForm({
   quotation,
   returnTo,
@@ -679,22 +655,6 @@ function QuotationTermsForm({ quotation, mode }: { quotation: Quotation; mode: "
   );
 }
 
-function ImageCell({ value }: { value: string | null }) {
-  if (!value) {
-    return <span className="text-xs text-zinc-400">No image</span>;
-  }
-
-  return (
-    <a href={value} target="_blank" className="block">
-      <span
-        aria-label="Open image"
-        className="block h-14 w-14 rounded-md border border-zinc-200 bg-cover bg-center"
-        style={{ backgroundImage: `url(${value})` }}
-      />
-    </a>
-  );
-}
-
 export default async function QuotationDetailPage({
   params,
   searchParams,
@@ -738,7 +698,7 @@ export default async function QuotationDetailPage({
 
   const { data: sections, error: sectionsError } = await supabase
     .from("quotation_sections")
-    .select("id,quotation_id,section_title,section_notes,section_type,title_align,title_bold,title_bg,title_size,row_height,sort_order,is_active")
+    .select("id,quotation_id,section_title,section_notes,section_type,parent_section_id,section_kind,title_align,title_bold,title_bg,title_size,row_height,sort_order,is_active")
     .eq("quotation_id", id)
     .order("sort_order", { ascending: true })
     .order("section_title", { ascending: true })
@@ -830,6 +790,8 @@ export default async function QuotationDetailPage({
   const itemsBySection = new Map<string, QuotationItem[]>();
 
   for (const item of items ?? []) {
+    if (!item.is_active) continue;
+
     const key = item.section_id ?? "unsectioned";
     const sectionItems = itemsBySection.get(key) ?? [];
     sectionItems.push(item);
@@ -844,20 +806,29 @@ export default async function QuotationDetailPage({
     itemCurrencies.size > 1 ||
     (itemCurrencies.size === 1 && !itemCurrencies.has(normalizeCurrency(quotation.currency)));
   const activeItems = (items ?? []).filter((item) => item.is_active);
-  const specifiedImageEntries = await Promise.all(
-    activeItems.map(async (item) => [
-      item.id,
-      await signedImageUrl(item.specified_image_url_snapshot, supabase),
-    ] as const),
+  const summaryItems = activeItems.filter((item) =>
+    !["note", "blank", "subtotal"].includes(item.item_type) &&
+    !["heading", "note", "no_quote"].includes(item.line_style),
   );
-  const proposedImageEntries = await Promise.all(
-    activeItems.map(async (item) => [
-      item.id,
-      await signedImageUrl(item.proposed_image_url_snapshot, supabase),
-    ] as const),
-  );
-  const specifiedImageUrlByItemId = new Map(specifiedImageEntries);
-  const proposedImageUrlByItemId = new Map(proposedImageEntries);
+  const activeSections = (sections ?? []).filter((section) => section.is_active);
+  const mainSectionCount = activeSections.filter((section) => section.section_kind === "main").length;
+  const subsectionCount = activeSections.filter((section) => section.section_kind !== "main").length;
+  const totalQuantity = summaryItems.reduce((total, item) => total + Number(item.qty || 0), 0);
+  const sectionById = new Map(activeSections.map((section) => [section.id, section]));
+  const nonEmptySectionSummaries = activeSections
+    .map((section) => {
+      const sectionItems = (itemsBySection.get(section.id) ?? []).filter((item) =>
+        !["note", "blank", "subtotal"].includes(item.item_type) &&
+        !["heading", "note", "no_quote"].includes(item.line_style),
+      );
+
+      return {
+        section,
+        itemCount: sectionItems.length,
+        totalQuantity: sectionItems.reduce((total, item) => total + Number(item.qty || 0), 0),
+      };
+    })
+    .filter((entry) => entry.itemCount > 0);
 
   return (
     <div className="min-h-screen bg-stone-50 lg:flex">
@@ -1213,122 +1184,107 @@ export default async function QuotationDetailPage({
             </section>
           ) : null}
 
-          <section className="mt-6 space-y-5">
-            <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-zinc-950">Sections & Line Items</h2>
-                  <p className="mt-1 text-sm text-zinc-500">
-                    Read-only line summary. To edit items, open the quotation builder.
-                  </p>
+          <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-zinc-950">Items Summary</h2>
+                <p className="mt-1 text-sm text-zinc-500">
+                  Compact overview of saved quotation items. Use the builder for detailed editing.
+                </p>
+                <div className="mt-3">
+                  <LocalDraftLink quotationId={quotation.id} showLink={false} />
                 </div>
-                <Link
-                  href={`/quotations/${quotation.id}/local-builder`}
-                  className="inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                >
-                  Open Builder
-                </Link>
               </div>
+              <Link
+                href={`/quotations/${quotation.id}/local-builder`}
+                className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+              >
+                Open Builder
+              </Link>
             </div>
-            {(sections ?? []).map((section) => {
-              const sectionItems = itemsBySection.get(section.id) ?? [];
 
-              return (
-                <article
-                  key={section.id}
-                  className="rounded-lg border border-zinc-200 bg-white shadow-sm"
-                >
-                  <div className="border-b border-zinc-200 p-5">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                      <div>
-                        <h2 className="text-lg font-semibold text-zinc-950">
-                          {section.section_title}
-                        </h2>
-                        <p className="mt-1 text-xs font-medium text-zinc-500">
-                          Sort {section.sort_order}
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <InfoValue label="Total items" value={summaryItems.length} />
+              <InfoValue label="Main sections" value={mainSectionCount} />
+              <InfoValue label="Subsections" value={subsectionCount} />
+              <InfoValue label="Total quantity" value={totalQuantity.toLocaleString("en-US")} />
+              <InfoValue label="Final total" value={money(quotation.currency, quotation.grand_total)} />
+            </div>
+
+            {nonEmptySectionSummaries.length ? (
+              <div className="mt-5 rounded-md border border-zinc-200 bg-zinc-50 p-4">
+                <h3 className="text-sm font-semibold text-zinc-950">Section Summary</h3>
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  {nonEmptySectionSummaries.map(({ itemCount, section, totalQuantity: sectionQuantity }) => {
+                    const parentSection = section.parent_section_id
+                      ? sectionById.get(section.parent_section_id)
+                      : null;
+
+                    return (
+                      <div key={section.id} className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm">
+                        <p className="font-semibold text-zinc-950">
+                          {parentSection ? `${parentSection.section_title} / ${section.section_title}` : section.section_title}
                         </p>
-                        {section.section_notes ? (
-                          <p className="mt-1 text-sm text-zinc-500">
-                            {section.section_notes}
-                          </p>
-                        ) : null}
+                        <p className="mt-1 text-xs text-zinc-500">
+                          {itemCount} {itemCount === 1 ? "item" : "items"} / Qty {sectionQuantity.toLocaleString("en-US")}
+                        </p>
                       </div>
-                    </div>
-                  </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <p className="mt-5 rounded-md border border-dashed border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-500">
+                No saved line items yet. Open the builder to add quotation sections and items.
+              </p>
+            )}
 
-                  <div className="overflow-x-auto p-5">
-                    <table className="w-full min-w-[1180px] text-left text-sm">
-                      <thead>
-                        <tr className="border-b border-zinc-200 text-xs font-semibold uppercase text-zinc-500">
-                          <th className="py-3 pr-3">S. No.</th>
-                          <th className="py-3 pr-3">Item Code</th>
-                          <th className="py-3 pr-3">Specified Image</th>
-                          <th className="py-3 pr-3">Proposed Image</th>
-                          <th className="py-3 pr-3">Specification</th>
-                          <th className="py-3 pr-3">Qty</th>
-                          <th className="py-3 pr-3">U.Price</th>
-                          <th className="py-3 pr-3">Discount</th>
-                          <th className="py-3 pr-3">Net Price</th>
-                          <th className="py-3 pr-3">Net Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sectionItems.map((item, index) => (
-                          <tr key={item.id} className="border-b border-zinc-100 align-top">
-                            <td className="py-3 pr-3 text-zinc-600">{index + 1}</td>
-                            <td className="py-3 pr-3 text-zinc-600">
-                              {item.item_code_snapshot ?? "-"}
-                            </td>
-                            <td className="py-3 pr-3">
-                              <ImageCell value={specifiedImageUrlByItemId.get(item.id) ?? null} />
-                            </td>
-                            <td className="py-3 pr-3">
-                              <ImageCell value={proposedImageUrlByItemId.get(item.id) ?? null} />
-                            </td>
-                            <td className="py-3 pr-3 text-zinc-700">
-                              <p className="font-medium text-zinc-950">
-                                {item.item_name_snapshot ?? "Custom item"}
-                              </p>
-                              <p className="mt-1 max-w-sm whitespace-pre-wrap">
-                                {item.specification_snapshot ?? "-"}
-                              </p>
-                            </td>
-                            <td className="py-3 pr-3 text-zinc-600">
-                              {item.qty} {item.unit_label}
-                            </td>
-                            <td className="py-3 pr-3 text-zinc-600">
-                              {money(item.currency, item.unit_price)}
-                            </td>
-                            <td className="py-3 pr-3 text-zinc-600">
-                              {item.discount_type === "percent"
-                                ? `${item.discount_value}%`
-                                : money(item.currency, item.discount_value)}
-                            </td>
-                            <td className="py-3 pr-3 text-zinc-600">
-                              {money(item.currency, item.net_price)}
-                            </td>
-                            <td className="py-3 pr-3 font-semibold text-zinc-950">
-                              {money(item.currency, item.net_total)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {!sectionItems.length ? (
-                      <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
-                        No line items yet.
-                      </p>
-                    ) : null}
-                  </div>
+            {nonEmptySectionSummaries.length ? (
+              <details className="mt-5 rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3">
+                <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
+                  View line items
+                </summary>
+                <div className="mt-4 grid gap-4">
+                  {nonEmptySectionSummaries.map(({ section }) => {
+                    const sectionItems = (itemsBySection.get(section.id) ?? []).filter((item) =>
+                      !["note", "blank", "subtotal"].includes(item.item_type) &&
+                      !["heading", "note", "no_quote"].includes(item.line_style),
+                    );
+                    const parentSection = section.parent_section_id
+                      ? sectionById.get(section.parent_section_id)
+                      : null;
 
-                </article>
-              );
-            })}
-
-            {!sections?.length ? (
-              <section className="rounded-lg border border-dashed border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
-                No sections yet. Open the builder to add quotation sections and items.
-              </section>
+                    return (
+                      <article key={section.id} className="rounded-md border border-zinc-200 bg-white p-4">
+                        <h3 className="text-sm font-semibold text-zinc-950">
+                          {parentSection ? `${parentSection.section_title} / ${section.section_title}` : section.section_title}
+                        </h3>
+                        <ul className="mt-3 divide-y divide-zinc-100">
+                          {sectionItems.map((item) => (
+                            <li key={item.id} className="py-2 text-sm">
+                              <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                  <p className="font-medium text-zinc-900">
+                                    {item.item_name_snapshot ?? item.item_code_snapshot ?? "Custom item"}
+                                  </p>
+                                  {item.specification_snapshot ? (
+                                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500">
+                                      {item.specification_snapshot}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <span className="shrink-0 text-xs font-semibold text-zinc-500">
+                                  Qty {Number(item.qty || 0).toLocaleString("en-US")} {item.unit_label}
+                                </span>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </article>
+                    );
+                  })}
+                </div>
+              </details>
             ) : null}
           </section>
         </main>

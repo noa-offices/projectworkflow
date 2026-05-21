@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { DeleteProjectWithQuotationsDialog } from "@/components/clients/delete-project-with-quotations-dialog";
+import { ClientsFilterBar } from "@/components/clients/clients-filter-bar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
@@ -33,6 +34,7 @@ type ClientsPageProps = {
     addClient?: string;
     addProject?: string;
     client?: string;
+    clientFilter?: string;
     message?: string;
     messageType?: string;
     project?: string;
@@ -163,6 +165,7 @@ function clientsHref(
       | "addClient"
       | "addProject"
       | "client"
+      | "clientFilter"
       | "project"
       | "q"
       | "status"
@@ -179,6 +182,7 @@ function clientsHref(
     "addClient",
     "addProject",
     "client",
+    "clientFilter",
     "project",
     "q",
     "status",
@@ -219,6 +223,10 @@ function quoteNoLabel(quotation?: ProjectQuotation) {
 // TODO: Future phase: auto-generate project numbers by year/company sequence.
 function projectNoLabel(project: Project) {
   return project.project_number ?? project.project_code ?? "-";
+}
+
+function clientNumberLabel(client: Client) {
+  return client.client_number?.trim() || null;
 }
 
 function TextInput({
@@ -302,7 +310,13 @@ function SubmitButton({ label, pendingLabel }: { label: string; pendingLabel?: s
   );
 }
 
-function ClientForm({ client }: { client?: Client }) {
+function ClientForm({
+  cancelHref,
+  client,
+}: {
+  cancelHref?: string;
+  client?: Client;
+}) {
   return (
     <form
       action={client ? updateClient : createClientRecord}
@@ -316,11 +330,11 @@ function ClientForm({ client }: { client?: Client }) {
         required
       />
       <TextInput
-        name="client_code"
-        label="Legacy client code"
-        defaultValue={client?.client_code}
+        name="contact_person"
+        label="Contact person"
+        defaultValue={client?.contact_person}
       />
-      <label className="block">
+      <label className="block md:col-span-2">
         <span className="text-xs font-semibold uppercase text-zinc-500">
           Client No.
         </span>
@@ -330,11 +344,6 @@ function ClientForm({ client }: { client?: Client }) {
           className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-500 outline-none"
         />
       </label>
-      <TextInput
-        name="contact_person"
-        label="Contact person"
-        defaultValue={client?.contact_person}
-      />
       <TextInput name="email" label="Email" type="email" defaultValue={client?.email} />
       <TextInput name="phone" label="Phone" defaultValue={client?.phone} />
       <TextInput name="website" label="Website" defaultValue={client?.website} />
@@ -346,7 +355,15 @@ function ClientForm({ client }: { client?: Client }) {
         <ActiveToggle defaultChecked={client?.is_active ?? true} />
       </div>
       <TextArea name="notes" label="Notes" defaultValue={client?.notes} />
-      <div className="flex justify-end md:col-span-2">
+      <div className="flex justify-end gap-3 md:col-span-2">
+        {cancelHref ? (
+          <Link
+            href={cancelHref}
+            className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
+          >
+            Cancel
+          </Link>
+        ) : null}
         <SubmitButton
           label={client ? "Save client" : "Add client"}
           pendingLabel={client ? "Saving client..." : "Creating client..."}
@@ -407,10 +424,12 @@ function ClientSelect({
 }
 
 function ProjectForm({
+  cancelHref,
   clientId,
   clients,
   project,
 }: {
+  cancelHref?: string;
   clientId?: string;
   clients?: Client[];
   project?: Project;
@@ -503,7 +522,15 @@ function ProjectForm({
         defaultValue={project?.project_address}
       />
       <TextArea name="notes" label="Notes" defaultValue={project?.notes} />
-      <div className="flex justify-end md:col-span-2">
+      <div className="flex justify-end gap-3 md:col-span-2">
+        {cancelHref ? (
+          <Link
+            href={cancelHref}
+            className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
+          >
+            Cancel
+          </Link>
+        ) : null}
         <SubmitButton
           label={project ? "Save project" : "Add project"}
           pendingLabel={project ? "Saving project..." : "Creating project..."}
@@ -526,6 +553,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
         : "success";
   const query = resolvedSearchParams?.q?.trim() ?? "";
   const selectedStatus = resolvedSearchParams?.status ?? "";
+  const selectedClientFilter = resolvedSearchParams?.clientFilter ?? "";
   const selectedClientId = resolvedSearchParams?.client ?? "";
   const selectedActive = resolvedSearchParams?.active ?? "";
   const selectedYear = resolvedSearchParams?.year ?? "";
@@ -662,7 +690,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
 
     return (
       (!selectedStatus || project.project_status === selectedStatus) &&
-      (!selectedClientId || project.client_id === selectedClientId) &&
+      (!selectedClientFilter || project.client_id === selectedClientFilter) &&
       (!selectedYear || String(project.project_year ?? "") === selectedYear) &&
       activeMatches(project.is_active) &&
       matchesSearch(
@@ -723,7 +751,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
       ) || (filteredProjectIdsByClient.get(client.id)?.length ?? 0) > 0;
 
     return (
-      (!selectedClientId || client.id === selectedClientId) &&
+      (!selectedClientFilter || client.id === selectedClientFilter) &&
       activeMatches(client.is_active) &&
       hasMatchingStatus &&
       hasMatchingYear &&
@@ -778,103 +806,17 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
           </div>
 
           <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-            <form
-              method="get"
-              className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto_auto]"
-            >
-              <label className="block">
-                <span className="text-xs font-semibold uppercase text-zinc-500">
-                  Search
-                </span>
-                <input
-                  name="q"
-                  defaultValue={query}
-                  placeholder="Search clients, projects, codes, locations..."
-                  className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                />
-              </label>
-              <label className="block">
-                <span className="text-xs font-semibold uppercase text-zinc-500">
-                  Status
-                </span>
-                <select
-                  name="status"
-                  defaultValue={selectedStatus}
-                  className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                >
-                  <option value="">All statuses</option>
-                  {projectStatusOptions.map((status) => (
-                    <option key={status.value} value={status.value}>
-                      {status.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className="text-xs font-semibold uppercase text-zinc-500">
-                  Client
-                </span>
-                <select
-                  name="client"
-                  defaultValue={selectedClientId}
-                  className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                >
-                  <option value="">All clients</option>
-                  {clientList.map((client) => (
-                    <option key={client.id} value={client.id}>
-                      {client.company_name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className="text-xs font-semibold uppercase text-zinc-500">
-                  Year
-                </span>
-                <select
-                  name="year"
-                  defaultValue={selectedYear}
-                  className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                >
-                  <option value="">All years</option>
-                  {projectYears.map((year) => (
-                    <option key={year} value={year}>
-                      {year}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className="text-xs font-semibold uppercase text-zinc-500">
-                  Active
-                </span>
-                <select
-                  name="active"
-                  defaultValue={selectedActive}
-                  className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                >
-                  <option value="">All</option>
-                  <option value="true">Active only</option>
-                  <option value="false">Inactive only</option>
-                </select>
-              </label>
-              <div className="flex items-end">
-                <button
-                  type="submit"
-                  className="h-10 w-full rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                >
-                  Apply
-                </button>
-              </div>
-              <div className="flex items-end">
-                <Link
-                  href="/clients"
-                  className="flex h-10 w-full items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-600 transition hover:border-emerald-900/25 hover:text-emerald-900"
-                >
-                  Reset filters
-                </Link>
-              </div>
-            </form>
+            <ClientsFilterBar
+              key={[activeTab, query, selectedStatus, selectedClientFilter, selectedYear, selectedActive].join("|")}
+              active={selectedActive}
+              client={selectedClientFilter}
+              clients={clientList.map((client) => ({ id: client.id, name: client.company_name }))}
+              query={query}
+              status={selectedStatus}
+              tab={activeTab}
+              year={selectedYear}
+              years={projectYears}
+            />
           </section>
 
           <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
@@ -956,6 +898,12 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
               <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div>
+                    <Link
+                      href={clientsHref(pageParams, { addProject: null })}
+                      className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
+                    >
+                      Back to projects
+                    </Link>
                     <h2 className="font-semibold text-zinc-950">Add project</h2>
                     <p className="mt-1 text-sm text-zinc-500">
                       Link the project to an existing client.
@@ -969,7 +917,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                   </Link>
                 </div>
                 {clientList.length ? (
-                  <ProjectForm clients={clientList} />
+                  <ProjectForm cancelHref={clientsHref(pageParams, { addProject: null })} clients={clientList} />
                 ) : (
                   <p className="rounded-md border border-dashed border-zinc-200 bg-white p-4 text-sm text-zinc-500">
                     Create a client before adding a project.
@@ -982,6 +930,12 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
               <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div>
+                    <Link
+                      href={clientsHref(pageParams, { addClient: null })}
+                      className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
+                    >
+                      Back to clients
+                    </Link>
                     <h2 className="font-semibold text-zinc-950">Add client</h2>
                     <p className="mt-1 text-sm text-zinc-500">
                       Create a client record for projects and quotations.
@@ -994,7 +948,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                     Cancel
                   </Link>
                 </div>
-                <ClientForm />
+                <ClientForm cancelHref={clientsHref(pageParams, { addClient: null })} />
               </div>
             ) : null}
           </section>
@@ -1022,34 +976,54 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                     </thead>
                     <tbody className="divide-y divide-zinc-100">
                       {filteredProjects.map((project) => {
+                        const previewHref = clientsHref(pageParams, {
+                          tab: "projects",
+                          project: project.id,
+                          client: null,
+                          addProject: null,
+                        });
+
                         return (
                           <tr
                             key={project.id}
                             className={project.id === selectedProject?.id ? "bg-emerald-50/60" : ""}
                           >
                             <td className="px-4 py-3 text-zinc-600">
-                              <span className="font-medium text-zinc-800">
+                              <Link
+                                href={previewHref}
+                                className="block font-medium text-zinc-800 transition hover:text-emerald-900"
+                              >
                                 {projectNoLabel(project)}
-                              </span>
+                              </Link>
                             </td>
                             <td className="px-4 py-3 font-semibold text-zinc-950">
-                              {project.project_name}
+                              <Link
+                                href={previewHref}
+                                className="block transition hover:text-emerald-900"
+                              >
+                                {project.project_name}
+                              </Link>
                             </td>
                             <td className="px-4 py-3 text-zinc-600">
-                              {clientNameById.get(project.client_id) ?? "Unknown client"}
+                              <Link
+                                href={previewHref}
+                                className="block transition hover:text-emerald-900"
+                              >
+                                {clientNameById.get(project.client_id) ?? "Unknown client"}
+                              </Link>
                             </td>
                             <td className="px-4 py-3 text-zinc-600">
-                              {project.project_year ?? "-"}
+                              <Link
+                                href={previewHref}
+                                className="block transition hover:text-emerald-900"
+                              >
+                                {project.project_year ?? "-"}
+                              </Link>
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex justify-end gap-2">
                                 <Link
-                                  href={clientsHref(pageParams, {
-                                    tab: "projects",
-                                    project: project.id,
-                                    client: null,
-                                    addProject: null,
-                                  })}
+                                  href={`/clients/projects/${project.id}`}
                                   className="inline-flex h-8 items-center rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
                                 >
                                   Open
@@ -1088,25 +1062,37 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
 
                 <div className="grid gap-3 p-4 md:hidden">
                   {filteredProjects.map((project) => {
+                    const previewHref = clientsHref(pageParams, {
+                      tab: "projects",
+                      project: project.id,
+                      client: null,
+                      addProject: null,
+                    });
+
                     return (
-                      <article key={project.id} className="rounded-md border border-zinc-200 p-3">
-                        <p className="text-xs font-semibold uppercase text-zinc-400">
-                          Project No. {projectNoLabel(project)}
-                        </p>
-                        <h3 className="mt-1 font-semibold text-zinc-950">
-                          {project.project_name}
-                        </h3>
-                        <p className="mt-1 text-sm text-zinc-500">
-                          {clientNameById.get(project.client_id) ?? "Unknown client"} / {project.project_year ?? "No year"}
-                        </p>
-                        <div className="mt-3 flex flex-wrap gap-2">
+                      <article
+                        key={project.id}
+                        className={`relative rounded-md border p-3 ${project.id === selectedProject?.id ? "border-emerald-300 bg-emerald-50/60" : "border-zinc-200"}`}
+                      >
+                        <Link
+                          href={previewHref}
+                          aria-label={`Preview ${project.project_name}`}
+                          className="absolute inset-0 rounded-md"
+                        />
+                        <div className="relative z-10">
+                          <p className="text-xs font-semibold uppercase text-zinc-400">
+                            Project No. {projectNoLabel(project)}
+                          </p>
+                          <h3 className="mt-1 font-semibold text-zinc-950">
+                            {project.project_name}
+                          </h3>
+                          <p className="mt-1 text-sm text-zinc-500">
+                            {clientNameById.get(project.client_id) ?? "Unknown client"} / {project.project_year ?? "No year"}
+                          </p>
+                        </div>
+                        <div className="relative z-10 mt-3 flex flex-wrap gap-2">
                           <Link
-                            href={clientsHref(pageParams, {
-                              tab: "projects",
-                              project: project.id,
-                              client: null,
-                              addProject: null,
-                            })}
+                            href={`/clients/projects/${project.id}`}
                             className="inline-flex h-8 items-center rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white"
                           >
                             Open
@@ -1161,12 +1147,20 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
               <aside className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
                 {selectedProject ? (
                   <>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-xl font-semibold text-zinc-950">
-                        {selectedProject.project_name}
-                      </h2>
-                      <ProjectStatusBadge status={selectedProject.project_status} />
-                      <StatusBadge active={selectedProject.is_active} />
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="text-xl font-semibold text-zinc-950">
+                          {selectedProject.project_name}
+                        </h2>
+                        <ProjectStatusBadge status={selectedProject.project_status} />
+                        <StatusBadge active={selectedProject.is_active} />
+                      </div>
+                      <Link
+                        href={clientsHref(pageParams, { project: null })}
+                        className="text-sm font-semibold text-zinc-500 transition hover:text-zinc-950"
+                      >
+                        Close details
+                      </Link>
                     </div>
                     <dl className="mt-4 grid gap-3 text-sm text-zinc-600">
                       <div>
@@ -1250,7 +1244,19 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                           Edit project
                         </summary>
                         <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                          <ProjectForm clients={clientList} project={selectedProject} />
+                          <div className="mb-4">
+                            <Link
+                              href={clientsHref(pageParams, { project: null })}
+                              className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
+                            >
+                              Back to projects
+                            </Link>
+                          </div>
+                          <ProjectForm
+                            cancelHref={clientsHref(pageParams, { project: null })}
+                            clients={clientList}
+                            project={selectedProject}
+                          />
                         </div>
                       </details>
                     ) : null}
@@ -1282,6 +1288,9 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                       >
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-semibold text-zinc-600">
+                              {clientNumberLabel(client) ? `Client No. ${clientNumberLabel(client)}` : "Client No. pending"}
+                            </span>
                             <h3 className="font-semibold text-zinc-950">
                               {client.company_name}
                             </h3>
@@ -1355,13 +1364,25 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
               <aside className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
                 {selectedClient ? (
                   <>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-xl font-semibold text-zinc-950">
-                        {selectedClient.company_name}
-                      </h2>
-                      <StatusBadge active={selectedClient.is_active} />
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="text-xl font-semibold text-zinc-950">
+                          {selectedClient.company_name}
+                        </h2>
+                        <StatusBadge active={selectedClient.is_active} />
+                      </div>
+                      <Link
+                        href={clientsHref(pageParams, { client: null })}
+                        className="text-sm font-semibold text-zinc-500 transition hover:text-zinc-950"
+                      >
+                        Close details
+                      </Link>
                     </div>
                     <dl className="mt-4 grid gap-3 text-sm text-zinc-600">
+                      <div>
+                        <dt className="text-xs font-semibold uppercase text-zinc-400">Client No.</dt>
+                        <dd>{clientNumberLabel(selectedClient) ?? "Client No. pending"}</dd>
+                      </div>
                       <div>
                         <dt className="text-xs font-semibold uppercase text-zinc-400">Contact</dt>
                         <dd>{selectedClient.contact_person ?? "-"}</dd>
@@ -1405,7 +1426,18 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
                           Edit client
                         </summary>
                         <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                          <ClientForm client={selectedClient} />
+                          <div className="mb-4">
+                            <Link
+                              href={clientsHref(pageParams, { client: null })}
+                              className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
+                            >
+                              Back to clients
+                            </Link>
+                          </div>
+                          <ClientForm
+                            cancelHref={clientsHref(pageParams, { client: null })}
+                            client={selectedClient}
+                          />
                         </div>
                       </details>
                     ) : null}

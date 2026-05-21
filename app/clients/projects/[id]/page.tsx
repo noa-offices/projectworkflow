@@ -667,13 +667,13 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                       </td>
                       <td className="py-3">
                         <Link
-                          href={`/quotations/${quotation.id}/builder`}
+                          href={`/quotations/${quotation.id}/local-builder`}
                           className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
                         >
                           Open Builder
                         </Link>
                         <div className="mt-2">
-                          <LocalDraftLink quotationId={quotation.id} />
+                          <LocalDraftLink quotationId={quotation.id} showLink={false} />
                         </div>
                       </td>
                       {canManageRecords ? (
@@ -693,8 +693,11 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                                 href={`/quotations/${quotation.id}/builder`}
                                 className="block rounded-md px-3 py-2 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 hover:text-emerald-900"
                               >
-                                Open Builder
+                                Open Legacy Builder
                               </Link>
+                              <div className="px-3 pb-2 text-xs text-zinc-500">
+                                Fallback only
+                              </div>
                               <QuotationActionForm
                                 action={duplicateQuotation}
                                 label="Duplicate"
