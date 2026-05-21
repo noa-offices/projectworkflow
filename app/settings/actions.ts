@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSettingsManager, requireSystemOwner } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit-log";
+import { DEFAULT_QUOTATION_NOTES } from "@/lib/quotations/quotation-pdf-settings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -26,6 +27,41 @@ function redirectWithMessage(message: string): never {
   redirect(`/settings?message=${encodeURIComponent(message)}`);
 }
 
+async function latestCompanySettingsId(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const { data: existingSettings, error: readError } = await supabase
+    .from("company_settings")
+    .select("id")
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+
+  if (readError) {
+    console.error("COMPANY SETTINGS LOOKUP ERROR", readError.message);
+    redirectWithMessage("Company settings could not be loaded.");
+  }
+
+  return existingSettings?.id ?? null;
+}
+
+async function saveCompanySettingsRecord(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  payload: Record<string, unknown>,
+) {
+  const existingSettingsId = await latestCompanySettingsId(supabase);
+  const mutation = existingSettingsId
+    ? supabase.from("company_settings").update(payload).eq("id", existingSettingsId)
+    : supabase.from("company_settings").insert(payload);
+
+  const { error } = await mutation;
+
+  if (error) {
+    console.error("COMPANY SETTINGS SAVE ERROR", error.message);
+    redirectWithMessage("Company settings could not be saved.");
+  }
+
+  return existingSettingsId;
+}
+
 export async function updateCompanySettings(formData: FormData) {
   const { user, displayName } = await requireSettingsManager();
   const supabase = await createClient();
@@ -46,33 +82,11 @@ export async function updateCompanySettings(formData: FormData) {
     logo_url: optionalTextValue(formData, "logo_url"),
     updated_by: user.id,
   };
-
-  const { data: existingSettings, error: readError } = await supabase
-    .from("company_settings")
-    .select("id")
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ id: string }>();
-
-  if (readError) {
-    console.error("COMPANY SETTINGS LOOKUP ERROR", readError.message);
-    redirectWithMessage("Company settings could not be loaded.");
-  }
-
-  const mutation = existingSettings?.id
-    ? supabase.from("company_settings").update(payload).eq("id", existingSettings.id)
-    : supabase.from("company_settings").insert(payload);
-
-  const { error } = await mutation;
-
-  if (error) {
-    console.error("COMPANY SETTINGS SAVE ERROR", error.message);
-    redirectWithMessage("Company settings could not be saved.");
-  }
+  const existingSettingsId = await saveCompanySettingsRecord(supabase, payload);
 
   await createAuditLog(supabase, {
     entityType: "company_settings",
-    entityId: existingSettings?.id ?? null,
+    entityId: existingSettingsId,
     action: "company_settings_updated",
     title: "Company settings updated",
     description: payload.display_name ?? payload.company_name ?? "Company profile updated.",
@@ -90,6 +104,35 @@ export async function updateCompanySettings(formData: FormData) {
   revalidatePath("/quotations/[id]/pdf", "page");
   revalidatePath("/quotations/[id]/specification", "page");
   redirectWithMessage("Company profile saved.");
+}
+
+export async function updateDocumentDefaults(formData: FormData) {
+  const { user, displayName } = await requireSettingsManager();
+  const supabase = await createClient();
+  const defaultQuotationNotes = textValue(formData, "default_quotation_notes") || DEFAULT_QUOTATION_NOTES;
+  const payload = {
+    default_quotation_notes: defaultQuotationNotes,
+    updated_by: user.id,
+  };
+  const existingSettingsId = await saveCompanySettingsRecord(supabase, payload);
+
+  await createAuditLog(supabase, {
+    entityType: "company_settings",
+    entityId: existingSettingsId,
+    action: "company_settings_document_defaults_updated",
+    title: "Document defaults updated",
+    description: "Quotation document defaults updated.",
+    metadata: {
+      defaultQuotationNotesLength: defaultQuotationNotes.length,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  revalidatePath("/settings");
+  revalidatePath("/quotations/[id]/pdf", "page");
+  revalidatePath("/quotations/[id]/download-pdf", "page");
+  redirectWithMessage("Document defaults saved.");
 }
 
 export async function resetTestData(formData: FormData) {

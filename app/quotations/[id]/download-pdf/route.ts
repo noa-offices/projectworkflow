@@ -7,6 +7,15 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+const A4_LANDSCAPE_VIEWPORT = {
+  width: 1123,
+  height: 794,
+  deviceScaleFactor: 2,
+  hasTouch: false,
+  isLandscape: true,
+  isMobile: false,
+} as const;
+
 type DownloadPdfRouteContext = {
   params: Promise<{ id: string }>;
 };
@@ -62,24 +71,18 @@ export async function GET(request: NextRequest, { params }: DownloadPdfRouteCont
     const pdfBuffer = await generatePdfBuffer({
       cookieHeader,
       pdfOptions: {
-        displayHeaderFooter: true,
-        footerTemplate: `
-          <div style="width:100%; font-size:8px; color:#6b7280; text-align:center; padding:0 8mm;">
-            Page <span class="pageNumber"></span> of <span class="totalPages"></span>
-          </div>
-        `,
+        displayHeaderFooter: false,
         format: "A4",
-        headerTemplate: "<div></div>",
         landscape: true,
         margin: {
-          top: "8mm",
-          right: "8mm",
-          bottom: "12mm",
-          left: "8mm",
+          top: "0",
+          right: "0",
+          bottom: "0",
+          left: "0",
         },
       },
       sourceUrl,
-      viewport: { width: 1280, height: 900, deviceScaleFactor: 1, hasTouch: false, isLandscape: true, isMobile: false },
+      viewport: A4_LANDSCAPE_VIEWPORT,
     });
     const filename = `${quotationPdfFilename(quotation)}.pdf`;
     const pdfBody = pdfBuffer.buffer.slice(

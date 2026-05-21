@@ -352,12 +352,48 @@ export function createWorkspaceFromServerSnapshot(source: ServerQuotationWorkspa
   return recalculateWorkspace(workspace);
 }
 
+function isServerWorkspaceSource(value: ServerQuotationWorkspaceSource | LocalQuotationWorkspace): value is ServerQuotationWorkspaceSource {
+  return typeof value === "object" && value !== null && "quotation" in value;
+}
+
+function serverWorkspaceSourceFromLocalWorkspace(workspace: LocalQuotationWorkspace): ServerQuotationWorkspaceSource {
+  const quotationRecord = (workspace.header_snapshot?.quotation ?? {}) as Record<string, unknown>;
+
+  return {
+    quotation: {
+      id: workspace.server_quotation_id,
+      client_id: workspace.client_id,
+      legacy_reference: typeof quotationRecord.legacy_reference === "string" ? quotationRecord.legacy_reference : null,
+      option_no: typeof quotationRecord.option_no === "number" ? quotationRecord.option_no : null,
+      project_id: workspace.project_id,
+      quotation_no: workspace.quotation_no,
+      revision_no: typeof quotationRecord.revision_no === "number" ? quotationRecord.revision_no : null,
+      title: workspace.title,
+      status: workspace.status,
+      quotation_date: workspace.quotation_date,
+      currency: workspace.currency,
+      vat_percent: workspace.vat_percent,
+      layout_mode: workspace.layout_mode,
+      layout_settings: workspace.layout_settings,
+      overall_discount_type: workspace.overall_discount_type,
+      overall_discount_value: workspace.overall_discount_value,
+    },
+    client: workspace.client_snapshot ?? null,
+    project: workspace.project_snapshot ?? null,
+    sections: workspace.sections,
+    items: workspace.items,
+  };
+}
+
 export function syncWorkspaceWithServerSnapshot(
   workspace: LocalQuotationWorkspace,
-  source: ServerQuotationWorkspaceSource,
+  source: ServerQuotationWorkspaceSource | LocalQuotationWorkspace,
 ): LocalQuotationWorkspace {
-  const serverWorkspace = createWorkspaceFromServerSnapshot(source);
-  const serverProjectSnapshot = (source.project ?? {}) as Record<string, unknown>;
+  const normalizedSource = isServerWorkspaceSource(source)
+    ? source
+    : serverWorkspaceSourceFromLocalWorkspace(source);
+  const serverWorkspace = createWorkspaceFromServerSnapshot(normalizedSource);
+  const serverProjectSnapshot = (normalizedSource.project ?? {}) as Record<string, unknown>;
   const currentProjectSnapshot = (workspace.project_snapshot ?? {}) as Record<string, unknown>;
   const currentClientSnapshot = (workspace.client_snapshot ?? {}) as Record<string, unknown>;
 
@@ -376,7 +412,7 @@ export function syncWorkspaceWithServerSnapshot(
     },
     client_snapshot: {
       ...currentClientSnapshot,
-      ...(source.client && "company_name" in source.client ? { company_name: source.client.company_name } : {}),
+      ...(normalizedSource.client && "company_name" in normalizedSource.client ? { company_name: normalizedSource.client.company_name } : {}),
     },
   });
 }

@@ -15,6 +15,7 @@ export type CompanySettingsRecord = {
   default_currency: string | null;
   vat_percent: number | null;
   logo_url: string | null;
+  default_quotation_notes: string | null;
   updated_by: string | null;
   updated_at: string;
   created_at: string;

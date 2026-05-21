@@ -2,9 +2,10 @@ import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { TopBar } from "@/components/top-bar";
-import { resetTestData, updateCompanySettings } from "@/app/settings/actions";
+import { resetTestData, updateCompanySettings, updateDocumentDefaults } from "@/app/settings/actions";
 import { requireActiveUser } from "@/lib/auth";
 import { getCompanyProfile, getCompanySettingsRecord, companyAddressLines } from "@/lib/company-profile";
+import { DEFAULT_QUOTATION_NOTES } from "@/lib/quotations/quotation-pdf-settings";
 import { createClient } from "@/lib/supabase/server";
 
 type SettingsPageProps = {
@@ -33,6 +34,33 @@ function Field({
         defaultValue={defaultValue ?? ""}
         required={required}
         className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+      />
+    </label>
+  );
+}
+
+function TextAreaField({
+  defaultValue,
+  label,
+  name,
+  required = false,
+  rows = 10,
+}: {
+  defaultValue?: string | null;
+  label: string;
+  name: string;
+  required?: boolean;
+  rows?: number;
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs font-semibold uppercase text-zinc-500">{label}</span>
+      <textarea
+        name={name}
+        defaultValue={defaultValue ?? ""}
+        required={required}
+        rows={rows}
+        className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-3 text-sm leading-6 text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
       />
     </label>
   );
@@ -84,6 +112,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
           ) : null}
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,0.8fr)]">
+            <div className="grid gap-4">
             <section className="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -146,6 +175,58 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                 </div>
               )}
             </section>
+
+            <section className="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-zinc-950">Document Defaults</h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">
+                    Define default quotation notes that apply to PDFs unless a quotation-specific PDF override is saved.
+                  </p>
+                </div>
+                <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-600">
+                  {canManageSettings ? "Editable" : "Read only"}
+                </span>
+              </div>
+
+              {canManageSettings ? (
+                <form action={updateDocumentDefaults} className="mt-5 grid gap-4">
+                  <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
+                    <h3 className="text-sm font-semibold text-zinc-950">Quotation Notes</h3>
+                    <p className="mt-1 text-sm text-zinc-500">
+                      These notes fill quotation PDF previews and downloads by default when no quotation-specific override is saved.
+                    </p>
+                    <div className="mt-4">
+                      <TextAreaField
+                        name="default_quotation_notes"
+                        label="Default quotation notes"
+                        defaultValue={companySettings?.default_quotation_notes ?? DEFAULT_QUOTATION_NOTES}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-4 rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
+                    <span>
+                      Last updated: {formatDateTime(companySettings?.updated_at)}
+                      {companySettings?.updated_at ? ` by ${lastUpdatedBy}` : ""}
+                    </span>
+                    <PendingSubmitButton
+                      className="rounded-md bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                      pendingLabel="Saving document defaults..."
+                    >
+                      Save document defaults
+                    </PendingSubmitButton>
+                  </div>
+                </form>
+              ) : (
+                <div className="mt-5 rounded-lg border border-zinc-200 bg-zinc-50 p-4">
+                  <h3 className="text-sm font-semibold text-zinc-950">Quotation Notes</h3>
+                  <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-zinc-700">
+                    {companySettings?.default_quotation_notes ?? DEFAULT_QUOTATION_NOTES}
+                  </p>
+                </div>
+              )}
+            </section>
+            </div>
 
             <div className="grid gap-4">
               {profile?.role === "system_owner" ? (
