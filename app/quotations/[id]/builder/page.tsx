@@ -27,7 +27,11 @@ import {
   type ProductLibraryComponent,
   type ProductLibraryTemplate,
 } from "@/components/quotations/product-library-selector";
-import { latestBrandPriceListUpdate } from "@/lib/product-price-check";
+import {
+  brandPriceBaselineDate,
+  latestBrandPriceListUpdate,
+  productTemplatePriceCheckState,
+} from "@/lib/product-price-check";
 import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
 import {
   FinishImagePreview,
@@ -3221,7 +3225,7 @@ export default async function QuotationBuilderPage({
 
   const { data: productBrands, error: productBrandsError } = await supabase
     .from("brands")
-    .select("id,name,origin")
+    .select("id,name,origin,last_price_list_checked_at")
     .eq("is_active", true)
     .order("name", { ascending: true })
     .returns<ProductLibraryBrand[]>();
@@ -3385,10 +3389,41 @@ export default async function QuotationBuilderPage({
       .map(([brandId, updates]) => [brandId, latestBrandPriceListUpdate(updates)] as const)
       .filter((entry): entry is readonly [string, NonNullable<(typeof entry)[1]>] => Boolean(entry[1])),
   );
+  const brandById = new Map((productBrands ?? []).map((brand) => [brand.id, brand]));
   const productTemplatesWithPriceChecks = (productTemplates ?? []).map((template) => ({
     ...template,
+    brand_latest_price_list_at: brandPriceBaselineDate({
+      fallbackCheckedAt: brandById.get(template.brand_id)?.last_price_list_checked_at ?? null,
+      latestBrandPriceListUpdate: latestPriceListUpdateByBrand.get(template.brand_id) ?? null,
+    }),
     latest_brand_price_list_update: latestPriceListUpdateByBrand.get(template.brand_id) ?? null,
   }));
+
+  for (const template of productTemplatesWithPriceChecks) {
+    const brandName = brandById.get(template.brand_id)?.name ?? null;
+
+    if (brandName !== "LAS MOBILI") {
+      continue;
+    }
+
+    const status = productTemplatePriceCheckState({
+      brandPriceBaselineAt: template.brand_latest_price_list_at,
+      formatDate: (value) => value ?? "",
+      latestBrandPriceListUpdate: template.latest_brand_price_list_update,
+      template,
+    });
+
+    console.log("Product price status derived", {
+      brandLatestPriceListAt: template.brand_latest_price_list_at,
+      brandName,
+      reason: status.reason,
+      status: status.key,
+      templateCreatedAt: template.created_at,
+      templateId: template.id,
+      templateName: template.internal_selection_name ?? template.template_name,
+      templatePriceCheckedAt: template.last_price_checked_at,
+    });
+  }
   const productTemplateById = new Map(
     productTemplatesWithPriceChecks.map((template) => [template.id, template]),
   );

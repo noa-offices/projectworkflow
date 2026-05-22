@@ -32,6 +32,7 @@ export type ProductLibraryBrand = {
   id: string;
   name: string;
   origin?: string | null;
+  last_price_list_checked_at?: string | null;
 };
 
 export type ProductLibraryCategory = {
@@ -88,6 +89,7 @@ export type ProductLibraryTemplate = {
   last_price_checked_at: string | null;
   price_check_interval_days: number | null;
   price_check_note?: string | null;
+  brand_latest_price_list_at?: string | null;
   latest_brand_price_list_update?: {
     title?: string | null;
     effective_from: string | null;
@@ -323,6 +325,7 @@ function finishSelectionLabel(finish: FinishSelectionEditorRow) {
 
 function priceCheckState(template: ProductLibraryTemplate) {
   return productTemplatePriceCheckState({
+    brandPriceBaselineAt: template.brand_latest_price_list_at,
     formatDate: formatPriceCheckDate,
     latestBrandPriceListUpdate: template.latest_brand_price_list_update,
     template,
@@ -341,7 +344,9 @@ function PriceCheckBadge({
     ? "inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-900"
     : status.tone === "notice"
       ? "inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-900"
-    : "inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-900";
+      : status.tone === "neutral"
+        ? "inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-bold text-zinc-700"
+        : "inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-900";
 
   return (
     <span className={compact ? "mt-1 block" : "grid gap-1"}>

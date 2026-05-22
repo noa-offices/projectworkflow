@@ -15,7 +15,11 @@ import {
 } from "@/components/quotations/finish-selections-editor";
 import { requireActiveUser } from "@/lib/auth";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
-import { latestBrandPriceListUpdate } from "@/lib/product-price-check";
+import {
+  brandPriceBaselineDate,
+  latestBrandPriceListUpdate,
+  productTemplatePriceCheckState,
+} from "@/lib/product-price-check";
 import { createWorkspaceFromServerSnapshot } from "@/lib/local/quotation-workspace";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
@@ -107,7 +111,7 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
 
   const { data: productBrands } = await supabase
     .from("brands")
-    .select("id,name,origin")
+    .select("id,name,origin,last_price_list_checked_at")
     .eq("is_active", true)
     .order("name", { ascending: true })
     .returns<ProductLibraryBrand[]>();
@@ -153,11 +157,42 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
   for (const update of brandPriceListUpdates ?? []) {
     updatesByBrand.set(update.brand_id, [...(updatesByBrand.get(update.brand_id) ?? []), update]);
   }
+  const brandById = new Map((productBrands ?? []).map((brand) => [brand.id, brand]));
 
   const productTemplatesWithPriceChecks = (productTemplates ?? []).map((template) => ({
     ...template,
+    brand_latest_price_list_at: brandPriceBaselineDate({
+      fallbackCheckedAt: brandById.get(template.brand_id)?.last_price_list_checked_at ?? null,
+      latestBrandPriceListUpdate: latestBrandPriceListUpdate(updatesByBrand.get(template.brand_id) ?? []) ?? null,
+    }),
     latest_brand_price_list_update: latestBrandPriceListUpdate(updatesByBrand.get(template.brand_id) ?? []) ?? null,
   }));
+
+  for (const template of productTemplatesWithPriceChecks) {
+    const brandName = brandById.get(template.brand_id)?.name ?? null;
+
+    if (brandName !== "LAS MOBILI") {
+      continue;
+    }
+
+    const status = productTemplatePriceCheckState({
+      brandPriceBaselineAt: template.brand_latest_price_list_at,
+      formatDate: (value) => value ?? "",
+      latestBrandPriceListUpdate: template.latest_brand_price_list_update,
+      template,
+    });
+
+    console.log("Product price status derived", {
+      brandLatestPriceListAt: template.brand_latest_price_list_at,
+      brandName,
+      reason: status.reason,
+      status: status.key,
+      templateCreatedAt: template.created_at,
+      templateId: template.id,
+      templateName: template.internal_selection_name ?? template.template_name,
+      templatePriceCheckedAt: template.last_price_checked_at,
+    });
+  }
 
   const { data: productComponents } = await supabase
     .from("product_components")
