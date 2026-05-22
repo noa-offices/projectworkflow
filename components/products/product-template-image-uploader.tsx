@@ -227,9 +227,18 @@ export function ProductTemplateImageUploader({
   }
 
   function clearImage() {
-    setStatus("uploading");
     setErrorMessage("");
-    saveImagePath("");
+    const pathInput = containerRef.current
+      ?.closest("form")
+      ?.querySelector<HTMLInputElement>(`input[name="${field}"]`);
+
+    if (pathInput) {
+      pathInput.value = "";
+    }
+
+    setCurrentValue("");
+    onValueChange?.(null);
+    setStatus("idle");
   }
 
   async function uploadAndSaveImage(

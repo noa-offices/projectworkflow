@@ -1108,6 +1108,7 @@ export async function updateProductTemplate(formData: FormData) {
   const { user, displayName } = await requireSettingsManager();
   const id = textValue(formData, "id");
   const initialPayload = templatePayload(formData);
+  const submittedImageSettings = templateImageMetadataValue(formData);
   const redirectPath = returnPath(formData);
 
   if (!id || !initialPayload.brand_id || !initialPayload.template_name) {
@@ -1125,18 +1126,35 @@ export async function updateProductTemplate(formData: FormData) {
   const supabase = await createClient();
   const { data: currentTemplate, error: currentTemplateError } = await supabase
     .from("product_templates")
-    .select("id,brand_id,template_name")
+    .select("id,brand_id,template_name,image_settings")
     .eq("id", id)
-    .maybeSingle<{ id: string; brand_id: string; template_name: string }>();
+    .maybeSingle<{ id: string; brand_id: string; template_name: string; image_settings: Record<string, unknown> | null }>();
 
   if (currentTemplateError || !currentTemplate) {
     console.error("PRODUCT TEMPLATE UPDATE READ ERROR", currentTemplateError?.message);
     redirectWithMessageToPath(redirectPath, "Product template could not be loaded.");
   }
 
+  const nextImageSettings = { ...(currentTemplate.image_settings ?? {}) };
+  for (const field of imageFields) {
+    delete nextImageSettings[extraTemplateImagePathKey(field)];
+
+    if (payload[field]) {
+      const nextFieldSettings = submittedImageSettings?.[field];
+      if (nextFieldSettings) {
+        nextImageSettings[field] = nextFieldSettings;
+      }
+    } else {
+      delete nextImageSettings[field];
+    }
+  }
+
   const { error } = await supabase
     .from("product_templates")
-    .update(payload)
+    .update({
+      ...payload,
+      image_settings: Object.keys(nextImageSettings).length ? nextImageSettings : null,
+    })
     .eq("id", id);
 
   if (error) {
@@ -1932,8 +1950,8 @@ export async function updateProductTemplateImage(formData: FormData) {
     .single<{ image_settings: Record<string, unknown> | null }>();
 
   if (readError || !currentTemplate) {
-    console.error("PRODUCT TEMPLATE IMAGE READ ERROR", readError?.message);
-    return { ok: false, message: "Product template image could not be saved." };
+    console.error("PRODUCT TEMPLATE IMAGE READ ERROR", { field, message: readError?.message });
+    return { ok: false, message: "Image slot could not be updated." };
   }
 
   const nextImageSettings = { ...(currentTemplate.image_settings ?? {}) };
@@ -1953,8 +1971,8 @@ export async function updateProductTemplateImage(formData: FormData) {
   const error = response.error;
 
   if (error) {
-    console.error("PRODUCT TEMPLATE IMAGE UPDATE ERROR", error.message);
-    return { ok: false, message: "Product template image could not be saved." };
+    console.error("PRODUCT TEMPLATE IMAGE UPDATE ERROR", { field, message: error.message });
+    return { ok: false, message: "Image slot could not be updated." };
   }
 
   revalidatePath("/products/templates");
