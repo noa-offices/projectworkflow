@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
+import {
+  markTemplatePriceCheckedForQuotationModal,
+  updateProductTemplateForQuotationModal,
+} from "@/app/products/templates/actions";
 import type { ImageDisplaySettings } from "@/components/images/image-adjustment-dialog";
+import { ProductTemplateForm } from "@/components/products/product-template-form";
 import {
   FinishSelectionsEditor,
   type FinishSelectionEditorRow,
@@ -29,6 +34,7 @@ import {
 } from "@/lib/quotation-image-path";
 
 export type ProductLibraryBrand = {
+  default_currency?: string | null;
   id: string;
   name: string;
   origin?: string | null;
@@ -89,6 +95,7 @@ export type ProductLibraryTemplate = {
   last_price_checked_at: string | null;
   price_check_interval_days: number | null;
   price_check_note?: string | null;
+  price_notes?: string | null;
   brand_latest_price_list_at?: string | null;
   latest_brand_price_list_update?: {
     title?: string | null;
@@ -807,6 +814,7 @@ function ProductImagePreviewDialog({
 
 export function ProductLibrarySelector({
   brands,
+  canManageProductLibrary = false,
   categories,
   components,
   linkedFamilies,
@@ -821,6 +829,7 @@ export function ProductLibrarySelector({
   templates,
 }: {
   brands: ProductLibraryBrand[];
+  canManageProductLibrary?: boolean;
   categories: ProductLibraryCategory[];
   components: ProductLibraryComponent[];
   linkedFamilies: ProductLibraryLinkedFamily[];
@@ -835,7 +844,9 @@ export function ProductLibrarySelector({
   templates: ProductLibraryTemplate[];
 }) {
   const isLocalMode = Boolean(onAddLocalItem);
+  const [isTemplateActionPending, startTemplateActionTransition] = useTransition();
   const [isOpen, setIsOpen] = useState(false);
+  const [templateRecords, setTemplateRecords] = useState(() => templates);
   const [brandId, setBrandId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [subcategoryId, setSubcategoryId] = useState("");
@@ -860,6 +871,17 @@ export function ProductLibrarySelector({
   const [discountTypes, setDiscountTypes] = useState<Record<string, string>>({});
   const [discountValues, setDiscountValues] = useState<Record<string, string>>({});
   const [selectedFinishesByTemplate, setSelectedFinishesByTemplate] = useState<Record<string, FinishSelectionEditorRow[]>>({});
+  const [templatePriceOverrides, setTemplatePriceOverrides] = useState<Record<string, number | undefined>>({});
+  const [templateEditor, setTemplateEditor] = useState<{
+    currentPreviewUnitPrice: number;
+    mode: "edit" | "price_check";
+    templateId: string;
+  } | null>(null);
+  const [templateActionMessageById, setTemplateActionMessageById] = useState<Record<string, string>>({});
+  const [pendingPriceUpdateChoice, setPendingPriceUpdateChoice] = useState<{
+    previousUnitPrice: number;
+    templateId: string;
+  } | null>(null);
 
   const brandNameById = useMemo(
     () => new Map(brands.map((brand) => [brand.id, brand.name])),
@@ -870,8 +892,8 @@ export function ProductLibrarySelector({
     [brands],
   );
   const templateById = useMemo(
-    () => new Map(templates.map((template) => [template.id, template])),
-    [templates],
+    () => new Map(templateRecords.map((template) => [template.id, template])),
+    [templateRecords],
   );
   const linkedFamiliesByParent = useMemo(() => {
     const map = new Map<string, ProductLibraryLinkedFamily[]>();
@@ -909,7 +931,7 @@ export function ProductLibrarySelector({
   }, [components]);
   const normalizedSearch = search.trim().toLowerCase();
   const hasSearch = normalizedSearch.length > 0;
-  const filteredTemplates = templates.filter((template) => {
+  const filteredTemplates = templateRecords.filter((template) => {
     const matchesSearch = !hasSearch || matchesTemplateSearch({
       brandNameById,
       categoryNameById,
@@ -934,16 +956,16 @@ export function ProductLibrarySelector({
   const productCountByBrand = useMemo(() => {
     const map = new Map<string, number>();
 
-    for (const template of templates) {
+    for (const template of templateRecords) {
       map.set(template.brand_id, (map.get(template.brand_id) ?? 0) + 1);
     }
 
     return map;
-  }, [templates]);
+  }, [templateRecords]);
   const productCountByCategory = useMemo(() => {
     const map = new Map<string, number>();
 
-    for (const template of templates) {
+    for (const template of templateRecords) {
       if (template.main_category_id) {
         map.set(template.main_category_id, (map.get(template.main_category_id) ?? 0) + 1);
       }
@@ -953,7 +975,7 @@ export function ProductLibrarySelector({
     }
 
     return map;
-  }, [templates]);
+  }, [templateRecords]);
   const visibleMainCategories = mainCategories.filter((category) => {
     if (brandId && category.brand_id !== brandId) return false;
 
@@ -965,6 +987,20 @@ export function ProductLibrarySelector({
 
     return (productCountByCategory.get(category.id) ?? 0) > 0;
   });
+
+  const updateTemplateRecord = (nextTemplate: ProductLibraryTemplate) => {
+    setTemplateRecords((current) =>
+      current.map((template) => (template.id === nextTemplate.id ? nextTemplate : template)),
+    );
+    setTemplateActionMessageById((current) => ({
+      ...current,
+      [nextTemplate.id]: "",
+    }));
+  };
+
+  const closeTemplateEditor = () => {
+    setTemplateEditor(null);
+  };
 
   return (
     <>
@@ -1076,7 +1112,7 @@ export function ProductLibrarySelector({
               <aside className={`${selectedTemplate ? "hidden" : "min-h-0 overflow-y-auto border-b border-zinc-200 bg-zinc-50 p-3 lg:border-b-0 lg:border-r"}`}>
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <p className="text-[11px] font-bold uppercase text-zinc-500">Library</p>
-                  <span className="text-[11px] font-semibold text-zinc-500">{templates.length} products</span>
+                  <span className="text-[11px] font-semibold text-zinc-500">{templateRecords.length} products</span>
                 </div>
                 <div className="space-y-2">
                   {brands.map((brand) => {
@@ -1495,6 +1531,20 @@ export function ProductLibrarySelector({
                     ? convertedPreviewTotal
                     : totalPreviewUnitPrice;
                   const previewUnitPriceWithConversion = quotationMoneyValue(rawPreviewUnitPriceWithConversion);
+                  const effectiveQuoteUnitPrice = quotationMoneyValue(
+                    templatePriceOverrides[template.id] ?? previewUnitPriceWithConversion,
+                  );
+                  const previousQuotedPrice =
+                    pendingPriceUpdateChoice?.templateId === template.id
+                      ? pendingPriceUpdateChoice.previousUnitPrice
+                      : null;
+                  const pendingUpdatedPrice =
+                    pendingPriceUpdateChoice?.templateId === template.id
+                      ? quotationMoneyValue(previewUnitPriceWithConversion)
+                      : null;
+                  const needsUpdatedPriceDecision = pendingUpdatedPrice !== null &&
+                    previousQuotedPrice !== null &&
+                    Math.abs(pendingUpdatedPrice - previousQuotedPrice) > 0.009;
                   const selectedDiscountType = discountTypes[template.id] ?? "none";
                   const rawDiscountValue = Math.max(0, numberValue(discountValues[template.id], 0));
                   const selectedDiscountValue = selectedDiscountType === "percent"
@@ -1504,12 +1554,12 @@ export function ProductLibrarySelector({
                       : 0;
                   const unitDiscountAmount = quotationMoneyValue(
                     selectedDiscountType === "percent"
-                      ? previewUnitPriceWithConversion * selectedDiscountValue / 100
+                      ? effectiveQuoteUnitPrice * selectedDiscountValue / 100
                       : selectedDiscountType === "amount"
                         ? selectedDiscountValue
                         : 0,
                   );
-                  const netPricePreview = quotationMoneyValue(Math.max(previewUnitPriceWithConversion - unitDiscountAmount, 0));
+                  const netPricePreview = quotationMoneyValue(Math.max(effectiveQuoteUnitPrice - unitDiscountAmount, 0));
                   const netTotalPreview = quotationMoneyValue(netPricePreview);
                   const proposedImageFields = [
                     "proposed_image_url_1",
@@ -1713,7 +1763,7 @@ export function ProductLibrarySelector({
                       pricingDisplayName(selectedVariantRow) ||
                       effectiveSelectedNames.join(", ") ||
                       template.template_name,
-                    converted_quotation_price: previewUnitPriceWithConversion,
+                    converted_quotation_price: effectiveQuoteUnitPrice,
                     quotation_currency: previewCurrency,
                   };
                   const originSnapshot = resolveProductOriginSnapshot(
@@ -1724,6 +1774,10 @@ export function ProductLibrarySelector({
                   const companyStyleSpecification = buildCompanyStyleProductSpecification({
                     accessorySnapshots,
                     linkedProductSnapshots,
+                    primarySpecification:
+                      selectedCategoryRow?.specification ??
+                      selectedVariantRow?.specification ??
+                      null,
                     selectedOptionSnapshots,
                     selectedWorkstationVariant: selectedWorkstationVariantRow,
                     template,
@@ -1854,7 +1908,7 @@ export function ProductLibrarySelector({
                             currency_conversion: {
                               exchange_rates: templateExchangeRates,
                               source_totals: sourceCurrencyTotals,
-                              converted_total_aed: previewUnitPriceWithConversion,
+                              converted_total_aed: effectiveQuoteUnitPrice,
                             },
                           }
                         : {}),
@@ -1885,7 +1939,7 @@ export function ProductLibrarySelector({
                     allow_material_continuation_page: false,
                     qty: 1,
                     unit_label: template.unit_label ?? "Pc",
-                    unit_price: previewUnitPriceWithConversion,
+                    unit_price: effectiveQuoteUnitPrice,
                     discount_type: selectedDiscountType === "percent" ? "percent" : "amount",
                     discount_value: selectedDiscountType === "none" ? 0 : selectedDiscountValue,
                     net_price: netPricePreview,
@@ -2081,6 +2135,27 @@ export function ProductLibrarySelector({
                           {mainCategory ? ` / ${mainCategory}` : ""}
                           {subCategory ? ` / ${subCategory}` : ""}
                         </p>
+                        {canManageProductLibrary ? (
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTemplateActionMessageById((current) => ({
+                                  ...current,
+                                  [template.id]: "",
+                                }));
+                                setTemplateEditor({
+                                  currentPreviewUnitPrice: effectiveQuoteUnitPrice,
+                                  mode: "edit",
+                                  templateId: template.id,
+                                });
+                              }}
+                              className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-emerald-500 hover:text-emerald-900"
+                            >
+                              Edit Template
+                            </button>
+                          </div>
+                        ) : null}
                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-600">
                           {template.default_specification ??
                             template.description ??
@@ -3070,15 +3145,66 @@ export function ProductLibrarySelector({
                             </div>
                             <div className="grid gap-1">
                               <p className="text-sm font-semibold text-zinc-950">
-                                {formatQuotationMoney(previewCurrency, previewUnitPriceWithConversion)}
+                                {formatQuotationMoney(previewCurrency, effectiveQuoteUnitPrice)}
                               </p>
                               <PriceCheckBadge template={template} />
-                          {priceCheckState(template).tone === "warning" ? (
-                            <p className="max-w-52 text-[11px] leading-4 text-amber-700">
-                              Please verify source price before finalizing quotation.
-                            </p>
-                          ) : null}
-                        </div>
+                              {priceCheckState(template).tone === "warning" ? (
+                                <>
+                                  <p className="max-w-52 text-[11px] leading-4 text-amber-700">
+                                    Please verify source price before finalizing quotation.
+                                  </p>
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setTemplateActionMessageById((current) => ({
+                                          ...current,
+                                          [template.id]: "",
+                                        }));
+                                        setTemplateEditor({
+                                          currentPreviewUnitPrice: effectiveQuoteUnitPrice,
+                                          mode: "price_check",
+                                          templateId: template.id,
+                                        });
+                                      }}
+                                      className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-amber-900 transition hover:border-amber-500"
+                                    >
+                                      Check / Update Price
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        startTemplateActionTransition(async () => {
+                                          const formData = new FormData();
+                                          formData.set("id", template.id);
+                                          formData.set("price_check_note", "");
+                                          const result = await markTemplatePriceCheckedForQuotationModal(formData);
+
+                                          if (!result.ok || !result.template) {
+                                            setTemplateActionMessageById((current) => ({
+                                              ...current,
+                                              [template.id]: result.message,
+                                            }));
+                                            return;
+                                          }
+
+                                          updateTemplateRecord(result.template as ProductLibraryTemplate);
+                                        });
+                                      }}
+                                      disabled={isTemplateActionPending}
+                                      className="rounded-md border border-emerald-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-emerald-900 transition hover:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                      {isTemplateActionPending ? "Saving..." : "Mark as Checked"}
+                                    </button>
+                                  </div>
+                                  {templateActionMessageById[template.id] ? (
+                                    <p className="max-w-64 text-[11px] leading-4 text-red-700">
+                                      {templateActionMessageById[template.id]}
+                                    </p>
+                                  ) : null}
+                                </>
+                              ) : null}
+                            </div>
                             {derivedDesking ? (
                               <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600">
                             {derivedDesking.clusterLabel ? (
@@ -3241,7 +3367,48 @@ export function ProductLibrarySelector({
                           <p className="font-bold uppercase text-zinc-500">
                             {usesWorkstationFlow ? "6. Pricing / Discount" : "Pricing / Discount"}
                           </p>
-                          <p>U.Price: {formatQuotationMoney(previewCurrency, previewUnitPriceWithConversion)}</p>
+                          <p>U.Price: {formatQuotationMoney(previewCurrency, effectiveQuoteUnitPrice)}</p>
+                          {needsUpdatedPriceDecision ? (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                              <p className="font-semibold">
+                                Price updated. Apply updated price to this selected quotation item?
+                              </p>
+                              <p className="mt-1">
+                                Current quote price: {formatQuotationMoney(previewCurrency, previousQuotedPrice ?? effectiveQuoteUnitPrice)}
+                              </p>
+                              <p>
+                                Updated source price: {formatQuotationMoney(previewCurrency, pendingUpdatedPrice)}
+                              </p>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTemplatePriceOverrides((current) => ({
+                                      ...current,
+                                      [template.id]: undefined,
+                                    }));
+                                    setPendingPriceUpdateChoice(null);
+                                  }}
+                                  className="rounded-md border border-emerald-700 bg-emerald-900 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-emerald-800"
+                                >
+                                  Apply Updated Price
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTemplatePriceOverrides((current) => ({
+                                      ...current,
+                                      [template.id]: previousQuotedPrice ?? effectiveQuoteUnitPrice,
+                                    }));
+                                    setPendingPriceUpdateChoice(null);
+                                  }}
+                                  className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400"
+                                >
+                                  Keep Current Quote Price
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
                           <label className="block">
                             <span className="text-[10px] font-bold uppercase text-zinc-500">Discount Type</span>
                             <select
@@ -3305,10 +3472,10 @@ export function ProductLibrarySelector({
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    onAddLocalItem?.(localProductItem);
-                                    setIsOpen(false);
-                                  }}
-                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection}
+                                  onAddLocalItem?.(localProductItem);
+                                  setIsOpen(false);
+                                }}
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || needsUpdatedPriceDecision}
                                   className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                                 >
                                   Add to Local Workspace
@@ -3316,7 +3483,7 @@ export function ProductLibrarySelector({
                               ) : (
                                 <button
                                   type="submit"
-                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection}
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || needsUpdatedPriceDecision}
                                   className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                                 >
                                   Add
@@ -3489,6 +3656,74 @@ export function ProductLibrarySelector({
                   );
                 }) : null}
               </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {templateEditor ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/45 px-4 py-6">
+          <div className="flex h-[92vh] w-[min(1180px,96vw)] flex-col overflow-hidden rounded-2xl border border-zinc-300 bg-zinc-50 shadow-2xl">
+            <div className="flex items-center justify-between gap-3 border-b border-zinc-200 bg-white px-5 py-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Product Library</p>
+                <h3 className="text-sm font-semibold text-zinc-950">
+                  {templateEditor.mode === "price_check" ? "Check / Update Price" : "Edit Template"}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={closeTemplateEditor}
+                className="text-xs font-semibold text-zinc-500 transition hover:text-zinc-950"
+              >
+                Close
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              {templateById.get(templateEditor.templateId) ? (
+                <ProductTemplateForm
+                  brands={brands}
+                  categories={categories}
+                  compactAccordionMode={templateEditor.mode === "edit"}
+                  extraHiddenFields={templateEditor.mode === "price_check"
+                    ? (
+                        <>
+                          <input type="hidden" name="price_check_mode" value="review_on_save" />
+                          <input type="hidden" name="price_check_note" value="" />
+                        </>
+                      )
+                    : undefined}
+                  focusSection={templateEditor.mode === "price_check" ? "pricing" : "details"}
+                  initialMessage={templateActionMessageById[templateEditor.templateId]}
+                  mode="update"
+                  onCancel={closeTemplateEditor}
+                  onSubmitAction={async (formData) => {
+                    const result = await updateProductTemplateForQuotationModal(formData);
+
+                    if (!result.ok || !result.template) {
+                      setTemplateActionMessageById((current) => ({
+                        ...current,
+                        [templateEditor.templateId]: result.message,
+                      }));
+                      return;
+                    }
+
+                    updateTemplateRecord(result.template as ProductLibraryTemplate);
+                    if (templateEditor.mode === "price_check") {
+                      setPendingPriceUpdateChoice({
+                        previousUnitPrice: templateEditor.currentPreviewUnitPrice,
+                        templateId: templateEditor.templateId,
+                      });
+                    }
+                    closeTemplateEditor();
+                  }}
+                  returnTo={returnTo}
+                  template={templateById.get(templateEditor.templateId) as ProductLibraryTemplate}
+                />
+              ) : (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+                  Product template could not be loaded in the quotation popup.
+                </div>
+              )}
             </div>
           </div>
         </div>

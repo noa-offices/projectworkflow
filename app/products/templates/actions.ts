@@ -6,6 +6,7 @@ import { formatSafeActionError, logServerActionError } from "@/lib/action-errors
 import { requireSettingsManager } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit-log";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
+import { brandPriceBaselineDate, latestBrandPriceListUpdate } from "@/lib/product-price-check";
 import { createClient } from "@/lib/supabase/server";
 
 const allowedOptionTypes = new Set([
@@ -398,6 +399,116 @@ function safeBrandLabel(brandName: string | null | undefined) {
   return brandName?.trim() || "Brand";
 }
 
+const productLibraryTemplateSelect =
+  "id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,image_settings,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,unit_label,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at,price_notes";
+
+type ProductTemplateModalActionResult = {
+  message: string;
+  ok: boolean;
+  template?: Record<string, unknown>;
+};
+
+async function fetchProductLibraryTemplateForClient(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  templateId: string,
+) {
+  const { data: template, error: templateError } = await supabase
+    .from("product_templates")
+    .select(productLibraryTemplateSelect)
+    .eq("id", templateId)
+    .maybeSingle<Record<string, unknown> & { brand_id: string }>();
+
+  if (templateError || !template) {
+    throw templateError ?? new Error("Product template could not be loaded.");
+  }
+
+  const { data: brand, error: brandError } = await supabase
+    .from("brands")
+    .select("id,last_price_list_checked_at")
+    .eq("id", template.brand_id)
+    .maybeSingle<{ id: string; last_price_list_checked_at: string | null }>();
+
+  if (brandError) {
+    throw brandError;
+  }
+
+  const { data: updates, error: updatesError } = await supabase
+    .from("brand_price_list_updates")
+    .select("title,effective_from,received_at,created_at,status")
+    .eq("brand_id", template.brand_id)
+    .in("status", ["draft", "active"])
+    .order("effective_from", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false });
+
+  if (updatesError) {
+    throw updatesError;
+  }
+
+  const latestUpdate = latestBrandPriceListUpdate(updates ?? []);
+
+  return {
+    ...template,
+    brand_latest_price_list_at: brandPriceBaselineDate({
+      fallbackCheckedAt: brand?.last_price_list_checked_at ?? null,
+      latestBrandPriceListUpdate: latestUpdate ?? null,
+    }),
+    latest_brand_price_list_update: latestUpdate ?? null,
+  };
+}
+
+async function markTemplatePriceCheckedRecord({
+  actorName,
+  createdBy,
+  note,
+  supabase,
+  templateId,
+}: {
+  actorName: string;
+  createdBy: string;
+  note?: string | null;
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  templateId: string;
+}) {
+  const trimmedNote = note?.trim() || null;
+  const payload = {
+    last_price_checked_at: new Date().toISOString(),
+    last_price_checked_by: createdBy,
+    ...(trimmedNote ? { price_check_note: trimmedNote } : {}),
+  };
+  const { data: template, error: templateError } = await supabase
+    .from("product_templates")
+    .select("id,template_name,brand_id")
+    .eq("id", templateId)
+    .maybeSingle<{ id: string; template_name: string; brand_id: string }>();
+
+  if (templateError || !template) {
+    throw templateError ?? new Error("Product template could not be loaded.");
+  }
+
+  const { error } = await supabase
+    .from("product_templates")
+    .update(payload)
+    .eq("id", templateId);
+
+  if (error) {
+    throw error;
+  }
+
+  await createAuditLog(supabase, {
+    entityType: "product_template",
+    entityId: template.id,
+    action: "price_checked",
+    title: `${safeTemplateLabel(template.template_name)} price checked`,
+    description: "Product template marked as price checked.",
+    metadata: {
+      brandId: template.brand_id,
+      note: trimmedNote,
+    },
+    actorName,
+    createdBy,
+  });
+}
+
 function textValueFromNames(formData: FormData, names: string[]) {
   for (const name of names) {
     const value = textValue(formData, name);
@@ -451,7 +562,7 @@ async function validateProductTemplateCategories({
         redirectWithMessageToPath(redirectPath, "Selected category does not belong to this brand.");
       }
 
-      redirectWithMessage("Selected category does not belong to this brand.");
+      throw new Error("Selected category does not belong to this brand.");
     }
   }
 
@@ -474,7 +585,7 @@ async function validateProductTemplateCategories({
         redirectWithMessageToPath(redirectPath, "Selected category does not belong to this brand.");
       }
 
-      redirectWithMessage("Selected category does not belong to this brand.");
+      throw new Error("Selected category does not belong to this brand.");
     }
   }
 }
@@ -1215,6 +1326,133 @@ export async function updateProductTemplate(formData: FormData) {
 
   revalidatePath("/products/templates");
   redirectWithMessageToPath(redirectPath, "Product template updated.");
+}
+
+export async function updateProductTemplateForQuotationModal(formData: FormData): Promise<ProductTemplateModalActionResult> {
+  try {
+    const { user, displayName } = await requireSettingsManager();
+    const id = textValue(formData, "id");
+    const initialPayload = templatePayload(formData);
+    const submittedImageSettings = templateImageMetadataValue(formData);
+    const shouldMarkPriceCheckedAfterSave = textValue(formData, "price_check_mode") === "review_on_save";
+
+    if (!id || !initialPayload.brand_id || !initialPayload.template_name) {
+      return { ok: false, message: "Template id, brand, and template name are required." };
+    }
+
+    await validateProductTemplateCategories({
+      brandId: initialPayload.brand_id,
+      mainCategoryId: initialPayload.main_category_id,
+      subCategoryId: initialPayload.sub_category_id,
+    });
+    const payload = await normalizeTemplateImagePayload(initialPayload, id);
+
+    const supabase = await createClient();
+    const { data: currentTemplate, error: currentTemplateError } = await supabase
+      .from("product_templates")
+      .select("id,brand_id,template_name,image_settings")
+      .eq("id", id)
+      .maybeSingle<{ id: string; brand_id: string; template_name: string; image_settings: Record<string, unknown> | null }>();
+
+    if (currentTemplateError || !currentTemplate) {
+      logServerActionError("PRODUCT TEMPLATE UPDATE READ ERROR", currentTemplateError, {
+        action: "updateProductTemplateForQuotationModal",
+        recordId: id,
+        table: "product_templates",
+      });
+      return {
+        ok: false,
+        message: actionErrorMessage("Product template could not be loaded", currentTemplateError),
+      };
+    }
+
+    const nextImageSettings = { ...normalizedImageSettingsValue(currentTemplate.image_settings) };
+    for (const field of imageFields) {
+      delete nextImageSettings[extraTemplateImagePathKey(field)];
+
+      if (payload[field]) {
+        const nextFieldSettings = submittedImageSettings?.[field];
+        if (nextFieldSettings) {
+          nextImageSettings[field] = nextFieldSettings;
+        }
+      } else {
+        delete nextImageSettings[field];
+      }
+    }
+
+    const { error } = await supabase
+      .from("product_templates")
+      .update({
+        ...payload,
+        image_settings: normalizedImageSettingsValue(nextImageSettings),
+      })
+      .eq("id", id);
+
+    if (error) {
+      logServerActionError("PRODUCT TEMPLATE UPDATE ERROR", error, {
+        action: "updateProductTemplateForQuotationModal",
+        recordId: id,
+        table: "product_templates",
+      });
+      return {
+        ok: false,
+        message: actionErrorMessage("Product template could not be updated", error),
+      };
+    }
+
+    await createAuditLog(supabase, {
+      entityType: "product_template",
+      entityId: currentTemplate.id,
+      action: "updated",
+      title: `${safeTemplateLabel(payload.template_name)} updated`,
+      description: "Product template details updated.",
+      metadata: {
+        brandId: payload.brand_id,
+        templateName: payload.template_name,
+      },
+      actorName: displayName,
+      createdBy: user.id,
+    });
+
+    if (shouldMarkPriceCheckedAfterSave) {
+      try {
+        await markTemplatePriceCheckedRecord({
+          actorName: displayName,
+          createdBy: user.id,
+          note: optionalTextValue(formData, "price_check_note"),
+          supabase,
+          templateId: id,
+        });
+      } catch (error) {
+        logServerActionError("PRODUCT TEMPLATE MODAL PRICE CHECK ERROR", error, {
+          action: "updateProductTemplateForQuotationModal",
+          recordId: id,
+          table: "product_templates",
+        });
+        return {
+          ok: false,
+          message: actionErrorMessage("Template price check could not be saved", error),
+        };
+      }
+    }
+
+    revalidatePath("/products/templates");
+    return {
+      ok: true,
+      message: shouldMarkPriceCheckedAfterSave
+        ? "Product template updated and price checked."
+        : "Product template updated.",
+      template: await fetchProductLibraryTemplateForClient(supabase, id),
+    };
+  } catch (error) {
+    logServerActionError("PRODUCT TEMPLATE MODAL UPDATE UNEXPECTED ERROR", error, {
+      action: "updateProductTemplateForQuotationModal",
+    });
+    return {
+      ok: false,
+      message: actionErrorMessage("Product template could not be updated", error),
+    };
+  }
 }
 
 export async function updateProductTemplateDefaultPrice(formData: FormData) {
@@ -2229,46 +2467,23 @@ export async function markProductTemplatePriceChecked(
     redirectWithMessageToPath(redirectPath, "Template id is required.");
   }
 
-  const payload = {
-    last_price_checked_at: new Date().toISOString(),
-    last_price_checked_by: user.id,
-    ...(note?.trim() ? { price_check_note: note.trim() } : {}),
-  };
   const supabase = await createClient();
-  const { data: template, error: templateError } = await supabase
-    .from("product_templates")
-    .select("id,template_name,brand_id")
-    .eq("id", templateId)
-    .maybeSingle<{ id: string; template_name: string; brand_id: string }>();
-
-  if (templateError || !template) {
-    console.error("TEMPLATE PRICE CHECK READ ERROR", templateError?.message);
-    redirectWithMessageToPath(redirectPath, "Template price check could not be saved.");
+  try {
+    await markTemplatePriceCheckedRecord({
+      actorName: displayName,
+      createdBy: user.id,
+      note,
+      supabase,
+      templateId,
+    });
+  } catch (error) {
+    logServerActionError("TEMPLATE PRICE CHECK ERROR", error, {
+      action: "markProductTemplatePriceChecked",
+      recordId: templateId,
+      table: "product_templates",
+    });
+    redirectWithMessageToPath(redirectPath, actionErrorMessage("Template price check could not be saved", error));
   }
-
-  const { error } = await supabase
-    .from("product_templates")
-    .update(payload)
-    .eq("id", templateId);
-
-  if (error) {
-    console.error("TEMPLATE PRICE CHECK ERROR", error.message);
-    redirectWithMessageToPath(redirectPath, "Template price check could not be saved.");
-  }
-
-  await createAuditLog(supabase, {
-    entityType: "product_template",
-    entityId: template.id,
-    action: "price_checked",
-    title: `${safeTemplateLabel(template.template_name)} price checked`,
-    description: "Product template marked as price checked.",
-    metadata: {
-      brandId: template.brand_id,
-      note: note?.trim() || null,
-    },
-    actorName: displayName,
-    createdBy: user.id,
-  });
 
   revalidatePath("/products/templates");
   redirectWithMessageToPath(redirectPath, "Template price check saved.");
@@ -2280,6 +2495,45 @@ export async function markTemplatePriceChecked(formData: FormData) {
     optionalTextValue(formData, "price_check_note"),
     returnPath(formData),
   );
+}
+
+export async function markTemplatePriceCheckedForQuotationModal(formData: FormData): Promise<ProductTemplateModalActionResult> {
+  const templateId = textValue(formData, "id");
+  const note = optionalTextValue(formData, "price_check_note");
+
+  try {
+    const { user, displayName } = await requireSettingsManager();
+
+    if (!templateId) {
+      return { ok: false, message: "Template id is required." };
+    }
+
+    const supabase = await createClient();
+    await markTemplatePriceCheckedRecord({
+      actorName: displayName,
+      createdBy: user.id,
+      note,
+      supabase,
+      templateId,
+    });
+
+    revalidatePath("/products/templates");
+    return {
+      ok: true,
+      message: "Template price check saved.",
+      template: await fetchProductLibraryTemplateForClient(supabase, templateId),
+    };
+  } catch (error) {
+    logServerActionError("TEMPLATE PRICE CHECK MODAL UNEXPECTED ERROR", error, {
+      action: "markTemplatePriceCheckedForQuotationModal",
+      recordId: templateId,
+      table: "product_templates",
+    });
+    return {
+      ok: false,
+      message: actionErrorMessage("Template price check could not be saved", error),
+    };
+  }
 }
 
 export async function markVisibleProductTemplatesPriceChecked(formData: FormData) {

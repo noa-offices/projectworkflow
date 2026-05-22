@@ -146,17 +146,25 @@ export function firstNonEmptySnapshotText(...values: Array<string | null | undef
 export function buildCompanyStyleProductSpecification({
   accessorySnapshots,
   linkedProductSnapshots,
+  primarySpecification,
   selectedOptionSnapshots,
   selectedWorkstationVariant,
   template,
 }: {
   accessorySnapshots: ProductSpecificationAccessoryInput[];
   linkedProductSnapshots: ProductSpecificationLinkedProductInput[];
+  primarySpecification?: string | null;
   selectedOptionSnapshots: ProductSpecificationOptionInput[];
   selectedWorkstationVariant?: ProductSpecificationWorkstationVariantInput | null;
   template: ProductSpecificationTemplateInput;
 }) {
-  const baseSpecification = compactText(template.default_specification ?? template.description ?? "");
+  const baseSpecification = compactText(
+    firstNonEmptySnapshotText(
+      primarySpecification,
+      template.default_specification,
+      template.description,
+    ) ?? "",
+  );
   const fragments = uniqueFragments([
     ...selectedOptionSnapshots.map((snapshot) => componentSpecificationPhrase(snapshot)),
     ...linkedProductSnapshots.map((snapshot) => linkedProductSpecificationPhrase(snapshot)),

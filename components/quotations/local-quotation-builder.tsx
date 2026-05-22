@@ -4280,6 +4280,7 @@ export function LocalQuotationBuilder({
                             ) : null}
                             <ProductLibrarySelector
                               brands={productBrands}
+                              canManageProductLibrary={canManageProductLibrary}
                               categories={productCategories}
                               components={productComponents}
                               linkedFamilies={productLinkedFamilies}

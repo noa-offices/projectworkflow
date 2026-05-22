@@ -4473,6 +4473,10 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const companyStyleSpecification = buildCompanyStyleProductSpecification({
     accessorySnapshots: selectedAccessoryPricing,
     linkedProductSnapshots: selectedLinkedProducts,
+    primarySpecification:
+      selectedCategoryPricingRow?.specification ??
+      selectedVariantPricingRow?.specification ??
+      null,
     selectedOptionSnapshots,
     selectedWorkstationVariant: selectedWorkstationVariantPricingRow,
     template,

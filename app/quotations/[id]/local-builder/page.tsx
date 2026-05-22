@@ -111,7 +111,7 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
 
   const { data: productBrands } = await supabase
     .from("brands")
-    .select("id,name,origin,last_price_list_checked_at")
+    .select("id,name,origin,last_price_list_checked_at,default_currency")
     .eq("is_active", true)
     .order("name", { ascending: true })
     .returns<ProductLibraryBrand[]>();
@@ -139,7 +139,7 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
 
   const { data: productTemplates } = await supabase
     .from("product_templates")
-    .select("id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,image_settings,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,unit_label,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at")
+    .select("id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,image_settings,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,unit_label,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at,price_notes")
     .eq("is_active", true)
     .eq("lifecycle_status", "active")
     .order("template_name", { ascending: true })

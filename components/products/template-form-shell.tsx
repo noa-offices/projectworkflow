@@ -7,9 +7,12 @@ import { PendingSubmitButton } from "@/components/pending-submit-button";
 
 type TemplateFormShellProps = {
   action: (formData: FormData) => void | Promise<void>;
-  cancelHref: string;
+  cancelHref?: string;
+  cancelLabel?: string;
   children: ReactNode;
   initialMessage?: string;
+  onInvalidFieldName?: (fieldName: string) => void;
+  onCancel?: () => void;
   pendingMessage: string;
   pendingLabel: string;
   submitLabel: string;
@@ -114,8 +117,11 @@ function TemplateFormNotice({
 export function TemplateFormShell({
   action,
   cancelHref,
+  cancelLabel = "Cancel",
   children,
   initialMessage,
+  onInvalidFieldName,
+  onCancel,
   pendingMessage,
   pendingLabel,
   submitLabel,
@@ -140,6 +146,7 @@ export function TemplateFormShell({
           target instanceof HTMLTextAreaElement
         ) {
           setValidationNotice(validationMessage(target.name));
+          onInvalidFieldName?.(target.name);
         }
       }}
       onSubmit={() => {
@@ -163,12 +170,22 @@ export function TemplateFormShell({
             </p>
           </div>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center">
-            <Link
-              href={cancelHref}
-              className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950"
-            >
-              Cancel
-            </Link>
+            {onCancel ? (
+              <button
+                type="button"
+                onClick={onCancel}
+                className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950"
+              >
+                {cancelLabel}
+              </button>
+            ) : cancelHref ? (
+              <Link
+                href={cancelHref}
+                className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950"
+              >
+                {cancelLabel}
+              </Link>
+            ) : null}
             <PendingSubmitButton
               className="h-10 rounded-md bg-emerald-900 px-5 text-sm font-semibold text-white transition hover:bg-emerald-800"
               pendingLabel={pendingLabel}

@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { randomUUID } from "crypto";
 import type { ReactNode } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
@@ -20,29 +19,23 @@ import {
   ProductManagementTemplateResults,
   type ProductManagementTemplateResult,
 } from "@/components/products/product-management-template-results";
-import { TemplatePricingSections } from "@/components/products/template-pricing-sections";
 import {
   TemplateDetailImageGallery,
-  TemplateReferenceImageFieldManager,
 } from "@/components/products/template-image-galleries";
 import {
-  TemplateImportActionButton,
-  TemplateImportBanner,
   type QuotationRowImportDraft as ClientQuotationRowImportDraft,
 } from "@/components/products/template-import-controls";
 import {
   QuickCategoryForm,
-  TemplateCategoryFields,
 } from "@/components/products/template-category-fields";
 import { ProductLibraryBrowseControls } from "@/components/products/product-library-browse-controls";
-import { TemplateFormShell } from "@/components/products/template-form-shell";
+import { ProductTemplateForm } from "@/components/products/product-template-form";
 import { TopBar } from "@/components/top-bar";
 import { requireSettingsManager } from "@/lib/auth";
 import {
   defaultCurrency,
   formatMoney,
   normalizeCurrency,
-  supportedCurrencies,
 } from "@/lib/currencies";
 import {
   brandPriceBaselineDate,
@@ -59,7 +52,6 @@ import {
   archiveProductTemplate,
   createBrandPriceListUpdate,
   createProductTemplateMaterialGroup,
-  createProductTemplate,
   deactivateLinkedProductFamily,
   deactivateProductTemplateMaterialGroup,
   markProductTemplateDiscontinued,
@@ -78,7 +70,6 @@ import {
   updateProductTemplateDefaultPrice,
   updateProductTemplateDetailPrice,
   updateProductTemplateMaterialGroup,
-  updateProductTemplate,
 } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -533,48 +524,6 @@ function parseQuotationRowImportDraft(value: string) {
   }
 }
 
-function quotationRowImportDescription(draft: QuotationRowImportDraft | null) {
-  if (!draft) return "";
-
-  return [
-    draft.model_snapshot,
-    draft.size_snapshot,
-    draft.notes,
-  ]
-    .filter(Boolean)
-    .join(" / ");
-}
-
-function appendedImportSpecification(
-  specification: string | null | undefined,
-  dimension: string | null | undefined,
-) {
-  const lines = [specification?.trim() || ""].filter(Boolean);
-  if (dimension?.trim()) {
-    lines.push(`Dimension: ${dimension.trim()}`);
-  }
-  return lines.join("\n");
-}
-
-function cancelTemplateImportHref({
-  returnTo,
-  templateId,
-}: {
-  returnTo?: string;
-  templateId: string;
-}) {
-  const search = new URLSearchParams({
-    template: templateId,
-    editTemplate: templateId,
-  });
-
-  if (returnTo) {
-    search.set("returnTo", returnTo);
-  }
-
-  return `/products/templates?${search.toString()}`;
-}
-
 function templatesHref(
   params: TemplatesSearchParams,
   updates: Partial<
@@ -847,33 +796,6 @@ function Checkbox({
   );
 }
 
-function CurrencySelect({
-  defaultValue,
-  name = "currency",
-}: {
-  defaultValue?: string | null;
-  name?: string;
-}) {
-  return (
-    <label className="block">
-      <span className="text-xs font-semibold uppercase text-zinc-500">
-        Currency
-      </span>
-      <select
-        name={name}
-        defaultValue={normalizeCurrency(defaultValue ?? defaultCurrency)}
-        className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-      >
-        {supportedCurrencies.map((currency) => (
-          <option key={currency.code} value={currency.code}>
-            {currency.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
 function SubmitButton({ label, pendingLabel }: { label: string; pendingLabel?: string }) {
   return (
     <PendingSubmitButton
@@ -915,6 +837,35 @@ function categoryPricingColumns(rows?: CategoryPricingRow[] | null) {
   return columns;
 }
 
+function CurrencySelect({
+  defaultValue,
+  name = "currency",
+}: {
+  defaultValue?: string | null;
+  name?: string;
+}) {
+  const currencies = ["AED", "USD", "EUR", "GBP", "SAR", "QAR", "KWD", "BHD", "OMR"];
+
+  return (
+    <label className="block">
+      <span className="text-xs font-semibold uppercase text-zinc-500">
+        Currency
+      </span>
+      <select
+        name={name}
+        defaultValue={normalizeCurrency(defaultValue ?? defaultCurrency)}
+        className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+      >
+        {currencies.map((currency) => (
+          <option key={currency} value={currency}>
+            {currency}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function FormSection({
   children,
   description,
@@ -934,245 +885,6 @@ function FormSection({
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{children}</div>
     </section>
-  );
-}
-
-function TemplateForm({
-  brands,
-  categories,
-  defaultBrandId,
-  defaultMainCategoryId,
-  defaultSubCategoryId,
-  existingImportDraft,
-  importDraft,
-  importMode,
-  initialMessage,
-  returnTo,
-  template,
-}: {
-  brands: Brand[];
-  categories: Category[];
-  defaultBrandId?: string;
-  defaultMainCategoryId?: string;
-  defaultSubCategoryId?: string;
-  existingImportDraft?: ClientQuotationRowImportDraft | null;
-  importDraft?: QuotationRowImportDraft | null;
-  importMode?: "new" | "existing" | "";
-  initialMessage?: string;
-  returnTo: string;
-  template?: ProductTemplate;
-}) {
-  const templateId = template?.id ?? randomUUID();
-  const selectedBrandId = template?.brand_id ?? defaultBrandId ?? "";
-  const selectedBrand = brands.find((brand) => brand.id === selectedBrandId) ?? null;
-  const brandDefaultCurrency = selectedBrand?.default_currency ?? defaultCurrency;
-  const allowImportPrefill = !template && importMode === "new";
-  const templateCurrency = template?.currency ?? (allowImportPrefill ? importDraft?.currency : null) ?? brandDefaultCurrency;
-  const selectedMainCategoryId =
-    template?.main_category_id ?? defaultMainCategoryId ?? "";
-  const selectedSubCategoryId =
-    template?.sub_category_id ?? defaultSubCategoryId ?? "";
-  const allowQuickCreate = !template;
-  const importedDescription = allowImportPrefill
-    ? quotationRowImportDescription(importDraft ?? null)
-    : "";
-  const showExistingImportBanner = Boolean(template && existingImportDraft);
-
-  return (
-    <TemplateFormShell
-      action={template ? updateProductTemplate : createProductTemplate}
-      cancelHref={returnTo || "/products/templates"}
-      initialMessage={initialMessage}
-      pendingLabel={template ? "Saving template..." : "Adding template..."}
-      pendingMessage={template ? "Saving template..." : "Adding product to library..."}
-      submitLabel={template ? "Save template" : "Add template"}
-    >
-      <input type="hidden" name="id" value={templateId} />
-      <input type="hidden" name="return_to" value={returnTo} />
-      {!template && importDraft && importMode === "new" ? (
-        <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950 shadow-sm">
-          <p className="font-semibold">Quotation row imported into the existing Add Template form.</p>
-          <p className="mt-1 text-xs leading-5 text-emerald-900">
-            Review the normal Product Library form below, then save when you are ready.
-          </p>
-        </section>
-      ) : null}
-      {showExistingImportBanner && existingImportDraft ? (
-        <TemplateImportBanner
-          cancelHref={cancelTemplateImportHref({
-            returnTo,
-            templateId,
-          })}
-          importDraft={existingImportDraft}
-          templateId={templateId}
-        />
-      ) : null}
-      <FormSection
-        title="Template Details"
-        description="Set the core product identity, category placement, quotation defaults, and internal notes for this template."
-      >
-        {existingImportDraft ? (
-          <div className="md:col-span-2 xl:col-span-3">
-            <TemplateImportActionButton
-              action="basic"
-              draft={existingImportDraft}
-              label="Use specification / dimension"
-              templateId={templateId}
-            />
-          </div>
-        ) : null}
-        <TemplateCategoryFields
-          allowQuickCreate={allowQuickCreate}
-          brands={brands}
-          categories={categories}
-          defaultBrandId={selectedBrandId}
-          defaultMainCategoryId={selectedMainCategoryId}
-          defaultSubCategoryId={selectedSubCategoryId}
-        />
-        <Field
-          name="template_name"
-          label="Item Name / Template Name"
-          defaultValue={template?.template_name ?? (allowImportPrefill ? importDraft?.item_name_snapshot ?? importDraft?.model_snapshot : null)}
-          required
-        />
-        <Field
-          name="internal_selection_name"
-          label="Internal Selection Name"
-          defaultValue={template?.internal_selection_name}
-          placeholder="Vintage Executive / Vintage Conference / Vintage Visitor"
-          hint="Used only inside the software to help users identify similar templates. Client documents still use Item Name / Template Name."
-        />
-        <Field
-          name="template_code"
-          label="Template Code"
-          defaultValue={template?.template_code ?? (allowImportPrefill ? importDraft?.item_code_snapshot : null)}
-        />
-        <Field
-          name="item_code"
-          label="Item Code"
-          defaultValue={template?.item_code ?? (allowImportPrefill ? importDraft?.item_code_snapshot : null)}
-        />
-        <TextArea
-          name="default_specification"
-          label="Specifications"
-          defaultValue={template?.default_specification ?? (allowImportPrefill
-            ? appendedImportSpecification(importDraft?.specification_snapshot, importDraft?.size_snapshot)
-            : null)}
-        />
-        <Field
-          name="origin"
-          label="Origin override"
-          defaultValue={template?.origin ?? (allowImportPrefill ? importDraft?.origin_snapshot : null)}
-        />
-        <Field
-          name="supplier_name"
-          label="Supplier override"
-          defaultValue={template?.supplier_name ?? (allowImportPrefill ? importDraft?.supplier_name_snapshot : null)}
-        />
-        <div className="rounded-md border border-dashed border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-500 md:col-span-2 xl:col-span-1">
-          Dimension is calculated from workstation size pricing when available.
-          Finish and accessory choices still come from Template Options.
-        </div>
-        <TextArea
-          name="description"
-          label="Description"
-          defaultValue={template?.description ?? importedDescription}
-        />
-        <TextArea
-          name="price_notes"
-          label="Pricing / Formula Notes"
-          defaultValue={template?.price_notes}
-        />
-      </FormSection>
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <FormSection
-          title="Pricing"
-          description="Define the base commercial values used before optional rows, materials, and linked product families are applied."
-        >
-          <Field
-            name="unit_label"
-            label="Unit"
-            defaultValue={template?.unit_label ?? (allowImportPrefill ? importDraft?.unit_label : null) ?? "Pc"}
-          />
-          <CurrencySelect defaultValue={templateCurrency} />
-          <Field
-            name="default_unit_price"
-            label="Default U.Price"
-            type="number"
-            defaultValue={template?.default_unit_price ?? (allowImportPrefill ? importDraft?.unit_price : null) ?? 0}
-          />
-          <div className="flex items-end">
-            <p className="text-xs leading-5 text-zinc-500">
-              New templates are created as active. Use Archive or Discontinue from the Product Library when the lifecycle changes.
-            </p>
-          </div>
-        </FormSection>
-
-        <FormSection
-          title="Reference Images"
-          description="Add product reference images. Click an image card or paste a PNG, JPG, JPEG, or WebP image from the clipboard."
-        >
-          {existingImportDraft ? (
-            <div className="md:col-span-2 xl:col-span-3">
-              <TemplateImportActionButton
-                action="image"
-                draft={existingImportDraft}
-                label="Add row image to gallery"
-                templateId={templateId}
-              />
-            </div>
-          ) : null}
-          <input
-            type="hidden"
-            name="reference_image_url"
-            defaultValue={template?.reference_image_url ?? (allowImportPrefill ? importDraft?.specified_image_url_snapshot : null) ?? ""}
-          />
-          <div className="md:col-span-2 xl:col-span-3">
-            <TemplateReferenceImageFieldManager
-              importDraft={existingImportDraft}
-              initialSlots={proposedImageSlots.map((slot) => ({
-                ...slot,
-                settings: templateImageDisplaySettings(template, slot.field),
-                value: templateImageValue(template, slot.field) ?? (
-                  slot.field === "proposed_image_url_1" && allowImportPrefill
-                    ? importDraft?.proposed_image_url_snapshot ?? importDraft?.specified_image_url_snapshot ?? null
-                    : null
-                ),
-              }))}
-              templateExists={Boolean(template)}
-              templateId={templateId}
-            />
-          </div>
-        </FormSection>
-      </div>
-
-      <FormSection
-        title="Detailed Pricing"
-        description="Maintain workstation pricing, base variants, accessories, and finish-category pricing in one dedicated pricing area."
-      >
-        <TemplatePricingSections
-          key={[
-            template?.id ?? "new",
-            template?.desking_size_pricing?.length ?? 0,
-            template?.variant_pricing?.length ?? 0,
-            template?.accessory_pricing?.length ?? 0,
-            template?.category_pricing?.length ?? 0,
-            (template?.category_pricing ?? [])
-              .map((row) => Object.keys(row.prices ?? {}).join(","))
-              .join("|"),
-          ].join(":")}
-          deskingSizePricingRows={template?.desking_size_pricing}
-          variantPricingRows={template?.variant_pricing}
-          accessoryPricingRows={template?.accessory_pricing}
-          categoryPricingRows={template?.category_pricing}
-          brandDefaultCurrency={brandDefaultCurrency}
-          importDraft={existingImportDraft}
-          templateId={templateId}
-          templateCurrency={template?.currency}
-        />
-      </FormSection>
-    </TemplateFormShell>
   );
 }
 
@@ -2761,9 +2473,10 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                       Cancel
                     </Link>
                   </div>
-                  <TemplateForm
+                  <ProductTemplateForm
                     brands={brandList}
                     categories={categoryList}
+                    compactAccordionMode
                     defaultBrandId={templateFormDefaultBrandId}
                     defaultMainCategoryId={templateFormDefaultMainCategoryId}
                     defaultSubCategoryId={templateFormDefaultSubCategoryId}
@@ -3544,9 +3257,10 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         Edit template details
                       </summary>
                       <div className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-                        <TemplateForm
+                        <ProductTemplateForm
                           brands={brandList}
                           categories={categoryList}
+                          compactAccordionMode
                           defaultBrandId={templateFormDefaultBrandId}
                           defaultMainCategoryId={templateFormDefaultMainCategoryId}
                           defaultSubCategoryId={templateFormDefaultSubCategoryId}
@@ -3809,36 +3523,47 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   ) : null}
 
                   <div className="border-t border-zinc-200 p-5">
-                    <div
+                    <details
                       id={`template-${template.id}-materials`}
-                      className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
+                      data-state-key={`template-material-sections-${template.id}`}
                     >
-                      <div>
-                        <h3 className="text-sm font-semibold uppercase text-zinc-500">
-                          Material Groups / Finish Options
-                        </h3>
-                        <p className="mt-1 text-sm leading-6 text-zinc-500">
-                          Link brand finish groups allowed for this template. Finish selection in quotations comes later.
-                        </p>
-                      </div>
-                      <details
-                        className="shrink-0"
-                        data-state-key={`template-material-group-create-${template.id}`}
-                      >
+                      <summary className="cursor-pointer list-none rounded-lg border border-zinc-200 bg-zinc-50 p-4 transition hover:border-emerald-900">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <h3 className="text-sm font-semibold uppercase text-zinc-500">
+                              Material Groups / Finish Options
+                            </h3>
+                            <p className="mt-1 text-sm leading-6 text-zinc-500">
+                              Link brand finish groups allowed for this template. Finish selection in quotations comes later.
+                            </p>
+                          </div>
+                          <span className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700">
+                            {(materialGroupsByTemplate.get(template.id) ?? []).length} linked groups
+                          </span>
+                        </div>
+                      </summary>
+                      <div className="mt-4">
+                        <div
+                          className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
+                        >
+                          <details
+                            className="shrink-0"
+                            data-state-key={`template-material-group-create-${template.id}`}
+                          >
                           <summary className="cursor-pointer rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
                             + Link Material Group
                           </summary>
-                        <div className="mt-3 w-[min(960px,calc(100vw-4rem))] rounded-lg border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
-                          <TemplateMaterialGroupForm
-                            materials={materialList}
-                            materialGroups={materialGroupList}
-                            returnTo={templateMaterialsReturnTo}
-                            template={template}
-                          />
+                            <div className="mt-3 w-[min(960px,calc(100vw-4rem))] rounded-lg border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
+                              <TemplateMaterialGroupForm
+                                materials={materialList}
+                                materialGroups={materialGroupList}
+                                returnTo={templateMaterialsReturnTo}
+                                template={template}
+                              />
+                            </div>
+                          </details>
                         </div>
-                      </details>
-                    </div>
-                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                        <div className="mt-4 grid gap-3 lg:grid-cols-2">
                       {(materialGroupsByTemplate.get(template.id) ?? []).map((link) => {
                         const materialGroup = materialGroupList.find(
                           (candidate) => candidate.id === link.material_group_id,
@@ -3904,35 +3629,46 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           No linked material groups yet.
                         </p>
                       ) : null}
-                    </div>
+                        </div>
+                      </div>
+                    </details>
                   </div>
 
                   <div className="border-t border-zinc-200 p-5">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <h3 className="text-sm font-semibold uppercase text-zinc-500">
-                          Linked Product Families / Screens & Add-ons
-                        </h3>
-                        <p className="mt-1 text-sm leading-6 text-zinc-500">
-                          Connect reusable product families such as screens, pedestals, cable trays, and power modules. These can be selected manually when adding this product to a quotation.
-                        </p>
-                      </div>
-                      <details
-                        className="shrink-0"
-                        data-state-key={`template-linked-family-create-${template.id}`}
-                      >
+                    <details data-state-key={`template-linked-family-sections-${template.id}`}>
+                      <summary className="cursor-pointer list-none rounded-lg border border-zinc-200 bg-zinc-50 p-4 transition hover:border-emerald-900">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <h3 className="text-sm font-semibold uppercase text-zinc-500">
+                              Linked Product Families / Screens & Add-ons
+                            </h3>
+                            <p className="mt-1 text-sm leading-6 text-zinc-500">
+                              Connect reusable product families such as screens, pedestals, cable trays, and power modules. These can be selected manually when adding this product to a quotation.
+                            </p>
+                          </div>
+                          <span className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700">
+                            {(linkedFamiliesByTemplate.get(template.id) ?? []).length} linked families
+                          </span>
+                        </div>
+                      </summary>
+                      <div className="mt-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <details
+                            className="shrink-0"
+                            data-state-key={`template-linked-family-create-${template.id}`}
+                          >
                          <summary className="cursor-pointer rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
                            + Link Product Family
                          </summary>
-                        <div className="mt-3 w-[min(960px,calc(100vw-4rem))] rounded-lg border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
-                          <LinkedProductFamilyForm
-                            templateId={template.id}
-                            templates={activeTemplateList}
-                          />
+                            <div className="mt-3 w-[min(960px,calc(100vw-4rem))] rounded-lg border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
+                              <LinkedProductFamilyForm
+                                templateId={template.id}
+                                templates={activeTemplateList}
+                              />
+                            </div>
+                          </details>
                         </div>
-                      </details>
-                    </div>
-                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                        <div className="mt-4 grid gap-3 lg:grid-cols-2">
                       {(linkedFamiliesByTemplate.get(template.id) ?? []).map((link) => {
                         const linkedTemplate = activeTemplateList.find(
                           (candidate) => candidate.id === link.linked_template_id,
@@ -3974,7 +3710,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           No linked product families yet.
                         </p>
                       ) : null}
-                    </div>
+                        </div>
+                      </div>
+                    </details>
                   </div>
 
                   {activeTemplateComponents.length ? (
