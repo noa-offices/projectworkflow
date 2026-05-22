@@ -206,7 +206,7 @@ export function ProductManagementFilterBar({
         <option value="current">Price current</option>
         <option value="needs_check">Needs price check</option>
         <option value="due">Price check due</option>
-        <option value="no_baseline">No price baseline</option>
+        <option value="no_price_list_date">No price list date</option>
         <option value="scheduled">New price list scheduled</option>
         <option value="checked">Price checked</option>
       </select>

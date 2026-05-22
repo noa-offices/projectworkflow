@@ -14,8 +14,9 @@ export type BrandPriceListUpdateForCheck = {
 
 export type ProductPriceCheckState = {
   detail: string;
-  key: "no_baseline" | "current" | "needs_check" | "due" | "scheduled" | "checked";
+  key: "no_price_list_date" | "current" | "needs_check" | "due" | "scheduled" | "checked";
   label: string;
+  reason: string;
   tone: "warning" | "notice" | "ok" | "neutral";
 };
 
@@ -26,6 +27,22 @@ function dateMs(value: string | null | undefined) {
 
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : null;
+}
+
+function dateKey(value: string | null | undefined) {
+  if (!value) return null;
+
+  const exactDate = value.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+  if (exactDate) {
+    return exactDate;
+  }
+
+  const time = new Date(value);
+  if (!Number.isFinite(time.getTime())) {
+    return null;
+  }
+
+  return time.toISOString().slice(0, 10);
 }
 
 export function brandPriceListUpdateDate(update: BrandPriceListUpdateForCheck | null | undefined) {
@@ -81,16 +98,28 @@ export function productTemplatePriceCheckState({
     latestBrandPriceListUpdate,
   });
   const latestBrandUpdateTime = dateMs(latestBrandUpdateDate);
-  const createdAt = dateMs(template.created_at);
+  const latestBrandUpdateDateKey = dateKey(latestBrandUpdateDate);
+  const createdDateKey = dateKey(template.created_at);
   const checkedAt = dateMs(template.last_price_checked_at);
-  const comparisonAt = checkedAt ?? createdAt;
+  const checkedDateKey = dateKey(template.last_price_checked_at);
+  const createdOnOrAfterBaseline = Boolean(
+    createdDateKey &&
+    latestBrandUpdateDateKey &&
+    createdDateKey >= latestBrandUpdateDateKey,
+  );
+  const checkedOnOrAfterBaseline = Boolean(
+    checkedDateKey &&
+    latestBrandUpdateDateKey &&
+    checkedDateKey >= latestBrandUpdateDateKey,
+  );
 
-  if (latestBrandUpdateTime === null) {
+  if (latestBrandUpdateDateKey === null || latestBrandUpdateTime === null) {
     return {
-      detail: "No brand price list update recorded yet.",
-      key: "no_baseline",
+      detail: "No brand price list date recorded yet.",
+      key: "no_price_list_date",
       tone: "neutral",
-      label: "No price baseline",
+      label: "No price list date",
+      reason: "No brand latest price list date is recorded.",
     };
   }
 
@@ -100,10 +129,11 @@ export function productTemplatePriceCheckState({
       key: "scheduled",
       tone: "notice",
       label: "New price list scheduled",
+      reason: "Brand latest price list date is in the future.",
     };
   }
 
-  if (comparisonAt !== null && comparisonAt >= latestBrandUpdateTime) {
+  if (checkedOnOrAfterBaseline) {
     if (checkedAt !== null) {
       const dueAt = checkedAt + intervalDays * dayMs;
 
@@ -113,22 +143,27 @@ export function productTemplatePriceCheckState({
           key: "due",
           tone: "warning",
           label: "Price check due",
+          reason: "Template was checked against the latest brand price list, but its scheduled recheck is now due.",
         };
       }
 
       return {
-        detail: `Price checked: ${formatDate(template.last_price_checked_at)}`,
+        detail: "Checked against latest brand price list.",
         key: "checked",
         tone: "ok",
         label: "Price checked",
+        reason: "Checked against latest brand price list.",
       };
     }
+  }
 
+  if (createdOnOrAfterBaseline) {
     return {
-      detail: "Added after latest brand price list update.",
+      detail: "Added after latest brand price list date.",
       key: "current",
       tone: "ok",
       label: "Price current",
+      reason: "Added after latest brand price list date.",
     };
   }
 
@@ -137,5 +172,6 @@ export function productTemplatePriceCheckState({
     key: "needs_check",
     tone: "warning",
     label: "Needs price check",
+    reason: "Brand price list was updated after this template was created or last checked.",
   };
 }

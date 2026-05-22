@@ -117,7 +117,7 @@ type Brand = {
   price_list_check_note: string | null;
 };
 
-type PriceSummaryKey = "current" | "needs_check" | "due" | "no_baseline" | "scheduled" | "checked";
+type PriceSummaryKey = "current" | "needs_check" | "due" | "no_price_list_date" | "scheduled" | "checked";
 
 type BrandPriceListUpdate = {
   id: string;
@@ -1560,6 +1560,20 @@ function priceCheckState(
   });
 }
 
+function shouldLogPriceStatusDebug({
+  brandId,
+  brandName,
+  selectedBrandFilter,
+  selectedPanelBrandId,
+}: {
+  brandId: string;
+  brandName?: string | null;
+  selectedBrandFilter: string;
+  selectedPanelBrandId: string;
+}) {
+  return brandName === "LAS MOBILI" || brandId === selectedBrandFilter || brandId === selectedPanelBrandId;
+}
+
 function PriceCheckStatus({
   actorNameById,
   brandPriceBaselineAt,
@@ -1651,37 +1665,6 @@ function TemplateDetailHeaderActions({
       </details>
     </div>
   );
-}
-
-function brandPriceCheckState(brand: Brand) {
-  const intervalDays = brand.price_list_check_interval_days && brand.price_list_check_interval_days > 0
-    ? brand.price_list_check_interval_days
-    : 90;
-
-  if (!brand.last_price_list_checked_at) {
-    return {
-      detail: "No brand price-list check recorded",
-      tone: "warning" as const,
-      label: "Brand price list not checked yet",
-    };
-  }
-
-  const checkedAt = new Date(brand.last_price_list_checked_at);
-  const dueAt = checkedAt.getTime() + intervalDays * 24 * 60 * 60 * 1000;
-
-  if (!Number.isFinite(checkedAt.getTime()) || dueAt < Date.now()) {
-    return {
-      detail: `Last checked: ${formatDate(brand.last_price_list_checked_at)}`,
-      tone: "warning" as const,
-      label: "Brand price list due",
-    };
-  }
-
-  return {
-    detail: `Brand price list checked: ${formatDate(brand.last_price_list_checked_at)}`,
-    tone: "ok" as const,
-    label: "Brand price list checked",
-  };
 }
 
 function BrandPriceListUpdateForm({
@@ -2171,6 +2154,38 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     }
   }
 
+  for (const template of activeTemplateList) {
+    const brandName = brandMap.get(template.brand_id) ?? null;
+
+    if (!shouldLogPriceStatusDebug({
+      brandId: template.brand_id,
+      brandName,
+      selectedBrandFilter,
+      selectedPanelBrandId,
+    })) {
+      continue;
+    }
+
+    const status = priceCheckState(
+      template,
+      latestPriceListUpdateByBrand.get(template.brand_id),
+      brandPriceBaselineByBrand.get(template.brand_id),
+    );
+
+    console.log("Price status derived", {
+      brandId: template.brand_id,
+      brandLatestPriceListAt: brandPriceBaselineByBrand.get(template.brand_id) ?? null,
+      brandName,
+      reason: status.reason,
+      status: status.key,
+      templateCheckedAt: template.last_price_checked_at,
+      templateCheckedBy: template.last_price_checked_by,
+      templateCreatedAt: template.created_at,
+      templateId: template.id,
+      templateName: templateSelectionName(template),
+    });
+  }
+
   for (const history of templatePriceHistoryList) {
     priceHistoryByTemplate.set(history.product_template_id, [
       ...(priceHistoryByTemplate.get(history.product_template_id) ?? []),
@@ -2337,13 +2352,13 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
         total: summary.total + 1,
       };
     },
-    { current: 0, needs_check: 0, due: 0, no_baseline: 0, scheduled: 0, checked: 0, total: 0 } satisfies Record<PriceSummaryKey | "total", number>,
+    { current: 0, needs_check: 0, due: 0, no_price_list_date: 0, scheduled: 0, checked: 0, total: 0 } satisfies Record<PriceSummaryKey | "total", number>,
   );
   const priceStatusOptions = [
     "current",
     "needs_check",
     "due",
-    "no_baseline",
+    "no_price_list_date",
     "scheduled",
     "checked",
   ] satisfies PriceSummaryKey[];
@@ -2772,7 +2787,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-900">Current: {priceCheckSummary.current + priceCheckSummary.checked}</span>
                   <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">Needs check: {priceCheckSummary.needs_check}</span>
                   <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">Due: {priceCheckSummary.due}</span>
-                  <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-zinc-700">No baseline: {priceCheckSummary.no_baseline}</span>
+                  <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-zinc-700">No price list date: {priceCheckSummary.no_price_list_date}</span>
                   {priceCheckSummary.scheduled > 0 ? (
                     <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-sky-900">Scheduled: {priceCheckSummary.scheduled}</span>
                   ) : null}
@@ -2850,7 +2865,8 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                     const matchingBrandTemplates = filteredTemplates.filter((template) => template.brand_id === brand.id);
                     const latestPriceListUpdate = latestPriceListUpdateByBrand.get(brand.id) ?? null;
                     const latestBaselineDate = brandPriceBaselineByBrand.get(brand.id) ?? null;
-                    const brandStatus = brandPriceCheckState(brand);
+                    const hasPriceListDate = Boolean(latestBaselineDate);
+                    const brandStatusLabel = hasPriceListDate ? "Price list date recorded" : "No price list date";
                     const matchingStatusSummary = matchingBrandTemplates.reduce(
                       (summary, template) => {
                         const key = priceCheckState(
@@ -2864,11 +2880,11 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           [key]: summary[key] + 1,
                         };
                       },
-                      { current: 0, needs_check: 0, due: 0, no_baseline: 0, scheduled: 0, checked: 0 } satisfies Record<PriceSummaryKey, number>,
+                      { current: 0, needs_check: 0, due: 0, no_price_list_date: 0, scheduled: 0, checked: 0 } satisfies Record<PriceSummaryKey, number>,
                     );
-                    const badgeClass = brandStatus.tone === "ok"
+                    const badgeClass = hasPriceListDate
                       ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                      : "border-amber-200 bg-amber-50 text-amber-900";
+                      : "border-zinc-200 bg-zinc-50 text-zinc-700";
 
                     return (
                       <div key={brand.id} className="rounded-xl border border-zinc-200 bg-white p-4 transition hover:border-zinc-300 hover:shadow-sm">
@@ -2883,7 +2899,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                                 {activeBrandTemplates.length} active
                               </span>
                               <span className={`rounded-full border px-2 py-0.5 font-semibold ${badgeClass}`}>
-                                {brandStatus.label}
+                                {brandStatusLabel}
                               </span>
                             </div>
                           </div>
@@ -2907,7 +2923,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           </p>
                           <p>
                             Current: {matchingStatusSummary.current + matchingStatusSummary.checked}{" "}
-                            • Needs check: {matchingStatusSummary.needs_check} • No baseline: {matchingStatusSummary.no_baseline}
+                            • Needs check: {matchingStatusSummary.needs_check} • No price list date: {matchingStatusSummary.no_price_list_date}
                           </p>
                           {matchingStatusSummary.due > 0 ? <p>Due: {matchingStatusSummary.due}</p> : null}
                           {latestPriceListUpdate?.title ? <p>Latest update record: {latestPriceListUpdate.title}</p> : null}
@@ -3052,11 +3068,10 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                   <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_auto]">
                     <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-600">
                       <p>
-                        Brand price list status:{" "}
-                        <span className="font-semibold text-zinc-950">{brandPriceCheckState(selectedBrand).label}</span>
-                      </p>
-                      <p className="mt-1">
-                        Last price check: {formatShortDate(selectedBrand.last_price_list_checked_at)}
+                        Template status basis:{" "}
+                        <span className="font-semibold text-zinc-950">
+                          {brandPriceBaselineByBrand.get(selectedBrand.id) ? "Price list date recorded" : "No price list date"}
+                        </span>
                       </p>
                       <p className="mt-1">
                         Latest price list: {brandPriceBaselineByBrand.get(selectedBrand.id)
