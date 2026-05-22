@@ -231,12 +231,19 @@ export function ProductTemplateImageUploader({
     const pathInput = containerRef.current
       ?.closest("form")
       ?.querySelector<HTMLInputElement>(`input[name="${field}"]`);
+    const settingsInput = containerRef.current
+      ?.closest("form")
+      ?.querySelector<HTMLInputElement>(`input[name="image_settings_${field}"]`);
 
     if (pathInput) {
       pathInput.value = "";
     }
+    if (settingsInput) {
+      settingsInput.value = "";
+    }
 
     setCurrentValue("");
+    setCurrentImageSettings(normalizeImageDisplaySettings(null));
     onValueChange?.(null);
     setStatus("idle");
   }

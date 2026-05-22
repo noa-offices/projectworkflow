@@ -660,6 +660,14 @@ function extraTemplateImagePathKey(field: string) {
   return `${field}_path`;
 }
 
+function normalizedImageSettingsValue(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return value as Record<string, unknown>;
+}
+
 function templateImageMetadataValue(formData: FormData) {
   const metadata: Record<string, ReturnType<typeof imageDisplaySettingsValue>> = {};
 
@@ -988,7 +996,7 @@ function createTemplatePayload(formData: FormData, userId: string) {
   const imageSettings = templateImageMetadataValue(formData);
   const payload = {
     ...templatePayload(formData, userId),
-    ...(imageSettings ? { image_settings: imageSettings } : {}),
+    ...(imageSettings ? { image_settings: normalizedImageSettingsValue(imageSettings) } : {}),
   };
 
   return id ? { ...payload, id } : payload;
@@ -1154,7 +1162,8 @@ export async function updateProductTemplate(formData: FormData) {
     redirectWithMessageToPath(redirectPath, actionErrorMessage("Product template could not be loaded", currentTemplateError));
   }
 
-  const nextImageSettings = { ...(currentTemplate.image_settings ?? {}) };
+  const nextImageSettings = { ...normalizedImageSettingsValue(currentTemplate.image_settings) };
+  const clearedImageSlots: string[] = [];
   for (const field of imageFields) {
     delete nextImageSettings[extraTemplateImagePathKey(field)];
 
@@ -1165,20 +1174,25 @@ export async function updateProductTemplate(formData: FormData) {
       }
     } else {
       delete nextImageSettings[field];
+      clearedImageSlots.push(field);
     }
   }
+
+  const safeImageSettings = normalizedImageSettingsValue(nextImageSettings);
 
   const { error } = await supabase
     .from("product_templates")
     .update({
       ...payload,
-      image_settings: Object.keys(nextImageSettings).length ? nextImageSettings : null,
+      image_settings: safeImageSettings,
     })
     .eq("id", id);
 
   if (error) {
     logServerActionError("PRODUCT TEMPLATE UPDATE ERROR", error, {
       action: "updateProductTemplate",
+      imageSettingsNormalized: true,
+      imageSlotsCleared: clearedImageSlots,
       recordId: id,
       table: "product_templates",
     });
@@ -1982,17 +1996,17 @@ export async function updateProductTemplateImage(formData: FormData) {
     return { ok: false, message: actionErrorMessage(`${imageSlotLabel(field)} could not be loaded`, readError) };
   }
 
-  const nextImageSettings = { ...(currentTemplate.image_settings ?? {}) };
+  const nextImageSettings = { ...normalizedImageSettingsValue(currentTemplate.image_settings) };
   delete nextImageSettings[extraTemplateImagePathKey(field)];
+  delete nextImageSettings[field];
+  const safeImageSettings = normalizedImageSettingsValue(nextImageSettings);
 
   const response = await supabase
     .from("product_templates")
     .update({
       [field]: path,
       ...(field === "proposed_image_url_1" ? { default_image_url: path } : {}),
-      image_settings: Object.keys(nextImageSettings).length
-        ? nextImageSettings
-        : null,
+      image_settings: safeImageSettings,
     })
     .eq("id", id);
 
@@ -2002,6 +2016,8 @@ export async function updateProductTemplateImage(formData: FormData) {
     logServerActionError("PRODUCT TEMPLATE IMAGE UPDATE ERROR", error, {
       action: "updateProductTemplateImage",
       field,
+      imageSettingsNormalized: true,
+      imageSlotsCleared: path ? [] : [field],
       imagePath: path,
       recordId: id,
       table: "product_templates",
@@ -2049,7 +2065,7 @@ export async function updateProductTemplateImageSettings(formData: FormData) {
     .from("product_templates")
     .update({
       image_settings: {
-        ...(currentTemplate.image_settings ?? {}),
+        ...normalizedImageSettingsValue(currentTemplate.image_settings),
         [field]: imageDisplaySettingsValue(formData),
       },
     })
