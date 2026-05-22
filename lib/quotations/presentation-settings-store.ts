@@ -1,4 +1,5 @@
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import { normalizePresentationSettings } from "@/lib/quotations/presentation-settings";
 
 type ProfileRecord = {
@@ -68,10 +69,14 @@ async function activeRecordsManager(): Promise<AuthFailure | AuthSuccess> {
     .maybeSingle<ProfileRecord>();
 
   if (profileError) {
-    console.error("PRESENTATION SETTINGS PROFILE ERROR", profileError.message);
+    logServerActionError("PRESENTATION SETTINGS PROFILE ERROR", profileError, {
+      action: "loadPresentationSettings.activeRecordsManager",
+      table: "profiles",
+      recordId: user.id,
+    });
     return {
       supabase,
-      error: "Failed to verify user permissions.",
+      error: formatSafeActionError("Failed to verify user permissions", profileError),
       status: 500,
       details: supabaseErrorDetails(profileError) ?? profileError.message,
       code: profileError.code,
@@ -103,11 +108,15 @@ export async function loadPresentationSettings(quotationId: string): Promise<Loa
     .maybeSingle<PresentationSettingsRecord>();
 
   if (error) {
-    console.error("PRESENTATION SETTINGS LOAD ERROR", error.message);
+    logServerActionError("PRESENTATION SETTINGS LOAD ERROR", error, {
+      action: "loadPresentationSettings",
+      recordId: quotationId,
+      table: "quotation_presentations",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to load presentation settings.",
+      error: formatSafeActionError("Failed to load presentation settings", error),
       details: supabaseErrorDetails(error) ?? error.message,
       code: error.code,
     };
@@ -136,11 +145,15 @@ export async function savePresentationSettings(quotationId: string, settings: un
     .maybeSingle<QuotationRecord>();
 
   if (quotationError) {
-    console.error("PRESENTATION SETTINGS QUOTATION READ ERROR", quotationError.message);
+    logServerActionError("PRESENTATION SETTINGS QUOTATION READ ERROR", quotationError, {
+      action: "savePresentationSettings",
+      recordId: quotationId,
+      table: "quotations",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to verify quotation.",
+      error: formatSafeActionError("Failed to verify quotation", quotationError),
       details: supabaseErrorDetails(quotationError) ?? quotationError.message,
       code: quotationError.code,
     };
@@ -170,11 +183,16 @@ export async function savePresentationSettings(quotationId: string, settings: un
     .single<PresentationSettingsRecord>();
 
   if (error) {
-    console.error("PRESENTATION SETTINGS SAVE ERROR", error.message);
+    logServerActionError("PRESENTATION SETTINGS SAVE ERROR", error, {
+      action: "savePresentationSettings",
+      recordId: quotationId,
+      table: "quotation_presentations",
+      field: "settings_json",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to save presentation settings.",
+      error: formatSafeActionError("Failed to save presentation settings", error),
       details: supabaseErrorDetails(error) ?? error.message,
       code: error.code,
     };

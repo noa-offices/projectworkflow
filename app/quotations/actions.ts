@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
+import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import {
   requireActiveUser,
   requireRecordsManager,
@@ -166,6 +167,10 @@ function splitRelativePath(path: string) {
 
 function redirectWithMessage(path: string, message: string): never {
   redirect(pathWithParams(path, { message }));
+}
+
+function actionErrorMessage(actionLabel: string, error: unknown, fallbackMessage?: string) {
+  return formatSafeActionError(actionLabel, error, fallbackMessage);
 }
 
 function pathWithParams(path: string, params: Record<string, string | null | undefined>) {
@@ -3219,15 +3224,23 @@ export async function updateQuotation(formData: FormData) {
     .maybeSingle<{ id: string; quotation_no: string | null; title: string }>();
 
   if (currentQuotationError || !currentQuotation) {
-    console.error("QUOTATION UPDATE READ ERROR", currentQuotationError?.message);
-    redirectWithMessage(`/quotations/${id}`, "Quotation could not be updated.");
+    logServerActionError("QUOTATION UPDATE READ ERROR", currentQuotationError, {
+      action: "updateQuotation",
+      recordId: id,
+      table: "quotations",
+    });
+    redirectWithMessage(`/quotations/${id}`, actionErrorMessage("Quotation could not be updated", currentQuotationError));
   }
 
   const { error } = await supabase.from("quotations").update(payload).eq("id", id);
 
   if (error) {
-    console.error("QUOTATION UPDATE ERROR", error.message);
-    redirectWithMessage(`/quotations/${id}`, "Quotation could not be updated.");
+    logServerActionError("QUOTATION UPDATE ERROR", error, {
+      action: "updateQuotation",
+      recordId: id,
+      table: "quotations",
+    });
+    redirectWithMessage(`/quotations/${id}`, actionErrorMessage("Quotation could not be updated", error));
   }
 
   await createAuditLog(supabase, {
@@ -3275,8 +3288,12 @@ export async function updateQuotationExtraDiscount(formData: FormData) {
     .maybeSingle<{ id: string; quotation_no: string | null; title: string }>();
 
   if (currentQuotationError || !currentQuotation) {
-    console.error("QUOTATION EXTRA DISCOUNT READ ERROR", currentQuotationError?.message);
-    redirectWithMessage(redirectPath, "Extra discount could not be updated.");
+    logServerActionError("QUOTATION EXTRA DISCOUNT READ ERROR", currentQuotationError, {
+      action: "updateQuotationExtraDiscount",
+      recordId: id,
+      table: "quotations",
+    });
+    redirectWithMessage(redirectPath, actionErrorMessage("Extra discount could not be updated", currentQuotationError));
   }
 
   const { error } = await supabase
@@ -3288,8 +3305,12 @@ export async function updateQuotationExtraDiscount(formData: FormData) {
     .eq("id", id);
 
   if (error) {
-    console.error("QUOTATION EXTRA DISCOUNT UPDATE ERROR", error.message);
-    redirectWithMessage(redirectPath, "Extra discount could not be updated.");
+    logServerActionError("QUOTATION EXTRA DISCOUNT UPDATE ERROR", error, {
+      action: "updateQuotationExtraDiscount",
+      recordId: id,
+      table: "quotations",
+    });
+    redirectWithMessage(redirectPath, actionErrorMessage("Extra discount could not be updated", error));
   }
 
   await createAuditLog(supabase, {
@@ -3337,8 +3358,12 @@ export async function updateQuotationStatus(formData: FormData) {
     .maybeSingle<QuotationStatusState>();
 
   if (quotationError || !quotation) {
-    console.error("QUOTATION STATUS READ ERROR", quotationError?.message);
-    redirectWithMessage(redirectPath, "Quotation status could not be updated.");
+    logServerActionError("QUOTATION STATUS READ ERROR", quotationError, {
+      action: "updateQuotationStatus",
+      recordId: quotationId,
+      table: "quotations",
+    });
+    redirectWithMessage(redirectPath, actionErrorMessage("Quotation status could not be updated", quotationError));
   }
 
   const { error: updateError } = await supabase
@@ -3352,8 +3377,12 @@ export async function updateQuotationStatus(formData: FormData) {
     .eq("id", quotationId);
 
   if (updateError) {
-    console.error("QUOTATION STATUS UPDATE ERROR", updateError.message);
-    redirectWithMessage(redirectPath, "Quotation status could not be updated.");
+    logServerActionError("QUOTATION STATUS UPDATE ERROR", updateError, {
+      action: "updateQuotationStatus",
+      recordId: quotationId,
+      table: "quotations",
+    });
+    redirectWithMessage(redirectPath, actionErrorMessage("Quotation status could not be updated", updateError));
   }
 
   await createAuditLog(supabase, {
@@ -3418,8 +3447,13 @@ export async function updateQuotationLayoutSettings(formData: FormData) {
     .eq("id", quotationId);
 
   if (error) {
-    console.error("QUOTATION LAYOUT SETTINGS UPDATE ERROR", error.message);
-    redirectWithMessage(redirectPath, "Column settings could not be saved.");
+    logServerActionError("QUOTATION LAYOUT SETTINGS UPDATE ERROR", error, {
+      action: "updateQuotationLayoutSettings",
+      recordId: quotationId,
+      field: "layout_settings",
+      table: "quotations",
+    });
+    redirectWithMessage(redirectPath, actionErrorMessage("Column settings could not be saved", error));
   }
 
   revalidatePath(`/quotations/${quotationId}`);

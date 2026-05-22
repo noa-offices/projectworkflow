@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import { createAuditLog } from "@/lib/audit-log";
 import { requireSystemOwner } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -26,6 +27,10 @@ function formValue(formData: FormData, name: string) {
 
 function redirectWithMessage(message: string): never {
   redirect(`/settings/users?message=${encodeURIComponent(message)}`);
+}
+
+function actionErrorMessage(actionLabel: string, error: unknown, fallbackMessage?: string) {
+  return formatSafeActionError(actionLabel, error, fallbackMessage);
 }
 
 export async function updateUserAccess(profileId: string, formData: FormData) {
@@ -80,8 +85,12 @@ export async function updateUserAccess(profileId: string, formData: FormData) {
     .eq("id", profileId);
 
   if (error) {
-    console.error("USER ACCESS UPDATE ERROR", error.message);
-    redirectWithMessage("User access update failed.");
+    logServerActionError("USER ACCESS UPDATE ERROR", error, {
+      action: "updateUserAccess",
+      recordId: profileId,
+      table: "profiles",
+    });
+    redirectWithMessage(actionErrorMessage("User access update failed", error));
   }
 
   await createAuditLog(supabase, {

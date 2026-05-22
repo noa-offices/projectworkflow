@@ -45,6 +45,7 @@ import {
   supportedCurrencies,
 } from "@/lib/currencies";
 import {
+  brandPriceBaselineDate,
   latestBrandPriceListUpdate,
   productTemplatePriceCheckState,
 } from "@/lib/product-price-check";
@@ -115,6 +116,8 @@ type Brand = {
   price_list_check_interval_days: number | null;
   price_list_check_note: string | null;
 };
+
+type PriceSummaryKey = "current" | "needs_check" | "due" | "no_baseline" | "scheduled" | "checked";
 
 type BrandPriceListUpdate = {
   id: string;
@@ -266,6 +269,7 @@ type ProductTemplate = {
   sub_category_id: string | null;
   template_code: string | null;
   template_name: string;
+  internal_selection_name: string | null;
   item_code: string | null;
   description: string | null;
   default_specification: string | null;
@@ -308,6 +312,7 @@ type ProductTemplate = {
   price_check_interval_days: number | null;
   price_check_note: string | null;
   price_notes: string | null;
+  created_at: string | null;
 };
 
 type QuotationRowImportDraft = {
@@ -631,6 +636,7 @@ function templateSearchText(
   categoryMap: Map<string, string>,
 ) {
   const tokens = [
+    template.internal_selection_name,
     template.template_name,
     template.template_code,
     template.item_code,
@@ -689,6 +695,10 @@ function templateSearchText(
 
 function templateCountLabel(count: number) {
   return `${count} ${count === 1 ? "product" : "products"} found`;
+}
+
+function templateSelectionName(template: Pick<ProductTemplate, "internal_selection_name" | "template_name">) {
+  return template.internal_selection_name?.trim() || template.template_name;
 }
 
 function StatusBadge({ active }: { active: boolean }) {
@@ -757,12 +767,16 @@ function Field({
   name,
   label,
   defaultValue,
+  hint,
+  placeholder,
   required,
   type = "text",
 }: {
   name: string;
   label: string;
   defaultValue?: string | number | null;
+  hint?: string;
+  placeholder?: string;
   required?: boolean;
   type?: string;
 }) {
@@ -776,9 +790,13 @@ function Field({
         type={type}
         step={type === "number" ? "0.01" : undefined}
         defaultValue={defaultValue ?? ""}
+        placeholder={placeholder}
         required={required}
         className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
       />
+      {hint ? (
+        <span className="mt-1 block text-xs leading-5 text-zinc-500">{hint}</span>
+      ) : null}
     </label>
   );
 }
@@ -1016,6 +1034,13 @@ function TemplateForm({
           label="Item Name / Template Name"
           defaultValue={template?.template_name ?? (allowImportPrefill ? importDraft?.item_name_snapshot ?? importDraft?.model_snapshot : null)}
           required
+        />
+        <Field
+          name="internal_selection_name"
+          label="Internal Selection Name"
+          defaultValue={template?.internal_selection_name}
+          placeholder="Vintage Executive / Vintage Conference / Vintage Visitor"
+          hint="Used only inside the software to help users identify similar templates. Client documents still use Item Name / Template Name."
         />
         <Field
           name="template_code"
@@ -1525,10 +1550,10 @@ function actorDisplayName(
 function priceCheckState(
   template: ProductTemplate,
   latestBrandUpdate?: BrandPriceListUpdate | null,
-  brandName?: string | null,
+  brandPriceBaselineAt?: string | null,
 ) {
   return productTemplatePriceCheckState({
-    brandName,
+    brandPriceBaselineAt,
     formatDate,
     latestBrandPriceListUpdate: latestBrandUpdate,
     template,
@@ -1537,27 +1562,29 @@ function priceCheckState(
 
 function PriceCheckStatus({
   actorNameById,
-  brandName,
+  brandPriceBaselineAt,
   latestBrandUpdate,
   template,
 }: {
   actorNameById: Map<string, string>;
-  brandName?: string | null;
+  brandPriceBaselineAt?: string | null;
   latestBrandUpdate?: BrandPriceListUpdate | null;
   template: ProductTemplate;
 }) {
-  const status = priceCheckState(template, latestBrandUpdate, brandName);
+  const status = priceCheckState(template, latestBrandUpdate, brandPriceBaselineAt);
   const className = status.tone === "ok"
     ? "inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-900"
     : status.tone === "notice"
       ? "inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-900"
-    : "inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900";
+      : status.tone === "neutral"
+        ? "inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-semibold text-zinc-700"
+        : "inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900";
 
   return (
     <div className="mt-2 grid gap-1">
       <span className={className}>{status.label}</span>
       <p className="text-xs text-zinc-500">
-        {template.last_price_checked_at
+        {status.key === "checked" && template.last_price_checked_at
           ? `Price checked by ${actorDisplayName(actorNameById, template.last_price_checked_by)} on ${formatDate(template.last_price_checked_at)}`
           : status.detail}
       </p>
@@ -1924,7 +1951,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const { data: templates, error: templatesError } = await supabase
     .from("product_templates")
     .select(
-      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price,is_active,lifecycle_status,last_price_checked_at,last_price_checked_by,price_check_interval_days,price_check_note,price_notes",
+      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price,is_active,lifecycle_status,last_price_checked_at,last_price_checked_by,price_check_interval_days,price_check_note,price_notes,created_at",
     )
     .order("brand_id", { ascending: true })
     .order("template_name", { ascending: true })
@@ -2087,6 +2114,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const materialGroupItemsByLink = new Map<string, ProductTemplateMaterialGroupItem[]>();
   const priceListUpdatesByBrand = new Map<string, BrandPriceListUpdate[]>();
   const latestPriceListUpdateByBrand = new Map<string, BrandPriceListUpdate>();
+  const brandPriceBaselineByBrand = new Map<string, string>();
   const priceHistoryByTemplate = new Map<string, ProductTemplatePriceHistory[]>();
   const detailPriceHistoryByTemplate = new Map<string, ProductTemplateDetailPriceHistory[]>();
   const auditHistoryByTemplate = new Map<string, AuditActivityEntry[]>();
@@ -2129,6 +2157,17 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
     if (latestUpdate) {
       latestPriceListUpdateByBrand.set(brandId, latestUpdate);
+    }
+  }
+
+  for (const brand of brandList) {
+    const baselineDate = brandPriceBaselineDate({
+      fallbackCheckedAt: brand.last_price_list_checked_at,
+      latestBrandPriceListUpdate: latestPriceListUpdateByBrand.get(brand.id),
+    });
+
+    if (baselineDate) {
+      brandPriceBaselineByBrand.set(brand.id, baselineDate);
     }
   }
 
@@ -2188,7 +2227,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
     const status = priceCheckState(
       template,
       latestPriceListUpdateByBrand.get(template.brand_id),
-      brandMap.get(template.brand_id),
+      brandPriceBaselineByBrand.get(template.brand_id),
     );
 
     return {
@@ -2216,17 +2255,18 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
           ? categoryMap.get(template.sub_category_id) ?? "No sub category"
           : "No sub category",
       ].join(" / "),
-      priceStatusDetail: template.last_price_checked_at
+      priceStatusDetail: status.key === "checked" && template.last_price_checked_at
         ? `Checked ${formatShortDate(template.last_price_checked_at)} by ${actorDisplayName(actorNameById, template.last_price_checked_by)}`
         : status.detail,
       priceStatusLabel: status.label,
-      priceStatusTone: status.tone === "ok" || status.tone === "notice" ? status.tone : "warning",
+      priceStatusTone: status.tone,
       priceText: formatMoney(template.currency, template.default_unit_price),
       searchText: templateSearchText(template, brandMap, categoryMap),
       templateCodeText: template.template_code || template.item_code
         ? [template.template_code, template.item_code].filter(Boolean).join(" / ")
         : "No template or item code",
-      templateName: template.template_name,
+      quoteName: template.template_name,
+      templateName: templateSelectionName(template),
     };
   }
 
@@ -2288,7 +2328,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
       const key = priceCheckState(
         template,
         latestPriceListUpdateByBrand.get(template.brand_id),
-        brandMap.get(template.brand_id),
+        brandPriceBaselineByBrand.get(template.brand_id),
       ).key;
 
       return {
@@ -2297,16 +2337,23 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
         total: summary.total + 1,
       };
     },
-    { checked: 0, due: 0, not_checked: 0, scheduled: 0, total: 0 },
+    { current: 0, needs_check: 0, due: 0, no_baseline: 0, scheduled: 0, checked: 0, total: 0 } satisfies Record<PriceSummaryKey | "total", number>,
   );
-  const priceStatusOptions = new Set(["not_checked", "due", "checked", "scheduled"]);
+  const priceStatusOptions = [
+    "current",
+    "needs_check",
+    "due",
+    "no_baseline",
+    "scheduled",
+    "checked",
+  ] satisfies PriceSummaryKey[];
   const filteredTemplates = templatesMatchingStructure.filter((template) => {
-    if (!priceStatusOptions.has(selectedPriceStatusFilter)) return true;
+    if (!priceStatusOptions.includes(selectedPriceStatusFilter as PriceSummaryKey)) return true;
 
     return priceCheckState(
       template,
       latestPriceListUpdateByBrand.get(template.brand_id),
-      brandMap.get(template.brand_id),
+      brandPriceBaselineByBrand.get(template.brand_id),
     ).key === selectedPriceStatusFilter;
   });
   const selectedTemplateBase =
@@ -2441,7 +2488,12 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                     <div className="flex flex-wrap items-start gap-3">
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Product Details</p>
-                        <h2 className="mt-1 text-2xl font-semibold text-zinc-950">{selectedTemplate.template_name}</h2>
+                        <h2 className="mt-1 text-2xl font-semibold text-zinc-950">{templateSelectionName(selectedTemplate)}</h2>
+                        {selectedTemplate.internal_selection_name ? (
+                          <p className="mt-1 text-sm font-medium text-zinc-500">
+                            Quote name: {selectedTemplate.template_name}
+                          </p>
+                        ) : null}
                         <p className="mt-2 text-sm text-zinc-500">
                           {brandMap.get(selectedTemplate.brand_id) ?? "Unknown brand"}
                           {selectedTemplate.main_category_id ? ` / ${categoryMap.get(selectedTemplate.main_category_id) ?? "Main category"}` : ""}
@@ -2559,10 +2611,15 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         <div className="flex flex-col gap-3 p-4">
                           <div className="flex items-start gap-2">
                             <h3 className="min-w-0 flex-1 text-sm font-semibold text-zinc-950">
-                              {template.template_name}
+                              {templateSelectionName(template)}
                             </h3>
                             <TemplateLifecycleBadge status={templateLifecycleById.get(template.id) ?? "active"} />
                           </div>
+                          {template.internal_selection_name ? (
+                            <p className="text-xs font-medium text-zinc-500">
+                              Quote name: {template.template_name}
+                            </p>
+                          ) : null}
                           <div className="grid gap-1 text-xs text-zinc-500">
                             <p>{brandMap.get(template.brand_id) ?? "Unknown brand"}</p>
                             <p>
@@ -2712,10 +2769,13 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                 <h2 className="text-sm font-semibold uppercase text-zinc-500">Price check summary</h2>
                 <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold">
                   <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-zinc-700">Total: {priceCheckSummary.total}</span>
-                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">Not checked: {priceCheckSummary.not_checked}</span>
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-900">Current: {priceCheckSummary.current + priceCheckSummary.checked}</span>
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">Needs check: {priceCheckSummary.needs_check}</span>
                   <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">Due: {priceCheckSummary.due}</span>
-                  <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-sky-900">Scheduled: {priceCheckSummary.scheduled}</span>
-                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-900">Checked: {priceCheckSummary.checked}</span>
+                  <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-zinc-700">No baseline: {priceCheckSummary.no_baseline}</span>
+                  {priceCheckSummary.scheduled > 0 ? (
+                    <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-sky-900">Scheduled: {priceCheckSummary.scheduled}</span>
+                  ) : null}
                 </div>
               </div>
               {filteredTemplates.length ? (
@@ -2789,7 +2849,23 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                     const activeBrandTemplates = activeTemplateList.filter((template) => template.brand_id === brand.id);
                     const matchingBrandTemplates = filteredTemplates.filter((template) => template.brand_id === brand.id);
                     const latestPriceListUpdate = latestPriceListUpdateByBrand.get(brand.id) ?? null;
+                    const latestBaselineDate = brandPriceBaselineByBrand.get(brand.id) ?? null;
                     const brandStatus = brandPriceCheckState(brand);
+                    const matchingStatusSummary = matchingBrandTemplates.reduce(
+                      (summary, template) => {
+                        const key = priceCheckState(
+                          template,
+                          latestPriceListUpdateByBrand.get(template.brand_id),
+                          brandPriceBaselineByBrand.get(template.brand_id),
+                        ).key;
+
+                        return {
+                          ...summary,
+                          [key]: summary[key] + 1,
+                        };
+                      },
+                      { current: 0, needs_check: 0, due: 0, no_baseline: 0, scheduled: 0, checked: 0 } satisfies Record<PriceSummaryKey, number>,
+                    );
                     const badgeClass = brandStatus.tone === "ok"
                       ? "border-emerald-200 bg-emerald-50 text-emerald-900"
                       : "border-amber-200 bg-amber-50 text-amber-900";
@@ -2826,8 +2902,15 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         </div>
                         <div className="mt-3 grid gap-1 text-xs text-zinc-500">
                           <p>Matching current filters: {matchingBrandTemplates.length}</p>
-                          <p>Last price check: {formatShortDate(brand.last_price_list_checked_at)}</p>
-                          <p>Latest price list: {latestPriceListUpdate?.title ?? "No update recorded"}</p>
+                          <p>
+                            Latest price list: {latestBaselineDate ? formatShortDate(latestBaselineDate) : "No update recorded"}
+                          </p>
+                          <p>
+                            Current: {matchingStatusSummary.current + matchingStatusSummary.checked}{" "}
+                            • Needs check: {matchingStatusSummary.needs_check} • No baseline: {matchingStatusSummary.no_baseline}
+                          </p>
+                          {matchingStatusSummary.due > 0 ? <p>Due: {matchingStatusSummary.due}</p> : null}
+                          {latestPriceListUpdate?.title ? <p>Latest update record: {latestPriceListUpdate.title}</p> : null}
                         </div>
                       </div>
                     );
@@ -2976,8 +3059,15 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         Last price check: {formatShortDate(selectedBrand.last_price_list_checked_at)}
                       </p>
                       <p className="mt-1">
-                        Latest update: {(latestPriceListUpdateByBrand.get(selectedBrand.id) ?? null)?.title ?? "No update recorded"}
+                        Latest price list: {brandPriceBaselineByBrand.get(selectedBrand.id)
+                          ? formatShortDate(brandPriceBaselineByBrand.get(selectedBrand.id) ?? null)
+                          : "No update recorded"}
                       </p>
+                      {(latestPriceListUpdateByBrand.get(selectedBrand.id) ?? null)?.title ? (
+                        <p className="mt-1">
+                          Latest update record: {(latestPriceListUpdateByBrand.get(selectedBrand.id) ?? null)?.title}
+                        </p>
+                      ) : null}
                     </div>
                     <details className="rounded-lg border border-zinc-200 bg-white p-3">
                       <summary className="cursor-pointer text-xs font-semibold text-zinc-700">
@@ -3313,14 +3403,19 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                               </>
                             ) : null}
                             <span>/</span>
-                            <span className="font-semibold text-zinc-950">{template.template_name}</span>
+                            <span className="font-semibold text-zinc-950">{templateSelectionName(template)}</span>
                           </div>
                           <div className="mt-3 flex flex-wrap items-start gap-3">
                             <h2 className="text-2xl font-semibold text-zinc-950">
-                              {template.template_name}
+                              {templateSelectionName(template)}
                             </h2>
                             <TemplateLifecycleBadge status={templateLifecycleById.get(template.id) ?? "active"} />
                           </div>
+                          {template.internal_selection_name ? (
+                            <p className="mt-2 text-sm font-medium text-zinc-500">
+                              Quote name: {template.template_name}
+                            </p>
+                          ) : null}
                           <p className="mt-2 text-sm text-zinc-500">
                             {brandMap.get(template.brand_id) ?? "Unknown brand"}
                             {template.main_category_id
@@ -3360,7 +3455,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         </p>
                         <PriceCheckStatus
                           actorNameById={actorNameById}
-                          brandName={brandMap.get(template.brand_id)}
+                          brandPriceBaselineAt={brandPriceBaselineByBrand.get(template.brand_id)}
                           latestBrandUpdate={latestPriceListUpdateByBrand.get(template.brand_id)}
                           template={template}
                         />

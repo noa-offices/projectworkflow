@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import {
   loadPurchaseOrderSettings,
   savePurchaseOrderSettings,
@@ -57,11 +58,15 @@ export async function POST(
       settings: result.settings,
     });
   } catch (error) {
-    console.error("PURCHASE ORDER SETTINGS SAVE UNEXPECTED ERROR", error);
+    logServerActionError("PURCHASE ORDER SETTINGS SAVE UNEXPECTED ERROR", error, {
+      action: "purchaseOrderSettingsRoute.POST",
+      table: "quotation_purchase_orders",
+      field: "settings_json",
+    });
     return errorResponse(
-      "Failed to save PO settings.",
+      formatSafeActionError("Failed to save PO settings", error),
       500,
-      error instanceof Error ? error.message : "Unexpected server error.",
+      undefined,
     );
   }
 }

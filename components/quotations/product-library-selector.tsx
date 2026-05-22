@@ -48,6 +48,7 @@ export type ProductLibraryTemplate = {
   sub_category_id: string | null;
   template_code: string | null;
   template_name: string;
+  internal_selection_name: string | null;
   item_code: string | null;
   description: string | null;
   default_specification: string | null;
@@ -83,6 +84,7 @@ export type ProductLibraryTemplate = {
   unit_label?: string | null;
   currency: string;
   default_unit_price: number;
+  created_at: string | null;
   last_price_checked_at: string | null;
   price_check_interval_days: number | null;
   price_check_note?: string | null;
@@ -319,9 +321,8 @@ function finishSelectionLabel(finish: FinishSelectionEditorRow) {
   return `${finish.group_label || "Finish"} - ${itemLabel}`;
 }
 
-function priceCheckState(template: ProductLibraryTemplate, brandName?: string | null) {
+function priceCheckState(template: ProductLibraryTemplate) {
   return productTemplatePriceCheckState({
-    brandName,
     formatDate: formatPriceCheckDate,
     latestBrandPriceListUpdate: template.latest_brand_price_list_update,
     template,
@@ -329,15 +330,13 @@ function priceCheckState(template: ProductLibraryTemplate, brandName?: string | 
 }
 
 function PriceCheckBadge({
-  brandName,
   compact = false,
   template,
 }: {
-  brandName?: string | null;
   compact?: boolean;
   template: ProductLibraryTemplate;
 }) {
-  const status = priceCheckState(template, brandName);
+  const status = priceCheckState(template);
   const badgeClass = status.tone === "ok"
     ? "inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-900"
     : status.tone === "notice"
@@ -477,17 +476,40 @@ function matchesTemplateSearch({
   template: ProductLibraryTemplate;
 }) {
   return [
+    template.internal_selection_name,
     template.template_name,
     template.item_code,
     template.template_code,
     template.description,
     template.default_specification,
+    template.origin,
+    template.supplier_name,
     brandNameById.get(template.brand_id),
     template.main_category_id ? categoryNameById.get(template.main_category_id) : null,
     template.sub_category_id ? categoryNameById.get(template.sub_category_id) : null,
+    ...(template.desking_size_pricing ?? []).flatMap((row) => [
+      row.label,
+      row.supplier_price_list_code,
+    ]),
+    ...(template.variant_pricing ?? []).flatMap((row) => [
+      row.variant_name,
+      row.display_name,
+      row.supplier_price_list_code,
+      row.specification,
+    ]),
+    ...(template.category_pricing ?? []).flatMap((row) => [
+      row.variant_name,
+      row.display_name,
+      row.supplier_price_list_code,
+      row.specification,
+    ]),
   ]
     .filter(Boolean)
     .some((value) => value?.toLowerCase().includes(normalizedSearch));
+}
+
+function templateSelectionName(template: Pick<ProductLibraryTemplate, "internal_selection_name" | "template_name">) {
+  return template.internal_selection_name?.trim() || template.template_name;
 }
 
 function deskingRole(component: ProductLibraryComponent) {
@@ -1182,8 +1204,13 @@ export function ProductLibrarySelector({
                         <ProductThumbnail path={thumbnailPath ?? null} selected={selected} />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-semibold text-zinc-950">
-                            {template.template_name}
+                            {templateSelectionName(template)}
                           </span>
+                          {template.internal_selection_name ? (
+                            <span className="mt-1 block text-[11px] font-medium text-zinc-500">
+                              Quote name: {template.template_name}
+                            </span>
+                          ) : null}
                           <span className="mt-1 block text-xs text-zinc-500">
                             {brandNameById.get(template.brand_id) ?? "Unknown brand"}
                             {mainCategory ? ` / ${mainCategory}` : ""}
@@ -1192,7 +1219,7 @@ export function ProductLibrarySelector({
                           <span className="mt-1 block text-[11px] font-semibold text-zinc-500">
                             {template.item_code ?? template.template_code ?? "No code"}
                           </span>
-                          <PriceCheckBadge compact brandName={brandNameById.get(template.brand_id)} template={template} />
+                          <PriceCheckBadge compact template={template} />
                         </span>
                         <span className="shrink-0 text-right text-xs font-bold text-zinc-700">
                           {formatMoney(template.currency, numberValue(template.default_unit_price))}
@@ -1992,13 +2019,18 @@ export function ProductLibrarySelector({
                           Product Library / {brandNameById.get(template.brand_id) ?? "Unknown brand"}
                           {mainCategory ? ` / ${mainCategory}` : ""}
                           {subCategory ? ` / ${subCategory}` : ""}
-                          {` / ${template.template_name}`}
+                          {` / ${templateSelectionName(template)}`}
                         </p>
                         <div className="mt-3 flex flex-wrap items-center gap-3">
                           <h3 className="text-lg font-semibold text-zinc-950">
-                            {template.template_name}
+                            {templateSelectionName(template)}
                           </h3>
-                          <PriceCheckBadge brandName={brandNameById.get(template.brand_id)} template={template} />
+                          {template.internal_selection_name ? (
+                            <p className="text-sm font-medium text-zinc-500">
+                              Quote name: {template.template_name}
+                            </p>
+                          ) : null}
+                          <PriceCheckBadge template={template} />
                         </div>
                       </div>
                       <form
@@ -2024,10 +2056,15 @@ export function ProductLibrarySelector({
                                 </button>
                               </div>
                               <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-semibold text-zinc-950">
-                            {template.template_name}
+                            {templateSelectionName(template)}
                           </h3>
+                          {template.internal_selection_name ? (
+                            <span className="text-xs font-medium text-zinc-500">
+                              Quote name: {template.template_name}
+                            </span>
+                          ) : null}
                           {template.item_code ? (
                             <span className="border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">
                               {template.item_code}
@@ -2863,7 +2900,10 @@ export function ProductLibrarySelector({
                               <div className="rounded-lg border border-zinc-200 bg-white p-3 text-xs leading-5 text-zinc-700">
                                 <div className="flex items-start justify-between gap-3">
                                   <div className="min-w-0">
-                                    <p className="font-semibold text-zinc-950">{template.template_name}</p>
+                                    <p className="font-semibold text-zinc-950">{templateSelectionName(template)}</p>
+                                    {template.internal_selection_name ? (
+                                      <p className="text-zinc-500">Quote name: {template.template_name}</p>
+                                    ) : null}
                                     <p>{mainItemLabel}</p>
                                     {mainItemDimension ? (
                                       <p className="text-zinc-500">Dimension: {mainItemDimension}</p>
@@ -3027,8 +3067,8 @@ export function ProductLibrarySelector({
                               <p className="text-sm font-semibold text-zinc-950">
                                 {formatQuotationMoney(previewCurrency, previewUnitPriceWithConversion)}
                               </p>
-                              <PriceCheckBadge brandName={brandNameById.get(template.brand_id)} template={template} />
-                          {priceCheckState(template, brandNameById.get(template.brand_id)).tone === "warning" ? (
+                              <PriceCheckBadge template={template} />
+                          {priceCheckState(template).tone === "warning" ? (
                             <p className="max-w-52 text-[11px] leading-4 text-amber-700">
                               Please verify source price before finalizing quotation.
                             </p>
@@ -3239,10 +3279,13 @@ export function ProductLibrarySelector({
                           <p>Net Price: {formatQuotationMoney(previewCurrency, netPricePreview)}</p>
                           <p>Net Total: {formatQuotationMoney(previewCurrency, netTotalPreview)}</p>
                         </div>
-                            <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
-                              <p className="font-bold uppercase text-zinc-500">Final Specification</p>
-                              <div className="space-y-1 rounded-lg border border-zinc-200 bg-white p-3">
-                                <p className="font-semibold text-zinc-950">{template.template_name}</p>
+                              <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
+                                <p className="font-bold uppercase text-zinc-500">Final Specification</p>
+                                <div className="space-y-1 rounded-lg border border-zinc-200 bg-white p-3">
+                                <p className="font-semibold text-zinc-950">{templateSelectionName(template)}</p>
+                                {template.internal_selection_name ? (
+                                  <p className="text-zinc-500">Quote name: {template.template_name}</p>
+                                ) : null}
                                 {specificationPreviewLines.length ? (
                                   specificationPreviewLines.map((line) => (
                                     <p key={line}>{line}</p>
@@ -3434,7 +3477,7 @@ export function ProductLibrarySelector({
                             }));
                             setImagePreview(null);
                           }}
-                          templateName={template.template_name}
+                          templateName={templateSelectionName(template)}
                         />
                       ) : null}
                     </article>

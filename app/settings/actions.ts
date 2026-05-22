@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import { requireActiveUser, requireSettingsManager, requireSystemOwner } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit-log";
 import { DEFAULT_QUOTATION_NOTES } from "@/lib/quotations/quotation-pdf-settings";
@@ -42,6 +43,10 @@ function redirectToProfile(message: string, messageType: SettingsMessageType = "
   redirect(`/settings/profile?${query.toString()}`);
 }
 
+function actionErrorMessage(actionLabel: string, error: unknown, fallbackMessage?: string) {
+  return formatSafeActionError(actionLabel, error, fallbackMessage);
+}
+
 async function latestCompanySettingsId(supabase: Awaited<ReturnType<typeof createClient>>) {
   const { data: existingSettings, error: readError } = await supabase
     .from("company_settings")
@@ -51,8 +56,11 @@ async function latestCompanySettingsId(supabase: Awaited<ReturnType<typeof creat
     .maybeSingle<{ id: string }>();
 
   if (readError) {
-    console.error("COMPANY SETTINGS LOOKUP ERROR", readError.message);
-    redirectToSettings("Company settings could not be loaded.", "error");
+    logServerActionError("COMPANY SETTINGS LOOKUP ERROR", readError, {
+      action: "latestCompanySettingsId",
+      table: "company_settings",
+    });
+    redirectToSettings(actionErrorMessage("Company settings could not be loaded", readError), "error");
   }
 
   return existingSettings?.id ?? null;
@@ -70,8 +78,12 @@ async function saveCompanySettingsRecord(
   const { error } = await mutation;
 
   if (error) {
-    console.error("COMPANY SETTINGS SAVE ERROR", error.message);
-    redirectToSettings("Company settings could not be saved.", "error");
+    logServerActionError("COMPANY SETTINGS SAVE ERROR", error, {
+      action: "saveCompanySettingsRecord",
+      recordId: existingSettingsId,
+      table: "company_settings",
+    });
+    redirectToSettings(actionErrorMessage("Company settings could not be saved", error), "error");
   }
 
   return existingSettingsId;
@@ -171,8 +183,12 @@ export async function updateMyProfile(formData: FormData) {
     .eq("id", user.id);
 
   if (error) {
-    console.error("MY PROFILE UPDATE ERROR", error.message);
-    redirectToProfile("Profile could not be updated.", "error");
+    logServerActionError("MY PROFILE UPDATE ERROR", error, {
+      action: "updateMyProfile",
+      recordId: user.id,
+      table: "profiles",
+    });
+    redirectToProfile(actionErrorMessage("Profile could not be updated", error), "error");
   }
 
   await createAuditLog(supabase, {

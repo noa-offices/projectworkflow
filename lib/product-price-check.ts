@@ -1,4 +1,5 @@
 export type PriceCheckTemplate = {
+  created_at: string | null;
   last_price_checked_at: string | null;
   price_check_interval_days: number | null;
 };
@@ -13,9 +14,9 @@ export type BrandPriceListUpdateForCheck = {
 
 export type ProductPriceCheckState = {
   detail: string;
-  key: "not_checked" | "due" | "scheduled" | "checked";
+  key: "no_baseline" | "current" | "needs_check" | "due" | "scheduled" | "checked";
   label: string;
-  tone: "warning" | "notice" | "ok";
+  tone: "warning" | "notice" | "ok" | "neutral";
 };
 
 const dayMs = 24 * 60 * 60 * 1000;
@@ -35,6 +36,16 @@ export function brandPriceListUpdateDate(update: BrandPriceListUpdateForCheck | 
   return update.effective_from ?? update.received_at ?? update.created_at ?? null;
 }
 
+export function brandPriceBaselineDate({
+  fallbackCheckedAt,
+  latestBrandPriceListUpdate,
+}: {
+  fallbackCheckedAt?: string | null;
+  latestBrandPriceListUpdate?: BrandPriceListUpdateForCheck | null;
+}) {
+  return brandPriceListUpdateDate(latestBrandPriceListUpdate) ?? fallbackCheckedAt ?? null;
+}
+
 export function latestBrandPriceListUpdate<T extends BrandPriceListUpdateForCheck>(updates: T[]) {
   return updates
     .filter((update) => update.status === "draft" || update.status === "active")
@@ -50,13 +61,13 @@ export function latestBrandPriceListUpdate<T extends BrandPriceListUpdateForChec
 }
 
 export function productTemplatePriceCheckState({
-  brandName,
+  brandPriceBaselineAt,
   formatDate,
   latestBrandPriceListUpdate,
   now = Date.now(),
   template,
 }: {
-  brandName?: string | null;
+  brandPriceBaselineAt?: string | null;
   formatDate: (value: string | null) => string;
   latestBrandPriceListUpdate?: BrandPriceListUpdateForCheck | null;
   now?: number;
@@ -65,53 +76,66 @@ export function productTemplatePriceCheckState({
   const intervalDays = template.price_check_interval_days && template.price_check_interval_days > 0
     ? template.price_check_interval_days
     : 90;
-  const latestBrandUpdateDate = brandPriceListUpdateDate(latestBrandPriceListUpdate);
+  const latestBrandUpdateDate = brandPriceBaselineDate({
+    fallbackCheckedAt: brandPriceBaselineAt,
+    latestBrandPriceListUpdate,
+  });
   const latestBrandUpdateTime = dateMs(latestBrandUpdateDate);
+  const createdAt = dateMs(template.created_at);
   const checkedAt = dateMs(template.last_price_checked_at);
-  const brandLabel = brandName ? `${brandName} price list` : "brand price list";
+  const comparisonAt = checkedAt ?? createdAt;
 
-  if (!template.last_price_checked_at || checkedAt === null) {
+  if (latestBrandUpdateTime === null) {
     return {
-      detail: "No check recorded",
-      key: "not_checked",
-      tone: "warning",
-      label: "Price not checked yet",
+      detail: "No brand price list update recorded yet.",
+      key: "no_baseline",
+      tone: "neutral",
+      label: "No price baseline",
     };
   }
 
-  if (latestBrandUpdateTime !== null && checkedAt < latestBrandUpdateTime) {
-    if (latestBrandUpdateTime > now) {
+  if (latestBrandUpdateTime > now) {
+    return {
+      detail: `Effective from: ${formatDate(latestBrandUpdateDate)}`,
+      key: "scheduled",
+      tone: "notice",
+      label: "New price list scheduled",
+    };
+  }
+
+  if (comparisonAt !== null && comparisonAt >= latestBrandUpdateTime) {
+    if (checkedAt !== null) {
+      const dueAt = checkedAt + intervalDays * dayMs;
+
+      if (dueAt < now) {
+        return {
+          detail: `Last checked: ${formatDate(template.last_price_checked_at)}`,
+          key: "due",
+          tone: "warning",
+          label: "Price check due",
+        };
+      }
+
       return {
-        detail: `Effective from: ${formatDate(latestBrandUpdateDate)}`,
-        key: "scheduled",
-        tone: "notice",
-        label: "New price list scheduled",
+        detail: `Price checked: ${formatDate(template.last_price_checked_at)}`,
+        key: "checked",
+        tone: "ok",
+        label: "Price checked",
       };
     }
 
     return {
-      detail: `New ${brandLabel} effective from ${formatDate(latestBrandUpdateDate)}`,
-      key: "due",
-      tone: "warning",
-      label: "Price check due",
-    };
-  }
-
-  const dueAt = checkedAt + intervalDays * dayMs;
-
-  if (dueAt < now) {
-    return {
-      detail: `Last checked: ${formatDate(template.last_price_checked_at)}`,
-      key: "due",
-      tone: "warning",
-      label: "Price check due",
+      detail: "Added after latest brand price list update.",
+      key: "current",
+      tone: "ok",
+      label: "Price current",
     };
   }
 
   return {
-    detail: `Price checked: ${formatDate(template.last_price_checked_at)}`,
-    key: "checked",
-    tone: "ok",
-    label: "Price checked",
+    detail: `Brand price list was updated after this template${checkedAt !== null ? " was last checked" : " was created"}.`,
+    key: "needs_check",
+    tone: "warning",
+    label: "Needs price check",
   };
 }

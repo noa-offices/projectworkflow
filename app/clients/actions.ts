@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import { loadProjectQuotationDependencyCount } from "@/lib/clients/project-dependencies";
 import { requireRecordsManager } from "@/lib/auth";
 import { createAdminClient as createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -57,6 +58,10 @@ function redirectToClients(
 function safeSupabaseErrorReason(error: { code?: string | null; message?: string | null; details?: string | null }) {
   const detail = [error.code, error.message, error.details].filter(Boolean).join(" - ");
   return detail || "unknown server error";
+}
+
+function actionErrorMessage(actionLabel: string, error: unknown, fallbackMessage?: string) {
+  return formatSafeActionError(actionLabel, error, fallbackMessage);
 }
 
 function clientPayload(formData: FormData, userId?: string) {
@@ -124,8 +129,12 @@ export async function createClient(formData: FormData) {
   const { error } = await supabase.from("clients").insert(payload);
 
   if (error) {
-    console.error("CLIENT CREATE ERROR", error.message);
-    redirectWithMessage("Client could not be created.", "error");
+    logServerActionError("CLIENT CREATE ERROR", error, {
+      action: "createClient",
+      table: "clients",
+      companyName: payload.company_name,
+    });
+    redirectWithMessage(actionErrorMessage("Client could not be created", error), "error");
   }
 
   revalidatePath("/clients");
@@ -145,8 +154,12 @@ export async function updateClient(formData: FormData) {
   const { error } = await supabase.from("clients").update(payload).eq("id", id);
 
   if (error) {
-    console.error("CLIENT UPDATE ERROR", error.message);
-    redirectWithMessage("Client could not be updated.", "error");
+    logServerActionError("CLIENT UPDATE ERROR", error, {
+      action: "updateClient",
+      recordId: id,
+      table: "clients",
+    });
+    redirectWithMessage(actionErrorMessage("Client could not be updated", error), "error");
   }
 
   revalidatePath("/clients");
@@ -171,8 +184,13 @@ export async function createProject(formData: FormData) {
   const { error } = await supabase.from("projects").insert(payload);
 
   if (error) {
-    console.error("PROJECT CREATE ERROR", error.message);
-    redirectWithMessage("Project could not be created.", "error");
+    logServerActionError("PROJECT CREATE ERROR", error, {
+      action: "createProject",
+      clientId: payload.client_id,
+      projectName: payload.project_name,
+      table: "projects",
+    });
+    redirectWithMessage(actionErrorMessage("Project could not be created", error), "error");
   }
 
   revalidatePath("/clients");
@@ -198,8 +216,12 @@ export async function updateProject(formData: FormData) {
   const { error } = await supabase.from("projects").update(payload).eq("id", id);
 
   if (error) {
-    console.error("PROJECT UPDATE ERROR", error.message);
-    redirectWithMessage("Project could not be updated.", "error");
+    logServerActionError("PROJECT UPDATE ERROR", error, {
+      action: "updateProject",
+      recordId: id,
+      table: "projects",
+    });
+    redirectWithMessage(actionErrorMessage("Project could not be updated", error), "error");
   }
 
   revalidatePath("/clients");
@@ -221,8 +243,12 @@ export async function deactivateProject(formData: FormData) {
     .eq("id", id);
 
   if (error) {
-    console.error("PROJECT DEACTIVATE ERROR", error.message);
-    redirectWithMessage("Project could not be deactivated.", "error");
+    logServerActionError("PROJECT DEACTIVATE ERROR", error, {
+      action: "deactivateProject",
+      recordId: id,
+      table: "projects",
+    });
+    redirectWithMessage(actionErrorMessage("Project could not be deactivated", error), "error");
   }
 
   revalidatePath("/clients");
@@ -244,8 +270,12 @@ export async function restoreProject(formData: FormData) {
     .eq("id", id);
 
   if (error) {
-    console.error("PROJECT RESTORE ERROR", error.message);
-    redirectToClients("Project could not be restored.", { tab: "archive" }, "error");
+    logServerActionError("PROJECT RESTORE ERROR", error, {
+      action: "restoreProject",
+      recordId: id,
+      table: "projects",
+    });
+    redirectToClients(actionErrorMessage("Project could not be restored", error), { tab: "archive" }, "error");
   }
 
   revalidatePath("/clients");
@@ -268,8 +298,12 @@ export async function permanentlyDeleteProject(formData: FormData) {
     .maybeSingle<{ id: string; is_active: boolean }>();
 
   if (projectError) {
-    console.error("PROJECT PERMANENT DELETE READ ERROR", projectError.message);
-    redirectToClients("Project could not be loaded for deletion.", { tab: "archive" }, "error");
+    logServerActionError("PROJECT PERMANENT DELETE READ ERROR", projectError, {
+      action: "permanentlyDeleteProject",
+      recordId: id,
+      table: "projects",
+    });
+    redirectToClients(actionErrorMessage("Project could not be loaded for deletion", projectError), { tab: "archive" }, "error");
   }
 
   if (!project) {
@@ -308,10 +342,8 @@ export async function permanentlyDeleteProject(formData: FormData) {
 
   if (error) {
     const safeReason = safeSupabaseErrorReason(error);
-    console.error("PROJECT PERMANENT DELETE ERROR", {
-      code: error.code ?? null,
-      message: error.message ?? null,
-      details: error.details ?? null,
+    logServerActionError("PROJECT PERMANENT DELETE ERROR", error, {
+      action: "permanentlyDeleteProject",
       projectId: id,
     });
     redirectToClients(`Project delete failed because related records still exist: ${safeReason}`, { tab: "archive" }, "error");
@@ -337,9 +369,13 @@ async function deleteQuotationsByIds(
     .returns<Array<{ id: string }>>();
 
   if (sectionsReadError) {
-    console.error("PROJECT DELETE QUOTATION SECTIONS READ ERROR", sectionsReadError.message);
+    logServerActionError("PROJECT DELETE QUOTATION SECTIONS READ ERROR", sectionsReadError, {
+      action: "deleteQuotationsByIds",
+      projectId,
+      table: "quotation_sections",
+    });
     redirectToClients(
-      `Could not delete because linked quotation data still exists in quotation_sections: ${sectionsReadError.message}`,
+      actionErrorMessage("Linked quotation data could not be loaded from quotation_sections", sectionsReadError),
       { tab: "archive" },
       "error",
     );
@@ -411,9 +447,13 @@ async function deleteQuotationsByIds(
     const { error } = await step.run();
 
     if (error) {
-      console.error(`PROJECT DELETE ${step.label.toUpperCase()} ERROR`, error.message);
+      logServerActionError(`PROJECT DELETE ${step.label.toUpperCase()} ERROR`, error, {
+        action: "deleteQuotationsByIds",
+        projectId,
+        table: step.label,
+      });
       redirectToClients(
-        `Could not delete because linked quotation data still exists in ${step.label}: ${error.message}`,
+        actionErrorMessage(`Could not delete because linked quotation data still exists in ${step.label}`, error),
         { tab: "archive" },
         "error",
       );
@@ -438,8 +478,12 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
     .maybeSingle<{ id: string; is_active: boolean; project_name: string }>();
 
   if (projectError) {
-    console.error("PROJECT CASCADE DELETE READ ERROR", projectError.message);
-    redirectToClients("Project could not be loaded for deletion.", { tab: "archive" }, "error");
+    logServerActionError("PROJECT CASCADE DELETE READ ERROR", projectError, {
+      action: "permanentlyDeleteProjectAndLinkedQuotations",
+      recordId: id,
+      table: "projects",
+    });
+    redirectToClients(actionErrorMessage("Project could not be loaded for deletion", projectError), { tab: "archive" }, "error");
   }
 
   if (!project) {
@@ -471,7 +515,11 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
 
   if (quotationsError) {
     const safeReason = safeSupabaseErrorReason(quotationsError);
-    console.error("PROJECT CASCADE DELETE QUOTATIONS READ ERROR", safeReason);
+    logServerActionError("PROJECT CASCADE DELETE QUOTATIONS READ ERROR", quotationsError, {
+      action: "permanentlyDeleteProjectAndLinkedQuotations",
+      recordId: id,
+      table: "quotations",
+    });
     redirectToClients(`Linked quotations could not be loaded for deletion: ${safeReason}`, { tab: "archive" }, "error");
   }
 
@@ -486,9 +534,13 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
     .eq("entity_id", id);
 
   if (projectAuditError) {
-    console.error("PROJECT CASCADE DELETE PROJECT AUDIT ERROR", projectAuditError.message);
+    logServerActionError("PROJECT CASCADE DELETE PROJECT AUDIT ERROR", projectAuditError, {
+      action: "permanentlyDeleteProjectAndLinkedQuotations",
+      recordId: id,
+      table: "audit_activity_log",
+    });
     redirectToClients(
-      `Could not delete because linked quotation data still exists in audit_activity_log: ${projectAuditError.message}`,
+      actionErrorMessage("Could not delete because linked quotation data still exists in audit_activity_log", projectAuditError),
       { tab: "archive" },
       "error",
     );
@@ -501,9 +553,13 @@ export async function permanentlyDeleteProjectAndLinkedQuotations(formData: Form
     .eq("is_active", false);
 
   if (deleteProjectError) {
-    console.error("PROJECT CASCADE DELETE ERROR", deleteProjectError.message);
+    logServerActionError("PROJECT CASCADE DELETE ERROR", deleteProjectError, {
+      action: "permanentlyDeleteProjectAndLinkedQuotations",
+      recordId: id,
+      table: "projects",
+    });
     redirectToClients(
-      `Project could not be permanently deleted: ${deleteProjectError.message}`,
+      actionErrorMessage("Project could not be permanently deleted", deleteProjectError),
       { tab: "archive" },
       "error",
     );
@@ -540,8 +596,12 @@ export async function deactivateClient(formData: FormData) {
     .eq("id", id);
 
   if (error) {
-    console.error("CLIENT DEACTIVATE ERROR", error.message);
-    redirectWithMessage("Client could not be moved to Archive.", "error");
+    logServerActionError("CLIENT DEACTIVATE ERROR", error, {
+      action: "deactivateClient",
+      recordId: id,
+      table: "clients",
+    });
+    redirectWithMessage(actionErrorMessage("Client could not be moved to Archive", error), "error");
   }
 
   revalidatePath("/clients");
@@ -563,8 +623,12 @@ export async function restoreClient(formData: FormData) {
     .eq("id", id);
 
   if (error) {
-    console.error("CLIENT RESTORE ERROR", error.message);
-    redirectToClients("Client could not be restored.", { tab: "archive" }, "error");
+    logServerActionError("CLIENT RESTORE ERROR", error, {
+      action: "restoreClient",
+      recordId: id,
+      table: "clients",
+    });
+    redirectToClients(actionErrorMessage("Client could not be restored", error), { tab: "archive" }, "error");
   }
 
   revalidatePath("/clients");
@@ -590,11 +654,13 @@ export async function permanentlyDeleteClient(formData: FormData) {
     .eq("client_id", id);
 
   if (projectCountError || quotationCountError) {
-    console.error(
-      "CLIENT DEPENDENCY CHECK ERROR",
-      projectCountError?.message ?? quotationCountError?.message,
-    );
-    redirectToClients("Client dependencies could not be checked.", { tab: "archive" }, "error");
+    const dependencyError = projectCountError ?? quotationCountError;
+    logServerActionError("CLIENT DEPENDENCY CHECK ERROR", dependencyError, {
+      action: "permanentlyDeleteClient",
+      recordId: id,
+      table: projectCountError ? "projects" : "quotations",
+    });
+    redirectToClients(actionErrorMessage("Client dependencies could not be checked", dependencyError), { tab: "archive" }, "error");
   }
 
   if ((projectCount ?? 0) > 0 || (quotationCount ?? 0) > 0) {
@@ -606,8 +672,12 @@ export async function permanentlyDeleteClient(formData: FormData) {
   const { error } = await supabase.from("clients").delete().eq("id", id);
 
   if (error) {
-    console.error("CLIENT PERMANENT DELETE ERROR", error.message);
-    redirectToClients("Client could not be permanently deleted.", { tab: "archive" }, "error");
+    logServerActionError("CLIENT PERMANENT DELETE ERROR", error, {
+      action: "permanentlyDeleteClient",
+      recordId: id,
+      table: "clients",
+    });
+    redirectToClients(actionErrorMessage("Client could not be permanently deleted", error), { tab: "archive" }, "error");
   }
 
   revalidatePath("/clients");

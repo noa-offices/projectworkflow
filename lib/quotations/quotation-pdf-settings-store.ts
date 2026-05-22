@@ -1,4 +1,5 @@
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import { normalizeQuotationPdfSettings } from "@/lib/quotations/quotation-pdf-settings";
 
 type ProfileRecord = {
@@ -69,10 +70,14 @@ async function activeUser(): Promise<AuthFailure | ActiveUserAuthSuccess> {
     .maybeSingle<ProfileRecord>();
 
   if (profileError) {
-    console.error("QUOTATION PDF SETTINGS PROFILE ERROR", profileError.message);
+    logServerActionError("QUOTATION PDF SETTINGS PROFILE ERROR", profileError, {
+      action: "loadQuotationPdfSettings.activeUser",
+      table: "profiles",
+      recordId: user.id,
+    });
     return {
       supabase,
-      error: "Failed to verify user permissions.",
+      error: formatSafeActionError("Failed to verify user permissions", profileError),
       status: 500,
       details: supabaseErrorDetails(profileError) ?? profileError.message,
       code: profileError.code,
@@ -105,11 +110,15 @@ export async function loadQuotationPdfSettings(quotationId: string): Promise<Loa
     .maybeSingle<QuotationPdfSettingsRecord>();
 
   if (error) {
-    console.error("QUOTATION PDF SETTINGS LOAD ERROR", error.message);
+    logServerActionError("QUOTATION PDF SETTINGS LOAD ERROR", error, {
+      action: "loadQuotationPdfSettings",
+      recordId: quotationId,
+      table: "quotation_pdfs",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to load quotation PDF settings.",
+      error: formatSafeActionError("Failed to load quotation PDF settings", error),
       details: supabaseErrorDetails(error) ?? error.message,
       code: error.code,
     };
@@ -143,11 +152,15 @@ export async function saveQuotationPdfSettings(quotationId: string, settings: un
     .maybeSingle<QuotationRecord>();
 
   if (quotationError) {
-    console.error("QUOTATION PDF SETTINGS QUOTATION READ ERROR", quotationError.message);
+    logServerActionError("QUOTATION PDF SETTINGS QUOTATION READ ERROR", quotationError, {
+      action: "saveQuotationPdfSettings",
+      recordId: quotationId,
+      table: "quotations",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to verify quotation.",
+      error: formatSafeActionError("Failed to verify quotation", quotationError),
       details: supabaseErrorDetails(quotationError) ?? quotationError.message,
       code: quotationError.code,
     };
@@ -177,11 +190,16 @@ export async function saveQuotationPdfSettings(quotationId: string, settings: un
     .single<QuotationPdfSettingsRecord>();
 
   if (error) {
-    console.error("QUOTATION PDF SETTINGS SAVE ERROR", error.message);
+    logServerActionError("QUOTATION PDF SETTINGS SAVE ERROR", error, {
+      action: "saveQuotationPdfSettings",
+      recordId: quotationId,
+      table: "quotation_pdfs",
+      field: "settings_json",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to save quotation PDF settings.",
+      error: formatSafeActionError("Failed to save quotation PDF settings", error),
       details: supabaseErrorDetails(error) ?? error.message,
       code: error.code,
     };

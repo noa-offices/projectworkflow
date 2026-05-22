@@ -203,8 +203,10 @@ export function ProductManagementFilterBar({
         className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
       >
         <option value="">All price statuses</option>
-        <option value="not_checked">Price not checked yet</option>
+        <option value="current">Price current</option>
+        <option value="needs_check">Needs price check</option>
         <option value="due">Price check due</option>
+        <option value="no_baseline">No price baseline</option>
         <option value="scheduled">New price list scheduled</option>
         <option value="checked">Price checked</option>
       </select>

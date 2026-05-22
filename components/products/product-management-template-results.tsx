@@ -7,7 +7,7 @@ import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { ProductTemplateImageUploader } from "@/components/products/product-template-image-uploader";
 
-type PriceStatusTone = "ok" | "notice" | "warning";
+type PriceStatusTone = "ok" | "notice" | "warning" | "neutral";
 
 export type ProductManagementTemplateResult = {
   id: string;
@@ -27,6 +27,7 @@ export type ProductManagementTemplateResult = {
   priceStatusLabel: string;
   priceStatusTone: PriceStatusTone;
   priceText: string;
+  quoteName: string;
   searchText: string;
   templateCodeText: string;
   templateName: string;
@@ -147,6 +148,8 @@ function CompactPriceCheckStatus({
     ? "border-emerald-200 bg-emerald-50 text-emerald-900"
     : tone === "notice"
       ? "border-sky-200 bg-sky-50 text-sky-900"
+      : tone === "neutral"
+        ? "border-zinc-200 bg-zinc-50 text-zinc-700"
       : "border-amber-200 bg-amber-50 text-amber-900";
 
   return (
@@ -230,6 +233,11 @@ export function ProductManagementTemplateResults({
                   </h3>
                   <TemplateLifecycleBadge status={template.lifecycleStatus} />
                 </div>
+                {template.templateName !== template.quoteName ? (
+                  <p className="text-xs font-medium text-zinc-500">
+                    Quote name: {template.quoteName}
+                  </p>
+                ) : null}
                 <p className="text-xs leading-5 text-zinc-500">{template.path}</p>
                 <div className="text-sm font-semibold text-zinc-950">{template.priceText}</div>
                 <div className="text-[11px] text-zinc-500">{template.templateCodeText}</div>

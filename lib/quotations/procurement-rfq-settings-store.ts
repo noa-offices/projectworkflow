@@ -1,4 +1,5 @@
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import { normalizeProcurementRfqSettings } from "@/lib/quotations/procurement-rfq-settings";
 
 type ProfileRecord = {
@@ -69,10 +70,14 @@ async function activeUser(): Promise<AuthFailure | ActiveUserAuthSuccess> {
     .maybeSingle<ProfileRecord>();
 
   if (profileError) {
-    console.error("PROCUREMENT RFQ SETTINGS PROFILE ERROR", profileError.message);
+    logServerActionError("PROCUREMENT RFQ SETTINGS PROFILE ERROR", profileError, {
+      action: "loadProcurementRfqSettings.activeUser",
+      table: "profiles",
+      recordId: user.id,
+    });
     return {
       supabase,
-      error: "Failed to verify user permissions.",
+      error: formatSafeActionError("Failed to verify user permissions", profileError),
       status: 500,
       details: supabaseErrorDetails(profileError) ?? profileError.message,
       code: profileError.code,
@@ -105,11 +110,15 @@ export async function loadProcurementRfqSettings(quotationId: string): Promise<L
     .maybeSingle<ProcurementRfqSettingsRecord>();
 
   if (error) {
-    console.error("PROCUREMENT RFQ SETTINGS LOAD ERROR", error.message);
+    logServerActionError("PROCUREMENT RFQ SETTINGS LOAD ERROR", error, {
+      action: "loadProcurementRfqSettings",
+      recordId: quotationId,
+      table: "quotation_procurement_rfqs",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to load RFQ settings.",
+      error: formatSafeActionError("Failed to load RFQ settings", error),
       details: supabaseErrorDetails(error) ?? error.message,
       code: error.code,
     };
@@ -143,11 +152,15 @@ export async function saveProcurementRfqSettings(quotationId: string, settings: 
     .maybeSingle<QuotationRecord>();
 
   if (quotationError) {
-    console.error("PROCUREMENT RFQ SETTINGS QUOTATION READ ERROR", quotationError.message);
+    logServerActionError("PROCUREMENT RFQ SETTINGS QUOTATION READ ERROR", quotationError, {
+      action: "saveProcurementRfqSettings",
+      recordId: quotationId,
+      table: "quotations",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to verify quotation.",
+      error: formatSafeActionError("Failed to verify quotation", quotationError),
       details: supabaseErrorDetails(quotationError) ?? quotationError.message,
       code: quotationError.code,
     };
@@ -177,11 +190,16 @@ export async function saveProcurementRfqSettings(quotationId: string, settings: 
     .single<ProcurementRfqSettingsRecord>();
 
   if (error) {
-    console.error("PROCUREMENT RFQ SETTINGS SAVE ERROR", error.message);
+    logServerActionError("PROCUREMENT RFQ SETTINGS SAVE ERROR", error, {
+      action: "saveProcurementRfqSettings",
+      recordId: quotationId,
+      table: "quotation_procurement_rfqs",
+      field: "settings_json",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to save RFQ settings.",
+      error: formatSafeActionError("Failed to save RFQ settings", error),
       details: supabaseErrorDetails(error) ?? error.message,
       code: error.code,
     };

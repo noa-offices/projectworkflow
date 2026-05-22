@@ -1,4 +1,5 @@
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import { normalizePurchaseOrderSettings } from "@/lib/quotations/purchase-order-settings";
 
 type ProfileRecord = {
@@ -69,10 +70,14 @@ async function activeUser(): Promise<AuthFailure | ActiveUserAuthSuccess> {
     .maybeSingle<ProfileRecord>();
 
   if (profileError) {
-    console.error("PURCHASE ORDER SETTINGS PROFILE ERROR", profileError.message);
+    logServerActionError("PURCHASE ORDER SETTINGS PROFILE ERROR", profileError, {
+      action: "loadPurchaseOrderSettings.activeUser",
+      table: "profiles",
+      recordId: user.id,
+    });
     return {
       supabase,
-      error: "Failed to verify user permissions.",
+      error: formatSafeActionError("Failed to verify user permissions", profileError),
       status: 500,
       details: supabaseErrorDetails(profileError) ?? profileError.message,
       code: profileError.code,
@@ -105,11 +110,15 @@ export async function loadPurchaseOrderSettings(quotationId: string): Promise<Lo
     .maybeSingle<PurchaseOrderSettingsRecord>();
 
   if (error) {
-    console.error("PURCHASE ORDER SETTINGS LOAD ERROR", error.message);
+    logServerActionError("PURCHASE ORDER SETTINGS LOAD ERROR", error, {
+      action: "loadPurchaseOrderSettings",
+      recordId: quotationId,
+      table: "quotation_purchase_orders",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to load PO settings.",
+      error: formatSafeActionError("Failed to load PO settings", error),
       details: supabaseErrorDetails(error) ?? error.message,
       code: error.code,
     };
@@ -143,11 +152,15 @@ export async function savePurchaseOrderSettings(quotationId: string, settings: u
     .maybeSingle<QuotationRecord>();
 
   if (quotationError) {
-    console.error("PURCHASE ORDER SETTINGS QUOTATION READ ERROR", quotationError.message);
+    logServerActionError("PURCHASE ORDER SETTINGS QUOTATION READ ERROR", quotationError, {
+      action: "savePurchaseOrderSettings",
+      recordId: quotationId,
+      table: "quotations",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to verify quotation.",
+      error: formatSafeActionError("Failed to verify quotation", quotationError),
       details: supabaseErrorDetails(quotationError) ?? quotationError.message,
       code: quotationError.code,
     };
@@ -177,11 +190,16 @@ export async function savePurchaseOrderSettings(quotationId: string, settings: u
     .single<PurchaseOrderSettingsRecord>();
 
   if (error) {
-    console.error("PURCHASE ORDER SETTINGS SAVE ERROR", error.message);
+    logServerActionError("PURCHASE ORDER SETTINGS SAVE ERROR", error, {
+      action: "savePurchaseOrderSettings",
+      recordId: quotationId,
+      table: "quotation_purchase_orders",
+      field: "settings_json",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to save PO settings.",
+      error: formatSafeActionError("Failed to save PO settings", error),
       details: supabaseErrorDetails(error) ?? error.message,
       code: error.code,
     };

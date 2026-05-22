@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import {
   loadProcurementRfqSettings,
   saveProcurementRfqSettings,
@@ -57,11 +58,15 @@ export async function POST(
       settings: result.settings,
     });
   } catch (error) {
-    console.error("PROCUREMENT RFQ SETTINGS SAVE UNEXPECTED ERROR", error);
+    logServerActionError("PROCUREMENT RFQ SETTINGS SAVE UNEXPECTED ERROR", error, {
+      action: "procurementRfqSettingsRoute.POST",
+      table: "quotation_procurement_rfqs",
+      field: "settings_json",
+    });
     return errorResponse(
-      "Failed to save RFQ settings.",
+      formatSafeActionError("Failed to save RFQ settings", error),
       500,
-      error instanceof Error ? error.message : "Unexpected server error.",
+      undefined,
     );
   }
 }

@@ -1,4 +1,5 @@
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import { normalizeOrderConfirmationSettings } from "@/lib/quotations/order-confirmation-settings";
 
 type ProfileRecord = {
@@ -69,10 +70,14 @@ async function activeUser(): Promise<AuthFailure | ActiveUserAuthSuccess> {
     .maybeSingle<ProfileRecord>();
 
   if (profileError) {
-    console.error("ORDER CONFIRMATION SETTINGS PROFILE ERROR", profileError.message);
+    logServerActionError("ORDER CONFIRMATION SETTINGS PROFILE ERROR", profileError, {
+      action: "loadOrderConfirmationSettings.activeUser",
+      table: "profiles",
+      recordId: user.id,
+    });
     return {
       supabase,
-      error: "Failed to verify user permissions.",
+      error: formatSafeActionError("Failed to verify user permissions", profileError),
       status: 500,
       details: supabaseErrorDetails(profileError) ?? profileError.message,
       code: profileError.code,
@@ -105,11 +110,15 @@ export async function loadOrderConfirmationSettings(quotationId: string): Promis
     .maybeSingle<OrderConfirmationSettingsRecord>();
 
   if (error) {
-    console.error("ORDER CONFIRMATION SETTINGS LOAD ERROR", error.message);
+    logServerActionError("ORDER CONFIRMATION SETTINGS LOAD ERROR", error, {
+      action: "loadOrderConfirmationSettings",
+      recordId: quotationId,
+      table: "quotation_order_confirmations",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to load order confirmation settings.",
+      error: formatSafeActionError("Failed to load order confirmation settings", error),
       details: supabaseErrorDetails(error) ?? error.message,
       code: error.code,
     };
@@ -143,11 +152,15 @@ export async function saveOrderConfirmationSettings(quotationId: string, setting
     .maybeSingle<QuotationRecord>();
 
   if (quotationError) {
-    console.error("ORDER CONFIRMATION SETTINGS QUOTATION READ ERROR", quotationError.message);
+    logServerActionError("ORDER CONFIRMATION SETTINGS QUOTATION READ ERROR", quotationError, {
+      action: "saveOrderConfirmationSettings",
+      recordId: quotationId,
+      table: "quotations",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to verify quotation.",
+      error: formatSafeActionError("Failed to verify quotation", quotationError),
       details: supabaseErrorDetails(quotationError) ?? quotationError.message,
       code: quotationError.code,
     };
@@ -177,11 +190,16 @@ export async function saveOrderConfirmationSettings(quotationId: string, setting
     .single<OrderConfirmationSettingsRecord>();
 
   if (error) {
-    console.error("ORDER CONFIRMATION SETTINGS SAVE ERROR", error.message);
+    logServerActionError("ORDER CONFIRMATION SETTINGS SAVE ERROR", error, {
+      action: "saveOrderConfirmationSettings",
+      recordId: quotationId,
+      table: "quotation_order_confirmations",
+      field: "settings_json",
+    });
     return {
       success: false,
       status: 500,
-      error: "Failed to save order confirmation settings.",
+      error: formatSafeActionError("Failed to save order confirmation settings", error),
       details: supabaseErrorDetails(error) ?? error.message,
       code: error.code,
     };

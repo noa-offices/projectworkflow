@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import {
   loadPresentationSettings,
   savePresentationSettings,
@@ -56,11 +57,15 @@ export async function POST(
       settings: result.settings,
     });
   } catch (error) {
-    console.error("PRESENTATION SETTINGS SAVE UNEXPECTED ERROR", error);
+    logServerActionError("PRESENTATION SETTINGS SAVE UNEXPECTED ERROR", error, {
+      action: "presentationSettingsRoute.POST",
+      table: "quotation_presentations",
+      field: "settings_json",
+    });
     return errorResponse(
-      "Failed to save presentation settings.",
+      formatSafeActionError("Failed to save presentation settings", error),
       500,
-      error instanceof Error ? error.message : "Unexpected server error.",
+      undefined,
     );
   }
 }

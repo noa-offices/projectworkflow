@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import {
   loadQuotationPdfSettings,
   saveQuotationPdfSettings,
@@ -57,11 +58,15 @@ export async function POST(
       settings: result.settings,
     });
   } catch (error) {
-    console.error("QUOTATION PDF SETTINGS SAVE UNEXPECTED ERROR", error);
+    logServerActionError("QUOTATION PDF SETTINGS SAVE UNEXPECTED ERROR", error, {
+      action: "quotationPdfSettingsRoute.POST",
+      table: "quotation_pdfs",
+      field: "settings_json",
+    });
     return errorResponse(
-      "Failed to save quotation PDF settings.",
+      formatSafeActionError("Failed to save quotation PDF settings", error),
       500,
-      error instanceof Error ? error.message : "Unexpected server error.",
+      undefined,
     );
   }
 }

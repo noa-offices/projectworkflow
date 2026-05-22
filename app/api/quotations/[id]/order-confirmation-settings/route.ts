@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import {
   loadOrderConfirmationSettings,
   saveOrderConfirmationSettings,
@@ -57,11 +58,15 @@ export async function POST(
       settings: result.settings,
     });
   } catch (error) {
-    console.error("ORDER CONFIRMATION SETTINGS SAVE UNEXPECTED ERROR", error);
+    logServerActionError("ORDER CONFIRMATION SETTINGS SAVE UNEXPECTED ERROR", error, {
+      action: "orderConfirmationSettingsRoute.POST",
+      table: "quotation_order_confirmations",
+      field: "settings_json",
+    });
     return errorResponse(
-      "Failed to save order confirmation settings.",
+      formatSafeActionError("Failed to save order confirmation settings", error),
       500,
-      error instanceof Error ? error.message : "Unexpected server error.",
+      undefined,
     );
   }
 }
