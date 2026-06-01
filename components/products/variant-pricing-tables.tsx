@@ -797,7 +797,7 @@ export function CategoryPricingTable({
     if (!trimmedName) {
       return;
     }
-    const normalizedCategory = normalizePriceCategoryLabel(trimmedName);
+    const normalizedCategory = normalizeCategoryPriceLabel(trimmedName);
     const groupPriceCategories = group?.price_categories ?? defaultPriceCategories;
     if (!normalizedCategory || groupPriceCategories.includes(normalizedCategory)) {
       setNewCategoryNames((current) => ({ ...current, [groupId]: "" }));
@@ -971,7 +971,14 @@ export function ModularItemPricingTable({
   );
   const modularDefaults = useMemo(() => modularPricingDefaultsFromRows(rows), [rows]);
   const [tableRows, setTableRows] = useState<CategoryPricingRow[]>(() => initialRows);
-  const [priceCategories, setPriceCategories] = useState<string[]>(() => derivedPriceCategories(initialRows));
+  const [priceCategories, setPriceCategories] = useState<string[]>(() =>
+    Array.from(new Set([
+      ...defaultPriceCategories,
+      ...initialRows.flatMap((row) =>
+        Object.keys(row.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean),
+      ),
+    ])),
+  );
   const [newCategoryName, setNewCategoryName] = useState("");
   const [showCategoryCreator, setShowCategoryCreator] = useState(false);
   const [defaultSpecification, setDefaultSpecification] = useState(modularDefaults.defaultSpecification ?? "");
@@ -1058,7 +1065,7 @@ export function ModularItemPricingTable({
     const trimmedName = newCategoryName.trim();
     if (!trimmedName) return;
 
-    const normalizedCategory = normalizePriceCategoryLabel(trimmedName);
+    const normalizedCategory = normalizeCategoryPriceLabel(trimmedName);
     if (!normalizedCategory || priceCategories.includes(normalizedCategory)) {
       setNewCategoryName("");
       setShowCategoryCreator(false);
