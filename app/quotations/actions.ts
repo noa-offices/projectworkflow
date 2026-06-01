@@ -12,9 +12,12 @@ import {
 import { createAuditLog } from "@/lib/audit-log";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import {
+  flattenStandardCategoryPricingRows,
+  standardCategoryPriceColumns as groupedCategoryPriceColumns,
+} from "@/lib/products/category-pricing-groups";
+import {
   modularItemPricingRows,
   modularPricingDefaultsFromRows,
-  standardCategoryPricingRows,
 } from "@/lib/products/modular-pricing";
 import {
   buildQuotationDocumentNumber,
@@ -595,7 +598,7 @@ function activeVariantRows(rows?: VariantPricingRow[] | null) {
 }
 
 function activeCategoryRows(rows?: CategoryPricingRow[] | null) {
-  return standardCategoryPricingRows(rows)
+  return flattenStandardCategoryPricingRows(rows)
     .filter((row) => row.is_active !== false)
     .filter((row) => row.variant_name || row.dimension || Object.values(row.prices ?? {}).some((price) => calculationNumber(price) > 0))
     .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
@@ -609,17 +612,10 @@ function activeModularRows(rows?: CategoryPricingRow[] | null) {
 }
 
 function categoryPriceColumns(rows?: CategoryPricingRow[] | null) {
-  const columns = ["Cat A", "Cat B", "Cat C", "Cat D"];
-
-  [...activeCategoryRows(rows), ...activeModularRows(rows)].forEach((row) => {
-    Object.keys(row.prices ?? {}).forEach((category) => {
-      if (!columns.includes(category)) {
-        columns.push(category);
-      }
-    });
-  });
-
-  return columns;
+  return Array.from(new Set([
+    ...groupedCategoryPriceColumns(rows),
+    ...activeModularRows(rows).flatMap((row) => Object.keys(row.prices ?? {})),
+  ]));
 }
 
 function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
@@ -1167,6 +1163,10 @@ type VariantPricingRow = {
 
 type CategoryPricingRow = {
   id?: string;
+  group_id?: string;
+  group_name?: string;
+  items?: CategoryPricingRow[];
+  price_categories?: string[];
   pricing_type?: string | null;
   pricing_category_id?: string | null;
   pricing_category_name?: string | null;

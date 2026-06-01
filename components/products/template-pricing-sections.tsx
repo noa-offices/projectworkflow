@@ -14,7 +14,8 @@ import {
   type VariantPricingRow,
   VariantPricingTable,
 } from "@/components/products/variant-pricing-tables";
-import { modularItemPricingRows, standardCategoryPricingRows } from "@/lib/products/modular-pricing";
+import { countStandardCategoryPricingRows } from "@/lib/products/category-pricing-groups";
+import { modularItemPricingRows } from "@/lib/products/modular-pricing";
 import {
   TemplateImportActionButton,
   type QuotationRowImportDraft,
@@ -130,7 +131,7 @@ export function TemplatePricingSections({
   const hasWorkstationPricing = hasRows(deskingSizePricingRows);
   const hasBasePricing = hasRows(variantPricingRows);
   const hasAccessoriesPricing = hasRows(accessoryPricingRows);
-  const hasFinishPricing = hasRows(standardCategoryPricingRows(categoryPricingRows));
+  const hasFinishPricing = countStandardCategoryPricingRows(categoryPricingRows) > 0;
   const hasModularPricing = hasRows(modularItemPricingRows(categoryPricingRows));
 
   const [showWorkstationPricing, setShowWorkstationPricing] = useState(hasWorkstationPricing || Boolean(importDraft));
@@ -371,7 +372,7 @@ export function TemplatePricingSections({
           <PricingAccordionSection
             isOpen={openFinishPricing}
             onToggle={() => setOpenFinishPricing((current) => !current)}
-            summary={`${categoryPricingRows?.length ?? 0} finish pricing rows`}
+            summary={`${countStandardCategoryPricingRows(categoryPricingRows)} finish pricing rows`}
             title="Fabric / Leather / Finish Category Pricing"
           >
             {renderFinishPricing}

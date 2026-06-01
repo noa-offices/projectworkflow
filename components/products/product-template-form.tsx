@@ -17,6 +17,7 @@ import {
 } from "@/components/products/template-category-fields";
 import { TemplateFormShell } from "@/components/products/template-form-shell";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import { countStandardCategoryPricingRows } from "@/lib/products/category-pricing-groups";
 
 type ProductTemplateImageField =
   | "proposed_image_url_1"
@@ -101,6 +102,10 @@ type VariantPricingRow = {
 
 type CategoryPricingRow = {
   id?: string;
+  group_id?: string;
+  group_name?: string;
+  items?: CategoryPricingRow[];
+  price_categories?: string[];
   pricing_type?: string | null;
   pricing_category_id?: string | null;
   pricing_category_name?: string | null;
@@ -434,7 +439,7 @@ export function ProductTemplateForm({
     (template?.desking_size_pricing?.length ?? 0) +
     (template?.variant_pricing?.length ?? 0) +
     (template?.accessory_pricing?.length ?? 0) +
-    (template?.category_pricing?.length ?? 0);
+    countStandardCategoryPricingRows(template?.category_pricing);
 
   useEffect(() => {
     if (focusSection !== "pricing") {

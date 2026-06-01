@@ -3,10 +3,14 @@
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import {
+  groupedStandardCategoryPricingRows,
+  normalizeCategoryPriceLabel,
+  standardCategoryPriceColumns,
+} from "@/lib/products/category-pricing-groups";
+import {
   MODULAR_ITEM_PRICING_TYPE,
   modularItemPricingRows,
   modularPricingDefaultsFromRows,
-  standardCategoryPricingRows,
 } from "@/lib/products/modular-pricing";
 import { resolveDefaultPricingCurrency } from "@/components/products/pricing-default-currency";
 import {
@@ -31,6 +35,10 @@ export type VariantPricingRow = {
 
 export type CategoryPricingRow = {
   id?: string;
+  group_id?: string;
+  group_name?: string;
+  items?: CategoryPricingRow[];
+  price_categories?: string[];
   pricing_type?: string | null;
   pricing_category_id?: string | null;
   pricing_category_name?: string | null;
@@ -84,24 +92,6 @@ function numberValue(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
-function normalizePriceCategoryLabel(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return "";
-  }
-
-  const compact = trimmed.replace(/[_-]+/g, " ").replace(/\s+/g, " ");
-  const match = compact.match(/^cat\s*([a-z0-9]+)$/i);
-  if (match) {
-    return `Cat ${match[1].toUpperCase()}`;
-  }
-
-  return compact
-    .split(" ")
-    .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
-    .join(" ");
-}
-
 function normalizedPriceMap(prices?: Record<string, unknown> | null) {
   const normalized = new Map<string, number>();
 
@@ -110,7 +100,7 @@ function normalizedPriceMap(prices?: Record<string, unknown> | null) {
   });
 
   Object.entries(prices ?? {}).forEach(([key, value]) => {
-    const label = normalizePriceCategoryLabel(key);
+    const label = normalizeCategoryPriceLabel(key);
     if (!label) {
       return;
     }
@@ -176,20 +166,6 @@ function resolveDefaultModularPricingCurrency({
     existingRowsCurrency(existingRows) ||
     defaultCurrency
   );
-}
-
-function derivedPriceCategories(rows?: CategoryPricingRow[] | null) {
-  const orderedCategories = [...defaultPriceCategories];
-
-  (Array.isArray(rows) ? rows : []).forEach((row) => {
-    Object.keys(normalizedPriceMap(row.prices)).forEach((category) => {
-      if (!orderedCategories.includes(category)) {
-        orderedCategories.push(category);
-      }
-    });
-  });
-
-  return orderedCategories;
 }
 
 function normalizeVariant(row: VariantPricingRow, index: number): VariantPricingRow {
@@ -385,6 +361,29 @@ function rowHasMeaningfulValues(row: CategoryPricingRow) {
   }
 
   return Object.values(row.prices ?? {}).some((value) => numberValue(value) !== 0);
+}
+
+function normalizeCategoryGroup(
+  row: CategoryPricingRow,
+  index: number,
+): CategoryPricingRow {
+  const items = Array.isArray(row.items)
+    ? row.items.map((item, itemIndex) => normalizeCategory(item, itemIndex))
+    : [];
+  const priceCategories = Array.from(new Set([
+    ...defaultPriceCategories,
+    ...((row.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean)),
+    ...items.flatMap((item) => Object.keys(item.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean)),
+  ]));
+
+  return {
+    id: row.id || `category-group-${index}`,
+    group_name: row.group_name?.trim() || "Finish Category Pricing",
+    price_categories: priceCategories,
+    is_active: row.is_active !== false,
+    sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
+    items,
+  };
 }
 
 function variantRowHasMeaningfulValues(row: VariantPricingRow) {
@@ -595,31 +594,39 @@ export function CategoryPricingTable({
   templateId: string;
   templateCurrency?: string | null;
 }) {
-  const initialRows = useMemo(
-    () => standardCategoryPricingRows(rows).map(normalizeCategory),
+  const initialGroups = useMemo(
+    () => groupedStandardCategoryPricingRows(rows).map((group, index) => normalizeCategoryGroup(group, index)),
     [rows],
   );
   const importedIdsRef = useRef<Set<string>>(new Set());
-  const [tableRows, setTableRows] = useState<CategoryPricingRow[]>(() => initialRows);
-  const [priceCategories, setPriceCategories] = useState<string[]>(() => derivedPriceCategories(rows));
-  const [newCategoryName, setNewCategoryName] = useState("");
-  const [showCategoryCreator, setShowCategoryCreator] = useState(false);
+  const [groups, setGroups] = useState<CategoryPricingRow[]>(() => initialGroups);
+  const [newCategoryNames, setNewCategoryNames] = useState<Record<string, string>>({});
+  const [showCategoryCreators, setShowCategoryCreators] = useState<Record<string, boolean>>({});
   const userEditedCurrencyRowIds = useRef<Set<string>>(new Set());
   const previousDefaultCurrencyRef = useRef(
     resolveDefaultPricingCurrency({
       brandDefaultCurrency,
-      existingRows: initialRows,
+      existingRows: initialGroups.flatMap((group) => group.items ?? []),
       savedTemplateCurrency: templateCurrency,
     }),
   );
   const serialized = useMemo(
     () =>
       JSON.stringify(
-        tableRows.map((row, index) =>
-          normalizeCategory(categoryPricingRowWithColumns(row, priceCategories), index),
-        ),
+        groups.map((group, groupIndex) => {
+          const normalizedGroup = normalizeCategoryGroup(group, groupIndex);
+          return {
+            ...normalizedGroup,
+            items: (normalizedGroup.items ?? []).map((item, itemIndex) =>
+              normalizeCategory(
+                categoryPricingRowWithColumns(item, normalizedGroup.price_categories ?? defaultPriceCategories),
+                itemIndex,
+              ),
+            ),
+          };
+        }),
       ),
-    [priceCategories, tableRows],
+    [groups],
   );
 
   useEffect(() => {
@@ -636,7 +643,7 @@ export function CategoryPricingTable({
 
       const price = Number(detail.draft.unit_price) || 0;
       const row = normalizeCategory({
-        id: idFor("category", tableRows.length),
+        id: idFor("category", groups.length),
         variant_name: detail.draft.model_snapshot || detail.draft.item_name_snapshot || "Imported finish row",
         display_name: detail.draft.item_name_snapshot || detail.draft.model_snapshot || "Imported finish row",
         dimension: detail.draft.size_snapshot || "",
@@ -649,11 +656,29 @@ export function CategoryPricingTable({
         },
         specification: detail.draft.specification_snapshot || "",
         is_active: true,
-        sort_order: tableRows.length,
-      }, tableRows.length);
+        sort_order: 0,
+      }, 0);
 
       importedIdsRef.current.add(row.id ?? "");
-      setTableRows((current) => [...current, row]);
+      setGroups((current) => {
+        if (!current.length) {
+          return [normalizeCategoryGroup({
+            id: "finish-category-pricing",
+            group_name: "Finish Category Pricing",
+            is_active: true,
+            sort_order: 0,
+            price_categories: defaultPriceCategories,
+            items: [row],
+          }, 0)];
+        }
+
+        return current.map((group, index) => index === 0
+          ? {
+              ...group,
+              items: [...(group.items ?? []), { ...row, sort_order: group.items?.length ?? 0 }],
+            }
+          : group);
+      });
       window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
         detail: {
           action: "finish",
@@ -670,7 +695,12 @@ export function CategoryPricingTable({
       }
 
       if (importedIdsRef.current.size) {
-        setTableRows((current) => current.filter((row) => !importedIdsRef.current.has(row.id ?? "")));
+        setGroups((current) =>
+          current.map((group) => ({
+            ...group,
+            items: (group.items ?? []).filter((row) => !importedIdsRef.current.has(row.id ?? "")),
+          })).filter((group) => (group.items ?? []).length > 0 || group.group_name),
+        );
       }
       importedIdsRef.current = new Set();
       window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
@@ -688,95 +718,124 @@ export function CategoryPricingTable({
       window.removeEventListener(TEMPLATE_IMPORT_APPLY_EVENT, handleApply);
       window.removeEventListener(TEMPLATE_IMPORT_RESET_EVENT, handleReset);
     };
-  }, [brandDefaultCurrency, tableRows.length, templateCurrency, templateId]);
+  }, [brandDefaultCurrency, groups.length, templateCurrency, templateId]);
 
-  function update(index: number, patch: Partial<CategoryPricingRow>) {
+  function updateGroup(index: number, patch: Partial<CategoryPricingRow>) {
+    setGroups((current) => current.map((group, groupIndex) => groupIndex === index ? { ...group, ...patch } : group));
+  }
+
+  function updateItem(groupIndex: number, itemIndex: number, patch: Partial<CategoryPricingRow>) {
     if (typeof patch.currency === "string") {
-      userEditedCurrencyRowIds.current.add(tableRows[index]?.id ?? `category-${index}`);
+      userEditedCurrencyRowIds.current.add(groups[groupIndex]?.items?.[itemIndex]?.id ?? `category-${groupIndex}-${itemIndex}`);
     }
 
-    setTableRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
+    setGroups((current) =>
+      current.map((group, currentGroupIndex) => {
+        if (currentGroupIndex !== groupIndex) return group;
+
+        return {
+          ...group,
+          items: (group.items ?? []).map((row, rowIndex) => rowIndex === itemIndex ? { ...row, ...patch } : row),
+        };
+      }),
+    );
   }
 
   useEffect(() => {
+    const allRows = groups.flatMap((group) => group.items ?? []);
     const nextDefaultCurrency = resolveDefaultPricingCurrency({
       brandDefaultCurrency,
-      existingRows: tableRows,
+      existingRows: allRows,
       savedTemplateCurrency: templateCurrency,
     });
 
-    setTableRows((current) => {
+    setGroups((current) => {
       let didChange = false;
-      const nextRows = current.map((row, index) => {
-        const key = row.id ?? `category-${index}`;
-        if (userEditedCurrencyRowIds.current.has(key) || rowHasMeaningfulValues(row)) {
-          return row;
-        }
+      const nextGroups = current.map((group, groupIndex) => {
+        const nextItems = (group.items ?? []).map((row, index) => {
+          const key = row.id ?? `category-${groupIndex}-${index}`;
+          if (userEditedCurrencyRowIds.current.has(key) || rowHasMeaningfulValues(row)) {
+            return row;
+          }
 
-        const currentCurrency = row.currency?.trim() ? normalizeCurrency(row.currency) : null;
-        const previousDefaultCurrency = previousDefaultCurrencyRef.current;
-        if (
-          currentCurrency &&
-          currentCurrency !== previousDefaultCurrency &&
-          currentCurrency !== defaultCurrency
-        ) {
-          return row;
-        }
+          const currentCurrency = row.currency?.trim() ? normalizeCurrency(row.currency) : null;
+          const previousDefaultCurrency = previousDefaultCurrencyRef.current;
+          if (
+            currentCurrency &&
+            currentCurrency !== previousDefaultCurrency &&
+            currentCurrency !== defaultCurrency
+          ) {
+            return row;
+          }
 
-        if (currentCurrency === nextDefaultCurrency) {
-          return row;
-        }
+          if (currentCurrency === nextDefaultCurrency) {
+            return row;
+          }
 
-        didChange = true;
-        return {
-          ...row,
-          currency: nextDefaultCurrency,
-        };
+          didChange = true;
+          return {
+            ...row,
+            currency: nextDefaultCurrency,
+          };
+        });
+
+        return nextItems.some((item, index) => item !== (group.items ?? [])[index])
+          ? { ...group, items: nextItems }
+          : group;
       });
 
-      return didChange ? nextRows : current;
+      return didChange ? nextGroups : current;
     });
 
     previousDefaultCurrencyRef.current = nextDefaultCurrency;
-  }, [brandDefaultCurrency, tableRows, templateCurrency]);
+  }, [brandDefaultCurrency, groups, templateCurrency]);
 
-  function addPriceCategoryColumn() {
-    const trimmedName = newCategoryName.trim();
+  function addPriceCategoryColumn(groupIndex: number) {
+    const group = groups[groupIndex];
+    const groupId = group?.id ?? `category-group-${groupIndex}`;
+    const trimmedName = (newCategoryNames[groupId] ?? "").trim();
     if (!trimmedName) {
       return;
     }
     const normalizedCategory = normalizePriceCategoryLabel(trimmedName);
-    if (!normalizedCategory || priceCategories.includes(normalizedCategory)) {
-      setNewCategoryName("");
-      setShowCategoryCreator(false);
+    const groupPriceCategories = group?.price_categories ?? defaultPriceCategories;
+    if (!normalizedCategory || groupPriceCategories.includes(normalizedCategory)) {
+      setNewCategoryNames((current) => ({ ...current, [groupId]: "" }));
+      setShowCategoryCreators((current) => ({ ...current, [groupId]: false }));
       return;
     }
 
-    setPriceCategories((current) => [...current, normalizedCategory]);
-    setTableRows((current) =>
-      current.map((row) => ({
+    updateGroup(groupIndex, {
+      price_categories: [...groupPriceCategories, normalizedCategory],
+      items: (group.items ?? []).map((row) => ({
         ...row,
         prices: {
           ...normalizedPriceMap(row.prices),
           [normalizedCategory]: numberValue(row.prices?.[normalizedCategory]),
         },
       })),
-    );
-    setNewCategoryName("");
-    setShowCategoryCreator(false);
+    });
+    setNewCategoryNames((current) => ({ ...current, [groupId]: "" }));
+    setShowCategoryCreators((current) => ({ ...current, [groupId]: false }));
   }
 
-  function addRow(event: MouseEvent<HTMLButtonElement>) {
+  function addRow(groupIndex: number, event: MouseEvent<HTMLButtonElement>) {
     const currency = resolveDefaultPricingCurrency({
       brandDefaultCurrency,
-      existingRows: tableRows,
+      existingRows: groups[groupIndex]?.items ?? groups.flatMap((group) => group.items ?? []),
       savedTemplateCurrency: templateCurrency,
       trigger: event.currentTarget,
     });
-    setTableRows((current) => [
-      ...current,
-      newCategoryPricingRow(current.length, priceCategories, currency),
-    ]);
+    updateGroup(groupIndex, {
+      items: [
+        ...(groups[groupIndex]?.items ?? []),
+        newCategoryPricingRow(
+          groups[groupIndex]?.items?.length ?? 0,
+          groups[groupIndex]?.price_categories ?? defaultPriceCategories,
+          currency,
+        ),
+      ],
+    });
   }
 
   return (
@@ -786,93 +845,112 @@ export function CategoryPricingTable({
         <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
           <p className="text-sm font-semibold text-zinc-950">Finish category pricing</p>
           <p className="mt-1 text-xs leading-5 text-zinc-500">
-            Manage finish pricing in one table and add more price category columns when needed.
+            Create separate finish pricing groups such as melamine, fabric, leather, glass, or acoustic panel pricing.
           </p>
-          {showCategoryCreator ? (
-            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-              <input
-                value={newCategoryName}
-                onChange={(event) => setNewCategoryName(event.target.value)}
-                placeholder="Cat E"
-                className="h-9 flex-1 rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-800"
-              />
-              <button
-                type="button"
-                onClick={addPriceCategoryColumn}
-                className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
-              >
-                Add column
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setNewCategoryName("");
-                  setShowCategoryCreator(false);
-                }}
-                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setShowCategoryCreator(true)}
-              className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
-            >
-              + Add price category column
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setGroups((current) => [...current, normalizeCategoryGroup({
+              id: idFor("category-group", current.length),
+              group_name: "Finish Category Pricing",
+              is_active: true,
+              sort_order: current.length,
+              price_categories: defaultPriceCategories,
+              items: [],
+            }, current.length)])}
+            className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
+          >
+            + Add finish pricing group
+          </button>
         </div>
 
-        {tableRows.length ? (
-          <div className="overflow-x-auto rounded-md border border-zinc-200 bg-white">
-            <table className="min-w-[1960px] w-full text-left text-xs">
-              <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
-                <tr>
-                  <th className="px-2 py-2">Variant Code / Short Name</th>
-                  <th className="px-2 py-2">Display Name</th>
-                  <th className="px-2 py-2">Supplier / Price List Code</th>
-                  <th className="px-2 py-2">Dimension</th>
-                  {priceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
-                  <th className="px-2 py-2">Currency</th>
-                  <th className="px-2 py-2">Specification</th>
-                  <th className="px-2 py-2">Active</th>
-                  <th className="px-2 py-2">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tableRows.map((row, index) => {
-                  const normalizedRow = categoryPricingRowWithColumns(row, priceCategories);
-                  return (
-                    <tr key={row.id ?? index} className="border-t border-zinc-100 align-top">
-                      <td className="px-2 py-2 align-top"><input value={normalizedRow.variant_name ?? ""} onChange={(e) => update(index, { variant_name: e.target.value })} className="h-10 min-w-[160px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
-                      <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.display_name ?? ""} onChange={(value) => update(index, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
-                      <td className="px-2 py-2 align-top"><input value={normalizedRow.supplier_price_list_code ?? ""} onChange={(e) => update(index, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
-                      <td className="px-2 py-2 align-top"><input value={normalizedRow.dimension ?? ""} onChange={(e) => update(index, { dimension: e.target.value })} className="h-10 min-w-[140px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
-                      {priceCategories.map((category) => <td key={category} className="px-2 py-2 align-top"><input type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => update(index, { prices: { ...normalizedRow.prices, [category]: Number(e.target.value) } })} className="h-10 min-w-[116px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>)}
-                      <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={normalizedRow.currency} onChange={(currency) => update(index, { currency })} /></div></td>
-                      <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => update(index, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /></td>
-                      <td className="px-2 py-2 align-top"><input type="checkbox" checked={normalizedRow.is_active !== false} onChange={(e) => update(index, { is_active: e.target.checked })} /></td>
-                      <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => setTableRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="text-xs font-semibold text-red-700">Remove</button></div></td>
+        {groups.length ? groups.map((group, groupIndex) => {
+          const groupId = group.id ?? `category-group-${groupIndex}`;
+          const groupPriceCategories = group.price_categories ?? standardCategoryPriceColumns(group.items);
+
+          return (
+            <div key={groupId} className="rounded-md border border-zinc-200 bg-white p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={group.group_name ?? ""}
+                  onChange={(event) => updateGroup(groupIndex, { group_name: event.target.value })}
+                  placeholder="Finish pricing group"
+                  className="h-8 w-64 border border-zinc-200 px-2 text-sm font-semibold outline-none focus:border-emerald-800"
+                />
+                <label className="flex items-center gap-2 text-xs text-zinc-600">
+                  <input type="checkbox" checked={group.is_active !== false} onChange={(event) => updateGroup(groupIndex, { is_active: event.target.checked })} />
+                  Active
+                </label>
+                <button type="button" onClick={() => setGroups((current) => current.filter((_, index) => index !== groupIndex))} className="ml-auto text-xs font-semibold text-red-700">Remove group</button>
+              </div>
+
+              {showCategoryCreators[groupId] ? (
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <input
+                    value={newCategoryNames[groupId] ?? ""}
+                    onChange={(event) => setNewCategoryNames((current) => ({ ...current, [groupId]: event.target.value }))}
+                    placeholder="Cat E"
+                    className="h-9 flex-1 rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-800"
+                  />
+                  <button type="button" onClick={() => addPriceCategoryColumn(groupIndex)} className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">
+                    Add column
+                  </button>
+                  <button type="button" onClick={() => { setNewCategoryNames((current) => ({ ...current, [groupId]: "" })); setShowCategoryCreators((current) => ({ ...current, [groupId]: false })); }} className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300">
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button type="button" onClick={() => setShowCategoryCreators((current) => ({ ...current, [groupId]: true }))} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">
+                  + Add price category column
+                </button>
+              )}
+
+              <div className="mt-3 overflow-x-auto">
+                <table className="min-w-[1960px] w-full text-left text-xs">
+                  <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
+                    <tr>
+                      <th className="px-2 py-2">Variant Code / Short Name</th>
+                      <th className="px-2 py-2">Display Name</th>
+                      <th className="px-2 py-2">Supplier / Price List Code</th>
+                      <th className="px-2 py-2">Dimension</th>
+                      {groupPriceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
+                      <th className="px-2 py-2">Currency</th>
+                      <th className="px-2 py-2">Specification</th>
+                      <th className="px-2 py-2">Active</th>
+                      <th className="px-2 py-2">Actions</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
+                  </thead>
+                  <tbody>
+                    {(group.items ?? []).map((row, itemIndex) => {
+                      const normalizedRow = categoryPricingRowWithColumns(row, groupPriceCategories);
+                      return (
+                        <tr key={row.id ?? itemIndex} className="border-t border-zinc-100 align-top">
+                          <td className="px-2 py-2 align-top"><input value={normalizedRow.variant_name ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { variant_name: e.target.value })} className="h-10 min-w-[160px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                          <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.display_name ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
+                          <td className="px-2 py-2 align-top"><input value={normalizedRow.supplier_price_list_code ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                          <td className="px-2 py-2 align-top"><input value={normalizedRow.dimension ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { dimension: e.target.value })} className="h-10 min-w-[140px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                          {groupPriceCategories.map((category) => <td key={category} className="px-2 py-2 align-top"><input type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { prices: { ...normalizedRow.prices, [category]: Number(e.target.value) } })} className="h-10 min-w-[116px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>)}
+                          <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={normalizedRow.currency} onChange={(currency) => updateItem(groupIndex, itemIndex, { currency })} /></div></td>
+                          <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /></td>
+                          <td className="px-2 py-2 align-top"><input type="checkbox" checked={normalizedRow.is_active !== false} onChange={(e) => updateItem(groupIndex, itemIndex, { is_active: e.target.checked })} /></td>
+                          <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => updateGroup(groupIndex, { items: (group.items ?? []).filter((_, index) => index !== itemIndex) })} className="text-xs font-semibold text-red-700">Remove row</button></div></td>
+                        </tr>
+                      );
+                    })}
+                    {!(group.items ?? []).length ? <tr><td colSpan={groupPriceCategories.length + 5} className="px-3 py-5 text-center text-zinc-500">No finish pricing rows in this group yet.</td></tr> : null}
+                  </tbody>
+                </table>
+              </div>
+
+              <button type="button" onClick={(event) => addRow(groupIndex, event)} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">
+                + Add row
+              </button>
+            </div>
+          );
+        }) : (
           <div className="rounded-md border border-dashed border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-500">
-            <p>No pricing rows yet.</p>
+            <p>No finish pricing groups yet.</p>
           </div>
         )}
-        <button
-          type="button"
-          onClick={addRow}
-          className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
-        >
-          + Add row
-        </button>
       </div>
     </div>
   );

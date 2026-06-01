@@ -21,9 +21,13 @@ import { formatMoney, normalizeCurrency } from "@/lib/currencies";
 import { createLocalId, localNow, type LocalQuotationItem } from "@/lib/local/quotation-workspace";
 import { productTemplatePriceCheckState } from "@/lib/product-price-check";
 import {
+  flattenStandardCategoryPricingRows,
+  groupedStandardCategoryPricingRows,
+  standardCategoryPriceColumns as groupedCategoryPriceColumns,
+} from "@/lib/products/category-pricing-groups";
+import {
   modularItemPricingRows,
   modularPricingDefaultsFromRows,
-  standardCategoryPricingRows,
 } from "@/lib/products/modular-pricing";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 import {
@@ -146,6 +150,10 @@ type VariantPricingRow = {
 
 type CategoryPricingRow = {
   id?: string;
+  group_id?: string;
+  group_name?: string;
+  items?: CategoryPricingRow[];
+  price_categories?: string[];
   pricing_type?: string | null;
   pricing_category_id?: string | null;
   pricing_category_name?: string | null;
@@ -413,7 +421,7 @@ function activeVariantRows(rows?: VariantPricingRow[] | null) {
 }
 
 function activeCategoryRows(rows?: CategoryPricingRow[] | null) {
-  return standardCategoryPricingRows(rows)
+  return flattenStandardCategoryPricingRows(rows)
     .filter((row) => row.is_active !== false)
     .filter((row) => row.variant_name || row.display_name || row.dimension || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
@@ -468,17 +476,10 @@ function InternalMetaLine({
 }
 
 function categoryPriceColumns(rows?: CategoryPricingRow[] | null) {
-  const columns = ["Cat A", "Cat B", "Cat C", "Cat D"];
-
-  [...activeCategoryRows(rows), ...activeModularRows(rows)].forEach((row) => {
-    Object.keys(row.prices ?? {}).forEach((category) => {
-      if (!columns.includes(category)) {
-        columns.push(category);
-      }
-    });
-  });
-
-  return columns;
+  return Array.from(new Set([
+    ...groupedCategoryPriceColumns(rows),
+    ...activeModularRows(rows).flatMap((row) => Object.keys(row.prices ?? {})),
+  ]));
 }
 
 function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
@@ -910,6 +911,7 @@ export function ProductLibrarySelector({
   const [accessoryQuantities, setAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [selectedDeskingSizes, setSelectedDeskingSizes] = useState<Record<string, string>>({});
   const [selectedVariantRows, setSelectedVariantRows] = useState<Record<string, string>>({});
+  const [selectedCategoryGroups, setSelectedCategoryGroups] = useState<Record<string, string>>({});
   const [selectedCategoryRows, setSelectedCategoryRows] = useState<Record<string, string>>({});
   const [selectedFabricCategories, setSelectedFabricCategories] = useState<Record<string, string>>({});
   const [selectedModularQuantities, setSelectedModularQuantities] = useState<Record<string, Record<string, number>>>({});
@@ -920,6 +922,7 @@ export function ProductLibrarySelector({
   const [linkedProductQuantities, setLinkedProductQuantities] = useState<Record<string, number>>({});
   const [linkedAccessoryQuantities, setLinkedAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [selectedLinkedVariants, setSelectedLinkedVariants] = useState<Record<string, string>>({});
+  const [selectedLinkedCategoryGroups, setSelectedLinkedCategoryGroups] = useState<Record<string, string>>({});
   const [selectedLinkedCategories, setSelectedLinkedCategories] = useState<Record<string, string>>({});
   const [selectedLinkedFabricCategories, setSelectedLinkedFabricCategories] = useState<Record<string, string>>({});
   const [exchangeRates, setExchangeRates] = useState<Record<string, Record<string, string>>>({});
@@ -1351,7 +1354,12 @@ export function ProductLibrarySelector({
                     new Set(sizePricingRows.map((row) => normalizeCurrency(row.currency ?? template.currency))),
                   );
                   const variantRows = activeVariantRows(template.variant_pricing);
-                  const categoryRows = activeCategoryRows(template.category_pricing);
+                  const categoryGroups = groupedStandardCategoryPricingRows(template.category_pricing);
+                  const selectedCategoryGroup =
+                    categoryGroups.find((group) => group.id === selectedCategoryGroups[template.id]) ??
+                    categoryGroups[0] ??
+                    null;
+                  const categoryRows = (selectedCategoryGroup?.items ?? []).filter((row) => row.is_active !== false);
                   const modularRows = activeModularRows(template.category_pricing);
                   const modularDefaults = modularPricingDefaultsFromRows(template.category_pricing);
                   const accessoryGroups = activeAccessoryRows(template.accessory_pricing);
@@ -1380,7 +1388,7 @@ export function ProductLibrarySelector({
                       : null;
                   const availableCategoryColumns = usesModularPricing
                     ? categoryPriceColumns(modularRows)
-                    : categoryPriceColumns(template.category_pricing);
+                    : (selectedCategoryGroup?.price_categories ?? categoryPriceColumns(template.category_pricing));
                   const selectedFabricCategory =
                     selectedFabricCategories[template.id] ?? availableCategoryColumns[0] ?? "Cat A";
                   const selectedCategoryPrice = selectedCategoryRow
@@ -1487,7 +1495,12 @@ export function ProductLibrarySelector({
                       const childTemplate = templateById.get(link.linked_template_id);
                       if (!childTemplate) return null;
 
-                      const childCategoryRows = activeCategoryRows(childTemplate.category_pricing);
+                      const childCategoryGroups = groupedStandardCategoryPricingRows(childTemplate.category_pricing);
+                      const selectedChildCategoryGroup =
+                        childCategoryGroups.find((group) => group.id === selectedLinkedCategoryGroups[link.id]) ??
+                        childCategoryGroups[0] ??
+                        null;
+                      const childCategoryRows = (selectedChildCategoryGroup?.items ?? []).filter((row) => row.is_active !== false);
                       const childVariantRows = activeVariantRows(childTemplate.variant_pricing);
                       const childAccessoryGroups = activeAccessoryRows(childTemplate.accessory_pricing);
                       const childAccessoryQuantities = linkedAccessoryQuantities[link.id] ?? {};
@@ -1501,7 +1514,7 @@ export function ProductLibrarySelector({
                             childVariantRows[0] ??
                             null
                           : null;
-                      const childCategoryColumns = categoryPriceColumns(childTemplate.category_pricing);
+                      const childCategoryColumns = selectedChildCategoryGroup?.price_categories ?? categoryPriceColumns(childTemplate.category_pricing);
                       const childCategory = selectedLinkedFabricCategories[link.id] ?? childCategoryColumns[0] ?? "Cat A";
                       const unitPrice = childCategoryRow
                         ? numberValue(childCategoryRow.prices?.[childCategory])
@@ -2042,6 +2055,7 @@ export function ProductLibrarySelector({
                       ...(selectedCategoryRow
                         ? {
                             category_pricing: {
+                              selected_group: selectedCategoryGroup?.group_name ?? null,
                               selected_row: selectedCategoryRow,
                               selected_category: selectedFabricCategory,
                               selected_price: selectedCategoryPrice,
@@ -2545,6 +2559,25 @@ export function ProductLibrarySelector({
                         ) : null}
                         {usesCategoryPricing ? (
                           <div className="mt-3 grid gap-2 md:grid-cols-2">
+                            {selectedCategoryGroup && categoryGroups.length > 1 ? (
+                              <label className="block md:col-span-2">
+                                <span className="text-[10px] font-bold uppercase text-zinc-500">Finish Pricing Group</span>
+                                <select
+                                  value={selectedCategoryGroup.id ?? ""}
+                                  onChange={(event) => {
+                                    setSelectedCategoryGroups((current) => ({ ...current, [template.id]: event.target.value }));
+                                    setSelectedCategoryRows((current) => ({ ...current, [template.id]: "" }));
+                                  }}
+                                  className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                >
+                                  {categoryGroups.map((group, index) => (
+                                    <option key={group.id ?? index} value={group.id ?? `category-group-${index}`}>
+                                      {group.group_name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            ) : null}
                             <label className="block">
                               <span className="text-[10px] font-bold uppercase text-zinc-500">Variant</span>
                               <select
@@ -2592,6 +2625,7 @@ export function ProductLibrarySelector({
                                   value={selectedCategoryRow.variant_name && pricingDisplayName(selectedCategoryRow) !== selectedCategoryRow.variant_name ? selectedCategoryRow.variant_name : null}
                                 />
                                 <InternalMetaLine label="Supplier Code" value={selectedCategoryRow.supplier_price_list_code} />
+                                <InternalMetaLine label="Group" value={selectedCategoryGroup?.group_name ?? null} />
                                 <InternalMetaLine label="Specification" value={selectedCategoryRow.specification} />
                               </div>
                             ) : null}
@@ -2925,6 +2959,25 @@ export function ProductLibrarySelector({
                                 </p>
                                 {line.childCategoryRow ? (
                                   <div className="mt-2 grid gap-2 md:grid-cols-2">
+                                    {selectedChildCategoryGroup && childCategoryGroups.length > 1 ? (
+                                      <label className="block md:col-span-2">
+                                        <span className="text-[10px] font-bold uppercase text-zinc-500">Finish Pricing Group</span>
+                                        <select
+                                          value={selectedChildCategoryGroup.id ?? ""}
+                                          onChange={(event) => {
+                                            setSelectedLinkedCategoryGroups((current) => ({ ...current, [line.link.id]: event.target.value }));
+                                            setSelectedLinkedCategories((current) => ({ ...current, [line.link.id]: "" }));
+                                          }}
+                                          className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                        >
+                                          {childCategoryGroups.map((group, index) => (
+                                            <option key={group.id ?? index} value={group.id ?? `linked-category-group-${index}`}>
+                                              {group.group_name}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </label>
+                                    ) : null}
                                     <label className="block">
                                       <span className="text-[10px] font-bold uppercase text-zinc-500">Variant</span>
                                       <select
@@ -3905,6 +3958,7 @@ export function ProductLibrarySelector({
                           ) : null}
                           {usesCategoryPricing && selectedCategoryRow ? (
                             <>
+                              <input type="hidden" name="category_pricing_group_id" value={selectedCategoryGroup?.id ?? ""} />
                               <input type="hidden" name="category_pricing_row_id" value={selectedCategoryRow.id ?? ""} />
                               <input type="hidden" name="category_pricing_category" value={selectedFabricCategory} />
                             </>

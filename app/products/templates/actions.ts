@@ -7,6 +7,10 @@ import { requireSettingsManager } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit-log";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import {
+  groupedStandardCategoryPricingRows,
+  normalizeCategoryPriceLabel,
+} from "@/lib/products/category-pricing-groups";
+import {
   MODULAR_ITEM_PRICING_TYPE,
   MODULAR_META_PRICING_TYPE,
 } from "@/lib/products/modular-pricing";
@@ -198,24 +202,6 @@ function optionalNumberValue(formData: FormData, name: string) {
   return Number.isFinite(value) ? value : undefined;
 }
 
-function normalizePriceCategoryLabel(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return "";
-  }
-
-  const compact = trimmed.replace(/[_-]+/g, " ").replace(/\s+/g, " ");
-  const match = compact.match(/^cat\s*([a-z0-9]+)$/i);
-  if (match) {
-    return `Cat ${match[1].toUpperCase()}`;
-  }
-
-  return compact
-    .split(" ")
-    .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
-    .join(" ");
-}
-
 function selectionModeValue(formData: FormData) {
   return textValue(formData, "selection_mode") === "selected_items" ? "selected_items" : "full_group";
 }
@@ -299,11 +285,15 @@ function updateJsonPriceRows({
     return nextRow;
   };
 
-  if (sourceTable === "product_templates.accessory_pricing") {
-    const nextRows = rows.map((group) => ({
+  if (sourceTable === "product_templates.accessory_pricing" || sourceTable === "product_templates.category_pricing") {
+    const nestedRows = rows.map((group) => ({
       ...group,
       items: jsonArrayValue(group.items).map(updateRow),
     }));
+
+    const nextRows = sourceTable === "product_templates.category_pricing"
+      ? nestedRows.map(updateRow)
+      : nestedRows;
 
     return { matched, oldPrice, rows: nextRows };
   }
@@ -941,60 +931,82 @@ function categoryPricingValue(formData: FormData) {
       ...(Array.isArray(parsedModular) ? parsedModular : []),
     ];
 
+    const normalizeCategoryRow = (row: Record<string, unknown>, index: number) => {
+      const prices = typeof row.prices === "object" && row.prices !== null
+        ? row.prices as Record<string, unknown>
+        : {};
+      const normalizedPrices = new Map<string, number>([
+        ["Cat A", 0],
+        ["Cat B", 0],
+        ["Cat C", 0],
+        ["Cat D", 0],
+      ]);
+
+      Object.entries(prices).forEach(([key, value]) => {
+        const label = normalizeCategoryPriceLabel(key);
+        if (!label) {
+          return;
+        }
+
+        normalizedPrices.set(label, Number.isFinite(Number(value)) ? Number(value) : 0);
+      });
+
+      return {
+        id: typeof row.id === "string" && row.id ? row.id : `category-${index}`,
+        pricing_type:
+          typeof row.pricing_type === "string" && row.pricing_type.trim()
+            ? row.pricing_type.trim()
+            : null,
+        pricing_category_id:
+          typeof row.pricing_category_id === "string" && row.pricing_category_id.trim()
+            ? row.pricing_category_id.trim()
+            : null,
+        pricing_category_name:
+          typeof row.pricing_category_name === "string" && row.pricing_category_name.trim()
+            ? row.pricing_category_name.trim()
+            : null,
+        variant_name: typeof row.variant_name === "string" ? row.variant_name.trim() : "",
+        display_name: typeof row.display_name === "string" ? row.display_name.trim() : "",
+        supplier_price_list_code: typeof row.supplier_price_list_code === "string" ? row.supplier_price_list_code.trim() : "",
+        dimension: typeof row.dimension === "string" ? row.dimension.trim() : "",
+        currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
+        prices: Object.fromEntries(normalizedPrices.entries()),
+        specification: typeof row.specification === "string" ? row.specification.trim() : "",
+        modular_default_dimension:
+          typeof row.modular_default_dimension === "string" && row.modular_default_dimension.trim()
+            ? row.modular_default_dimension.trim()
+            : null,
+        modular_default_specification:
+          typeof row.modular_default_specification === "string" && row.modular_default_specification.trim()
+            ? row.modular_default_specification.trim()
+            : null,
+        sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
+        is_active: row.is_active !== false,
+      };
+    };
+
+    const standardGroups = groupedStandardCategoryPricingRows(
+      (Array.isArray(parsed) ? parsed : []) as Array<Record<string, unknown>>,
+    ).map((group, groupIndex) => ({
+      id: typeof group.id === "string" && group.id ? group.id : `category-group-${groupIndex}`,
+      group_name: typeof group.group_name === "string" && group.group_name.trim()
+        ? group.group_name.trim()
+        : "Finish Category Pricing",
+      sort_order: Number.isFinite(Number(group.sort_order)) ? Number(group.sort_order) : groupIndex,
+      is_active: group.is_active !== false,
+      price_categories: Array.from(new Set((group.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean))),
+      items: (group.items ?? [])
+        .map((item, itemIndex) => normalizeCategoryRow(item as Record<string, unknown>, itemIndex))
+        .filter((row) =>
+          row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price > 0) || row.specification,
+        ),
+    })).filter((group) => group.items.length || group.group_name);
+
     const rows = sourceRows
       .map((row, index) => {
-        const prices = typeof row.prices === "object" && row.prices !== null
-          ? row.prices as Record<string, unknown>
-          : {};
-        const normalizedPrices = new Map<string, number>([
-          ["Cat A", 0],
-          ["Cat B", 0],
-          ["Cat C", 0],
-          ["Cat D", 0],
-        ]);
-
-        Object.entries(prices).forEach(([key, value]) => {
-          const label = normalizePriceCategoryLabel(key);
-          if (!label) {
-            return;
-          }
-
-          normalizedPrices.set(label, Number.isFinite(Number(value)) ? Number(value) : 0);
-        });
-
-        return {
-          id: typeof row.id === "string" && row.id ? row.id : `category-${index}`,
-          pricing_type:
-            typeof row.pricing_type === "string" && row.pricing_type.trim()
-              ? row.pricing_type.trim()
-              : null,
-          pricing_category_id:
-            typeof row.pricing_category_id === "string" && row.pricing_category_id.trim()
-              ? row.pricing_category_id.trim()
-              : null,
-          pricing_category_name:
-            typeof row.pricing_category_name === "string" && row.pricing_category_name.trim()
-              ? row.pricing_category_name.trim()
-              : null,
-          variant_name: typeof row.variant_name === "string" ? row.variant_name.trim() : "",
-          display_name: typeof row.display_name === "string" ? row.display_name.trim() : "",
-          supplier_price_list_code: typeof row.supplier_price_list_code === "string" ? row.supplier_price_list_code.trim() : "",
-          dimension: typeof row.dimension === "string" ? row.dimension.trim() : "",
-          currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
-          prices: Object.fromEntries(normalizedPrices.entries()),
-          specification: typeof row.specification === "string" ? row.specification.trim() : "",
-          modular_default_dimension:
-            typeof row.modular_default_dimension === "string" && row.modular_default_dimension.trim()
-              ? row.modular_default_dimension.trim()
-              : null,
-          modular_default_specification:
-            typeof row.modular_default_specification === "string" && row.modular_default_specification.trim()
-              ? row.modular_default_specification.trim()
-              : null,
-          sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
-          is_active: row.is_active !== false,
-        };
+        return normalizeCategoryRow(row, index);
       })
+      .filter((row) => row.pricing_type === MODULAR_ITEM_PRICING_TYPE || row.pricing_type === MODULAR_META_PRICING_TYPE)
       .filter((row) =>
         row.pricing_type === MODULAR_ITEM_PRICING_TYPE
           ? row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price > 0) || row.specification
@@ -1030,7 +1042,7 @@ function categoryPricingValue(formData: FormData) {
       });
     }
 
-    return rows;
+    return [...standardGroups, ...rows];
   } catch {
     return [];
   }
