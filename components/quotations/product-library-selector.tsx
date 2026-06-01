@@ -1557,8 +1557,10 @@ export function ProductLibrarySelector({
                         accessoryTotal,
                         baseLineTotal,
                         childCategory,
+                        childCategoryGroups,
                         childCategoryRow,
                         childAccessoryGroups,
+                        selectedChildCategoryGroup,
                         childTemplate,
                         childVariantRow,
                         currency,
@@ -2959,18 +2961,18 @@ export function ProductLibrarySelector({
                                 </p>
                                 {line.childCategoryRow ? (
                                   <div className="mt-2 grid gap-2 md:grid-cols-2">
-                                    {selectedChildCategoryGroup && childCategoryGroups.length > 1 ? (
+                                    {line.selectedChildCategoryGroup && line.childCategoryGroups.length > 1 ? (
                                       <label className="block md:col-span-2">
                                         <span className="text-[10px] font-bold uppercase text-zinc-500">Finish Pricing Group</span>
                                         <select
-                                          value={selectedChildCategoryGroup.id ?? ""}
+                                          value={line.selectedChildCategoryGroup.id ?? ""}
                                           onChange={(event) => {
                                             setSelectedLinkedCategoryGroups((current) => ({ ...current, [line.link.id]: event.target.value }));
                                             setSelectedLinkedCategories((current) => ({ ...current, [line.link.id]: "" }));
                                           }}
                                           className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                                         >
-                                          {childCategoryGroups.map((group, index) => (
+                                          {line.childCategoryGroups.map((group, index) => (
                                             <option key={group.id ?? index} value={group.id ?? `linked-category-group-${index}`}>
                                               {group.group_name}
                                             </option>
