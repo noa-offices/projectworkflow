@@ -1,10 +1,12 @@
-"use client";
+﻿"use client";
 
-import Link from "next/link";
 import type { ReactNode } from "react";
 import { useState, useTransition } from "react";
+import { DocumentPrintSetupPanel, type PrintPlannerItem } from "@/components/quotations/document-print-setup-panel";
 import { ProcurementRfqDocument } from "@/components/quotations/procurement-rfq-document";
 import { buildEffectiveDocumentGroups, type EffectiveDocumentGroup } from "@/lib/quotations/document-grouping";
+import { buildProcurementRfqPages } from "@/lib/quotations/procurement-rfq-pages";
+import type { DocumentPrintSettings } from "@/lib/quotations/document-print-settings";
 import {
   type ProcurementRfqColumnVisibility,
   type ProcurementRfqDocumentDetails,
@@ -181,6 +183,7 @@ function sectionContext(sectionId: string | null, sectionsById: Map<string, Proc
 function sanitizeSettingsForCompare(settings: QuotationProcurementRfqSettings) {
   return JSON.stringify({
     documentDetails: settings.documentDetails,
+    print: settings.print,
     selectedGroupKey: settings.selectedGroupKey,
     supplierOverrides: settings.supplierOverrides,
     itemOverrides: settings.itemOverrides,
@@ -379,6 +382,7 @@ export function ProcurementRfqEditor({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [activeTab, setActiveTab] = useState<EditorTab>("document");
+  const [showSettings, setShowSettings] = useState(true);
   const [expandedSupplierKey, setExpandedSupplierKey] = useState<string | null>(null);
   const [expandedItemGroupKey, setExpandedItemGroupKey] = useState<string | null>(null);
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
@@ -445,6 +449,20 @@ export function ProcurementRfqEditor({
       };
     }),
   }));
+  const plannerItems: PrintPlannerItem[] = buildProcurementRfqPages({
+    columnVisibility: settings.columnVisibility,
+    groups: documentGroups,
+    notes: settings.notes,
+    print: settings.print,
+  }).flatMap((page) =>
+    page.items.map((item) => ({
+      itemId: item.id,
+      itemName: item.description,
+      pageNumber: page.pageIndex + 1,
+      sectionTitle: item.context || page.group.label,
+      serial: String(item.rowNumber).padStart(2, "0"),
+    })),
+  );
 
   function updateDocumentDetails<K extends keyof ProcurementRfqDocumentDetails>(key: K, value: ProcurementRfqDocumentDetails[K]) {
     setSettings((current) => ({
@@ -520,6 +538,43 @@ export function ProcurementRfqEditor({
     }));
   }
 
+  function updatePrintSettings(patch: Partial<DocumentPrintSettings>) {
+    setSettings((current) => ({
+      ...current,
+      print: {
+        ...current.print,
+        ...patch,
+      },
+    }));
+  }
+
+  function toggleManualPageBreak(itemId: string, enabled: boolean) {
+    const nextBreaks = new Set(settings.print.manualPageBreaks);
+    if (enabled) {
+      nextBreaks.add(itemId);
+    } else {
+      nextBreaks.delete(itemId);
+    }
+
+    updatePrintSettings({ manualPageBreaks: Array.from(nextBreaks) });
+  }
+
+  function assignPage(itemId: string, pageNumber: number | null) {
+    const nextAssignments = { ...settings.print.pageAssignments };
+    if (pageNumber === null) {
+      delete nextAssignments[itemId];
+    } else {
+      nextAssignments[itemId] = pageNumber;
+    }
+
+    updatePrintSettings({ pageAssignments: nextAssignments });
+  }
+
+  function resetManualPageBreaks() {
+    updatePrintSettings({ manualPageBreaks: [], pageAssignments: {} });
+    setFeedback("RFQ manual page breaks cleared locally.");
+  }
+
   function moveItem(group: EffectiveGroup, itemId: string, direction: -1 | 1) {
     const ownerKey = firstGroupKeyForItem(group, settings, itemId);
     const currentIds = (settings.groupOrder[ownerKey] && settings.groupOrder[ownerKey].length > 0)
@@ -591,12 +646,12 @@ export function ProcurementRfqEditor({
   return (
     <main className="min-h-screen bg-stone-100 px-4 py-6 print:bg-white print:px-0 print:py-0">
       <style>{`
-        @page { size: A4 landscape; margin: 0; }
+        @page { size: A4 ${settings.print.orientation}; margin: 0; }
         html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         .doc-page + .doc-page { margin-top: 24px; }
         @media print {
           html, body { background: #ffffff; }
-          html, body { margin: 0 !important; padding: 0 !important; width: 297mm !important; background: #fff !important; }
+          html, body { margin: 0 !important; padding: 0 !important; width: ${settings.print.orientation === "portrait" ? "210mm" : "297mm"} !important; background: #fff !important; }
           .doc-page { break-after: page; page-break-after: always; margin: 0 !important; }
           .doc-page:last-child { break-after: auto; page-break-after: auto; }
           .doc-page + .doc-page { margin-top: 0 !important; }
@@ -605,52 +660,34 @@ export function ProcurementRfqEditor({
 
       {!printMode ? (
         <div className="mx-auto mb-5 w-[297mm] max-w-full print:hidden">
-          <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">Procurement / Supplier RFQ</p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Link href={`/quotations/${data.quotation.id}`} className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50">
-                  Back to Quotation
-                </Link>
-                <button
-                  type="button"
-                  onClick={saveSettings}
-                  disabled={isPending}
-                  className="rounded-md bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-emerald-700"
-                >
-                  {isPending ? "Saving..." : "Save RFQ Settings"}
-                </button>
-                <button
-                  type="button"
-                  onClick={resetToDefaults}
-                  disabled={isPending}
-                  className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed"
-                >
-                  Reset RFQ Settings
-                </button>
-                <button
-                  type="button"
-                  onClick={downloadPdf}
-                  className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800"
-                >
-                  Download PDF
-                </button>
-              </div>
-            </div>
-            <div className="mt-4 text-sm text-zinc-600">
-              {isDirty ? "You have unsaved RFQ changes." : "RFQ settings match latest saved version."}
-            </div>
-            {feedback ? <p className="mt-2 text-sm font-medium text-zinc-900">{feedback}</p> : null}
-            <p className="mt-3 text-sm text-zinc-600">
-              Showing: {currentScopeLabel}
-            </p>
-          </div>
+          <DocumentPrintSetupPanel
+            actionLabel="Save Print Settings"
+            backHref={`/quotations/${data.quotation.id}`}
+            dirtyMessage="You have unsaved RFQ print changes."
+            feedback={feedback}
+            isDirty={isDirty}
+            isPending={isPending}
+            onDownload={downloadPdf}
+            onReset={resetToDefaults}
+            onResetManualPageBreaks={resetManualPageBreaks}
+            onSave={saveSettings}
+            onSettingsChange={updatePrintSettings}
+            onAssignPage={assignPage}
+            onToggleManualPageBreak={toggleManualPageBreak}
+            plannerItems={plannerItems}
+            resetLabel="Reset Print Settings"
+            savedMessage="RFQ print settings match latest saved version."
+            settings={settings.print}
+            showSettings={showSettings}
+            title="Procurement RFQ Print Setup"
+            toggleSettings={() => setShowSettings((current) => !current)}
+          >
+            <p className="text-sm text-zinc-600">Showing: {currentScopeLabel}</p>
+          </DocumentPrintSetupPanel>
         </div>
       ) : null}
 
-      {!printMode ? (
+      {!printMode && showSettings ? (
         <div className="mx-auto mb-5 w-[297mm] max-w-full print:hidden">
           <SetupPanel activeTab={activeTab} onTabChange={setActiveTab}>
             {activeTab === "document" ? (
@@ -904,8 +941,11 @@ export function ProcurementRfqEditor({
         settings={{
           columnVisibility: settings.columnVisibility,
           documentDetails: settings.documentDetails,
+          print: settings.print,
         }}
       />
     </main>
   );
 }
+
+

@@ -142,7 +142,7 @@ export default async function ProcurementRfqPage({ params, searchParams }: Procu
           size_snapshot: item.size_snapshot,
           origin_snapshot: item.origin_snapshot,
           supplier_name_snapshot: item.supplier_name_snapshot,
-          supplier_price_list_code_snapshot: supplierPriceListCodeFromSourceData(item.source_component_data),
+          supplier_price_list_code_snapshot: supplierPriceListCodeFromSourceData(item),
           qty: item.qty,
           imageUrl: data.imageUrlByItemId.get(item.id) ?? null,
         })),

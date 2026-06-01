@@ -46,6 +46,11 @@ type ImageSettings = {
 type ImageSlotState = {
   field: ProductTemplateImageField;
   label: string;
+  sessionUploadInfo: {
+    compressionApplied: boolean;
+    optimizedSizeBytes: number;
+    originalSizeBytes: number;
+  } | null;
   settings?: ImageSettings;
   value: string | null;
 };
@@ -87,6 +92,7 @@ function normalizeFormSlots(initialSlots: ImageSlotState[]) {
     return {
       field: slot.field,
       label: slot.label,
+      sessionUploadInfo: existing?.sessionUploadInfo ?? null,
       settings: existing?.settings,
       value: existing?.value ?? null,
     };
@@ -195,7 +201,7 @@ export function TemplateReferenceImageFieldManager({
         }));
 
         return current.map((slot) => (
-          slot.field === targetField ? { ...slot, value: imageValue } : slot
+          slot.field === targetField ? { ...slot, sessionUploadInfo: null, value: imageValue } : slot
         ));
       });
     };
@@ -249,6 +255,17 @@ export function TemplateReferenceImageFieldManager({
     );
   }
 
+  function updateSlotUploadInfo(
+    field: ProductTemplateImageField,
+    sessionUploadInfo: ImageSlotState["sessionUploadInfo"],
+  ) {
+    setSlots((current) =>
+      current.map((slot) => (
+        slot.field === field ? { ...slot, sessionUploadInfo } : slot
+      )),
+    );
+  }
+
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       {slots.map((slot) => (
@@ -286,7 +303,9 @@ export function TemplateReferenceImageFieldManager({
                 imageSettings={slot.settings}
                 key={`${slot.field}:${slot.value ?? ""}`}
                 label={isEmptyAddSlot ? "Add product reference image" : `${label} product reference image`}
+                onUploadInfoChange={(uploadInfo) => updateSlotUploadInfo(slot.field, uploadInfo)}
                 onValueChange={(value) => updateSlotValue(slot.field, value)}
+                sessionUploadInfo={slot.sessionUploadInfo}
                 templateId={templateId}
                 value={slot.value}
               />

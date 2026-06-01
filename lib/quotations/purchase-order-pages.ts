@@ -1,4 +1,9 @@
-import type { PurchaseOrderColumnVisibility, PurchaseOrderTerms } from "@/lib/quotations/purchase-order-settings";
+﻿import type { PurchaseOrderColumnVisibility, PurchaseOrderTerms } from "@/lib/quotations/purchase-order-settings";
+import {
+  DEFAULT_LANDSCAPE_PRINT_SETTINGS,
+  type DocumentPrintSettings,
+} from "@/lib/quotations/document-print-settings";
+import { paginateDocumentItems } from "@/lib/quotations/manual-item-pagination";
 
 export type PurchaseOrderDocumentItem = {
   id: string;
@@ -53,6 +58,16 @@ export type PurchaseOrderPage = {
 
 const FIRST_PAGE_ITEM_CAPACITY = 33;
 const CONTINUATION_ITEM_CAPACITY = 44;
+
+function capacityMultiplier(settings: DocumentPrintSettings) {
+  const densityMultiplier = settings.density === "comfortable" ? 0.84 : settings.density === "maxFit" ? 1.18 : 1;
+  const orientationMultiplier = settings.orientation === "portrait" ? 0.72 : 1;
+  return densityMultiplier * orientationMultiplier;
+}
+
+function itemCapacity(base: number, settings: DocumentPrintSettings) {
+  return Math.max(8, Math.floor(base * capacityMultiplier(settings)));
+}
 
 function splitLines(value: string | null | undefined) {
   return (value ?? "")
@@ -130,49 +145,45 @@ export function buildPurchaseOrderPages({
   items,
   columnVisibility,
   closing,
+  print = DEFAULT_LANDSCAPE_PRINT_SETTINGS,
 }: {
   items: PurchaseOrderDocumentItem[];
   columnVisibility: PurchaseOrderColumnVisibility;
   closing: PurchaseOrderClosingContent;
+  print?: DocumentPrintSettings;
 }) {
   const pages: Array<Omit<PurchaseOrderPage, "pageIndex" | "totalPages" | "isFirstPage" | "isContinuationPage">> = [];
-  let current: PurchaseOrderPageItem[] = [];
-  let currentUnits = 0;
-
-  items.forEach((item, index) => {
-    const pageIndex = pages.length;
-    const maxUnits = pageIndex === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY;
-    const pageItem = { ...item, rowNumber: index + 1 };
-    const itemUnits = estimateItemUnits(pageItem, columnVisibility);
-
-    if (current.length > 0 && currentUnits + itemUnits > maxUnits) {
-      pages.push({
-        closing: null,
-        isClosingPage: false,
-        isItemPage: true,
-        items: current,
-      });
-      current = [];
-      currentUnits = 0;
-    }
-
-    current.push(pageItem);
-    currentUnits += itemUnits;
+  const itemPages = paginateDocumentItems({
+    items,
+    print,
+    getItemId: (item) => item.id,
+    createPageItem: (item, index) => ({ ...item, rowNumber: index + 1 }),
+    estimateItemUnits: (item) => estimateItemUnits(item, columnVisibility),
+    getItemCapacity: (pageIndex) => itemCapacity(pageIndex === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY, print),
   });
 
-  if (current.length > 0 || pages.length === 0) {
+  itemPages.forEach((pageItems) => {
     pages.push({
       closing: null,
       isClosingPage: false,
       isItemPage: true,
-      items: current,
+      items: pageItems,
+    });
+  });
+
+  if (pages.length === 0) {
+    pages.push({
+      closing: null,
+      isClosingPage: false,
+      isItemPage: true,
+      items: [],
     });
   }
 
   if (hasClosingContent(closing)) {
     const lastPageIndex = pages.length - 1;
     const lastPage = pages[lastPageIndex];
-    const lastPageCapacity = lastPageIndex === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY;
+    const lastPageCapacity = itemCapacity(lastPageIndex === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY, print);
     const usedUnits = lastPage.items.reduce((sum, item) => sum + estimateItemUnits(item, columnVisibility), 0);
     const remainingUnits = lastPageCapacity - usedUnits;
 
@@ -188,11 +199,14 @@ export function buildPurchaseOrderPages({
     }
   }
 
-  return pages.map((page, index) => ({
+  const visiblePages = pages.filter((page) => page.isClosingPage || page.items.length > 0);
+
+  return visiblePages.map((page, index) => ({
     ...page,
     isContinuationPage: index > 0,
     isFirstPage: index === 0,
     pageIndex: index,
-    totalPages: pages.length,
+    totalPages: visiblePages.length,
   }));
 }
+

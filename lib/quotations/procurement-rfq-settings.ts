@@ -1,3 +1,9 @@
+import {
+  DEFAULT_LANDSCAPE_PRINT_SETTINGS,
+  normalizeDocumentPrintSettings,
+  type DocumentPrintSettings,
+} from "@/lib/quotations/document-print-settings";
+
 export type ProcurementRfqLogoDisplayMode = "logo_if_available" | "text_wordmark_fallback";
 
 export type ProcurementRfqDocumentDetails = {
@@ -56,6 +62,7 @@ export type ProcurementRfqNotes = {
 
 export type QuotationProcurementRfqSettings = {
   documentDetails: ProcurementRfqDocumentDetails;
+  print: DocumentPrintSettings;
   selectedGroupKey: string;
   supplierOverrides: Record<string, ProcurementRfqSupplierOverride>;
   itemOverrides: Record<string, ProcurementRfqItemOverride>;
@@ -128,6 +135,7 @@ export const DEFAULT_PROCUREMENT_RFQ_NOTES: ProcurementRfqNotes = {
 
 export const DEFAULT_PROCUREMENT_RFQ_SETTINGS: QuotationProcurementRfqSettings = {
   documentDetails: DEFAULT_PROCUREMENT_RFQ_DOCUMENT_DETAILS,
+  print: DEFAULT_LANDSCAPE_PRINT_SETTINGS,
   selectedGroupKey: "all",
   supplierOverrides: {},
   itemOverrides: {},
@@ -180,6 +188,7 @@ export function normalizeProcurementRfqSettings(
   const itemOverridesRecord = isRecord(record.itemOverrides) ? record.itemOverrides : undefined;
   const columnVisibilityRecord = isRecord(record.columnVisibility) ? record.columnVisibility : undefined;
   const notesRecord = isRecord(record.notes) ? record.notes : undefined;
+  const printRecord = isRecord(record.print) ? record.print : undefined;
   const groupOrderRecord = isRecord(record.groupOrder) ? record.groupOrder : undefined;
 
   const supplierOverrides = Object.fromEntries(
@@ -251,6 +260,7 @@ export function normalizeProcurementRfqSettings(
         : "logo_if_available",
       companyDisplayName: normalizedString(documentDetailsRecord, "companyDisplayName", DEFAULT_PROCUREMENT_RFQ_DOCUMENT_DETAILS.companyDisplayName),
     },
+    print: normalizeDocumentPrintSettings(printRecord, DEFAULT_PROCUREMENT_RFQ_SETTINGS.print),
     selectedGroupKey: normalizedString(record, "selectedGroupKey", DEFAULT_PROCUREMENT_RFQ_SETTINGS.selectedGroupKey),
     supplierOverrides,
     itemOverrides,

@@ -20,6 +20,11 @@ import {
 import { formatMoney, normalizeCurrency } from "@/lib/currencies";
 import { createLocalId, localNow, type LocalQuotationItem } from "@/lib/local/quotation-workspace";
 import { productTemplatePriceCheckState } from "@/lib/product-price-check";
+import {
+  modularItemPricingRows,
+  modularPricingDefaultsFromRows,
+  standardCategoryPricingRows,
+} from "@/lib/products/modular-pricing";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 import {
   buildCompanyStyleProductSpecification,
@@ -110,13 +115,18 @@ type DeskingSizePricingRow = {
   id?: string;
   label?: string;
   supplier_price_list_code?: string;
+  base_supplier_price_list_code?: string;
   length?: number;
   depth?: number;
   height?: number;
   dimension_unit?: string;
+  layout_type?: string;
   default_price?: number;
   additional_price?: number;
+  additional_supplier_price_list_code?: string;
   currency?: string;
+  specification?: string;
+  default_dimension?: string;
   sort_order?: number;
   is_active?: boolean;
 };
@@ -136,6 +146,7 @@ type VariantPricingRow = {
 
 type CategoryPricingRow = {
   id?: string;
+  pricing_type?: string | null;
   pricing_category_id?: string | null;
   pricing_category_name?: string | null;
   variant_name?: string;
@@ -145,6 +156,8 @@ type CategoryPricingRow = {
   currency?: string;
   prices?: Record<string, number>;
   specification?: string;
+  modular_default_dimension?: string | null;
+  modular_default_specification?: string | null;
   is_active?: boolean;
   sort_order?: number;
 };
@@ -260,21 +273,36 @@ function parseSizeLabel(label?: string | null) {
   };
 }
 
+function normalizedWorkstationLayoutType(value: unknown) {
+  return value === "Linear" || value === "Cluster" || value === "Both" ? value : "Linear";
+}
+
 function normalizedSizePricingRow(row: DeskingSizePricingRow, index: number): DeskingSizePricingRow {
-  const parsedLabel = parseSizeLabel(row.label);
+  const parsedLabel = parseSizeLabel(
+    typeof row.default_dimension === "string" && row.default_dimension.trim()
+      ? row.default_dimension
+      : row.label,
+  );
   const length = parsedLabel?.length ?? numberValue(row.length);
   const depth = parsedLabel?.depth ?? numberValue(row.depth);
   const height = parsedLabel?.height ?? numberValue(row.height);
+  const baseSupplierPriceListCode = row.base_supplier_price_list_code?.trim() || row.supplier_price_list_code?.trim() || "";
 
   return {
     ...row,
+    additional_supplier_price_list_code: row.additional_supplier_price_list_code?.trim() || "",
+    base_supplier_price_list_code: baseSupplierPriceListCode,
     currency: normalizeCurrency(row.currency ?? "AED"),
+    default_dimension: row.default_dimension?.trim() || (length && depth && height ? `${length}x${depth}x${height}` : ""),
     depth,
     height,
     id: row.id ?? `size-${index}`,
     is_active: row.is_active !== false,
     label: row.label?.trim() || `${length}x${depth}x${height}`,
     length,
+    layout_type: normalizedWorkstationLayoutType(row.layout_type),
+    specification: row.specification?.trim() || "",
+    supplier_price_list_code: baseSupplierPriceListCode,
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
   };
 }
@@ -367,7 +395,13 @@ function activeSizePricingRows(rows?: DeskingSizePricingRow[] | null) {
   return (Array.isArray(rows) ? rows : [])
     .map((row, index) => normalizedSizePricingRow(row, index))
     .filter((row) => row.is_active !== false)
-    .filter((row) => numberValue(row.length) > 0 && numberValue(row.depth) > 0 && numberValue(row.height) > 0)
+    .filter((row) =>
+      Boolean(
+        row.label?.trim() ||
+        row.default_dimension?.trim() ||
+        numberValue(row.default_price) > 0 ||
+        numberValue(row.additional_price) > 0,
+      ))
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
 }
 
@@ -379,7 +413,14 @@ function activeVariantRows(rows?: VariantPricingRow[] | null) {
 }
 
 function activeCategoryRows(rows?: CategoryPricingRow[] | null) {
-  return (Array.isArray(rows) ? rows : [])
+  return standardCategoryPricingRows(rows)
+    .filter((row) => row.is_active !== false)
+    .filter((row) => row.variant_name || row.display_name || row.dimension || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
+    .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
+}
+
+function activeModularRows(rows?: CategoryPricingRow[] | null) {
+  return modularItemPricingRows(rows)
     .filter((row) => row.is_active !== false)
     .filter((row) => row.variant_name || row.display_name || row.dimension || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
@@ -429,7 +470,7 @@ function InternalMetaLine({
 function categoryPriceColumns(rows?: CategoryPricingRow[] | null) {
   const columns = ["Cat A", "Cat B", "Cat C", "Cat D"];
 
-  activeCategoryRows(rows).forEach((row) => {
+  [...activeCategoryRows(rows), ...activeModularRows(rows)].forEach((row) => {
     Object.keys(row.prices ?? {}).forEach((category) => {
       if (!columns.includes(category)) {
         columns.push(category);
@@ -510,6 +551,8 @@ function matchesTemplateSearch({
       row.specification,
     ]),
     ...(template.category_pricing ?? []).flatMap((row) => [
+      row.modular_default_specification,
+      row.modular_default_dimension,
       row.variant_name,
       row.display_name,
       row.supplier_price_list_code,
@@ -547,12 +590,16 @@ function isDeskingTemplate({
 function deskingSizePricingCalculation({
   accessoryQuantities,
   additionalClusterQty,
+  configuredDimension,
+  selectedLayoutType,
   selectedSize,
   template,
   templateComponents,
 }: {
   accessoryQuantities: Record<string, number>;
   additionalClusterQty: number;
+  configuredDimension?: string | null;
+  selectedLayoutType?: string | null;
   selectedSize: DeskingSizePricingRow;
   template: ProductLibraryTemplate;
   templateComponents: ProductLibraryComponent[];
@@ -576,10 +623,11 @@ function deskingSizePricingCalculation({
   const depth = numberValue(selectedSize.depth, 0);
   const height = numberValue(selectedSize.height, 0);
   const dimensionUnit = selectedSize.dimension_unit ?? "cm";
-  const dimension =
+  const calculatedDimension =
     moduleLength && depth && height && totalModules
       ? `${moduleLength * totalModules} x ${depth} x ${height} ${dimensionUnit}`
       : "";
+  const dimension = configuredDimension?.trim() || selectedSize.default_dimension?.trim() || calculatedDimension;
   const clusterName = "CL2";
   const clusterLabel =
     additionalClusterQty > 0
@@ -603,10 +651,13 @@ function deskingSizePricingCalculation({
     accessoryPrice,
     additionalClusterQty,
     additionalPrice,
+    additionalSupplierPriceListCode: selectedSize.additional_supplier_price_list_code ?? null,
     basePrice,
+    baseSupplierPriceListCode: selectedSize.base_supplier_price_list_code ?? selectedSize.supplier_price_list_code ?? null,
     clusterLabel,
     clusterName,
     dimension,
+    layoutType: selectedLayoutType || selectedSize.layout_type || "Linear",
     mainCurrency: selectedSize.currency ?? template.currency,
     formula:
       additionalClusterQty > 0
@@ -861,6 +912,10 @@ export function ProductLibrarySelector({
   const [selectedVariantRows, setSelectedVariantRows] = useState<Record<string, string>>({});
   const [selectedCategoryRows, setSelectedCategoryRows] = useState<Record<string, string>>({});
   const [selectedFabricCategories, setSelectedFabricCategories] = useState<Record<string, string>>({});
+  const [selectedModularQuantities, setSelectedModularQuantities] = useState<Record<string, Record<string, number>>>({});
+  const [configuredDimensions, setConfiguredDimensions] = useState<Record<string, string>>({});
+  const [configuredSpecifications, setConfiguredSpecifications] = useState<Record<string, string>>({});
+  const [selectedWorkstationLayouts, setSelectedWorkstationLayouts] = useState<Record<string, string>>({});
   const [pricingAccessoryQuantities, setPricingAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [linkedProductQuantities, setLinkedProductQuantities] = useState<Record<string, number>>({});
   const [linkedAccessoryQuantities, setLinkedAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
@@ -1297,12 +1352,16 @@ export function ProductLibrarySelector({
                   );
                   const variantRows = activeVariantRows(template.variant_pricing);
                   const categoryRows = activeCategoryRows(template.category_pricing);
+                  const modularRows = activeModularRows(template.category_pricing);
+                  const modularDefaults = modularPricingDefaultsFromRows(template.category_pricing);
                   const accessoryGroups = activeAccessoryRows(template.accessory_pricing);
                   const templateLinkedFamilies = linkedFamiliesByParent.get(template.id) ?? [];
                   const usesWorkstationFlow = sizePricingRows.length > 0;
                   const usesVariantPricing = !usesWorkstationFlow && variantRows.length > 0;
-                  const usesCategoryPricing = !usesVariantPricing && categoryRows.length > 0;
+                  const usesModularPricing = modularRows.length > 0;
+                  const usesCategoryPricing = !usesVariantPricing && !usesModularPricing && categoryRows.length > 0;
                   const templatePricingAccessoryQuantities = pricingAccessoryQuantities[template.id] ?? {};
+                  const templateModularQuantities = selectedModularQuantities[template.id] ?? {};
                   const selectedVariantRow =
                     usesVariantPricing
                       ? variantRows.find((row) => row.id === selectedVariantRows[template.id]) ??
@@ -1319,12 +1378,29 @@ export function ProductLibrarySelector({
                         categoryRows[0] ??
                         null
                       : null;
-                  const availableCategoryColumns = categoryPriceColumns(template.category_pricing);
+                  const availableCategoryColumns = usesModularPricing
+                    ? categoryPriceColumns(modularRows)
+                    : categoryPriceColumns(template.category_pricing);
                   const selectedFabricCategory =
                     selectedFabricCategories[template.id] ?? availableCategoryColumns[0] ?? "Cat A";
                   const selectedCategoryPrice = selectedCategoryRow
                     ? numberValue(selectedCategoryRow.prices?.[selectedFabricCategory])
                     : 0;
+                  const selectedModularItems = modularRows
+                    .map((row) => {
+                      const id = row.id ?? row.variant_name ?? row.display_name ?? "";
+                      const qty = Math.max(0, Math.trunc(numberValue(templateModularQuantities[id])));
+                      const price = numberValue(row.prices?.[selectedFabricCategory]);
+
+                      return {
+                        id,
+                        qty,
+                        row,
+                        total: qty * price,
+                        unitPrice: price,
+                      };
+                    })
+                    .filter((line) => line.qty > 0);
                   const groupedOptions = new Map<string, ProductLibraryComponent[]>();
                   const templateSelections = selectedOptions[template.id] ?? {};
                   const additionalClusterQty = Math.max(
@@ -1343,18 +1419,35 @@ export function ProductLibrarySelector({
                     sizePricingRows.find((row) => row.id === selectedDeskingSizes[template.id]) ??
                     sizePricingRows[0] ??
                     null;
+                  const configuredDimension = usesModularPricing
+                    ? configuredDimensions[template.id] ?? modularDefaults.defaultDimension ?? ""
+                    : configuredDimensions[template.id] ?? selectedSizeRow?.default_dimension ?? selectedSizeRow?.label ?? "";
+                  const configuredSpecification = usesWorkstationFlow
+                    ? configuredSpecifications[template.id] ?? selectedSizeRow?.specification ?? template.default_specification ?? template.description ?? ""
+                    : "";
+                  const selectedWorkstationLayout = usesWorkstationFlow
+                    ? (
+                        selectedSizeRow?.layout_type === "Both"
+                          ? selectedWorkstationLayouts[template.id] ?? "Linear"
+                          : selectedSizeRow?.layout_type ?? "Linear"
+                      )
+                    : "";
                   const hasMixedWorkstationCurrencies = usesWorkstationFlow && workstationCurrencies.length > 1;
                   const missingRequiredWorkstationSelection = usesWorkstationFlow && !selectedSizeRow;
+                  const missingRequiredModularSelection = usesModularPricing && selectedModularItems.length === 0;
                   const derivedDesking = isDesking && selectedSizeRow
                     ? deskingSizePricingCalculation({
                         accessoryQuantities: templateAccessoryQuantities,
                         additionalClusterQty,
+                        configuredDimension,
+                        selectedLayoutType: selectedWorkstationLayout,
                         selectedSize: selectedSizeRow,
                         template,
                         templateComponents,
                       })
                     : null;
                   const rowCurrency = derivedDesking?.mainCurrency ??
+                    selectedModularItems[0]?.row.currency ??
                     selectedCategoryRow?.currency ??
                     selectedVariantRow?.currency ??
                     template.currency;
@@ -1381,7 +1474,9 @@ export function ProductLibrarySelector({
                     (line) => normalizeCurrency(line.accessory.currency ?? rowCurrency) !== normalizeCurrency(rowCurrency),
                   );
                   const previewUnitPrice =
-                    (derivedDesking?.unitPrice ??
+                    (usesModularPricing
+                      ? selectedModularItems.reduce((total, line) => total + line.total, 0)
+                      : derivedDesking?.unitPrice ??
                       (selectedCategoryRow ? selectedCategoryPrice : undefined) ??
                       selectedVariantRow?.price ??
                       template.default_unit_price) +
@@ -1478,10 +1573,12 @@ export function ProductLibrarySelector({
                     );
                   const totalPreviewUnitPrice = previewUnitPrice + matchingLinkedProductTotal;
                   const baseProductPrice =
-                    derivedDesking?.unitPrice ??
-                    (selectedCategoryRow ? selectedCategoryPrice : undefined) ??
-                    selectedVariantRow?.price ??
-                    template.default_unit_price;
+                    usesModularPricing
+                      ? selectedModularItems.reduce((total, line) => total + line.total, 0)
+                      : derivedDesking?.unitPrice ??
+                        (selectedCategoryRow ? selectedCategoryPrice : undefined) ??
+                        selectedVariantRow?.price ??
+                        template.default_unit_price;
                   const originalCurrencyTotals = new Map<string, number>();
                   const addCurrencyTotal = (currency: string | undefined, amount: number) => {
                     const normalizedCurrency = normalizeCurrency(currency ?? "AED");
@@ -1711,6 +1808,7 @@ export function ProductLibrarySelector({
                     qty: line.qty,
                     price: numberValue(line.accessory.price),
                     currency: normalizeCurrency(line.accessory.currency ?? rowCurrency),
+                    supplier_price_list_code: line.accessory.supplier_price_list_code ?? null,
                     specification: line.accessory.specification ?? "",
                   }));
                   const linkedProductSnapshots = selectedLinkedProducts.map((line) => ({
@@ -1721,6 +1819,10 @@ export function ProductLibrarySelector({
                     selected_variant: line.childVariantRow?.variant_name ?? null,
                     selected_category: line.childCategoryRow ? line.childCategory : null,
                     dimension: line.childCategoryRow?.dimension ?? line.childVariantRow?.dimension ?? null,
+                    supplier_price_list_code:
+                      line.childCategoryRow?.supplier_price_list_code ??
+                      line.childVariantRow?.supplier_price_list_code ??
+                      null,
                     specification: line.childCategoryRow?.specification ?? line.childVariantRow?.specification ?? null,
                     qty: line.qty,
                     unit_price: line.unitPrice,
@@ -1733,6 +1835,7 @@ export function ProductLibrarySelector({
                       qty: accessoryLine.qty,
                       price: numberValue(accessoryLine.accessory.price),
                       currency: normalizeCurrency(accessoryLine.accessory.currency ?? line.currency),
+                      supplier_price_list_code: accessoryLine.accessory.supplier_price_list_code ?? null,
                     })),
                   }));
                   const sourceCurrencyTotals = Object.fromEntries(
@@ -1751,6 +1854,8 @@ export function ProductLibrarySelector({
                     original_source_totals: sourceCurrencyTotals,
                     source_price_type: derivedDesking
                       ? "desking_size_pricing"
+                      : usesModularPricing
+                        ? "modular_item_pricing"
                       : selectedCategoryRow
                         ? "category_pricing"
                         : selectedVariantRow
@@ -1759,6 +1864,9 @@ export function ProductLibrarySelector({
                             ? "component_options"
                             : "template_default",
                     source_price_label: derivedDesking?.sizeLabel ||
+                      (usesModularPricing
+                        ? `${selectedModularItems.length} modular items / ${selectedFabricCategory}`
+                        : null) ||
                       pricingDisplayName(selectedCategoryRow) ||
                       pricingDisplayName(selectedVariantRow) ||
                       effectiveSelectedNames.join(", ") ||
@@ -1775,33 +1883,79 @@ export function ProductLibrarySelector({
                     accessorySnapshots,
                     linkedProductSnapshots,
                     primarySpecification:
+                      (usesWorkstationFlow ? configuredSpecification : null) ??
+                      (usesModularPricing ? modularDefaults.defaultSpecification : null) ??
                       selectedCategoryRow?.specification ??
                       selectedVariantRow?.specification ??
                       null,
                     selectedOptionSnapshots,
                     selectedWorkstationVariant: selectedWorkstationVariantRow,
-                    template,
+                    template: usesModularPricing
+                      ? {
+                          ...template,
+                          default_specification:
+                            modularDefaults.defaultSpecification ?? template.default_specification,
+                        }
+                      : template,
                   });
                   const localSpecification = resolveProductSpecificationSnapshot({
                     companyStyleSpecification,
-                    selectedCategorySpecification: selectedCategoryRow?.specification ?? null,
+                    selectedCategorySpecification:
+                      (usesWorkstationFlow ? configuredSpecification : null) ??
+                      (usesModularPricing ? modularDefaults.defaultSpecification : null) ??
+                      selectedCategoryRow?.specification ??
+                      null,
                     selectedVariantSpecification: selectedVariantRow?.specification ?? null,
                     selectedWorkstationVariantSpecification: selectedWorkstationVariantRow?.specification,
-                    template,
+                    template: usesModularPricing
+                      ? {
+                          ...template,
+                          default_specification:
+                            modularDefaults.defaultSpecification ?? template.default_specification,
+                        }
+                      : template,
                   });
                   const localDimension = resolveProductDimensionSnapshot({
-                    derivedDeskingDimension: derivedDesking?.dimension,
+                    derivedDeskingDimension:
+                      usesModularPricing || usesWorkstationFlow
+                        ? configuredDimension
+                        : derivedDesking?.dimension,
                     selectedSizeLabel: selectedSizeRow?.label,
                     selectedCategoryDimension: selectedCategoryRow?.dimension,
                     selectedVariantDimension: selectedVariantRow?.dimension,
                     selectedWorkstationVariantDimension: selectedWorkstationVariantRow?.dimension ?? null,
                   });
                   const selectedSupplierPriceListCode =
+                    (usesModularPricing
+                      ? selectedModularItems
+                          .map((line) => line.row.supplier_price_list_code?.trim() || "")
+                          .filter(Boolean)
+                          .join(", ")
+                      : null) ||
+                    (usesWorkstationFlow && selectedSizeRow
+                      ? [
+                          selectedSizeRow.base_supplier_price_list_code?.trim() || selectedSizeRow.supplier_price_list_code?.trim() || "",
+                          selectedSizeRow.additional_supplier_price_list_code?.trim() || "",
+                        ].filter(Boolean).join(", ")
+                      : null) ||
                     selectedCategoryRow?.supplier_price_list_code?.trim() ||
                     selectedVariantRow?.supplier_price_list_code?.trim() ||
                     selectedSizeRow?.supplier_price_list_code?.trim() ||
                     selectedWorkstationVariantRow?.supplier_price_list_code?.trim() ||
                     null;
+                  const modularItemSnapshots = selectedModularItems.map((line) => ({
+                    item_type: "modular_item",
+                    label: pricingDisplayName(line.row) || line.row.variant_name || "Modular item",
+                    item_name: pricingDisplayName(line.row) || line.row.variant_name || "Modular item",
+                    selected_category: selectedFabricCategory,
+                    supplier_price_list_code: line.row.supplier_price_list_code ?? null,
+                    specification: line.row.specification ?? "",
+                    dimension: line.row.dimension ?? null,
+                    qty: line.qty,
+                    unit_price: quotationMoneyValue(line.unitPrice),
+                    total: quotationMoneyValue(line.total),
+                    currency: normalizeCurrency(line.row.currency ?? rowCurrency),
+                  }));
                   const localProductItem: LocalQuotationItem = {
                     id: createLocalId("item"),
                     quotation_id: quotationId,
@@ -1822,7 +1976,11 @@ export function ProductLibrarySelector({
                       supplier_price_list_code: selectedSupplierPriceListCode,
                       specification: localSpecification,
                       description: template.description ?? null,
-                      default_specification: template.default_specification ?? null,
+                      default_specification:
+                        (usesWorkstationFlow ? configuredSpecification : null) ??
+                        (usesModularPricing ? modularDefaults.defaultSpecification : null) ??
+                        template.default_specification ??
+                        null,
                       dimension: localDimension,
                       dimensions: localDimension,
                       size_label: localDimension,
@@ -1851,7 +2009,9 @@ export function ProductLibrarySelector({
                       selected_proposed_image_url: selectedImage || null,
                       selected_option_ids: effectiveSelectedIds,
                       selected_options: effectiveSelectedNames,
-                      selected_options_snapshot: selectedOptionSnapshots,
+                      selected_options_snapshot: usesModularPricing
+                        ? modularItemSnapshots
+                        : selectedOptionSnapshots,
                       source_price_reference: sourcePriceReference,
                       ...(derivedDesking
                         ? {
@@ -1859,10 +2019,18 @@ export function ProductLibrarySelector({
                               size_label: derivedDesking.sizeLabel,
                               cluster_label: derivedDesking.clusterLabel,
                               dimension: derivedDesking.dimension,
+                              configured_dimension: configuredDimension || null,
+                              default_dimension: selectedSizeRow?.default_dimension ?? null,
+                              default_specification: selectedSizeRow?.specification ?? null,
+                              layout_type: selectedWorkstationLayout || null,
                               total_modules: derivedDesking.totalModules,
                               total_seats: derivedDesking.totalSeats,
                               default_price: derivedDesking.basePrice,
                               additional_price: derivedDesking.additionalPrice,
+                              base_supplier_price_list_code:
+                                derivedDesking.baseSupplierPriceListCode,
+                              additional_supplier_price_list_code:
+                                derivedDesking.additionalSupplierPriceListCode,
                               additional_qty: derivedDesking.additionalClusterQty,
                               accessory_price: derivedDesking.accessoryPrice,
                               final_price: derivedDesking.unitPrice,
@@ -1877,6 +2045,17 @@ export function ProductLibrarySelector({
                               selected_row: selectedCategoryRow,
                               selected_category: selectedFabricCategory,
                               selected_price: selectedCategoryPrice,
+                            },
+                          }
+                        : {}),
+                      ...(usesModularPricing
+                        ? {
+                            modular_pricing: {
+                              configured_dimension: configuredDimension || null,
+                              default_dimension: modularDefaults.defaultDimension,
+                              default_specification: modularDefaults.defaultSpecification,
+                              selected_category: selectedFabricCategory,
+                              items: modularItemSnapshots,
                             },
                           }
                         : {}),
@@ -1923,13 +2102,16 @@ export function ProductLibrarySelector({
                     specification_snapshot: localSpecification,
                     finish_selections_snapshot: selectedFinishes,
                     selected_options_snapshot: [
-                      ...selectedOptionSnapshots,
+                      ...(usesModularPricing ? modularItemSnapshots : selectedOptionSnapshots),
                       ...accessorySnapshots,
                       ...linkedProductSnapshots,
                     ],
                     internal_components_snapshot: linkedProductSnapshots,
                     room_name_snapshot: null,
-                    model_snapshot: selectedCategoryRow?.variant_name || selectedVariantRow?.variant_name || null,
+                    model_snapshot:
+                      usesModularPricing
+                        ? (selectedModularItems.length ? `${selectedModularItems.length} modular items` : null)
+                        : selectedCategoryRow?.variant_name || selectedVariantRow?.variant_name || null,
                     finish_snapshot: finishSnapshotValue(selectedFinishes),
                     size_snapshot: localDimension,
                     origin_snapshot: originSnapshot,
@@ -1974,11 +2156,15 @@ export function ProductLibrarySelector({
                   );
                   const mainItemLabel = usesWorkstationFlow
                     ? selectedSizeRow?.label ?? selectedSizeRow?.id ?? template.template_name
+                    : usesModularPricing
+                      ? template.template_name
                     : selectedCategoryRow
                       ? `${pricingDisplayName(selectedCategoryRow)} / ${selectedFabricCategory}`
                       : pricingDisplayName(selectedVariantRow) || template.template_name;
                   const mainItemDimension = usesWorkstationFlow
                     ? selectedSizeRow?.label ?? derivedDesking?.dimension ?? null
+                    : usesModularPricing
+                      ? localDimension
                     : selectedCategoryRow?.dimension ?? selectedVariantRow?.dimension ?? localDimension;
                   const additionalClusterLine =
                     usesWorkstationFlow && selectedSizeRow && additionalClusterQty > 0
@@ -2009,6 +2195,15 @@ export function ProductLibrarySelector({
                     qty: line.qty,
                     total: quotationMoneyValue(line.qty * numberValue(line.accessory.price)),
                     unitPrice: quotationMoneyValue(numberValue(line.accessory.price)),
+                  }));
+                  const modularSummary = selectedModularItems.map((line) => ({
+                    currency: normalizeCurrency(line.row.currency ?? rowCurrency),
+                    detail: [line.row.supplier_price_list_code, line.row.dimension].filter(Boolean).join(" / ") || null,
+                    label: pricingDisplayName(line.row) || line.row.variant_name || "Modular item",
+                    supplierCode: line.row.supplier_price_list_code ?? null,
+                    qty: line.qty,
+                    total: quotationMoneyValue(line.total),
+                    unitPrice: quotationMoneyValue(line.unitPrice),
                   }));
                   const linkedProductSummary = selectedLinkedProducts
                     .filter((line) => line.qty > 0)
@@ -2246,12 +2441,21 @@ export function ProductLibrarySelector({
                             </label>
                             {selectedSizeRow ? (
                               <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-700">
+                                <p>Layout type: {selectedWorkstationLayout || selectedSizeRow.layout_type || "Linear"}</p>
                                 <p>
                                   Base price: {formatMoney(selectedSizeRow.currency ?? template.currency, numberValue(selectedSizeRow.default_price))}
                                 </p>
+                                {selectedSizeRow.base_supplier_price_list_code || selectedSizeRow.supplier_price_list_code ? (
+                                  <p>Base supplier code: {selectedSizeRow.base_supplier_price_list_code || selectedSizeRow.supplier_price_list_code}</p>
+                                ) : null}
                                 <p>
                                   Additional CL2 price: {formatMoney(selectedSizeRow.currency ?? template.currency, numberValue(selectedSizeRow.additional_price))}
                                 </p>
+                                {selectedSizeRow.additional_supplier_price_list_code ? (
+                                  <p>Additional supplier code: {selectedSizeRow.additional_supplier_price_list_code}</p>
+                                ) : null}
+                                {selectedSizeRow.specification ? <p>{selectedSizeRow.specification}</p> : null}
+                                {selectedSizeRow.default_dimension ? <p>Default dimension: {selectedSizeRow.default_dimension}</p> : null}
                               </div>
                             ) : null}
                             {hasMixedWorkstationCurrencies ? (
@@ -2259,6 +2463,46 @@ export function ProductLibrarySelector({
                                 Mixed currencies detected. Review conversion before adding.
                               </p>
                             ) : null}
+                          </div>
+                        ) : null}
+                        {usesWorkstationFlow && selectedSizeRow ? (
+                          <div className="mt-4 grid gap-3 md:grid-cols-2">
+                            {selectedSizeRow.layout_type === "Both" ? (
+                              <label className="block">
+                                <span className="text-[10px] font-bold uppercase text-zinc-500">Layout Type</span>
+                                <select
+                                  value={selectedWorkstationLayout}
+                                  onChange={(event) => setSelectedWorkstationLayouts((current) => ({ ...current, [template.id]: event.target.value }))}
+                                  className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                >
+                                  <option value="Linear">Linear</option>
+                                  <option value="Cluster">Cluster</option>
+                                </select>
+                              </label>
+                            ) : (
+                              <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600">
+                                <p className="font-semibold text-zinc-900">Layout Type</p>
+                                <p>{selectedWorkstationLayout}</p>
+                              </div>
+                            )}
+                            <label className="block md:col-span-2">
+                              <span className="text-[10px] font-bold uppercase text-zinc-500">Workstation Specification</span>
+                              <textarea
+                                value={configuredSpecification}
+                                onChange={(event) => setConfiguredSpecifications((current) => ({ ...current, [template.id]: event.target.value }))}
+                                rows={4}
+                                className="mt-1 w-full border border-zinc-300 bg-white px-2 py-2 text-xs outline-none focus:border-emerald-800"
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="text-[10px] font-bold uppercase text-zinc-500">Configured Dimension</span>
+                              <input
+                                value={configuredDimension}
+                                onChange={(event) => setConfiguredDimensions((current) => ({ ...current, [template.id]: event.target.value }))}
+                                placeholder="e.g. 240x120x75 cmH"
+                                className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                              />
+                            </label>
                           </div>
                         ) : null}
                         {usesWorkstationFlow ? (
@@ -2351,6 +2595,86 @@ export function ProductLibrarySelector({
                                 <InternalMetaLine label="Specification" value={selectedCategoryRow.specification} />
                               </div>
                             ) : null}
+                          </div>
+                        ) : null}
+                        {usesModularPricing ? (
+                          <div className="mt-3 space-y-3">
+                            <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                              Modular Configurator
+                            </p>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <label className="block">
+                                <span className="text-[10px] font-bold uppercase text-zinc-500">Fabric / Category</span>
+                                <select
+                                  value={selectedFabricCategory}
+                                  onChange={(event) => setSelectedFabricCategories((current) => ({ ...current, [template.id]: event.target.value }))}
+                                  className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                >
+                                  {availableCategoryColumns.map((category) => (
+                                    <option key={category} value={category}>{category}</option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label className="block">
+                                <span className="text-[10px] font-bold uppercase text-zinc-500">Configured Dimension</span>
+                                <input
+                                  value={configuredDimension}
+                                  onChange={(event) => setConfiguredDimensions((current) => ({ ...current, [template.id]: event.target.value }))}
+                                  placeholder="e.g. 540x70x78 cmH"
+                                  className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                />
+                              </label>
+                            </div>
+                            {modularDefaults.defaultSpecification ? (
+                              <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600">
+                                <p className="font-semibold text-zinc-950">Default modular specification</p>
+                                <p className="mt-1 whitespace-pre-wrap">{modularDefaults.defaultSpecification}</p>
+                              </div>
+                            ) : null}
+                            <div className="space-y-2">
+                              {modularRows.map((row) => {
+                                const modularRowId = row.id ?? row.variant_name ?? row.display_name ?? "";
+                                const modularQty = templateModularQuantities[modularRowId] ?? 0;
+                                const modularUnitPrice = numberValue(row.prices?.[selectedFabricCategory]);
+                                return (
+                                  <div key={modularRowId} className="grid gap-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 md:grid-cols-[minmax(0,1fr)_100px]">
+                                    <div className="min-w-0">
+                                      <p className="font-semibold text-zinc-950">
+                                        {pricingDisplayName(row) || row.variant_name || "Modular item"}
+                                      </p>
+                                      <div className="mt-1 space-y-1 text-xs leading-5 text-zinc-600">
+                                        {row.variant_name && pricingDisplayName(row) !== row.variant_name ? (
+                                          <p>Module code: {row.variant_name}</p>
+                                        ) : null}
+                                        {row.supplier_price_list_code ? <p>Supplier code: {row.supplier_price_list_code}</p> : null}
+                                        {row.dimension ? <p>Dimension: {row.dimension}</p> : null}
+                                        <p>Price: {formatMoney(row.currency ?? template.currency, modularUnitPrice)}</p>
+                                        {row.specification ? <p>{row.specification}</p> : null}
+                                      </div>
+                                    </div>
+                                    <label className="block">
+                                      <span className="text-[10px] font-bold uppercase text-zinc-500">Qty</span>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        step={1}
+                                        value={modularQty}
+                                        onChange={(event) =>
+                                          setSelectedModularQuantities((current) => ({
+                                            ...current,
+                                            [template.id]: {
+                                              ...(current[template.id] ?? {}),
+                                              [modularRowId]: Math.max(0, Math.trunc(Number(event.target.value) || 0)),
+                                            },
+                                          }))
+                                        }
+                                        className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-right text-xs outline-none focus:border-emerald-800"
+                                      />
+                                    </label>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         ) : null}
                         {usesVariantPricing ? (
@@ -3215,11 +3539,23 @@ export function ProductLibrarySelector({
                                 Cluster: {derivedDesking.clusterLabel}
                               </p>
                             ) : null}
+                            {derivedDesking.layoutType ? (
+                              <p>Layout: {derivedDesking.layoutType}</p>
+                            ) : null}
                             {derivedDesking.dimension ? (
                               <p>Dimension: {derivedDesking.dimension}</p>
                             ) : null}
+                            {configuredSpecification ? (
+                              <p className="whitespace-pre-wrap">Specification: {configuredSpecification}</p>
+                            ) : null}
                             <p>Price: {formatMoney(derivedDesking.mainCurrency, derivedDesking.unitPrice)}</p>
                             <p>Formula: {derivedDesking.formula}</p>
+                            {derivedDesking.baseSupplierPriceListCode ? (
+                              <p>Base supplier code: {derivedDesking.baseSupplierPriceListCode}</p>
+                            ) : null}
+                            {derivedDesking.additionalSupplierPriceListCode ? (
+                              <p>Additional supplier code: {derivedDesking.additionalSupplierPriceListCode}</p>
+                            ) : null}
                             {derivedDesking.finishNames.length ? (
                               <p>Finish: {derivedDesking.finishNames.join(", ")}</p>
                             ) : null}
@@ -3245,6 +3581,25 @@ export function ProductLibrarySelector({
                             {selectedVariantRow.specification ? (
                               <p className="line-clamp-3">{selectedVariantRow.specification}</p>
                             ) : null}
+                          </div>
+                        ) : null}
+                        {usesModularPricing ? (
+                          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600">
+                            <p className="font-semibold text-zinc-950">Modular configuration</p>
+                            <p>Fabric / Category: {selectedFabricCategory}</p>
+                            {localDimension ? <p>Configured Dimension: {localDimension}</p> : null}
+                            {modularSummary.length ? (
+                              <div className="mt-2 space-y-1">
+                                {modularSummary.map((line) => (
+                                  <p key={`${line.label}-${line.qty}-${line.supplierCode ?? ""}`}>
+                                    {line.label} x{line.qty} - {formatMoney(line.currency, line.total)}
+                                    {line.supplierCode ? ` (${line.supplierCode})` : ""}
+                                  </p>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="mt-1 text-zinc-500">Select one or more modular items.</p>
+                            )}
                           </div>
                         ) : null}
                         {usesWorkstationFlow && selectedWorkstationVariantRow ? (
@@ -3295,6 +3650,11 @@ export function ProductLibrarySelector({
                         {effectiveSelectedNames.length ? (
                           <p className="text-xs leading-5 text-zinc-500">
                             Selected: {effectiveSelectedNames.join(", ")}
+                          </p>
+                        ) : null}
+                        {missingRequiredModularSelection ? (
+                          <p className="text-xs leading-5 text-amber-700">
+                            Select at least one modular item to add this product.
                           </p>
                         ) : null}
                         {hasMixedOptionCurrencies ? (
@@ -3475,7 +3835,7 @@ export function ProductLibrarySelector({
                                   onAddLocalItem?.(localProductItem);
                                   setIsOpen(false);
                                 }}
-                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || needsUpdatedPriceDecision}
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredModularSelection || needsUpdatedPriceDecision}
                                   className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                                 >
                                   Add to Local Workspace
@@ -3483,7 +3843,7 @@ export function ProductLibrarySelector({
                               ) : (
                                 <button
                                   type="submit"
-                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || needsUpdatedPriceDecision}
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredModularSelection || needsUpdatedPriceDecision}
                                   className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                                 >
                                   Add
@@ -3536,10 +3896,31 @@ export function ProductLibrarySelector({
                               value={selectedSizeRow.id ?? ""}
                             />
                           ) : null}
+                          {usesWorkstationFlow && selectedSizeRow ? (
+                            <>
+                              <input type="hidden" name="configured_dimension" value={configuredDimension} />
+                              <input type="hidden" name="configured_specification" value={configuredSpecification} />
+                              <input type="hidden" name="workstation_layout_type" value={selectedWorkstationLayout} />
+                            </>
+                          ) : null}
                           {usesCategoryPricing && selectedCategoryRow ? (
                             <>
                               <input type="hidden" name="category_pricing_row_id" value={selectedCategoryRow.id ?? ""} />
                               <input type="hidden" name="category_pricing_category" value={selectedFabricCategory} />
+                            </>
+                          ) : null}
+                          {usesModularPricing ? (
+                            <>
+                              <input type="hidden" name="modular_pricing_category" value={selectedFabricCategory} />
+                              <input type="hidden" name="configured_dimension" value={configuredDimension} />
+                              {selectedModularItems.map((line) => (
+                                <input
+                                  key={line.id}
+                                  type="hidden"
+                                  name="modular_item_selection"
+                                  value={`${line.id}:${line.qty}`}
+                                />
+                              ))}
                             </>
                           ) : null}
                           {usesVariantPricing && selectedVariantRow ? (

@@ -8,11 +8,13 @@ import {
 import {
   AccessoryPricingTable,
   CategoryPricingTable,
+  ModularItemPricingTable,
   type AccessoryPricingRow,
   type CategoryPricingRow,
   type VariantPricingRow,
   VariantPricingTable,
 } from "@/components/products/variant-pricing-tables";
+import { modularItemPricingRows, standardCategoryPricingRows } from "@/lib/products/modular-pricing";
 import {
   TemplateImportActionButton,
   type QuotationRowImportDraft,
@@ -106,7 +108,9 @@ function PricingAccordionSection({
             {isOpen ? "Hide" : "Show"}
           </span>
         </button>
-        {isOpen ? <div className="border-t border-zinc-100 p-4">{children}</div> : null}
+        <div hidden={!isOpen} className="border-t border-zinc-100 p-4">
+          {children}
+        </div>
       </section>
     </div>
   );
@@ -126,22 +130,26 @@ export function TemplatePricingSections({
   const hasWorkstationPricing = hasRows(deskingSizePricingRows);
   const hasBasePricing = hasRows(variantPricingRows);
   const hasAccessoriesPricing = hasRows(accessoryPricingRows);
-  const hasFinishPricing = hasRows(categoryPricingRows);
+  const hasFinishPricing = hasRows(standardCategoryPricingRows(categoryPricingRows));
+  const hasModularPricing = hasRows(modularItemPricingRows(categoryPricingRows));
 
   const [showWorkstationPricing, setShowWorkstationPricing] = useState(hasWorkstationPricing || Boolean(importDraft));
   const [showBasePricing, setShowBasePricing] = useState(hasBasePricing || Boolean(importDraft));
   const [showAccessoriesPricing, setShowAccessoriesPricing] = useState(hasAccessoriesPricing || Boolean(importDraft));
   const [showFinishPricing, setShowFinishPricing] = useState(hasFinishPricing || Boolean(importDraft));
+  const [showModularPricing, setShowModularPricing] = useState(hasModularPricing);
   const [openWorkstationPricing, setOpenWorkstationPricing] = useState(!compactAccordionMode && (hasWorkstationPricing || Boolean(importDraft)));
   const [openBasePricing, setOpenBasePricing] = useState(!compactAccordionMode && (hasBasePricing || Boolean(importDraft)));
   const [openAccessoriesPricing, setOpenAccessoriesPricing] = useState(!compactAccordionMode && (hasAccessoriesPricing || Boolean(importDraft)));
   const [openFinishPricing, setOpenFinishPricing] = useState(!compactAccordionMode && (hasFinishPricing || Boolean(importDraft)));
+  const [openModularPricing, setOpenModularPricing] = useState(!compactAccordionMode && hasModularPricing);
 
   const hiddenSectionCount = [
     showWorkstationPricing,
     showBasePricing,
     showAccessoriesPricing,
     showFinishPricing,
+    showModularPricing,
   ].filter((isVisible) => !isVisible).length;
 
   const accessoryItemCount = (accessoryPricingRows ?? []).reduce((count, row) => {
@@ -236,6 +244,14 @@ export function TemplatePricingSections({
     </>
   );
 
+  const renderModularPricing = (
+    <ModularItemPricingTable
+      brandDefaultCurrency={brandDefaultCurrency}
+      rows={categoryPricingRows}
+      templateCurrency={templateCurrency}
+    />
+  );
+
   return (
     <>
       <div className="md:col-span-2 xl:col-span-3">
@@ -272,6 +288,13 @@ export function TemplatePricingSections({
                   label="+ Use fabric/leather pricing"
                   description="Reveal finish-category pricing rows and any additional price category columns."
                   onClick={() => setShowFinishPricing(true)}
+                />
+              ) : null}
+              {!showModularPricing ? (
+                <PricingSetupButton
+                  label="+ Use modular item pricing"
+                  description="Reveal modular components with fabric/category pricing for configurable sofas, lounge sets, and sectional items."
+                  onClick={() => setShowModularPricing(true)}
                 />
               ) : null}
             </div>
@@ -356,6 +379,26 @@ export function TemplatePricingSections({
         ) : (
           <PricingSectionCard title="Fabric / Leather / Finish Category Pricing">
             {renderFinishPricing}
+          </PricingSectionCard>
+        )
+      ) : null}
+
+      {showModularPricing ? (
+        compactAccordionMode ? (
+          <PricingAccordionSection
+            isOpen={openModularPricing}
+            onToggle={() => setOpenModularPricing((current) => !current)}
+            summary={`${modularItemPricingRows(categoryPricingRows).length} modular item rows`}
+            title="Modular Items Pricing"
+          >
+            {renderModularPricing}
+          </PricingAccordionSection>
+        ) : (
+          <PricingSectionCard
+            title="Modular Items Pricing"
+            helperText="Configure modular sofa or sectional units with default modular specification, default dimension, and fabric/category pricing per module."
+          >
+            {renderModularPricing}
           </PricingSectionCard>
         )
       ) : null}

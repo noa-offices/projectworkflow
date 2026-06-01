@@ -1,4 +1,9 @@
 import { normalizePurchaseOrderCurrency } from "@/lib/quotations/purchase-order-currency";
+import {
+  DEFAULT_LANDSCAPE_PRINT_SETTINGS,
+  normalizeDocumentPrintSettings,
+  type DocumentPrintSettings,
+} from "@/lib/quotations/document-print-settings";
 
 export type PurchaseOrderLogoDisplayMode = "logo_if_available" | "text_wordmark_fallback";
 
@@ -67,6 +72,7 @@ export type PurchaseOrderTerms = {
 
 export type QuotationPurchaseOrderSettings = {
   documentDetails: PurchaseOrderDocumentDetails;
+  print: DocumentPrintSettings;
   selectedSupplierKey: string;
   supplierOverrides: Record<string, PurchaseOrderSupplierOverride>;
   itemOverrides: Record<string, PurchaseOrderItemOverride>;
@@ -145,6 +151,7 @@ export const DEFAULT_PURCHASE_ORDER_TERMS: PurchaseOrderTerms = {
 
 export const DEFAULT_PURCHASE_ORDER_SETTINGS: QuotationPurchaseOrderSettings = {
   documentDetails: DEFAULT_PURCHASE_ORDER_DOCUMENT_DETAILS,
+  print: DEFAULT_LANDSCAPE_PRINT_SETTINGS,
   selectedSupplierKey: "",
   supplierOverrides: {},
   itemOverrides: {},
@@ -194,6 +201,7 @@ export function normalizePurchaseOrderSettings(
   const itemOverridesRecord = isRecord(record.itemOverrides) ? record.itemOverrides : undefined;
   const columnVisibilityRecord = isRecord(record.columnVisibility) ? record.columnVisibility : undefined;
   const termsRecord = isRecord(record.terms) ? record.terms : undefined;
+  const printRecord = isRecord(record.print) ? record.print : undefined;
   const groupOrderRecord = isRecord(record.groupOrder) ? record.groupOrder : undefined;
 
   const supplierOverrides = Object.fromEntries(
@@ -274,6 +282,7 @@ export function normalizePurchaseOrderSettings(
         ? "text_wordmark_fallback"
         : "logo_if_available",
     },
+    print: normalizeDocumentPrintSettings(printRecord, DEFAULT_PURCHASE_ORDER_SETTINGS.print),
     selectedSupplierKey: normalizedString(record, "selectedSupplierKey"),
     supplierOverrides,
     itemOverrides,

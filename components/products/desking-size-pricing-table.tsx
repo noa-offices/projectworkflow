@@ -14,13 +14,18 @@ export type DeskingSizePricingRow = {
   id?: string;
   label?: string;
   supplier_price_list_code?: string;
+  base_supplier_price_list_code?: string;
   length?: number;
   depth?: number;
   height?: number;
   dimension_unit?: string;
+  layout_type?: string;
   default_price?: number;
   additional_price?: number;
+  additional_supplier_price_list_code?: string;
   currency?: string;
+  specification?: string;
+  default_dimension?: string;
   sort_order?: number;
   is_active?: boolean;
 };
@@ -34,6 +39,7 @@ function newRow(sortOrder: number, currency: string): DeskingSizePricingRow {
   return {
     id,
     dimension_unit: "cm",
+    layout_type: "Linear",
     currency: normalizeCurrency(currency),
     sort_order: sortOrder,
     is_active: true,
@@ -63,27 +69,56 @@ function parseDimensionLabel(label?: string) {
   };
 }
 
+function normalizedLayoutType(value: unknown) {
+  return value === "Linear" || value === "Cluster" || value === "Both" ? value : "Linear";
+}
+
 function normalizedRow(row: DeskingSizePricingRow, index: number): DeskingSizePricingRow {
-  const parsed = parseDimensionLabel(row.label);
+  const parsed = parseDimensionLabel(
+    typeof row.default_dimension === "string" && row.default_dimension.trim()
+      ? row.default_dimension
+      : row.label,
+  );
   const length = parsed?.length ?? numericValue(row.length);
   const depth = parsed?.depth ?? numericValue(row.depth);
   const height = parsed?.height ?? numericValue(row.height);
-  const fallbackLabel = length && depth && height ? `${length} x ${depth} x ${height}` : "";
+  const fallbackDimension = length && depth && height ? `${length} x ${depth} x ${height}` : "";
+  const baseSupplierPriceListCode = row.base_supplier_price_list_code?.trim() || row.supplier_price_list_code?.trim() || "";
 
   return {
     id: row.id || `size-${index}`,
-    label: row.label?.trim() || fallbackLabel,
-    supplier_price_list_code: row.supplier_price_list_code?.trim() || "",
+    label: row.label?.trim() || fallbackDimension,
+    supplier_price_list_code: baseSupplierPriceListCode,
+    base_supplier_price_list_code: baseSupplierPriceListCode,
     length,
     depth,
     height,
     dimension_unit: row.dimension_unit?.trim() || "cm",
+    layout_type: normalizedLayoutType(row.layout_type),
     default_price: numericValue(row.default_price),
     additional_price: numericValue(row.additional_price),
+    additional_supplier_price_list_code: row.additional_supplier_price_list_code?.trim() || "",
     currency: normalizeCurrency(row.currency ?? defaultCurrency),
+    specification: row.specification?.trim() || "",
+    default_dimension: row.default_dimension?.trim() || fallbackDimension,
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
     is_active: row.is_active !== false,
   };
+}
+
+function rowHasMeaningfulValues(row: DeskingSizePricingRow) {
+  return Boolean(
+    row.label?.trim() ||
+    row.base_supplier_price_list_code?.trim() ||
+    row.additional_supplier_price_list_code?.trim() ||
+    numericValue(row.length) !== 0 ||
+    numericValue(row.depth) !== 0 ||
+    numericValue(row.height) !== 0 ||
+    row.specification?.trim() ||
+    row.default_dimension?.trim() ||
+    numericValue(row.default_price) !== 0 ||
+    numericValue(row.additional_price) !== 0,
+  );
 }
 
 export function DeskingSizePricingTable({
@@ -102,6 +137,14 @@ export function DeskingSizePricingTable({
   const [tableRows, setTableRows] = useState<DeskingSizePricingRow[]>(() => initialRows);
   const [draftRows, setDraftRows] = useState<Record<string, DeskingSizePricingRow>>({});
   const [editingRows, setEditingRows] = useState<Record<string, boolean>>({});
+  const userEditedCurrencyRowIds = useRef<Set<string>>(new Set());
+  const previousDefaultCurrencyRef = useRef(
+    resolveDefaultPricingCurrency({
+      brandDefaultCurrency,
+      existingRows: initialRows,
+      savedTemplateCurrency: templateCurrency,
+    }),
+  );
   const serializedRows = useMemo(
     () =>
       JSON.stringify(
@@ -132,10 +175,15 @@ export function DeskingSizePricingTable({
             : `size-import-${Date.now()}`,
         label: detail.draft.size_snapshot || detail.draft.item_name_snapshot || "Imported size",
         supplier_price_list_code: "",
+        base_supplier_price_list_code: "",
         default_price: Number(detail.draft.unit_price) || 0,
         additional_price: 0,
+        additional_supplier_price_list_code: "",
         currency: normalizeCurrency(detail.draft.currency ?? templateCurrency ?? brandDefaultCurrency ?? defaultCurrency),
         dimension_unit: "cm",
+        layout_type: "Linear",
+        specification: detail.draft.specification_snapshot || "",
+        default_dimension: detail.draft.size_snapshot || "",
         is_active: true,
         sort_order: tableRows.length,
       }, tableRows.length);
@@ -180,6 +228,83 @@ export function DeskingSizePricingTable({
     };
   }, [brandDefaultCurrency, tableRows.length, templateCurrency, templateId]);
 
+  useEffect(() => {
+    const nextDefaultCurrency = resolveDefaultPricingCurrency({
+      brandDefaultCurrency,
+      existingRows: tableRows,
+      savedTemplateCurrency: templateCurrency,
+    });
+
+    setTableRows((current) => {
+      let didChange = false;
+      const nextRows = current.map((row, index) => {
+        const key = row.id ?? `size-${index}`;
+        if (userEditedCurrencyRowIds.current.has(key)) {
+          return row;
+        }
+
+        const draft = draftRows[key] ?? row;
+        if (rowHasMeaningfulValues(draft)) {
+          return row;
+        }
+
+        const currentCurrency = draft.currency?.trim() ? normalizeCurrency(draft.currency) : null;
+        const previousDefaultCurrency = previousDefaultCurrencyRef.current;
+        if (
+          currentCurrency &&
+          currentCurrency !== previousDefaultCurrency &&
+          currentCurrency !== defaultCurrency
+        ) {
+          return row;
+        }
+
+        if (currentCurrency === nextDefaultCurrency) {
+          return row;
+        }
+
+        didChange = true;
+        return {
+          ...row,
+          currency: nextDefaultCurrency,
+        };
+      });
+
+      return didChange ? nextRows : current;
+    });
+
+    setDraftRows((current) => {
+      let didChange = false;
+      const nextDrafts = { ...current };
+
+      Object.entries(current).forEach(([key, draft]) => {
+        if (userEditedCurrencyRowIds.current.has(key) || rowHasMeaningfulValues(draft)) {
+          return;
+        }
+
+        const currentCurrency = draft.currency?.trim() ? normalizeCurrency(draft.currency) : null;
+        const previousDefaultCurrency = previousDefaultCurrencyRef.current;
+        if (
+          currentCurrency &&
+          currentCurrency !== previousDefaultCurrency &&
+          currentCurrency !== defaultCurrency
+        ) {
+          return;
+        }
+
+        if (currentCurrency === nextDefaultCurrency) {
+          return;
+        }
+
+        didChange = true;
+        nextDrafts[key] = { ...draft, currency: nextDefaultCurrency };
+      });
+
+      return didChange ? nextDrafts : current;
+    });
+
+    previousDefaultCurrencyRef.current = nextDefaultCurrency;
+  }, [brandDefaultCurrency, draftRows, tableRows, templateCurrency]);
+
   function rowKey(row: DeskingSizePricingRow, index: number) {
     return row.id ?? `size-${index}`;
   }
@@ -191,6 +316,10 @@ export function DeskingSizePricingTable({
   }
 
   function updateDraft(key: string, patch: Partial<DeskingSizePricingRow>) {
+    if (typeof patch.currency === "string") {
+      userEditedCurrencyRowIds.current.add(key);
+    }
+
     setDraftRows((current) => ({
       ...current,
       [key]: { ...(current[key] ?? {}), ...patch },
@@ -220,14 +349,18 @@ export function DeskingSizePricingTable({
     <div className="md:col-span-2 xl:col-span-3">
       <input type="hidden" name="desking_size_pricing" value={serializedRows} />
       <div className="overflow-x-auto rounded-md border border-zinc-200 bg-white">
-        <table className="min-w-[760px] w-full text-left text-xs">
+        <table className="min-w-[1560px] w-full text-left text-xs">
           <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
             <tr>
-              <th className="px-2 py-2">Size / Dimension</th>
-              <th className="px-2 py-2">Supplier / Price List Code</th>
+              <th className="px-2 py-2">Size / Display Name</th>
+              <th className="px-2 py-2">Layout Type</th>
               <th className="px-2 py-2">Default Price</th>
+              <th className="px-2 py-2">Base Supplier / Price List Code</th>
               <th className="px-2 py-2">Additional Price</th>
+              <th className="px-2 py-2">Additional Supplier / Price List Code</th>
               <th className="px-2 py-2">Currency</th>
+              <th className="px-2 py-2">Default Workstation Specification</th>
+              <th className="px-2 py-2">Default Dimension</th>
               <th className="px-2 py-2">Active</th>
               <th className="px-2 py-2">Actions</th>
             </tr>
@@ -244,9 +377,9 @@ export function DeskingSizePricingTable({
                     {isEditing ? (
                       <input
                         value={draft.label ?? ""}
-                        placeholder="120x145x73"
+                        placeholder="6-person bench"
                         onChange={(event) => updateDraft(key, { label: event.target.value })}
-                        className="h-8 w-40 border border-zinc-200 px-2 outline-none focus:border-emerald-800"
+                        className="h-8 w-48 border border-zinc-200 px-2 outline-none focus:border-emerald-800"
                       />
                     ) : (
                       <span className="font-medium text-zinc-900">{row.label}</span>
@@ -254,30 +387,70 @@ export function DeskingSizePricingTable({
                   </td>
                   <td className="px-2 py-2">
                     {isEditing ? (
-                      <input
-                        value={draft.supplier_price_list_code ?? ""}
-                        onChange={(event) => updateDraft(key, { supplier_price_list_code: event.target.value })}
-                        className="h-8 w-36 border border-zinc-200 px-2 outline-none focus:border-emerald-800"
-                      />
+                      <select
+                        value={normalizedLayoutType(draft.layout_type)}
+                        onChange={(event) => updateDraft(key, { layout_type: event.target.value })}
+                        className="h-8 w-28 border border-zinc-200 bg-white px-2 outline-none focus:border-emerald-800"
+                      >
+                        <option value="Linear">Linear</option>
+                        <option value="Cluster">Cluster</option>
+                        <option value="Both">Both</option>
+                      </select>
                     ) : (
-                      <span>{row.supplier_price_list_code || "-"}</span>
+                      <span>{row.layout_type || "Linear"}</span>
                     )}
                   </td>
-                  {(["default_price", "additional_price"] as const).map((field) => (
-                    <td key={field} className="px-2 py-2">
-                      {isEditing ? (
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={draft[field] ?? ""}
-                          onChange={(event) => updateDraft(key, { [field]: Number(event.target.value) })}
-                          className="h-8 w-28 border border-zinc-200 px-2 outline-none focus:border-emerald-800"
-                        />
-                      ) : (
-                        <span>{row[field]}</span>
-                      )}
-                    </td>
-                  ))}
+                  <td className="px-2 py-2">
+                    {isEditing ? (
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={draft.default_price ?? ""}
+                        onChange={(event) => updateDraft(key, { default_price: Number(event.target.value) })}
+                        className="h-8 w-28 border border-zinc-200 px-2 outline-none focus:border-emerald-800"
+                      />
+                    ) : (
+                      <span>{row.default_price}</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-2">
+                    {isEditing ? (
+                      <input
+                        value={draft.base_supplier_price_list_code ?? draft.supplier_price_list_code ?? ""}
+                        onChange={(event) => updateDraft(key, {
+                          base_supplier_price_list_code: event.target.value,
+                          supplier_price_list_code: event.target.value,
+                        })}
+                        className="h-8 min-w-[180px] border border-zinc-200 px-2 outline-none focus:border-emerald-800"
+                      />
+                    ) : (
+                      <span>{row.base_supplier_price_list_code || row.supplier_price_list_code || "-"}</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-2">
+                    {isEditing ? (
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={draft.additional_price ?? ""}
+                        onChange={(event) => updateDraft(key, { additional_price: Number(event.target.value) })}
+                        className="h-8 w-28 border border-zinc-200 px-2 outline-none focus:border-emerald-800"
+                      />
+                    ) : (
+                      <span>{row.additional_price}</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-2">
+                    {isEditing ? (
+                      <input
+                        value={draft.additional_supplier_price_list_code ?? ""}
+                        onChange={(event) => updateDraft(key, { additional_supplier_price_list_code: event.target.value })}
+                        className="h-8 min-w-[180px] border border-zinc-200 px-2 outline-none focus:border-emerald-800"
+                      />
+                    ) : (
+                      <span>{row.additional_supplier_price_list_code || "-"}</span>
+                    )}
+                  </td>
                   <td className="px-2 py-2">
                     {isEditing ? (
                       <select
@@ -293,6 +466,30 @@ export function DeskingSizePricingTable({
                       </select>
                     ) : (
                       <span>{normalizeCurrency(row.currency ?? defaultCurrency)}</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-2 align-top">
+                    {isEditing ? (
+                      <textarea
+                        value={draft.specification ?? ""}
+                        rows={3}
+                        onChange={(event) => updateDraft(key, { specification: event.target.value })}
+                        className="min-h-[64px] min-w-[280px] border border-zinc-200 px-2 py-1 outline-none focus:border-emerald-800"
+                      />
+                    ) : (
+                      <span className="whitespace-pre-wrap">{row.specification || "-"}</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-2">
+                    {isEditing ? (
+                      <input
+                        value={draft.default_dimension ?? ""}
+                        placeholder="240x120x75 cmH"
+                        onChange={(event) => updateDraft(key, { default_dimension: event.target.value })}
+                        className="h-8 min-w-[150px] border border-zinc-200 px-2 outline-none focus:border-emerald-800"
+                      />
+                    ) : (
+                      <span>{row.default_dimension || "-"}</span>
                     )}
                   </td>
                   <td className="px-2 py-2">
@@ -349,7 +546,7 @@ export function DeskingSizePricingTable({
             })}
             {!tableRows.length ? (
               <tr>
-                <td colSpan={7} className="px-3 py-5 text-center text-zinc-500">
+                <td colSpan={11} className="px-3 py-5 text-center text-zinc-500">
                   No workstation sizes yet.
                 </td>
               </tr>

@@ -391,6 +391,26 @@ function withReindexedSectionItems(
     );
 }
 
+function withReindexedSections(
+  sections: LocalQuotationSection[],
+  insertAtIndex: number,
+  nextSection: LocalQuotationSection,
+) {
+  const ordered = orderedSections(sections);
+  const clampedIndex = Math.max(0, Math.min(insertAtIndex, ordered.length));
+  const nextOrdered = [...ordered];
+  nextOrdered.splice(clampedIndex, 0, nextSection);
+
+  const nextSortById = new Map(
+    nextOrdered.map((section, index) => [section.id, (index + 1) * 10]),
+  );
+
+  return nextOrdered.map((section) => ({
+    ...section,
+    sort_order: nextSortById.get(section.id) ?? section.sort_order,
+  }));
+}
+
 function statusText(workspace: LocalQuotationWorkspace, localDraftSaved: boolean, saveState: string) {
   if (saveState === "saving") return "Saving to software...";
   if (saveState === "saved") return "Saved to software";
@@ -915,6 +935,20 @@ function sourceSnapshotDetails(item: LocalQuotationItem) {
     .map((entry) => {
       if (typeof entry === "string") return entry;
       const record = recordEntries(entry);
+      if (stringValue(record, "item_type") === "modular_item") {
+        const modularLabel = firstNonEmptyValue(
+          stringValue(record, "label"),
+          stringValue(record, "item_name"),
+        );
+        const modularQty = stringValue(record, "qty");
+        const modularCode = stringValue(record, "supplier_price_list_code");
+        return [
+          modularLabel,
+          modularQty ? `x${modularQty}` : null,
+          modularCode ? `Code ${modularCode}` : null,
+          stringValue(record, "selected_category"),
+        ].filter(Boolean).join(" / ");
+      }
       const parts = [
         stringValue(record, "label"),
         stringValue(record, "item_name"),
@@ -2135,11 +2169,44 @@ export function LocalQuotationBuilder({
     }), { groupKey: "quote-details", mode: "merge" });
   }
 
-  function addSection(kind: "main" | "sub", parentSectionId?: string | null) {
-    commit((current) => ({
-      ...current,
-      sections: [...current.sections, createEmptySection(current, kind, parentSectionId)],
-    }));
+  function addSection(
+    kind: "main" | "sub",
+    parentSectionId?: string | null,
+    insertBeforeSectionId?: string | null,
+  ) {
+    commit((current) => {
+      const nextSection = createEmptySection(current, kind, parentSectionId);
+      const ordered = orderedSections(current.sections);
+
+      if (!insertBeforeSectionId) {
+        return {
+          ...current,
+          sections: [...current.sections, nextSection],
+        };
+      }
+
+      const targetIndex = ordered.findIndex((section) => section.id === insertBeforeSectionId);
+      if (targetIndex < 0) {
+        return {
+          ...current,
+          sections: [...current.sections, nextSection],
+        };
+      }
+
+      let insertAtIndex = targetIndex;
+      if (kind === "sub" && parentSectionId) {
+        const targetSection = ordered[targetIndex];
+        if (targetSection?.id === parentSectionId) {
+          const firstChildIndex = ordered.findIndex((section) => section.parent_section_id === parentSectionId);
+          insertAtIndex = firstChildIndex >= 0 ? firstChildIndex : targetIndex + 1;
+        }
+      }
+
+      return {
+        ...current,
+        sections: withReindexedSections(current.sections, insertAtIndex, nextSection),
+      };
+    });
   }
 
   function addItem(sectionId: string | null, itemType: "custom" | "note" | "blank") {
@@ -3932,13 +3999,19 @@ export function LocalQuotationBuilder({
             >
               <tbody>
                 {displaySections.map((section, sectionIndex) => {
+                  const previousSection = sectionIndex > 0 ? displaySections[sectionIndex - 1] : null;
                   const nextSection = displaySections[sectionIndex + 1];
 
                   if (section.renderAsMainOnly) {
                     const mainTotal = mainSectionTotalById.get(section.id) ?? 0;
+                    const insertSubParentId = previousSection
+                      ? previousSection.section_kind === "sub"
+                        ? previousSection.parent_section_id
+                        : previousSection.id
+                      : section.id;
                     return (
                       <Fragment key={section.id}>
-                        <InsertSectionRow canManage onAddMain={() => addSection("main")} onAddSub={() => addSection("sub", section.id)} totalColumns={totalColumns} />
+                        <InsertSectionRow canManage onAddMain={() => addSection("main", null, section.id)} onAddSub={() => addSection("sub", insertSubParentId ?? section.id, section.id)} totalColumns={totalColumns} />
                         <tr>
                           <td colSpan={totalColumns} className={`relative border border-zinc-300 px-3 py-3 uppercase tracking-wide ${sectionTitleClass(section)}`} style={section.row_height ? { height: `${section.row_height}px` } : undefined}>
                               <div className="flex items-center justify-between gap-3">
@@ -3965,7 +4038,7 @@ export function LocalQuotationBuilder({
 
                   return (
                     <Fragment key={section.id}>
-                      <InsertSectionRow canManage onAddMain={() => addSection("main")} onAddSub={() => addSection("sub", section.parent_section_id ?? null)} totalColumns={totalColumns} />
+                      <InsertSectionRow canManage onAddMain={() => addSection("main", null, section.id)} onAddSub={() => addSection("sub", section.parent_section_id ?? null, section.id)} totalColumns={totalColumns} />
                       <tr>
                         <td colSpan={totalColumns} className={`relative border border-zinc-300 px-3 py-2 uppercase tracking-wide ${sectionTitleClass(section)}`} style={section.row_height ? { height: `${section.row_height}px` } : undefined}>
                           <div className="flex items-center justify-between gap-3">

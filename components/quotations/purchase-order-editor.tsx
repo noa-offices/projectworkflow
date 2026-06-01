@@ -1,11 +1,13 @@
-"use client";
+﻿"use client";
 
-import Link from "next/link";
 import type { ReactNode } from "react";
 import { useState, useTransition } from "react";
 import { buildEffectiveDocumentGroups, type EffectiveDocumentGroup } from "@/lib/quotations/document-grouping";
 import { normalizePurchaseOrderCurrency, purchaseOrderCurrencies } from "@/lib/quotations/purchase-order-currency";
 import { PurchaseOrderDocument } from "@/components/quotations/purchase-order-document";
+import { DocumentPrintSetupPanel, type PrintPlannerItem } from "@/components/quotations/document-print-setup-panel";
+import { buildPurchaseOrderPages } from "@/lib/quotations/purchase-order-pages";
+import type { DocumentPrintSettings } from "@/lib/quotations/document-print-settings";
 import {
   DEFAULT_PURCHASE_ORDER_ITEM_OVERRIDE,
   DEFAULT_PURCHASE_ORDER_SUPPLIER_OVERRIDE,
@@ -211,6 +213,7 @@ function sectionContext(sectionId: string | null, sectionsById: Map<string, Purc
 function sanitizeSettingsForCompare(settings: QuotationPurchaseOrderSettings) {
   return JSON.stringify({
     documentDetails: settings.documentDetails,
+    print: settings.print,
     selectedSupplierKey: settings.selectedSupplierKey,
     supplierOverrides: settings.supplierOverrides,
     itemOverrides: settings.itemOverrides,
@@ -357,6 +360,7 @@ export function PurchaseOrderEditor({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [activeTab, setActiveTab] = useState<EditorTab>("document");
+  const [showSettings, setShowSettings] = useState(true);
   const [itemsOpen, setItemsOpen] = useState(true);
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const isDirty = sanitizeSettingsForCompare(settings) !== sanitizeSettingsForCompare(savedSettings);
@@ -417,6 +421,27 @@ export function PurchaseOrderEditor({
       unitPrice: entry.unitPrice,
     };
   });
+  const plannerItems: PrintPlannerItem[] = buildPurchaseOrderPages({
+    closing: {
+      hasPriceValues,
+      poDate: settings.documentDetails.poDate,
+      preparedBy: settings.documentDetails.preparedBy,
+      subtotal,
+      supplier: selectedSupplier,
+      terms: settings.terms,
+    },
+    columnVisibility: settings.columnVisibility,
+    items: documentItems,
+    print: settings.print,
+  }).flatMap((page) =>
+    page.items.map((item) => ({
+      itemId: item.id,
+      itemName: item.description,
+      pageNumber: page.pageIndex + 1,
+      sectionTitle: item.context || selectedGroup?.displayLabel || "Supplier",
+      serial: String(item.rowNumber).padStart(2, "0"),
+    })),
+  );
 
   function updateDocumentDetails<K extends keyof PurchaseOrderDocumentDetails>(key: K, value: PurchaseOrderDocumentDetails[K]) {
     setSettings((current) => ({
@@ -484,6 +509,43 @@ export function PurchaseOrderEditor({
         [key]: value,
       },
     }));
+  }
+
+  function updatePrintSettings(patch: Partial<DocumentPrintSettings>) {
+    setSettings((current) => ({
+      ...current,
+      print: {
+        ...current.print,
+        ...patch,
+      },
+    }));
+  }
+
+  function toggleManualPageBreak(itemId: string, enabled: boolean) {
+    const nextBreaks = new Set(settings.print.manualPageBreaks);
+    if (enabled) {
+      nextBreaks.add(itemId);
+    } else {
+      nextBreaks.delete(itemId);
+    }
+
+    updatePrintSettings({ manualPageBreaks: Array.from(nextBreaks) });
+  }
+
+  function assignPage(itemId: string, pageNumber: number | null) {
+    const nextAssignments = { ...settings.print.pageAssignments };
+    if (pageNumber === null) {
+      delete nextAssignments[itemId];
+    } else {
+      nextAssignments[itemId] = pageNumber;
+    }
+
+    updatePrintSettings({ pageAssignments: nextAssignments });
+  }
+
+  function resetManualPageBreaks() {
+    updatePrintSettings({ manualPageBreaks: [], pageAssignments: {} });
+    setFeedback("PO manual page breaks cleared locally.");
   }
 
   function moveItem(itemId: string, direction: -1 | 1) {
@@ -557,12 +619,12 @@ export function PurchaseOrderEditor({
   return (
     <main className="min-h-screen bg-stone-100 px-4 py-6 print:bg-white print:px-0 print:py-0">
       <style>{`
-        @page { size: A4 landscape; margin: 0; }
+        @page { size: A4 ${settings.print.orientation}; margin: 0; }
         html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         .doc-page + .doc-page { margin-top: 24px; }
         @media print {
           html, body { background: #ffffff; }
-          html, body { margin: 0 !important; padding: 0 !important; width: 297mm !important; background: #fff !important; }
+          html, body { margin: 0 !important; padding: 0 !important; width: ${settings.print.orientation === "portrait" ? "210mm" : "297mm"} !important; background: #fff !important; }
           .doc-page { break-after: page; page-break-after: always; margin: 0 !important; }
           .doc-page:last-child { break-after: auto; page-break-after: auto; }
           .doc-page + .doc-page { margin-top: 0 !important; }
@@ -571,30 +633,30 @@ export function PurchaseOrderEditor({
 
       {!printMode ? (
         <div className="mx-auto mb-5 w-[297mm] max-w-full print:hidden">
-          <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">Purchase Order</p>
-              <div className="flex flex-wrap gap-2">
-                <Link href={`/quotations/${data.quotation.id}`} className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50">
-                  Back to Quotation
-                </Link>
-                <button type="button" onClick={saveSettings} disabled={isPending} className="rounded-md bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-emerald-700">
-                  {isPending ? "Saving..." : "Save PO Settings"}
-                </button>
-                <button type="button" onClick={resetToDefaults} disabled={isPending} className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed">
-                  Reset PO Settings
-                </button>
-                <button type="button" onClick={downloadPdf} className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800">
-                  Download PDF
-                </button>
-              </div>
-            </div>
-            <div className="mt-4 text-sm text-zinc-600">
-              {isDirty ? "You have unsaved PO changes." : "PO settings match latest saved version."}
-            </div>
-            {feedback ? <p className="mt-2 text-sm font-medium text-zinc-900">{feedback}</p> : null}
+          <DocumentPrintSetupPanel
+            actionLabel="Save Print Settings"
+            backHref={`/quotations/${data.quotation.id}`}
+            dirtyMessage="You have unsaved purchase order print changes."
+            feedback={feedback}
+            isDirty={isDirty}
+            isPending={isPending}
+            onDownload={downloadPdf}
+            onReset={resetToDefaults}
+            onResetManualPageBreaks={resetManualPageBreaks}
+            onSave={saveSettings}
+            onSettingsChange={updatePrintSettings}
+            onAssignPage={assignPage}
+            onToggleManualPageBreak={toggleManualPageBreak}
+            plannerItems={plannerItems}
+            resetLabel="Reset Print Settings"
+            savedMessage="Purchase order print settings match latest saved version."
+            settings={settings.print}
+            showSettings={showSettings}
+            title="Purchase Order Print Setup"
+            toggleSettings={() => setShowSettings((current) => !current)}
+          >
             {effectiveGroups.length > 0 ? (
-              <div className="mt-4 max-w-md">
+              <div className="max-w-md">
                 <label className="grid gap-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Purchase Order For</span>
                   <select
@@ -611,11 +673,11 @@ export function PurchaseOrderEditor({
                 </label>
               </div>
             ) : null}
-          </div>
+          </DocumentPrintSetupPanel>
         </div>
       ) : null}
 
-      {!printMode ? (
+      {!printMode && showSettings ? (
         <div className="mx-auto mb-5 w-[297mm] max-w-full print:hidden">
           <SetupPanel activeTab={activeTab} onTabChange={setActiveTab}>
             {activeTab === "document" ? (
@@ -842,6 +904,7 @@ export function PurchaseOrderEditor({
         settings={{
           columnVisibility: settings.columnVisibility,
           documentDetails: settings.documentDetails,
+          print: settings.print,
           terms: settings.terms,
         }}
         subtotal={subtotal}
@@ -851,3 +914,5 @@ export function PurchaseOrderEditor({
     </main>
   );
 }
+
+

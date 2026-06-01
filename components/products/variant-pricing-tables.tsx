@@ -2,6 +2,12 @@
 
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
+import {
+  MODULAR_ITEM_PRICING_TYPE,
+  modularItemPricingRows,
+  modularPricingDefaultsFromRows,
+  standardCategoryPricingRows,
+} from "@/lib/products/modular-pricing";
 import { resolveDefaultPricingCurrency } from "@/components/products/pricing-default-currency";
 import {
   TEMPLATE_IMPORT_APPLY_EVENT,
@@ -25,6 +31,7 @@ export type VariantPricingRow = {
 
 export type CategoryPricingRow = {
   id?: string;
+  pricing_type?: string | null;
   pricing_category_id?: string | null;
   pricing_category_name?: string | null;
   variant_name?: string;
@@ -34,6 +41,8 @@ export type CategoryPricingRow = {
   currency?: string;
   prices?: Record<string, number>;
   specification?: string;
+  modular_default_dimension?: string | null;
+  modular_default_specification?: string | null;
   is_active?: boolean;
   sort_order?: number;
 };
@@ -112,6 +121,63 @@ function normalizedPriceMap(prices?: Record<string, unknown> | null) {
   return Object.fromEntries(normalized.entries());
 }
 
+function formCurrencyFromTrigger(trigger?: HTMLElement | null) {
+  if (!trigger) {
+    return null;
+  }
+
+  const form = trigger.closest("form");
+  if (!form) {
+    return null;
+  }
+
+  const currencyField = form.querySelector<HTMLSelectElement | HTMLInputElement>(
+    'select[name="currency"], input[name="currency"]',
+  );
+  if (!currencyField) {
+    return null;
+  }
+
+  const value = currencyField.value.trim();
+  return value ? normalizeCurrency(value) : null;
+}
+
+function existingRowsCurrency(rows: Array<{ currency?: string | null }>) {
+  const counts = new Map<string, number>();
+
+  rows.forEach((row) => {
+    const currency = row.currency?.trim();
+    if (!currency) {
+      return;
+    }
+
+    const normalized = normalizeCurrency(currency);
+    counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+  });
+
+  return Array.from(counts.entries()).sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
+}
+
+function resolveDefaultModularPricingCurrency({
+  brandDefaultCurrency,
+  existingRows = [],
+  savedTemplateCurrency,
+  trigger,
+}: {
+  brandDefaultCurrency?: string | null;
+  existingRows?: Array<{ currency?: string | null }>;
+  savedTemplateCurrency?: string | null;
+  trigger?: HTMLElement | null;
+}) {
+  return (
+    (brandDefaultCurrency?.trim() ? normalizeCurrency(brandDefaultCurrency) : null) ||
+    (savedTemplateCurrency?.trim() ? normalizeCurrency(savedTemplateCurrency) : null) ||
+    formCurrencyFromTrigger(trigger) ||
+    existingRowsCurrency(existingRows) ||
+    defaultCurrency
+  );
+}
+
 function derivedPriceCategories(rows?: CategoryPricingRow[] | null) {
   const orderedCategories = [...defaultPriceCategories];
 
@@ -144,6 +210,9 @@ function normalizeVariant(row: VariantPricingRow, index: number): VariantPricing
 function normalizeCategory(row: CategoryPricingRow, index: number): CategoryPricingRow {
   return {
     id: row.id || `category-${index}`,
+    pricing_type: typeof row.pricing_type === "string" && row.pricing_type.trim()
+      ? row.pricing_type.trim()
+      : null,
     pricing_category_id:
       typeof row.pricing_category_id === "string" && row.pricing_category_id.trim()
         ? row.pricing_category_id.trim()
@@ -159,6 +228,14 @@ function normalizeCategory(row: CategoryPricingRow, index: number): CategoryPric
     currency: normalizeCurrency(row.currency ?? defaultCurrency),
     prices: normalizedPriceMap(row.prices),
     specification: row.specification?.trim() ?? "",
+    modular_default_dimension:
+      typeof row.modular_default_dimension === "string" && row.modular_default_dimension.trim()
+        ? row.modular_default_dimension.trim()
+        : null,
+    modular_default_specification:
+      typeof row.modular_default_specification === "string" && row.modular_default_specification.trim()
+        ? row.modular_default_specification.trim()
+        : null,
     is_active: row.is_active !== false,
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
   };
@@ -296,6 +373,40 @@ function newCategoryPricingRow(
   };
 }
 
+function rowHasMeaningfulValues(row: CategoryPricingRow) {
+  if (
+    row.variant_name?.trim() ||
+    row.display_name?.trim() ||
+    row.supplier_price_list_code?.trim() ||
+    row.dimension?.trim() ||
+    row.specification?.trim()
+  ) {
+    return true;
+  }
+
+  return Object.values(row.prices ?? {}).some((value) => numberValue(value) !== 0);
+}
+
+function variantRowHasMeaningfulValues(row: VariantPricingRow) {
+  return Boolean(
+    row.variant_name?.trim() ||
+    row.display_name?.trim() ||
+    row.supplier_price_list_code?.trim() ||
+    row.dimension?.trim() ||
+    row.specification?.trim() ||
+    numberValue(row.price) !== 0,
+  );
+}
+
+function accessoryItemHasMeaningfulValues(row: AccessoryPricingItem) {
+  return Boolean(
+    row.item_name?.trim() ||
+    row.supplier_price_list_code?.trim() ||
+    row.specification?.trim() ||
+    numberValue(row.price) !== 0,
+  );
+}
+
 export function VariantPricingTable({
   brandDefaultCurrency,
   rows,
@@ -310,6 +421,14 @@ export function VariantPricingTable({
   const initialRows = useMemo(() => rows?.length ? rows.map(normalizeVariant) : [], [rows]);
   const importedIdsRef = useRef<Set<string>>(new Set());
   const [tableRows, setTableRows] = useState<VariantPricingRow[]>(() => initialRows);
+  const userEditedCurrencyRowIds = useRef<Set<string>>(new Set());
+  const previousDefaultCurrencyRef = useRef(
+    resolveDefaultPricingCurrency({
+      brandDefaultCurrency,
+      existingRows: initialRows,
+      savedTemplateCurrency: templateCurrency,
+    }),
+  );
   const serialized = useMemo(() => JSON.stringify(tableRows.map(normalizeVariant)), [tableRows]);
 
   useEffect(() => {
@@ -374,7 +493,53 @@ export function VariantPricingTable({
     };
   }, [brandDefaultCurrency, tableRows.length, templateCurrency, templateId]);
 
+  useEffect(() => {
+    const nextDefaultCurrency = resolveDefaultPricingCurrency({
+      brandDefaultCurrency,
+      existingRows: tableRows,
+      savedTemplateCurrency: templateCurrency,
+    });
+
+    setTableRows((current) => {
+      let didChange = false;
+      const nextRows = current.map((row, index) => {
+        const key = row.id ?? `variant-${index}`;
+        if (userEditedCurrencyRowIds.current.has(key) || variantRowHasMeaningfulValues(row)) {
+          return row;
+        }
+
+        const currentCurrency = row.currency?.trim() ? normalizeCurrency(row.currency) : null;
+        const previousDefaultCurrency = previousDefaultCurrencyRef.current;
+        if (
+          currentCurrency &&
+          currentCurrency !== previousDefaultCurrency &&
+          currentCurrency !== defaultCurrency
+        ) {
+          return row;
+        }
+
+        if (currentCurrency === nextDefaultCurrency) {
+          return row;
+        }
+
+        didChange = true;
+        return {
+          ...row,
+          currency: nextDefaultCurrency,
+        };
+      });
+
+      return didChange ? nextRows : current;
+    });
+
+    previousDefaultCurrencyRef.current = nextDefaultCurrency;
+  }, [brandDefaultCurrency, tableRows, templateCurrency]);
+
   function update(index: number, patch: Partial<VariantPricingRow>) {
+    if (typeof patch.currency === "string") {
+      userEditedCurrencyRowIds.current.add(tableRows[index]?.id ?? `variant-${index}`);
+    }
+
     setTableRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
   }
 
@@ -430,12 +595,23 @@ export function CategoryPricingTable({
   templateId: string;
   templateCurrency?: string | null;
 }) {
-  const initialRows = useMemo(() => rows?.length ? rows.map(normalizeCategory) : [], [rows]);
+  const initialRows = useMemo(
+    () => standardCategoryPricingRows(rows).map(normalizeCategory),
+    [rows],
+  );
   const importedIdsRef = useRef<Set<string>>(new Set());
   const [tableRows, setTableRows] = useState<CategoryPricingRow[]>(() => initialRows);
   const [priceCategories, setPriceCategories] = useState<string[]>(() => derivedPriceCategories(rows));
   const [newCategoryName, setNewCategoryName] = useState("");
   const [showCategoryCreator, setShowCategoryCreator] = useState(false);
+  const userEditedCurrencyRowIds = useRef<Set<string>>(new Set());
+  const previousDefaultCurrencyRef = useRef(
+    resolveDefaultPricingCurrency({
+      brandDefaultCurrency,
+      existingRows: initialRows,
+      savedTemplateCurrency: templateCurrency,
+    }),
+  );
   const serialized = useMemo(
     () =>
       JSON.stringify(
@@ -515,8 +691,54 @@ export function CategoryPricingTable({
   }, [brandDefaultCurrency, tableRows.length, templateCurrency, templateId]);
 
   function update(index: number, patch: Partial<CategoryPricingRow>) {
+    if (typeof patch.currency === "string") {
+      userEditedCurrencyRowIds.current.add(tableRows[index]?.id ?? `category-${index}`);
+    }
+
     setTableRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
   }
+
+  useEffect(() => {
+    const nextDefaultCurrency = resolveDefaultPricingCurrency({
+      brandDefaultCurrency,
+      existingRows: tableRows,
+      savedTemplateCurrency: templateCurrency,
+    });
+
+    setTableRows((current) => {
+      let didChange = false;
+      const nextRows = current.map((row, index) => {
+        const key = row.id ?? `category-${index}`;
+        if (userEditedCurrencyRowIds.current.has(key) || rowHasMeaningfulValues(row)) {
+          return row;
+        }
+
+        const currentCurrency = row.currency?.trim() ? normalizeCurrency(row.currency) : null;
+        const previousDefaultCurrency = previousDefaultCurrencyRef.current;
+        if (
+          currentCurrency &&
+          currentCurrency !== previousDefaultCurrency &&
+          currentCurrency !== defaultCurrency
+        ) {
+          return row;
+        }
+
+        if (currentCurrency === nextDefaultCurrency) {
+          return row;
+        }
+
+        didChange = true;
+        return {
+          ...row,
+          currency: nextDefaultCurrency,
+        };
+      });
+
+      return didChange ? nextRows : current;
+    });
+
+    previousDefaultCurrencyRef.current = nextDefaultCurrency;
+  }, [brandDefaultCurrency, tableRows, templateCurrency]);
 
   function addPriceCategoryColumn() {
     const trimmedName = newCategoryName.trim();
@@ -656,6 +878,257 @@ export function CategoryPricingTable({
   );
 }
 
+export function ModularItemPricingTable({
+  brandDefaultCurrency,
+  rows,
+  templateCurrency,
+}: {
+  brandDefaultCurrency?: string | null;
+  rows?: CategoryPricingRow[] | null;
+  templateCurrency?: string | null;
+}) {
+  const initialRows = useMemo(
+    () => modularItemPricingRows(rows).map(normalizeCategory),
+    [rows],
+  );
+  const modularDefaults = useMemo(() => modularPricingDefaultsFromRows(rows), [rows]);
+  const [tableRows, setTableRows] = useState<CategoryPricingRow[]>(() => initialRows);
+  const [priceCategories, setPriceCategories] = useState<string[]>(() => derivedPriceCategories(initialRows));
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [showCategoryCreator, setShowCategoryCreator] = useState(false);
+  const [defaultSpecification, setDefaultSpecification] = useState(modularDefaults.defaultSpecification ?? "");
+  const [defaultDimension, setDefaultDimension] = useState(modularDefaults.defaultDimension ?? "");
+  const userEditedCurrencyRowIds = useRef<Set<string>>(new Set());
+  const previousDefaultCurrencyRef = useRef(
+    resolveDefaultModularPricingCurrency({
+      brandDefaultCurrency,
+      existingRows: initialRows,
+      savedTemplateCurrency: templateCurrency,
+    }),
+  );
+  const serialized = useMemo(
+    () =>
+      JSON.stringify(
+        tableRows.map((row, index) =>
+          normalizeCategory({
+            ...categoryPricingRowWithColumns(row, priceCategories),
+            pricing_type: MODULAR_ITEM_PRICING_TYPE,
+          }, index),
+        ),
+      ),
+    [priceCategories, tableRows],
+  );
+  const serializedDefaults = useMemo(
+    () =>
+      JSON.stringify({
+        modular_default_dimension: defaultDimension.trim() || null,
+        modular_default_specification: defaultSpecification.trim() || null,
+      }),
+    [defaultDimension, defaultSpecification],
+  );
+
+  function update(index: number, patch: Partial<CategoryPricingRow>) {
+    setTableRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
+  }
+
+  useEffect(() => {
+    const nextDefaultCurrency = resolveDefaultModularPricingCurrency({
+      brandDefaultCurrency,
+      existingRows: tableRows,
+      savedTemplateCurrency: templateCurrency,
+    });
+
+    setTableRows((current) => {
+      let didChange = false;
+      const nextRows = current.map((row) => {
+        if (userEditedCurrencyRowIds.current.has(row.id ?? "")) {
+          return row;
+        }
+
+        if (rowHasMeaningfulValues(row)) {
+          return row;
+        }
+
+        const currentCurrency = row.currency?.trim() ? normalizeCurrency(row.currency) : null;
+        const previousDefaultCurrency = previousDefaultCurrencyRef.current;
+        if (
+          currentCurrency &&
+          currentCurrency !== previousDefaultCurrency &&
+          currentCurrency !== defaultCurrency
+        ) {
+          return row;
+        }
+
+        if (currentCurrency === nextDefaultCurrency) {
+          return row;
+        }
+
+        didChange = true;
+        return {
+          ...row,
+          currency: nextDefaultCurrency,
+        };
+      });
+
+      return didChange ? nextRows : current;
+    });
+
+    previousDefaultCurrencyRef.current = nextDefaultCurrency;
+  }, [brandDefaultCurrency, tableRows, templateCurrency]);
+
+  function addPriceCategoryColumn() {
+    const trimmedName = newCategoryName.trim();
+    if (!trimmedName) return;
+
+    const normalizedCategory = normalizePriceCategoryLabel(trimmedName);
+    if (!normalizedCategory || priceCategories.includes(normalizedCategory)) {
+      setNewCategoryName("");
+      setShowCategoryCreator(false);
+      return;
+    }
+
+    setPriceCategories((current) => [...current, normalizedCategory]);
+    setTableRows((current) =>
+      current.map((row) => ({
+        ...row,
+        prices: {
+          ...normalizedPriceMap(row.prices),
+          [normalizedCategory]: numberValue(row.prices?.[normalizedCategory]),
+        },
+      })),
+    );
+    setNewCategoryName("");
+    setShowCategoryCreator(false);
+  }
+
+  function addRow(event: MouseEvent<HTMLButtonElement>) {
+    const currency = resolveDefaultModularPricingCurrency({
+      brandDefaultCurrency,
+      existingRows: tableRows,
+      savedTemplateCurrency: templateCurrency,
+      trigger: event.currentTarget,
+    });
+    setTableRows((current) => [
+      ...current,
+      {
+        ...newCategoryPricingRow(current.length, priceCategories, currency),
+        pricing_type: MODULAR_ITEM_PRICING_TYPE,
+      },
+    ]);
+  }
+
+  return (
+    <div className="md:col-span-2 xl:col-span-3">
+      <input type="hidden" name="modular_item_pricing" value={serialized} />
+      <input type="hidden" name="modular_item_pricing_defaults" value={serializedDefaults} />
+      <div className="space-y-4">
+        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
+          <p className="text-sm font-semibold text-zinc-950">Modular item defaults</p>
+          <p className="mt-1 text-xs leading-5 text-zinc-500">
+            Set the default modular specification and dimension used when this template opens in the quotation popup.
+          </p>
+          <div className="mt-3 grid gap-3">
+            <label className="block">
+              <span className="text-xs font-semibold uppercase text-zinc-500">Default modular specification</span>
+              <AutoGrowTextarea
+                value={defaultSpecification}
+                onChange={setDefaultSpecification}
+                minHeightClass="min-h-[72px]"
+                rows={3}
+                widthClass="min-w-0 w-full"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs font-semibold uppercase text-zinc-500">Default dimension</span>
+              <input
+                value={defaultDimension}
+                onChange={(event) => setDefaultDimension(event.target.value)}
+                placeholder="540x70x78 cmH"
+                className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-800"
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
+          <p className="text-sm font-semibold text-zinc-950">Modular item pricing</p>
+          <p className="mt-1 text-xs leading-5 text-zinc-500">
+            Add configurable modular units and their fabric/category prices for sofas, lounges, and sectional compositions.
+          </p>
+          {showCategoryCreator ? (
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+              <input
+                value={newCategoryName}
+                onChange={(event) => setNewCategoryName(event.target.value)}
+                placeholder="Cat E"
+                className="h-9 flex-1 rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-800"
+              />
+              <button type="button" onClick={addPriceCategoryColumn} className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">
+                Add column
+              </button>
+              <button type="button" onClick={() => { setNewCategoryName(""); setShowCategoryCreator(false); }} className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300">
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setShowCategoryCreator(true)} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">
+              + Add price category column
+            </button>
+          )}
+        </div>
+
+        {tableRows.length ? (
+          <div className="overflow-x-auto rounded-md border border-zinc-200 bg-white">
+            <table className="min-w-[1960px] w-full text-left text-xs">
+              <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
+                <tr>
+                  <th className="px-2 py-2">Module name</th>
+                  <th className="px-2 py-2">Display name</th>
+                  <th className="px-2 py-2">Supplier / Price List Code</th>
+                  <th className="px-2 py-2">Dimension</th>
+                  {priceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
+                  <th className="px-2 py-2">Currency</th>
+                  <th className="px-2 py-2">Specification note</th>
+                  <th className="px-2 py-2">Active</th>
+                  <th className="px-2 py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tableRows.map((row, index) => {
+                  const normalizedRow = categoryPricingRowWithColumns(row, priceCategories);
+                  return (
+                    <tr key={row.id ?? index} className="border-t border-zinc-100 align-top">
+                      <td className="px-2 py-2 align-top"><input value={normalizedRow.variant_name ?? ""} onChange={(e) => update(index, { variant_name: e.target.value })} className="h-10 min-w-[160px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                      <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.display_name ?? ""} onChange={(value) => update(index, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
+                      <td className="px-2 py-2 align-top"><input value={normalizedRow.supplier_price_list_code ?? ""} onChange={(e) => update(index, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                      <td className="px-2 py-2 align-top"><input value={normalizedRow.dimension ?? ""} onChange={(e) => update(index, { dimension: e.target.value })} className="h-10 min-w-[140px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                      {priceCategories.map((category) => <td key={category} className="px-2 py-2 align-top"><input type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => update(index, { prices: { ...normalizedRow.prices, [category]: Number(e.target.value) } })} className="h-10 min-w-[116px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>)}
+                      <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={normalizedRow.currency} onChange={(currency) => {
+                        userEditedCurrencyRowIds.current.add(normalizedRow.id ?? `${index}`);
+                        update(index, { currency });
+                      }} /></div></td>
+                      <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => update(index, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /></td>
+                      <td className="px-2 py-2 align-top"><input type="checkbox" checked={normalizedRow.is_active !== false} onChange={(e) => update(index, { is_active: e.target.checked })} /></td>
+                      <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => setTableRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="text-xs font-semibold text-red-700">Remove</button></div></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="rounded-md border border-dashed border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-500">
+            <p>No modular item pricing rows yet.</p>
+          </div>
+        )}
+        <button type="button" onClick={addRow} className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">
+          + Add modular item
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function AccessoryPricingTable({
   brandDefaultCurrency,
   rows,
@@ -670,6 +1143,14 @@ export function AccessoryPricingTable({
   const initialGroups = useMemo(() => normalizeAccessoryGroups(rows), [rows]);
   const importedIdsRef = useRef<Set<string>>(new Set());
   const [groups, setGroups] = useState<AccessoryPricingRow[]>(() => initialGroups);
+  const userEditedCurrencyItemIds = useRef<Set<string>>(new Set());
+  const previousDefaultCurrencyRef = useRef(
+    resolveDefaultPricingCurrency({
+      brandDefaultCurrency,
+      existingRows: initialGroups.flatMap((group) => group.items ?? []),
+      savedTemplateCurrency: templateCurrency,
+    }),
+  );
   const serialized = useMemo(() => JSON.stringify(groups.map(normalizeAccessoryGroup)), [groups]);
 
   useEffect(() => {
@@ -745,6 +1226,10 @@ export function AccessoryPricingTable({
   }
 
   function updateItem(groupIndex: number, itemIndex: number, patch: Partial<AccessoryPricingItem>) {
+    if (typeof patch.currency === "string") {
+      userEditedCurrencyItemIds.current.add(groups[groupIndex]?.items?.[itemIndex]?.id ?? `add-on-${groupIndex}-${itemIndex}`);
+    }
+
     setGroups((current) =>
       current.map((group, currentGroupIndex) => {
         if (currentGroupIndex !== groupIndex) return group;
@@ -758,6 +1243,61 @@ export function AccessoryPricingTable({
       }),
     );
   }
+
+  useEffect(() => {
+    const allItems = groups.flatMap((group) => group.items ?? []);
+    const nextDefaultCurrency = resolveDefaultPricingCurrency({
+      brandDefaultCurrency,
+      existingRows: allItems,
+      savedTemplateCurrency: templateCurrency,
+    });
+
+    setGroups((current) => {
+      let didChange = false;
+      const nextGroups = current.map((group, groupIndex) => {
+        const nextItems = (group.items ?? []).map((item, itemIndex) => {
+          const key = item.id ?? `add-on-${groupIndex}-${itemIndex}`;
+          if (userEditedCurrencyItemIds.current.has(key) || accessoryItemHasMeaningfulValues(item)) {
+            return item;
+          }
+
+          const currentCurrency = item.currency?.trim() ? normalizeCurrency(item.currency) : null;
+          const previousDefaultCurrency = previousDefaultCurrencyRef.current;
+          if (
+            currentCurrency &&
+            currentCurrency !== previousDefaultCurrency &&
+            currentCurrency !== defaultCurrency
+          ) {
+            return item;
+          }
+
+          if (currentCurrency === nextDefaultCurrency) {
+            return item;
+          }
+
+          didChange = true;
+          return {
+            ...item,
+            currency: nextDefaultCurrency,
+          };
+        });
+
+        const groupChanged = nextItems.some((item, itemIndex) => item !== (group.items ?? [])[itemIndex]);
+        if (!groupChanged) {
+          return group;
+        }
+
+        return {
+          ...group,
+          items: nextItems,
+        };
+      });
+
+      return didChange ? nextGroups : current;
+    });
+
+    previousDefaultCurrencyRef.current = nextDefaultCurrency;
+  }, [brandDefaultCurrency, groups, templateCurrency]);
 
   return (
     <div className="md:col-span-2 xl:col-span-3">

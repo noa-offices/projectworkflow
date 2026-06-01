@@ -18,6 +18,15 @@ const A4_LANDSCAPE_VIEWPORT = {
   isMobile: false,
 } as const;
 
+const A4_PORTRAIT_VIEWPORT = {
+  width: 794,
+  height: 1123,
+  deviceScaleFactor: 2,
+  hasTouch: false,
+  isLandscape: false,
+  isMobile: false,
+} as const;
+
 type DownloadPurchaseOrderRouteContext = {
   params: Promise<{ id: string }>;
 };
@@ -68,6 +77,7 @@ export async function GET(request: NextRequest, { params }: DownloadPurchaseOrde
       .find(Boolean)
     : null;
   const supplierName = savedSupplierOverride?.displayName || effectiveSupplierLabel(data.items, selectedKey) || "Supplier";
+  const landscape = settingsResult.success ? settingsResult.settings.print.orientation !== "portrait" : true;
 
   const origin = requestOrigin(request);
   const sourceUrl = `${origin}/quotations/${id}/purchase-order?print=1`;
@@ -80,7 +90,7 @@ export async function GET(request: NextRequest, { params }: DownloadPurchaseOrde
       pdfOptions: {
         displayHeaderFooter: false,
         format: "A4",
-        landscape: true,
+        landscape,
         margin: {
           top: "0",
           right: "0",
@@ -89,7 +99,7 @@ export async function GET(request: NextRequest, { params }: DownloadPurchaseOrde
         },
       },
       sourceUrl,
-      viewport: A4_LANDSCAPE_VIEWPORT,
+      viewport: landscape ? A4_LANDSCAPE_VIEWPORT : A4_PORTRAIT_VIEWPORT,
     });
     const filename = `${purchaseOrderFilename(poNumber, supplierName)}.pdf`;
     const pdfBody = pdfBuffer.buffer.slice(

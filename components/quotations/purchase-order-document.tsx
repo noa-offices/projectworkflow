@@ -3,6 +3,10 @@ import { DocumentFooter, DocumentHeader, DocumentMetaList, DocumentPage } from "
 import { formatPurchaseOrderMoney } from "@/lib/quotations/purchase-order-currency";
 import { buildPurchaseOrderPages, type PurchaseOrderClosingContent, type PurchaseOrderDocumentItem, type PurchaseOrderDocumentSupplier, type PurchaseOrderPage } from "@/lib/quotations/purchase-order-pages";
 import type { PurchaseOrderColumnVisibility, PurchaseOrderDocumentDetails, PurchaseOrderTerms } from "@/lib/quotations/purchase-order-settings";
+import {
+  DEFAULT_LANDSCAPE_PRINT_SETTINGS,
+  type DocumentPrintSettings,
+} from "@/lib/quotations/document-print-settings";
 
 type PurchaseOrderDocumentProps = {
   companyLogoUrl: string | null;
@@ -11,6 +15,7 @@ type PurchaseOrderDocumentProps = {
   settings: {
     columnVisibility: PurchaseOrderColumnVisibility;
     documentDetails: PurchaseOrderDocumentDetails;
+    print?: DocumentPrintSettings;
     terms: PurchaseOrderTerms;
   };
   subtotal: number;
@@ -60,6 +65,7 @@ function CompactHeader({
   details,
   page,
   poCurrency,
+  print,
   supplier,
   supplierLabel,
 }: {
@@ -67,12 +73,13 @@ function CompactHeader({
   details: PurchaseOrderDocumentDetails;
   page: PurchaseOrderPage;
   poCurrency: string;
+  print: DocumentPrintSettings;
   supplier: PurchaseOrderDocumentSupplier;
   supplierLabel: string;
 }) {
   const supplierName = supplier.displayName || supplierLabel || "Supplier";
 
-  if (page.isFirstPage) {
+  if (page.isFirstPage || !print.showFullHeaderOnlyFirstPage) {
     return (
       <DocumentHeader>
         <div className="flex items-start justify-between gap-4">
@@ -120,14 +127,23 @@ function ItemTable({
   columnVisibility,
   page,
   poCurrency,
+  print,
 }: {
   columnVisibility: PurchaseOrderColumnVisibility;
   page: PurchaseOrderPage;
   poCurrency: string;
+  print: DocumentPrintSettings;
 }) {
+  const imageFrameClassName = print.imageSize === "small"
+    ? "h-10 w-10"
+    : print.imageSize === "large"
+      ? "h-16 w-16"
+      : "h-12 w-12";
+  const showTableHeader = page.isFirstPage || print.repeatTableHeader;
+
   return (
     <table className="w-full border-collapse text-left text-[8px] text-zinc-700">
-      <thead className="bg-zinc-50 text-[7px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+      {showTableHeader ? <thead className="bg-zinc-50 text-[7px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
         <tr>
           <th className="w-[6%] border-b border-zinc-200 px-2 py-2">S.No</th>
           {columnVisibility.image ? <th className="w-[11%] border-b border-zinc-200 px-2 py-2">Image</th> : null}
@@ -137,14 +153,14 @@ function ItemTable({
           {columnVisibility.unitPrice ? <th className="w-[11%] border-b border-zinc-200 px-2 py-2 text-right">Unit Price</th> : null}
           {columnVisibility.lineTotal ? <th className="w-[11%] border-b border-zinc-200 px-2 py-2 text-right">Total</th> : null}
         </tr>
-      </thead>
+      </thead> : null}
       <tbody>
         {page.items.map((item, index) => (
           <tr key={item.id} className={index % 2 === 0 ? "bg-white" : "bg-zinc-50/40"}>
             <td className="align-top border-b border-zinc-200 px-2 py-2 font-semibold text-zinc-900">{String(item.rowNumber).padStart(2, "0")}</td>
             {columnVisibility.image ? (
               <td className="align-top border-b border-zinc-200 px-2 py-2">
-                <div className="h-12 w-12 overflow-hidden border border-zinc-200 bg-white">
+                <div className={`${imageFrameClassName} overflow-hidden border border-zinc-200 bg-white`}>
                   <QuotationImageFrame
                     alt={item.description}
                     className="h-full w-full overflow-hidden"
@@ -158,7 +174,7 @@ function ItemTable({
               <p className="font-semibold text-zinc-900">{item.description}</p>
               {item.context ? <p className="mt-0.5 text-[7.5px] text-zinc-500">{item.context}</p> : null}
               {columnVisibility.code && item.code ? <p className="mt-0.5 text-[7.5px]"><span className="font-semibold text-zinc-900">Code:</span> {item.code}</p> : null}
-              {columnVisibility.supplierPriceListCode && item.supplierPriceListCode ? <p className="text-[7.5px]"><span className="font-semibold text-zinc-900">Supplier Code:</span> {item.supplierPriceListCode}</p> : null}
+              {columnVisibility.supplierPriceListCode && item.supplierPriceListCode ? <p className="text-[7.5px]"><span className="font-semibold text-zinc-900">Supplier Codes:</span> {item.supplierPriceListCode}</p> : null}
               {columnVisibility.model && item.model ? <p className="text-[7.5px]"><span className="font-semibold text-zinc-900">Model:</span> {item.model}</p> : null}
               {columnVisibility.brandOrigin && item.brandOrigin ? <p className="text-[7.5px]"><span className="font-semibold text-zinc-900">Brand / Origin:</span> {item.brandOrigin}</p> : null}
               {item.specification ? <p className="mt-0.5 line-clamp-2 text-[7.5px] leading-3.5 text-zinc-600">{item.specification}</p> : null}
@@ -264,6 +280,7 @@ export function PurchaseOrderDocument({
   supplier,
   supplierLabel,
 }: PurchaseOrderDocumentProps) {
+  const print = settings.print ?? DEFAULT_LANDSCAPE_PRINT_SETTINGS;
   const pages = buildPurchaseOrderPages({
     closing: {
       hasPriceValues,
@@ -275,17 +292,19 @@ export function PurchaseOrderDocument({
     },
     columnVisibility: settings.columnVisibility,
     items,
+    print,
   });
 
   return (
     <>
       {pages.map((page) => (
-        <DocumentPage key={`po-page-${page.pageIndex}-${page.isClosingPage ? "closing" : "items"}`}>
+        <DocumentPage key={`po-page-${page.pageIndex}-${page.isClosingPage ? "closing" : "items"}`} orientation={print.orientation}>
           <CompactHeader
             companyLogoUrl={companyLogoUrl}
             details={settings.documentDetails}
             page={page}
             poCurrency={poCurrency}
+            print={print}
             supplier={supplier}
             supplierLabel={supplierLabel}
           />
@@ -297,6 +316,7 @@ export function PurchaseOrderDocument({
                   columnVisibility={settings.columnVisibility}
                   page={page}
                   poCurrency={poCurrency}
+                  print={print}
                 />
                 <ClosingSections closing={page.closing} poCurrency={poCurrency} />
               </div>

@@ -6,6 +6,10 @@ import { formatSafeActionError, logServerActionError } from "@/lib/action-errors
 import { requireSettingsManager } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit-log";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
+import {
+  MODULAR_ITEM_PRICING_TYPE,
+  MODULAR_META_PRICING_TYPE,
+} from "@/lib/products/modular-pricing";
 import { brandPriceBaselineDate, latestBrandPriceListUpdate } from "@/lib/product-price-check";
 import { createClient } from "@/lib/supabase/server";
 
@@ -829,6 +833,16 @@ function deskingSizePricingValue(formData: FormData) {
         const height = parsedDimensions[2] ?? Number(row.height);
         const defaultPrice = Number(row.default_price);
         const additionalPrice = Number(row.additional_price);
+        const baseSupplierPriceListCode =
+          typeof row.base_supplier_price_list_code === "string" && row.base_supplier_price_list_code.trim()
+            ? row.base_supplier_price_list_code.trim()
+            : typeof row.supplier_price_list_code === "string"
+              ? row.supplier_price_list_code.trim()
+              : "";
+        const additionalSupplierPriceListCode =
+          typeof row.additional_supplier_price_list_code === "string"
+            ? row.additional_supplier_price_list_code.trim()
+            : "";
 
         return {
           id: typeof row.id === "string" && row.id ? row.id : `size-${index}`,
@@ -837,8 +851,8 @@ function deskingSizePricingValue(formData: FormData) {
               : Number.isFinite(length) && Number.isFinite(depth) && Number.isFinite(height)
                 ? `${length} x ${depth} x ${height}`
                 : "",
-          supplier_price_list_code:
-            typeof row.supplier_price_list_code === "string" ? row.supplier_price_list_code.trim() : "",
+          supplier_price_list_code: baseSupplierPriceListCode,
+          base_supplier_price_list_code: baseSupplierPriceListCode,
           length: Number.isFinite(length) ? length : 0,
           depth: Number.isFinite(depth) ? depth : 0,
           height: Number.isFinite(height) ? height : 0,
@@ -846,11 +860,19 @@ function deskingSizePricingValue(formData: FormData) {
             typeof row.dimension_unit === "string" && row.dimension_unit.trim()
               ? row.dimension_unit.trim()
               : "cm",
+          layout_type:
+            row.layout_type === "Cluster" || row.layout_type === "Both"
+              ? row.layout_type
+              : "Linear",
           default_price: Number.isFinite(defaultPrice) ? defaultPrice : 0,
           additional_price: Number.isFinite(additionalPrice) ? additionalPrice : 0,
+          additional_supplier_price_list_code: additionalSupplierPriceListCode,
           currency: normalizeCurrency(
             typeof row.currency === "string" ? row.currency : defaultCurrency,
           ),
+          specification: typeof row.specification === "string" ? row.specification.trim() : "",
+          default_dimension:
+            typeof row.default_dimension === "string" ? row.default_dimension.trim() : "",
           sort_order: Number.isFinite(Number(row.sort_order))
             ? Number(row.sort_order)
             : index,
@@ -865,7 +887,10 @@ function deskingSizePricingValue(formData: FormData) {
           row.height > 0 ||
           row.default_price > 0 ||
           row.additional_price > 0 ||
-          row.supplier_price_list_code,
+          row.supplier_price_list_code ||
+          row.additional_supplier_price_list_code ||
+          row.specification ||
+          row.default_dimension,
       );
   } catch {
     return [];
@@ -901,13 +926,22 @@ function variantPricingValue(formData: FormData) {
 
 function categoryPricingValue(formData: FormData) {
   const rawValue = textValue(formData, "category_pricing");
-  if (!rawValue) return [];
+  const modularRawValue = textValue(formData, "modular_item_pricing");
+  const modularDefaultsRawValue = textValue(formData, "modular_item_pricing_defaults");
+  if (!rawValue && !modularRawValue && !modularDefaultsRawValue) return [];
 
   try {
-    const parsed = JSON.parse(rawValue) as Array<Record<string, unknown>>;
-    if (!Array.isArray(parsed)) return [];
+    const parsed = rawValue ? JSON.parse(rawValue) as Array<Record<string, unknown>> : [];
+    const parsedModular = modularRawValue ? JSON.parse(modularRawValue) as Array<Record<string, unknown>> : [];
+    const modularDefaults = modularDefaultsRawValue
+      ? JSON.parse(modularDefaultsRawValue) as Record<string, unknown>
+      : {};
+    const sourceRows = [
+      ...(Array.isArray(parsed) ? parsed : []),
+      ...(Array.isArray(parsedModular) ? parsedModular : []),
+    ];
 
-    return parsed
+    const rows = sourceRows
       .map((row, index) => {
         const prices = typeof row.prices === "object" && row.prices !== null
           ? row.prices as Record<string, unknown>
@@ -930,6 +964,10 @@ function categoryPricingValue(formData: FormData) {
 
         return {
           id: typeof row.id === "string" && row.id ? row.id : `category-${index}`,
+          pricing_type:
+            typeof row.pricing_type === "string" && row.pricing_type.trim()
+              ? row.pricing_type.trim()
+              : null,
           pricing_category_id:
             typeof row.pricing_category_id === "string" && row.pricing_category_id.trim()
               ? row.pricing_category_id.trim()
@@ -945,11 +983,54 @@ function categoryPricingValue(formData: FormData) {
           currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
           prices: Object.fromEntries(normalizedPrices.entries()),
           specification: typeof row.specification === "string" ? row.specification.trim() : "",
+          modular_default_dimension:
+            typeof row.modular_default_dimension === "string" && row.modular_default_dimension.trim()
+              ? row.modular_default_dimension.trim()
+              : null,
+          modular_default_specification:
+            typeof row.modular_default_specification === "string" && row.modular_default_specification.trim()
+              ? row.modular_default_specification.trim()
+              : null,
           sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
           is_active: row.is_active !== false,
         };
       })
-      .filter((row) => row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price > 0) || row.specification);
+      .filter((row) =>
+        row.pricing_type === MODULAR_ITEM_PRICING_TYPE
+          ? row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price > 0) || row.specification
+          : row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price > 0) || row.specification,
+      );
+
+    const modularDefaultSpecification =
+      typeof modularDefaults.modular_default_specification === "string" && modularDefaults.modular_default_specification.trim()
+        ? modularDefaults.modular_default_specification.trim()
+        : null;
+    const modularDefaultDimension =
+      typeof modularDefaults.modular_default_dimension === "string" && modularDefaults.modular_default_dimension.trim()
+        ? modularDefaults.modular_default_dimension.trim()
+        : null;
+
+    if (modularDefaultSpecification || modularDefaultDimension) {
+      rows.unshift({
+        id: "modular-meta",
+        pricing_type: MODULAR_META_PRICING_TYPE,
+        pricing_category_id: null,
+        pricing_category_name: null,
+        variant_name: "",
+        display_name: "",
+        supplier_price_list_code: "",
+        dimension: "",
+        currency: defaultCurrency,
+        prices: Object.fromEntries([["Cat A", 0], ["Cat B", 0], ["Cat C", 0], ["Cat D", 0]]),
+        specification: "",
+        modular_default_dimension: modularDefaultDimension,
+        modular_default_specification: modularDefaultSpecification,
+        sort_order: -1,
+        is_active: true,
+      });
+    }
+
+    return rows;
   } catch {
     return [];
   }

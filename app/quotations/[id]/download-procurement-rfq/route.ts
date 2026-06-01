@@ -18,6 +18,15 @@ const A4_LANDSCAPE_VIEWPORT = {
   isMobile: false,
 } as const;
 
+const A4_PORTRAIT_VIEWPORT = {
+  width: 794,
+  height: 1123,
+  deviceScaleFactor: 2,
+  hasTouch: false,
+  isLandscape: false,
+  isMobile: false,
+} as const;
+
 type DownloadProcurementRfqRouteContext = {
   params: Promise<{ id: string }>;
 };
@@ -66,6 +75,7 @@ export async function GET(request: NextRequest, { params }: DownloadProcurementR
   const scopeLabel = savedGroupKey === "all"
     ? "All Suppliers"
     : savedSupplierOverride?.displayName || selectedGroup?.displayLabel || "All Suppliers";
+  const landscape = settingsResult.success ? settingsResult.settings.print.orientation !== "portrait" : true;
 
   const origin = requestOrigin(request);
   const sourceUrl = `${origin}/quotations/${id}/procurement-rfq?print=1`;
@@ -78,7 +88,7 @@ export async function GET(request: NextRequest, { params }: DownloadProcurementR
       pdfOptions: {
         displayHeaderFooter: false,
         format: "A4",
-        landscape: true,
+        landscape,
         margin: {
           top: "0",
           right: "0",
@@ -87,7 +97,7 @@ export async function GET(request: NextRequest, { params }: DownloadProcurementR
         },
       },
       sourceUrl,
-      viewport: A4_LANDSCAPE_VIEWPORT,
+      viewport: landscape ? A4_LANDSCAPE_VIEWPORT : A4_PORTRAIT_VIEWPORT,
     });
     const filename = `${procurementRfqFilename(rfqNumber, scopeLabel)}.pdf`;
     const pdfBody = pdfBuffer.buffer.slice(

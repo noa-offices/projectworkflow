@@ -166,20 +166,253 @@ export function documentItemTitle(item: Pick<DerivedDocumentItem, "item_name_sna
   return item.item_name_snapshot || item.model_snapshot || item.item_code_snapshot || "Quotation Item";
 }
 
-export function supplierPriceListCodeFromSourceData(sourceData: unknown) {
-  const sourceRecord = isRecord(sourceData) ? sourceData : null;
-  if (!sourceRecord) return null;
+type SupplierCodeEntry = {
+  code: string;
+  label: string;
+};
 
-  const topLevelCode = stringFromRecord(sourceRecord, ["supplier_price_list_code"]);
-  if (topLevelCode) return topLevelCode;
+function splitSupplierCodes(value: string | null | undefined) {
+  return (value ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function arrayRecords(value: unknown) {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function addSupplierCodeEntries(
+  entries: SupplierCodeEntry[],
+  seenEntries: Set<string>,
+  seenCodes: Set<string>,
+  codeValue: string | null | undefined,
+  label: string | null | undefined,
+  options: { skipSeenCodes?: boolean } = {},
+) {
+  const normalizedLabel = label?.trim() || "Item";
+  const codes = splitSupplierCodes(codeValue);
+  const uniqueCodes = codes.filter((code, index) =>
+    codes.findIndex((candidate) => candidate.toLowerCase() === code.toLowerCase()) === index
+  );
+  const nextCodes: string[] = [];
+
+  for (const code of uniqueCodes) {
+    const codeKey = code.toLowerCase();
+    if (options.skipSeenCodes && seenCodes.has(codeKey)) {
+      continue;
+    }
+
+    const dedupeKey = `${normalizedLabel.toLowerCase()}::${code.toLowerCase()}`;
+    if (seenEntries.has(dedupeKey)) {
+      continue;
+    }
+
+    seenEntries.add(dedupeKey);
+    seenCodes.add(codeKey);
+    nextCodes.push(code);
+  }
+
+  if (nextCodes.length) {
+    entries.push({
+      code: nextCodes.join(" / "),
+      label: normalizedLabel,
+    });
+  }
+}
+
+function supplierCodeLabel(record: Record<string, unknown>, fallback: string) {
+  return stringFromRecord(record, [
+    "item_name",
+    "display_name",
+    "variant_name",
+    "label",
+    "template_name",
+    "group_name",
+    "component_name",
+    "name",
+  ]) ?? fallback;
+}
+
+function compactSupplierCodeLabel(value: string | null | undefined, fallback: string) {
+  const normalized = value?.trim() || fallback;
+  return normalized
+    .replace(/\s*\/\s*/g, " / ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function collectSupplierCodeSummary(sourceData: unknown): SupplierCodeEntry[] {
+  const itemRecord = isRecord(sourceData) && "source_component_data" in sourceData ? sourceData : null;
+  const sourceRecord = itemRecord && isRecord(itemRecord.source_component_data)
+    ? itemRecord.source_component_data
+    : isRecord(sourceData)
+      ? sourceData
+      : null;
+  if (!sourceRecord) return [];
+
+  const entries: SupplierCodeEntry[] = [];
+  const seenEntries = new Set<string>();
+  const seenCodes = new Set<string>();
+
+  const desking = isRecord(sourceRecord.desking) ? sourceRecord.desking : null;
+  if (desking) {
+    addSupplierCodeEntries(
+      entries,
+      seenEntries,
+      seenCodes,
+      stringFromRecord(desking, ["base_supplier_price_list_code"]),
+      "Base",
+    );
+    addSupplierCodeEntries(
+      entries,
+      seenEntries,
+      seenCodes,
+      stringFromRecord(desking, ["additional_supplier_price_list_code"]),
+      "Additional",
+    );
+  }
 
   const variantPricing = isRecord(sourceRecord.variant_pricing) ? sourceRecord.variant_pricing : null;
-  const variantCode = variantPricing ? stringFromRecord(variantPricing, ["supplier_price_list_code"]) : null;
-  if (variantCode) return variantCode;
+  if (variantPricing) {
+    addSupplierCodeEntries(
+      entries,
+      seenEntries,
+      seenCodes,
+      stringFromRecord(variantPricing, ["supplier_price_list_code"]),
+      "Main",
+    );
+  }
+
+  const modularPricing = isRecord(sourceRecord.modular_pricing) ? sourceRecord.modular_pricing : null;
+  const modularItems = modularPricing && Array.isArray(modularPricing.items) ? modularPricing.items : [];
+  for (const item of modularItems) {
+    if (!isRecord(item)) continue;
+    addSupplierCodeEntries(
+      entries,
+      seenEntries,
+      seenCodes,
+      stringFromRecord(item, ["supplier_price_list_code"]),
+      compactSupplierCodeLabel(supplierCodeLabel(item, "Modular item"), "Modular"),
+    );
+  }
 
   const categoryPricing = isRecord(sourceRecord.category_pricing) ? sourceRecord.category_pricing : null;
   const selectedRow = categoryPricing && isRecord(categoryPricing.selected_row) ? categoryPricing.selected_row : null;
-  return selectedRow ? stringFromRecord(selectedRow, ["supplier_price_list_code"]) : null;
+  if (selectedRow) {
+    addSupplierCodeEntries(
+      entries,
+      seenEntries,
+      seenCodes,
+      stringFromRecord(selectedRow, ["supplier_price_list_code"]),
+      "Main",
+    );
+  }
+
+  const addOns = isRecord(sourceRecord.add_ons) ? sourceRecord.add_ons : null;
+  const addOnGroups = addOns && Array.isArray(addOns.groups) ? addOns.groups : [];
+  for (const group of addOnGroups) {
+    if (!isRecord(group)) continue;
+    const items = Array.isArray(group.items) ? group.items : [];
+    for (const item of items) {
+      if (!isRecord(item)) continue;
+      addSupplierCodeEntries(
+        entries,
+        seenEntries,
+        seenCodes,
+        stringFromRecord(item, ["supplier_price_list_code"]),
+        compactSupplierCodeLabel(supplierCodeLabel(item, "Accessory"), "Accessory"),
+      );
+    }
+  }
+
+  const linkedProducts = isRecord(sourceRecord.linked_products) ? sourceRecord.linked_products : null;
+  const linkedItems = linkedProducts && Array.isArray(linkedProducts.items) ? linkedProducts.items : [];
+  for (const item of linkedItems) {
+    if (!isRecord(item)) continue;
+    addSupplierCodeEntries(
+      entries,
+      seenEntries,
+      seenCodes,
+      stringFromRecord(item, ["supplier_price_list_code"]),
+      compactSupplierCodeLabel(supplierCodeLabel(item, "Linked product"), "Linked product"),
+    );
+
+    const accessories = Array.isArray(item.accessories) ? item.accessories : [];
+    for (const accessory of accessories) {
+      if (!isRecord(accessory)) continue;
+      addSupplierCodeEntries(
+        entries,
+        seenEntries,
+        seenCodes,
+        stringFromRecord(accessory, ["supplier_price_list_code"]),
+        compactSupplierCodeLabel(supplierCodeLabel(accessory, "Add-on"), "Add-on"),
+      );
+    }
+  }
+
+  const selectedOptions = [
+    ...arrayRecords(sourceRecord.selected_options),
+    ...arrayRecords(sourceRecord.selected_options_snapshot),
+    ...arrayRecords(itemRecord?.selected_options_snapshot),
+  ];
+  for (const option of selectedOptions) {
+    addSupplierCodeEntries(
+      entries,
+      seenEntries,
+      seenCodes,
+      stringFromRecord(option, ["supplier_price_list_code", "component_code"]),
+      compactSupplierCodeLabel(supplierCodeLabel(option, "Option"), "Option"),
+    );
+
+    const selectedVariant = isRecord(option.selected_variant) ? option.selected_variant : null;
+    if (selectedVariant) {
+      addSupplierCodeEntries(
+        entries,
+        seenEntries,
+        seenCodes,
+        stringFromRecord(selectedVariant, ["supplier_price_list_code"]),
+        compactSupplierCodeLabel(supplierCodeLabel(selectedVariant, "Option"), "Option"),
+      );
+    }
+
+    const accessories = Array.isArray(option.accessories) ? option.accessories : [];
+    for (const accessory of accessories) {
+      if (!isRecord(accessory)) continue;
+      addSupplierCodeEntries(
+        entries,
+        seenEntries,
+        seenCodes,
+        stringFromRecord(accessory, ["supplier_price_list_code"]),
+        compactSupplierCodeLabel(supplierCodeLabel(accessory, "Add-on"), "Add-on"),
+      );
+    }
+  }
+
+  addSupplierCodeEntries(
+    entries,
+    seenEntries,
+    seenCodes,
+    stringFromRecord(sourceRecord, ["supplier_price_list_code"]),
+    "Main",
+    { skipSeenCodes: true },
+  );
+
+  return entries;
+}
+
+export function formatSupplierCodeSummary(entries: SupplierCodeEntry[]) {
+  return entries.map((entry) => `${entry.label} ${entry.code}`).join(" | ");
+}
+
+export function supplierPriceListCodeFromSourceData(sourceData: unknown) {
+  const entries = collectSupplierCodeSummary(sourceData);
+
+  if (!entries.length) {
+    return null;
+  }
+
+  return formatSupplierCodeSummary(entries);
 }
 
 export function isDocumentItem(item: Pick<DerivedDocumentItem, "item_type" | "line_style" | "is_active">) {

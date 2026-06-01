@@ -1,3 +1,9 @@
+import {
+  DEFAULT_PORTRAIT_PRINT_SETTINGS,
+  normalizeDocumentPrintSettings,
+  type DocumentPrintSettings,
+} from "@/lib/quotations/document-print-settings";
+
 export type OrderConfirmationLogoDisplayMode = "logo_if_available" | "text_wordmark_fallback";
 
 export type OrderConfirmationDocumentDetails = {
@@ -56,6 +62,7 @@ export type OrderConfirmationTerms = {
 
 export type QuotationOrderConfirmationSettings = {
   documentDetails: OrderConfirmationDocumentDetails;
+  print: DocumentPrintSettings;
   itemOverrides: Record<string, OrderConfirmationItemOverride>;
   columnVisibility: OrderConfirmationColumnVisibility;
   terms: OrderConfirmationTerms;
@@ -123,6 +130,7 @@ export const DEFAULT_ORDER_CONFIRMATION_TERMS: OrderConfirmationTerms = {
 
 export const DEFAULT_ORDER_CONFIRMATION_SETTINGS: QuotationOrderConfirmationSettings = {
   documentDetails: DEFAULT_ORDER_CONFIRMATION_DOCUMENT_DETAILS,
+  print: DEFAULT_PORTRAIT_PRINT_SETTINGS,
   itemOverrides: {},
   columnVisibility: DEFAULT_ORDER_CONFIRMATION_COLUMN_VISIBILITY,
   terms: DEFAULT_ORDER_CONFIRMATION_TERMS,
@@ -168,6 +176,7 @@ export function normalizeOrderConfirmationSettings(
   const itemOverridesRecord = isRecord(record.itemOverrides) ? record.itemOverrides : undefined;
   const columnVisibilityRecord = isRecord(record.columnVisibility) ? record.columnVisibility : undefined;
   const termsRecord = isRecord(record.terms) ? record.terms : undefined;
+  const printRecord = isRecord(record.print) ? record.print : undefined;
 
   const itemOverrides = Object.fromEntries(
     Object.entries(itemOverridesRecord ?? {})
@@ -217,6 +226,7 @@ export function normalizeOrderConfirmationSettings(
         ? "text_wordmark_fallback"
         : "logo_if_available",
     },
+    print: normalizeDocumentPrintSettings(printRecord, DEFAULT_ORDER_CONFIRMATION_SETTINGS.print),
     itemOverrides,
     columnVisibility: {
       image: normalizedBoolean(columnVisibilityRecord, "image", DEFAULT_ORDER_CONFIRMATION_COLUMN_VISIBILITY.image),

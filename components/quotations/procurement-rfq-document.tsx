@@ -2,6 +2,10 @@ import { QuotationImageFrame } from "@/components/quotations/quotation-image-fra
 import { DocumentFooter, DocumentHeader, DocumentMetaList, DocumentPage } from "@/components/quotations/document-page";
 import { buildProcurementRfqPages, type ProcurementRfqDocumentGroup, type ProcurementRfqPage } from "@/lib/quotations/procurement-rfq-pages";
 import type { ProcurementRfqColumnVisibility, ProcurementRfqDocumentDetails, ProcurementRfqNotes } from "@/lib/quotations/procurement-rfq-settings";
+import {
+  DEFAULT_LANDSCAPE_PRINT_SETTINGS,
+  type DocumentPrintSettings,
+} from "@/lib/quotations/document-print-settings";
 
 type ProcurementRfqDocumentProps = {
   companyLogoUrl: string | null;
@@ -12,6 +16,7 @@ type ProcurementRfqDocumentProps = {
   settings: {
     columnVisibility: ProcurementRfqColumnVisibility;
     documentDetails: ProcurementRfqDocumentDetails;
+    print?: DocumentPrintSettings;
   };
 };
 
@@ -56,13 +61,15 @@ function CompactHeader({
   currentScopeLabel,
   details,
   page,
+  print,
 }: {
   companyLogoUrl: string | null;
   currentScopeLabel: string;
   details: ProcurementRfqDocumentDetails;
   page: ProcurementRfqPage;
+  print: DocumentPrintSettings;
 }) {
-  if (page.isFirstPage) {
+  if (page.isFirstPage || !print.showFullHeaderOnlyFirstPage) {
     return (
       <DocumentHeader>
         <div className="flex items-start justify-between gap-4">
@@ -112,13 +119,22 @@ function CompactHeader({
 function ItemTable({
   columnVisibility,
   page,
+  print,
 }: {
   columnVisibility: ProcurementRfqColumnVisibility;
   page: ProcurementRfqPage;
+  print: DocumentPrintSettings;
 }) {
+  const imageFrameClassName = print.imageSize === "small"
+    ? "h-10 w-10"
+    : print.imageSize === "large"
+      ? "h-16 w-16"
+      : "h-12 w-12";
+  const showTableHeader = page.isFirstPage || print.repeatTableHeader;
+
   return (
     <table className="w-full border-collapse text-left text-[8px] text-zinc-700">
-      <thead className="bg-zinc-50 text-[7px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+      {showTableHeader ? <thead className="bg-zinc-50 text-[7px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
         <tr>
           <th className="w-[6%] border-b border-zinc-200 px-2 py-2">SR</th>
           {columnVisibility.image ? <th className="w-[11%] border-b border-zinc-200 px-2 py-2">Image</th> : null}
@@ -127,14 +143,14 @@ function ItemTable({
           {columnVisibility.finish ? <th className="w-[14%] border-b border-zinc-200 px-2 py-2">Finish</th> : null}
           {columnVisibility.quantity ? <th className="w-[8%] border-b border-zinc-200 px-2 py-2 text-center">Total Qty</th> : null}
         </tr>
-      </thead>
+      </thead> : null}
       <tbody>
         {page.items.map((item, index) => (
           <tr key={item.id} className={index % 2 === 0 ? "bg-white" : "bg-zinc-50/40"}>
             <td className="align-top border-b border-zinc-200 px-2 py-2 font-semibold text-zinc-900">{String(item.rowNumber).padStart(2, "0")}</td>
             {columnVisibility.image ? (
               <td className="align-top border-b border-zinc-200 px-2 py-2">
-                <div className="h-12 w-12 overflow-hidden border border-zinc-200 bg-white">
+                <div className={`${imageFrameClassName} overflow-hidden border border-zinc-200 bg-white`}>
                   <QuotationImageFrame
                     alt={item.description}
                     className="h-full w-full overflow-hidden"
@@ -148,7 +164,7 @@ function ItemTable({
               <p className="font-semibold text-zinc-900">{item.description}</p>
               {item.context ? <p className="mt-0.5 text-[7.5px] text-zinc-500">{item.context}</p> : null}
               {columnVisibility.code && item.code ? <p className="mt-0.5 text-[7.5px]"><span className="font-semibold text-zinc-900">Code:</span> {item.code}</p> : null}
-              {columnVisibility.supplierPriceListCode && item.supplierPriceListCode ? <p className="text-[7.5px]"><span className="font-semibold text-zinc-900">Supplier Code:</span> {item.supplierPriceListCode}</p> : null}
+              {columnVisibility.supplierPriceListCode && item.supplierPriceListCode ? <p className="text-[7.5px]"><span className="font-semibold text-zinc-900">Supplier Codes:</span> {item.supplierPriceListCode}</p> : null}
               {columnVisibility.model && item.model ? <p className="text-[7.5px]"><span className="font-semibold text-zinc-900">Model:</span> {item.model}</p> : null}
               {columnVisibility.brandOrigin && item.brandOrigin ? <p className="text-[7.5px]"><span className="font-semibold text-zinc-900">Brand / Origin:</span> {item.brandOrigin}</p> : null}
               {columnVisibility.specification && item.specification ? <p className="mt-0.5 line-clamp-3 text-[7.5px] leading-3.5 text-zinc-600">{item.specification}</p> : null}
@@ -236,9 +252,11 @@ export function ProcurementRfqDocument({
   notes,
   settings,
 }: ProcurementRfqDocumentProps) {
+  const print = settings.print ?? DEFAULT_LANDSCAPE_PRINT_SETTINGS;
+
   if (groups.length === 0) {
     return (
-      <DocumentPage>
+      <DocumentPage orientation={print.orientation}>
         <div className="flex flex-1 items-center justify-center text-sm text-zinc-500">{defaultEmptyMessage}</div>
       </DocumentPage>
     );
@@ -248,23 +266,25 @@ export function ProcurementRfqDocument({
     columnVisibility: settings.columnVisibility,
     groups,
     notes,
+    print,
   });
 
   return (
     <>
       {pages.map((page) => (
-        <DocumentPage key={`${page.group.key}-${page.pageIndex}-${page.isClosingPage ? "closing" : "items"}`}>
+        <DocumentPage key={`${page.group.key}-${page.pageIndex}-${page.isClosingPage ? "closing" : "items"}`} orientation={print.orientation}>
           <CompactHeader
             companyLogoUrl={companyLogoUrl}
             currentScopeLabel={currentScopeLabel}
             details={settings.documentDetails}
             page={page}
+            print={print}
           />
 
           <div className="mt-3 flex-1 overflow-hidden">
             {page.isItemPage && page.items.length > 0 ? (
               <div className="space-y-3">
-                <ItemTable columnVisibility={settings.columnVisibility} page={page} />
+                <ItemTable columnVisibility={settings.columnVisibility} page={page} print={print} />
                 <ClosingSections
                   notes={page.notes}
                   page={page}

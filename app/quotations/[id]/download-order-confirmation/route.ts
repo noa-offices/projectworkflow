@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireActiveUser } from "@/lib/auth";
+import { loadOrderConfirmationSettings } from "@/lib/quotations/order-confirmation-settings-store";
 import { generatePdfBuffer } from "@/lib/server/generate-pdf-buffer";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
@@ -13,6 +14,15 @@ const A4_PORTRAIT_VIEWPORT = {
   deviceScaleFactor: 2,
   hasTouch: false,
   isLandscape: false,
+  isMobile: false,
+} as const;
+
+const A4_LANDSCAPE_VIEWPORT = {
+  width: 1404,
+  height: 993,
+  deviceScaleFactor: 2,
+  hasTouch: false,
+  isLandscape: true,
   isMobile: false,
 } as const;
 
@@ -48,11 +58,15 @@ export async function GET(request: NextRequest, { params }: DownloadOrderConfirm
 
   const { id } = await params;
   const supabase = await createSupabaseClient();
-  const { data: quotation, error } = await supabase
-    .from("quotations")
-    .select("quotation_no,title")
-    .eq("id", id)
-    .maybeSingle<QuotationFilenameData>();
+  const [quotationResult, settingsResult] = await Promise.all([
+    supabase
+      .from("quotations")
+      .select("quotation_no,title")
+      .eq("id", id)
+      .maybeSingle<QuotationFilenameData>(),
+    loadOrderConfirmationSettings(id),
+  ]);
+  const { data: quotation, error } = quotationResult;
 
   if (error) {
     console.error("ORDER CONFIRMATION DOWNLOAD LOOKUP ERROR", error.message);
@@ -66,6 +80,7 @@ export async function GET(request: NextRequest, { params }: DownloadOrderConfirm
   const sourceUrl = `${origin}/quotations/${id}/order-confirmation?print=1`;
   const fallbackUrl = new URL(`/quotations/${id}/order-confirmation?print=1`, origin);
   const cookieHeader = request.headers.get("cookie") ?? "";
+  const landscape = settingsResult.success ? settingsResult.settings.print.orientation === "landscape" : false;
 
   try {
     const pdfBuffer = await generatePdfBuffer({
@@ -73,7 +88,7 @@ export async function GET(request: NextRequest, { params }: DownloadOrderConfirm
       pdfOptions: {
         displayHeaderFooter: false,
         format: "A4",
-        landscape: false,
+        landscape,
         margin: {
           top: "0",
           right: "0",
@@ -82,7 +97,7 @@ export async function GET(request: NextRequest, { params }: DownloadOrderConfirm
         },
       },
       sourceUrl,
-      viewport: A4_PORTRAIT_VIEWPORT,
+      viewport: landscape ? A4_LANDSCAPE_VIEWPORT : A4_PORTRAIT_VIEWPORT,
     });
     const filename = `${orderConfirmationFilename(quotation)}.pdf`;
     const pdfBody = pdfBuffer.buffer.slice(

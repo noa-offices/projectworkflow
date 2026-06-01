@@ -17,6 +17,7 @@ import {
   normalizeImageDisplaySettings,
   type ImageDisplaySettings,
 } from "@/components/images/image-adjustment-dialog";
+import { compressProductImage } from "@/lib/images/compress-product-image";
 import { uploadProductTemplateImage } from "@/lib/quotation-image-upload";
 import { createClient } from "@/lib/supabase/client";
 
@@ -49,6 +50,18 @@ const extensionByType: Record<string, string> = {
   "image/png": "png",
   "image/webp": "webp",
 };
+
+function formatImageFileSize(sizeInBytes: number) {
+  if (!Number.isFinite(sizeInBytes) || sizeInBytes <= 0) {
+    return "";
+  }
+
+  if (sizeInBytes < 1024 * 1024) {
+    return `${Math.max(1, Math.round(sizeInBytes / 1024))} KB`;
+  }
+
+  return `${(sizeInBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function isDirectImageUrl(value: string) {
   return /^(https?:|blob:|data:|\/)/i.test(value);
@@ -119,7 +132,9 @@ export function ProductTemplateImageUploader({
   formOnly = false,
   imageSettings,
   label = "Product template image",
+  onUploadInfoChange,
   onValueChange,
+  sessionUploadInfo,
   templateId,
   value,
 }: {
@@ -128,7 +143,17 @@ export function ProductTemplateImageUploader({
   formOnly?: boolean;
   imageSettings?: Partial<ImageDisplaySettings> | null;
   label?: string;
+  onUploadInfoChange?: (uploadInfo: {
+    compressionApplied: boolean;
+    optimizedSizeBytes: number;
+    originalSizeBytes: number;
+  } | null) => void;
   onValueChange?: (value: string | null) => void;
+  sessionUploadInfo?: {
+    compressionApplied: boolean;
+    optimizedSizeBytes: number;
+    originalSizeBytes: number;
+  } | null;
   templateId: string;
   value: string | null;
 }) {
@@ -140,6 +165,11 @@ export function ProductTemplateImageUploader({
   const [currentValue, setCurrentValue] = useState(value ?? "");
   const [previewUrl, setPreviewUrl] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [localUploadInfo, setLocalUploadInfo] = useState<{
+    compressionApplied: boolean;
+    optimizedSizeBytes: number;
+    originalSizeBytes: number;
+  } | null>(null);
   const [currentImageSettings, setCurrentImageSettings] = useState<ImageDisplaySettings>(
     normalizeImageDisplaySettings(imageSettings),
   );
@@ -149,6 +179,7 @@ export function ProductTemplateImageUploader({
   const [settingsStatus, setSettingsStatus] = useState<SettingsStatus>("idle");
   const [, startTransition] = useTransition();
   const imageValue = currentValue;
+  const displayUploadInfo = sessionUploadInfo ?? localUploadInfo;
 
   useEffect(() => {
     let cancelled = false;
@@ -181,7 +212,14 @@ export function ProductTemplateImageUploader({
     };
   }, [imageValue]);
 
-  function saveImagePath(path: string) {
+  function saveImagePath(
+    path: string,
+    uploadInfo?: {
+      compressionApplied: boolean;
+      optimizedSizeBytes: number;
+      originalSizeBytes: number;
+    } | null,
+  ) {
     const pathInput = containerRef.current
       ?.closest("form")
       ?.querySelector<HTMLInputElement>(`input[name="${field}"]`);
@@ -192,6 +230,8 @@ export function ProductTemplateImageUploader({
 
     if (formOnly) {
       setCurrentValue(path);
+      setLocalUploadInfo(path ? uploadInfo ?? null : null);
+      onUploadInfoChange?.(path ? uploadInfo ?? null : null);
       onValueChange?.(path || null);
       setErrorMessage("");
       setStatus(path ? "uploaded" : "idle");
@@ -213,6 +253,8 @@ export function ProductTemplateImageUploader({
           }
 
           setCurrentValue(path);
+          setLocalUploadInfo(path ? uploadInfo ?? null : null);
+          onUploadInfoChange?.(path ? uploadInfo ?? null : null);
           onValueChange?.(path || null);
           setErrorMessage("");
           setStatus(path ? "uploaded" : "idle");
@@ -243,6 +285,8 @@ export function ProductTemplateImageUploader({
     }
 
     setCurrentValue("");
+    setLocalUploadInfo(null);
+    onUploadInfoChange?.(null);
     setCurrentImageSettings(normalizeImageDisplaySettings(null));
     onValueChange?.(null);
     setStatus("idle");
@@ -256,9 +300,19 @@ export function ProductTemplateImageUploader({
     setErrorMessage("");
 
     try {
-      const upload = await uploadProductTemplateImage({ file, templateId });
-      saveImagePath(upload.path);
+      const compressed = await compressProductImage(file);
+      const upload = await uploadProductTemplateImage({
+        file: compressed.compressedFile,
+        templateId,
+      });
+      saveImagePath(upload.path, {
+        compressionApplied: compressed.compressionApplied,
+        optimizedSizeBytes: compressed.compressedSizeBytes,
+        originalSizeBytes: compressed.originalSizeBytes,
+      });
     } catch (error) {
+      setLocalUploadInfo(null);
+      onUploadInfoChange?.(null);
       setErrorMessage(
         error instanceof Error ? error.message : "Product image upload failed.",
       );
@@ -470,6 +524,22 @@ export function ProductTemplateImageUploader({
               >
                 Adjust
               </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {canEdit && displayUploadInfo ? (
+          <div className="mt-1">
+            <p className="text-xs leading-4 text-zinc-500">
+              Original size: {formatImageFileSize(displayUploadInfo.originalSizeBytes)}
+            </p>
+            <p className="mt-1 text-xs leading-4 text-zinc-500">
+              Optimized size: {formatImageFileSize(displayUploadInfo.optimizedSizeBytes)}
+            </p>
+            {displayUploadInfo.compressionApplied ? (
+              <p className="mt-1 text-xs leading-4 text-emerald-700">
+                Optimized before upload.
+              </p>
             ) : null}
           </div>
         ) : null}

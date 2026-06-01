@@ -1,4 +1,9 @@
-import type { ProcurementRfqColumnVisibility, ProcurementRfqNotes } from "@/lib/quotations/procurement-rfq-settings";
+﻿import type { ProcurementRfqColumnVisibility, ProcurementRfqNotes } from "@/lib/quotations/procurement-rfq-settings";
+import {
+  DEFAULT_LANDSCAPE_PRINT_SETTINGS,
+  type DocumentPrintSettings,
+} from "@/lib/quotations/document-print-settings";
+import { paginateDocumentItems } from "@/lib/quotations/manual-item-pagination";
 
 export type ProcurementRfqDocumentItem = {
   id: string;
@@ -49,6 +54,16 @@ export type ProcurementRfqPage = {
 const FIRST_PAGE_ITEM_CAPACITY = 34;
 const CONTINUATION_ITEM_CAPACITY = 46;
 const CLOSING_PAGE_CAPACITY = 30;
+
+function capacityMultiplier(settings: DocumentPrintSettings) {
+  const densityMultiplier = settings.density === "comfortable" ? 0.84 : settings.density === "maxFit" ? 1.18 : 1;
+  const orientationMultiplier = settings.orientation === "portrait" ? 0.72 : 1;
+  return densityMultiplier * orientationMultiplier;
+}
+
+function itemCapacity(base: number, settings: DocumentPrintSettings) {
+  return Math.max(8, Math.floor(base * capacityMultiplier(settings)));
+}
 
 function splitLines(value: string | null | undefined) {
   return (value ?? "")
@@ -110,33 +125,18 @@ function estimateClosingUnits(
 function chunkItems(
   items: ProcurementRfqDocumentItem[],
   columnVisibility: ProcurementRfqColumnVisibility,
+  print: DocumentPrintSettings,
   startingPageIndex: number,
 ) {
-  const pages: ProcurementRfqPageItem[][] = [];
-  let current: ProcurementRfqPageItem[] = [];
-  let currentUnits = 0;
-
-  items.forEach((item, index) => {
-    const pageIndex = startingPageIndex + pages.length;
-    const maxUnits = pageIndex === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY;
-    const pageItem = { ...item, rowNumber: index + 1 };
-    const itemUnits = estimateItemUnits(pageItem, columnVisibility);
-
-    if (current.length > 0 && currentUnits + itemUnits > maxUnits) {
-      pages.push(current);
-      current = [];
-      currentUnits = 0;
-    }
-
-    current.push(pageItem);
-    currentUnits += itemUnits;
+  return paginateDocumentItems({
+    items,
+    print,
+    pageNumberOffset: startingPageIndex,
+    getItemId: (item) => item.id,
+    createPageItem: (item, index) => ({ ...item, rowNumber: index + 1 }),
+    estimateItemUnits: (item) => estimateItemUnits(item, columnVisibility),
+    getItemCapacity: (pageIndex) => itemCapacity(pageIndex === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY, print),
   });
-
-  if (current.length > 0) {
-    pages.push(current);
-  }
-
-  return pages;
 }
 
 function hasClosingContent(notes: ProcurementRfqNotes, showSupplierResponseFields: boolean, group: ProcurementRfqDocumentGroup) {
@@ -149,15 +149,17 @@ export function buildProcurementRfqPages({
   groups,
   notes,
   columnVisibility,
+  print = DEFAULT_LANDSCAPE_PRINT_SETTINGS,
 }: {
   groups: ProcurementRfqDocumentGroup[];
   notes: ProcurementRfqNotes;
   columnVisibility: ProcurementRfqColumnVisibility;
+  print?: DocumentPrintSettings;
 }) {
   const pages: Array<Omit<ProcurementRfqPage, "pageIndex" | "totalPages" | "isFirstPage" | "isContinuationPage">> = [];
 
   for (const group of groups) {
-    const itemPages = chunkItems(group.items, columnVisibility, pages.length);
+    const itemPages = chunkItems(group.items, columnVisibility, print, pages.length);
     itemPages.forEach((items) => {
       pages.push({
         group,
@@ -174,10 +176,10 @@ export function buildProcurementRfqPages({
     }
 
     const closingUnits = estimateClosingUnits(group, notes, columnVisibility.supplierResponseFields);
-    const lastPage = pages[pages.length - 1] ?? null;
+      const lastPage = pages[pages.length - 1] ?? null;
 
     if (lastPage && lastPage.isItemPage) {
-      const lastPageCapacity = pages.length - 1 === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY;
+      const lastPageCapacity = itemCapacity(pages.length - 1 === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY, print);
       const usedUnits = lastPage.items.reduce((sum, item) => sum + estimateItemUnits(item, columnVisibility), 0);
       const remainingUnits = lastPageCapacity - usedUnits;
 
@@ -213,3 +215,4 @@ export function buildProcurementRfqPages({
     return CLOSING_PAGE_CAPACITY > 0;
   });
 }
+

@@ -1,9 +1,11 @@
-"use client";
+﻿"use client";
 
-import Link from "next/link";
 import type { ReactNode } from "react";
 import { useState, useTransition } from "react";
+import { DocumentPrintSetupPanel, type PrintPlannerItem } from "@/components/quotations/document-print-setup-panel";
 import { OrderConfirmationDocument } from "@/components/quotations/order-confirmation-document";
+import { buildOrderConfirmationPages } from "@/lib/quotations/order-confirmation-pages";
+import type { DocumentPrintSettings } from "@/lib/quotations/document-print-settings";
 import {
   DEFAULT_ORDER_CONFIRMATION_ITEM_OVERRIDE,
   type OrderConfirmationColumnVisibility,
@@ -163,6 +165,7 @@ function sectionContext(sectionId: string | null, sectionsById: Map<string, Orde
 function sanitizeSettingsForCompare(settings: QuotationOrderConfirmationSettings) {
   return JSON.stringify({
     documentDetails: settings.documentDetails,
+    print: settings.print,
     itemOverrides: settings.itemOverrides,
     columnVisibility: settings.columnVisibility,
     terms: settings.terms,
@@ -299,6 +302,7 @@ export function OrderConfirmationEditor({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [activeTab, setActiveTab] = useState<EditorTab>("document");
+  const [showSettings, setShowSettings] = useState(true);
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const isDirty = sanitizeSettingsForCompare(settings) !== sanitizeSettingsForCompare(savedSettings);
 
@@ -333,6 +337,20 @@ export function OrderConfirmationEditor({
       };
     })
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+  const plannerItems: PrintPlannerItem[] = buildOrderConfirmationPages({
+    closing: { terms: settings.terms },
+    columnVisibility: settings.columnVisibility,
+    items: previewItems,
+    print: settings.print,
+  }).flatMap((page) =>
+    page.items.map((item) => ({
+      itemId: item.id,
+      itemName: item.title,
+      pageNumber: page.pageIndex + 1,
+      sectionTitle: item.areaSection || "Order Confirmation",
+      serial: item.itemNumber,
+    })),
+  );
 
   function updateDocumentDetails<K extends keyof OrderConfirmationDocumentDetails>(key: K, value: OrderConfirmationDocumentDetails[K]) {
     setSettings((current) => ({
@@ -376,6 +394,43 @@ export function OrderConfirmationEditor({
         [key]: value,
       },
     }));
+  }
+
+  function updatePrintSettings(patch: Partial<DocumentPrintSettings>) {
+    setSettings((current) => ({
+      ...current,
+      print: {
+        ...current.print,
+        ...patch,
+      },
+    }));
+  }
+
+  function toggleManualPageBreak(itemId: string, enabled: boolean) {
+    const nextBreaks = new Set(settings.print.manualPageBreaks);
+    if (enabled) {
+      nextBreaks.add(itemId);
+    } else {
+      nextBreaks.delete(itemId);
+    }
+
+    updatePrintSettings({ manualPageBreaks: Array.from(nextBreaks) });
+  }
+
+  function assignPage(itemId: string, pageNumber: number | null) {
+    const nextAssignments = { ...settings.print.pageAssignments };
+    if (pageNumber === null) {
+      delete nextAssignments[itemId];
+    } else {
+      nextAssignments[itemId] = pageNumber;
+    }
+
+    updatePrintSettings({ pageAssignments: nextAssignments });
+  }
+
+  function resetManualPageBreaks() {
+    updatePrintSettings({ manualPageBreaks: [], pageAssignments: {} });
+    setFeedback("Order confirmation manual page breaks cleared locally.");
   }
 
   function moveItem(itemId: string, direction: -1 | 1) {
@@ -443,12 +498,12 @@ export function OrderConfirmationEditor({
   return (
     <main className="min-h-screen bg-stone-100 px-4 py-6 print:bg-white print:px-0 print:py-0">
       <style>{`
-        @page { size: A4 portrait; margin: 0; }
+        @page { size: A4 ${settings.print.orientation}; margin: 0; }
         html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         .doc-page + .doc-page { margin-top: 24px; }
         @media print {
           html, body { background: #ffffff; }
-          html, body { margin: 0 !important; padding: 0 !important; width: 210mm !important; background: #fff !important; }
+          html, body { margin: 0 !important; padding: 0 !important; width: ${settings.print.orientation === "portrait" ? "210mm" : "297mm"} !important; background: #fff !important; }
           .doc-page { break-after: page; page-break-after: always; margin: 0 !important; }
           .doc-page:last-child { break-after: auto; page-break-after: auto; }
           .doc-page + .doc-page { margin-top: 0 !important; }
@@ -457,33 +512,32 @@ export function OrderConfirmationEditor({
 
       {!printMode ? (
         <div className="mx-auto mb-5 w-[210mm] max-w-full print:hidden">
-          <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">Order Confirmation</p>
-              <div className="flex flex-wrap gap-2">
-                <Link href={`/quotations/${data.quotation.id}`} className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50">
-                  Back to Quotation
-                </Link>
-                <button type="button" onClick={saveSettings} disabled={isPending} className="rounded-md bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-emerald-700">
-                  {isPending ? "Saving..." : "Save Order Confirmation Settings"}
-                </button>
-                <button type="button" onClick={resetToDefaults} disabled={isPending} className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed">
-                  Reset Order Confirmation Settings
-                </button>
-                <button type="button" onClick={downloadPdf} className="rounded-md bg-zinc-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800">
-                  Download PDF
-                </button>
-              </div>
-            </div>
-            <div className="mt-4 text-sm text-zinc-600">
-              {isDirty ? "You have unsaved order confirmation changes." : "Order confirmation settings match latest saved version."}
-            </div>
-            {feedback ? <p className="mt-2 text-sm font-medium text-zinc-900">{feedback}</p> : null}
-          </div>
+          <DocumentPrintSetupPanel
+            actionLabel="Save Print Settings"
+            backHref={`/quotations/${data.quotation.id}`}
+            dirtyMessage="You have unsaved order confirmation print changes."
+            feedback={feedback}
+            isDirty={isDirty}
+            isPending={isPending}
+            onDownload={downloadPdf}
+            onReset={resetToDefaults}
+            onResetManualPageBreaks={resetManualPageBreaks}
+            onSave={saveSettings}
+            onSettingsChange={updatePrintSettings}
+            onAssignPage={assignPage}
+            onToggleManualPageBreak={toggleManualPageBreak}
+            plannerItems={plannerItems}
+            resetLabel="Reset Print Settings"
+            savedMessage="Order confirmation print settings match latest saved version."
+            settings={settings.print}
+            showSettings={showSettings}
+            title="Order Confirmation Print Setup"
+            toggleSettings={() => setShowSettings((current) => !current)}
+          />
         </div>
       ) : null}
 
-      {!printMode ? (
+      {!printMode && showSettings ? (
         <div className="mx-auto mb-5 w-[210mm] max-w-full print:hidden">
           <SetupPanel activeTab={activeTab} onTabChange={setActiveTab}>
             {activeTab === "document" ? (
@@ -640,9 +694,12 @@ export function OrderConfirmationEditor({
         settings={{
           columnVisibility: settings.columnVisibility,
           documentDetails: settings.documentDetails,
+          print: settings.print,
           terms: settings.terms,
         }}
       />
     </main>
   );
 }
+
+

@@ -1,4 +1,9 @@
-import type { OrderConfirmationColumnVisibility, OrderConfirmationTerms } from "@/lib/quotations/order-confirmation-settings";
+﻿import type { OrderConfirmationColumnVisibility, OrderConfirmationTerms } from "@/lib/quotations/order-confirmation-settings";
+import {
+  DEFAULT_PORTRAIT_PRINT_SETTINGS,
+  type DocumentPrintSettings,
+} from "@/lib/quotations/document-print-settings";
+import { paginateDocumentItems } from "@/lib/quotations/manual-item-pagination";
 
 export type OrderConfirmationDocumentItem = {
   id: string;
@@ -39,6 +44,16 @@ export type OrderConfirmationPage = {
 const FIRST_PAGE_ITEM_CAPACITY = 68;
 const CONTINUATION_ITEM_CAPACITY = 78;
 const PAGE_BREAK_BUFFER = 1;
+
+function capacityMultiplier(settings: DocumentPrintSettings) {
+  const densityMultiplier = settings.density === "comfortable" ? 0.84 : settings.density === "maxFit" ? 1.18 : 1;
+  const orientationMultiplier = settings.orientation === "landscape" ? 1.35 : 1;
+  return densityMultiplier * orientationMultiplier;
+}
+
+function itemCapacity(base: number, settings: DocumentPrintSettings) {
+  return Math.max(10, Math.floor(base * capacityMultiplier(settings)));
+}
 
 function splitLines(value: string | null | undefined) {
   return (value ?? "")
@@ -102,52 +117,46 @@ export function buildOrderConfirmationPages({
   items,
   columnVisibility,
   closing,
+  print = DEFAULT_PORTRAIT_PRINT_SETTINGS,
 }: {
   items: OrderConfirmationDocumentItem[];
   columnVisibility: OrderConfirmationColumnVisibility;
   closing: OrderConfirmationClosingContent;
+  print?: DocumentPrintSettings;
 }) {
   const pages: Array<Omit<OrderConfirmationPage, "pageIndex" | "totalPages" | "isFirstPage">> = [];
-  let current: OrderConfirmationPageItem[] = [];
-  let currentUnits = 0;
-
-  items.forEach((item, index) => {
-    const pageIndex = pages.length;
-    const maxUnits = pageIndex === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY;
-    const pageItem = { ...item, rowNumber: index + 1 };
-    const itemUnits = estimateItemUnits(pageItem, columnVisibility);
-
-    const remainingUnits = maxUnits - currentUnits;
-    const canFitCurrentPage = current.length === 0 || remainingUnits >= itemUnits + PAGE_BREAK_BUFFER;
-
-    if (!canFitCurrentPage) {
-      pages.push({
-        closing: null,
-        isClosingPage: false,
-        isItemPage: true,
-        items: current,
-      });
-      current = [];
-      currentUnits = 0;
-    }
-
-    current.push(pageItem);
-    currentUnits += itemUnits;
+  const itemPages = paginateDocumentItems({
+    items,
+    print,
+    overflowBufferUnits: PAGE_BREAK_BUFFER,
+    getItemId: (item) => item.id,
+    createPageItem: (item, index) => ({ ...item, rowNumber: index + 1 }),
+    estimateItemUnits: (item) => estimateItemUnits(item, columnVisibility),
+    getItemCapacity: (pageIndex) => itemCapacity(pageIndex === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY, print),
   });
 
-  if (current.length > 0 || pages.length === 0) {
+  itemPages.forEach((pageItems) => {
     pages.push({
       closing: null,
       isClosingPage: false,
       isItemPage: true,
-      items: current,
+      items: pageItems,
+    });
+  });
+
+  if (pages.length === 0) {
+    pages.push({
+      closing: null,
+      isClosingPage: false,
+      isItemPage: true,
+      items: [],
     });
   }
 
   if (hasClosingContent(closing)) {
     const lastPageIndex = pages.length - 1;
     const lastPage = pages[lastPageIndex];
-    const lastPageCapacity = lastPageIndex === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY;
+    const lastPageCapacity = itemCapacity(lastPageIndex === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY, print);
     const usedUnits = lastPage.items.reduce((sum, item) => sum + estimateItemUnits(item, columnVisibility), 0);
     const remainingUnits = lastPageCapacity - usedUnits;
 
@@ -163,10 +172,13 @@ export function buildOrderConfirmationPages({
     }
   }
 
-  return pages.map((page, index) => ({
+  const visiblePages = pages.filter((page) => page.isClosingPage || page.items.length > 0);
+
+  return visiblePages.map((page, index, allPages) => ({
     ...page,
     isFirstPage: index === 0,
     pageIndex: index,
-    totalPages: pages.length,
+    totalPages: allPages.length,
   }));
 }
+

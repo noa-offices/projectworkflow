@@ -12,6 +12,11 @@ import {
 import { createAuditLog } from "@/lib/audit-log";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import {
+  modularItemPricingRows,
+  modularPricingDefaultsFromRows,
+  standardCategoryPricingRows,
+} from "@/lib/products/modular-pricing";
+import {
   buildQuotationDocumentNumber,
   quotationOptionLabel,
   quotationOptionNoFromQuotationNo,
@@ -427,6 +432,23 @@ function accessoryPricingQuantities(formData: FormData) {
   return quantities;
 }
 
+function modularItemQuantities(formData: FormData) {
+  const quantities = new Map<string, number>();
+
+  for (const value of formData.getAll("modular_item_selection")) {
+    if (typeof value !== "string") continue;
+
+    const [id, rawQty] = value.split(":");
+    const qty = Math.max(0, Math.trunc(Number(rawQty) || 0));
+
+    if (id && qty > 0) {
+      quantities.set(id, qty);
+    }
+  }
+
+  return quantities;
+}
+
 type LinkedProductSelectionInput = {
   category: string;
   categoryRowId: string;
@@ -509,20 +531,35 @@ function parseDeskingSizeLabel(label?: string | null) {
   };
 }
 
+function normalizedWorkstationLayoutType(value: unknown) {
+  return value === "Linear" || value === "Cluster" || value === "Both" ? value : "Linear";
+}
+
 function normalizedDeskingSizeRow(row: DeskingSizePricingRow, index: number): DeskingSizePricingRow {
-  const parsedLabel = parseDeskingSizeLabel(row.label);
+  const parsedLabel = parseDeskingSizeLabel(
+    typeof row.default_dimension === "string" && row.default_dimension.trim()
+      ? row.default_dimension
+      : row.label,
+  );
   const length = parsedLabel?.length ?? calculationNumber(row.length);
   const depth = parsedLabel?.depth ?? calculationNumber(row.depth);
   const height = parsedLabel?.height ?? calculationNumber(row.height);
+  const baseSupplierPriceListCode = row.base_supplier_price_list_code?.trim() || row.supplier_price_list_code?.trim() || "";
 
   return {
     ...row,
+    additional_supplier_price_list_code: row.additional_supplier_price_list_code?.trim() || "",
+    base_supplier_price_list_code: baseSupplierPriceListCode,
     depth,
     height,
+    default_dimension: row.default_dimension?.trim() || (length && depth && height ? `${length}x${depth}x${height}` : ""),
     id: row.id ?? `size-${index}`,
     is_active: row.is_active !== false,
     label: row.label?.trim() || `${length}x${depth}x${height}`,
     length,
+    layout_type: normalizedWorkstationLayoutType(row.layout_type),
+    specification: row.specification?.trim() || "",
+    supplier_price_list_code: baseSupplierPriceListCode,
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
   };
 }
@@ -533,9 +570,12 @@ function activeDeskingSizeRows(rows?: DeskingSizePricingRow[] | null) {
     .filter((row) => row.is_active !== false)
     .filter(
       (row) =>
-        calculationNumber(row.length) > 0 &&
-        calculationNumber(row.depth) > 0 &&
-        calculationNumber(row.height) > 0,
+        Boolean(
+          row.label?.trim() ||
+          row.default_dimension?.trim() ||
+          calculationNumber(row.default_price) > 0 ||
+          calculationNumber(row.additional_price) > 0,
+        ),
     )
     .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
 }
@@ -555,7 +595,14 @@ function activeVariantRows(rows?: VariantPricingRow[] | null) {
 }
 
 function activeCategoryRows(rows?: CategoryPricingRow[] | null) {
-  return (Array.isArray(rows) ? rows : [])
+  return standardCategoryPricingRows(rows)
+    .filter((row) => row.is_active !== false)
+    .filter((row) => row.variant_name || row.dimension || Object.values(row.prices ?? {}).some((price) => calculationNumber(price) > 0))
+    .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
+}
+
+function activeModularRows(rows?: CategoryPricingRow[] | null) {
+  return modularItemPricingRows(rows)
     .filter((row) => row.is_active !== false)
     .filter((row) => row.variant_name || row.dimension || Object.values(row.prices ?? {}).some((price) => calculationNumber(price) > 0))
     .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
@@ -564,7 +611,7 @@ function activeCategoryRows(rows?: CategoryPricingRow[] | null) {
 function categoryPriceColumns(rows?: CategoryPricingRow[] | null) {
   const columns = ["Cat A", "Cat B", "Cat C", "Cat D"];
 
-  activeCategoryRows(rows).forEach((row) => {
+  [...activeCategoryRows(rows), ...activeModularRows(rows)].forEach((row) => {
     Object.keys(row.prices ?? {}).forEach((category) => {
       if (!columns.includes(category)) {
         columns.push(category);
@@ -634,6 +681,9 @@ function deskingSizePricingSnapshot({
   accessoryQtyById,
   additionalClusterQty,
   baseText,
+  configuredDimension,
+  configuredSpecification,
+  selectedLayoutType,
   selectedSize,
   selectedOptions,
   template,
@@ -641,6 +691,9 @@ function deskingSizePricingSnapshot({
   accessoryQtyById: Map<string, number>;
   additionalClusterQty: number;
   baseText: string;
+  configuredDimension?: string | null;
+  configuredSpecification?: string | null;
+  selectedLayoutType?: string | null;
   selectedSize: DeskingSizePricingRow;
   selectedOptions: ProductComponentSnapshotSource[];
   template: ProductTemplateSnapshotSource;
@@ -661,11 +714,12 @@ function deskingSizePricingSnapshot({
   const depth = calculationNumber(selectedSize.depth);
   const height = calculationNumber(selectedSize.height);
   const dimensionUnit = selectedSize.dimension_unit ?? "cm";
-  const dimensionValue =
+  const calculatedDimensionValue =
     moduleLength && depth && height
       ? `${moduleLength * totalModules} x ${depth} x ${height}`
       : "";
-  const dimension = dimensionValue ? `${dimensionValue} ${dimensionUnit}` : "";
+  const calculatedDimension = calculatedDimensionValue ? `${calculatedDimensionValue} ${dimensionUnit}` : "";
+  const dimension = configuredDimension?.trim() || selectedSize.default_dimension?.trim() || calculatedDimension;
   const clusterName = "CL2";
   const clusterLabel =
     additionalClusterQty > 0
@@ -692,7 +746,7 @@ function deskingSizePricingSnapshot({
         option.option_type === "fabric_category",
     )
     .map((option) => option.component_name);
-  const specification = [baseText, `Cluster of ${totalSeats}`]
+  const specification = [configuredSpecification?.trim() || baseText, `Cluster of ${totalSeats}`]
     .filter(Boolean)
     .join(", ");
 
@@ -701,13 +755,16 @@ function deskingSizePricingSnapshot({
     additionalClusterPrice,
     additionalClusterQty,
     additionalUnitPrice,
+    additionalSupplierPriceListCode: selectedSize.additional_supplier_price_list_code ?? null,
     baseClusterSeats: baseSeats,
     basePrice,
+    baseSupplierPriceListCode: selectedSize.base_supplier_price_list_code ?? selectedSize.supplier_price_list_code ?? null,
     clusterLabel,
     clusterName,
     dimension,
-    dimensionValue,
+    dimensionValue: configuredDimension?.trim() || selectedSize.default_dimension?.trim() || calculatedDimensionValue,
     finishOptions,
+    layoutType: selectedLayoutType || selectedSize.layout_type || "Linear",
     mainCurrency: selectedSize.currency || template.currency || defaultCurrency,
     selectedOptionNames,
     selectedOptions: [
@@ -1079,13 +1136,18 @@ type DeskingSizePricingRow = {
   id?: string;
   label?: string;
   supplier_price_list_code?: string;
+  base_supplier_price_list_code?: string;
   length?: number;
   depth?: number;
   height?: number;
   dimension_unit?: string;
+  layout_type?: string;
   default_price?: number;
   additional_price?: number;
+  additional_supplier_price_list_code?: string;
   currency?: string;
+  specification?: string;
+  default_dimension?: string;
   sort_order?: number;
   is_active?: boolean;
 };
@@ -1105,6 +1167,7 @@ type VariantPricingRow = {
 
 type CategoryPricingRow = {
   id?: string;
+  pricing_type?: string | null;
   pricing_category_id?: string | null;
   pricing_category_name?: string | null;
   variant_name?: string;
@@ -1114,6 +1177,8 @@ type CategoryPricingRow = {
   currency?: string;
   prices?: Record<string, number>;
   specification?: string;
+  modular_default_dimension?: string | null;
+  modular_default_specification?: string | null;
   is_active?: boolean;
   sort_order?: number;
 };
@@ -4002,6 +4067,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const selectedTemplateImagePath = optionalTextValue(formData, "selected_template_image_path");
   const accessoryQtyById = accessoryQuantities(formData);
   const accessoryPricingQtyById = accessoryPricingQuantities(formData);
+  const modularQtyById = modularItemQuantities(formData);
   const linkedProductSelectionInputs = linkedProductSelections(formData);
   const linkedProductAccessorySelectionInputs = linkedProductAccessorySelections(formData);
   const exchangeRateByCurrency = currencyExchangeRates(formData);
@@ -4133,10 +4199,53 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const selectedWorkstationVariantPricingRow = selectedSizePricing
     ? selectedVariantPricing(formData, template.variant_pricing, "workstation_variant_pricing_row_id")
     : null;
+  const modularRows = activeModularRows(template.category_pricing);
+  const modularDefaults = modularPricingDefaultsFromRows(template.category_pricing);
+  const usesModularPricing = modularRows.length > 0;
+  const configuredDimensionInput = optionalTextValue(formData, "configured_dimension");
+  const configuredSpecificationInput = optionalTextValue(formData, "configured_specification");
+  const workstationLayoutTypeInput = optionalTextValue(formData, "workstation_layout_type");
   const selectedCategory =
-    textValue(formData, "category_pricing_category") ||
+    textValue(formData, usesModularPricing ? "modular_pricing_category" : "category_pricing_category") ||
     categoryPriceColumns(template.category_pricing)[0] ||
     "Cat A";
+  const configuredDimension = configuredDimensionInput ??
+    (selectedSizePricing?.default_dimension?.trim() || null) ??
+    modularDefaults.defaultDimension;
+  const configuredWorkstationSpecification = configuredSpecificationInput ??
+    (selectedSizePricing?.specification?.trim() || null) ??
+    template.default_specification ??
+    template.description ??
+    null;
+  const selectedWorkstationLayoutType = selectedSizePricing
+    ? (selectedSizePricing.layout_type === "Both"
+        ? workstationLayoutTypeInput ?? "Linear"
+        : selectedSizePricing.layout_type ?? "Linear")
+    : null;
+  const selectedModularItems = modularRows
+    .map((row) => {
+      const id = row.id ?? row.variant_name ?? row.display_name ?? "";
+      const qty = modularQtyById.get(id) ?? 0;
+      const unitPrice = money(calculationNumber(row.prices?.[selectedCategory]));
+
+      return {
+        currency: normalizeCurrency(row.currency ?? template.currency ?? defaultCurrency),
+        dimension: row.dimension ?? null,
+        display_name: row.display_name ?? null,
+        id,
+        item_name: row.display_name || row.variant_name || "Modular item",
+        qty,
+        specification: row.specification ?? "",
+        supplier_price_list_code: row.supplier_price_list_code ?? null,
+        total: money(unitPrice * qty),
+        unit_price: unitPrice,
+        variant_name: row.variant_name ?? null,
+      };
+    })
+    .filter((line) => line.qty > 0);
+  if (usesModularPricing && !selectedModularItems.length) {
+    redirectWithMessage(redirectPath, "Select at least one modular item before adding this product.");
+  }
   const selectedCategoryPrice = selectedCategoryPricingRow
     ? money(calculationNumber(selectedCategoryPricingRow.prices?.[selectedCategory]))
     : 0;
@@ -4152,9 +4261,13 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         accessoryQtyById,
         additionalClusterQty,
         baseText:
+          configuredWorkstationSpecification ??
           template.default_specification ??
           template.description ??
           template.template_name,
+        configuredDimension,
+        configuredSpecification: configuredWorkstationSpecification,
+        selectedLayoutType: selectedWorkstationLayoutType,
         selectedSize: selectedSizePricing,
         template,
         selectedOptions,
@@ -4188,6 +4301,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   );
   const rowCurrency = normalizeCurrency(
     derivedDesking?.mainCurrency ||
+    selectedModularItems[0]?.currency ||
     selectedCategoryPricingRow?.currency ||
     selectedVariantPricingRow?.currency ||
     template.currency ||
@@ -4207,6 +4321,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
           qty: accessoryPricingQtyById.get(id) ?? 0,
           price: calculationNumber(accessory.price),
           currency: normalizeCurrency(accessory.currency ?? rowCurrency),
+          supplier_price_list_code: accessory.supplier_price_list_code ?? null,
           specification: accessory.specification ?? "",
         };
       }),
@@ -4277,6 +4392,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
               qty,
               price: calculationNumber(accessory.price),
               currency: normalizeCurrency(accessory.currency ?? currency),
+              supplier_price_list_code: accessory.supplier_price_list_code ?? null,
               specification: accessory.specification ?? "",
             };
           }),
@@ -4300,6 +4416,10 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         template_name: linkedTemplate.template_name,
         selected_variant: categoryRow?.variant_name || variantRow?.variant_name || null,
         selected_category: categoryRow ? selectedCategoryLabel : null,
+        supplier_price_list_code:
+          categoryRow?.supplier_price_list_code ??
+          variantRow?.supplier_price_list_code ??
+          null,
         qty: selection.qty,
         unit_price: unitPrice,
         currency,
@@ -4331,6 +4451,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
 
   const baseUnitPrice = derivedDesking
     ? derivedDesking.unitPrice || money(template.default_unit_price ?? 0)
+    : usesModularPricing
+      ? money(selectedModularItems.reduce((total, item) => total + item.total, 0))
     : selectedCategoryPricingRow
       ? selectedCategoryPrice
       : selectedVariantPricingRow
@@ -4474,22 +4596,41 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     accessorySnapshots: selectedAccessoryPricing,
     linkedProductSnapshots: selectedLinkedProducts,
     primarySpecification:
+      (derivedDesking ? configuredWorkstationSpecification : null) ??
+      (usesModularPricing ? modularDefaults.defaultSpecification : null) ??
       selectedCategoryPricingRow?.specification ??
       selectedVariantPricingRow?.specification ??
       null,
     selectedOptionSnapshots,
     selectedWorkstationVariant: selectedWorkstationVariantPricingRow,
-    template,
+    template: usesModularPricing
+      ? {
+          ...template,
+          default_specification: modularDefaults.defaultSpecification ?? template.default_specification,
+        }
+      : template,
   });
   const specificationSnapshot = resolveProductSpecificationSnapshot({
     companyStyleSpecification,
-    selectedCategorySpecification: selectedCategoryPricingRow?.specification ?? null,
+    selectedCategorySpecification:
+      (derivedDesking ? configuredWorkstationSpecification : null) ??
+      (usesModularPricing ? modularDefaults.defaultSpecification : null) ??
+      selectedCategoryPricingRow?.specification ??
+      null,
     selectedVariantSpecification: selectedVariantPricingRow?.specification ?? null,
     selectedWorkstationVariantSpecification: selectedWorkstationVariantPricingRow?.specification ?? null,
-    template,
+    template: usesModularPricing
+      ? {
+          ...template,
+          default_specification: modularDefaults.defaultSpecification ?? template.default_specification,
+        }
+      : template,
   });
   const dimensionSnapshot = resolveProductDimensionSnapshot({
-    derivedDeskingDimension: derivedDesking?.dimensionValue ?? derivedDesking?.dimension,
+    derivedDeskingDimension:
+      usesModularPricing || derivedDesking
+        ? configuredDimension ?? derivedDesking?.dimensionValue ?? derivedDesking?.dimension
+        : null,
     selectedSizeLabel: selectedSizePricing?.label ?? null,
     selectedCategoryDimension: selectedCategoryPricingRow?.dimension ?? null,
     selectedVariantDimension: selectedVariantPricingRow?.dimension ?? null,
@@ -4501,10 +4642,13 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         {
           item_type: "desking_size",
           label: derivedDesking.sizeLabel,
+          layout_type: derivedDesking.layoutType,
           additional_qty: derivedDesking.additionalClusterQty,
           dimension: derivedDesking.dimension,
           default_price: derivedDesking.basePrice,
+          base_supplier_price_list_code: derivedDesking.baseSupplierPriceListCode,
           additional_price: derivedDesking.additionalUnitPrice,
+          additional_supplier_price_list_code: derivedDesking.additionalSupplierPriceListCode,
           final_price: derivedDesking.unitPrice,
         },
         ...derivedDesking.selectedOptions,
@@ -4524,6 +4668,19 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         selected_price: selectedCategoryPrice,
       }
     : null;
+  const modularSnapshots = selectedModularItems.map((item) => ({
+    item_type: "modular_item",
+    item_name: item.item_name,
+    label: item.item_name,
+    selected_category: selectedCategory,
+    supplier_price_list_code: item.supplier_price_list_code,
+    specification: item.specification,
+    dimension: item.dimension,
+    qty: item.qty,
+    price: item.unit_price,
+    total: item.total,
+    currency: item.currency,
+  }));
   const workstationVariantSnapshot = selectedWorkstationVariantPricingRow
     ? {
         item_type: "add_on",
@@ -4542,6 +4699,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     : null;
   const finalSelectedOptions = categorySnapshot
     ? [categorySnapshot, ...snapshotSelectedOptions]
+    : usesModularPricing
+      ? [...snapshotSelectedOptions, ...modularSnapshots]
     : variantSnapshot
       ? [variantSnapshot, ...snapshotSelectedOptions]
       : snapshotSelectedOptions;
@@ -4561,8 +4720,14 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         total_seats: derivedDesking.totalSeats,
         total_modules: derivedDesking.totalModules,
         dimension: derivedDesking.dimension,
+        configured_dimension: configuredDimension || null,
+        default_dimension: selectedSizePricing?.default_dimension ?? null,
+        default_specification: selectedSizePricing?.specification ?? null,
+        layout_type: derivedDesking.layoutType,
         default_price: derivedDesking.basePrice,
+        base_supplier_price_list_code: derivedDesking.baseSupplierPriceListCode,
         additional_price: derivedDesking.additionalUnitPrice,
+        additional_supplier_price_list_code: derivedDesking.additionalSupplierPriceListCode,
         additional_total: derivedDesking.additionalClusterPrice,
         accessory_price: derivedDesking.accessoryPrice,
         final_price: derivedDesking.unitPrice,
@@ -4574,6 +4739,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const singleOriginalSourceTotal = originalSourceTotals.length === 1 ? originalSourceTotals[0] : null;
   const baseSourcePriceType = derivedDesking
     ? "desking_size_pricing"
+    : usesModularPricing
+      ? "modular_item_pricing"
     : selectedCategoryPricingRow
       ? "category_pricing"
       : selectedVariantPricingRow
@@ -4583,6 +4750,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
           : "template_default";
   const sourcePriceLabel = derivedDesking
     ? [derivedDesking.sizeLabel, derivedDesking.clusterLabel].filter(Boolean).join(" / ")
+    : usesModularPricing
+      ? `${selectedModularItems.length} modular items / ${selectedCategory}`
     : selectedCategoryPricingRow
       ? [selectedCategoryPricingRow.variant_name, selectedCategory].filter(Boolean).join(" / ")
       : selectedVariantPricingRow
@@ -4592,6 +4761,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
           : template.template_name;
   const sourcePriceKey = derivedDesking
     ? derivedDesking.sizeLabel
+    : usesModularPricing
+      ? selectedModularItems.map((item) => item.id).join(",")
     : selectedCategoryPricingRow
       ? [selectedCategoryPricingRow.id, selectedCategory].filter(Boolean).join(":")
       : selectedVariantPricingRow
@@ -4610,6 +4781,18 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     quotation_currency: rowOutputCurrency,
   };
   const selectedSupplierPriceListCode =
+    (usesModularPricing
+      ? selectedModularItems
+          .map((item) => item.supplier_price_list_code?.trim() || "")
+          .filter(Boolean)
+          .join(", ")
+      : null) ||
+    (selectedSizePricing
+      ? [
+          selectedSizePricing.base_supplier_price_list_code?.trim() || selectedSizePricing.supplier_price_list_code?.trim() || "",
+          selectedSizePricing.additional_supplier_price_list_code?.trim() || "",
+        ].filter(Boolean).join(", ")
+      : null) ||
     selectedCategoryPricingRow?.supplier_price_list_code?.trim() ||
     selectedVariantPricingRow?.supplier_price_list_code?.trim() ||
     selectedSizePricing?.supplier_price_list_code?.trim() ||
@@ -4631,7 +4814,10 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       country_of_origin: originSnapshot,
       supplier_name: supplierNameSnapshot,
       supplier_price_list_code: selectedSupplierPriceListCode,
-      default_specification: template.default_specification,
+      default_specification:
+        (derivedDesking ? configuredWorkstationSpecification : null) ??
+        (usesModularPricing ? modularDefaults.defaultSpecification : null) ??
+        template.default_specification,
       description: template.description,
       specification: specificationSnapshot,
       dimension: dimensionSnapshot,
@@ -4682,6 +4868,17 @@ export async function addProductTemplateToQuotation(formData: FormData) {
             },
           }
         : {}),
+      ...(usesModularPricing
+        ? {
+            modular_pricing: {
+              configured_dimension: configuredDimension || null,
+              default_dimension: modularDefaults.defaultDimension,
+              default_specification: modularDefaults.defaultSpecification,
+              selected_category: selectedCategory,
+              items: modularSnapshots,
+            },
+          }
+        : {}),
       ...(selectedAccessoryPricing.length
         ? {
             add_ons: {
@@ -4729,6 +4926,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     selected_options_snapshot: finalSelectedOptionsWithLinkedProducts,
     model_snapshot: derivedDesking
       ? `Cluster of ${derivedDesking.totalSeats}`
+      : usesModularPricing
+        ? (selectedModularItems.length ? `${selectedModularItems.length} modular items` : null)
       : selectedCategoryPricingRow?.variant_name ||
         selectedVariantPricingRow?.variant_name ||
         selectedClusterOptions.join(", ") ||

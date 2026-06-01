@@ -3,6 +3,10 @@ import { DocumentFooter } from "@/components/quotations/document-page";
 import { QuotationImageFrame } from "@/components/quotations/quotation-image-frame";
 import { buildOrderConfirmationPages, type OrderConfirmationDocumentItem, type OrderConfirmationPage } from "@/lib/quotations/order-confirmation-pages";
 import type { OrderConfirmationColumnVisibility, OrderConfirmationDocumentDetails, OrderConfirmationTerms } from "@/lib/quotations/order-confirmation-settings";
+import {
+  DEFAULT_PORTRAIT_PRINT_SETTINGS,
+  type DocumentPrintSettings,
+} from "@/lib/quotations/document-print-settings";
 
 type OrderConfirmationDocumentProps = {
   companyLogoUrl: string | null;
@@ -11,6 +15,7 @@ type OrderConfirmationDocumentProps = {
   settings: {
     columnVisibility: OrderConfirmationColumnVisibility;
     documentDetails: OrderConfirmationDocumentDetails;
+    print?: DocumentPrintSettings;
     terms: OrderConfirmationTerms;
   };
 };
@@ -34,9 +39,13 @@ function normalizedText(value: string | null | undefined) {
   return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function PortraitPage({ children }: { children: ReactNode }) {
+function PrintPage({ children, orientation }: { children: ReactNode; orientation: DocumentPrintSettings["orientation"] }) {
+  const pageClassName = orientation === "landscape"
+    ? "h-[210mm] min-h-[210mm] w-[297mm] print:h-[210mm] print:min-h-[210mm] print:w-[297mm]"
+    : "h-[297mm] min-h-[297mm] w-[210mm] print:h-[297mm] print:min-h-[297mm] print:w-[210mm]";
+
   return (
-    <section className="doc-page mx-auto mb-6 flex h-[297mm] min-h-[297mm] w-[210mm] max-w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white px-[10mm] py-[10mm] shadow-[0_20px_60px_rgba(15,23,42,0.08)] print:mb-0 print:h-[297mm] print:min-h-[297mm] print:w-[210mm] print:max-w-none print:rounded-none print:border-0 print:px-[10mm] print:py-[10mm] print:shadow-none">
+    <section className={`doc-page mx-auto mb-6 flex max-w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white px-[10mm] py-[10mm] shadow-[0_20px_60px_rgba(15,23,42,0.08)] print:mb-0 print:max-w-none print:rounded-none print:border-0 print:px-[10mm] print:py-[10mm] print:shadow-none ${pageClassName}`}>
       {children}
     </section>
   );
@@ -67,12 +76,14 @@ function Header({
   companyLogoUrl,
   details,
   page,
+  print,
 }: {
   companyLogoUrl: string | null;
   details: OrderConfirmationDocumentDetails;
   page: OrderConfirmationPage;
+  print: DocumentPrintSettings;
 }) {
-  if (!page.isFirstPage) return null;
+  if (!page.isFirstPage && print.showFullHeaderOnlyFirstPage) return null;
 
   return (
     <header className="shrink-0 border-b border-zinc-200 pb-3">
@@ -121,18 +132,25 @@ function Header({
 function ItemCard({
   columnVisibility,
   item,
+  print,
 }: {
   columnVisibility: OrderConfirmationColumnVisibility;
   item: OrderConfirmationDocumentItem & { rowNumber: number };
+  print: DocumentPrintSettings;
 }) {
   const showDescription = Boolean(item.description) && normalizedText(item.description) !== normalizedText(item.specification);
   const showSpecification = columnVisibility.specification && Boolean(item.specification);
+  const imageSizeClassName = print.imageSize === "small"
+    ? "h-[56px] w-[56px]"
+    : print.imageSize === "large"
+      ? "h-[84px] w-[84px]"
+      : "h-[68px] w-[68px]";
 
   return (
     <article className="border border-zinc-200 px-2 py-1.5" key={item.id}>
-      <div className={`grid items-start gap-2 ${columnVisibility.image ? "grid-cols-[68px_minmax(0,1fr)]" : "grid-cols-[minmax(0,1fr)]"}`}>
+      <div className={`grid items-start gap-2 ${columnVisibility.image ? "grid-cols-[auto_minmax(0,1fr)]" : "grid-cols-[minmax(0,1fr)]"}`}>
         {columnVisibility.image ? (
-          <div className="flex h-[68px] w-[68px] items-center justify-center overflow-hidden border border-zinc-200 bg-white">
+          <div className={`flex ${imageSizeClassName} items-center justify-center overflow-hidden border border-zinc-200 bg-white`}>
             <QuotationImageFrame
               alt={item.title}
               className="h-full w-full overflow-hidden"
@@ -239,12 +257,14 @@ export function OrderConfirmationDocument({
   items,
   settings,
 }: OrderConfirmationDocumentProps) {
+  const print = settings.print ?? DEFAULT_PORTRAIT_PRINT_SETTINGS;
+
   if (items.length === 0) {
     return (
-      <PortraitPage>
+      <PrintPage orientation={print.orientation}>
         <div className="flex flex-1 items-center justify-center text-sm text-zinc-500">{defaultEmptyMessage}</div>
         <DocumentFooter pageNumber={1} totalPages={1} />
-      </PortraitPage>
+      </PrintPage>
     );
   }
 
@@ -252,17 +272,18 @@ export function OrderConfirmationDocument({
     closing: { terms: settings.terms },
     columnVisibility: settings.columnVisibility,
     items,
+    print,
   });
 
   return (
     <>
       {pages.map((page) => (
-        <PortraitPage key={`oc-page-${page.pageIndex}-${page.isClosingPage ? "closing" : "items"}`}>
-          <Header companyLogoUrl={companyLogoUrl} details={settings.documentDetails} page={page} />
+        <PrintPage key={`oc-page-${page.pageIndex}-${page.isClosingPage ? "closing" : "items"}`} orientation={print.orientation}>
+          <Header companyLogoUrl={companyLogoUrl} details={settings.documentDetails} page={page} print={print} />
           <div className={`flex-1 overflow-hidden ${page.isFirstPage ? "mt-2" : ""}`}>
             {page.isItemPage && page.items.length > 0 ? (
               <div className="space-y-1.5">
-                {page.items.map((item) => <ItemCard key={item.id} columnVisibility={settings.columnVisibility} item={item} />)}
+                {page.items.map((item) => <ItemCard key={item.id} columnVisibility={settings.columnVisibility} item={item} print={print} />)}
                 <ClosingSections terms={page.closing?.terms ?? null} />
               </div>
             ) : (
@@ -270,7 +291,7 @@ export function OrderConfirmationDocument({
             )}
           </div>
           <DocumentFooter pageNumber={page.pageIndex + 1} totalPages={page.totalPages} />
-        </PortraitPage>
+        </PrintPage>
       ))}
     </>
   );

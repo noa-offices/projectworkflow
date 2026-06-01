@@ -5,11 +5,17 @@ const FOOTER_RIGHT_PREFIX = "www.noaoffices.com";
 
 export function DocumentPage({
   children,
+  orientation = "landscape",
 }: {
   children: ReactNode;
+  orientation?: "landscape" | "portrait";
 }) {
+  const pageClassName = orientation === "portrait"
+    ? "h-[297mm] min-h-[297mm] w-[210mm] print:h-[297mm] print:min-h-[297mm] print:w-[210mm]"
+    : "h-[210mm] min-h-[210mm] w-[297mm] print:h-[210mm] print:min-h-[210mm] print:w-[297mm]";
+
   return (
-    <section className="doc-page mx-auto mb-6 flex h-[210mm] min-h-[210mm] w-[297mm] max-w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white px-[10mm] py-[10mm] shadow-[0_20px_60px_rgba(15,23,42,0.08)] print:mb-0 print:h-[210mm] print:min-h-[210mm] print:w-[297mm] print:max-w-none print:rounded-none print:border-0 print:px-[10mm] print:py-[10mm] print:shadow-none">
+    <section className={`doc-page mx-auto mb-6 flex max-w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white px-[10mm] py-[10mm] shadow-[0_20px_60px_rgba(15,23,42,0.08)] print:mb-0 print:max-w-none print:rounded-none print:border-0 print:px-[10mm] print:py-[10mm] print:shadow-none ${pageClassName}`}>
       {children}
     </section>
   );

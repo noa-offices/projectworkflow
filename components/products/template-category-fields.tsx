@@ -190,6 +190,7 @@ export function TemplateCategoryFields({
   defaultBrandId,
   defaultMainCategoryId,
   defaultSubCategoryId,
+  onBrandChange,
 }: {
   allowQuickCreate: boolean;
   brands: BrandOption[];
@@ -197,6 +198,7 @@ export function TemplateCategoryFields({
   defaultBrandId?: string;
   defaultMainCategoryId?: string;
   defaultSubCategoryId?: string;
+  onBrandChange?: (brandId: string) => void;
 }) {
   const [selectedBrandId, setSelectedBrandId] = useState(defaultBrandId ?? "");
   const [selectedMainCategoryId, setSelectedMainCategoryId] = useState(defaultMainCategoryId ?? "");
@@ -229,6 +231,7 @@ export function TemplateCategoryFields({
             setSelectedBrandId(event.target.value);
             setSelectedMainCategoryId("");
             setSelectedSubCategoryId("");
+            onBrandChange?.(event.target.value);
           }}
           required
           className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"

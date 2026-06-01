@@ -55,9 +55,9 @@ export function resolveDefaultPricingCurrency({
   trigger?: HTMLElement | null;
 }) {
   return (
-    formCurrencyFromTrigger(trigger) ||
-    (savedTemplateCurrency?.trim() ? normalizeCurrency(savedTemplateCurrency) : null) ||
     (brandDefaultCurrency?.trim() ? normalizeCurrency(brandDefaultCurrency) : null) ||
+    (savedTemplateCurrency?.trim() ? normalizeCurrency(savedTemplateCurrency) : null) ||
+    formCurrencyFromTrigger(trigger) ||
     existingRowsCurrency(existingRows) ||
     defaultCurrency
   );

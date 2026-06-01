@@ -70,13 +70,18 @@ type DeskingSizePricingRow = {
   id?: string;
   label?: string;
   supplier_price_list_code?: string;
+  base_supplier_price_list_code?: string;
   length?: number;
   depth?: number;
   height?: number;
   dimension_unit?: string;
+  layout_type?: string;
   default_price?: number;
   additional_price?: number;
+  additional_supplier_price_list_code?: string;
   currency?: string;
+  specification?: string;
+  default_dimension?: string;
   sort_order?: number;
   is_active?: boolean;
 };
@@ -96,6 +101,7 @@ type VariantPricingRow = {
 
 type CategoryPricingRow = {
   id?: string;
+  pricing_type?: string | null;
   pricing_category_id?: string | null;
   pricing_category_name?: string | null;
   variant_name?: string;
@@ -105,6 +111,8 @@ type CategoryPricingRow = {
   currency?: string;
   prices?: Record<string, number>;
   specification?: string;
+  modular_default_dimension?: string | null;
+  modular_default_specification?: string | null;
   is_active?: boolean;
   sort_order?: number;
 };
@@ -303,11 +311,9 @@ function FormSection({
           ) : null}
         </div>
       </button>
-      {isOpen ? (
-        <div className="border-t border-zinc-100 p-5">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{children}</div>
-        </div>
-      ) : null}
+      <div hidden={!isOpen} className="border-t border-zinc-100 p-5">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{children}</div>
+      </div>
     </section>
   );
 }
@@ -408,7 +414,7 @@ export function ProductTemplateForm({
 }: ProductTemplateFormProps) {
   const templateId = useMemo(() => template?.id ?? fallbackTemplateId(), [template?.id]);
   const pricingRef = useRef<HTMLDivElement | null>(null);
-  const selectedBrandId = template?.brand_id ?? defaultBrandId ?? "";
+  const [selectedBrandId, setSelectedBrandId] = useState(template?.brand_id ?? defaultBrandId ?? "");
   const selectedBrand = brands.find((brand) => brand.id === selectedBrandId) ?? null;
   const brandDefaultCurrency = selectedBrand?.default_currency ?? defaultCurrency;
   const allowImportPrefill = !template && importMode === "new";
@@ -569,6 +575,7 @@ export function ProductTemplateForm({
           defaultBrandId={selectedBrandId}
           defaultMainCategoryId={selectedMainCategoryId}
           defaultSubCategoryId={selectedSubCategoryId}
+          onBrandChange={setSelectedBrandId}
         />
         <Field
           name="template_name"
@@ -682,6 +689,7 @@ export function ProductTemplateForm({
               importDraft={existingImportDraft}
               initialSlots={proposedImageSlots.map((slot) => ({
                 ...slot,
+                sessionUploadInfo: null,
                 settings: templateImageDisplaySettings(template, slot.field),
                 value: templateImageValue(template, slot.field) ?? (
                   slot.field === "proposed_image_url_1" && allowImportPrefill
@@ -697,23 +705,24 @@ export function ProductTemplateForm({
       </div>
 
       {template ? (
-        expandedSections.gallery ? (
-          <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Current Gallery</p>
-            <div className="mt-3">
-              <TemplateDetailImageGallery
-                templateId={template.id}
-                visibleSlots={proposedImageSlots
-                  .map((slot) => ({
-                    ...slot,
-                    settings: templateImageDisplaySettings(template, slot.field),
-                    value: templateImageValue(template, slot.field),
-                  }))
-                  .filter((slot): slot is typeof slot & { value: string } => Boolean(slot.value))}
-              />
-            </div>
+        <div
+          hidden={!expandedSections.gallery}
+          className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Current Gallery</p>
+          <div className="mt-3">
+            <TemplateDetailImageGallery
+              templateId={template.id}
+              visibleSlots={proposedImageSlots
+                .map((slot) => ({
+                  ...slot,
+                  settings: templateImageDisplaySettings(template, slot.field),
+                  value: templateImageValue(template, slot.field),
+                }))
+                .filter((slot): slot is typeof slot & { value: string } => Boolean(slot.value))}
+            />
           </div>
-        ) : null
+        </div>
       ) : null}
 
       <FormSection
