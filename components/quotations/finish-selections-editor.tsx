@@ -3,6 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { ClipboardEvent, ChangeEvent } from "react";
 import { FinishImagePreview } from "@/components/quotations/finish-image-uploader";
+import {
+  materialDisplayCategory,
+  UNCATEGORIZED_MATERIAL_LABEL,
+} from "@/lib/products/material-classification";
 import { uploadQuotationFinishImage } from "@/lib/quotation-image-upload";
 
 export type FinishSelectionEditorRow = {
@@ -49,6 +53,7 @@ export type FinishMaterial = {
   brand_id: string;
   material_group_id: string;
   material_category: string | null;
+  material_collection?: string | null;
   material_code: string | null;
   material_name: string;
   description: string | null;
@@ -176,7 +181,11 @@ function cleanCategoryLabel(value?: string | null) {
   const category = value?.trim();
   if (!category) return "";
 
-  return /^(cat|category)\b/i.test(category) ? category : `Category ${category}`;
+  return category;
+}
+
+function materialCategoryKey(material: Pick<FinishMaterial, "material_category" | "material_collection">) {
+  return materialDisplayCategory(material);
 }
 
 function sortMaterials(left: FinishMaterial, right: FinishMaterial) {
@@ -408,7 +417,7 @@ function MaterialGrid({
   const uncategorized: FinishMaterial[] = [];
 
   for (const material of sorted) {
-    const category = material.material_category?.trim();
+    const category = materialCategoryKey(material);
     if (!category) {
       uncategorized.push(material);
       continue;
@@ -418,7 +427,7 @@ function MaterialGrid({
 
   const sections = [
     ...Array.from(categorized.entries()).sort(([left], [right]) => left.localeCompare(right)),
-    ...(uncategorized.length ? [[categorized.size ? "Uncategorized" : "", uncategorized] as [string, FinishMaterial[]]] : []),
+    ...(uncategorized.length ? [[categorized.size ? UNCATEGORIZED_MATERIAL_LABEL : "", uncategorized] as [string, FinishMaterial[]]] : []),
   ];
 
   return (
@@ -439,7 +448,7 @@ function MaterialGrid({
                 key={material.id}
                 actionLabel={getActionLabel?.(material) ?? "Select"}
                 brand={brandsById.get(material.brand_id)}
-                category={category && category !== "Uncategorized" ? category : material.material_category ?? ""}
+                category={category && category !== UNCATEGORIZED_MATERIAL_LABEL ? category : materialCategoryKey(material)}
                 groupLabel={groupLabel}
                 isSelected={isMaterialSelected?.(material) ?? false}
                 material={material}
@@ -618,14 +627,14 @@ export function FinishSelectionsEditor({
       visibleMaterials
         .filter((material) => !libraryBrandId || material.brand_id === libraryBrandId)
         .filter((material) => !libraryGroupId || material.material_group_id === libraryGroupId)
-        .map((material) => material.material_category?.trim())
+        .map((material) => materialCategoryKey(material))
         .filter((value): value is string => Boolean(value)),
     ),
   ).sort((left, right) => left.localeCompare(right));
   const filteredLibraryMaterials = visibleMaterials
     .filter((material) => !libraryBrandId || material.brand_id === libraryBrandId)
     .filter((material) => !libraryGroupId || material.material_group_id === libraryGroupId)
-    .filter((material) => !libraryCategory || material.material_category?.trim() === libraryCategory)
+    .filter((material) => !libraryCategory || materialCategoryKey(material) === libraryCategory)
     .filter((material) => {
       const search = librarySearch.trim().toLowerCase();
       if (!search) return true;
@@ -711,7 +720,7 @@ export function FinishSelectionsEditor({
       brand_name: brand?.name ?? "",
       group_label: groupLabel,
       group_sort_order: link?.sort_order,
-      material_category: material.material_category ?? "",
+      material_category: materialCategoryKey(material),
       finish_code: material.material_code ?? "",
       finish_name: material.material_name,
       finish_description: material.description ?? "",
@@ -993,9 +1002,9 @@ export function FinishSelectionsEditor({
               </select>
             </label>
             <label className="block">
-              <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Category</span>
+              <span className="mb-1 block text-[10px] font-semibold uppercase text-zinc-500">Grade / Collection</span>
               <select value={libraryCategory} onChange={(event) => setLibraryCategory(event.target.value)} className="h-8 w-full border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-emerald-800">
-                <option value="">All categories</option>
+                <option value="">All grades / collections</option>
                 {categoryOptions.map((category) => (
                   <option key={category} value={category}>{cleanCategoryLabel(category)}</option>
                 ))}

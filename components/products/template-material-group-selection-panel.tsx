@@ -1,6 +1,10 @@
 "use client";
 
 import { useDeferredValue, useState } from "react";
+import {
+  materialDisplayCategoryLabel,
+  UNCATEGORIZED_MATERIAL_LABEL,
+} from "@/lib/products/material-classification";
 
 type SelectionMode = "full_group" | "selected_categories" | "selected_items";
 
@@ -13,13 +17,13 @@ type MaterialOption = {
   id: string;
   material_group_id: string;
   material_category: string | null;
+  material_collection?: string | null;
   material_code: string | null;
   material_name: string;
 };
 
-function materialCategoryLabel(value?: string | null) {
-  const trimmed = value?.trim();
-  return trimmed || "Uncategorized";
+function materialCategoryLabel(material: Pick<MaterialOption, "material_category" | "material_collection">) {
+  return materialDisplayCategoryLabel(material);
 }
 
 function materialLabel(material: MaterialOption) {
@@ -27,8 +31,8 @@ function materialLabel(material: MaterialOption) {
 }
 
 function sortCategoryLabels(left: string, right: string) {
-  if (left === "Uncategorized") return 1;
-  if (right === "Uncategorized") return -1;
+  if (left === UNCATEGORIZED_MATERIAL_LABEL) return 1;
+  if (right === UNCATEGORIZED_MATERIAL_LABEL) return -1;
   return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
 }
 
@@ -56,7 +60,7 @@ export function TemplateMaterialGroupSelectionPanel({
     new Set(
       groupMaterials
         .filter((material) => linkedItemIds.has(material.id))
-        .map((material) => materialCategoryLabel(material.material_category)),
+        .map((material) => materialCategoryLabel(material)),
     ),
   ).sort(sortCategoryLabels);
   const [selectedCategories, setSelectedCategories] = useState<string[]>(initialSelectedCategories);
@@ -64,7 +68,7 @@ export function TemplateMaterialGroupSelectionPanel({
   const normalizedSearchTerm = deferredSearchTerm.trim().toLowerCase();
   const groupedCategories = Array.from(
     groupMaterials.reduce((map, material) => {
-      const category = materialCategoryLabel(material.material_category);
+      const category = materialCategoryLabel(material);
       map.set(category, (map.get(category) ?? 0) + 1);
       return map;
     }, new Map<string, number>()).entries(),
@@ -160,7 +164,7 @@ export function TemplateMaterialGroupSelectionPanel({
         {selectedMaterialGroupId && selectionMode === "selected_categories" ? (
           <div className="grid gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
             <p className="text-xs text-zinc-600">
-              Select one or more finish categories. All finishes inside the chosen categories will be available.
+              Select one or more finish categories. This uses Price Category / Grade when available, otherwise Collection / Finish Type.
             </p>
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
               {groupedCategories.map(([category, count]) => (
@@ -205,7 +209,7 @@ export function TemplateMaterialGroupSelectionPanel({
             <div className="grid max-h-72 gap-2 overflow-auto rounded-md border border-zinc-200 bg-white p-2 sm:grid-cols-2 xl:grid-cols-3">
               {groupMaterials.map((material) => {
                 const label = materialLabel(material);
-                const category = materialCategoryLabel(material.material_category);
+                const category = materialCategoryLabel(material);
                 const matchesSearch =
                   !normalizedSearchTerm ||
                   label.toLowerCase().includes(normalizedSearchTerm) ||

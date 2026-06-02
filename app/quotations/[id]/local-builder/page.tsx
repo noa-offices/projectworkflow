@@ -222,7 +222,7 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
 
   const { data: materials } = await supabase
     .from("brand_materials")
-    .select("id,brand_id,material_group_id,material_category,material_code,material_name,description,image_url,sort_order,is_active")
+    .select("id,brand_id,material_group_id,material_category,material_collection,material_code,material_name,description,image_url,sort_order,is_active")
     .eq("is_active", true)
     .order("brand_id", { ascending: true })
     .order("material_group_id", { ascending: true })

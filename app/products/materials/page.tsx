@@ -2,16 +2,23 @@ import Link from "next/link";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { AppSidebar } from "@/components/app-sidebar";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
-import { BrandMaterialSwatchInput } from "@/components/products/brand-material-swatch-input";
+import {
+  BatchMaterialDialogButton,
+  MaterialDialogButton,
+} from "@/components/products/material-library-dialogs";
 import { TopBar } from "@/components/top-bar";
 import { requireRecordsManager } from "@/lib/auth";
+import {
+  materialCollectionLabel,
+  materialDisplayCategory,
+  materialPriceCategoryLabel,
+  UNCATEGORIZED_MATERIAL_LABEL,
+} from "@/lib/products/material-classification";
 import { createClient } from "@/lib/supabase/server";
 import {
-  createMaterial,
   createMaterialGroup,
   deactivateMaterial,
   deactivateMaterialGroup,
-  updateMaterial,
   updateMaterialGroup,
 } from "./actions";
 
@@ -54,6 +61,7 @@ type Material = {
   brand_id: string;
   material_group_id: string;
   material_category: string | null;
+  material_collection: string | null;
   material_code: string | null;
   material_name: string;
   color_family: string | null;
@@ -185,6 +193,176 @@ function ActiveToggle({ defaultChecked = true }: { defaultChecked?: boolean }) {
   );
 }
 
+function materialCategoryKey(material: Pick<Material, "material_category" | "material_collection">) {
+  return materialDisplayCategory(material);
+}
+
+type MaterialFilter =
+  | { mode: "grade"; grade: string }
+  | { mode: "combo"; grade: string; collection: string }
+  | { mode: "collection"; collection: string }
+  | { mode: "uncategorized" }
+  | { mode: "legacy"; value: string };
+
+type MaterialCollectionSummary = {
+  count: number;
+  filterValue: string;
+  label: string;
+  materials: Material[];
+};
+
+type MaterialGradeSummary = {
+  collections: MaterialCollectionSummary[];
+  count: number;
+  directMaterials: Material[];
+  filterValue: string;
+  grade: string;
+  materials: Material[];
+};
+
+type MaterialGroupSummary = {
+  collectionOnly: MaterialCollectionSummary[];
+  grades: MaterialGradeSummary[];
+  uncategorized: Material[];
+};
+
+function encodeMaterialFilter(filter: MaterialFilter) {
+  return JSON.stringify(filter);
+}
+
+function parseMaterialFilter(value: string) {
+  if (!value) return null;
+
+  try {
+    const parsed = JSON.parse(value) as Partial<MaterialFilter> & Record<string, unknown>;
+
+    if (parsed.mode === "grade" && typeof parsed.grade === "string" && parsed.grade.trim()) {
+      return { mode: "grade", grade: parsed.grade.trim() } satisfies MaterialFilter;
+    }
+    if (
+      parsed.mode === "combo" &&
+      typeof parsed.grade === "string" &&
+      parsed.grade.trim() &&
+      typeof parsed.collection === "string" &&
+      parsed.collection.trim()
+    ) {
+      return {
+        mode: "combo",
+        grade: parsed.grade.trim(),
+        collection: parsed.collection.trim(),
+      } satisfies MaterialFilter;
+    }
+    if (parsed.mode === "collection" && typeof parsed.collection === "string" && parsed.collection.trim()) {
+      return { mode: "collection", collection: parsed.collection.trim() } satisfies MaterialFilter;
+    }
+    if (parsed.mode === "uncategorized") {
+      return { mode: "uncategorized" } satisfies MaterialFilter;
+    }
+  } catch {
+    // Keep compatibility with old plain-string filters.
+  }
+
+  return { mode: "legacy", value } satisfies MaterialFilter;
+}
+
+function materialFilterLabel(filter: MaterialFilter) {
+  if (filter.mode === "grade") return filter.grade;
+  if (filter.mode === "combo") return `${filter.grade} / ${filter.collection}`;
+  if (filter.mode === "collection") return filter.collection;
+  if (filter.mode === "uncategorized") return UNCATEGORIZED_MATERIAL_LABEL;
+  return filter.value;
+}
+
+function materialMatchesFilter(material: Material, filter: MaterialFilter | null) {
+  if (!filter) return true;
+
+  const grade = materialPriceCategoryLabel(material);
+  const collection = materialCollectionLabel(material);
+
+  if (filter.mode === "grade") return grade === filter.grade;
+  if (filter.mode === "combo") return grade === filter.grade && collection === filter.collection;
+  if (filter.mode === "collection") return !grade && collection === filter.collection;
+  if (filter.mode === "uncategorized") return !grade && !collection;
+  return materialCategoryKey(material) === filter.value;
+}
+
+function materialPrefillFromFilter(filter: MaterialFilter | null) {
+  if (!filter) return {};
+  if (filter.mode === "grade") return { grade: filter.grade };
+  if (filter.mode === "combo") return { grade: filter.grade, collection: filter.collection };
+  if (filter.mode === "collection") return { collection: filter.collection };
+  return {};
+}
+
+function materialFilterSortKey(filter: MaterialFilter) {
+  if (filter.mode === "grade") return `1:${filter.grade}`;
+  if (filter.mode === "combo") return `2:${filter.grade}:${filter.collection}`;
+  if (filter.mode === "collection") return `3:${filter.collection}`;
+  if (filter.mode === "uncategorized") return "9:zzzz";
+  return `8:${filter.value}`;
+}
+
+function summarizeMaterialGroup(materials: Material[]): MaterialGroupSummary {
+  const gradeMap = new Map<string, { collections: Map<string, Material[]>; directMaterials: Material[]; materials: Material[] }>();
+  const collectionOnlyMap = new Map<string, Material[]>();
+  const uncategorized: Material[] = [];
+
+  for (const material of materials) {
+    const grade = materialPriceCategoryLabel(material);
+    const collection = materialCollectionLabel(material);
+
+    if (grade) {
+      const current = gradeMap.get(grade) ?? { collections: new Map<string, Material[]>(), directMaterials: [], materials: [] };
+      current.materials.push(material);
+
+      if (collection) {
+        current.collections.set(collection, [...(current.collections.get(collection) ?? []), material]);
+      } else {
+        current.directMaterials.push(material);
+      }
+
+      gradeMap.set(grade, current);
+      continue;
+    }
+
+    if (collection) {
+      collectionOnlyMap.set(collection, [...(collectionOnlyMap.get(collection) ?? []), material]);
+      continue;
+    }
+
+    uncategorized.push(material);
+  }
+
+  const grades = Array.from(gradeMap.entries())
+    .map(([grade, value]) => ({
+      collections: Array.from(value.collections.entries())
+        .map(([label, collectionMaterials]) => ({
+          count: collectionMaterials.length,
+          filterValue: encodeMaterialFilter({ mode: "combo", grade, collection: label }),
+          label,
+          materials: collectionMaterials,
+        }))
+        .sort((left, right) => left.label.localeCompare(right.label)),
+      count: value.materials.length,
+      directMaterials: value.directMaterials,
+      filterValue: encodeMaterialFilter({ mode: "grade", grade }),
+      grade,
+      materials: value.materials,
+    }))
+    .sort((left, right) => left.grade.localeCompare(right.grade, undefined, { numeric: true, sensitivity: "base" }));
+
+  const collectionOnly = Array.from(collectionOnlyMap.entries())
+    .map(([label, collectionMaterials]) => ({
+      count: collectionMaterials.length,
+      filterValue: encodeMaterialFilter({ mode: "collection", collection: label }),
+      label,
+      materials: collectionMaterials,
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+
+  return { collectionOnly, grades, uncategorized };
+}
+
 function SubmitButton({ label, pendingLabel }: { label: string; pendingLabel?: string }) {
   return (
     <PendingSubmitButton
@@ -224,47 +402,6 @@ function GroupForm({
   );
 }
 
-function MaterialForm({
-  brandId,
-  group,
-  material,
-  returnTo,
-}: {
-  brandId: string;
-  group: MaterialGroup;
-  material?: Material;
-  returnTo: string;
-}) {
-  return (
-    <form action={material ? updateMaterial : createMaterial} className="grid gap-3 md:grid-cols-2">
-      <input type="hidden" name="brand_id" value={brandId} />
-      <input type="hidden" name="material_group_id" value={group.id} />
-      <input type="hidden" name="return_to" value={returnTo} />
-      <input type="hidden" name="description" value={material?.description ?? ""} />
-      <input type="hidden" name="color_family" value={material?.color_family ?? ""} />
-      <input type="hidden" name="sort_order" value={material?.sort_order ?? 0} />
-      {material ? <input type="hidden" name="id" value={material.id} /> : null}
-      <label className="block">
-        <span className="text-xs font-semibold uppercase text-zinc-500">Group</span>
-        <span className="mt-1 flex h-10 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700">
-          {group.group_name}
-        </span>
-      </label>
-      <TextInput name="material_category" label="Category / Collection" defaultValue={material?.material_category} />
-      <TextInput name="material_code" label="Code" defaultValue={material?.material_code} />
-      <TextInput name="material_name" label="Name" defaultValue={material?.material_name} required />
-      <BrandMaterialSwatchInput brandId={brandId} groupId={group.id} defaultValue={material?.image_url} />
-      <div className="flex flex-col gap-3 md:col-span-2 sm:flex-row sm:items-center sm:justify-between">
-        <ActiveToggle defaultChecked={material?.is_active ?? true} />
-        <SubmitButton
-          label={material ? "Save material" : "Add material"}
-          pendingLabel={material ? "Saving material..." : "Creating material..."}
-        />
-      </div>
-    </form>
-  );
-}
-
 function Swatch({ material, size = "md" }: { material: Material; size?: "md" | "lg" }) {
   const sizeClass = size === "lg" ? "h-24 w-full" : "h-12 w-12";
 
@@ -280,40 +417,6 @@ function Swatch({ material, size = "md" }: { material: Material; size?: "md" | "
       />
     </a>
   );
-}
-
-function groupedMaterials(materials: Material[]) {
-  const categories = new Map<string, Material[]>();
-  const uncategorized: Material[] = [];
-
-  for (const material of materials) {
-    const category = material.material_category?.trim();
-
-    if (!category) {
-      uncategorized.push(material);
-      continue;
-    }
-
-    categories.set(category, [...(categories.get(category) ?? []), material]);
-  }
-
-  return { categories: Array.from(categories.entries()), uncategorized };
-}
-
-function categoryLabel(category: string) {
-  return /^(cat|category)\s+/i.test(category) ? category : `Category ${category}`;
-}
-
-function categoryCounts(materials: Material[]) {
-  const counts = new Map<string, number>();
-
-  for (const material of materials) {
-    const category = material.material_category?.trim();
-    if (!category) continue;
-    counts.set(category, (counts.get(category) ?? 0) + 1);
-  }
-
-  return Array.from(counts.entries()).sort(([left], [right]) => left.localeCompare(right));
 }
 
 function sortMaterials(materials: Material[], sortMode: string) {
@@ -336,25 +439,35 @@ function sortMaterials(materials: Material[], sortMode: string) {
 
 function MaterialGridCard({
   brandId,
-  group,
+  brandName,
+  groups,
   material,
   returnTo,
   showCategoryBadge = true,
 }: {
   brandId: string;
-  group: MaterialGroup;
+  brandName: string;
+  groups: MaterialGroup[];
   material: Material;
   returnTo: string;
   showCategoryBadge?: boolean;
 }) {
+  const gradeBadge = materialPriceCategoryLabel(material);
+  const collectionBadge = materialCollectionLabel(material);
+
   return (
     <div className="rounded-md border border-zinc-200 bg-white p-3">
       <Swatch material={material} size="lg" />
       <div className="mt-3 min-h-20">
         <div className="flex flex-wrap items-center gap-1.5">
-          {showCategoryBadge && material.material_category ? (
+          {showCategoryBadge && gradeBadge ? (
             <span className="rounded border border-zinc-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-zinc-500">
-              {categoryLabel(material.material_category)}
+              {gradeBadge}
+            </span>
+          ) : null}
+          {collectionBadge ? (
+            <span className="rounded border border-zinc-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-zinc-500">
+              {collectionBadge}
             </span>
           ) : null}
           <StatusBadge active={material.is_active} />
@@ -367,14 +480,16 @@ function MaterialGridCard({
         ) : null}
       </div>
       <div className="mt-3 flex items-center justify-between gap-3 border-t border-zinc-100 pt-3">
-        <details>
-          <summary className="cursor-pointer text-xs font-semibold text-zinc-600 transition hover:text-zinc-950">
-            Edit
-          </summary>
-          <div className="mt-3 w-[min(680px,calc(100vw-3rem))] rounded-md border border-zinc-200 bg-zinc-50 p-4 text-left shadow-sm">
-            <MaterialForm brandId={brandId} group={group} material={material} returnTo={returnTo} />
-          </div>
-        </details>
+        <MaterialDialogButton
+          brandId={brandId}
+          brandName={brandName}
+          groups={groups.map((item) => ({ id: item.id, group_name: item.group_name }))}
+          material={material}
+          returnTo={returnTo}
+          title={`Edit Material${material.material_name ? ` - ${material.material_name}` : ""}`}
+          triggerClassName="text-xs font-semibold text-zinc-600 transition hover:text-zinc-950"
+          triggerLabel="Edit"
+        />
         <form action={deactivateMaterial}>
           <input type="hidden" name="id" value={material.id} />
           <input type="hidden" name="return_to" value={returnTo} />
@@ -392,17 +507,22 @@ function MaterialGridCard({
 
 function MaterialListRow({
   brandId,
-  group,
+  brandName,
+  groups,
   material,
   returnTo,
   showCategoryBadge = true,
 }: {
   brandId: string;
-  group: MaterialGroup;
+  brandName: string;
+  groups: MaterialGroup[];
   material: Material;
   returnTo: string;
   showCategoryBadge?: boolean;
 }) {
+  const gradeBadge = materialPriceCategoryLabel(material);
+  const collectionBadge = materialCollectionLabel(material);
+
   return (
     <div className="grid gap-3 p-3 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-start">
       <Swatch material={material} />
@@ -411,9 +531,14 @@ function MaterialListRow({
           <p className="font-semibold text-zinc-950">
             {material.material_code ? `${material.material_code} | ` : ""}{material.material_name}
           </p>
-          {showCategoryBadge && material.material_category ? (
+          {showCategoryBadge && gradeBadge ? (
             <span className="rounded border border-zinc-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-zinc-500">
-              {categoryLabel(material.material_category)}
+              {gradeBadge}
+            </span>
+          ) : null}
+          {collectionBadge ? (
+            <span className="rounded border border-zinc-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-zinc-500">
+              {collectionBadge}
             </span>
           ) : null}
           <StatusBadge active={material.is_active} />
@@ -423,14 +548,16 @@ function MaterialListRow({
         ) : null}
       </div>
       <div className="flex flex-wrap gap-3 md:justify-end">
-        <details>
-          <summary className="cursor-pointer text-sm font-semibold text-zinc-600 transition hover:text-zinc-950">
-            Edit
-          </summary>
-          <div className="mt-3 w-[min(680px,calc(100vw-3rem))] rounded-md border border-zinc-200 bg-zinc-50 p-4 text-left shadow-sm">
-            <MaterialForm brandId={brandId} group={group} material={material} returnTo={returnTo} />
-          </div>
-        </details>
+        <MaterialDialogButton
+          brandId={brandId}
+          brandName={brandName}
+          groups={groups.map((item) => ({ id: item.id, group_name: item.group_name }))}
+          material={material}
+          returnTo={returnTo}
+          title={`Edit Material${material.material_name ? ` - ${material.material_name}` : ""}`}
+          triggerClassName="text-sm font-semibold text-zinc-600 transition hover:text-zinc-950"
+          triggerLabel="Edit"
+        />
         <form action={deactivateMaterial}>
           <input type="hidden" name="id" value={material.id} />
           <input type="hidden" name="return_to" value={returnTo} />
@@ -448,14 +575,16 @@ function MaterialListRow({
 
 function MaterialCollection({
   brandId,
-  group,
+  brandName,
+  groups,
   materials,
   returnTo,
   showCategoryBadge,
   viewMode,
 }: {
   brandId: string;
-  group: MaterialGroup;
+  brandName: string;
+  groups: MaterialGroup[];
   materials: Material[];
   returnTo: string;
   showCategoryBadge: boolean;
@@ -465,7 +594,7 @@ function MaterialCollection({
     return (
       <div className="divide-y divide-zinc-100 rounded-md border border-zinc-100">
         {materials.map((material) => (
-          <MaterialListRow key={material.id} brandId={brandId} group={group} material={material} returnTo={returnTo} showCategoryBadge={showCategoryBadge} />
+          <MaterialListRow key={material.id} brandId={brandId} brandName={brandName} groups={groups} material={material} returnTo={returnTo} showCategoryBadge={showCategoryBadge} />
         ))}
       </div>
     );
@@ -474,7 +603,7 @@ function MaterialCollection({
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
       {materials.map((material) => (
-        <MaterialGridCard key={material.id} brandId={brandId} group={group} material={material} returnTo={returnTo} showCategoryBadge={showCategoryBadge} />
+        <MaterialGridCard key={material.id} brandId={brandId} brandName={brandName} groups={groups} material={material} returnTo={returnTo} showCategoryBadge={showCategoryBadge} />
       ))}
     </div>
   );
@@ -488,6 +617,7 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
   const searchQuery = stringParam(params.q).trim();
   const selectedGroupId = stringParam(params.group);
   const selectedCategory = stringParam(params.category);
+  const selectedMaterialFilter = parseMaterialFilter(selectedCategory);
   const legacyShowInactive = stringParam(params.showInactive) === "1";
   const statusFilter = stringParam(params.status) || (legacyShowInactive ? "all" : "active");
   const sortMode = stringParam(params.sort) || "sort_order";
@@ -539,7 +669,7 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
   const { data: materials, error: materialsError } = selectedBrand
     ? await supabase
         .from("brand_materials")
-        .select("id,brand_id,material_group_id,material_category,material_code,material_name,color_family,description,image_url,sort_order,is_active")
+        .select("id,brand_id,material_group_id,material_category,material_collection,material_code,material_name,color_family,description,image_url,sort_order,is_active")
         .eq("brand_id", selectedBrand.id)
         .order("material_group_id", { ascending: true })
         .order("sort_order", { ascending: true })
@@ -552,26 +682,52 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
 
   const rawGroups = groups ?? [];
   const rawMaterials = materials ?? [];
+  const materialFormPrefill = {
+    ...materialPrefillFromFilter(selectedMaterialFilter),
+    groupId: selectedGroupId || undefined,
+  };
   const statusMatches = (active: boolean) =>
     statusFilter === "all" ||
     (statusFilter === "active" && active) ||
     (statusFilter === "inactive" && !active);
   const navigableGroups = rawGroups.filter((group) => statusFilter === "all" || group.is_active);
-  const categoryOptions = Array.from(
-    new Set(
-      rawMaterials
-        .filter((material) => statusMatches(material.is_active))
-        .filter((material) => !selectedGroupId || material.material_group_id === selectedGroupId)
-        .map((material) => material.material_category?.trim())
-        .filter((value): value is string => Boolean(value)),
-    ),
-  ).sort((left, right) => left.localeCompare(right));
+  const categoryOptionMap = new Map<string, MaterialFilter>();
+  for (const material of rawMaterials
+    .filter((item) => statusMatches(item.is_active))
+    .filter((item) => !selectedGroupId || item.material_group_id === selectedGroupId)) {
+    const grade = materialPriceCategoryLabel(material);
+    const collection = materialCollectionLabel(material);
+
+    if (grade) {
+      categoryOptionMap.set(encodeMaterialFilter({ mode: "grade", grade }), { mode: "grade", grade });
+      if (collection) {
+        categoryOptionMap.set(
+          encodeMaterialFilter({ mode: "combo", grade, collection }),
+          { mode: "combo", grade, collection },
+        );
+      }
+      continue;
+    }
+
+    if (collection) {
+      categoryOptionMap.set(
+        encodeMaterialFilter({ mode: "collection", collection }),
+        { mode: "collection", collection },
+      );
+      continue;
+    }
+
+    categoryOptionMap.set(encodeMaterialFilter({ mode: "uncategorized" }), { mode: "uncategorized" });
+  }
+  const categoryOptions = Array.from(categoryOptionMap.entries())
+    .map(([value, filter]) => ({ label: materialFilterLabel(filter), sortKey: materialFilterSortKey(filter), value }))
+    .sort((left, right) => left.sortKey.localeCompare(right.sortKey, undefined, { numeric: true, sensitivity: "base" }));
   const normalizedSearch = searchQuery.toLowerCase();
   const filteredMaterials = sortMaterials(
     rawMaterials
       .filter((material) => statusMatches(material.is_active))
       .filter((material) => !selectedGroupId || material.material_group_id === selectedGroupId)
-      .filter((material) => !selectedCategory || material.material_category?.trim() === selectedCategory)
+      .filter((material) => materialMatchesFilter(material, selectedMaterialFilter))
       .filter((material) => {
         if (!normalizedSearch) return true;
 
@@ -605,7 +761,7 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
 
   const visibleGroups = navigableGroups
     .filter((group) => !selectedGroupId || group.id === selectedGroupId)
-    .filter((group) => (materialsByGroup.get(group.id)?.length ?? 0) > 0 || !searchQuery && !selectedCategory);
+    .filter((group) => (materialsByGroup.get(group.id)?.length ?? 0) > 0 || (!searchQuery && !selectedCategory));
   const activeGroupCount = rawGroups.filter((group) => group.is_active).length;
   const activeMaterialCount = rawMaterials.filter((material) => material.is_active).length;
   const addBrandHref = "/products/brands?addBrand=1";
@@ -632,6 +788,29 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
               >
                 + Add Brand
               </Link>
+              {selectedBrand && rawGroups.length ? (
+                <>
+                  <MaterialDialogButton
+                    brandId={selectedBrand.id}
+                    brandName={selectedBrand.name}
+                    groups={rawGroups.map((group) => ({ id: group.id, group_name: group.group_name }))}
+                    prefill={materialFormPrefill}
+                    returnTo={returnTo}
+                    title="Add Material"
+                    triggerClassName="inline-flex h-10 items-center justify-center rounded-md border border-emerald-900 bg-white px-4 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-50"
+                    triggerLabel="+ Add material"
+                  />
+                  <BatchMaterialDialogButton
+                    brandId={selectedBrand.id}
+                    brandName={selectedBrand.name}
+                    groups={rawGroups.map((group) => ({ id: group.id, group_name: group.group_name }))}
+                    prefill={materialFormPrefill}
+                    returnTo={returnTo}
+                    triggerClassName="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                    triggerLabel="+ Batch add materials"
+                  />
+                </>
+              ) : null}
             </div>
             <div className="flex flex-wrap items-center justify-end gap-3">
               {message ? (
@@ -676,11 +855,11 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
                 </select>
               </label>
               <label className="block">
-                <span className="text-xs font-semibold uppercase text-zinc-500">Category</span>
+                <span className="text-xs font-semibold uppercase text-zinc-500">Grade / Collection</span>
                 <select name="category" defaultValue={selectedCategory} className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10">
-                  <option value="">All categories</option>
+                  <option value="">All grades / collections</option>
                   {categoryOptions.map((category) => (
-                    <option key={category} value={category}>{category}</option>
+                    <option key={category.value} value={category.value}>{category.label}</option>
                   ))}
                 </select>
               </label>
@@ -753,7 +932,7 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
                   <div className="space-y-2">
                     {navigableGroups.map((group) => {
                       const groupMaterials = allMaterialsByGroup.get(group.id) ?? [];
-                      const groupCategoryCounts = categoryCounts(groupMaterials);
+                      const groupSummary = summarizeMaterialGroup(groupMaterials);
 
                       return (
                         <div key={group.id} className="rounded-md border border-zinc-100 bg-zinc-50 p-2">
@@ -764,18 +943,52 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
                             <span>{group.group_name}</span>
                             <span className="text-xs text-zinc-500">{groupMaterials.length}</span>
                           </Link>
-                          {groupCategoryCounts.length ? (
+                          {groupSummary.grades.length || groupSummary.collectionOnly.length || groupSummary.uncategorized.length ? (
                             <div className="mt-2 space-y-1 border-l border-zinc-200 pl-3">
-                              {groupCategoryCounts.map(([category, count]) => (
+                              {groupSummary.grades.map((grade) => (
+                                <div key={`${group.id}-${grade.grade}`} className="space-y-1">
+                                  <Link
+                                    href={`${materialsHref(normalizedParams, { group: group.id, category: grade.filterValue })}#group-${group.id}`}
+                                    className={`flex items-center justify-between gap-3 text-xs ${selectedCategory === grade.filterValue && selectedGroupId === group.id ? "font-semibold text-emerald-900" : "text-zinc-600"}`}
+                                  >
+                                    <span>{grade.grade}</span>
+                                    <span>{grade.count}</span>
+                                  </Link>
+                                  {grade.collections.length ? (
+                                    <div className="space-y-1 border-l border-zinc-200 pl-3">
+                                      {grade.collections.map((collection) => (
+                                        <Link
+                                          key={`${group.id}-${grade.grade}-${collection.label}`}
+                                          href={`${materialsHref(normalizedParams, { group: group.id, category: collection.filterValue })}#group-${group.id}`}
+                                          className={`flex items-center justify-between gap-3 text-xs ${selectedCategory === collection.filterValue && selectedGroupId === group.id ? "font-semibold text-emerald-900" : "text-zinc-500"}`}
+                                        >
+                                          <span>{collection.label}</span>
+                                          <span>{collection.count}</span>
+                                        </Link>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ))}
+                              {groupSummary.collectionOnly.map((collection) => (
                                 <Link
-                                  key={`${group.id}-${category}`}
-                                  href={`${materialsHref(normalizedParams, { group: group.id, category })}#group-${group.id}`}
-                                  className={`flex items-center justify-between gap-3 text-xs ${selectedCategory === category && selectedGroupId === group.id ? "font-semibold text-emerald-900" : "text-zinc-500"}`}
+                                  key={`${group.id}-${collection.label}`}
+                                  href={`${materialsHref(normalizedParams, { group: group.id, category: collection.filterValue })}#group-${group.id}`}
+                                  className={`flex items-center justify-between gap-3 text-xs ${selectedCategory === collection.filterValue && selectedGroupId === group.id ? "font-semibold text-emerald-900" : "text-zinc-500"}`}
                                 >
-                                  <span>{categoryLabel(category)}</span>
-                                  <span>{count}</span>
+                                  <span>{collection.label}</span>
+                                  <span>{collection.count}</span>
                                 </Link>
                               ))}
+                              {groupSummary.uncategorized.length ? (
+                                <Link
+                                  href={`${materialsHref(normalizedParams, { group: group.id, category: encodeMaterialFilter({ mode: "uncategorized" }) })}#group-${group.id}`}
+                                  className={`flex items-center justify-between gap-3 text-xs ${selectedCategory === encodeMaterialFilter({ mode: "uncategorized" }) && selectedGroupId === group.id ? "font-semibold text-emerald-900" : "text-zinc-500"}`}
+                                >
+                                  <span>{UNCATEGORIZED_MATERIAL_LABEL}</span>
+                                  <span>{groupSummary.uncategorized.length}</span>
+                                </Link>
+                              ) : null}
                             </div>
                           ) : null}
                         </div>
@@ -798,7 +1011,7 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
 
                 {visibleGroups.map((group) => {
                   const groupMaterials = materialsByGroup.get(group.id) ?? [];
-                  const { categories, uncategorized } = groupedMaterials(groupMaterials);
+                  const groupSummary = summarizeMaterialGroup(groupMaterials);
 
                   return (
                     <details id={`group-${group.id}`} key={group.id} className="rounded-lg border border-zinc-200 bg-white shadow-sm">
@@ -822,6 +1035,31 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
 
                       <div className="space-y-5 p-5">
                         <div className="flex flex-wrap justify-end gap-3 border-b border-zinc-100 pb-4">
+                          <MaterialDialogButton
+                            brandId={selectedBrand.id}
+                            brandName={selectedBrand.name}
+                            groups={rawGroups.map((item) => ({ id: item.id, group_name: item.group_name }))}
+                            prefill={{
+                              ...materialFormPrefill,
+                              groupId: group.id,
+                            }}
+                            returnTo={returnTo}
+                            title={`Add Material - ${group.group_name}`}
+                            triggerClassName="inline-flex h-10 items-center rounded-md border border-emerald-900 bg-white px-4 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-50"
+                            triggerLabel="+ Add material"
+                          />
+                          <BatchMaterialDialogButton
+                            brandId={selectedBrand.id}
+                            brandName={selectedBrand.name}
+                            groups={rawGroups.map((item) => ({ id: item.id, group_name: item.group_name }))}
+                            prefill={{
+                              ...materialFormPrefill,
+                              groupId: group.id,
+                            }}
+                            returnTo={returnTo}
+                            triggerClassName="inline-flex h-10 items-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+                            triggerLabel="+ Batch add materials"
+                          />
                           <details>
                             <summary className="cursor-pointer text-sm font-semibold text-zinc-600 transition hover:text-zinc-950">
                               Edit group
@@ -841,43 +1079,88 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
                             </ConfirmSubmitButton>
                           </form>
                         </div>
-                        {categories.map(([category, categoryMaterials]) => (
-                          <section key={category}>
-                            <div className="mb-3 flex items-center gap-2">
-                              <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-600">{categoryLabel(category)}</h3>
+                        {groupSummary.grades.map((grade) => (
+                          <section key={grade.grade} className="space-y-4">
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-600">{grade.grade}</h3>
                               <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">
-                                {categoryMaterials.length}
+                                {grade.count}
                               </span>
                             </div>
-                            <MaterialCollection brandId={selectedBrand.id} group={group} materials={categoryMaterials} returnTo={returnTo} showCategoryBadge={false} viewMode={viewMode} />
+                            {grade.directMaterials.length ? (
+                              <MaterialCollection
+                                brandId={selectedBrand.id}
+                                brandName={selectedBrand.name}
+                                groups={rawGroups}
+                                materials={grade.directMaterials}
+                                returnTo={returnTo}
+                                showCategoryBadge
+                                viewMode={viewMode}
+                              />
+                            ) : null}
+                            {grade.collections.map((collection) => (
+                              <section key={`${grade.grade}-${collection.label}`}>
+                                <div className="mb-3 flex items-center gap-2 border-l-2 border-zinc-200 pl-3">
+                                  <h4 className="text-xs font-bold uppercase tracking-wide text-zinc-500">{collection.label}</h4>
+                                  <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">
+                                    {collection.count}
+                                  </span>
+                                </div>
+                                <MaterialCollection
+                                  brandId={selectedBrand.id}
+                                  brandName={selectedBrand.name}
+                                  groups={rawGroups}
+                                  materials={collection.materials}
+                                  returnTo={returnTo}
+                                  showCategoryBadge
+                                  viewMode={viewMode}
+                                />
+                              </section>
+                            ))}
                           </section>
                         ))}
-                        {uncategorized.length ? (
+                        {groupSummary.collectionOnly.map((collection) => (
+                          <section key={collection.label}>
+                            <div className="mb-3 flex items-center gap-2">
+                              <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-600">{collection.label}</h3>
+                              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">
+                                {collection.count}
+                              </span>
+                            </div>
+                            <MaterialCollection
+                              brandId={selectedBrand.id}
+                              brandName={selectedBrand.name}
+                              groups={rawGroups}
+                              materials={collection.materials}
+                              returnTo={returnTo}
+                              showCategoryBadge
+                              viewMode={viewMode}
+                            />
+                          </section>
+                        ))}
+                        {groupSummary.uncategorized.length ? (
                           <section>
-                            {categories.length ? (
-                              <div className="mb-3 flex items-center gap-2">
-                                <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-600">Uncategorized</h3>
-                                <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">
-                                  {uncategorized.length}
-                                </span>
-                              </div>
-                            ) : null}
-                            <MaterialCollection brandId={selectedBrand.id} group={group} materials={uncategorized} returnTo={returnTo} showCategoryBadge={false} viewMode={viewMode} />
+                            <div className="mb-3 flex items-center gap-2">
+                              <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-600">{UNCATEGORIZED_MATERIAL_LABEL}</h3>
+                              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">
+                                {groupSummary.uncategorized.length}
+                              </span>
+                            </div>
+                            <MaterialCollection
+                              brandId={selectedBrand.id}
+                              brandName={selectedBrand.name}
+                              groups={rawGroups}
+                              materials={groupSummary.uncategorized}
+                              returnTo={returnTo}
+                              showCategoryBadge
+                              viewMode={viewMode}
+                            />
                           </section>
                         ) : null}
                         {!groupMaterials.length ? (
                           <div className="text-sm text-zinc-500">No materials match the current filters.</div>
                         ) : null}
                       </div>
-
-                      <details className="border-t border-zinc-200 p-4">
-                        <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                          + Add material / swatch
-                        </summary>
-                        <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                          <MaterialForm brandId={selectedBrand.id} group={group} returnTo={returnTo} />
-                        </div>
-                      </details>
                     </details>
                   );
                 })}

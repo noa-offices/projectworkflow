@@ -44,6 +44,7 @@ import {
   productTemplatePriceCheckState,
 } from "@/lib/product-price-check";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
+import { materialDisplayCategoryLabel } from "@/lib/products/material-classification";
 import { createClient } from "@/lib/supabase/server";
 import { profileDisplayName } from "@/lib/user-display";
 import {
@@ -384,6 +385,7 @@ type BrandMaterial = {
   brand_id: string;
   material_group_id: string;
   material_category: string | null;
+  material_collection: string | null;
   material_code: string | null;
   material_name: string;
   sort_order: number;
@@ -1091,7 +1093,7 @@ function TemplateMaterialGroupForm({
     .filter((material) => (link ? material.material_group_id === link.material_group_id : true))
     .sort((left, right) =>
       left.material_group_id.localeCompare(right.material_group_id) ||
-      (left.material_category ?? "").localeCompare(right.material_category ?? "") ||
+      materialCategoryLabel(left).localeCompare(materialCategoryLabel(right)) ||
       left.sort_order - right.sort_order ||
       (left.material_code ?? "").localeCompare(right.material_code ?? "") ||
       left.material_name.localeCompare(right.material_name),
@@ -1113,6 +1115,7 @@ function TemplateMaterialGroupForm({
           id: material.id,
           material_group_id: material.material_group_id,
           material_category: material.material_category,
+          material_collection: material.material_collection,
           material_code: material.material_code,
           material_name: material.material_name,
         }))}
@@ -1178,9 +1181,8 @@ function formatShortDate(value: string | null) {
   }).format(new Date(value));
 }
 
-function materialCategoryLabel(value?: string | null) {
-  const trimmed = value?.trim();
-  return trimmed || "Uncategorized";
+function materialCategoryLabel(material: Pick<BrandMaterial, "material_category" | "material_collection">) {
+  return materialDisplayCategoryLabel(material);
 }
 
 function materialSelectionModeLabel(value: ProductTemplateMaterialGroup["selection_mode"]) {
@@ -1637,7 +1639,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
   const { data: materials, error: materialsError } = await supabase
     .from("brand_materials")
-    .select("id,brand_id,material_group_id,material_category,material_code,material_name,sort_order,is_active")
+    .select("id,brand_id,material_group_id,material_category,material_collection,material_code,material_name,sort_order,is_active")
     .eq("is_active", true)
     .order("brand_id", { ascending: true })
     .order("material_group_id", { ascending: true })
@@ -3518,7 +3520,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                           .filter((material): material is BrandMaterial => Boolean(material));
                         const selectedCount = linkedMaterials.length;
                         const selectedCategories = Array.from(new Set(
-                          linkedMaterials.map((material) => materialCategoryLabel(material.material_category)),
+                          linkedMaterials.map((material) => materialCategoryLabel(material)),
                         ));
                         const availableSummary = link.selection_mode === "full_group"
                           ? "All finishes"

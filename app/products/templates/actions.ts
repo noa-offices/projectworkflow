@@ -10,6 +10,7 @@ import {
   groupedStandardCategoryPricingRows,
   normalizeCategoryPriceLabel,
 } from "@/lib/products/category-pricing-groups";
+import { materialDisplayCategoryLabel } from "@/lib/products/material-classification";
 import {
   MODULAR_GROUP_PRICING_TYPE,
   MODULAR_ITEM_PRICING_TYPE,
@@ -226,9 +227,8 @@ function selectedMaterialCategoriesValue(formData: FormData) {
   ));
 }
 
-function materialCategoryLabel(value?: string | null) {
-  const trimmed = value?.trim();
-  return trimmed || "Uncategorized";
+function materialCategoryLabel(material: { material_category?: string | null; material_collection?: string | null }) {
+  return materialDisplayCategoryLabel(material);
 }
 
 function priceListUpdateStatusValue(formData: FormData) {
@@ -2201,7 +2201,7 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
     if (selectionMode !== "full_group") {
       const { data: groupMaterials, error: materialsError } = await supabase
         .from("brand_materials")
-        .select("id,material_category")
+        .select("id,material_category,material_collection")
         .eq("material_group_id", materialGroupId)
         .eq("is_active", true);
 
@@ -2213,7 +2213,7 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
       const rows = (groupMaterials ?? [])
         .filter((material) => {
           if (selectionMode === "selected_categories") {
-            return selectedMaterialCategories.includes(materialCategoryLabel(material.material_category));
+            return selectedMaterialCategories.includes(materialCategoryLabel(material));
           }
 
           return selectedMaterialIds.includes(material.id);
@@ -2314,7 +2314,7 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
   if (selectionMode !== "full_group") {
     const { data: groupMaterials, error: materialsError } = await supabase
       .from("brand_materials")
-      .select("id,material_category")
+      .select("id,material_category,material_collection")
       .eq("material_group_id", existingLink.material_group_id)
       .eq("is_active", true);
 
@@ -2326,7 +2326,7 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
     const rows = (groupMaterials ?? [])
       .filter((material) => {
         if (selectionMode === "selected_categories") {
-          return selectedMaterialCategories.includes(materialCategoryLabel(material.material_category));
+          return selectedMaterialCategories.includes(materialCategoryLabel(material));
         }
 
         return selectedMaterialIds.includes(material.id);
