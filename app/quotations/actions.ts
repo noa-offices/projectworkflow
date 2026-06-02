@@ -4252,6 +4252,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const usesModularPricing = modularRows.length > 0;
   const configuredDimensionInput = optionalTextValue(formData, "configured_dimension");
   const configuredSpecificationInput = optionalTextValue(formData, "configured_specification");
+  const finalSpecificationWasEdited = optionalTextValue(formData, "final_specification_was_edited") === "true";
+  const finalSpecificationOverrideInput = optionalTextValue(formData, "final_specification_override");
   const workstationLayoutTypeInput = optionalTextValue(formData, "workstation_layout_type");
   const selectedCategory =
     textValue(formData, usesModularPricing ? "modular_pricing_category" : "category_pricing_category") ||
@@ -4659,7 +4661,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         }
       : template,
   });
-  const specificationSnapshot = resolveProductSpecificationSnapshot({
+  const specificationSnapshot = (finalSpecificationWasEdited ? finalSpecificationOverrideInput : null) ?? resolveProductSpecificationSnapshot({
     companyStyleSpecification,
     selectedCategorySpecification:
       (derivedDesking ? configuredWorkstationSpecification : null) ??

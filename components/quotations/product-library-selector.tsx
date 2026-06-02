@@ -25,6 +25,7 @@ import {
   standardCategoryPriceColumns as groupedCategoryPriceColumns,
 } from "@/lib/products/category-pricing-groups";
 import {
+  modularItemPricingGroups,
   modularItemPricingRows,
   modularPricingDefaultsFromRows,
 } from "@/lib/products/modular-pricing";
@@ -440,6 +441,27 @@ function activeModularRows(rows?: CategoryPricingRow[] | null) {
     .filter((row) => row.is_active !== false)
     .filter((row) => row.variant_name || row.display_name || row.dimension || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
+}
+
+function activeModularGroups(rows?: CategoryPricingRow[] | null) {
+  return modularItemPricingGroups(rows)
+    .map((group, groupIndex) => {
+      const sourceGroup = group as CategoryPricingRow;
+
+      return {
+      id: sourceGroup.id ?? `modular-group-${groupIndex}`,
+      group_name: sourceGroup.group_name?.trim() || "Modular Items",
+      is_active: sourceGroup.is_active !== false,
+      sort_order: numberValue(sourceGroup.sort_order, groupIndex),
+      items: (sourceGroup.items ?? [])
+        .filter((row) => row.is_active !== false)
+        .filter((row) => row.variant_name || row.display_name || row.dimension || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
+        .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order)),
+    };
+  })
+    .filter((group) => group.is_active !== false)
+    .filter((group) => group.items.length > 0)
+    .sort((left, right) => left.sort_order - right.sort_order);
 }
 
 function pricingDisplayName(row?: { display_name?: string; variant_name?: string } | null) {
@@ -925,6 +947,8 @@ export function ProductLibrarySelector({
   const [selectedModularQuantities, setSelectedModularQuantities] = useState<Record<string, Record<string, number>>>({});
   const [configuredDimensions, setConfiguredDimensions] = useState<Record<string, string>>({});
   const [configuredSpecifications, setConfiguredSpecifications] = useState<Record<string, string>>({});
+  const [finalSpecifications, setFinalSpecifications] = useState<Record<string, string>>({});
+  const [finalSpecificationEditedByTemplate, setFinalSpecificationEditedByTemplate] = useState<Record<string, boolean>>({});
   const [selectedWorkstationLayouts, setSelectedWorkstationLayouts] = useState<Record<string, string>>({});
   const [pricingAccessoryQuantities, setPricingAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [linkedProductInstancesByLinkId, setLinkedProductInstancesByLinkId] = useState<Record<string, LinkedProductInstance[]>>({});
@@ -1375,7 +1399,8 @@ export function ProductLibrarySelector({
                     categoryGroups[0] ??
                     null;
                   const categoryRows = (selectedCategoryGroup?.items ?? []).filter((row) => row.is_active !== false);
-                  const modularRows = activeModularRows(template.category_pricing);
+                  const modularGroups = activeModularGroups(template.category_pricing);
+                  const modularRows = modularGroups.flatMap((group) => group.items);
                   const modularDefaults = modularPricingDefaultsFromRows(template.category_pricing);
                   const accessoryGroups = activeAccessoryRows(template.accessory_pricing);
                   const templateLinkedFamilies = linkedFamiliesByParent.get(template.id) ?? [];
@@ -1409,20 +1434,22 @@ export function ProductLibrarySelector({
                   const selectedCategoryPrice = selectedCategoryRow
                     ? numberValue(selectedCategoryRow.prices?.[selectedFabricCategory])
                     : 0;
-                  const selectedModularItems = modularRows
-                    .map((row) => {
+                  const selectedModularItems = modularGroups
+                    .flatMap((group) => group.items.map((row) => {
                       const id = row.id ?? row.variant_name ?? row.display_name ?? "";
                       const qty = Math.max(0, Math.trunc(numberValue(templateModularQuantities[id])));
                       const price = numberValue(row.prices?.[selectedFabricCategory]);
 
                       return {
+                        groupId: group.id,
+                        groupName: group.group_name,
                         id,
                         qty,
                         row,
                         total: qty * price,
                         unitPrice: price,
                       };
-                    })
+                    }))
                     .filter((line) => line.qty > 0);
                   const groupedOptions = new Map<string, ProductLibraryComponent[]>();
                   const templateSelections = selectedOptions[template.id] ?? {};
@@ -1445,8 +1472,14 @@ export function ProductLibrarySelector({
                   const configuredDimension = usesModularPricing
                     ? configuredDimensions[template.id] ?? modularDefaults.defaultDimension ?? ""
                     : configuredDimensions[template.id] ?? selectedSizeRow?.default_dimension ?? selectedSizeRow?.label ?? "";
-                  const configuredSpecification = usesWorkstationFlow
-                    ? configuredSpecifications[template.id] ?? selectedSizeRow?.specification ?? template.default_specification ?? template.description ?? ""
+                  const configuredSpecification = usesWorkstationFlow || usesModularPricing
+                    ? configuredSpecifications[template.id] ??
+                      (usesWorkstationFlow
+                        ? selectedSizeRow?.specification
+                        : modularDefaults.defaultSpecification) ??
+                      template.default_specification ??
+                      template.description ??
+                      ""
                     : "";
                   const selectedWorkstationLayout = usesWorkstationFlow
                     ? (
@@ -1921,7 +1954,7 @@ export function ProductLibrarySelector({
                     accessorySnapshots,
                     linkedProductSnapshots,
                     primarySpecification:
-                      (usesWorkstationFlow ? configuredSpecification : null) ??
+                      (usesWorkstationFlow || usesModularPricing ? configuredSpecification : null) ??
                       (usesModularPricing ? modularDefaults.defaultSpecification : null) ??
                       selectedCategoryRow?.specification ??
                       selectedVariantRow?.specification ??
@@ -1939,7 +1972,7 @@ export function ProductLibrarySelector({
                   const localSpecification = resolveProductSpecificationSnapshot({
                     companyStyleSpecification,
                     selectedCategorySpecification:
-                      (usesWorkstationFlow ? configuredSpecification : null) ??
+                      (usesWorkstationFlow || usesModularPricing ? configuredSpecification : null) ??
                       (usesModularPricing ? modularDefaults.defaultSpecification : null) ??
                       selectedCategoryRow?.specification ??
                       null,
@@ -1963,6 +1996,15 @@ export function ProductLibrarySelector({
                     selectedVariantDimension: selectedVariantRow?.dimension,
                     selectedWorkstationVariantDimension: selectedWorkstationVariantRow?.dimension ?? null,
                   });
+                  const generatedFinalSpecification = [
+                    localSpecification || null,
+                    localDimension ? `Dimension: ${localDimension}` : null,
+                  ].filter(Boolean).join("\n");
+                  const finalSpecificationWasEdited = Boolean(finalSpecificationEditedByTemplate[template.id]);
+                  const finalSpecification = finalSpecificationWasEdited
+                    ? (finalSpecifications[template.id] ?? generatedFinalSpecification)
+                    : generatedFinalSpecification;
+                  const savedFinalSpecification = finalSpecificationWasEdited ? finalSpecification : localSpecification;
                   const selectedSupplierPriceListCode =
                     (usesModularPricing
                       ? selectedModularItems
@@ -1983,6 +2025,8 @@ export function ProductLibrarySelector({
                     null;
                   const modularItemSnapshots = selectedModularItems.map((line) => ({
                     item_type: "modular_item",
+                    group_id: line.groupId,
+                    group_name: line.groupName,
                     label: pricingDisplayName(line.row) || line.row.variant_name || "Modular item",
                     item_name: pricingDisplayName(line.row) || line.row.variant_name || "Modular item",
                     selected_category: selectedFabricCategory,
@@ -2012,10 +2056,10 @@ export function ProductLibrarySelector({
                       supplier_name: supplierNameSnapshot,
                       supplier: supplierNameSnapshot,
                       supplier_price_list_code: selectedSupplierPriceListCode,
-                      specification: localSpecification,
+                      specification: savedFinalSpecification,
                       description: template.description ?? null,
                       default_specification:
-                        (usesWorkstationFlow ? configuredSpecification : null) ??
+                        (usesWorkstationFlow || usesModularPricing ? configuredSpecification : null) ??
                         (usesModularPricing ? modularDefaults.defaultSpecification : null) ??
                         template.default_specification ??
                         null,
@@ -2138,7 +2182,7 @@ export function ProductLibrarySelector({
                     category_name_snapshot: [mainCategory, subCategory].filter(Boolean).join(" / ") || null,
                     specified_image_url_snapshot: null,
                     proposed_image_url_snapshot: localSelectedImagePath || null,
-                    specification_snapshot: localSpecification,
+                    specification_snapshot: savedFinalSpecification,
                     finish_selections_snapshot: selectedFinishes,
                     selected_options_snapshot: [
                       ...(usesModularPricing ? modularItemSnapshots : selectedOptionSnapshots),
@@ -2237,7 +2281,7 @@ export function ProductLibrarySelector({
                   }));
                   const modularSummary = selectedModularItems.map((line) => ({
                     currency: normalizeCurrency(line.row.currency ?? rowCurrency),
-                    detail: [line.row.supplier_price_list_code, line.row.dimension].filter(Boolean).join(" / ") || null,
+                    detail: [line.groupName, line.row.supplier_price_list_code, line.row.dimension].filter(Boolean).join(" / ") || null,
                     label: pricingDisplayName(line.row) || line.row.variant_name || "Modular item",
                     supplierCode: line.row.supplier_price_list_code ?? null,
                     qty: line.qty,
@@ -2290,11 +2334,6 @@ export function ProductLibrarySelector({
                       amount: quotationMoneyValue(amount),
                       currency: normalizeCurrency(currency),
                     }));
-                  const specificationPreviewLines = [
-                    localSpecification || null,
-                    localDimension ? `Dimension: ${localDimension}` : null,
-                  ].filter(Boolean);
-
                   return (
                     <article
                       key={template.id}
@@ -2684,55 +2723,68 @@ export function ProductLibrarySelector({
                                 />
                               </label>
                             </div>
-                            {modularDefaults.defaultSpecification ? (
-                              <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600">
-                                <p className="font-semibold text-zinc-950">Default modular specification</p>
-                                <p className="mt-1 whitespace-pre-wrap">{modularDefaults.defaultSpecification}</p>
-                              </div>
-                            ) : null}
+                            <label className="block">
+                              <span className="text-[10px] font-bold uppercase text-zinc-500">Modular Specification</span>
+                              <textarea
+                                value={configuredSpecification}
+                                onChange={(event) => setConfiguredSpecifications((current) => ({ ...current, [template.id]: event.target.value }))}
+                                placeholder="Enter modular item specification for this quotation item"
+                                rows={4}
+                                className="mt-1 min-h-[96px] w-full border border-zinc-300 bg-white px-3 py-2 text-xs outline-none focus:border-emerald-800"
+                              />
+                            </label>
                             <div className="space-y-2">
-                              {modularRows.map((row) => {
-                                const modularRowId = row.id ?? row.variant_name ?? row.display_name ?? "";
-                                const modularQty = templateModularQuantities[modularRowId] ?? 0;
-                                const modularUnitPrice = numberValue(row.prices?.[selectedFabricCategory]);
-                                return (
-                                  <div key={modularRowId} className="grid gap-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 md:grid-cols-[minmax(0,1fr)_100px]">
-                                    <div className="min-w-0">
-                                      <p className="font-semibold text-zinc-950">
-                                        {pricingDisplayName(row) || row.variant_name || "Modular item"}
-                                      </p>
-                                      <div className="mt-1 space-y-1 text-xs leading-5 text-zinc-600">
-                                        {row.variant_name && pricingDisplayName(row) !== row.variant_name ? (
-                                          <p>Module code: {row.variant_name}</p>
-                                        ) : null}
-                                        {row.supplier_price_list_code ? <p>Supplier code: {row.supplier_price_list_code}</p> : null}
-                                        {row.dimension ? <p>Dimension: {row.dimension}</p> : null}
-                                        <p>Price: {formatMoney(row.currency ?? template.currency, modularUnitPrice)}</p>
-                                        {row.specification ? <p>{row.specification}</p> : null}
-                                      </div>
-                                    </div>
-                                    <label className="block">
-                                      <span className="text-[10px] font-bold uppercase text-zinc-500">Qty</span>
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        step={1}
-                                        value={modularQty}
-                                        onChange={(event) =>
-                                          setSelectedModularQuantities((current) => ({
-                                            ...current,
-                                            [template.id]: {
-                                              ...(current[template.id] ?? {}),
-                                              [modularRowId]: Math.max(0, Math.trunc(Number(event.target.value) || 0)),
-                                            },
-                                          }))
-                                        }
-                                        className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-right text-xs outline-none focus:border-emerald-800"
-                                      />
-                                    </label>
+                              {modularGroups.map((group) => (
+                                <div key={group.id} className="rounded-xl border border-zinc-200 bg-white p-3">
+                                  <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                                    {group.group_name || "Modular Items"}
+                                  </p>
+                                  <div className="mt-2 space-y-2">
+                                    {group.items.map((row) => {
+                                      const modularRowId = row.id ?? row.variant_name ?? row.display_name ?? "";
+                                      const modularQty = templateModularQuantities[modularRowId] ?? 0;
+                                      const modularUnitPrice = numberValue(row.prices?.[selectedFabricCategory]);
+                                      return (
+                                        <div key={modularRowId} className="grid gap-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 md:grid-cols-[minmax(0,1fr)_100px]">
+                                          <div className="min-w-0">
+                                            <p className="font-semibold text-zinc-950">
+                                              {pricingDisplayName(row) || row.variant_name || "Modular item"}
+                                            </p>
+                                            <div className="mt-1 space-y-1 text-xs leading-5 text-zinc-600">
+                                              {row.variant_name && pricingDisplayName(row) !== row.variant_name ? (
+                                                <p>Module code: {row.variant_name}</p>
+                                              ) : null}
+                                              {row.supplier_price_list_code ? <p>Supplier code: {row.supplier_price_list_code}</p> : null}
+                                              {row.dimension ? <p>Dimension: {row.dimension}</p> : null}
+                                              <p>Price: {formatMoney(row.currency ?? template.currency, modularUnitPrice)}</p>
+                                              {row.specification ? <p>{row.specification}</p> : null}
+                                            </div>
+                                          </div>
+                                          <label className="block">
+                                            <span className="text-[10px] font-bold uppercase text-zinc-500">Qty</span>
+                                            <input
+                                              type="number"
+                                              min={0}
+                                              step={1}
+                                              value={modularQty}
+                                              onChange={(event) =>
+                                                setSelectedModularQuantities((current) => ({
+                                                  ...current,
+                                                  [template.id]: {
+                                                    ...(current[template.id] ?? {}),
+                                                    [modularRowId]: Math.max(0, Math.trunc(Number(event.target.value) || 0)),
+                                                  },
+                                                }))
+                                              }
+                                              className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-right text-xs outline-none focus:border-emerald-800"
+                                            />
+                                          </label>
+                                        </div>
+                                      );
+                                    })}
                                   </div>
-                                );
-                              })}
+                                </div>
+                              ))}
                             </div>
                           </div>
                         ) : null}
@@ -3745,6 +3797,9 @@ export function ProductLibrarySelector({
                             <p className="font-semibold text-zinc-950">Modular configuration</p>
                             <p>Fabric / Category: {selectedFabricCategory}</p>
                             {localDimension ? <p>Configured Dimension: {localDimension}</p> : null}
+                            {configuredSpecification ? (
+                              <p className="whitespace-pre-wrap">Specification: {configuredSpecification}</p>
+                            ) : null}
                             {modularSummary.length ? (
                               <div className="mt-2 space-y-1">
                                 {modularSummary.map((line) => (
@@ -3971,19 +4026,54 @@ export function ProductLibrarySelector({
                               <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
                                 <p className="font-bold uppercase text-zinc-500">Final Specification</p>
                                 <div className="space-y-1 rounded-lg border border-zinc-200 bg-white p-3">
-                                <p className="font-semibold text-zinc-950">{templateSelectionName(template)}</p>
-                                {template.internal_selection_name ? (
-                                  <p className="text-zinc-500">Quote name: {template.template_name}</p>
-                                ) : null}
-                                {specificationPreviewLines.length ? (
-                                  specificationPreviewLines.map((line) => (
-                                    <p key={line}>{line}</p>
-                                  ))
-                                ) : (
-                                  <p className="text-zinc-500">No specification details yet.</p>
-                                )}
+                                  <p className="font-semibold text-zinc-950">{templateSelectionName(template)}</p>
+                                  {template.internal_selection_name ? (
+                                    <p className="text-zinc-500">Quote name: {template.template_name}</p>
+                                  ) : null}
+                                  <textarea
+                                    name="final_specification_override"
+                                    value={finalSpecification}
+                                    onChange={(event) => {
+                                      setFinalSpecifications((current) => ({
+                                        ...current,
+                                        [template.id]: event.target.value,
+                                      }));
+                                      setFinalSpecificationEditedByTemplate((current) => ({
+                                        ...current,
+                                        [template.id]: true,
+                                      }));
+                                    }}
+                                    placeholder="Enter final specification for this quotation item"
+                                    rows={8}
+                                    className="mt-2 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs leading-5 text-zinc-700 outline-none focus:border-emerald-800"
+                                  />
+                                  {finalSpecificationWasEdited ? (
+                                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-amber-700">
+                                      <p>Specification was manually edited. Review if selections changed.</p>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setFinalSpecifications((current) => ({
+                                            ...current,
+                                            [template.id]: generatedFinalSpecification,
+                                          }));
+                                          setFinalSpecificationEditedByTemplate((current) => ({
+                                            ...current,
+                                            [template.id]: false,
+                                          }));
+                                        }}
+                                        className="font-semibold text-emerald-900 transition hover:text-emerald-700"
+                                      >
+                                        Reset to generated specification
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <p className="text-[11px] text-zinc-500">
+                                      This only updates the current quotation item. Template specification stays unchanged.
+                                    </p>
+                                  )}
+                                </div>
                               </div>
-                            </div>
                             <div className="sticky bottom-0 -mx-4 -mb-4 mt-1 border-t border-zinc-200 bg-white px-4 py-4">
                               {isLocalMode ? (
                                 <button
@@ -4025,6 +4115,11 @@ export function ProductLibrarySelector({
                           <input type="hidden" name="quotation_id" value={quotationId} />
                           <input type="hidden" name="section_id" value={sectionId} />
                           <input type="hidden" name="template_id" value={template.id} />
+                          <input
+                            type="hidden"
+                            name="final_specification_was_edited"
+                            value={finalSpecificationWasEdited ? "true" : "false"}
+                          />
                           <input
                             type="hidden"
                             name="selected_template_image_path"
@@ -4071,6 +4166,7 @@ export function ProductLibrarySelector({
                             <>
                               <input type="hidden" name="modular_pricing_category" value={selectedFabricCategory} />
                               <input type="hidden" name="configured_dimension" value={configuredDimension} />
+                              <input type="hidden" name="configured_specification" value={configuredSpecification} />
                               {selectedModularItems.map((line) => (
                                 <input
                                   key={line.id}
