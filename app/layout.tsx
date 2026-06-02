@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Suspense } from "react";
+import { GlobalLoadingIndicator } from "@/components/global-loading-indicator";
 import { PreserveUiState } from "@/components/preserve-ui-state";
 import { PwaServiceWorkerRegister } from "@/components/pwa-service-worker-register";
 import "./globals.css";
@@ -18,7 +19,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   applicationName: "ProjectWorkflow",
   title: "ProjectWorkflow",
-  description: "Quotation + Specification Workflow",
+  description: "Quotation • Procurement • Project Workflow",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -67,6 +68,9 @@ export default function RootLayout({
           <PreserveUiState />
         </Suspense>
         <PwaServiceWorkerRegister />
+        <Suspense fallback={null}>
+          <GlobalLoadingIndicator />
+        </Suspense>
         {children}
       </body>
     </html>

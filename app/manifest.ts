@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "ProjectWorkflow",
     short_name: "ProjectWorkflow",
-    description: "Quotation + Specification Workflow",
+    description: "Quotation • Procurement • Project Workflow",
     start_url: "/dashboard",
     scope: "/",
     display: "standalone",

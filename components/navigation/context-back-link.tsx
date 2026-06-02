@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
+import { startGlobalLoading } from "@/lib/global-loading";
 
 type ContextBackLinkProps = {
   fallbackHref: string;
@@ -21,10 +22,12 @@ export function ContextBackLink({
       type="button"
       onClick={() => {
         if (window.history.length > 1) {
+          startGlobalLoading("navigation");
           router.back();
           return;
         }
 
+        startGlobalLoading("navigation");
         router.push(fallbackHref);
       }}
       className={

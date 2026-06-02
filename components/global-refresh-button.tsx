@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { startGlobalLoading, stopGlobalLoading } from "@/lib/global-loading";
 
 type RefreshStatus = "idle" | "updated";
 
@@ -31,6 +32,7 @@ export function GlobalRefreshButton() {
     }
 
     wasPendingRef.current = false;
+    stopGlobalLoading();
     setStatus("updated");
     resetTimerRef.current = window.setTimeout(() => {
       setStatus("idle");
@@ -56,6 +58,7 @@ export function GlobalRefreshButton() {
         }
 
         setStatus("idle");
+        startGlobalLoading("action");
         startTransition(() => {
           router.refresh();
         });
