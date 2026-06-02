@@ -8,8 +8,9 @@ import {
   standardCategoryPriceColumns,
 } from "@/lib/products/category-pricing-groups";
 import {
+  MODULAR_GROUP_PRICING_TYPE,
   MODULAR_ITEM_PRICING_TYPE,
-  modularItemPricingRows,
+  modularItemPricingGroups,
   modularPricingDefaultsFromRows,
 } from "@/lib/products/modular-pricing";
 import { resolveDefaultPricingCurrency } from "@/components/products/pricing-default-currency";
@@ -965,17 +966,37 @@ export function ModularItemPricingTable({
   rows?: CategoryPricingRow[] | null;
   templateCurrency?: string | null;
 }) {
-  const initialRows = useMemo(
-    () => modularItemPricingRows(rows).map(normalizeCategory),
+  const initialGroups = useMemo(
+    () =>
+      modularItemPricingGroups(rows).map((group, groupIndex) => {
+        const sourceGroup = group as CategoryPricingRow;
+
+        return {
+        ...sourceGroup,
+        id: sourceGroup.id || `modular-group-${groupIndex}`,
+        group_name: sourceGroup.group_name?.trim() || "Modular Items",
+        is_active: sourceGroup.is_active !== false,
+        pricing_type: MODULAR_GROUP_PRICING_TYPE,
+        sort_order: Number.isFinite(Number(sourceGroup.sort_order)) ? Number(sourceGroup.sort_order) : groupIndex,
+        items: (sourceGroup.items ?? []).map((item, itemIndex) =>
+          normalizeCategory({
+            ...item,
+            pricing_type: MODULAR_ITEM_PRICING_TYPE,
+          }, itemIndex),
+        ),
+      };
+    }),
     [rows],
   );
   const modularDefaults = useMemo(() => modularPricingDefaultsFromRows(rows), [rows]);
-  const [tableRows, setTableRows] = useState<CategoryPricingRow[]>(() => initialRows);
+  const [groups, setGroups] = useState<CategoryPricingRow[]>(() => initialGroups);
   const [priceCategories, setPriceCategories] = useState<string[]>(() =>
     Array.from(new Set([
       ...defaultPriceCategories,
-      ...initialRows.flatMap((row) =>
-        Object.keys(row.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean),
+      ...initialGroups.flatMap((group) =>
+        (group.items ?? []).flatMap((row) =>
+          Object.keys(row.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean),
+        ),
       ),
     ])),
   );
@@ -987,79 +1008,104 @@ export function ModularItemPricingTable({
   const previousDefaultCurrencyRef = useRef(
     resolveDefaultModularPricingCurrency({
       brandDefaultCurrency,
-      existingRows: initialRows,
+      existingRows: initialGroups.flatMap((group) => group.items ?? []),
       savedTemplateCurrency: templateCurrency,
     }),
   );
   const serialized = useMemo(
     () =>
       JSON.stringify(
-        tableRows.map((row, index) =>
-          normalizeCategory({
-            ...categoryPricingRowWithColumns(row, priceCategories),
-            pricing_type: MODULAR_ITEM_PRICING_TYPE,
-          }, index),
-        ),
+        groups.map((group, groupIndex) => ({
+          id: (group as CategoryPricingRow).id || `modular-group-${groupIndex}`,
+          group_name: (group as CategoryPricingRow).group_name?.trim() || "Modular Items",
+          is_active: (group as CategoryPricingRow).is_active !== false,
+          pricing_type: MODULAR_GROUP_PRICING_TYPE,
+          sort_order: Number.isFinite(Number((group as CategoryPricingRow).sort_order))
+            ? Number((group as CategoryPricingRow).sort_order)
+            : groupIndex,
+          items: (group.items ?? []).map((row, index) =>
+            normalizeCategory({
+              ...categoryPricingRowWithColumns(row, priceCategories),
+              pricing_type: MODULAR_ITEM_PRICING_TYPE,
+            }, index),
+          ),
+        })),
       ),
-    [priceCategories, tableRows],
+    [groups, priceCategories],
   );
   const serializedDefaults = useMemo(
     () =>
       JSON.stringify({
         modular_default_dimension: defaultDimension.trim() || null,
         modular_default_specification: defaultSpecification.trim() || null,
-      }),
+    }),
     [defaultDimension, defaultSpecification],
   );
 
-  function update(index: number, patch: Partial<CategoryPricingRow>) {
-    setTableRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
+  function updateGroup(groupIndex: number, patch: Partial<CategoryPricingRow>) {
+    setGroups((current) => current.map((group, index) => index === groupIndex ? { ...group, ...patch } : group));
+  }
+
+  function updateRow(groupIndex: number, rowIndex: number, patch: Partial<CategoryPricingRow>) {
+    setGroups((current) => current.map((group, currentGroupIndex) =>
+      currentGroupIndex === groupIndex
+        ? {
+            ...group,
+            items: (group.items ?? []).map((row, currentRowIndex) =>
+              currentRowIndex === rowIndex ? { ...row, ...patch } : row,
+            ),
+          }
+        : group,
+    ));
   }
 
   useEffect(() => {
     const nextDefaultCurrency = resolveDefaultModularPricingCurrency({
       brandDefaultCurrency,
-      existingRows: tableRows,
+      existingRows: groups.flatMap((group) => group.items ?? []),
       savedTemplateCurrency: templateCurrency,
     });
 
-    setTableRows((current) => {
+    setGroups((current) => {
       let didChange = false;
-      const nextRows = current.map((row) => {
-        if (userEditedCurrencyRowIds.current.has(row.id ?? "")) {
-          return row;
-        }
+      const nextGroups = current.map((group) => ({
+        ...group,
+        items: (group.items ?? []).map((row) => {
+          if (userEditedCurrencyRowIds.current.has(row.id ?? "")) {
+            return row;
+          }
 
-        if (rowHasMeaningfulValues(row)) {
-          return row;
-        }
+          if (rowHasMeaningfulValues(row)) {
+            return row;
+          }
 
-        const currentCurrency = row.currency?.trim() ? normalizeCurrency(row.currency) : null;
-        const previousDefaultCurrency = previousDefaultCurrencyRef.current;
-        if (
-          currentCurrency &&
-          currentCurrency !== previousDefaultCurrency &&
-          currentCurrency !== defaultCurrency
-        ) {
-          return row;
-        }
+          const currentCurrency = row.currency?.trim() ? normalizeCurrency(row.currency) : null;
+          const previousDefaultCurrency = previousDefaultCurrencyRef.current;
+          if (
+            currentCurrency &&
+            currentCurrency !== previousDefaultCurrency &&
+            currentCurrency !== defaultCurrency
+          ) {
+            return row;
+          }
 
-        if (currentCurrency === nextDefaultCurrency) {
-          return row;
-        }
+          if (currentCurrency === nextDefaultCurrency) {
+            return row;
+          }
 
-        didChange = true;
-        return {
-          ...row,
-          currency: nextDefaultCurrency,
-        };
-      });
+          didChange = true;
+          return {
+            ...row,
+            currency: nextDefaultCurrency,
+          };
+        }),
+      }));
 
-      return didChange ? nextRows : current;
+      return didChange ? nextGroups : current;
     });
 
     previousDefaultCurrencyRef.current = nextDefaultCurrency;
-  }, [brandDefaultCurrency, tableRows, templateCurrency]);
+  }, [brandDefaultCurrency, groups, templateCurrency]);
 
   function addPriceCategoryColumn() {
     const trimmedName = newCategoryName.trim();
@@ -1073,33 +1119,57 @@ export function ModularItemPricingTable({
     }
 
     setPriceCategories((current) => [...current, normalizedCategory]);
-    setTableRows((current) =>
-      current.map((row) => ({
-        ...row,
-        prices: {
-          ...normalizedPriceMap(row.prices),
-          [normalizedCategory]: numberValue(row.prices?.[normalizedCategory]),
-        },
+    setGroups((current) =>
+      current.map((group) => ({
+        ...group,
+        items: (group.items ?? []).map((row) => ({
+          ...row,
+          prices: {
+            ...normalizedPriceMap(row.prices),
+            [normalizedCategory]: numberValue(row.prices?.[normalizedCategory]),
+          },
+        })),
       })),
     );
     setNewCategoryName("");
     setShowCategoryCreator(false);
   }
 
-  function addRow(event: MouseEvent<HTMLButtonElement>) {
+  function addGroup() {
+    setGroups((current) => [
+      ...current,
+      {
+        id: idFor("modular-group", current.length),
+        group_name: "Modular Items",
+        is_active: true,
+        pricing_type: MODULAR_GROUP_PRICING_TYPE,
+        sort_order: current.length,
+        items: [],
+      },
+    ]);
+  }
+
+  function addRow(groupIndex: number, event: MouseEvent<HTMLButtonElement>) {
     const currency = resolveDefaultModularPricingCurrency({
       brandDefaultCurrency,
-      existingRows: tableRows,
+      existingRows: groups.flatMap((group) => group.items ?? []),
       savedTemplateCurrency: templateCurrency,
       trigger: event.currentTarget,
     });
-    setTableRows((current) => [
-      ...current,
-      {
-        ...newCategoryPricingRow(current.length, priceCategories, currency),
-        pricing_type: MODULAR_ITEM_PRICING_TYPE,
-      },
-    ]);
+    setGroups((current) => current.map((group, index) =>
+      index === groupIndex
+        ? {
+            ...group,
+            items: [
+              ...(group.items ?? []),
+              {
+                ...newCategoryPricingRow((group.items ?? []).length, priceCategories, currency),
+                pricing_type: MODULAR_ITEM_PRICING_TYPE,
+              },
+            ],
+          }
+        : group,
+    ));
   }
 
   return (
@@ -1162,52 +1232,94 @@ export function ModularItemPricingTable({
           )}
         </div>
 
-        {tableRows.length ? (
-          <div className="overflow-x-auto rounded-md border border-zinc-200 bg-white">
-            <table className="min-w-[1960px] w-full text-left text-xs">
-              <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
-                <tr>
-                  <th className="px-2 py-2">Module name</th>
-                  <th className="px-2 py-2">Display name</th>
-                  <th className="px-2 py-2">Supplier / Price List Code</th>
-                  <th className="px-2 py-2">Dimension</th>
-                  {priceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
-                  <th className="px-2 py-2">Currency</th>
-                  <th className="px-2 py-2">Specification note</th>
-                  <th className="px-2 py-2">Active</th>
-                  <th className="px-2 py-2">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tableRows.map((row, index) => {
-                  const normalizedRow = categoryPricingRowWithColumns(row, priceCategories);
-                  return (
-                    <tr key={row.id ?? index} className="border-t border-zinc-100 align-top">
-                      <td className="px-2 py-2 align-top"><input value={normalizedRow.variant_name ?? ""} onChange={(e) => update(index, { variant_name: e.target.value })} className="h-10 min-w-[160px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
-                      <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.display_name ?? ""} onChange={(value) => update(index, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
-                      <td className="px-2 py-2 align-top"><input value={normalizedRow.supplier_price_list_code ?? ""} onChange={(e) => update(index, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
-                      <td className="px-2 py-2 align-top"><input value={normalizedRow.dimension ?? ""} onChange={(e) => update(index, { dimension: e.target.value })} className="h-10 min-w-[140px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
-                      {priceCategories.map((category) => <td key={category} className="px-2 py-2 align-top"><input type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => update(index, { prices: { ...normalizedRow.prices, [category]: Number(e.target.value) } })} className="h-10 min-w-[116px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>)}
-                      <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={normalizedRow.currency} onChange={(currency) => {
-                        userEditedCurrencyRowIds.current.add(normalizedRow.id ?? `${index}`);
-                        update(index, { currency });
-                      }} /></div></td>
-                      <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => update(index, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /></td>
-                      <td className="px-2 py-2 align-top"><input type="checkbox" checked={normalizedRow.is_active !== false} onChange={(e) => update(index, { is_active: e.target.checked })} /></td>
-                      <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => setTableRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="text-xs font-semibold text-red-700">Remove</button></div></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+        {groups.length ? (
+          <div className="space-y-4">
+            {groups.map((group, groupIndex) => (
+              <div key={group.id ?? groupIndex} className="rounded-md border border-zinc-200 bg-white p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="grid flex-1 gap-3 md:grid-cols-[minmax(220px,1fr)_auto] md:items-end">
+                    <label className="block">
+                      <span className="text-xs font-semibold uppercase text-zinc-500">Modular item group</span>
+                      <input
+                        value={group.group_name ?? ""}
+                        onChange={(event) => updateGroup(groupIndex, { group_name: event.target.value })}
+                        className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-800"
+                      />
+                    </label>
+                    <label className="inline-flex items-center gap-2 text-xs font-semibold uppercase text-zinc-500">
+                      <input
+                        type="checkbox"
+                        checked={group.is_active !== false}
+                        onChange={(event) => updateGroup(groupIndex, { is_active: event.target.checked })}
+                      />
+                      Active
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setGroups((current) => current.filter((_, index) => index !== groupIndex))}
+                    className="text-xs font-semibold text-red-700"
+                  >
+                    Remove group
+                  </button>
+                </div>
+                {(group.items ?? []).length ? (
+                  <div className="mt-4 overflow-x-auto rounded-md border border-zinc-200 bg-white">
+                    <table className="min-w-[1960px] w-full text-left text-xs">
+                      <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
+                        <tr>
+                          <th className="px-2 py-2">Module name</th>
+                          <th className="px-2 py-2">Display name</th>
+                          <th className="px-2 py-2">Supplier / Price List Code</th>
+                          <th className="px-2 py-2">Dimension</th>
+                          {priceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
+                          <th className="px-2 py-2">Currency</th>
+                          <th className="px-2 py-2">Specification note</th>
+                          <th className="px-2 py-2">Active</th>
+                          <th className="px-2 py-2">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(group.items ?? []).map((row, rowIndex) => {
+                          const normalizedRow = categoryPricingRowWithColumns(row, priceCategories);
+                          return (
+                            <tr key={row.id ?? rowIndex} className="border-t border-zinc-100 align-top">
+                              <td className="px-2 py-2 align-top"><input value={normalizedRow.variant_name ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { variant_name: e.target.value })} className="h-10 min-w-[160px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                              <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.display_name ?? ""} onChange={(value) => updateRow(groupIndex, rowIndex, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
+                              <td className="px-2 py-2 align-top"><input value={normalizedRow.supplier_price_list_code ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                              <td className="px-2 py-2 align-top"><input value={normalizedRow.dimension ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { dimension: e.target.value })} className="h-10 min-w-[140px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                              {priceCategories.map((category) => <td key={category} className="px-2 py-2 align-top"><input type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { prices: { ...normalizedRow.prices, [category]: Number(e.target.value) } })} className="h-10 min-w-[116px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>)}
+                              <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={normalizedRow.currency} onChange={(currency) => {
+                                userEditedCurrencyRowIds.current.add(normalizedRow.id ?? `${groupIndex}-${rowIndex}`);
+                                updateRow(groupIndex, rowIndex, { currency });
+                              }} /></div></td>
+                              <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => updateRow(groupIndex, rowIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /></td>
+                              <td className="px-2 py-2 align-top"><input type="checkbox" checked={normalizedRow.is_active !== false} onChange={(e) => updateRow(groupIndex, rowIndex, { is_active: e.target.checked })} /></td>
+                              <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => setGroups((current) => current.map((currentGroup, currentGroupIndex) => currentGroupIndex === groupIndex ? { ...currentGroup, items: (currentGroup.items ?? []).filter((_, index) => index !== rowIndex) } : currentGroup))} className="text-xs font-semibold text-red-700">Remove</button></div></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-md border border-dashed border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-500">
+                    <p>No modular item rows in this group yet.</p>
+                  </div>
+                )}
+                <button type="button" onClick={(event) => addRow(groupIndex, event)} className="mt-4 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">
+                  + Add modular item
+                </button>
+              </div>
+            ))}
           </div>
         ) : (
           <div className="rounded-md border border-dashed border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-500">
-            <p>No modular item pricing rows yet.</p>
+            <p>No modular item groups yet.</p>
           </div>
         )}
-        <button type="button" onClick={addRow} className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">
-          + Add modular item
+        <button type="button" onClick={addGroup} className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">
+          + Add modular item group
         </button>
       </div>
     </div>

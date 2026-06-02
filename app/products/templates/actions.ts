@@ -11,6 +11,7 @@ import {
   normalizeCategoryPriceLabel,
 } from "@/lib/products/category-pricing-groups";
 import {
+  MODULAR_GROUP_PRICING_TYPE,
   MODULAR_ITEM_PRICING_TYPE,
   MODULAR_META_PRICING_TYPE,
 } from "@/lib/products/modular-pricing";
@@ -943,7 +944,7 @@ function categoryPricingValue(formData: FormData) {
       : {};
     const sourceRows = [
       ...(Array.isArray(parsed) ? parsed : []),
-      ...(Array.isArray(parsedModular) ? parsedModular : []),
+      ...(Array.isArray(parsedModular) ? parsedModular.filter((row) => row?.pricing_type !== MODULAR_GROUP_PRICING_TYPE) : []),
     ];
 
     const normalizeCategoryRow = (row: Record<string, unknown>, index: number) => {
@@ -1017,6 +1018,25 @@ function categoryPricingValue(formData: FormData) {
         ),
     })).filter((group) => group.items.length || group.group_name);
 
+    const modularGroups = (Array.isArray(parsedModular) ? parsedModular : [])
+      .filter((row) => row?.pricing_type === MODULAR_GROUP_PRICING_TYPE)
+      .map((group, groupIndex) => ({
+        id: typeof group.id === "string" && group.id ? group.id : `modular-group-${groupIndex}`,
+        pricing_type: MODULAR_GROUP_PRICING_TYPE,
+        group_name: typeof group.group_name === "string" && group.group_name.trim()
+          ? group.group_name.trim()
+          : "Modular Items",
+        sort_order: Number.isFinite(Number(group.sort_order)) ? Number(group.sort_order) : groupIndex,
+        is_active: group.is_active !== false,
+        items: (Array.isArray(group.items) ? group.items : [])
+          .map((item, itemIndex) => normalizeCategoryRow(item as Record<string, unknown>, itemIndex))
+          .map((item) => ({ ...item, pricing_type: MODULAR_ITEM_PRICING_TYPE }))
+          .filter((row) =>
+            row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price > 0) || row.specification,
+          ),
+      }))
+      .filter((group) => (group.items?.length ?? 0) > 0 || group.group_name);
+
     const rows = sourceRows
       .map((row, index) => {
         return normalizeCategoryRow(row, index);
@@ -1057,7 +1077,7 @@ function categoryPricingValue(formData: FormData) {
       });
     }
 
-    return [...standardGroups, ...rows];
+    return [...standardGroups, ...modularGroups, ...rows];
   } catch {
     return [];
   }
