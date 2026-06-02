@@ -61,7 +61,7 @@ export type ProductTemplateMaterialGroupLink = {
   id: string;
   product_template_id: string;
   material_group_id: string;
-  selection_mode?: "full_group" | "selected_items";
+  selection_mode?: "full_group" | "selected_categories" | "selected_items";
   label_override: string | null;
   is_required: boolean;
   allow_multiple: boolean;
@@ -918,7 +918,7 @@ export function FinishSelectionsEditor({
             const linkedItemIds = linkedItemIdsByGroupLink.get(link.id) ?? new Set<string>();
             const groupMaterials = visibleMaterials
               .filter((material) => material.material_group_id === link.material_group_id)
-              .filter((material) => link.selection_mode !== "selected_items" || linkedItemIds.has(material.id));
+              .filter((material) => link.selection_mode === "full_group" || linkedItemIds.has(material.id));
             const label = link.label_override?.trim() || group?.group_name || "Material group";
             const selectedMaterialIds = new Set(
               finishes

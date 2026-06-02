@@ -203,7 +203,8 @@ function optionalNumberValue(formData: FormData, name: string) {
 }
 
 function selectionModeValue(formData: FormData) {
-  return textValue(formData, "selection_mode") === "selected_items" ? "selected_items" : "full_group";
+  const value = textValue(formData, "selection_mode");
+  return value === "selected_categories" || value === "selected_items" ? value : "full_group";
 }
 
 function selectedMaterialIdsValue(formData: FormData) {
@@ -213,6 +214,20 @@ function selectedMaterialIdsValue(formData: FormData) {
       .map((value) => (typeof value === "string" ? value.trim() : ""))
       .filter(Boolean),
   ));
+}
+
+function selectedMaterialCategoriesValue(formData: FormData) {
+  return Array.from(new Set(
+    formData
+      .getAll("material_category[]")
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean),
+  ));
+}
+
+function materialCategoryLabel(value?: string | null) {
+  const trimmed = value?.trim();
+  return trimmed || "Uncategorized";
 }
 
 function priceListUpdateStatusValue(formData: FormData) {
@@ -2089,6 +2104,7 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
   const materialGroupId = textValue(formData, "material_group_id");
   const selectionMode = selectionModeValue(formData);
   const selectedMaterialIds = selectedMaterialIdsValue(formData);
+  const selectedMaterialCategories = selectedMaterialCategoriesValue(formData);
   const payload = {
     product_template_id: productTemplateId,
     material_group_id: materialGroupId,
@@ -2110,12 +2126,41 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
   if (selectionMode === "selected_items" && selectedMaterialIds.length === 0) {
     redirectWithMessageToPath(redirectPath, "Select at least one finish for selected finishes only.");
   }
+  if (selectionMode === "selected_categories" && selectedMaterialCategories.length === 0) {
+    redirectWithMessageToPath(redirectPath, "Select at least one category for Select by category.");
+  }
 
-  const { data: link, error } = await supabase
+  const { data: existingLink, error: existingLinkError } = await supabase
     .from("product_template_material_groups")
-    .upsert(payload, { onConflict: "product_template_id,material_group_id" })
-    .select("id")
-    .single();
+    .select("id,is_active")
+    .eq("product_template_id", productTemplateId)
+    .eq("material_group_id", materialGroupId)
+    .maybeSingle();
+
+  if (existingLinkError) {
+    console.error("TEMPLATE MATERIAL GROUP EXISTING LOOKUP ERROR", existingLinkError.message);
+    redirectWithMessageToPath(redirectPath, "Material group link could not be checked.");
+  }
+
+  if (existingLink?.id && existingLink.is_active) {
+    redirectWithMessageToPath(
+      redirectPath,
+      "This material group is already linked. Edit the existing linked group card instead of adding it again.",
+    );
+  }
+
+  const { data: link, error } = existingLink?.id
+    ? await supabase
+      .from("product_template_material_groups")
+      .update(payload)
+      .eq("id", existingLink.id)
+      .select("id")
+      .single()
+    : await supabase
+      .from("product_template_material_groups")
+      .insert(payload)
+      .select("id")
+      .single();
 
   if (error) {
     console.error("TEMPLATE MATERIAL GROUP CREATE ERROR", error.message);
@@ -2133,31 +2178,40 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
       redirectWithMessageToPath(redirectPath, "Material group finishes could not be saved.");
     }
 
-    if (selectionMode === "selected_items") {
-      const { data: allowedMaterials, error: materialsError } = await supabase
+    if (selectionMode !== "full_group") {
+      const { data: groupMaterials, error: materialsError } = await supabase
         .from("brand_materials")
-        .select("id")
+        .select("id,material_category")
         .eq("material_group_id", materialGroupId)
-        .eq("is_active", true)
-        .in("id", selectedMaterialIds);
+        .eq("is_active", true);
 
       if (materialsError) {
         console.error("TEMPLATE MATERIAL GROUP ITEMS VALIDATE ERROR", materialsError.message);
         redirectWithMessageToPath(redirectPath, "Selected finishes could not be validated.");
       }
 
-      const allowedIds = new Set((allowedMaterials ?? []).map((material) => material.id as string));
-      const rows = selectedMaterialIds
-        .filter((id) => allowedIds.has(id))
-        .map((brandMaterialId, index) => ({
+      const rows = (groupMaterials ?? [])
+        .filter((material) => {
+          if (selectionMode === "selected_categories") {
+            return selectedMaterialCategories.includes(materialCategoryLabel(material.material_category));
+          }
+
+          return selectedMaterialIds.includes(material.id);
+        })
+        .map((material, index) => ({
           product_template_material_group_id: link.id,
-          brand_material_id: brandMaterialId,
+          brand_material_id: material.id,
           sort_order: index,
           is_active: true,
         }));
 
       if (!rows.length) {
-        redirectWithMessageToPath(redirectPath, "Select at least one active finish from the chosen group.");
+        redirectWithMessageToPath(
+          redirectPath,
+          selectionMode === "selected_categories"
+            ? "Select at least one active finish category from the chosen group."
+            : "Select at least one active finish from the chosen group.",
+        );
       }
 
       const { error: itemsError } = await supabase
@@ -2182,6 +2236,7 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
   const id = textValue(formData, "id");
   const selectionMode = selectionModeValue(formData);
   const selectedMaterialIds = selectedMaterialIdsValue(formData);
+  const selectedMaterialCategories = selectedMaterialCategoriesValue(formData);
   const payload = {
     selection_mode: selectionMode,
     label_override: optionalTextValue(formData, "label_override"),
@@ -2200,6 +2255,9 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
   const supabase = await createClient();
   if (selectionMode === "selected_items" && selectedMaterialIds.length === 0) {
     redirectWithMessageToPath(redirectPath, "Select at least one finish for selected finishes only.");
+  }
+  if (selectionMode === "selected_categories" && selectedMaterialCategories.length === 0) {
+    redirectWithMessageToPath(redirectPath, "Select at least one category for Select by category.");
   }
 
   const { data: existingLink, error: linkError } = await supabase
@@ -2233,31 +2291,40 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
     redirectWithMessageToPath(redirectPath, "Material group finishes could not be saved.");
   }
 
-  if (selectionMode === "selected_items") {
-    const { data: allowedMaterials, error: materialsError } = await supabase
+  if (selectionMode !== "full_group") {
+    const { data: groupMaterials, error: materialsError } = await supabase
       .from("brand_materials")
-      .select("id")
+      .select("id,material_category")
       .eq("material_group_id", existingLink.material_group_id)
-      .eq("is_active", true)
-      .in("id", selectedMaterialIds);
+      .eq("is_active", true);
 
     if (materialsError) {
       console.error("TEMPLATE MATERIAL GROUP ITEMS VALIDATE ERROR", materialsError.message);
       redirectWithMessageToPath(redirectPath, "Selected finishes could not be validated.");
     }
 
-    const allowedIds = new Set((allowedMaterials ?? []).map((material) => material.id as string));
-    const rows = selectedMaterialIds
-      .filter((brandMaterialId) => allowedIds.has(brandMaterialId))
-      .map((brandMaterialId, index) => ({
+    const rows = (groupMaterials ?? [])
+      .filter((material) => {
+        if (selectionMode === "selected_categories") {
+          return selectedMaterialCategories.includes(materialCategoryLabel(material.material_category));
+        }
+
+        return selectedMaterialIds.includes(material.id);
+      })
+      .map((material, index) => ({
         product_template_material_group_id: id,
-        brand_material_id: brandMaterialId,
+        brand_material_id: material.id,
         sort_order: index,
         is_active: true,
       }));
 
     if (!rows.length) {
-      redirectWithMessageToPath(redirectPath, "Select at least one active finish from this group.");
+      redirectWithMessageToPath(
+        redirectPath,
+        selectionMode === "selected_categories"
+          ? "Select at least one active finish category from this group."
+          : "Select at least one active finish from this group.",
+      );
     }
 
     const { error: itemsError } = await supabase

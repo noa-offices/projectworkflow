@@ -29,6 +29,7 @@ import {
   QuickCategoryForm,
 } from "@/components/products/template-category-fields";
 import { ProductLibraryBrowseControls } from "@/components/products/product-library-browse-controls";
+import { TemplateMaterialGroupSelectionPanel } from "@/components/products/template-material-group-selection-panel";
 import { ProductTemplateForm } from "@/components/products/product-template-form";
 import { TopBar } from "@/components/top-bar";
 import { requireSettingsManager } from "@/lib/auth";
@@ -393,7 +394,7 @@ type ProductTemplateMaterialGroup = {
   id: string;
   product_template_id: string;
   material_group_id: string;
-  selection_mode: "full_group" | "selected_items";
+  selection_mode: "full_group" | "selected_categories" | "selected_items";
   label_override: string | null;
   is_required: boolean;
   allow_multiple: boolean;
@@ -1064,6 +1065,7 @@ function LinkedProductFamilyForm({
 function TemplateMaterialGroupForm({
   link,
   linkedItemIds = new Set<string>(),
+  linkedGroups = [],
   materials,
   materialGroups,
   returnTo,
@@ -1071,12 +1073,19 @@ function TemplateMaterialGroupForm({
 }: {
   link?: ProductTemplateMaterialGroup;
   linkedItemIds?: Set<string>;
+  linkedGroups?: ProductTemplateMaterialGroup[];
   materials: BrandMaterial[];
   materialGroups: BrandMaterialGroup[];
   returnTo: string;
   template: ProductTemplate;
 }) {
-  const linkedGroupOptions = materialGroups.filter((group) => group.brand_id === template.brand_id);
+  const linkedGroupOptions = materialGroups
+    .filter((group) => group.brand_id === template.brand_id)
+    .filter((group) => (
+      link
+        ? group.id === link.material_group_id
+        : !linkedGroups.some((entry) => entry.material_group_id === group.id)
+    ));
   const formMaterials = materials
     .filter((material) => material.brand_id === template.brand_id)
     .filter((material) => (link ? material.material_group_id === link.material_group_id : true))
@@ -1087,99 +1096,27 @@ function TemplateMaterialGroupForm({
       (left.material_code ?? "").localeCompare(right.material_code ?? "") ||
       left.material_name.localeCompare(right.material_name),
     );
-  const materialsByGroup = new Map<string, BrandMaterial[]>();
-
-  for (const material of formMaterials) {
-    materialsByGroup.set(material.material_group_id, [
-      ...(materialsByGroup.get(material.material_group_id) ?? []),
-      material,
-    ]);
-  }
 
   return (
     <form action={link ? updateProductTemplateMaterialGroup : createProductTemplateMaterialGroup} className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
       {link ? <input type="hidden" name="id" value={link.id} /> : null}
       <input type="hidden" name="product_template_id" value={template.id} />
       <input type="hidden" name="return_to" value={returnTo} />
-      {!link ? (
-        <label className="block xl:col-span-2">
-          <span className="mb-1 block text-xs font-semibold uppercase text-zinc-500">Material group</span>
-          <select
-            name="material_group_id"
-            required
-            className="h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-          >
-            <option value="">Select group</option>
-            {linkedGroupOptions.map((group) => (
-              <option key={group.id} value={group.id}>
-                {group.group_name}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
       <Field name="label_override" label="Label override" defaultValue={link?.label_override} />
       <Field name="sort_order" label="Sort order" type="number" defaultValue={link?.sort_order ?? 0} />
-      <fieldset className="grid gap-2 rounded-md border border-zinc-200 bg-white p-3 md:col-span-2 xl:col-span-4">
-        <legend className="px-1 text-xs font-semibold uppercase text-zinc-500">Selection mode</legend>
-        <label className="flex items-center gap-2 text-sm font-medium text-zinc-700">
-          <input
-            type="radio"
-            name="selection_mode"
-            value="full_group"
-            defaultChecked={(link?.selection_mode ?? "full_group") === "full_group"}
-            className="h-4 w-4 accent-emerald-900"
-          />
-          Full group
-        </label>
-        <label className="flex items-center gap-2 text-sm font-medium text-zinc-700">
-          <input
-            type="radio"
-            name="selection_mode"
-            value="selected_items"
-            defaultChecked={link?.selection_mode === "selected_items"}
-            className="h-4 w-4 accent-emerald-900"
-          />
-          Selected finishes only
-        </label>
-        <div className="mt-2 grid max-h-72 gap-3 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2">
-          {Array.from(materialsByGroup.entries()).map(([groupId, groupMaterials]) => {
-            const group = materialGroups.find((candidate) => candidate.id === groupId);
-
-            return (
-              <div key={groupId} className="grid gap-2">
-                {!link ? (
-                  <p className="text-[11px] font-bold uppercase text-zinc-500">{group?.group_name ?? "Material group"}</p>
-                ) : null}
-                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                  {groupMaterials.map((material) => (
-                    <label key={material.id} className="flex min-w-0 items-start gap-2 rounded border border-zinc-200 bg-white p-2 text-xs text-zinc-700">
-                      <input
-                        type="checkbox"
-                        name="brand_material_id[]"
-                        value={material.id}
-                        defaultChecked={linkedItemIds.has(material.id)}
-                        className="mt-0.5 h-4 w-4 shrink-0 accent-emerald-900"
-                      />
-                      <span className="min-w-0">
-                        <span className="block truncate font-semibold text-zinc-900">
-                          {[material.material_code, material.material_name].filter(Boolean).join(" - ") || material.material_name}
-                        </span>
-                        {material.material_category ? (
-                          <span className="block truncate text-[11px] text-zinc-500">{material.material_category}</span>
-                        ) : null}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-          {!formMaterials.length ? (
-            <p className="text-xs text-zinc-500">No active finishes found for this brand group yet.</p>
-          ) : null}
-        </div>
-      </fieldset>
+      <TemplateMaterialGroupSelectionPanel
+        availableGroups={linkedGroupOptions.map((group) => ({ id: group.id, group_name: group.group_name }))}
+        initialLinkedItemIds={Array.from(linkedItemIds)}
+        initialMaterialGroupId={link?.material_group_id ?? ""}
+        initialSelectionMode={link?.selection_mode ?? "full_group"}
+        materials={formMaterials.map((material) => ({
+          id: material.id,
+          material_group_id: material.material_group_id,
+          material_category: material.material_category,
+          material_code: material.material_code,
+          material_name: material.material_name,
+        }))}
+      />
       <div className="flex flex-wrap items-end gap-4 md:col-span-2 xl:col-span-4">
         <Checkbox name="is_required" label="Required" defaultChecked={link?.is_required ?? false} />
         <Checkbox name="show_in_specification" label="Show in Specification" defaultChecked={link?.show_in_specification ?? true} />
@@ -1202,7 +1139,7 @@ function DeactivateTemplateMaterialGroupForm({ id, returnTo }: { id: string; ret
         type="submit"
         className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:border-red-700"
       >
-        Remove link
+        Remove
       </button>
     </form>
   );
@@ -1239,6 +1176,21 @@ function formatShortDate(value: string | null) {
   return new Intl.DateTimeFormat("en", {
     dateStyle: "medium",
   }).format(new Date(value));
+}
+
+function materialCategoryLabel(value?: string | null) {
+  const trimmed = value?.trim();
+  return trimmed || "Uncategorized";
+}
+
+function materialSelectionModeLabel(value: ProductTemplateMaterialGroup["selection_mode"]) {
+  if (value === "selected_categories") return "Categories";
+  if (value === "selected_items") return "Individual";
+  return "Full group";
+}
+
+function materialSummaryLabel(material: BrandMaterial) {
+  return [material.material_code, material.material_name].filter(Boolean).join(" - ") || material.material_name;
 }
 
 function auditMetadataActorName(metadata: Record<string, unknown> | null | undefined) {
@@ -1781,6 +1733,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   );
   const materialGroupList = materialGroups ?? [];
   const materialList = materials ?? [];
+  const materialById = new Map(materialList.map((material) => [material.id, material]));
   const activeTemplateMaterialGroupList = (templateMaterialGroups ?? []).filter((link) => link.is_active);
   const materialGroupItemList = templateMaterialGroupItems ?? [];
   const brandPriceListUpdateList = brandPriceListUpdates ?? [];
@@ -3543,18 +3496,120 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                         </div>
                       </summary>
                       <div className="mt-4">
-                        <div
-                          className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
-                        >
+                        <div className="rounded-lg border border-zinc-200 bg-white p-4">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <h4 className="text-sm font-semibold text-zinc-950">Selected / Linked Material Groups</h4>
+                              <p className="mt-1 text-sm leading-6 text-zinc-500">
+                                Each linked group is saved as its own finish option card. Add another group below without replacing the ones already selected.
+                              </p>
+                            </div>
+                            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-semibold text-zinc-700">
+                              {(materialGroupsByTemplate.get(template.id) ?? []).length} linked groups
+                            </span>
+                          </div>
+                        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                      {(materialGroupsByTemplate.get(template.id) ?? []).map((link) => {
+                        const materialGroup = materialGroupList.find(
+                          (candidate) => candidate.id === link.material_group_id,
+                        );
+                        const linkedMaterials = (materialGroupItemsByLink.get(link.id) ?? [])
+                          .map((item) => materialById.get(item.brand_material_id) ?? null)
+                          .filter((material): material is BrandMaterial => Boolean(material));
+                        const selectedCount = linkedMaterials.length;
+                        const selectedCategories = Array.from(new Set(
+                          linkedMaterials.map((material) => materialCategoryLabel(material.material_category)),
+                        ));
+                        const availableSummary = link.selection_mode === "full_group"
+                          ? "All finishes"
+                          : link.selection_mode === "selected_categories"
+                            ? (selectedCategories.length ? selectedCategories.join(", ") : "No categories selected")
+                            : (
+                                linkedMaterials.slice(0, 3).map(materialSummaryLabel).join(", ") +
+                                (selectedCount > 3 ? ` +${selectedCount - 3} more` : "")
+                              );
+                        const selectionCountLabel = "Multiple selection";
+
+                        return (
+                          <div
+                            key={link.id}
+                            id={`material-link-${link.id}`}
+                            className="rounded-lg border border-zinc-200 bg-zinc-50 p-4"
+                          >
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div>
+                                <p className="text-base font-semibold text-zinc-950">
+                                  {link.label_override || materialGroup?.group_name || "Material group"}
+                                </p>
+                                <div className="mt-3 grid gap-1 text-sm text-zinc-600">
+                                  <p><span className="font-semibold text-zinc-900">Mode:</span> {materialSelectionModeLabel(link.selection_mode)}</p>
+                                  <p><span className="font-semibold text-zinc-900">Selected:</span> {availableSummary}</p>
+                                  <p><span className="font-semibold text-zinc-900">Required:</span> {link.is_required ? "Yes" : "No"}</p>
+                                  <p><span className="font-semibold text-zinc-900">Show in Specification:</span> {link.show_in_specification ? "Yes" : "No"}</p>
+                                  <p><span className="font-semibold text-zinc-900">Show in Quotation:</span> {link.show_in_quotation ? "Yes" : "No"}</p>
+                                  <p><span className="font-semibold text-zinc-900">Sort order:</span> {link.sort_order}</p>
+                                </div>
+                                <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-bold uppercase">
+                                  <span className="rounded border border-zinc-200 bg-white px-2 py-1 text-zinc-600">
+                                    {selectionCountLabel}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <details
+                                  id={`template-${template.id}-material-link-${link.id}`}
+                                  data-state-key={`template-material-group-edit-${link.id}`}
+                                >
+                                  <summary className="inline-flex cursor-pointer rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
+                                    Edit
+                                  </summary>
+                                  <div className="mt-3 w-[min(960px,calc(100vw-4rem))] rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                                    <TemplateMaterialGroupForm
+                                      link={link}
+                                      linkedItemIds={new Set((materialGroupItemsByLink.get(link.id) ?? []).map((item) => item.brand_material_id))}
+                                      linkedGroups={materialGroupsByTemplate.get(template.id) ?? []}
+                                      materials={materialList}
+                                      materialGroups={materialGroupList}
+                                      returnTo={withHash(templateBaseReturnTo, `material-link-${link.id}`)}
+                                      template={template}
+                                    />
+                                  </div>
+                                </details>
+                                <DeactivateTemplateMaterialGroupForm
+                                  id={link.id}
+                                  returnTo={withHash(templateBaseReturnTo, `material-link-${link.id}`)}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {!(materialGroupsByTemplate.get(template.id) ?? []).length ? (
+                        <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
+                          No linked material groups yet. Add one below and it will appear here as a selected card.
+                        </p>
+                      ) : null}
+                        </div>
+                        </div>
+                        <div className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <h4 className="text-sm font-semibold text-zinc-950">Add Another Material Group</h4>
+                              <p className="mt-1 text-sm leading-6 text-zinc-500">
+                                Use this form to link one more finish group. After linking, the form resets and the new group is added to the selected list above.
+                              </p>
+                            </div>
+                          </div>
                           <details
-                            className="shrink-0"
+                            className="mt-4"
                             data-state-key={`template-material-group-create-${template.id}`}
                           >
-                          <summary className="cursor-pointer rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
-                            + Link Material Group
-                          </summary>
-                            <div className="mt-3 w-[min(960px,calc(100vw-4rem))] rounded-lg border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
+                            <summary className="inline-flex cursor-pointer rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
+                              + Link Material Group
+                            </summary>
+                            <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
                               <TemplateMaterialGroupForm
+                                linkedGroups={materialGroupsByTemplate.get(template.id) ?? []}
                                 materials={materialList}
                                 materialGroups={materialGroupList}
                                 returnTo={templateMaterialsReturnTo}
@@ -3562,73 +3617,6 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                               />
                             </div>
                           </details>
-                        </div>
-                        <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                      {(materialGroupsByTemplate.get(template.id) ?? []).map((link) => {
-                        const materialGroup = materialGroupList.find(
-                          (candidate) => candidate.id === link.material_group_id,
-                        );
-                        const selectedCount = materialGroupItemsByLink.get(link.id)?.length ?? 0;
-                        const modeLabel = link.selection_mode === "selected_items"
-                          ? `Selected finishes only · ${selectedCount} selected`
-                          : "Full group";
-                        const selectionCountLabel = "Multiple selection";
-
-                        return (
-                          <div
-                            key={link.id}
-                            id={`material-link-${link.id}`}
-                            className="rounded-md border border-zinc-200 bg-zinc-50 p-3"
-                          >
-                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                              <div>
-                                <p className="font-semibold text-zinc-950">
-                                  {link.label_override || materialGroup?.group_name || "Material group"}
-                                </p>
-                                <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold uppercase">
-                                  <span className="rounded border border-zinc-200 bg-white px-2 py-1 text-zinc-600">
-                                    {selectionCountLabel}
-                                  </span>
-                                  <span className="rounded border border-zinc-200 bg-white px-2 py-1 text-zinc-500">
-                                    {modeLabel}
-                                  </span>
-                                </div>
-                                <p className="mt-1 text-xs leading-5 text-zinc-500">
-                                  {link.is_required ? "Required" : "Optional"}. {link.show_in_specification ? "Shows in specification" : "Hidden from specification"}. {link.show_in_quotation ? "Shows in quotation" : "Hidden from quotation"}.
-                                </p>
-                              </div>
-                              <DeactivateTemplateMaterialGroupForm
-                                id={link.id}
-                                returnTo={withHash(templateBaseReturnTo, `material-link-${link.id}`)}
-                              />
-                            </div>
-                            <details
-                              id={`template-${template.id}-material-link-${link.id}`}
-                              className="mt-3"
-                              data-state-key={`template-material-group-edit-${link.id}`}
-                            >
-                              <summary className="inline-flex cursor-pointer rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
-                                Edit settings
-                              </summary>
-                              <div className="mt-3">
-                                <TemplateMaterialGroupForm
-                                  link={link}
-                                  linkedItemIds={new Set((materialGroupItemsByLink.get(link.id) ?? []).map((item) => item.brand_material_id))}
-                                  materials={materialList}
-                                  materialGroups={materialGroupList}
-                                  returnTo={withHash(templateBaseReturnTo, `material-link-${link.id}`)}
-                                  template={template}
-                                />
-                              </div>
-                            </details>
-                          </div>
-                        );
-                      })}
-                      {!(materialGroupsByTemplate.get(template.id) ?? []).length ? (
-                        <p className="rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
-                          No linked material groups yet.
-                        </p>
-                      ) : null}
                         </div>
                       </div>
                     </details>

@@ -21,7 +21,6 @@ import { formatMoney, normalizeCurrency } from "@/lib/currencies";
 import { createLocalId, localNow, type LocalQuotationItem } from "@/lib/local/quotation-workspace";
 import { productTemplatePriceCheckState } from "@/lib/product-price-check";
 import {
-  flattenStandardCategoryPricingRows,
   groupedStandardCategoryPricingRows,
   standardCategoryPriceColumns as groupedCategoryPriceColumns,
 } from "@/lib/products/category-pricing-groups";
@@ -194,6 +193,11 @@ type AccessoryPricingItem = {
   sort_order?: number;
 };
 
+type LinkedProductInstance = {
+  id: string;
+  label: string;
+};
+
 export type ProductLibraryComponent = {
   id: string;
   template_id: string;
@@ -259,6 +263,17 @@ const optionTypeOrder = [
 function numberValue(value: unknown, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
+}
+
+function linkedProductInstanceKey(linkId: string, instanceId: string) {
+  return `${linkId}:${instanceId}`;
+}
+
+function defaultLinkedProductInstance(linkId: string): LinkedProductInstance {
+  return {
+    id: `${linkId}-default`,
+    label: "",
+  };
 }
 
 function parseSizeLabel(label?: string | null) {
@@ -417,13 +432,6 @@ function activeVariantRows(rows?: VariantPricingRow[] | null) {
   return (Array.isArray(rows) ? rows : [])
     .filter((row) => row.is_active !== false)
     .filter((row) => row.variant_name || row.display_name || row.dimension || numberValue(row.price) > 0)
-    .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
-}
-
-function activeCategoryRows(rows?: CategoryPricingRow[] | null) {
-  return flattenStandardCategoryPricingRows(rows)
-    .filter((row) => row.is_active !== false)
-    .filter((row) => row.variant_name || row.display_name || row.dimension || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
 }
 
@@ -919,6 +927,7 @@ export function ProductLibrarySelector({
   const [configuredSpecifications, setConfiguredSpecifications] = useState<Record<string, string>>({});
   const [selectedWorkstationLayouts, setSelectedWorkstationLayouts] = useState<Record<string, string>>({});
   const [pricingAccessoryQuantities, setPricingAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
+  const [linkedProductInstancesByLinkId, setLinkedProductInstancesByLinkId] = useState<Record<string, LinkedProductInstance[]>>({});
   const [linkedProductQuantities, setLinkedProductQuantities] = useState<Record<string, number>>({});
   const [linkedAccessoryQuantities, setLinkedAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [selectedLinkedVariants, setSelectedLinkedVariants] = useState<Record<string, string>>({});
@@ -953,6 +962,12 @@ export function ProductLibrarySelector({
     () => new Map(templateRecords.map((template) => [template.id, template])),
     [templateRecords],
   );
+  const linkedInstancesForLink = (link: ProductLibraryLinkedFamily) =>
+    link.allow_multiple
+      ? (linkedProductInstancesByLinkId[link.id]?.length
+          ? linkedProductInstancesByLinkId[link.id]
+          : [defaultLinkedProductInstance(link.id)])
+      : [defaultLinkedProductInstance(link.id)];
   const linkedFamiliesByParent = useMemo(() => {
     const map = new Map<string, ProductLibraryLinkedFamily[]>();
 
@@ -1491,86 +1506,94 @@ export function ProductLibrarySelector({
                     selectedWorkstationVariantPrice +
                     matchingAccessoryTotal;
                   const selectedLinkedProducts = templateLinkedFamilies
-                    .map((link) => {
+                    .flatMap((link) => {
                       const childTemplate = templateById.get(link.linked_template_id);
-                      if (!childTemplate) return null;
+                      if (!childTemplate) return [];
 
-                      const childCategoryGroups = groupedStandardCategoryPricingRows(childTemplate.category_pricing);
-                      const selectedChildCategoryGroup =
-                        childCategoryGroups.find((group) => group.id === selectedLinkedCategoryGroups[link.id]) ??
-                        childCategoryGroups[0] ??
-                        null;
-                      const childCategoryRows = (selectedChildCategoryGroup?.items ?? []).filter((row) => row.is_active !== false);
-                      const childVariantRows = activeVariantRows(childTemplate.variant_pricing);
-                      const childAccessoryGroups = activeAccessoryRows(childTemplate.accessory_pricing);
-                      const childAccessoryQuantities = linkedAccessoryQuantities[link.id] ?? {};
-                      const childCategoryRow =
-                        childCategoryRows.find((row) => row.id === selectedLinkedCategories[link.id]) ??
-                        childCategoryRows[0] ??
-                        null;
-                      const childVariantRow =
-                        !childCategoryRow
-                          ? childVariantRows.find((row) => row.id === selectedLinkedVariants[link.id]) ??
-                            childVariantRows[0] ??
-                            null
-                          : null;
-                      const childCategoryColumns = selectedChildCategoryGroup?.price_categories ?? categoryPriceColumns(childTemplate.category_pricing);
-                      const childCategory = selectedLinkedFabricCategories[link.id] ?? childCategoryColumns[0] ?? "Cat A";
-                      const unitPrice = childCategoryRow
-                        ? numberValue(childCategoryRow.prices?.[childCategory])
-                        : childVariantRow
-                          ? numberValue(childVariantRow.price)
-                          : numberValue(childTemplate.default_unit_price);
-                      const currency = childCategoryRow?.currency ?? childVariantRow?.currency ?? childTemplate.currency;
-                      const qty = Math.max(0, Math.trunc(numberValue(
-                        linkedProductQuantities[link.id],
-                        numberValue(link.default_qty),
-                      )));
-                      const selectedAccessories = childAccessoryGroups
-                        .flatMap((group) =>
-                          group.items.map((accessory) => {
-                            const id = accessory.id ?? accessory.item_name ?? "";
-                            const accessoryQty = Math.max(0, Math.trunc(numberValue(childAccessoryQuantities[id])));
+                      return linkedInstancesForLink(link).map((instance) => {
+                        const instanceKey = linkedProductInstanceKey(link.id, instance.id);
+                        const childCategoryGroups = groupedStandardCategoryPricingRows(childTemplate.category_pricing);
+                        const selectedChildCategoryGroup =
+                          childCategoryGroups.find((group) => group.id === selectedLinkedCategoryGroups[instanceKey]) ??
+                          childCategoryGroups[0] ??
+                          null;
+                        const childCategoryRows = (selectedChildCategoryGroup?.items ?? []).filter((row) => row.is_active !== false);
+                        const childVariantRows = activeVariantRows(childTemplate.variant_pricing);
+                        const childAccessoryGroups = activeAccessoryRows(childTemplate.accessory_pricing);
+                        const childAccessoryQuantities = linkedAccessoryQuantities[instanceKey] ?? {};
+                        const childCategoryRow =
+                          childCategoryRows.find((row) => row.id === selectedLinkedCategories[instanceKey]) ??
+                          childCategoryRows[0] ??
+                          null;
+                        const childVariantRow =
+                          !childCategoryRow
+                            ? childVariantRows.find((row) => row.id === selectedLinkedVariants[instanceKey]) ??
+                              childVariantRows[0] ??
+                              null
+                            : null;
+                        const childCategoryColumns = selectedChildCategoryGroup?.price_categories ?? categoryPriceColumns(childTemplate.category_pricing);
+                        const childCategory = selectedLinkedFabricCategories[instanceKey] ?? childCategoryColumns[0] ?? "Cat A";
+                        const unitPrice = childCategoryRow
+                          ? numberValue(childCategoryRow.prices?.[childCategory])
+                          : childVariantRow
+                            ? numberValue(childVariantRow.price)
+                            : numberValue(childTemplate.default_unit_price);
+                        const currency = childCategoryRow?.currency ?? childVariantRow?.currency ?? childTemplate.currency;
+                        const qty = Math.max(0, Math.trunc(numberValue(
+                          linkedProductQuantities[instanceKey],
+                          numberValue(link.default_qty),
+                        )));
+                        const selectedAccessories = childAccessoryGroups
+                          .flatMap((group) =>
+                            group.items.map((accessory) => {
+                              const id = accessory.id ?? accessory.item_name ?? "";
+                              const accessoryQty = Math.max(0, Math.trunc(numberValue(childAccessoryQuantities[id])));
 
-                            return {
-                              accessory,
-                              groupName: group.group_name,
-                              id,
-                              qty: accessoryQty,
-                            };
-                          }),
-                        )
-                        .filter((line) => line.qty > 0);
-                      const baseLineTotal = qty * unitPrice;
-                      const matchingAccessoryTotal = selectedAccessories
-                        .filter((line) => normalizeCurrency(line.accessory.currency ?? currency) === normalizeCurrency(currency))
-                        .reduce((total, line) => total + line.qty * numberValue(line.accessory.price), 0);
-                      const accessoryTotal = selectedAccessories.reduce(
-                        (total, line) => total + line.qty * numberValue(line.accessory.price),
-                        0,
-                      );
-                      const hasMixedAccessoryCurrencies = selectedAccessories.some(
-                        (line) => normalizeCurrency(line.accessory.currency ?? currency) !== normalizeCurrency(currency),
-                      );
+                              return {
+                                accessory,
+                                groupName: group.group_name,
+                                id,
+                                qty: accessoryQty,
+                              };
+                            }),
+                          )
+                          .filter((line) => line.qty > 0);
+                        const baseLineTotal = qty * unitPrice;
+                        const matchingAccessoryTotal = selectedAccessories
+                          .filter((line) => normalizeCurrency(line.accessory.currency ?? currency) === normalizeCurrency(currency))
+                          .reduce((total, line) => total + line.qty * numberValue(line.accessory.price), 0);
+                        const accessoryTotal = selectedAccessories.reduce(
+                          (total, line) => total + line.qty * numberValue(line.accessory.price),
+                          0,
+                        );
+                        const hasMixedAccessoryCurrencies = selectedAccessories.some(
+                          (line) => normalizeCurrency(line.accessory.currency ?? currency) !== normalizeCurrency(currency),
+                        );
 
-                      return {
-                        accessoryTotal,
-                        baseLineTotal,
-                        childCategory,
-                        childCategoryGroups,
-                        childCategoryRow,
-                        childAccessoryGroups,
-                        selectedChildCategoryGroup,
-                        childTemplate,
-                        childVariantRow,
-                        currency,
-                        hasMixedAccessoryCurrencies,
-                        link,
-                        matchingAccessoryTotal,
-                        qty,
-                        selectedAccessories,
-                        unitPrice,
-                      };
+                        return {
+                          accessoryTotal,
+                          baseLineTotal,
+                          childCategory,
+                          childCategoryColumns,
+                          childCategoryGroups,
+                          childCategoryRow,
+                          childCategoryRows,
+                          childAccessoryGroups,
+                          childTemplate,
+                          childVariantRow,
+                          childVariantRows,
+                          currency,
+                          hasMixedAccessoryCurrencies,
+                          instance,
+                          instanceKey,
+                          link,
+                          matchingAccessoryTotal,
+                          qty,
+                          selectedAccessories,
+                          selectedChildCategoryGroup,
+                          unitPrice,
+                        };
+                      });
                     })
                     .filter((line): line is NonNullable<typeof line> => Boolean(line));
                   const matchingLinkedProductTotal = selectedLinkedProducts
@@ -1828,7 +1851,7 @@ export function ProductLibrarySelector({
                   }));
                   const linkedProductSnapshots = selectedLinkedProducts.map((line) => ({
                     item_type: "linked_product",
-                    label: line.link.label,
+                    label: line.instance.label.trim() || line.link.label || line.childTemplate.template_name,
                     template_name: line.childTemplate.template_name,
                     template_code: line.childTemplate.template_code,
                     selected_variant: line.childVariantRow?.variant_name ?? null,
@@ -2232,7 +2255,7 @@ export function ProductLibrarySelector({
                       ]
                         .filter(Boolean)
                         .join(" - "),
-                      label: line.childTemplate.template_name,
+                      label: line.instance.label.trim() || line.link.label || line.childTemplate.template_name,
                       supplierCode:
                         line.childCategoryRow?.supplier_price_list_code ??
                         line.childVariantRow?.supplier_price_list_code ??
@@ -2950,8 +2973,8 @@ export function ProductLibrarySelector({
                             <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
                               {usesWorkstationFlow ? "4. Linked Product Families / Screens & Add-ons" : "Linked Product Families / Screens & Add-ons"}
                             </p>
-                            {selectedLinkedProducts.map((line) => (
-                              <fieldset key={line.link.id} className="border border-zinc-200 bg-zinc-50 p-2">
+                            {selectedLinkedProducts.map((line, lineIndex) => (
+                              <fieldset key={line.instanceKey} className="border border-zinc-200 bg-zinc-50 p-2">
                                 <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
                                   {line.link.label || line.childTemplate.template_name}
                                   {line.link.is_required ? " (Required)" : ""}
@@ -2959,6 +2982,23 @@ export function ProductLibrarySelector({
                                 <p className="text-xs font-semibold text-zinc-900">
                                   {line.childTemplate.template_name}
                                 </p>
+                                {line.link.allow_multiple ? (
+                                  <label className="mt-2 block">
+                                    <span className="text-[10px] font-bold uppercase text-zinc-500">Label / Position</span>
+                                    <input
+                                      type="text"
+                                      value={line.instance.label}
+                                      onChange={(event) => setLinkedProductInstancesByLinkId((current) => ({
+                                        ...current,
+                                        [line.link.id]: linkedInstancesForLink(line.link).map((instance) =>
+                                          instance.id === line.instance.id ? { ...instance, label: event.target.value } : instance
+                                        ),
+                                      }))}
+                                      placeholder={lineIndex === 0 ? "Front screen" : "Side screen"}
+                                      className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                    />
+                                  </label>
+                                ) : null}
                                 {line.childCategoryRow ? (
                                   <div className="mt-2 grid gap-2 md:grid-cols-2">
                                     {line.selectedChildCategoryGroup && line.childCategoryGroups.length > 1 ? (
@@ -2967,8 +3007,9 @@ export function ProductLibrarySelector({
                                         <select
                                           value={line.selectedChildCategoryGroup.id ?? ""}
                                           onChange={(event) => {
-                                            setSelectedLinkedCategoryGroups((current) => ({ ...current, [line.link.id]: event.target.value }));
-                                            setSelectedLinkedCategories((current) => ({ ...current, [line.link.id]: "" }));
+                                            setSelectedLinkedCategoryGroups((current) => ({ ...current, [line.instanceKey]: event.target.value }));
+                                            setSelectedLinkedCategories((current) => ({ ...current, [line.instanceKey]: "" }));
+                                            setSelectedLinkedFabricCategories((current) => ({ ...current, [line.instanceKey]: "" }));
                                           }}
                                           className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                                         >
@@ -2984,10 +3025,10 @@ export function ProductLibrarySelector({
                                       <span className="text-[10px] font-bold uppercase text-zinc-500">Variant</span>
                                       <select
                                         value={line.childCategoryRow.id ?? ""}
-                                        onChange={(event) => setSelectedLinkedCategories((current) => ({ ...current, [line.link.id]: event.target.value }))}
+                                        onChange={(event) => setSelectedLinkedCategories((current) => ({ ...current, [line.instanceKey]: event.target.value }))}
                                         className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                                       >
-                                        {activeCategoryRows(line.childTemplate.category_pricing).map((row, index) => (
+                                        {line.childCategoryRows.map((row, index) => (
                                           <option key={row.id ?? index} value={row.id ?? `linked-category-${index}`}>
                                             {pricingOptionLabel({
                                               currency: row.currency ?? line.childTemplate.currency,
@@ -3002,10 +3043,10 @@ export function ProductLibrarySelector({
                                       <span className="text-[10px] font-bold uppercase text-zinc-500">Category</span>
                                       <select
                                         value={line.childCategory}
-                                        onChange={(event) => setSelectedLinkedFabricCategories((current) => ({ ...current, [line.link.id]: event.target.value }))}
+                                        onChange={(event) => setSelectedLinkedFabricCategories((current) => ({ ...current, [line.instanceKey]: event.target.value }))}
                                         className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                                       >
-                                        {categoryPriceColumns(line.childTemplate.category_pricing).map((category) => (
+                                        {line.childCategoryColumns.map((category) => (
                                           <option key={category} value={category}>
                                             {category} - {formatMoney(line.childCategoryRow?.currency ?? line.childTemplate.currency, numberValue(line.childCategoryRow?.prices?.[category]))}
                                           </option>
@@ -3018,10 +3059,10 @@ export function ProductLibrarySelector({
                                     <span className="text-[10px] font-bold uppercase text-zinc-500">Variant</span>
                                     <select
                                       value={line.childVariantRow?.id ?? ""}
-                                      onChange={(event) => setSelectedLinkedVariants((current) => ({ ...current, [line.link.id]: event.target.value }))}
+                                      onChange={(event) => setSelectedLinkedVariants((current) => ({ ...current, [line.instanceKey]: event.target.value }))}
                                       className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                                     >
-                                      {activeVariantRows(line.childTemplate.variant_pricing).map((row, index) => (
+                                      {line.childVariantRows.map((row, index) => (
                                         <option key={row.id ?? index} value={row.id ?? `linked-variant-${index}`}>
                                           {pricingOptionLabel({
                                             currency: row.currency ?? line.childTemplate.currency,
@@ -3045,7 +3086,7 @@ export function ProductLibrarySelector({
                                       min={0}
                                       step={1}
                                       value={line.qty}
-                                      onChange={(event) => setLinkedProductQuantities((current) => ({ ...current, [line.link.id]: Math.max(0, Math.trunc(Number(event.target.value) || 0)) }))}
+                                      onChange={(event) => setLinkedProductQuantities((current) => ({ ...current, [line.instanceKey]: Math.max(0, Math.trunc(Number(event.target.value) || 0)) }))}
                                       className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                                     />
                                   </label>
@@ -3063,7 +3104,7 @@ export function ProductLibrarySelector({
                                         <div className="mt-1 space-y-2">
                                           {group.items.map((accessory) => {
                                             const id = accessory.id ?? accessory.item_name ?? "";
-                                            const qty = linkedAccessoryQuantities[line.link.id]?.[id] ?? 0;
+                                            const qty = linkedAccessoryQuantities[line.instanceKey]?.[id] ?? 0;
 
                                             return (
                                               <label key={`${line.link.id}-${id}`} className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
@@ -3074,8 +3115,8 @@ export function ProductLibrarySelector({
                                                     onChange={(event) =>
                                                       setLinkedAccessoryQuantities((current) => ({
                                                         ...current,
-                                                        [line.link.id]: {
-                                                          ...(current[line.link.id] ?? {}),
+                                                        [line.instanceKey]: {
+                                                          ...(current[line.instanceKey] ?? {}),
                                                           [id]: event.target.checked ? Math.max(1, qty || 1) : 0,
                                                         },
                                                       }))
@@ -3097,8 +3138,8 @@ export function ProductLibrarySelector({
                                                   onChange={(event) =>
                                                     setLinkedAccessoryQuantities((current) => ({
                                                       ...current,
-                                                      [line.link.id]: {
-                                                        ...(current[line.link.id] ?? {}),
+                                                      [line.instanceKey]: {
+                                                        ...(current[line.instanceKey] ?? {}),
                                                         [id]: Math.max(1, Math.trunc(Number(event.target.value) || 1)),
                                                       },
                                                     }))
@@ -3127,6 +3168,67 @@ export function ProductLibrarySelector({
                                     ) : null}
                                   </div>
                                 ) : null}
+                                <div className="mt-2 flex flex-wrap justify-between gap-2">
+                                  {line.link.allow_multiple ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setLinkedProductInstancesByLinkId((current) => ({
+                                        ...current,
+                                        [line.link.id]: [
+                                          ...linkedInstancesForLink(line.link),
+                                          { id: createLocalId("linked-instance"), label: "" },
+                                        ],
+                                      }))}
+                                      className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                                    >
+                                      Add another screen
+                                    </button>
+                                  ) : <span />}
+                                  {line.link.allow_multiple && linkedInstancesForLink(line.link).length > 1 ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setLinkedProductInstancesByLinkId((current) => ({
+                                          ...current,
+                                          [line.link.id]: linkedInstancesForLink(line.link).filter((instance) => instance.id !== line.instance.id),
+                                        }));
+                                        setLinkedProductQuantities((current) => {
+                                          const next = { ...current };
+                                          delete next[line.instanceKey];
+                                          return next;
+                                        });
+                                        setLinkedAccessoryQuantities((current) => {
+                                          const next = { ...current };
+                                          delete next[line.instanceKey];
+                                          return next;
+                                        });
+                                        setSelectedLinkedCategoryGroups((current) => {
+                                          const next = { ...current };
+                                          delete next[line.instanceKey];
+                                          return next;
+                                        });
+                                        setSelectedLinkedCategories((current) => {
+                                          const next = { ...current };
+                                          delete next[line.instanceKey];
+                                          return next;
+                                        });
+                                        setSelectedLinkedVariants((current) => {
+                                          const next = { ...current };
+                                          delete next[line.instanceKey];
+                                          return next;
+                                        });
+                                        setSelectedLinkedFabricCategories((current) => {
+                                          const next = { ...current };
+                                          delete next[line.instanceKey];
+                                          return next;
+                                        });
+                                      }}
+                                      className="text-[11px] font-semibold text-red-700 hover:text-red-800"
+                                    >
+                                      Remove this screen
+                                    </button>
+                                  ) : null}
+                                </div>
                               </fieldset>
                             ))}
                           </div>
@@ -3999,24 +4101,31 @@ export function ProductLibrarySelector({
                           ))}
                           {selectedLinkedProducts.map((line) => (
                             line.qty > 0 ? (
-                              <span key={line.link.id} className="contents">
+                              <span key={line.instanceKey} className="contents">
                                 <input
                                   type="hidden"
                                   name="linked_product_selection"
-                                  value={[
-                                    line.link.id,
-                                    line.qty,
-                                    line.childCategoryRow?.id ?? "",
-                                    line.childCategoryRow ? line.childCategory : "",
-                                    line.childVariantRow?.id ?? "",
-                                  ].join(":")}
+                                  value={JSON.stringify({
+                                    category: line.childCategoryRow ? line.childCategory : "",
+                                    categoryRowId: line.childCategoryRow?.id ?? "",
+                                    instanceId: line.instance.id,
+                                    label: line.instance.label.trim(),
+                                    linkId: line.link.id,
+                                    qty: line.qty,
+                                    variantRowId: line.childVariantRow?.id ?? "",
+                                  })}
                                 />
                                 {line.selectedAccessories.map((accessoryLine) => (
                                   <input
-                                    key={`${line.link.id}-${accessoryLine.id}`}
+                                    key={`${line.instanceKey}-${accessoryLine.id}`}
                                     type="hidden"
                                     name="linked_product_accessory_qty"
-                                    value={[line.link.id, accessoryLine.id, accessoryLine.qty].join(":")}
+                                    value={JSON.stringify({
+                                      accessoryId: accessoryLine.id,
+                                      instanceId: line.instance.id,
+                                      linkId: line.link.id,
+                                      qty: accessoryLine.qty,
+                                    })}
                                   />
                                 ))}
                               </span>

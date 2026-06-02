@@ -455,6 +455,8 @@ function modularItemQuantities(formData: FormData) {
 type LinkedProductSelectionInput = {
   category: string;
   categoryRowId: string;
+  instanceId: string;
+  label: string;
   linkId: string;
   qty: number;
   variantRowId: string;
@@ -462,6 +464,7 @@ type LinkedProductSelectionInput = {
 
 type LinkedProductAccessorySelectionInput = {
   accessoryId: string;
+  instanceId: string;
   linkId: string;
   qty: number;
 };
@@ -471,10 +474,34 @@ function linkedProductSelections(formData: FormData) {
     .getAll("linked_product_selection")
     .filter((value): value is string => typeof value === "string")
     .map((value): LinkedProductSelectionInput | null => {
+      const trimmed = value.trim();
+      if (trimmed.startsWith("{")) {
+        try {
+          const parsed = JSON.parse(trimmed) as Partial<LinkedProductSelectionInput>;
+          const qty = Math.max(0, Math.trunc(Number(parsed.qty) || 0));
+
+          return parsed.linkId && parsed.instanceId && qty > 0
+            ? {
+                category: parsed.category ?? "",
+                categoryRowId: parsed.categoryRowId ?? "",
+                instanceId: parsed.instanceId,
+                label: parsed.label ?? "",
+                linkId: parsed.linkId,
+                qty,
+                variantRowId: parsed.variantRowId ?? "",
+              }
+            : null;
+        } catch {
+          return null;
+        }
+      }
+
       const [linkId, rawQty, categoryRowId = "", category = "", variantRowId = ""] = value.split(":");
       const qty = Math.max(0, Math.trunc(Number(rawQty) || 0));
 
-      return linkId && qty > 0 ? { category, categoryRowId, linkId, qty, variantRowId } : null;
+      return linkId && qty > 0
+        ? { category, categoryRowId, instanceId: `${linkId}-default`, label: "", linkId, qty, variantRowId }
+        : null;
     })
     .filter((value): value is LinkedProductSelectionInput => Boolean(value));
 }
@@ -484,10 +511,31 @@ function linkedProductAccessorySelections(formData: FormData) {
     .getAll("linked_product_accessory_qty")
     .filter((value): value is string => typeof value === "string")
     .map((value): LinkedProductAccessorySelectionInput | null => {
+      const trimmed = value.trim();
+      if (trimmed.startsWith("{")) {
+        try {
+          const parsed = JSON.parse(trimmed) as Partial<LinkedProductAccessorySelectionInput>;
+          const qty = Math.max(0, Math.trunc(Number(parsed.qty) || 0));
+
+          return parsed.linkId && parsed.instanceId && parsed.accessoryId && qty > 0
+            ? {
+                accessoryId: parsed.accessoryId,
+                instanceId: parsed.instanceId,
+                linkId: parsed.linkId,
+                qty,
+              }
+            : null;
+        } catch {
+          return null;
+        }
+      }
+
       const [linkId, accessoryId, rawQty] = value.split(":");
       const qty = Math.max(0, Math.trunc(Number(rawQty) || 0));
 
-      return linkId && accessoryId && qty > 0 ? { accessoryId, linkId, qty } : null;
+      return linkId && accessoryId && qty > 0
+        ? { accessoryId, instanceId: `${linkId}-default`, linkId, qty }
+        : null;
     })
     .filter((value): value is LinkedProductAccessorySelectionInput => Boolean(value));
 }
@@ -4334,9 +4382,10 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   );
   const linkedFamilyById = new Map((linkedFamilies ?? []).map((link) => [link.id, link]));
   const linkedTemplateById = new Map((linkedTemplates ?? []).map((linkedTemplate) => [linkedTemplate.id, linkedTemplate]));
-  const linkedAccessorySelectionsByLinkId = linkedProductAccessorySelectionInputs.reduce((map, selection) => {
-    const currentSelections = map.get(selection.linkId) ?? [];
-    map.set(selection.linkId, [...currentSelections, selection]);
+  const linkedAccessorySelectionsByInstanceKey = linkedProductAccessorySelectionInputs.reduce((map, selection) => {
+    const instanceKey = `${selection.linkId}:${selection.instanceId}`;
+    const currentSelections = map.get(instanceKey) ?? [];
+    map.set(instanceKey, [...currentSelections, selection]);
     return map;
   }, new Map<string, LinkedProductAccessorySelectionInput[]>());
   const selectedLinkedProducts = linkedProductSelectionInputs
@@ -4375,7 +4424,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         linkedTemplate.default_specification ||
         linkedTemplate.description ||
         "";
-      const linkedAccessorySelections = linkedAccessorySelectionsByLinkId.get(selection.linkId) ?? [];
+      const linkedAccessorySelections = linkedAccessorySelectionsByInstanceKey.get(`${selection.linkId}:${selection.instanceId}`) ?? [];
       const selectedAccessories = activeAccessoryRows(linkedTemplate.accessory_pricing)
         .flatMap((group) =>
           group.items.map((accessory) => {
@@ -4411,7 +4460,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
 
       return {
         type: "linked_product_family",
-        label: link.label || linkedTemplate.template_name,
+        label: selection.label.trim() || link.label || linkedTemplate.template_name,
         linked_template_id: linkedTemplate.id,
         template_name: linkedTemplate.template_name,
         selected_variant: categoryRow?.variant_name || variantRow?.variant_name || null,
