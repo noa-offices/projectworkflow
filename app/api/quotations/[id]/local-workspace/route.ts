@@ -6,6 +6,10 @@ import {
   type LocalQuotationSection,
   type LocalQuotationWorkspace,
 } from "@/lib/local/quotation-workspace";
+import {
+  normalizePresentationSettings,
+  type QuotationPresentationSettings,
+} from "@/lib/quotations/presentation-settings";
 
 type SavePayload = {
   workspace: LocalQuotationWorkspace;
@@ -33,6 +37,11 @@ type SupabaseLikeError = {
   details?: string | null;
   hint?: string | null;
   message?: string;
+};
+
+type PresentationSettingsRecord = {
+  settings_json: unknown;
+  updated_at: string;
 };
 
 const allowedSectionTypes = new Set(["option", "floor", "room", "category", "section"]);
@@ -153,6 +162,45 @@ function logSupabaseSaveError(label: string, error: SupabaseLikeError | null | u
   });
 }
 
+function remapIdList(ids: string[], idByPreviousId: Map<string, string>) {
+  return Array.from(new Set(ids.map((id) => idByPreviousId.get(id) ?? id)));
+}
+
+function remapKeyedRecord<T>(record: Record<string, T>, idByPreviousId: Map<string, string>) {
+  return Object.fromEntries(
+    Object.entries(record).map(([id, value]) => [idByPreviousId.get(id) ?? id, value]),
+  );
+}
+
+function remapPresentationSettingsForInsertedRows(
+  settings: QuotationPresentationSettings,
+  sectionIdByPreviousId: Map<string, string>,
+  itemIdByPreviousId: Map<string, string>,
+): QuotationPresentationSettings {
+  return {
+    ...settings,
+    hiddenItemIds: remapIdList(settings.hiddenItemIds, itemIdByPreviousId),
+    flowOrder: {
+      mainSectionKeys: remapIdList(settings.flowOrder.mainSectionKeys, sectionIdByPreviousId),
+      sectionKeysByMain: Object.fromEntries(
+        Object.entries(settings.flowOrder.sectionKeysByMain).map(([mainSectionId, sectionIds]) => [
+          sectionIdByPreviousId.get(mainSectionId) ?? mainSectionId,
+          remapIdList(sectionIds, sectionIdByPreviousId),
+        ]),
+      ),
+      itemIdsBySection: Object.fromEntries(
+        Object.entries(settings.flowOrder.itemIdsBySection).map(([sectionId, itemIds]) => [
+          sectionIdByPreviousId.get(sectionId) ?? sectionId,
+          remapIdList(itemIds, itemIdByPreviousId),
+        ]),
+      ),
+    },
+    mainSectionOverrides: remapKeyedRecord(settings.mainSectionOverrides, sectionIdByPreviousId),
+    sectionOverrides: remapKeyedRecord(settings.sectionOverrides, sectionIdByPreviousId),
+    itemOverrides: remapKeyedRecord(settings.itemOverrides, itemIdByPreviousId),
+  };
+}
+
 export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
@@ -196,17 +244,31 @@ export async function POST(
       return errorResponse("Quotation not found.", supabaseErrorDetails(quotationError), 404);
     }
 
+    const { data: presentationSettings, error: presentationSettingsReadError } = await supabase
+      .from("quotation_presentations")
+      .select("settings_json,updated_at")
+      .eq("quotation_id", quotation.id)
+      .maybeSingle<PresentationSettingsRecord>();
+
+    if (presentationSettingsReadError) {
+      return errorResponse("Failed to read presentation settings.", supabaseErrorDetails(presentationSettingsReadError));
+    }
+
     const { data: existingSections } = await supabase
       .from("quotation_sections")
       .select("id")
       .eq("quotation_id", quotation.id)
       .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true })
       .returns<Array<{ id: string }>>();
     const { data: existingItems } = await supabase
       .from("quotation_items")
       .select("id")
       .eq("quotation_id", quotation.id)
       .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true })
       .returns<Array<{ id: string }>>();
 
     const orderedSections = sortByOrder(workspace.sections).filter((section) => section.is_active !== false);
@@ -231,6 +293,18 @@ export async function POST(
       section_id: item.section_id ? nextSectionIdByLocalId.get(item.section_id) ?? null : null,
       source_item_id: item.source_item_id ?? item.id,
     }));
+    const sectionIdByPreviousId = new Map<string, string>();
+    sectionsToInsert.forEach((section, index) => {
+      [section.source_section_id, orderedSections[index]?.id, existingSections?.[index]?.id].forEach((previousId) => {
+        if (previousId) sectionIdByPreviousId.set(previousId, section.id);
+      });
+    });
+    const itemIdByPreviousId = new Map<string, string>();
+    itemsToInsert.forEach((item, index) => {
+      [item.source_item_id, orderedItems[index]?.id, existingItems?.[index]?.id].forEach((previousId) => {
+        if (previousId) itemIdByPreviousId.set(previousId, item.id);
+      });
+    });
 
     const existingItemIds = (existingItems ?? []).map((item) => item.id);
     if (existingItemIds.length) {
@@ -363,6 +437,30 @@ export async function POST(
           insertItemsError.hint,
           insertItemsError.code,
         );
+      }
+    }
+
+    if (presentationSettings) {
+      const normalizedPresentationSettings = normalizePresentationSettings(presentationSettings.settings_json, {
+        updatedAt: presentationSettings.updated_at,
+      });
+      const remappedPresentationSettings = remapPresentationSettingsForInsertedRows(
+        normalizedPresentationSettings,
+        sectionIdByPreviousId,
+        itemIdByPreviousId,
+      );
+      const { error: updatePresentationSettingsError } = await supabase
+        .from("quotation_presentations")
+        .update({
+          settings_json: {
+            ...remappedPresentationSettings,
+            updatedAt: new Date().toISOString(),
+          },
+        })
+        .eq("quotation_id", quotation.id);
+
+      if (updatePresentationSettingsError) {
+        return errorResponse("Failed to preserve presentation settings.", supabaseErrorDetails(updatePresentationSettingsError));
       }
     }
 
