@@ -1108,6 +1108,8 @@ type QuotationItemCopySource = {
   currency: string;
   sort_order: number;
   is_optional: boolean;
+  parent_item_id: string | null;
+  include_in_total: boolean;
   internal_cost: number;
   margin_type: string;
   margin_value: number;
@@ -1671,7 +1673,7 @@ const sectionCopySelect =
   "id,section_title,section_notes,section_type,parent_section_id,section_kind,title_align,title_bold,title_bg,title_size,row_height,sort_order";
 
 const itemCopySelect =
-  "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,allow_material_continuation_page,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,notes";
+  "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,allow_material_continuation_page,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,parent_item_id,include_in_total,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,notes";
 
 function finishSelectionsValue(formData: FormData) {
   const labels = formData.getAll("finish_group_label[]");
@@ -1868,6 +1870,8 @@ function itemPayload(formData: FormData, userId?: string) {
     currency: normalizeCurrency(textValue(formData, "currency") || defaultCurrency),
     sort_order: integerValue(formData, "sort_order", 0),
     is_optional: boolValue(formData, "is_optional"),
+    parent_item_id: optionalTextValue(formData, "parent_item_id"),
+    include_in_total: boolValue(formData, "is_optional") ? boolValue(formData, "include_in_total") : true,
     internal_cost: numberValue(formData, "internal_cost", 0),
     margin_type: textValue(formData, "margin_type") || "amount",
     margin_value: numberValue(formData, "margin_value", 0),
@@ -1901,7 +1905,7 @@ export async function recalculateQuotationTotals(quotationId: string) {
 
   const { data: items, error: itemsError } = await supabase
     .from("quotation_items")
-    .select("qty,unit_price,net_total,line_style,is_rate_only,item_type")
+    .select("qty,unit_price,net_total,line_style,is_rate_only,item_type,is_optional,include_in_total")
     .eq("quotation_id", quotationId)
     .eq("is_active", true)
     .returns<
@@ -1912,6 +1916,8 @@ export async function recalculateQuotationTotals(quotationId: string) {
         line_style: string;
         is_rate_only: boolean;
         item_type: string;
+        is_optional: boolean;
+        include_in_total: boolean;
       }>
     >();
 
@@ -1923,6 +1929,7 @@ export async function recalculateQuotationTotals(quotationId: string) {
   const pricedItems = (items ?? []).filter(
     (item) =>
       !item.is_rate_only &&
+      (!item.is_optional || item.include_in_total === true) &&
       !excludedTotalLineStyles.has(item.line_style) &&
       !["note", "blank", "subtotal"].includes(item.item_type),
   );
@@ -4037,6 +4044,8 @@ async function createBlankQuotationItemRecord({
     currency: "AED",
     sort_order: await nextSortOrder(quotationId, sectionId),
     is_optional: false,
+    parent_item_id: null,
+    include_in_total: true,
     internal_cost: 0,
     margin_type: "amount",
     margin_value: 0,
@@ -5003,6 +5012,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     currency: rowOutputCurrency,
     sort_order: (lastItem?.sort_order ?? 0) + 10,
     is_optional: false,
+    parent_item_id: null,
+    include_in_total: true,
     internal_cost: 0,
     margin_type: "amount",
     margin_value: 0,
@@ -5872,6 +5883,8 @@ function sanitizeCopiedRowSnapshot(value: unknown) {
     net_total: linePricing.netTotal,
     currency: normalizeCurrency(String(source.currency || defaultCurrency)),
     is_optional: booleanOr(source.is_optional, false),
+    parent_item_id: null,
+    include_in_total: booleanOr(source.include_in_total, !booleanOr(source.is_optional, false)),
     internal_cost: numberOr(source.internal_cost, 0),
     margin_type: discountTypes.has(String(source.margin_type)) ? String(source.margin_type) : "amount",
     margin_value: numberOr(source.margin_value, 0),

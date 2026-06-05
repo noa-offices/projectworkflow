@@ -20,6 +20,9 @@ export type PurchaseOrderDocumentItem = {
   imageUrl: string | null;
   lineTotal: number | null;
   unitPrice: number | null;
+  isOptional?: boolean;
+  isRateOnly?: boolean;
+  lineTotalLabel?: string | null;
 };
 
 export type PurchaseOrderDocumentSupplier = {
@@ -157,6 +160,7 @@ export function buildPurchaseOrderPages({
     items,
     print,
     getItemId: (item) => item.id,
+    getSectionKey: (item) => item.context,
     createPageItem: (item, index) => ({ ...item, rowNumber: index + 1 }),
     estimateItemUnits: (item) => estimateItemUnits(item, columnVisibility),
     getItemCapacity: (pageIndex) => itemCapacity(pageIndex === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY, print),

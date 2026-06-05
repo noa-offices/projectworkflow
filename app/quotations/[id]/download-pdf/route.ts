@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireActiveUser } from "@/lib/auth";
+import { loadQuotationPdfSettings } from "@/lib/quotations/quotation-pdf-settings-store";
 import { generatePdfBuffer } from "@/lib/server/generate-pdf-buffer";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
@@ -66,6 +67,10 @@ export async function GET(request: NextRequest, { params }: DownloadPdfRouteCont
   const sourceUrl = `${origin}/quotations/${id}/pdf?print=1`;
   const fallbackUrl = new URL(`/quotations/${id}/pdf?print=1`, origin);
   const cookieHeader = request.headers.get("cookie") ?? "";
+  const settingsResult = await loadQuotationPdfSettings(id);
+  const isLandscape = settingsResult.success
+    ? settingsResult.settings.orientation === "landscape"
+    : true;
 
   try {
     const pdfBuffer = await generatePdfBuffer({
@@ -73,7 +78,7 @@ export async function GET(request: NextRequest, { params }: DownloadPdfRouteCont
       pdfOptions: {
         displayHeaderFooter: false,
         format: "A4",
-        landscape: true,
+        landscape: isLandscape,
         margin: {
           top: "0",
           right: "0",

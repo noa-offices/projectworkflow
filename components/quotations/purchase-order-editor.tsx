@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import { buildEffectiveDocumentGroups, type EffectiveDocumentGroup } from "@/lib/quotations/document-grouping";
 import { normalizePurchaseOrderCurrency, purchaseOrderCurrencies } from "@/lib/quotations/purchase-order-currency";
 import { PurchaseOrderDocument } from "@/components/quotations/purchase-order-document";
-import { DocumentPrintSetupPanel, type PrintPlannerItem } from "@/components/quotations/document-print-setup-panel";
+import { DocumentPrintPagePlanner, DocumentPrintSetupPanel, type PrintPlannerItem } from "@/components/quotations/document-print-setup-panel";
 import { buildPurchaseOrderPages } from "@/lib/quotations/purchase-order-pages";
 import type { DocumentPrintSettings } from "@/lib/quotations/document-print-settings";
 import {
@@ -65,6 +65,9 @@ type PurchaseOrderItem = {
   finish_snapshot: string | null;
   size_snapshot: string | null;
   origin_snapshot: string | null;
+  is_optional: boolean;
+  include_in_total: boolean;
+  is_rate_only: boolean;
   supplier_name_snapshot: string | null;
   supplier_price_list_code_snapshot: string | null;
   qty: number;
@@ -99,6 +102,7 @@ type PurchaseOrderPreviewItem = {
   quantity: number;
   unitPrice: number | null;
   lineTotal: number | null;
+  lineTotalLabel: string | null;
   remark: string;
 };
 
@@ -385,7 +389,8 @@ export function PurchaseOrderEditor({
 
       const quantity = override.quantity ?? item.qty;
       const unitPrice = numericAmount(override.unitPrice);
-      const lineTotal = lineTotalFromOverride(override, quantity);
+      const countsInTotals = !item.is_rate_only && (!item.is_optional || item.include_in_total === true);
+      const lineTotal = countsInTotals ? lineTotalFromOverride(override, quantity) : null;
 
       return {
         item,
@@ -395,6 +400,7 @@ export function PurchaseOrderEditor({
         quantity,
         unitPrice,
         lineTotal,
+        lineTotalLabel: item.is_rate_only ? "Rate Only" : item.is_optional && item.include_in_total !== true ? "Optional" : null,
         remark: override.remark,
       };
     })
@@ -407,6 +413,9 @@ export function PurchaseOrderEditor({
     return {
       id: entry.item.id,
       description: entry.description,
+      isOptional: entry.item.is_optional,
+      isRateOnly: entry.item.is_rate_only,
+      lineTotalLabel: entry.lineTotalLabel,
       context: (context.area || context.section) ? [context.area, context.section].filter(Boolean).join(" / ") : null,
       code: entry.item.item_code_snapshot,
       supplierPriceListCode: entry.item.supplier_price_list_code_snapshot,
@@ -616,6 +625,24 @@ export function PurchaseOrderEditor({
     window.location.href = `/quotations/${data.quotation.id}/download-purchase-order`;
   }
 
+  const purchaseOrderDocument = (
+    <PurchaseOrderDocument
+      companyLogoUrl={defaultLogoUrl}
+      hasPriceValues={hasPriceValues}
+      items={documentItems}
+      poCurrency={poCurrency}
+      settings={{
+        columnVisibility: settings.columnVisibility,
+        documentDetails: settings.documentDetails,
+        print: settings.print,
+        terms: settings.terms,
+      }}
+      subtotal={subtotal}
+      supplier={selectedSupplier}
+      supplierLabel={selectedGroup?.displayLabel || "Supplier"}
+    />
+  );
+
   return (
     <main className="min-h-screen bg-stone-100 px-4 py-6 print:bg-white print:px-0 print:py-0">
       <style>{`
@@ -632,6 +659,8 @@ export function PurchaseOrderEditor({
       `}</style>
 
       {!printMode ? (
+        <div className="mx-auto grid max-w-[calc(297mm+2rem+440px+1.25rem)] gap-5 xl:grid-cols-[minmax(0,calc(297mm+2rem))_minmax(380px,440px)] xl:items-start">
+          <div className="min-w-0">
         <div className="mx-auto mb-5 w-[297mm] max-w-full print:hidden">
           <DocumentPrintSetupPanel
             actionLabel="Save Print Settings"
@@ -652,6 +681,7 @@ export function PurchaseOrderEditor({
             savedMessage="Purchase order print settings match latest saved version."
             settings={settings.print}
             showSettings={showSettings}
+            showPlanner={false}
             title="Purchase Order Print Setup"
             toggleSettings={() => setShowSettings((current) => !current)}
           >
@@ -675,9 +705,8 @@ export function PurchaseOrderEditor({
             ) : null}
           </DocumentPrintSetupPanel>
         </div>
-      ) : null}
 
-      {!printMode && showSettings ? (
+      {showSettings ? (
         <div className="mx-auto mb-5 w-[297mm] max-w-full print:hidden">
           <SetupPanel activeTab={activeTab} onTabChange={setActiveTab}>
             {activeTab === "document" ? (
@@ -793,7 +822,7 @@ export function PurchaseOrderEditor({
                                   />
                                   <div>
                                     <p className="text-sm font-semibold text-zinc-950">
-                                      {item.manual_serial?.trim() || String(index + 1).padStart(2, "0")} - {documentItemTitle(item)}
+                                      {item.manual_serial?.trim() || String(index + 1).padStart(2, "0")} - {documentItemTitle(item)} {item.is_optional ? "OPTIONAL" : ""}
                                     </p>
                                     <p className="mt-1 text-xs text-zinc-500">
                                       {item.item_code_snapshot ? `Code: ${item.item_code_snapshot} | ` : ""}Current Qty: {item.qty} | PO Qty: {override.quantity ?? item.qty}
@@ -896,21 +925,21 @@ export function PurchaseOrderEditor({
         </div>
       ) : null}
 
-      <PurchaseOrderDocument
-        companyLogoUrl={defaultLogoUrl}
-        hasPriceValues={hasPriceValues}
-        items={documentItems}
-        poCurrency={poCurrency}
-        settings={{
-          columnVisibility: settings.columnVisibility,
-          documentDetails: settings.documentDetails,
-          print: settings.print,
-          terms: settings.terms,
-        }}
-        subtotal={subtotal}
-        supplier={selectedSupplier}
-        supplierLabel={selectedGroup?.displayLabel || "Supplier"}
-      />
+            {purchaseOrderDocument}
+          </div>
+
+          {showSettings ? (
+            <DocumentPrintPagePlanner
+              onAssignPage={assignPage}
+              onToggleManualPageBreak={toggleManualPageBreak}
+              plannerItems={plannerItems}
+              settings={settings.print}
+            />
+          ) : null}
+        </div>
+      ) : (
+        purchaseOrderDocument
+      )}
     </main>
   );
 }

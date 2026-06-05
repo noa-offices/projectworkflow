@@ -19,6 +19,8 @@ export type ProcurementRfqDocumentItem = {
   quantity: number;
   remark: string;
   imageUrl: string | null;
+  isOptional?: boolean;
+  isRateOnly?: boolean;
 };
 
 export type ProcurementRfqDocumentGroup = {
@@ -133,6 +135,7 @@ function chunkItems(
     print,
     pageNumberOffset: startingPageIndex,
     getItemId: (item) => item.id,
+    getSectionKey: (item) => item.context,
     createPageItem: (item, index) => ({ ...item, rowNumber: index + 1 }),
     estimateItemUnits: (item) => estimateItemUnits(item, columnVisibility),
     getItemCapacity: (pageIndex) => itemCapacity(pageIndex === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY, print),

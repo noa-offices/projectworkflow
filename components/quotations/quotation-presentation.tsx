@@ -89,6 +89,8 @@ type PresentationItem = {
   warranty_snapshot: string | null;
   supplier_name_snapshot: string | null;
   sort_order: number;
+  is_optional?: boolean;
+  is_rate_only?: boolean;
   line_style: string;
   is_active: boolean;
   cell_layout: {
@@ -1268,7 +1270,11 @@ function TwoPerPageCard({
       <div className="flex items-start justify-between gap-3 px-5 pb-3 pt-4">
         <div className="min-w-0">
           <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-zinc-400">{sectionTitle}</p>
-          <h3 className="mt-1.5 text-[21px] font-light tracking-tight text-zinc-950" style={clampStyle(2)}>{data.heading}</h3>
+          <h3 className="mt-1.5 text-[21px] font-light tracking-tight text-zinc-950" style={clampStyle(2)}>
+            {data.heading}
+            {data.item.is_optional ? <span className="ml-2 border border-red-300 bg-red-50 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase text-red-700">OPTIONAL</span> : null}
+            {data.item.is_rate_only ? <span className="ml-2 border border-sky-300 bg-sky-50 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase text-sky-700">RATE ONLY</span> : null}
+          </h3>
         </div>
         {itemNumber ? (
           <div className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
@@ -3587,7 +3593,11 @@ export function QuotationPresentation({
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
                         <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">{sectionTitle}</p>
-                        <p className="mt-2 text-2xl font-light tracking-tight text-zinc-950" style={clampStyle(2)}>{data.heading}</p>
+                        <p className="mt-2 text-2xl font-light tracking-tight text-zinc-950" style={clampStyle(2)}>
+                          {data.heading}
+                          {data.item.is_optional ? <span className="ml-2 border border-red-300 bg-red-50 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase text-red-700">OPTIONAL</span> : null}
+                          {data.item.is_rate_only ? <span className="ml-2 border border-sky-300 bg-sky-50 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase text-sky-700">RATE ONLY</span> : null}
+                        </p>
                       </div>
                       <div className="rounded-full border border-zinc-300 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
                         Item {visibleSlideItemNumberById.get(item.id) ?? 1}
@@ -3639,7 +3649,11 @@ export function QuotationPresentation({
                   <div className="grid h-full grid-rows-[220px_auto_1fr_96px] bg-[#f3f4f6] px-8 py-9">
                     <div className="min-h-0 border-b border-zinc-900/10 pb-5">
                       <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-500">Technical Details</p>
-                      <h3 className="mt-3 text-3xl font-light tracking-tight text-zinc-950" style={clampStyle(2)}>{data.heading}</h3>
+                      <h3 className="mt-3 text-3xl font-light tracking-tight text-zinc-950" style={clampStyle(2)}>
+                        {data.heading}
+                        {data.item.is_optional ? <span className="ml-2 border border-red-300 bg-red-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase text-red-700">OPTIONAL</span> : null}
+                        {data.item.is_rate_only ? <span className="ml-2 border border-sky-300 bg-sky-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase text-sky-700">RATE ONLY</span> : null}
+                      </h3>
                       {settings.contentVisibility.specification ? (
                         data.cleanedSpecification ? (
                           <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-zinc-600" style={clampStyle(5)}>

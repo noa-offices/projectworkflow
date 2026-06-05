@@ -21,6 +21,8 @@ export type OrderConfirmationDocumentItem = {
   origin: string | null;
   specification: string | null;
   areaSection: string | null;
+  isOptional?: boolean;
+  isRateOnly?: boolean;
 };
 
 export type OrderConfirmationClosingContent = {
@@ -130,6 +132,7 @@ export function buildOrderConfirmationPages({
     print,
     overflowBufferUnits: PAGE_BREAK_BUFFER,
     getItemId: (item) => item.id,
+    getSectionKey: (item) => item.areaSection,
     createPageItem: (item, index) => ({ ...item, rowNumber: index + 1 }),
     estimateItemUnits: (item) => estimateItemUnits(item, columnVisibility),
     getItemCapacity: (pageIndex) => itemCapacity(pageIndex === 0 ? FIRST_PAGE_ITEM_CAPACITY : CONTINUATION_ITEM_CAPACITY, print),

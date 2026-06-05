@@ -1050,10 +1050,57 @@ function sectionSubtotal(items: LocalQuotationItem[]) {
     items
       .filter((item) => item.is_active !== false)
       .filter((item) => !item.is_rate_only)
+      .filter((item) => !item.is_optional || item.include_in_total === true)
       .filter((item) => !["note", "blank", "subtotal"].includes(item.item_type))
       .filter((item) => !["heading", "note", "no_quote"].includes(item.line_style))
       .reduce((total, item) => total + exactMoneyValue(item.net_total), 0),
   );
+}
+
+function isOptionalQuotationItem(item: Pick<LocalQuotationItem, "is_optional">) {
+  return item.is_optional === true;
+}
+
+function OptionalBadge() {
+  return (
+    <span className="inline-flex items-center border border-red-300 bg-red-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-red-700">
+      Optional
+    </span>
+  );
+}
+
+function RateOnlyBadge() {
+  return (
+    <span className="inline-flex items-center border border-sky-300 bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-sky-700">
+      Rate Only
+    </span>
+  );
+}
+
+function itemCountsInLocalTotals(item: Pick<LocalQuotationItem, "include_in_total" | "is_optional" | "is_rate_only" | "line_style">) {
+  return !item.is_rate_only && item.line_style !== "rate_only" && (!item.is_optional || item.include_in_total === true);
+}
+
+function netTotalPlaceholder(item: Pick<LocalQuotationItem, "include_in_total" | "is_optional" | "is_rate_only" | "line_style">) {
+  if (item.is_rate_only || item.line_style === "rate_only") return "Rate Only";
+  if (item.is_optional && item.include_in_total !== true) return "Optional";
+  return null;
+}
+
+function orderedItemsWithOptionalChildren(items: LocalQuotationItem[], sectionId: string | null) {
+  const ordered = orderedItems(items, sectionId);
+  const childrenByParent = new Map<string, LocalQuotationItem[]>();
+  const topLevel: LocalQuotationItem[] = [];
+
+  for (const item of ordered) {
+    if (item.is_optional && item.parent_item_id) {
+      childrenByParent.set(item.parent_item_id, [...(childrenByParent.get(item.parent_item_id) ?? []), item]);
+    } else {
+      topLevel.push(item);
+    }
+  }
+
+  return { childrenByParent, topLevel };
 }
 
 function localLayoutSettings(value: unknown): LocalLayoutSettings {
@@ -1537,6 +1584,7 @@ export function LocalQuotationBuilder({
   const [recentEditedRowId, setRecentEditedRowId] = useState<string | null>(null);
   const [editingOriginCellId, setEditingOriginCellId] = useState<string | null>(null);
   const [detailsModalRowId, setDetailsModalRowId] = useState<string | null>(null);
+  const [collapsedOptionalParentIds, setCollapsedOptionalParentIds] = useState<Set<string>>(() => new Set());
   const [saveLibraryChoiceRowId, setSaveLibraryChoiceRowId] = useState<string | null>(null);
   const [saveLibraryMode, setSaveLibraryMode] = useState<"new" | "existing">("new");
   const [saveLibraryTemplateSearch, setSaveLibraryTemplateSearch] = useState("");
@@ -2523,6 +2571,13 @@ export function LocalQuotationBuilder({
     ].filter((field) => Boolean(field.value));
     const showOptionalDetailsOpen = optionalDetailFields.length > 0;
     const imagePreviewValue = item.proposed_image_url_snapshot || item.specified_image_url_snapshot || null;
+    const optionalParentChoices = orderedItems(workspace.items, item.section_id)
+      .filter((candidate) =>
+        candidate.id !== item.id &&
+        candidate.is_active !== false &&
+        !candidate.is_optional &&
+        !["note", "blank", "subtotal"].includes(candidate.item_type)
+      );
     const sourceSummaryRows = [
       { label: "Source template", value: sourceLibrarySummary(item).templateName || "Manual row" },
       { label: "Source type", value: snapshotDetails.sourcePriceType },
@@ -2618,6 +2673,38 @@ export function LocalQuotationBuilder({
                 <input type="checkbox" checked={item.is_rate_only === true} onChange={(event) => updateItem(item.id, { is_rate_only: event.target.checked })} className="h-4 w-4 rounded border-zinc-300" />
                 <span>Rate only</span>
               </label>
+              <label className="flex items-center gap-2 border border-red-200 bg-red-50 px-2 py-2 text-xs text-red-800">
+                <input
+                  type="checkbox"
+                  checked={item.is_optional === true}
+                  onChange={(event) => updateItem(item.id, {
+                    is_optional: event.target.checked,
+                    parent_item_id: event.target.checked ? item.parent_item_id ?? null : null,
+                    include_in_total: event.target.checked ? item.include_in_total === true : true,
+                  })}
+                  className="h-4 w-4 rounded border-red-300"
+                />
+                <span>Optional</span>
+              </label>
+              {item.is_optional ? (
+                <>
+                  <label className="grid gap-1 md:col-span-2">
+                    <span className="text-[10px] font-semibold uppercase text-zinc-500">Parent Product</span>
+                    <select value={item.parent_item_id ?? ""} onChange={(event) => updateItem(item.id, { parent_item_id: event.target.value || null })} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800">
+                      <option value="">No parent product</option>
+                      {optionalParentChoices.map((candidate) => (
+                        <option key={candidate.id} value={candidate.id}>
+                          {candidate.item_name_snapshot || candidate.model_snapshot || candidate.item_code_snapshot || "Product row"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2 border border-zinc-200 bg-zinc-50 px-2 py-2 text-xs text-zinc-700">
+                    <input type="checkbox" checked={item.include_in_total === true} onChange={(event) => updateItem(item.id, { include_in_total: event.target.checked })} className="h-4 w-4 rounded border-zinc-300" />
+                    <span>Include optional item in totals</span>
+                  </label>
+                </>
+              ) : null}
               <label className="flex items-center gap-2 border border-zinc-200 bg-zinc-50 px-2 py-2 text-xs text-zinc-700">
                 <input type="checkbox" checked={item.allow_material_continuation_page === true} onChange={(event) => updateItem(item.id, { allow_material_continuation_page: event.target.checked })} className="h-4 w-4 rounded border-zinc-300" />
                 <span>Allow material continuation page</span>
@@ -3505,7 +3592,7 @@ export function LocalQuotationBuilder({
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Row Details</p>
                 <p className="truncate text-sm font-semibold text-zinc-950">{detailsModalItem.item_name_snapshot || "Unnamed item"}</p>
                 <p className="truncate text-xs text-zinc-500">
-                  Code: {detailsModalItem.item_code_snapshot || "-"} / Qty {detailsModalItem.qty} / Net Total {formatTableNumber(detailsModalItem.net_total)}
+                  Code: {detailsModalItem.item_code_snapshot || "-"} / Qty {detailsModalItem.qty} / Net Total {itemCountsInLocalTotals(detailsModalItem) ? formatTableNumber(detailsModalItem.net_total) : netTotalPlaceholder(detailsModalItem)}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -4033,7 +4120,14 @@ export function LocalQuotationBuilder({
                     );
                   }
 
-                  const sectionItems = orderedItems(workspace.items, section.id);
+                  const { childrenByParent: optionalChildrenByParent, topLevel: topLevelSectionItems } = orderedItemsWithOptionalChildren(workspace.items, section.id);
+                  const sectionItems = topLevelSectionItems.flatMap((item) => [
+                    { item, isOptionalChild: false },
+                    ...(collapsedOptionalParentIds.has(item.id)
+                      ? []
+                      : (optionalChildrenByParent.get(item.id) ?? []).map((child) => ({ item: child, isOptionalChild: true }))),
+                  ]);
+                  const sectionItemCount = topLevelSectionItems.length + Array.from(optionalChildrenByParent.values()).reduce((count, children) => count + children.length, 0);
                   const sectionTotal = sectionTotalById.get(section.id) ?? 0;
 
                   return (
@@ -4095,12 +4189,12 @@ export function LocalQuotationBuilder({
                           </td>
                         </tr>
                       ) : null}
-                      {!sectionItems.length ? (
+                      {!sectionItemCount ? (
                         <tr>
                           <td colSpan={totalColumns} className="border border-zinc-300 bg-white px-3 py-6 text-center text-sm text-zinc-500">No rows yet.</td>
                         </tr>
                       ) : null}
-                      {sectionItems.map((item) => (
+                      {sectionItems.map(({ item, isOptionalChild }) => (
                         <Fragment key={item.id}>
                           {itemTypeDisplay(item) === "blank" ? (
                             <>
@@ -4187,6 +4281,9 @@ export function LocalQuotationBuilder({
                             const marginAmountLabel = margin.amount === null
                               ? "-"
                               : formatTableNumber(margin.amount);
+                            const optionalChildren = optionalChildrenByParent.get(item.id) ?? [];
+                            const hasOptionalChildren = optionalChildren.length > 0;
+                            const optionalChildrenCollapsed = collapsedOptionalParentIds.has(item.id);
                             const renderOrderedItemCell = (column: typeof visibleColumns[number]) => {
                               if (column.customPrintableColumnId) {
                                 const customColumn = customPrintableColumnDefs.find((entry) => entry.id === column.customPrintableColumnId);
@@ -4267,7 +4364,7 @@ export function LocalQuotationBuilder({
                                 case "proposed_image":
                                   return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="flex h-full items-center"><LocalQuotationImageCell field="proposed_image_url_snapshot" item={item} quotationId={workspace.server_quotation_id} rowHeight={imageCellHeight} updateItem={(patch) => updateItem(item.id, patch)} /></div></td>;
                                 case "specification":
-                                  return <td key={column.key} className={`${compactCellClassName} break-words whitespace-pre-wrap`}><div className="flex h-full min-h-full flex-col justify-center py-0.5 text-left">{showSpecificationTitle ? (<input value={item.item_name_snapshot ?? specificationTitle} onChange={(event) => updateItem(item.id, { item_name_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50" />) : (<span className="text-[10px] font-semibold uppercase text-zinc-400">Title hidden in specification</span>)}<LocalAutoResizeTextarea value={cleanedSpecification ?? ""} onChange={(value) => updateItem(item.id, { specification_snapshot: cleanInlineValue(value) })} placeholder="Click to add specification" className="mt-1 w-full resize-none overflow-hidden bg-transparent text-xs leading-5 text-zinc-700 outline-none focus:bg-emerald-50" />{showSpecificationDimension ? (<label className="mt-1 flex items-center gap-1 text-xs leading-4 text-zinc-500"><span className="font-semibold">Dimension:</span><input value={showDimensionLine ? (dimensionValue ?? "") : (item.size_snapshot ?? dimensionValue ?? "")} onChange={(event) => updateItem(item.id, { size_snapshot: cleanInlineValue(event.target.value) })} placeholder="Click to add dimension" className="min-w-0 flex-1 bg-transparent text-xs text-zinc-600 outline-none focus:bg-emerald-50" /></label>) : null}{specificationDetailRows.length ? (<dl className="mt-2 grid gap-0.5 border-t border-zinc-200 pt-1.5 text-[11px] leading-4 text-zinc-500">{specificationDetailRows.map(([label, value]) => (<div key={label} className="grid grid-cols-[88px_1fr] gap-1"><dt className="font-semibold text-zinc-500">{label}:</dt><dd className="text-zinc-600">{value}</dd></div>))}</dl>) : null}</div></td>;
+                                  return <td key={column.key} className={`${compactCellClassName} break-words whitespace-pre-wrap ${isOptionalChild ? "bg-red-50/40 pl-5" : ""}`}><div className="flex h-full min-h-full flex-col justify-center py-0.5 text-left"><div className="flex items-center gap-2">{hasOptionalChildren ? (<button type="button" onClick={() => setCollapsedOptionalParentIds((current) => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} className="h-5 w-5 border border-zinc-300 bg-white text-[11px] font-bold text-zinc-700" title={optionalChildrenCollapsed ? "Show optional items" : "Hide optional items"}>{optionalChildrenCollapsed ? ">" : "v"}</button>) : isOptionalChild ? (<span className="h-5 w-5 border-l border-red-200" />) : null}{showSpecificationTitle ? (<input value={item.item_name_snapshot ?? specificationTitle} onChange={(event) => updateItem(item.id, { item_name_snapshot: cleanInlineValue(event.target.value) })} className="min-w-0 flex-1 bg-transparent text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50" />) : (<span className="text-[10px] font-semibold uppercase text-zinc-400">Title hidden in specification</span>)}{isOptionalQuotationItem(item) ? <OptionalBadge /> : null}{item.is_rate_only || item.line_style === "rate_only" ? <RateOnlyBadge /> : null}</div><LocalAutoResizeTextarea value={cleanedSpecification ?? ""} onChange={(value) => updateItem(item.id, { specification_snapshot: cleanInlineValue(value) })} placeholder="Click to add specification" className="mt-1 w-full resize-none overflow-hidden bg-transparent text-xs leading-5 text-zinc-700 outline-none focus:bg-emerald-50" />{showSpecificationDimension ? (<label className="mt-1 flex items-center gap-1 text-xs leading-4 text-zinc-500"><span className="font-semibold">Dimension:</span><input value={showDimensionLine ? (dimensionValue ?? "") : (item.size_snapshot ?? dimensionValue ?? "")} onChange={(event) => updateItem(item.id, { size_snapshot: cleanInlineValue(event.target.value) })} placeholder="Click to add dimension" className="min-w-0 flex-1 bg-transparent text-xs text-zinc-600 outline-none focus:bg-emerald-50" /></label>) : null}{specificationDetailRows.length ? (<dl className="mt-2 grid gap-0.5 border-t border-zinc-200 pt-1.5 text-[11px] leading-4 text-zinc-500">{specificationDetailRows.map(([label, value]) => (<div key={label} className="grid grid-cols-[88px_1fr] gap-1"><dt className="font-semibold text-zinc-500">{label}:</dt><dd className="text-zinc-600">{value}</dd></div>))}</dl>) : null}</div></td>;
                                 case "origin":
                                   return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="flex h-full min-h-full flex-col justify-center gap-1.5 py-0.5 text-center leading-5" onBlur={(event) => { const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null; if (!event.currentTarget.contains(nextTarget)) { setEditingOriginCellId((current) => (current === item.id ? null : current)); } }}>{isEditingOriginCell ? (<><input autoFocus value={item.brand_name_snapshot ?? (originDisplay.brand ?? "")} onChange={(event) => updateItem(item.id, { brand_name_snapshot: cleanInlineValue(event.target.value) })} placeholder="Brand" className="w-full bg-transparent text-center text-xs font-semibold text-zinc-950 outline-none focus:bg-emerald-50" /><input value={item.origin_snapshot ?? (originDisplay.origin ?? "")} onChange={(event) => updateItem(item.id, { origin_snapshot: cleanInlineValue(event.target.value) })} placeholder="Origin" className="w-full bg-transparent text-center text-xs text-zinc-700 outline-none focus:bg-emerald-50" /><input value={item.supplier_name_snapshot ?? (originDisplay.supplier ?? "")} onChange={(event) => updateItem(item.id, { supplier_name_snapshot: cleanInlineValue(event.target.value) })} placeholder="Supplier" className="w-full bg-transparent text-center text-xs text-zinc-500 outline-none focus:bg-emerald-50" /></>) : (<button type="button" onClick={() => setEditingOriginCellId(item.id)} className="w-full bg-transparent text-center outline-none">{originDisplay.primaryLine ? (<span className="block text-xs font-semibold uppercase text-zinc-950">{originDisplay.primaryLine}</span>) : (<span className="block text-xs text-zinc-400">Click to add origin / supplier</span>)}{originDisplay.supplier ? (<span className="mt-1 block text-[11px] text-zinc-500">Supplier: {originDisplay.supplier}</span>) : null}</button>)}</div></td>;
                                 case "model":
@@ -4291,7 +4388,7 @@ export function LocalQuotationBuilder({
                                 case "net_price":
                                   return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs`}>{formatTableNumber(displayPricing.netPrice)}</td>;
                                 case "net_total":
-                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs font-semibold`}>{formatTableNumber(displayPricing.netTotal)}</td>;
+                                  return <td key={column.key} className={`${compactCellClassName} break-words text-center text-xs font-semibold`}>{itemCountsInLocalTotals(item) ? formatTableNumber(displayPricing.netTotal) : <span className={item.is_rate_only || item.line_style === "rate_only" ? "text-sky-700" : "text-red-700"}>{netTotalPlaceholder(item)}</span>}</td>;
                                 case "supplier_name":
                                   return <td key={column.key} className={`${compactCellClassName} break-words`}><div className="grid h-full content-center"><input value={item.supplier_name_snapshot ?? ""} onChange={(event) => updateItem(item.id, { supplier_name_snapshot: cleanInlineValue(event.target.value) })} className="w-full bg-transparent text-xs outline-none" /></div></td>;
                                 case "internal_notes":
@@ -4326,7 +4423,7 @@ export function LocalQuotationBuilder({
 
                             return (
                             <>
-                              <tr className="align-middle" style={{ minHeight: `${itemRowMinHeight(item.row_height)}px` }}>
+                              <tr className={`align-middle ${isOptionalChild ? "bg-red-50/20" : ""}`} style={{ minHeight: `${itemRowMinHeight(item.row_height)}px` }}>
                               {visibleColumns.map((column) => renderOrderedItemCell(column))}
                             </tr>
                             <ItemRowResizeHandle item={item} totalColumns={totalColumns} />

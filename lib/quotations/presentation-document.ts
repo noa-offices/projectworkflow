@@ -56,6 +56,8 @@ export type PresentationItem = {
   warranty_snapshot: string | null;
   supplier_name_snapshot: string | null;
   sort_order: number;
+  is_optional?: boolean;
+  is_rate_only?: boolean;
   line_style: string;
   is_active: boolean;
   cell_layout: {
@@ -247,7 +249,7 @@ export async function loadQuotationPresentationData(
         .returns<PresentationSection[]>(),
       supabase
         .from("quotation_items")
-        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,sort_order,line_style,is_active,cell_layout")
+        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,sort_order,is_optional,is_rate_only,line_style,is_active,cell_layout")
         .eq("quotation_id", quotationId)
         .eq("is_active", true)
         .order("sort_order", { ascending: true })

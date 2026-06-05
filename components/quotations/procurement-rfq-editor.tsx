@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useState, useTransition } from "react";
-import { DocumentPrintSetupPanel, type PrintPlannerItem } from "@/components/quotations/document-print-setup-panel";
+import { DocumentPrintPagePlanner, DocumentPrintSetupPanel, type PrintPlannerItem } from "@/components/quotations/document-print-setup-panel";
 import { ProcurementRfqDocument } from "@/components/quotations/procurement-rfq-document";
 import { buildEffectiveDocumentGroups, type EffectiveDocumentGroup } from "@/lib/quotations/document-grouping";
 import { buildProcurementRfqPages } from "@/lib/quotations/procurement-rfq-pages";
@@ -65,6 +65,9 @@ type ProcurementRfqItem = {
   finish_snapshot: string | null;
   size_snapshot: string | null;
   origin_snapshot: string | null;
+  is_optional: boolean;
+  include_in_total: boolean;
+  is_rate_only: boolean;
   supplier_name_snapshot: string | null;
   supplier_price_list_code_snapshot: string | null;
   qty: number;
@@ -435,6 +438,8 @@ export function ProcurementRfqEditor({
       return {
         id: entry.item.id,
         description: entry.description,
+        isOptional: entry.item.is_optional,
+        isRateOnly: entry.item.is_rate_only,
         context: (context.area || context.section) ? [context.area, context.section].filter(Boolean).join(" / ") : null,
         code: entry.item.item_code_snapshot,
         supplierPriceListCode: entry.item.supplier_price_list_code_snapshot,
@@ -643,6 +648,20 @@ export function ProcurementRfqEditor({
     window.location.href = `/quotations/${data.quotation.id}/download-procurement-rfq`;
   }
 
+  const rfqDocument = (
+    <ProcurementRfqDocument
+      companyLogoUrl={defaultLogoUrl}
+      currentScopeLabel={currentScopeLabel}
+      groups={documentGroups}
+      notes={settings.notes}
+      settings={{
+        columnVisibility: settings.columnVisibility,
+        documentDetails: settings.documentDetails,
+        print: settings.print,
+      }}
+    />
+  );
+
   return (
     <main className="min-h-screen bg-stone-100 px-4 py-6 print:bg-white print:px-0 print:py-0">
       <style>{`
@@ -659,6 +678,8 @@ export function ProcurementRfqEditor({
       `}</style>
 
       {!printMode ? (
+        <div className="mx-auto grid max-w-[calc(297mm+2rem+440px+1.25rem)] gap-5 xl:grid-cols-[minmax(0,calc(297mm+2rem))_minmax(380px,440px)] xl:items-start">
+          <div className="min-w-0">
         <div className="mx-auto mb-5 w-[297mm] max-w-full print:hidden">
           <DocumentPrintSetupPanel
             actionLabel="Save Print Settings"
@@ -679,15 +700,15 @@ export function ProcurementRfqEditor({
             savedMessage="RFQ print settings match latest saved version."
             settings={settings.print}
             showSettings={showSettings}
+            showPlanner={false}
             title="Procurement RFQ Print Setup"
             toggleSettings={() => setShowSettings((current) => !current)}
           >
             <p className="text-sm text-zinc-600">Showing: {currentScopeLabel}</p>
           </DocumentPrintSetupPanel>
         </div>
-      ) : null}
 
-      {!printMode && showSettings ? (
+      {showSettings ? (
         <div className="mx-auto mb-5 w-[297mm] max-w-full print:hidden">
           <SetupPanel activeTab={activeTab} onTabChange={setActiveTab}>
             {activeTab === "document" ? (
@@ -831,7 +852,7 @@ export function ProcurementRfqEditor({
                                       />
                                       <div>
                                         <p className="text-sm font-semibold text-zinc-950">
-                                          {item.manual_serial?.trim() || String(index + 1).padStart(2, "0")} - {documentItemTitle(item)}
+                                          {item.manual_serial?.trim() || String(index + 1).padStart(2, "0")} - {documentItemTitle(item)} {item.is_optional ? "OPTIONAL" : ""} {item.is_rate_only ? "RATE ONLY" : ""}
                                         </p>
                                         <p className="mt-1 text-xs text-zinc-500">
                                           {item.item_code_snapshot ? `Code: ${item.item_code_snapshot} | ` : ""}
@@ -933,17 +954,21 @@ export function ProcurementRfqEditor({
         </div>
       ) : null}
 
-      <ProcurementRfqDocument
-        companyLogoUrl={defaultLogoUrl}
-        currentScopeLabel={currentScopeLabel}
-        groups={documentGroups}
-        notes={settings.notes}
-        settings={{
-          columnVisibility: settings.columnVisibility,
-          documentDetails: settings.documentDetails,
-          print: settings.print,
-        }}
-      />
+            {rfqDocument}
+          </div>
+
+          {showSettings ? (
+            <DocumentPrintPagePlanner
+              onAssignPage={assignPage}
+              onToggleManualPageBreak={toggleManualPageBreak}
+              plannerItems={plannerItems}
+              settings={settings.print}
+            />
+          ) : null}
+        </div>
+      ) : (
+        rfqDocument
+      )}
     </main>
   );
 }

@@ -103,6 +103,8 @@ export type QuotationItem = {
   net_total: number;
   currency: string;
   sort_order: number;
+  is_optional: boolean;
+  include_in_total?: boolean;
   line_style: string;
   is_rate_only: boolean;
   is_active: boolean;
@@ -153,7 +155,7 @@ type PdfColumn = {
   customPrintableColumnType?: string;
 };
 
-type DisplaySection = QuotationSection & {
+export type DisplaySection = QuotationSection & {
   renderAsMainOnly?: boolean;
 };
 
@@ -246,9 +248,9 @@ function quotationPdfLayoutMetrics(settings: QuotationPdfSettings): QuotationPdf
 
   const capacityByOrientation = isLandscape
     ? {
-        comfortable: { first: 20, continuation: 27 },
-        compact: { first: 23, continuation: 31 },
-        maxFit: { first: 26, continuation: 35 },
+        comfortable: { first: 14, continuation: 17 },
+        compact: { first: 16, continuation: 20 },
+        maxFit: { first: 18, continuation: 23 },
       }
     : {
         comfortable: { first: 14, continuation: 20 },
@@ -659,7 +661,12 @@ function SpecificationBlock({
 
   return (
     <div className="space-y-0.5">
-      {settings.title ? <p className="font-semibold text-zinc-950">{title}</p> : null}
+      {settings.title ? (
+        <p className="font-semibold text-zinc-950">
+          {title}
+          {item.is_optional ? <span className="ml-1 border border-red-300 bg-red-50 px-1 py-0.5 text-[8px] font-bold uppercase text-red-700">OPTIONAL</span> : null}
+        </p>
+      ) : null}
       {cleanedSpecification ? (
         <p className="whitespace-pre-wrap text-zinc-700">{cleanedSpecification}</p>
       ) : null}
@@ -691,6 +698,63 @@ function isSerialCountedLine(item: QuotationItem) {
 
 function isPriceHiddenLine(item: QuotationItem) {
   return ["note", "heading", "blank"].includes(item.item_type) || ["note", "heading", "no_quote"].includes(item.line_style);
+}
+
+function itemCountsInTotals(item: QuotationItem) {
+  return !item.is_rate_only && item.line_style !== "rate_only" && (!item.is_optional || item.include_in_total === true);
+}
+
+function netTotalDisplayLabel(item: QuotationItem) {
+  if (item.is_rate_only || item.line_style === "rate_only") return "Rate Only";
+  if (item.is_optional && item.include_in_total !== true) return "Optional";
+  return "-";
+}
+
+function applyCustomOrder<T extends { id: string }>(entries: T[], orderedIds: string[]) {
+  if (!orderedIds.length) return entries;
+
+  const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
+  const orderedEntries = orderedIds
+    .map((id) => entriesById.get(id))
+    .filter((entry): entry is T => Boolean(entry));
+  const orderedIdSet = new Set(orderedEntries.map((entry) => entry.id));
+
+  return [
+    ...orderedEntries,
+    ...entries.filter((entry) => !orderedIdSet.has(entry.id)),
+  ];
+}
+
+export function quotationPdfOrderedSections(
+  data: QuotationPdfDocumentData,
+  settings: QuotationPdfSettings = DEFAULT_QUOTATION_PDF_SETTINGS,
+) {
+  const flowOrder = settings.flowOrder;
+  const mainSections = data.printableSections.filter((section) => section.renderAsMainOnly);
+  const childSectionsByMain = new Map<string, DisplaySection[]>();
+  const standaloneSections: DisplaySection[] = [];
+
+  for (const section of data.printableSections) {
+    if (section.renderAsMainOnly) continue;
+
+    if (section.parent_section_id && data.mainSectionIds.has(section.parent_section_id)) {
+      childSectionsByMain.set(section.parent_section_id, [
+        ...(childSectionsByMain.get(section.parent_section_id) ?? []),
+        section,
+      ]);
+      continue;
+    }
+
+    standaloneSections.push(section);
+  }
+
+  return [
+    ...applyCustomOrder(mainSections, flowOrder.mainSectionIds).flatMap((section) => [
+      section,
+      ...applyCustomOrder(childSectionsByMain.get(section.id) ?? [], flowOrder.sectionIdsByMain[section.id] ?? []),
+    ]),
+    ...standaloneSections,
+  ];
 }
 
 function tableCellClass(column: PdfColumn) {
@@ -726,7 +790,7 @@ function renderPdfCell({
   visibleColumnKeys: Set<string>;
   pdfSettings: QuotationPdfSettings;
 }) {
-  if ((isPriceHiddenLine(item) || item.is_rate_only) && ["qty", "unit_price", "discount", "discount_percentage", "discount_amount", "net_price", "net_total"].includes(column.key)) {
+  if (isPriceHiddenLine(item) && ["qty", "unit_price", "discount", "discount_percentage", "discount_amount", "net_price"].includes(column.key)) {
     return "-";
   }
 
@@ -804,7 +868,7 @@ function renderPdfCell({
     case "net_price":
       return tableNumber(item.net_price);
     case "net_total":
-      return <span className="font-semibold">{tableNumber(item.net_total)}</span>;
+      return <span className={`font-semibold ${itemCountsInTotals(item) ? "" : item.is_rate_only || item.line_style === "rate_only" ? "text-sky-700" : "text-red-700"}`}>{itemCountsInTotals(item) ? tableNumber(item.net_total) : netTotalDisplayLabel(item)}</span>;
     case "supplier_name":
       return item.supplier_name_snapshot ?? "-";
     case "supplier_notes":
@@ -896,8 +960,9 @@ export function buildQuotationPdfPages(
   }];
   const manualBreaks = new Set(settings.manualPageBreaks);
   const mainSectionIds = new Set(data.mainSectionIds);
+  const orderedSections = quotationPdfOrderedSections(data, settings);
+  const emittedMainSectionIds = new Set<string>();
   let serial = 0;
-  let lastMainSectionIdOnPage: string | null = null;
 
   const startItemsPage = () => {
     const page = {
@@ -907,7 +972,6 @@ export function buildQuotationPdfPages(
       rows: [],
     };
     pages.push(page);
-    lastMainSectionIdOnPage = null;
     return page;
   };
 
@@ -940,22 +1004,25 @@ export function buildQuotationPdfPages(
     }
     page.rows.push(row);
     if (row.type === "main_section_heading") {
-      lastMainSectionIdOnPage = row.section.id;
+      emittedMainSectionIds.add(row.section.id);
     }
   };
 
-  for (let sectionIndex = 0; sectionIndex < data.printableSections.length; sectionIndex += 1) {
-    const section = data.printableSections[sectionIndex];
-    const nextSection = data.printableSections[sectionIndex + 1];
+  for (let sectionIndex = 0; sectionIndex < orderedSections.length; sectionIndex += 1) {
+    const section = orderedSections[sectionIndex];
+    const nextSection = orderedSections[sectionIndex + 1];
 
     if (section.renderAsMainOnly) {
       continue;
     }
 
-    const sectionItems = data.itemsBySection.get(section.id) ?? [];
+    const sectionItems = applyCustomOrder(data.itemsBySection.get(section.id) ?? [], settings.flowOrder.itemIdsBySection[section.id] ?? []);
     const parentMainSection = section.parent_section_id && mainSectionIds.has(section.parent_section_id)
       ? data.sectionById.get(section.parent_section_id) ?? null
       : null;
+    if (settings.startEachSectionOnNewPage && ensureItemPage().rows.length > 0) {
+      currentPage = startItemsPage();
+    }
     const baseSectionIntroRows: ItemPageRow[] = [
       ...(parentMainSection ? [{ type: "main_section_heading", section: parentMainSection } satisfies ItemPageRow] : []),
       { type: "section_heading", section },
@@ -973,7 +1040,7 @@ export function buildQuotationPdfPages(
     const activePage = ensureItemPage();
     const usedUnits = activePage.rows.reduce((total, row) => total + rowUnits(row, data.visibleColumnKeys, settings), 0);
     const availableUnits = pageCapacity(activePage, settings) - usedUnits;
-    const visibleIntroRowsForCurrentPage = (Boolean(parentMainSection) && lastMainSectionIdOnPage !== parentMainSection?.id)
+    const visibleIntroRowsForCurrentPage = (parentMainSection && !emittedMainSectionIds.has(parentMainSection.id))
       ? baseSectionIntroRows
       : baseSectionIntroRows.filter((row) => row.type !== "main_section_heading");
     const sectionUnitTotal = [
@@ -998,7 +1065,7 @@ export function buildQuotationPdfPages(
       currentPage = startItemsPage();
     }
 
-    const visibleIntroRows = (Boolean(parentMainSection) && lastMainSectionIdOnPage !== parentMainSection?.id)
+    const visibleIntroRows = (parentMainSection && !emittedMainSectionIds.has(parentMainSection.id))
       ? baseSectionIntroRows
       : baseSectionIntroRows.filter((row) => row.type !== "main_section_heading");
     visibleIntroRows.forEach((row) => pushRow(row));
@@ -1225,7 +1292,7 @@ function ItemRowsTable({
   const layout = quotationPdfLayoutMetrics(settings);
 
   return (
-    <table className={`w-full table-fixed border-collapse leading-tight ${layout.tableTextClassName}`}>
+    <table className={`w-full max-w-full table-fixed border-collapse leading-tight ${layout.tableTextClassName}`}>
       <colgroup>
         {data.pdfColumnWidths.map((width, index) => (
           <col key={`${width}-${index}`} style={{ width }} />
@@ -1451,7 +1518,7 @@ function PageFrame({
   const layout = quotationPdfLayoutMetrics(settings);
   return (
     <article
-      className={`quotation-pdf-page ${layout.pageClassName} mx-auto flex max-w-full flex-col bg-white px-[10mm] pb-[8mm] pt-[8mm] shadow-sm ring-1 ring-zinc-200`}
+      className={`quotation-pdf-page ${layout.pageClassName} mx-auto box-border flex max-w-full flex-col overflow-hidden bg-white px-[10mm] pb-[8mm] pt-[8mm] shadow-sm ring-1 ring-zinc-200`}
       style={{ height: `${layout.pageHeightMm}mm`, minHeight: `${layout.pageHeightMm}mm`, width: `${layout.pageWidthMm}mm` }}
     >
       <div className="flex min-h-0 flex-1 flex-col">

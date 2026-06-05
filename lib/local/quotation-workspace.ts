@@ -54,6 +54,8 @@ export type LocalQuotationItem = {
   currency: string;
   sort_order: number;
   is_optional: boolean;
+  parent_item_id: string | null;
+  include_in_total: boolean;
   internal_cost: number;
   margin_type: string;
   margin_value: number;
@@ -242,6 +244,7 @@ export function workspaceTotals(workspace: Pick<LocalQuotationWorkspace, "items"
     (item) =>
       item.is_active !== false &&
       !item.is_rate_only &&
+      (!item.is_optional || item.include_in_total === true) &&
       !["note", "blank", "subtotal"].includes(item.item_type) &&
       !["heading", "note", "no_quote"].includes(item.line_style),
   );
@@ -281,6 +284,8 @@ export function recalculateWorkspace(workspace: LocalQuotationWorkspace): LocalQ
 
     return {
       ...item,
+      parent_item_id: item.parent_item_id ?? null,
+      include_in_total: item.include_in_total ?? !item.is_optional,
       currency: normalizeCurrency(item.currency || workspace.currency || defaultCurrency),
       qty: normalizedQty,
       unit_price: itemLinePricing(item).unitPrice,
@@ -331,6 +336,8 @@ export function createWorkspaceFromServerSnapshot(source: ServerQuotationWorkspa
       ...item,
       source_item_id: item.id,
       currency: normalizeCurrency(item.currency || source.quotation.currency || defaultCurrency),
+      parent_item_id: item.parent_item_id ?? null,
+      include_in_total: item.include_in_total ?? !item.is_optional,
     })),
     totals: {
       subtotal: 0,
@@ -480,6 +487,8 @@ export function createEmptyItem(workspace: LocalQuotationWorkspace, itemType: "p
     currency: normalizeCurrency(workspace.currency || defaultCurrency),
     sort_order: nextSortOrder,
     is_optional: false,
+    parent_item_id: null,
+    include_in_total: true,
     internal_cost: 0,
     margin_type: "amount",
     margin_value: 0,

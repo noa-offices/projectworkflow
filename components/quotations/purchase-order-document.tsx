@@ -171,7 +171,11 @@ function ItemTable({
               </td>
             ) : null}
             <td className="align-top border-b border-zinc-200 px-2 py-2">
-              <p className="font-semibold text-zinc-900">{item.description}</p>
+              <p className="font-semibold text-zinc-900">
+                {item.description}
+                {item.isOptional ? <span className="ml-1 border border-red-300 bg-red-50 px-1 py-0.5 text-[7px] font-bold uppercase text-red-700">OPTIONAL</span> : null}
+                {item.isRateOnly ? <span className="ml-1 border border-sky-300 bg-sky-50 px-1 py-0.5 text-[7px] font-bold uppercase text-sky-700">RATE ONLY</span> : null}
+              </p>
               {item.context ? <p className="mt-0.5 text-[7.5px] text-zinc-500">{item.context}</p> : null}
               {columnVisibility.code && item.code ? <p className="mt-0.5 text-[7.5px]"><span className="font-semibold text-zinc-900">Code:</span> {item.code}</p> : null}
               {columnVisibility.supplierPriceListCode && item.supplierPriceListCode ? <p className="text-[7.5px]"><span className="font-semibold text-zinc-900">Supplier Codes:</span> {item.supplierPriceListCode}</p> : null}
@@ -183,7 +187,7 @@ function ItemTable({
             {columnVisibility.finish ? <td className="align-top border-b border-zinc-200 px-2 py-2 text-[7.5px] leading-3.5"><p className="line-clamp-4 whitespace-pre-wrap">{item.finish || "-"}</p></td> : null}
             <td className="align-top border-b border-zinc-200 px-2 py-2 text-center font-semibold text-zinc-900">{item.quantity}</td>
             {columnVisibility.unitPrice ? <td className="align-top border-b border-zinc-200 px-2 py-2 text-right">{formatPurchaseOrderMoney(poCurrency, item.unitPrice)}</td> : null}
-            {columnVisibility.lineTotal ? <td className="align-top border-b border-zinc-200 px-2 py-2 text-right font-semibold text-zinc-900">{formatPurchaseOrderMoney(poCurrency, item.lineTotal)}</td> : null}
+            {columnVisibility.lineTotal ? <td className={`align-top border-b border-zinc-200 px-2 py-2 text-right font-semibold ${item.lineTotalLabel ? item.isRateOnly ? "text-sky-700" : "text-red-700" : "text-zinc-900"}`}>{item.lineTotalLabel ?? formatPurchaseOrderMoney(poCurrency, item.lineTotal)}</td> : null}
           </tr>
         ))}
       </tbody>

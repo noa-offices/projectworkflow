@@ -40,6 +40,8 @@ type ProductPageData = {
   meta: Array<{ label: string; value: string }>;
   compactMeta: Array<{ label: string; value: string }>;
   finishes: FinishEntry[];
+  isOptional: boolean;
+  isRateOnly: boolean;
 };
 
 type PptxSlide = ReturnType<PptxGenJS["addSlide"]>;
@@ -563,6 +565,8 @@ function productPageData(
   return {
     item,
     heading: productTitle(item),
+    isOptional: item.is_optional === true,
+    isRateOnly: item.is_rate_only === true,
     specification: specificationWithoutDuplicateCode({
       code: item.item_code_snapshot,
       specification: item.specification_snapshot,
@@ -1384,6 +1388,30 @@ export async function exportQuotationPresentationPptx(data: LoadedQuotationPrese
             color: COLOR_TEXT,
             margin: 0,
           });
+          if (dataForItem.isOptional) {
+            slide.addText("OPTIONAL", {
+              x: cardX + 0.22,
+              y: cardY + 0.5,
+              w: 0.82,
+              h: 0.14,
+              fontSize: 7,
+              bold: true,
+              color: "B91C1C",
+              margin: 0,
+            });
+          }
+          if (dataForItem.isRateOnly) {
+            slide.addText("RATE ONLY", {
+              x: cardX + (dataForItem.isOptional ? 1.02 : 0.22),
+              y: cardY + 0.5,
+              w: 0.86,
+              h: 0.14,
+              fontSize: 7,
+              bold: true,
+              color: "0369A1",
+              margin: 0,
+            });
+          }
           slide.addShape(RECT_SHAPE, {
             x: cardX + 4.03,
             y: cardY + 0.16,
@@ -1473,6 +1501,30 @@ export async function exportQuotationPresentationPptx(data: LoadedQuotationPrese
         color: COLOR_TEXT,
         margin: 0,
       });
+      if (dataForItem.isOptional) {
+        slide.addText("OPTIONAL", {
+          x: PAGE_MARGIN,
+          y: 1.04,
+          w: 0.9,
+          h: 0.14,
+          fontSize: 7.5,
+          bold: true,
+          color: "B91C1C",
+          margin: 0,
+        });
+      }
+      if (dataForItem.isRateOnly) {
+        slide.addText("RATE ONLY", {
+          x: PAGE_MARGIN + (dataForItem.isOptional ? 0.92 : 0),
+          y: 1.04,
+          w: 0.92,
+          h: 0.14,
+          fontSize: 7.5,
+          bold: true,
+          color: "0369A1",
+          margin: 0,
+        });
+      }
       slide.addShape(RECT_SHAPE, {
         x: 5.85,
         y: 0.42,
@@ -1535,8 +1587,32 @@ export async function exportQuotationPresentationPptx(data: LoadedQuotationPrese
         color: COLOR_TEXT,
         margin: 0,
       });
+      if (dataForItem.isOptional) {
+        slide.addText("OPTIONAL", {
+          x: 7.28,
+          y: 1.42,
+          w: 0.9,
+          h: 0.14,
+          fontSize: 7.5,
+          bold: true,
+          color: "B91C1C",
+          margin: 0,
+        });
+      }
+      if (dataForItem.isRateOnly) {
+        slide.addText("RATE ONLY", {
+          x: 7.28 + (dataForItem.isOptional ? 0.92 : 0),
+          y: 1.42,
+          w: 0.92,
+          h: 0.14,
+          fontSize: 7.5,
+          bold: true,
+          color: "0369A1",
+          margin: 0,
+        });
+      }
 
-      let detailsCursor = 1.75;
+      let detailsCursor = dataForItem.isOptional || dataForItem.isRateOnly ? 1.88 : 1.75;
       if (settings.contentVisibility.specification && dataForItem.specification) {
         slide.addText(trimText(dataForItem.specification, 320) ?? dataForItem.specification, {
           x: 7.28,

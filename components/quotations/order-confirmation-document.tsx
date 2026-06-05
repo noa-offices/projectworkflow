@@ -45,7 +45,7 @@ function PrintPage({ children, orientation }: { children: ReactNode; orientation
     : "h-[297mm] min-h-[297mm] w-[210mm] print:h-[297mm] print:min-h-[297mm] print:w-[210mm]";
 
   return (
-    <section className={`doc-page mx-auto mb-6 flex max-w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white px-[10mm] py-[10mm] shadow-[0_20px_60px_rgba(15,23,42,0.08)] print:mb-0 print:max-w-none print:rounded-none print:border-0 print:px-[10mm] print:py-[10mm] print:shadow-none ${pageClassName}`}>
+    <section className={`doc-page mx-auto mb-6 box-border flex max-w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white px-[10mm] py-[10mm] shadow-[0_20px_60px_rgba(15,23,42,0.08)] print:mb-0 print:max-w-none print:rounded-none print:border-0 print:px-[10mm] print:py-[10mm] print:shadow-none ${pageClassName}`}>
       {children}
     </section>
   );
@@ -163,7 +163,11 @@ function ItemCard({
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="text-[7px] font-semibold uppercase tracking-[0.18em] text-zinc-400">Approved Item {String(item.rowNumber).padStart(2, "0")}</p>
-              <h2 className="mt-px text-[10px] font-semibold leading-[1.2] text-zinc-950">{item.title}</h2>
+              <h2 className="mt-px text-[10px] font-semibold leading-[1.2] text-zinc-950">
+                {item.title}
+                {item.isOptional ? <span className="ml-1 border border-red-300 bg-red-50 px-1 py-0.5 text-[7px] font-bold uppercase text-red-700">OPTIONAL</span> : null}
+                {item.isRateOnly ? <span className="ml-1 border border-sky-300 bg-sky-50 px-1 py-0.5 text-[7px] font-bold uppercase text-sky-700">RATE ONLY</span> : null}
+              </h2>
             </div>
             {columnVisibility.quantity ? (
               <p className="text-[7.5px] text-zinc-600"><span className="font-semibold text-zinc-900">Qty:</span> {item.quantity}</p>

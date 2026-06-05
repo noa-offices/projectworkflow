@@ -30,6 +30,84 @@ function ToggleRow({
   );
 }
 
+export function DocumentPrintPagePlanner({
+  onAssignPage,
+  onToggleManualPageBreak,
+  plannerItems,
+  settings,
+}: {
+  onAssignPage: (itemId: string, pageNumber: number | null) => void;
+  onToggleManualPageBreak: (itemId: string, enabled: boolean) => void;
+  plannerItems: PrintPlannerItem[];
+  settings: DocumentPrintSettings;
+}) {
+  const pageFlowMode = settings.pageFlowMode;
+  const maxPageNumber = Math.max(1, ...plannerItems.map((item) => item.pageNumber), ...Object.values(settings.pageAssignments));
+  const pageOptions = Array.from({ length: maxPageNumber }, (_, index) => index + 1);
+
+  return (
+    <div className="flex min-h-[360px] flex-col rounded-lg border border-zinc-200 bg-zinc-50 p-3 print:hidden xl:sticky xl:top-5 xl:max-h-[calc(100vh-2.5rem)] xl:self-start">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Page Planner</p>
+        <span className="text-xs text-zinc-500">{plannerItems.length} item{plannerItems.length === 1 ? "" : "s"}</span>
+      </div>
+      <div className="mt-3 min-h-[320px] flex-1 overflow-y-auto rounded-md border border-zinc-200 bg-white">
+        <table className="w-full table-fixed border-collapse text-xs">
+          <thead className="sticky top-0 bg-zinc-50 text-zinc-500">
+            <tr>
+              <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Item</th>
+              <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Section</th>
+              <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Page</th>
+              <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Break</th>
+            </tr>
+          </thead>
+          <tbody>
+            {plannerItems.map((item) => {
+              const assignmentValue = settings.pageAssignments[item.itemId];
+
+              return (
+              <tr key={item.itemId}>
+                <td className="border-b border-zinc-200 px-3 py-2 text-zinc-900">
+                  <div className="font-medium">{item.serial ? `${item.serial}. ` : ""}{item.itemName}</div>
+                </td>
+                <td className="border-b border-zinc-200 px-3 py-2 text-zinc-600">{item.sectionTitle}</td>
+                <td className="border-b border-zinc-200 px-3 py-2">
+                  <label className="grid gap-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400">Current: Page {item.pageNumber}</span>
+                    <select
+                      value={assignmentValue ?? ""}
+                      disabled={pageFlowMode !== "manual"}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        onAssignPage(item.itemId, value ? Number(value) : null);
+                      }}
+                      className="h-8 rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-900 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
+                    >
+                      <option value="">Auto</option>
+                      {item.isClosing ? <option value="0">Same page if space</option> : null}
+                      {pageOptions.map((pageNumber) => (
+                        <option key={pageNumber} value={pageNumber}>Page {pageNumber}</option>
+                      ))}
+                      <option value={maxPageNumber + 1}>New page</option>
+                    </select>
+                  </label>
+                </td>
+                <td className="border-b border-zinc-200 px-3 py-2">
+                  <label className="flex items-center gap-2 text-zinc-700">
+                    <input type="checkbox" checked={settings.manualPageBreaks.includes(item.itemId)} disabled={pageFlowMode !== "manual" || item.isClosing} onChange={(event) => onToggleManualPageBreak(item.itemId, event.target.checked)} className="h-4 w-4 rounded border-zinc-300 text-emerald-900 focus:ring-emerald-900/20 disabled:cursor-not-allowed" />
+                    <span>Break before</span>
+                  </label>
+                </td>
+              </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export function DocumentPrintSetupPanel({
   actionLabel,
   backHref,
@@ -51,6 +129,7 @@ export function DocumentPrintSetupPanel({
   savedMessage,
   settings,
   showSettings,
+  showPlanner = true,
   title,
   toggleSettings,
 }: {
@@ -74,12 +153,11 @@ export function DocumentPrintSetupPanel({
   savedMessage: string;
   settings: DocumentPrintSettings;
   showSettings: boolean;
+  showPlanner?: boolean;
   title: string;
   toggleSettings: () => void;
 }) {
   const pageFlowMode = settings.pageFlowMode;
-  const maxPageNumber = Math.max(1, ...plannerItems.map((item) => item.pageNumber), ...Object.values(settings.pageAssignments));
-  const pageOptions = Array.from({ length: maxPageNumber }, (_, index) => index + 1);
 
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
@@ -146,6 +224,7 @@ export function DocumentPrintSetupPanel({
                 <ToggleRow checked={settings.repeatTableHeader} label="Repeat table header on continuation pages" onChange={(checked) => onSettingsChange({ repeatTableHeader: checked })} />
                 <ToggleRow checked={settings.showFullHeaderOnlyFirstPage} label="Full header only on first page" onChange={(checked) => onSettingsChange({ showFullHeaderOnlyFirstPage: checked })} />
                 <ToggleRow checked={settings.keepSectionTogether} label="Keep section together" onChange={(checked) => onSettingsChange({ keepSectionTogether: checked })} />
+                <ToggleRow checked={settings.startEachSectionOnNewPage} label="Start each section on a new page" onChange={(checked) => onSettingsChange({ startEachSectionOnNewPage: checked })} />
               </div>
               <div className="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Page Flow</p>
@@ -168,65 +247,14 @@ export function DocumentPrintSetupPanel({
             {children}
           </div>
 
-          <div className="flex min-h-[360px] flex-col rounded-lg border border-zinc-200 bg-zinc-50 p-3 xl:max-h-[calc(100vh-12rem)]">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Page Planner</p>
-              <span className="text-xs text-zinc-500">{plannerItems.length} item{plannerItems.length === 1 ? "" : "s"}</span>
-            </div>
-            <div className="mt-3 min-h-[320px] flex-1 overflow-y-auto rounded-md border border-zinc-200 bg-white">
-              <table className="w-full table-fixed border-collapse text-xs">
-                <thead className="sticky top-0 bg-zinc-50 text-zinc-500">
-                  <tr>
-                    <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Item</th>
-                    <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Section</th>
-                    <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Page</th>
-                    <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Break</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {plannerItems.map((item) => {
-                    const assignmentValue = settings.pageAssignments[item.itemId];
-
-                    return (
-                    <tr key={item.itemId}>
-                      <td className="border-b border-zinc-200 px-3 py-2 text-zinc-900">
-                        <div className="font-medium">{item.serial ? `${item.serial}. ` : ""}{item.itemName}</div>
-                      </td>
-                      <td className="border-b border-zinc-200 px-3 py-2 text-zinc-600">{item.sectionTitle}</td>
-                      <td className="border-b border-zinc-200 px-3 py-2">
-                        <label className="grid gap-1">
-                          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400">Current: Page {item.pageNumber}</span>
-                          <select
-                            value={assignmentValue ?? ""}
-                            disabled={pageFlowMode !== "manual"}
-                            onChange={(event) => {
-                              const value = event.target.value;
-                              onAssignPage(item.itemId, value ? Number(value) : null);
-                            }}
-                            className="h-8 rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-900 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
-                          >
-                            <option value="">Auto</option>
-                            {item.isClosing ? <option value="0">Same page if space</option> : null}
-                            {pageOptions.map((pageNumber) => (
-                              <option key={pageNumber} value={pageNumber}>Page {pageNumber}</option>
-                            ))}
-                            <option value={maxPageNumber + 1}>New page</option>
-                          </select>
-                        </label>
-                      </td>
-                      <td className="border-b border-zinc-200 px-3 py-2">
-                        <label className="flex items-center gap-2 text-zinc-700">
-                          <input type="checkbox" checked={settings.manualPageBreaks.includes(item.itemId)} disabled={pageFlowMode !== "manual" || item.isClosing} onChange={(event) => onToggleManualPageBreak(item.itemId, event.target.checked)} className="h-4 w-4 rounded border-zinc-300 text-emerald-900 focus:ring-emerald-900/20 disabled:cursor-not-allowed" />
-                          <span>Break before</span>
-                        </label>
-                      </td>
-                    </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          {showPlanner ? (
+            <DocumentPrintPagePlanner
+              onAssignPage={onAssignPage}
+              onToggleManualPageBreak={onToggleManualPageBreak}
+              plannerItems={plannerItems}
+              settings={settings}
+            />
+          ) : null}
         </div>
       ) : null}
     </div>

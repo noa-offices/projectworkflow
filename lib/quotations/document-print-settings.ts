@@ -14,6 +14,7 @@ export type DocumentPrintSettings = {
   manualPageBreaks: string[];
   pageAssignments: Record<string, number>;
   closingPlacement: DocumentPrintClosingPlacement;
+  startEachSectionOnNewPage: boolean;
   keepSectionTogether: boolean;
 };
 
@@ -27,6 +28,7 @@ export const DEFAULT_LANDSCAPE_PRINT_SETTINGS: DocumentPrintSettings = {
   manualPageBreaks: [],
   pageAssignments: {},
   closingPlacement: "auto",
+  startEachSectionOnNewPage: false,
   keepSectionTogether: false,
 };
 
@@ -96,6 +98,7 @@ export function normalizeDocumentPrintSettings(
       : record.closingPlacement === "samePage"
         ? "samePage"
         : "auto",
+    startEachSectionOnNewPage: normalizedBoolean(record, "startEachSectionOnNewPage", fallback.startEachSectionOnNewPage),
     keepSectionTogether: normalizedBoolean(record, "keepSectionTogether", fallback.keepSectionTogether),
   };
 }

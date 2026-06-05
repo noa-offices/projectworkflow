@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useState, useTransition } from "react";
-import { DocumentPrintSetupPanel, type PrintPlannerItem } from "@/components/quotations/document-print-setup-panel";
+import { DocumentPrintPagePlanner, DocumentPrintSetupPanel, type PrintPlannerItem } from "@/components/quotations/document-print-setup-panel";
 import { OrderConfirmationDocument } from "@/components/quotations/order-confirmation-document";
 import { buildOrderConfirmationPages } from "@/lib/quotations/order-confirmation-pages";
 import type { DocumentPrintSettings } from "@/lib/quotations/document-print-settings";
@@ -67,6 +67,9 @@ type OrderConfirmationItem = {
   finish_snapshot: string | null;
   size_snapshot: string | null;
   origin_snapshot: string | null;
+  is_optional: boolean;
+  include_in_total: boolean;
+  is_rate_only: boolean;
   qty: number;
   imageUrl: string | null;
 };
@@ -334,6 +337,8 @@ export function OrderConfirmationEditor({
         quantity: override.quantity ?? item.qty,
         specification: compactSpecification(item.specification_snapshot),
         title: override.title || documentItemTitle(item),
+        isOptional: item.is_optional,
+        isRateOnly: item.is_rate_only,
       };
     })
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
@@ -495,6 +500,19 @@ export function OrderConfirmationEditor({
     window.location.href = `/quotations/${data.quotation.id}/download-order-confirmation`;
   }
 
+  const orderConfirmationDocument = (
+    <OrderConfirmationDocument
+      companyLogoUrl={defaultLogoUrl}
+      items={previewItems}
+      settings={{
+        columnVisibility: settings.columnVisibility,
+        documentDetails: settings.documentDetails,
+        print: settings.print,
+        terms: settings.terms,
+      }}
+    />
+  );
+
   return (
     <main className="min-h-screen bg-stone-100 px-4 py-6 print:bg-white print:px-0 print:py-0">
       <style>{`
@@ -511,6 +529,8 @@ export function OrderConfirmationEditor({
       `}</style>
 
       {!printMode ? (
+        <div className="mx-auto grid max-w-[calc(210mm+2rem+440px+1.25rem)] gap-5 xl:grid-cols-[minmax(0,calc(210mm+2rem))_minmax(380px,440px)] xl:items-start">
+          <div className="min-w-0">
         <div className="mx-auto mb-5 w-[210mm] max-w-full print:hidden">
           <DocumentPrintSetupPanel
             actionLabel="Save Print Settings"
@@ -531,13 +551,13 @@ export function OrderConfirmationEditor({
             savedMessage="Order confirmation print settings match latest saved version."
             settings={settings.print}
             showSettings={showSettings}
+            showPlanner={false}
             title="Order Confirmation Print Setup"
             toggleSettings={() => setShowSettings((current) => !current)}
           />
         </div>
-      ) : null}
 
-      {!printMode && showSettings ? (
+      {showSettings ? (
         <div className="mx-auto mb-5 w-[210mm] max-w-full print:hidden">
           <SetupPanel activeTab={activeTab} onTabChange={setActiveTab}>
             {activeTab === "document" ? (
@@ -596,7 +616,7 @@ export function OrderConfirmationEditor({
                           />
                           <div>
                             <p className="text-sm font-semibold text-zinc-950">
-                              {item.manual_serial?.trim() || String(index + 1).padStart(2, "0")} - {documentItemTitle(item)}
+                              {item.manual_serial?.trim() || String(index + 1).padStart(2, "0")} - {documentItemTitle(item)} {item.is_optional ? "OPTIONAL" : ""} {item.is_rate_only ? "RATE ONLY" : ""}
                             </p>
                             <p className="mt-1 text-xs text-zinc-500">
                               {item.item_code_snapshot ? `Code: ${item.item_code_snapshot} | ` : ""}
@@ -688,16 +708,21 @@ export function OrderConfirmationEditor({
         </div>
       ) : null}
 
-      <OrderConfirmationDocument
-        companyLogoUrl={defaultLogoUrl}
-        items={previewItems}
-        settings={{
-          columnVisibility: settings.columnVisibility,
-          documentDetails: settings.documentDetails,
-          print: settings.print,
-          terms: settings.terms,
-        }}
-      />
+            {orderConfirmationDocument}
+          </div>
+
+          {showSettings ? (
+            <DocumentPrintPagePlanner
+              onAssignPage={assignPage}
+              onToggleManualPageBreak={toggleManualPageBreak}
+              plannerItems={plannerItems}
+              settings={settings.print}
+            />
+          ) : null}
+        </div>
+      ) : (
+        orderConfirmationDocument
+      )}
     </main>
   );
 }

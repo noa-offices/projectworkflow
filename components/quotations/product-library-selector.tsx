@@ -2212,6 +2212,8 @@ export function ProductLibrarySelector({
                     currency: previewCurrency,
                     sort_order: 0,
                     is_optional: false,
+                    parent_item_id: null,
+                    include_in_total: true,
                     internal_cost: 0,
                     margin_type: "amount",
                     margin_value: 0,

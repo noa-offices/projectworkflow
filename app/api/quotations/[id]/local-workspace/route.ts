@@ -54,6 +54,22 @@ function sortByOrder<T extends { sort_order: number }>(rows: T[]) {
   return [...rows].sort((left, right) => left.sort_order - right.sort_order);
 }
 
+function sortItemsWithOptionalChildren(rows: LocalQuotationItem[]) {
+  const ordered = sortByOrder(rows);
+  const childrenByParent = new Map<string, LocalQuotationItem[]>();
+  const topLevel: LocalQuotationItem[] = [];
+
+  for (const row of ordered) {
+    if (row.is_optional && row.parent_item_id) {
+      childrenByParent.set(row.parent_item_id, [...(childrenByParent.get(row.parent_item_id) ?? []), row]);
+    } else {
+      topLevel.push(row);
+    }
+  }
+
+  return topLevel.flatMap((row) => [row, ...(childrenByParent.get(row.id) ?? [])]);
+}
+
 function itemLineStyleForInsert(item: LocalQuotationItem) {
   if (item.line_style === "blank") {
     return "normal";
@@ -272,7 +288,7 @@ export async function POST(
       .returns<Array<{ id: string }>>();
 
     const orderedSections = sortByOrder(workspace.sections).filter((section) => section.is_active !== false);
-    const orderedItems = sortByOrder(workspace.items).filter((item) => item.is_active !== false);
+    const orderedItems = sortItemsWithOptionalChildren(workspace.items.filter((item) => item.is_active !== false));
     const nextSectionIdByLocalId = new Map<string, string>();
 
     for (const section of orderedSections) {
@@ -286,12 +302,14 @@ export async function POST(
       parent_section_id: section.parent_section_id ? nextSectionIdByLocalId.get(section.parent_section_id) ?? null : null,
       source_section_id: section.source_section_id ?? section.id,
     }));
-    const itemsToInsert: LocalQuotationItem[] = orderedItems.map((item) => ({
+    const itemsToInsert: LocalQuotationItem[] = orderedItems.map((item, index) => ({
       ...item,
       id: crypto.randomUUID(),
       quotation_id: quotation.id,
       section_id: item.section_id ? nextSectionIdByLocalId.get(item.section_id) ?? null : null,
+      sort_order: (index + 1) * 10,
       source_item_id: item.source_item_id ?? item.id,
+      parent_item_id: item.parent_item_id ?? null,
     }));
     const sectionIdByPreviousId = new Map<string, string>();
     sectionsToInsert.forEach((section, index) => {
@@ -304,6 +322,9 @@ export async function POST(
       [item.source_item_id, orderedItems[index]?.id, existingItems?.[index]?.id].forEach((previousId) => {
         if (previousId) itemIdByPreviousId.set(previousId, item.id);
       });
+    });
+    itemsToInsert.forEach((item) => {
+      item.parent_item_id = item.parent_item_id ? itemIdByPreviousId.get(item.parent_item_id) ?? null : null;
     });
 
     const existingItemIds = (existingItems ?? []).map((item) => item.id);
@@ -409,6 +430,8 @@ export async function POST(
         currency: textOrNull(item.currency) ?? workspace.currency,
         sort_order: numericValue(item.sort_order),
         is_optional: Boolean(item.is_optional),
+        parent_item_id: item.parent_item_id,
+        include_in_total: item.is_optional ? item.include_in_total === true : true,
         internal_cost: numericValue(item.internal_cost),
         margin_type: item.margin_type === "percent" ? "percent" : "amount",
         margin_value: numericValue(item.margin_value),

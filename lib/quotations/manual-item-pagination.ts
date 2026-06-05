@@ -6,6 +6,7 @@ type ManualPaginationOptions<TItem, TPageItem> = {
   pageNumberOffset?: number;
   overflowBufferUnits?: number;
   getItemId: (item: TItem) => string;
+  getSectionKey?: (item: TItem) => string | null;
   createPageItem: (item: TItem, index: number) => TPageItem;
   estimateItemUnits: (item: TPageItem) => number;
   getItemCapacity: (pageIndex: number) => number;
@@ -17,12 +18,14 @@ export function paginateDocumentItems<TItem, TPageItem>({
   pageNumberOffset = 0,
   overflowBufferUnits = 0,
   getItemId,
+  getSectionKey,
   createPageItem,
   estimateItemUnits,
   getItemCapacity,
 }: ManualPaginationOptions<TItem, TPageItem>) {
   type Entry = {
     itemId: string;
+    sectionKey: string | null;
     index: number;
     pageItem: TPageItem;
     units: number;
@@ -32,6 +35,7 @@ export function paginateDocumentItems<TItem, TPageItem>({
     const pageItem = createPageItem(item, index);
     return {
       itemId: getItemId(item),
+      sectionKey: getSectionKey?.(item) ?? null,
       index,
       pageItem,
       units: estimateItemUnits(pageItem),
@@ -42,23 +46,31 @@ export function paginateDocumentItems<TItem, TPageItem>({
     const pages: TPageItem[][] = [];
     let current: TPageItem[] = [];
     let currentUnits = 0;
+    let currentSectionKey: string | null = null;
 
     const pushCurrentPage = () => {
       if (current.length === 0) return;
       pages.push(current);
       current = [];
       currentUnits = 0;
+      currentSectionKey = null;
     };
 
     entries.forEach((entry) => {
       const pageIndex = pageNumberOffset + pages.length;
       const maxUnits = getItemCapacity(pageIndex);
+      const sectionBreak = print.startEachSectionOnNewPage
+        && current.length > 0
+        && entry.sectionKey !== null
+        && currentSectionKey !== null
+        && entry.sectionKey !== currentSectionKey;
 
-      if (current.length > 0 && currentUnits + entry.units + overflowBufferUnits > maxUnits) {
+      if (current.length > 0 && (sectionBreak || currentUnits + entry.units + overflowBufferUnits > maxUnits)) {
         pushCurrentPage();
       }
 
       current.push(entry.pageItem);
+      currentSectionKey = entry.sectionKey;
       currentUnits += entry.units;
     });
 
@@ -123,6 +135,7 @@ export function paginateDocumentItems<TItem, TPageItem>({
     let current: TPageItem[] = [];
     let currentUnits = 0;
     let currentPhysicalPage = pageNumberOffset + pages.length + 1;
+    let currentSectionKey: string | null = null;
 
     const pushCurrentPage = () => {
       if (current.length === 0) return;
@@ -130,18 +143,25 @@ export function paginateDocumentItems<TItem, TPageItem>({
       current = [];
       currentUnits = 0;
       currentPhysicalPage = pageNumberOffset + pages.length + 1;
+      currentSectionKey = null;
     };
 
     sortedEntries.forEach((entry) => {
       const pageIndex = pageNumberOffset + pages.length;
       const maxUnits = getItemCapacity(pageIndex);
       const forcedBreak = print.manualPageBreaks.includes(entry.itemId);
+      const sectionBreak = print.startEachSectionOnNewPage
+        && current.length > 0
+        && entry.sectionKey !== null
+        && currentSectionKey !== null
+        && entry.sectionKey !== currentSectionKey;
 
-      if (current.length > 0 && (forcedBreak || currentUnits + entry.units + overflowBufferUnits > maxUnits)) {
+      if (current.length > 0 && (forcedBreak || sectionBreak || currentUnits + entry.units + overflowBufferUnits > maxUnits)) {
         pushCurrentPage();
       }
 
       current.push(entry.pageItem);
+      currentSectionKey = entry.sectionKey;
       currentUnits += entry.units;
       renderedPageByItemId[entry.itemId] = currentPhysicalPage;
     });

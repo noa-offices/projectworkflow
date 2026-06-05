@@ -200,6 +200,8 @@ type QuotationItem = {
   currency: string;
   sort_order: number;
   is_optional: boolean;
+  parent_item_id: string | null;
+  include_in_total: boolean;
   internal_cost: number;
   margin_type: string;
   margin_value: number;
@@ -401,6 +403,7 @@ function moneyCell(value: number) {
 
 function totalCell(item: QuotationItem) {
   if (item.is_rate_only || item.line_style === "rate_only") return "Rate Only";
+  if (item.is_optional && item.include_in_total !== true) return "Optional";
   if (item.line_style === "no_quote") return "N/A";
   if (item.line_style === "note" || item.line_style === "heading") return "-";
 
@@ -1915,6 +1918,8 @@ function LineForm({
           </>
         ) : null}
         {item?.is_optional ? <input type="hidden" name="is_optional" value="on" /> : null}
+        {item?.parent_item_id ? <input type="hidden" name="parent_item_id" value={item.parent_item_id} /> : null}
+        {item && (!item.is_optional || item.include_in_total) ? <input type="hidden" name="include_in_total" value="on" /> : null}
         {!showInternal && item ? (
           <>
             <input type="hidden" name="supplier_notes_snapshot" value={item.supplier_notes_snapshot ?? ""} />
@@ -2261,8 +2266,8 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
             </span>
           )}
           {(item.line_style === "optional" || item.is_optional) ? (
-            <span className="border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-800">
-              Optional
+            <span className="border border-red-300 bg-red-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-red-700">
+              OPTIONAL
             </span>
           ) : null}
         </div>
@@ -2561,8 +2566,8 @@ function getColumns(layoutMode: string, showInternal: boolean, settings?: Layout
             <span className="text-[10px] font-semibold uppercase text-zinc-400">Title hidden in client display</span>
           ) : null}
           {(item.line_style === "optional" || item.is_optional) ? (
-            <span className="border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-800">
-              Optional
+            <span className="border border-red-300 bg-red-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-red-700">
+              OPTIONAL
             </span>
           ) : null}
         </div>
@@ -3348,7 +3353,7 @@ export default async function QuotationBuilderPage({
   const { data: items, error: itemsError } = await supabase
     .from("quotation_items")
     .select(
-      "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,allow_material_continuation_page,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,is_active,notes,created_at",
+      "id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,allow_material_continuation_page,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,parent_item_id,include_in_total,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,is_active,notes,created_at",
     )
     .eq("quotation_id", id)
     .eq("is_active", true)

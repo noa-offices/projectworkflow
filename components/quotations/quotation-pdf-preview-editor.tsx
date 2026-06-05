@@ -6,6 +6,7 @@ import {
   QuotationPdfDocument,
   deserializeQuotationPdfDocumentData,
   quotationPdfItemPageAssignments,
+  quotationPdfOrderedSections,
   type SerializedQuotationPdfDocumentData,
 } from "@/components/quotations/quotation-pdf-document";
 import {
@@ -22,6 +23,19 @@ type QuotationPdfPreviewEditorProps = {
 
 function settingsSignature(settings: QuotationPdfSettings) {
   return JSON.stringify(normalizeQuotationPdfSettings(settings));
+}
+
+function moveOrderedEntry(ids: string[], entryId: string, direction: "up" | "down") {
+  const currentIndex = ids.indexOf(entryId);
+  if (currentIndex < 0) return ids;
+
+  const nextIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+  if (nextIndex < 0 || nextIndex >= ids.length) return ids;
+
+  const nextIds = [...ids];
+  const [entry] = nextIds.splice(currentIndex, 1);
+  nextIds.splice(nextIndex, 0, entry);
+  return nextIds;
 }
 
 function ToggleRow({
@@ -41,6 +55,113 @@ function ToggleRow({
   );
 }
 
+function PagePlanner({
+  mainSectionGroups,
+  moveMainSection,
+  moveSubsection,
+  pageAssignments,
+  pageFlowMode,
+  settings,
+  subsectionGroups,
+  toggleManualPageBreak,
+}: {
+  mainSectionGroups: Array<{ id: string; title: string; canMoveUp: boolean; canMoveDown: boolean }>;
+  moveMainSection: (sectionId: string, direction: "up" | "down") => void;
+  moveSubsection: (mainSectionId: string, sectionId: string, direction: "up" | "down") => void;
+  pageAssignments: ReturnType<typeof quotationPdfItemPageAssignments>;
+  pageFlowMode: "auto" | "manual";
+  settings: QuotationPdfSettings;
+  subsectionGroups: Array<{ id: string; mainSectionId: string; title: string; parentTitle: string; canMoveUp: boolean; canMoveDown: boolean }>;
+  toggleManualPageBreak: (itemId: string, enabled: boolean) => void;
+}) {
+  return (
+    <aside className="flex min-h-[360px] flex-col rounded-lg border border-zinc-200 bg-zinc-50 p-3 shadow-sm xl:sticky xl:top-5 xl:max-h-[calc(100vh-2.5rem)]">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Page Planner</p>
+        <span className="text-xs text-zinc-500">{pageAssignments.length} item{pageAssignments.length === 1 ? "" : "s"}</span>
+      </div>
+      {mainSectionGroups.length > 1 || subsectionGroups.length > 1 ? (
+        <div className="mt-3 grid gap-3 rounded-md border border-zinc-200 bg-white p-3">
+          {mainSectionGroups.length > 1 ? (
+            <div className="grid gap-2">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Main Sections</p>
+              <div className="grid gap-1.5">
+                {mainSectionGroups.map((section) => (
+                  <div key={section.id} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1.5 text-xs">
+                    <span className="truncate font-medium text-zinc-800">{section.title}</span>
+                    <button type="button" disabled={!section.canMoveUp} onClick={() => moveMainSection(section.id, "up")} className="rounded border border-zinc-200 px-2 py-1 font-semibold text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-300">
+                      Up
+                    </button>
+                    <button type="button" disabled={!section.canMoveDown} onClick={() => moveMainSection(section.id, "down")} className="rounded border border-zinc-200 px-2 py-1 font-semibold text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-300">
+                      Down
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {subsectionGroups.length > 1 ? (
+            <div className="grid gap-2">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Subsections</p>
+              <div className="grid gap-1.5">
+                {subsectionGroups.map((section) => (
+                  <div key={section.id} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1.5 text-xs">
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-zinc-800">{section.title}</span>
+                      <span className="block truncate text-[10px] text-zinc-500">{section.parentTitle}</span>
+                    </span>
+                    <button type="button" disabled={!section.canMoveUp} onClick={() => moveSubsection(section.mainSectionId, section.id, "up")} className="rounded border border-zinc-200 px-2 py-1 font-semibold text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-300">
+                      Up
+                    </button>
+                    <button type="button" disabled={!section.canMoveDown} onClick={() => moveSubsection(section.mainSectionId, section.id, "down")} className="rounded border border-zinc-200 px-2 py-1 font-semibold text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-300">
+                      Down
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="mt-3 min-h-[320px] flex-1 overflow-y-auto rounded-md border border-zinc-200 bg-white">
+        <table className="w-full table-fixed border-collapse text-xs">
+          <thead className="sticky top-0 bg-zinc-50 text-zinc-500">
+            <tr>
+              <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Item</th>
+              <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Section</th>
+              <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Page</th>
+              <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Break</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pageAssignments.map((assignment) => (
+              <tr key={assignment.itemId}>
+                <td className="border-b border-zinc-200 px-3 py-2 text-zinc-900">
+                  <div className="font-medium">{assignment.serial ? `${assignment.serial}. ` : ""}{assignment.itemName}</div>
+                </td>
+                <td className="border-b border-zinc-200 px-3 py-2 text-zinc-600">{assignment.sectionTitle}</td>
+                <td className="border-b border-zinc-200 px-3 py-2 text-zinc-600">Page {assignment.pageNumber}</td>
+                <td className="border-b border-zinc-200 px-3 py-2">
+                  <label className="flex items-center gap-2 text-zinc-700">
+                    <input
+                      type="checkbox"
+                      checked={settings.manualPageBreaks.includes(assignment.itemId)}
+                      disabled={pageFlowMode !== "manual"}
+                      onChange={(event) => toggleManualPageBreak(assignment.itemId, event.target.checked)}
+                      className="h-4 w-4 rounded border-zinc-300 text-emerald-900 focus:ring-emerald-900/20 disabled:cursor-not-allowed"
+                    />
+                    <span>Break before</span>
+                  </label>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </aside>
+  );
+}
+
 export function QuotationPdfPreviewEditor({
   defaultSettings,
   initialSettings,
@@ -54,11 +175,52 @@ export function QuotationPdfPreviewEditor({
   const [pageFlowMode, setPageFlowMode] = useState<"auto" | "manual">(initialSettings.manualPageBreaks.length > 0 ? "manual" : "auto");
   const [isPending, startTransition] = useTransition();
   const data = useMemo(() => deserializeQuotationPdfDocumentData(serializedData), [serializedData]);
-  const isDirty = settingsSignature(settings) !== settingsSignature(savedSettings);
-  const pageAssignments = useMemo(
-    () => quotationPdfItemPageAssignments(data, settings),
-    [data, settings],
+  const previewSettings = useMemo(
+    () => pageFlowMode === "auto" ? { ...settings, manualPageBreaks: [] } : settings,
+    [pageFlowMode, settings],
   );
+  const isDirty = settingsSignature(previewSettings) !== settingsSignature(savedSettings);
+  const pageAssignments = useMemo(
+    () => quotationPdfItemPageAssignments(data, previewSettings),
+    [data, previewSettings],
+  );
+  const orderedSections = useMemo(
+    () => quotationPdfOrderedSections(data, previewSettings),
+    [data, previewSettings],
+  );
+  const mainSectionGroups = useMemo(() => {
+    const sections = orderedSections.filter((section) => section.renderAsMainOnly);
+
+    return sections.map((section, index) => ({
+      id: section.id,
+      title: section.section_title,
+      canMoveUp: index > 0,
+      canMoveDown: index < sections.length - 1,
+    }));
+  }, [orderedSections]);
+  const subsectionGroups = useMemo(() => {
+    const mainSectionTitleById = new Map(
+      orderedSections
+        .filter((section) => section.renderAsMainOnly)
+        .map((section) => [section.id, section.section_title] as const),
+    );
+
+    return orderedSections
+      .filter((section) => section.parent_section_id && mainSectionTitleById.has(section.parent_section_id))
+      .map((section) => {
+        const siblingSections = orderedSections.filter((entry) => entry.parent_section_id === section.parent_section_id);
+        const index = siblingSections.findIndex((entry) => entry.id === section.id);
+
+        return {
+          id: section.id,
+          mainSectionId: section.parent_section_id!,
+          title: section.section_title,
+          parentTitle: mainSectionTitleById.get(section.parent_section_id!) ?? "Main Section",
+          canMoveUp: index > 0,
+          canMoveDown: index >= 0 && index < siblingSections.length - 1,
+        };
+      });
+  }, [orderedSections]);
   const companyDefaultNotes = data.defaultQuotationNotes;
   const notesValue = settings.notesOverride ?? companyDefaultNotes;
 
@@ -79,6 +241,39 @@ export function QuotationPdfPreviewEditor({
 
     updateSettings({
       manualPageBreaks: Array.from(nextBreaks),
+    });
+  }
+
+  function moveMainSection(sectionId: string, direction: "up" | "down") {
+    const orderedIds = orderedSections
+      .filter((section) => section.renderAsMainOnly)
+      .map((section) => section.id);
+    const nextIds = moveOrderedEntry(orderedIds, sectionId, direction);
+    if (nextIds.join("|") === orderedIds.join("|")) return;
+
+    updateSettings({
+      flowOrder: {
+        ...settings.flowOrder,
+        mainSectionIds: nextIds,
+      },
+    });
+  }
+
+  function moveSubsection(mainSectionId: string, sectionId: string, direction: "up" | "down") {
+    const orderedIds = orderedSections
+      .filter((section) => section.parent_section_id === mainSectionId)
+      .map((section) => section.id);
+    const nextIds = moveOrderedEntry(orderedIds, sectionId, direction);
+    if (nextIds.join("|") === orderedIds.join("|")) return;
+
+    updateSettings({
+      flowOrder: {
+        ...settings.flowOrder,
+        sectionIdsByMain: {
+          ...settings.flowOrder.sectionIdsByMain,
+          [mainSectionId]: nextIds,
+        },
+      },
     });
   }
 
@@ -107,6 +302,7 @@ export function QuotationPdfPreviewEditor({
         const trimmedNotesOverride = settings.notesOverride?.trim() ?? "";
         const settingsToSave = {
           ...settings,
+          manualPageBreaks: pageFlowMode === "auto" ? [] : settings.manualPageBreaks,
           notesOverride:
             trimmedNotesOverride.length === 0 || trimmedNotesOverride === trimmedDefaultNotes
               ? null
@@ -149,8 +345,9 @@ export function QuotationPdfPreviewEditor({
 
   return (
     <main className="min-h-screen bg-zinc-100 px-4 py-5">
-      <div className="mx-auto mb-5 w-[297mm] max-w-full">
-        <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+      <div className="mx-auto grid max-w-[calc(297mm+2rem+440px+1.25rem)] gap-5 xl:grid-cols-[minmax(0,calc(297mm+2rem))_minmax(380px,440px)] xl:items-start">
+        <div className="min-w-0">
+          <div className="mx-auto mb-5 w-[297mm] max-w-full rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">Quotation PDF Preview Setup</p>
@@ -182,8 +379,8 @@ export function QuotationPdfPreviewEditor({
             </div>
           </div>
 
-          {showSettings ? (
-            <div className="mt-5 grid items-stretch gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(400px,0.92fr)]">
+            {showSettings ? (
+              <div className="mt-5 grid content-start gap-4">
               <div className="grid content-start gap-4">
                 <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Basic Layout</p>
@@ -234,6 +431,7 @@ export function QuotationPdfPreviewEditor({
                     <ToggleRow checked={settings.repeatTableHeader} label="Repeat table header on continuation pages" onChange={(checked) => updateSettings({ repeatTableHeader: checked })} />
                     <ToggleRow checked={settings.showFullHeaderOnlyFirstPage} label="Full header only on first page" onChange={(checked) => updateSettings({ showFullHeaderOnlyFirstPage: checked })} />
                     <ToggleRow checked={settings.keepSectionTogether} label="Keep section together" onChange={(checked) => updateSettings({ keepSectionTogether: checked })} />
+                    <ToggleRow checked={settings.startEachSectionOnNewPage} label="Start each section on a new page" onChange={(checked) => updateSettings({ startEachSectionOnNewPage: checked })} />
                   </div>
 
                   <div className="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
@@ -301,53 +499,26 @@ export function QuotationPdfPreviewEditor({
                 </div>
               </div>
 
-              <div className="flex min-h-[360px] flex-col rounded-lg border border-zinc-200 bg-zinc-50 p-3 xl:min-h-[520px] xl:max-h-[calc(100vh-12rem)]">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Page Planner</p>
-                  <span className="text-xs text-zinc-500">{pageAssignments.length} item{pageAssignments.length === 1 ? "" : "s"}</span>
-                </div>
-                <div className="mt-3 min-h-[320px] flex-1 overflow-y-auto rounded-md border border-zinc-200 bg-white xl:min-h-[480px]">
-                  <table className="w-full table-fixed border-collapse text-xs">
-                    <thead className="sticky top-0 bg-zinc-50 text-zinc-500">
-                      <tr>
-                        <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Item</th>
-                        <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Section</th>
-                        <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Page</th>
-                        <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Break</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pageAssignments.map((assignment) => (
-                        <tr key={assignment.itemId}>
-                          <td className="border-b border-zinc-200 px-3 py-2 text-zinc-900">
-                            <div className="font-medium">{assignment.serial ? `${assignment.serial}. ` : ""}{assignment.itemName}</div>
-                          </td>
-                          <td className="border-b border-zinc-200 px-3 py-2 text-zinc-600">{assignment.sectionTitle}</td>
-                          <td className="border-b border-zinc-200 px-3 py-2 text-zinc-600">Page {assignment.pageNumber}</td>
-                          <td className="border-b border-zinc-200 px-3 py-2">
-                            <label className="flex items-center gap-2 text-zinc-700">
-                              <input
-                                type="checkbox"
-                                checked={settings.manualPageBreaks.includes(assignment.itemId)}
-                                disabled={pageFlowMode !== "manual"}
-                                onChange={(event) => toggleManualPageBreak(assignment.itemId, event.target.checked)}
-                                className="h-4 w-4 rounded border-zinc-300 text-emerald-900 focus:ring-emerald-900/20 disabled:cursor-not-allowed"
-                              />
-                              <span>Break before</span>
-                            </label>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
             </div>
           ) : null}
         </div>
-      </div>
 
-      <QuotationPdfDocument data={data} settings={settings} printMode={false} showToolbar={false} />
+          <QuotationPdfDocument data={data} settings={previewSettings} printMode={false} showToolbar={false} />
+        </div>
+
+        {showSettings ? (
+          <PagePlanner
+            mainSectionGroups={mainSectionGroups}
+            moveMainSection={moveMainSection}
+            moveSubsection={moveSubsection}
+            pageAssignments={pageAssignments}
+            pageFlowMode={pageFlowMode}
+            settings={settings}
+            subsectionGroups={subsectionGroups}
+            toggleManualPageBreak={toggleManualPageBreak}
+          />
+        ) : null}
+      </div>
     </main>
   );
 }

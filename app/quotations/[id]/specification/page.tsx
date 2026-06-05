@@ -87,6 +87,8 @@ type QuotationItem = {
   supplier_notes_snapshot: string | null;
   allow_material_continuation_page: boolean;
   sort_order: number;
+  is_optional: boolean;
+  is_rate_only: boolean;
   line_style: string;
   is_active: boolean;
   cell_layout: CellLayout | null;
@@ -542,9 +544,17 @@ function TextBlockPage({
         </p>
         <div className="mt-8 border-l border-zinc-300 pl-8">
           {isHeadingRow(page.item) ? (
-            <h2 className="text-3xl font-bold leading-tight text-zinc-950">{text}</h2>
+            <h2 className="text-3xl font-bold leading-tight text-zinc-950">
+              {text}
+              {page.item.is_optional ? <span className="ml-2 border border-red-300 bg-red-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase text-red-700">OPTIONAL</span> : null}
+              {page.item.is_rate_only ? <span className="ml-2 border border-sky-300 bg-sky-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase text-sky-700">RATE ONLY</span> : null}
+            </h2>
           ) : (
-            <p className="whitespace-pre-wrap text-lg leading-8 text-zinc-700">{text}</p>
+            <p className="whitespace-pre-wrap text-lg leading-8 text-zinc-700">
+              {text}
+              {page.item.is_optional ? <span className="ml-2 border border-red-300 bg-red-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase text-red-700">OPTIONAL</span> : null}
+              {page.item.is_rate_only ? <span className="ml-2 border border-sky-300 bg-sky-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase text-sky-700">RATE ONLY</span> : null}
+            </p>
           )}
         </div>
       </div>
@@ -912,7 +922,11 @@ function ProductSpecPage({
 
         <div className="min-w-0">
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-400">{item.brand_name_snapshot || item.category_name_snapshot || "Product"}</p>
-          <h2 className="mt-3 text-3xl font-bold leading-tight text-zinc-950">{title}</h2>
+          <h2 className="mt-3 text-3xl font-bold leading-tight text-zinc-950">
+            {title}
+            {item.is_optional ? <span className="ml-2 border border-red-300 bg-red-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase text-red-700">OPTIONAL</span> : null}
+            {item.is_rate_only ? <span className="ml-2 border border-sky-300 bg-sky-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase text-sky-700">RATE ONLY</span> : null}
+          </h2>
           <dl className="mt-6 grid gap-x-6 gap-y-4 md:grid-cols-2">
             <DetailLine label="Brand" value={item.brand_name_snapshot} />
             <DetailLine label="Model" value={item.model_snapshot} />
@@ -985,7 +999,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
         .returns<QuotationSection[]>(),
       supabase
         .from("quotation_items")
-        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,allow_material_continuation_page,sort_order,line_style,is_active,cell_layout,notes")
+        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,allow_material_continuation_page,sort_order,is_optional,is_rate_only,line_style,is_active,cell_layout,notes")
         .eq("quotation_id", id)
         .eq("is_active", true)
         .order("sort_order", { ascending: true })

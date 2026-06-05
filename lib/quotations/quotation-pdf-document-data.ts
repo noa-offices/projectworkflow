@@ -39,6 +39,7 @@ function sectionSubtotal(items: QuotationItem[]) {
     .filter((item) => (
       item.line_style !== "rate_only" &&
       !item.is_rate_only &&
+      (!item.is_optional || item.include_in_total === true) &&
       item.line_style !== "no_quote" &&
       item.line_style !== "note" &&
       item.line_style !== "heading" &&
@@ -115,7 +116,7 @@ export async function loadQuotationPdfDocumentData(id: string): Promise<Quotatio
         .returns<QuotationSection[]>(),
       supabase
         .from("quotation_items")
-        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,line_style,is_rate_only,is_active,cell_layout,notes")
+        .select("id,section_id,item_type,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,include_in_total,line_style,is_rate_only,is_active,cell_layout,notes")
         .eq("quotation_id", id)
         .eq("is_active", true)
         .order("sort_order", { ascending: true })

@@ -3,6 +3,12 @@ export type QuotationPdfDensity = "comfortable" | "compact" | "maxFit";
 export type QuotationPdfImageSize = "small" | "medium" | "large";
 export type QuotationPdfFooterMode = "fullContact";
 
+export type QuotationPdfFlowOrder = {
+  mainSectionIds: string[];
+  sectionIdsByMain: Record<string, string[]>;
+  itemIdsBySection: Record<string, string[]>;
+};
+
 export const DEFAULT_QUOTATION_NOTES = [
   "• Prices quoted are in AED and exclusive of VAT unless otherwise stated.",
   "• Quotation is valid for 60 days from the date of submission.",
@@ -22,6 +28,8 @@ export type QuotationPdfSettings = {
   repeatTableHeader: boolean;
   showFullHeaderOnlyFirstPage: boolean;
   manualPageBreaks: string[];
+  flowOrder: QuotationPdfFlowOrder;
+  startEachSectionOnNewPage: boolean;
   keepSectionTogether: boolean;
   closingPreparedName: string;
   notesOverride: string | null;
@@ -36,6 +44,12 @@ export const DEFAULT_QUOTATION_PDF_SETTINGS: QuotationPdfSettings = {
   repeatTableHeader: true,
   showFullHeaderOnlyFirstPage: true,
   manualPageBreaks: [],
+  flowOrder: {
+    mainSectionIds: [],
+    sectionIdsByMain: {},
+    itemIdsBySection: {},
+  },
+  startEachSectionOnNewPage: false,
   keepSectionTogether: false,
   closingPreparedName: "NOA OFFICES",
   notesOverride: null,
@@ -59,6 +73,26 @@ function normalizedStringArray(value: unknown) {
       .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
       .map((entry) => entry.trim()),
   ));
+}
+
+function normalizedStringArrayRecord(value: unknown) {
+  if (!isRecord(value)) return {};
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, entry]) => [key, normalizedStringArray(entry)] as const)
+      .filter(([, entries]) => entries.length > 0),
+  );
+}
+
+function normalizedFlowOrder(value: unknown): QuotationPdfFlowOrder {
+  const record = isRecord(value) ? value : {};
+
+  return {
+    mainSectionIds: normalizedStringArray(record.mainSectionIds),
+    sectionIdsByMain: normalizedStringArrayRecord(record.sectionIdsByMain),
+    itemIdsBySection: normalizedStringArrayRecord(record.itemIdsBySection),
+  };
 }
 
 function normalizedString(source: Record<string, unknown> | undefined, key: string, fallback: string) {
@@ -95,6 +129,8 @@ export function normalizeQuotationPdfSettings(
     repeatTableHeader: normalizedBoolean(record, "repeatTableHeader", DEFAULT_QUOTATION_PDF_SETTINGS.repeatTableHeader),
     showFullHeaderOnlyFirstPage: normalizedBoolean(record, "showFullHeaderOnlyFirstPage", DEFAULT_QUOTATION_PDF_SETTINGS.showFullHeaderOnlyFirstPage),
     manualPageBreaks: normalizedStringArray(record.manualPageBreaks),
+    flowOrder: normalizedFlowOrder(record.flowOrder),
+    startEachSectionOnNewPage: normalizedBoolean(record, "startEachSectionOnNewPage", DEFAULT_QUOTATION_PDF_SETTINGS.startEachSectionOnNewPage),
     keepSectionTogether: normalizedBoolean(record, "keepSectionTogether", DEFAULT_QUOTATION_PDF_SETTINGS.keepSectionTogether),
     closingPreparedName: normalizedString(record, "closingPreparedName", DEFAULT_QUOTATION_PDF_SETTINGS.closingPreparedName),
     notesOverride: normalizedNullableMultilineString(record, "notesOverride"),
