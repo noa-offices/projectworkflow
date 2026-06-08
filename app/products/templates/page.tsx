@@ -1,8 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
+import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { type DeskingSizePricingRow } from "@/components/products/desking-size-pricing-table";
 import {
   DeactivateGroupForm,
@@ -31,7 +31,6 @@ import {
 import { ProductLibraryBrowseControls } from "@/components/products/product-library-browse-controls";
 import { TemplateMaterialGroupSelectionPanel } from "@/components/products/template-material-group-selection-panel";
 import { ProductTemplateForm } from "@/components/products/product-template-form";
-import { TopBar } from "@/components/top-bar";
 import { requireSettingsManager } from "@/lib/auth";
 import {
   defaultCurrency,
@@ -96,7 +95,7 @@ type TemplatesSearchParams = {
   quoteImportAction?: string | string[];
 };
 
-type TemplatesPageProps = {
+export type TemplatesPageProps = {
   searchParams?: Promise<TemplatesSearchParams>;
 };
 
@@ -1540,7 +1539,7 @@ function DetailPriceRow({
   );
 }
 
-export default async function TemplatesPage({ searchParams }: TemplatesPageProps) {
+export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps) {
   const { user, displayName } = await requireSettingsManager();
   const params = (await searchParams) ?? {};
   const message = stringParam(params.message);
@@ -1553,6 +1552,7 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
   const selectedPanelMainId = stringParam(params.panelMain);
   const selectedPanelSubId = stringParam(params.panelSub);
   const selectedPriceStatusFilter = stringParam(params.priceStatus);
+  const isPriceUpdatesView = selectedPriceStatusFilter === "due";
   const openTemplateId = stringParam(params.template);
   const showAddTemplate = stringParam(params.addTemplate) === "1";
   const editTemplateId = stringParam(params.editTemplate);
@@ -2116,16 +2116,17 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
 
   if (!isManagementView) {
     return (
-      <div className="min-h-screen bg-stone-50 lg:flex">
-        <AppSidebar />
-        <div className="flex-1">
-          <TopBar
-            title="Product Library"
-            description="Browse reusable product templates by brand, category, or search."
-            userDisplayName={displayName}
-            userEmail={user.email}
-          />
-          <main className="px-5 py-6 sm:px-8">
+      <ErpAppShell
+        title={isPriceUpdatesView ? "Price Updates" : "Product Library"}
+        description={
+          isPriceUpdatesView
+            ? "Review products due for source price checks and price-list follow-up."
+            : "Browse reusable product templates by brand, category, or search."
+        }
+        userDisplayName={displayName}
+        userEmail={user.email}
+      >
+        <div className="px-5 py-6 sm:px-8">
             <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <Link
                 href="/products"
@@ -2354,25 +2355,21 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
                 </Link>
               </section>
             )}
-          </main>
         </div>
-      </div>
+      </ErpAppShell>
     );
   }
 
   return (
-    <div className="min-h-screen bg-stone-50 lg:flex">
-      <AppSidebar />
-      <div className="flex-1">
-          <TopBar
-            title={isManagementView ? "Product Management" : "Product Library"}
-            description={isManagementView
-              ? "Add, edit, archive, and maintain reusable product templates and configurable options."
-              : "Browse reusable product templates, search by brand or category, and open product details when you need them."}
-          userDisplayName={displayName}
-          userEmail={user.email}
-        />
-        <main className="px-5 py-6 sm:px-8">
+    <ErpAppShell
+      title={isManagementView ? "Product Management" : "Product Library"}
+      description={isManagementView
+        ? "Add, edit, archive, and maintain reusable product templates and configurable options."
+        : "Browse reusable product templates, search by brand or category, and open product details when you need them."}
+      userDisplayName={displayName}
+      userEmail={user.email}
+    >
+      <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             {isManagementView ? <div /> : (
               <Link
@@ -4058,8 +4055,9 @@ export default async function TemplatesPage({ searchParams }: TemplatesPageProps
             </section>
             </div>
           </section>
-        </main>
       </div>
-    </div>
+    </ErpAppShell>
   );
 }
+
+export default ProductTemplatesPage;

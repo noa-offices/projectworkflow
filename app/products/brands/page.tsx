@@ -1,8 +1,7 @@
 import Link from "next/link";
-import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
+import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
-import { TopBar } from "@/components/top-bar";
 import { requireSettingsManager } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
@@ -544,16 +543,13 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
   ];
 
   return (
-    <div className="min-h-screen bg-stone-50 lg:flex">
-      <AppSidebar />
-      <div className="flex-1">
-        <TopBar
-          title="Brands"
-          description="Manage brands, origins, categories, and subcategories used by products and materials."
-          userDisplayName={displayName}
-          userEmail={user.email}
-        />
-        <main className="px-5 py-6 sm:px-8">
+    <ErpAppShell
+      title="Brands"
+      description="Manage brands, origins, categories, and subcategories used by products and materials."
+      userDisplayName={displayName}
+      userEmail={user.email}
+    >
+      <div className="px-5 py-6 sm:px-8">
           <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
@@ -1021,8 +1017,7 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
               ) : null}
             </div>
           </section>
-        </main>
       </div>
-    </div>
+    </ErpAppShell>
   );
 }

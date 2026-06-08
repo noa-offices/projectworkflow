@@ -1,12 +1,11 @@
 import Link from "next/link";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
-import { AppSidebar } from "@/components/app-sidebar";
+import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import {
   BatchMaterialDialogButton,
   MaterialDialogButton,
 } from "@/components/products/material-library-dialogs";
-import { TopBar } from "@/components/top-bar";
 import { requireRecordsManager } from "@/lib/auth";
 import {
   materialCollectionLabel,
@@ -767,16 +766,13 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
   const addBrandHref = "/products/brands?addBrand=1";
 
   return (
-    <div className="min-h-screen bg-stone-50 lg:flex">
-      <AppSidebar />
-      <div className="flex-1">
-        <TopBar
-          title="Brand Material Library"
-          description="Manage reusable finish groups and swatches by brand."
-          userDisplayName={displayName}
-          userEmail={user.email}
-        />
-        <main className="px-5 py-6 sm:px-8">
+    <ErpAppShell
+      title="Brand Material Library"
+      description="Manage reusable finish groups and swatches by brand."
+      userDisplayName={displayName}
+      userEmail={user.email}
+    >
+      <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-3">
               <Link href="/products" className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800">
@@ -1199,8 +1195,7 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
               </div>
             </section>
           )}
-        </main>
       </div>
-    </div>
+    </ErpAppShell>
   );
 }

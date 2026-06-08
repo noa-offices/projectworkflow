@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { DeleteProjectWithQuotationsDialog } from "@/components/clients/delete-project-with-quotations-dialog";
 import { ClientsFilterBar } from "@/components/clients/clients-filter-bar";
-import { AppSidebar } from "@/components/app-sidebar";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
+import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
-import { TopBar } from "@/components/top-bar";
 import { loadProjectQuotationDependencyCounts } from "@/lib/clients/project-dependencies";
 import { requireActiveUser } from "@/lib/auth";
 import { formatQuotationDisplayNo, quotationRootBaseNo } from "@/lib/quotation-options";
@@ -776,16 +775,13 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
     : null;
 
   return (
-    <div className="min-h-screen bg-stone-50 lg:flex">
-      <AppSidebar />
-      <div className="flex-1">
-        <TopBar
-          title="Clients & Projects"
-          description="Manage client profiles, project details, and contact references."
-          userDisplayName={displayName}
-          userEmail={user.email}
-        />
-        <main className="px-5 py-6 sm:px-8">
+    <ErpAppShell
+      title="Clients & Projects"
+      description="Manage client profiles, project details, and contact references."
+      userDisplayName={displayName}
+      userEmail={user.email}
+    >
+      <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-zinc-500">
               Coming next: quotations will be linked to projects.
@@ -1575,8 +1571,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
               </div>
             </section>
           )}
-        </main>
       </div>
-    </div>
+    </ErpAppShell>
   );
 }

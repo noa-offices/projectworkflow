@@ -1,81 +1,19 @@
-import { AppSidebar } from "@/components/app-sidebar";
-import { InstallAppCard } from "@/components/install-app-card";
-import { ModuleCard } from "@/components/module-card";
-import { TopBar } from "@/components/top-bar";
+import { ERPDashboard } from "@/components/dashboard/erp-dashboard";
+import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { requireActiveUser } from "@/lib/auth";
-
-const modules = [
-  {
-    title: "Clients & Projects",
-    description:
-      "Manage clients, projects, and project quotations from one working area.",
-    href: "/clients",
-  },
-  {
-    title: "Product Library",
-    description:
-      "Browse product templates, images, finishes, and reusable product information.",
-    href: "/products/templates",
-  },
-  {
-    title: "Product Management",
-    description:
-      "Add, edit, archive, and maintain reusable product templates and source price setup.",
-    href: "/products/management",
-  },
-  {
-    title: "Brand Material Library",
-    description:
-      "Manage finishes, swatches, material groups, and brand-specific selections.",
-    href: "/products/materials",
-  },
-  {
-    title: "Price Updates",
-    description:
-      "Review overdue template price checks, brand price lists, and source price follow-up work.",
-    href: "/products/templates?priceStatus=due",
-  },
-  {
-    title: "Specification Sheets",
-    description:
-      "Open a client project quotation to preview or download specification sheets.",
-    href: "/clients",
-  },
-  {
-    title: "Settings",
-    description:
-      "Manage company profile, users, and system configuration areas.",
-    href: "/settings",
-  },
-];
 
 export default async function DashboardPage() {
   const { user, displayName } = await requireActiveUser();
 
   return (
-    <div className="min-h-screen bg-stone-50 lg:flex">
-      <AppSidebar />
-      <div className="flex-1">
-        <TopBar
-          title="Dashboard"
-          description="A practical starting point for client quotations, specifications, product setup, and price-control work."
-          userDisplayName={displayName}
-          userEmail={user.email}
-        />
-        <main className="px-5 py-6 sm:px-8">
-          <InstallAppCard />
-          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {modules.map((module) => (
-              <ModuleCard
-                key={module.title}
-                title={module.title}
-                description={module.description}
-                href={module.href}
-              />
-            ))}
-          </section>
-        </main>
-      </div>
-    </div>
+    <ErpAppShell
+      eyebrow="Dashboard"
+      title="ERP Overview"
+      description="Local-first operating view for projects, quotations, products, procurement, and document workflows."
+      userDisplayName={displayName}
+      userEmail={user.email}
+    >
+      <ERPDashboard />
+    </ErpAppShell>
   );
 }

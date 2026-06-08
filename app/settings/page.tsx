@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { AppSidebar } from "@/components/app-sidebar";
+import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
-import { TopBar } from "@/components/top-bar";
 import { resetTestData, updateCompanySettings, updateDocumentDefaults } from "@/app/settings/actions";
 import { requireActiveUser } from "@/lib/auth";
 import { getCompanyProfile, getCompanySettingsRecord, companyAddressLines } from "@/lib/company-profile";
@@ -103,16 +102,13 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
     : "border-emerald-200 bg-emerald-50 text-emerald-950";
 
   return (
-    <div className="min-h-screen bg-stone-50 lg:flex">
-      <AppSidebar />
-      <div className="flex-1">
-        <TopBar
-          title="Settings"
-          description="Manage company profile metadata used across quotation and specification documents."
-          userDisplayName={displayName}
-          userEmail={user.email}
-        />
-        <main className="px-5 py-6 sm:px-8">
+    <ErpAppShell
+      title="Settings"
+      description="Manage company profile metadata used across quotation and specification documents."
+      userDisplayName={displayName}
+      userEmail={user.email}
+    >
+      <div className="px-5 py-6 sm:px-8">
           {showMessage ? (
             <div className={`mb-4 rounded-lg border px-4 py-3 text-sm ${messageClassName}`}>
               {params.message}
@@ -353,8 +349,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
               ) : null}
             </div>
           </div>
-        </main>
       </div>
-    </div>
+    </ErpAppShell>
   );
 }

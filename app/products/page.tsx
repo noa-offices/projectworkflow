@@ -1,76 +1,26 @@
-import Link from "next/link";
-import { AppSidebar } from "@/components/app-sidebar";
-import { TopBar } from "@/components/top-bar";
-import { requireActiveUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { ProductTemplatesPage, type TemplatesPageProps } from "./templates/page";
 
-const productCards = [
-  {
-    title: "Product Library",
-    description: "Browse reusable product templates, images, finishes, and category-organized product information.",
-    href: "/products/templates",
-    action: "Browse",
-  },
-  {
-    title: "Product Management",
-    description: "Add, edit, archive, and maintain reusable product templates and their source pricing setup.",
-    href: "/products/management",
-    action: "Manage",
-  },
-  {
-    title: "Brand Material Library",
-    description: "Reusable finish groups, material codes, and swatch references by brand.",
-    href: "/products/materials",
-    action: "Manage",
-  },
-  {
-    title: "Brands",
-    description: "Manage product brands, origins, suppliers, and brand-level price settings.",
-    href: "/products/brands",
-    action: "Manage Brands",
-  },
-  {
-    title: "Price Updates",
-    description: "Review templates with due price checks and follow up on source price updates.",
-    href: "/products/templates?priceStatus=due",
-    action: "Review due items",
-  },
-];
+function stringParam(value?: string | string[]) {
+  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+}
 
-export default async function ProductsPage() {
-  const { user, displayName } = await requireActiveUser();
+export default async function ProductsPage({ searchParams }: TemplatesPageProps) {
+  const params = (await searchParams) ?? {};
+  const priceStatus = stringParam(params.priceStatus);
 
-  return (
-    <div className="min-h-screen bg-stone-50 lg:flex">
-      <AppSidebar />
-      <div className="flex-1">
-        <TopBar
-          title="Products & Templates"
-          description="Browse the product library, maintain reusable templates, and manage brand material workflows."
-          userDisplayName={displayName}
-          userEmail={user.email}
-        />
-        <main className="px-5 py-6 sm:px-8">
-          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {productCards.map((card) => (
-              <Link
-                key={card.title}
-                href={card.href}
-                className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-emerald-900/25 hover:shadow-md"
-              >
-                <h2 className="text-base font-semibold text-zinc-950">
-                  {card.title}
-                </h2>
-                <p className="mt-2 text-sm leading-6 text-zinc-500">
-                  {card.description}
-                </p>
-                <p className="mt-6 text-sm font-semibold text-emerald-900">
-                  {card.action}
-                </p>
-              </Link>
-            ))}
-          </section>
-        </main>
-      </div>
-    </div>
-  );
+  if (priceStatus === "due") {
+    const query = new URLSearchParams();
+    const q = stringParam(params.q).trim();
+    const brand = stringParam(params.brand);
+
+    if (q) query.set("q", q);
+    if (brand) query.set("brand", brand);
+    query.set("status", "due");
+
+    const suffix = query.toString();
+    redirect(`/products/price-updates${suffix ? `?${suffix}` : ""}`);
+  }
+
+  return <ProductTemplatesPage searchParams={Promise.resolve(params)} />;
 }
