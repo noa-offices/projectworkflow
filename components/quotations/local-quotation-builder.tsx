@@ -703,6 +703,65 @@ function DownloadMenuRow({
   );
 }
 
+function ClickAwayWrapper({
+  children,
+  className,
+  buttonClassName,
+  buttonLabel,
+  defaultOpen = false,
+  open,
+  onOpenChange,
+  dataStateKey,
+}: {
+  children: ReactNode;
+  className?: string;
+  buttonClassName: string;
+  buttonLabel: ReactNode;
+  defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  dataStateKey?: string;
+}) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const isControlled = open !== undefined;
+  const isOpen = isControlled ? open : internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    function handleOutsideClick(event: PointerEvent | MouseEvent) {
+      const wrapper = wrapperRef.current;
+      const target = event.target;
+
+      if (!wrapper || !(target instanceof Node) || wrapper.contains(target)) return;
+
+      setOpen(false);
+    }
+
+    document.addEventListener("pointerdown", handleOutsideClick, true);
+    document.addEventListener("mousedown", handleOutsideClick, true);
+    return () => {
+      document.removeEventListener("pointerdown", handleOutsideClick, true);
+      document.removeEventListener("mousedown", handleOutsideClick, true);
+    };
+  }, [isOpen, setOpen]);
+
+  return (
+    <div
+      ref={wrapperRef}
+      className={className}
+      data-state-key={dataStateKey}
+    >
+      <button type="button" className={buttonClassName} onClick={() => setOpen(!isOpen)}>
+        {buttonLabel}
+      </button>
+      {isOpen ? children : null}
+    </div>
+  );
+}
+
 function layoutColumnOrder(value: unknown) {
   const order = localLayoutSettings(value).columnOrder;
   if (!Array.isArray(order)) return [];
@@ -1600,11 +1659,11 @@ export function LocalQuotationBuilder({
   const [newPrintableColumnShowInClient, setNewPrintableColumnShowInClient] = useState(true);
   const [newPrintableColumnShowInInternal, setNewPrintableColumnShowInInternal] = useState(true);
   const [roundingStepInput, setRoundingStepInput] = useState("5");
+  const [openToolbarDropdown, setOpenToolbarDropdown] = useState<"downloads" | "columns" | "more" | null>(null);
   const [copiedRowClipboard, setCopiedRowClipboard] = useState<LocalRowClipboardPayload | null>(null);
   const [copiedRowId, setCopiedRowId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const importRef = useRef<HTMLInputElement | null>(null);
-  const columnSettingsRef = useRef<HTMLDetailsElement | null>(null);
   const lastPersistedSignatureRef = useRef<string | null>(null);
   const historyGroupRef = useRef<{ key: string; timestamp: number } | null>(null);
   const clientSnapshot = (workspace.client_snapshot ?? {}) as Record<string, unknown>;
@@ -2019,9 +2078,7 @@ export function LocalQuotationBuilder({
   function saveColumnSettingsPanel() {
     setSaveMessage("Column settings saved locally");
     window.setTimeout(() => setSaveMessage((current) => current === "Column settings saved locally" ? "" : current), 1800);
-    if (columnSettingsRef.current) {
-      columnSettingsRef.current.open = false;
-    }
+    setOpenToolbarDropdown(null);
   }
 
   function updateSpecificationMetadataSetting(key: LocalSpecificationMetadataKey, checked: boolean) {
@@ -3097,10 +3154,13 @@ export function LocalQuotationBuilder({
                 ↷
               </button>
               <button type="button" onClick={saveToSoftware} disabled={isPending} className="inline-flex h-9 items-center bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:bg-zinc-400">Save to Software</button>
-              <details className="relative">
-                <summary className="inline-flex h-9 cursor-pointer items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
-                  Downloads
-                </summary>
+              <ClickAwayWrapper
+                className="relative"
+                buttonClassName="inline-flex h-9 cursor-pointer items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                buttonLabel="Downloads"
+                open={openToolbarDropdown === "downloads"}
+                onOpenChange={(open) => setOpenToolbarDropdown(open ? "downloads" : null)}
+              >
                 <div className="absolute right-0 z-30 mt-2 flex w-[560px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-lg border border-zinc-300 bg-white text-xs shadow-lg">
                   <div className="border-b border-zinc-200 px-4 py-3">
                     <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Downloads</p>
@@ -3171,11 +3231,14 @@ export function LocalQuotationBuilder({
                     </div>
                   </div>
                 </div>
-              </details>
-              <details ref={columnSettingsRef} className="relative">
-                <summary className="inline-flex h-9 cursor-pointer items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
-                  Columns
-                </summary>
+              </ClickAwayWrapper>
+              <ClickAwayWrapper
+                className="relative"
+                buttonClassName="inline-flex h-9 cursor-pointer items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                buttonLabel="Columns"
+                open={openToolbarDropdown === "columns"}
+                onOpenChange={(open) => setOpenToolbarDropdown(open ? "columns" : null)}
+              >
                 <div className="absolute right-0 z-30 mt-2 flex w-[760px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden border border-zinc-300 bg-white text-xs text-zinc-600 shadow-lg">
                   <div className="border-b border-zinc-200 px-4 py-3">
                     <p className="text-[10px] font-bold uppercase text-zinc-500">Local Column Settings</p>
@@ -3549,12 +3612,15 @@ export function LocalQuotationBuilder({
                     </div>
                   </div>
                 </div>
-              </details>
+              </ClickAwayWrapper>
               <Link href={`/quotations/${workspace.server_quotation_id}`} className="inline-flex h-9 items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Summary</Link>
-              <details className="relative">
-                <summary className="inline-flex h-9 cursor-pointer items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
-                  More
-                </summary>
+              <ClickAwayWrapper
+                className="relative"
+                buttonClassName="inline-flex h-9 cursor-pointer items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                buttonLabel="More"
+                open={openToolbarDropdown === "more"}
+                onOpenChange={(open) => setOpenToolbarDropdown(open ? "more" : null)}
+              >
                 <div className="absolute right-0 z-30 mt-2 grid min-w-[220px] gap-2 border border-zinc-300 bg-white p-2 text-xs shadow-lg">
                   <button type="button" onClick={exportBackup} className="h-9 border border-zinc-300 bg-white px-3 text-left font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
                     Export Backup JSON
@@ -3569,7 +3635,7 @@ export function LocalQuotationBuilder({
                     Fallback only
                   </p>
                 </div>
-              </details>
+              </ClickAwayWrapper>
               <div className="inline-flex h-9 items-center border border-emerald-900 bg-emerald-50 px-3 text-xs font-semibold text-emerald-950">
                 Final Total: {formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total)}
               </div>

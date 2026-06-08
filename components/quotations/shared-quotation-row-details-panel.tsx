@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { FinishImagePreview } from "@/components/quotations/finish-image-uploader";
 
 type SharedMode = "server" | "local";
@@ -56,6 +56,65 @@ function checkboxValue(value: boolean | null | undefined) {
 function integerFieldValue(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(Math.round(parsed), 0) : 0;
+}
+
+function ClickAwayWrapper({
+  children,
+  className,
+  buttonClassName,
+  buttonLabel,
+  defaultOpen = false,
+  dataStateKey,
+  open,
+  onOpenChange,
+}: {
+  children: ReactNode;
+  className?: string;
+  buttonClassName: string;
+  buttonLabel: ReactNode;
+  defaultOpen?: boolean;
+  dataStateKey?: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const isControlled = open !== undefined;
+  const isOpen = isControlled ? open : internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    function handleOutsideClick(event: PointerEvent | MouseEvent) {
+      const wrapper = wrapperRef.current;
+      const target = event.target;
+
+      if (!wrapper || !(target instanceof Node) || wrapper.contains(target)) return;
+
+      setOpen(false);
+    }
+
+    document.addEventListener("pointerdown", handleOutsideClick, true);
+    document.addEventListener("mousedown", handleOutsideClick, true);
+    return () => {
+      document.removeEventListener("pointerdown", handleOutsideClick, true);
+      document.removeEventListener("mousedown", handleOutsideClick, true);
+    };
+  }, [isOpen, setOpen]);
+
+  return (
+    <div
+      ref={wrapperRef}
+      className={className}
+      data-state-key={dataStateKey}
+    >
+      <button type="button" className={buttonClassName} onClick={() => setOpen(!isOpen)}>
+        {buttonLabel}
+      </button>
+      {isOpen ? children : null}
+    </div>
+  );
 }
 
 function SharedField({
@@ -210,29 +269,30 @@ export function SharedQuotationMoreMenu({
   menuClassName?: string;
 }) {
   return (
-    <details className="relative" data-state-key={`quotation-item-more-${itemId}`}>
-      <summary className="h-6 cursor-pointer border border-zinc-300 bg-white px-2 py-1 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
-        More
-      </summary>
+    <ClickAwayWrapper
+      className="relative"
+      buttonClassName="h-6 cursor-pointer border border-zinc-300 bg-white px-2 py-1 text-[11px] font-semibold leading-none text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+      buttonLabel="More"
+      dataStateKey={`quotation-item-more-${itemId}`}
+    >
       <div className={menuClassName}>
         {mergeControl}
         <div className="mt-2 grid gap-2">
           {actionButtons}
           {detailsContent ? (
-            <details
+            <ClickAwayWrapper
               className="relative"
-              data-state-key={`quotation-item-details-${itemId}`}
-              open={detailsDefaultOpen}
+              buttonClassName="h-7 cursor-pointer border border-zinc-300 bg-white px-2 py-1.5 text-xs font-semibold text-emerald-900"
+              buttonLabel="Details"
+              dataStateKey={`quotation-item-details-${itemId}`}
+              defaultOpen={detailsDefaultOpen}
             >
-              <summary className="h-7 cursor-pointer border border-zinc-300 bg-white px-2 py-1.5 text-xs font-semibold text-emerald-900">
-                Details
-              </summary>
               <div className={detailsPanelClassName}>{detailsContent}</div>
-            </details>
+            </ClickAwayWrapper>
           ) : null}
         </div>
       </div>
-    </details>
+    </ClickAwayWrapper>
   );
 }
 
