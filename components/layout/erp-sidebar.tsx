@@ -48,7 +48,19 @@ function isProjectsActive(pathname: string) {
 }
 
 function isQuotationsActive(pathname: string) {
-  return pathname === "/quotations" || pathname.startsWith("/quotations/");
+  return pathname === "/sales/quotations" || pathname.startsWith("/sales/quotations/") || pathname === "/quotations" || pathname.startsWith("/quotations/");
+}
+
+function isSalesEnquiriesActive(pathname: string) {
+  return pathname === "/sales/enquiries" || pathname.startsWith("/sales/enquiries/");
+}
+
+function isSalesOpportunitiesActive(pathname: string) {
+  return pathname === "/sales/opportunities" || pathname.startsWith("/sales/opportunities/");
+}
+
+function isSalesApprovalsActive(pathname: string) {
+  return pathname === "/sales/approvals" || pathname.startsWith("/sales/approvals/");
 }
 
 function isSettingsActive(pathname: string) {
@@ -122,10 +134,10 @@ export function ErpSidebar() {
       {
         title: "Sales",
         items: [
-          { label: "Leads / Enquiries", icon: MailSearch, disabled: true, suffix: "Coming soon" },
-          { label: "Opportunities", icon: Target, disabled: true, suffix: "Coming soon" },
-          { label: "Quotations", href: "/quotations", icon: FileText, active: isQuotationsActive(pathname) },
-          { label: "Client Approvals", icon: BadgeCheck, disabled: true, suffix: "Coming soon" },
+          { label: "Leads / Enquiries", href: "/sales/enquiries", icon: MailSearch, active: isSalesEnquiriesActive(pathname) },
+          { label: "Opportunities", href: "/sales/opportunities", icon: Target, active: isSalesOpportunitiesActive(pathname) },
+          { label: "Quotations", href: "/sales/quotations", icon: FileText, active: isQuotationsActive(pathname) },
+          { label: "Client Approvals", href: "/sales/approvals", icon: BadgeCheck, active: isSalesApprovalsActive(pathname) },
         ],
       },
       {
