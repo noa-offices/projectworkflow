@@ -37,7 +37,7 @@ export default async function SalesOpportunitiesPage() {
     <ErpAppShell
       eyebrow="SALES"
       title="Opportunities"
-      description="Manage qualified sales opportunities before quotation and project confirmation."
+      description="Capture furniture sales requests, client details, and quotation submission dates before quotation."
       userDisplayName={displayName}
       userEmail={user.email}
     >

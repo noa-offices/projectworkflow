@@ -25,13 +25,22 @@ type LocalOpportunity = {
   clientId?: unknown;
   clientName?: unknown;
   clientSource?: unknown;
+  clientConfirmed?: unknown;
   projectId?: unknown;
+  referenceName?: unknown;
   projectName?: unknown;
   projectSource?: unknown;
   contactName?: unknown;
   phone?: unknown;
   email?: unknown;
+  location?: unknown;
+  deliveryLocation?: unknown;
   requirement?: unknown;
+  source?: unknown;
+  status?: unknown;
+  stage?: unknown;
+  enquiryDate?: unknown;
+  quotationSubmissionDate?: unknown;
   expectedValue?: unknown;
   assignedTo?: unknown;
   notes?: unknown;
@@ -43,14 +52,22 @@ type OpportunityPrefill = {
   title: string;
   clientId?: string;
   clientName: string;
-  clientSource?: "existing" | "local-pending";
+  clientSource?: "existing" | "created" | "local";
+  clientConfirmed: boolean;
   projectId?: string;
+  referenceName: string;
   projectName: string;
   projectSource?: "existing" | "local-pending";
   contactName: string;
   phone?: string;
   email?: string;
+  location?: string;
+  deliveryLocation?: string;
   requirement: string;
+  source?: string;
+  status?: string;
+  enquiryDate?: string;
+  quotationSubmissionDate?: string;
   expectedValue?: number;
   assignedTo: string;
   notes: string;
@@ -72,8 +89,16 @@ function safeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function safeSource(value: unknown) {
-  return value === "existing" || value === "local-pending" ? value : undefined;
+function safeClientSource(value: unknown) {
+  return value === "existing" || value === "created" || value === "local" || value === "local-pending"
+    ? (value === "local-pending" ? "local" : value)
+    : undefined;
+}
+
+function safeProjectSource(value: unknown) {
+  return value === "existing" || value === "local-pending" || value === "local"
+    ? (value === "local" ? "local-pending" : value)
+    : undefined;
 }
 
 function normalizeMatchValue(value: string) {
@@ -104,14 +129,24 @@ function normalizeOpportunity(raw: unknown): OpportunityPrefill | null {
     title,
     clientId: safeString(opportunity.clientId) || undefined,
     clientName: safeString(opportunity.clientName),
-    clientSource: safeSource(opportunity.clientSource),
+    clientSource: safeClientSource(opportunity.clientSource),
+    clientConfirmed:
+      opportunity.clientConfirmed === true ||
+      Boolean(safeString(opportunity.clientId) && (safeString(opportunity.clientSource) === "existing" || safeString(opportunity.clientSource) === "created")),
     projectId: safeString(opportunity.projectId) || undefined,
-    projectName: safeString(opportunity.projectName),
-    projectSource: safeSource(opportunity.projectSource),
+    referenceName: safeString(opportunity.referenceName) || safeString(opportunity.projectName),
+    projectName: safeString(opportunity.projectName) || safeString(opportunity.referenceName),
+    projectSource: safeProjectSource(opportunity.projectSource),
     contactName: safeString(opportunity.contactName),
     phone: safeString(opportunity.phone) || undefined,
     email: safeString(opportunity.email) || undefined,
+    location: safeString(opportunity.location) || safeString(opportunity.deliveryLocation) || undefined,
+    deliveryLocation: safeString(opportunity.deliveryLocation) || safeString(opportunity.location) || undefined,
     requirement: safeString(opportunity.requirement),
+    source: safeString(opportunity.source) || undefined,
+    status: safeString(opportunity.status) || safeString(opportunity.stage) || undefined,
+    enquiryDate: safeString(opportunity.enquiryDate) || undefined,
+    quotationSubmissionDate: safeString(opportunity.quotationSubmissionDate) || undefined,
     expectedValue: safeNumber(opportunity.expectedValue),
     assignedTo: safeString(opportunity.assignedTo),
     notes: safeString(opportunity.notes),
@@ -127,11 +162,16 @@ function buildNotesPrefill(opportunity: OpportunityPrefill) {
   return [
     `Prefilled from ${opportunity.opportunityNo}: ${opportunity.title}`,
     opportunity.clientName ? `Client: ${opportunity.clientName}` : "",
-    opportunity.projectName ? `Project: ${opportunity.projectName}` : "",
+    opportunity.referenceName ? `Project / reference: ${opportunity.referenceName}` : "",
     opportunity.contactName ? `Contact: ${opportunity.contactName}` : "",
     opportunity.phone ? `Phone: ${opportunity.phone}` : "",
     opportunity.email ? `Email: ${opportunity.email}` : "",
+    opportunity.deliveryLocation || opportunity.location ? `Location / delivery: ${opportunity.deliveryLocation || opportunity.location}` : "",
     opportunity.requirement ? `Requirement: ${opportunity.requirement}` : "",
+    opportunity.source ? `Source: ${opportunity.source}` : "",
+    opportunity.status ? `Status: ${opportunity.status}` : "",
+    opportunity.enquiryDate ? `Enquiry date: ${opportunity.enquiryDate}` : "",
+    opportunity.quotationSubmissionDate ? `Quotation submission date: ${opportunity.quotationSubmissionDate}` : "",
     opportunity.notes ? `Opportunity notes: ${opportunity.notes}` : "",
     opportunity.expectedValue !== undefined ? `Expected value reference: ${formatExpectedValue(opportunity.expectedValue)}` : "",
     opportunity.assignedTo ? `Assigned to: ${opportunity.assignedTo}` : "",
@@ -192,13 +232,12 @@ function findOpportunityMatch(
   clients: ClientOption[],
   projects: ProjectOption[],
 ): OpportunityMatch {
-  const existingClientById = opportunity.clientSource === "existing" && opportunity.clientId
+  const existingClientById = (opportunity.clientSource === "existing" || opportunity.clientSource === "created") && opportunity.clientId
     ? clients.find((client) => client.id === opportunity.clientId)
     : undefined;
   const clientIdFromId = existingClientById?.id ?? null;
-  const isLocalPendingClient = opportunity.clientSource === "local-pending";
   const normalizedClientName = normalizeMatchValue(opportunity.clientName);
-  const matchingClients = !clientIdFromId && !isLocalPendingClient && normalizedClientName
+  const matchingClients = opportunity.clientConfirmed && !clientIdFromId && normalizedClientName
     ? clients.filter((client) => normalizeMatchValue(client.company_name) === normalizedClientName)
     : [];
 
@@ -244,7 +283,6 @@ export function OpportunityQuotationPrefill({
   const fromOpportunity = searchParams.get("fromOpportunity")?.trim() ?? "";
   const [opportunity, setOpportunity] = useState<OpportunityPrefill | null>(null);
   const [status, setStatus] = useState<"idle" | "found" | "missing" | "invalid">("idle");
-  const [showHelper, setShowHelper] = useState(false);
   const match = useMemo(
     () => (opportunity ? findOpportunityMatch(opportunity, clients, projects) : null),
     [clients, opportunity, projects],
@@ -299,30 +337,27 @@ export function OpportunityQuotationPrefill({
     if (!form) return;
 
     setFieldValue(form, 'input[name="title"]', opportunity.title);
+    setFieldValue(form, 'input[name="legacy_reference"]', opportunity.referenceName || opportunity.projectName || opportunity.title);
+    setFieldValue(form, 'input[name="from_opportunity_no"]', opportunity.opportunityNo);
     setFieldValue(form, 'textarea[name="notes"]', buildNotesPrefill(opportunity));
 
-    if (match.clientId) {
+    if (opportunity.clientConfirmed && match.clientId) {
       setSelectPrefill(form, 'select[name="client_id"]', match.clientId, "client_id");
     }
-
-    window.setTimeout(() => {
-      if (match.projectId) {
-        setSelectPrefill(form, 'select[name="project_id"]', match.projectId, "project_id");
-      }
-    }, 0);
   }, [match, opportunity]);
 
   function clearPrefill() {
     const form = document.querySelector<HTMLFormElement>("[data-quotation-create-form]");
     if (form) {
       clearPrefilledField(form, 'input[name="title"]');
+      clearPrefilledField(form, 'input[name="legacy_reference"]');
+      clearPrefilledField(form, 'input[name="from_opportunity_no"]');
       clearPrefilledField(form, 'textarea[name="notes"]');
       clearPrefilledSelect(form, 'select[name="project_id"]', "project_id");
       clearPrefilledSelect(form, 'select[name="client_id"]', "client_id");
     }
     setOpportunity(null);
     setStatus("idle");
-    setShowHelper(false);
     router.replace(clearHref, { scroll: false });
   }
 
@@ -341,100 +376,39 @@ export function OpportunityQuotationPrefill({
 
   if (!opportunity) return null;
 
-  const matchedClientLabel = match?.clientNameMatched && match.clientId ? "matched existing client" : "manual client selection needed";
-  const matchedProjectLabel = match?.projectNameMatched && match.projectId ? "matched existing project" : "manual project selection needed";
-  const noticeText =
-    opportunity.clientSource === "local-pending" || opportunity.projectSource === "local-pending"
-      ? "This opportunity uses local-only client/project names. Select or create the real client/project before creating the quotation."
-      : match?.clientNameMatched && match?.projectNameMatched
-        ? "Existing client/project matched from opportunity. Please review before creating the quotation."
-        : match?.clientNameMatched
-          ? "Existing client matched from opportunity. Select the matching existing project before creating the quotation."
-          : "Client/project are shown as reference only. Select the matching existing client and project before creating the quotation.";
+  const hasConfirmedClient = Boolean(opportunity.clientConfirmed && match?.clientId);
+  const matchedClientLabel = hasConfirmedClient ? "matched confirmed client" : "confirmed client missing";
+  const noticeText = hasConfirmedClient
+    ? "Prefilled from opportunity. Please review before creating the quotation."
+    : "This opportunity does not have a confirmed client. Please return to Opportunities and update the client before creating the quotation.";
 
   return (
-    <div className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950">
+    <div className={`mb-4 rounded-md border p-3 text-sm ${
+      hasConfirmedClient
+        ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+        : "border-amber-200 bg-amber-50 text-amber-950"
+    }`}>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="font-semibold">
             Prefilled from opportunity: {opportunity.opportunityNo} / {opportunity.title}
           </p>
-          <p className="mt-1 text-emerald-900">{noticeText}</p>
-          <p className="mt-1 text-xs text-emerald-900">
+          <p className={hasConfirmedClient ? "mt-1 text-emerald-900" : "mt-1 text-amber-900"}>{noticeText}</p>
+          <p className={hasConfirmedClient ? "mt-1 text-xs text-emerald-900" : "mt-1 text-xs text-amber-900"}>
             Client: {opportunity.clientName || "Not set"} ({matchedClientLabel})
             <br />
-            Project: {opportunity.projectName || "Not set"} ({matchedProjectLabel})
+            Project / reference: {opportunity.referenceName || opportunity.projectName || "Not set"}
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:items-end">
+          <Link href="/sales/opportunities" className="text-left text-sm font-semibold underline sm:text-right">
+            Back to Opportunities
+          </Link>
           <button type="button" onClick={clearPrefill} className="text-left text-sm font-semibold underline sm:text-right">
             Clear opportunity prefill
           </button>
-          {opportunity.clientSource === "local-pending" || opportunity.projectSource === "local-pending" || (!match?.clientId || !match?.projectId) ? (
-            <button
-              type="button"
-              onClick={() => setShowHelper((current) => !current)}
-              className="text-left text-sm font-semibold underline sm:text-right"
-            >
-              Create real client/project
-            </button>
-          ) : null}
         </div>
       </div>
-
-      {showHelper ? (
-        <div className="mt-4 rounded-md border border-amber-200 bg-white p-4 text-sm text-zinc-700">
-          <p className="font-semibold text-zinc-950">Create real client/project</p>
-          <p className="mt-1">
-            This opportunity is using local-only client/project names. Open Clients &amp; Projects, create or select the real records, then return here to continue.
-          </p>
-          <dl className="mt-3 grid gap-2 text-sm">
-            <div className="flex justify-between gap-3 border-b border-zinc-100 pb-2">
-              <dt className="text-zinc-500">Opportunity</dt>
-              <dd className="font-medium text-zinc-950">{opportunity.opportunityNo}</dd>
-            </div>
-            <div className="flex justify-between gap-3 border-b border-zinc-100 pb-2">
-              <dt className="text-zinc-500">Client</dt>
-              <dd className="font-medium text-zinc-950">{opportunity.clientName || "Not set"}</dd>
-            </div>
-            <div className="flex justify-between gap-3 border-b border-zinc-100 pb-2">
-              <dt className="text-zinc-500">Project</dt>
-              <dd className="font-medium text-zinc-950">{opportunity.projectName || "Not set"}</dd>
-            </div>
-            <div className="flex justify-between gap-3 border-b border-zinc-100 pb-2">
-              <dt className="text-zinc-500">Contact</dt>
-              <dd className="font-medium text-zinc-950">{opportunity.contactName || "Not set"}</dd>
-            </div>
-            <div className="flex justify-between gap-3 border-b border-zinc-100 pb-2">
-              <dt className="text-zinc-500">Requirement</dt>
-              <dd className="font-medium text-zinc-950">{opportunity.requirement || "Not set"}</dd>
-            </div>
-          </dl>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Link
-              href="/clients"
-              className="inline-flex h-9 items-center rounded-md bg-emerald-900 px-3 text-sm font-semibold text-white transition hover:bg-emerald-800"
-            >
-              Open Clients &amp; Projects
-            </Link>
-            <Link
-              href="/clients?tab=clients&addClient=1"
-              className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900/25 hover:text-emerald-900"
-            >
-              Add Client
-            </Link>
-            <Link
-              href="/clients?tab=projects&addProject=1"
-              className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900/25 hover:text-emerald-900"
-            >
-              Add Project
-            </Link>
-          </div>
-          <p className="mt-3 text-xs text-zinc-500">
-            After the real records are created or selected, return here and select them in the quotation form before clicking Add quotation.
-          </p>
-        </div>
-      ) : null}
     </div>
   );
 }

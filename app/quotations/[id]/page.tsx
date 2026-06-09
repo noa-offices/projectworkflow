@@ -4,6 +4,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ContextBackLink } from "@/components/navigation/context-back-link";
 import { PendingLinkButton } from "@/components/pending-link-button";
 import { LocalDraftLink } from "@/components/quotations/local-draft-link";
+import { OpportunityQuotationLinkSync } from "@/components/quotations/opportunity-quotation-link-sync";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
@@ -55,7 +56,8 @@ type Project = {
 type Quotation = {
   id: string;
   client_id: string;
-  project_id: string;
+  project_id: string | null;
+  legacy_reference: string | null;
   quotation_no: string | null;
   option_no: number;
   title: string;
@@ -585,7 +587,7 @@ function QuotationTermsForm({ quotation, mode }: { quotation: Quotation; mode: "
     <form action={updateQuotation} className="grid gap-3 md:grid-cols-2">
       <input type="hidden" name="id" value={quotation.id} />
       <input type="hidden" name="client_id" value={quotation.client_id} />
-      <input type="hidden" name="project_id" value={quotation.project_id} />
+      <input type="hidden" name="project_id" value={quotation.project_id ?? ""} />
       <input type="hidden" name="is_active" value={quotation.is_active ? "on" : ""} />
       <input type="hidden" name="audit_scope" value={isDetails ? "details" : "terms"} />
       {isDetails ? (
@@ -684,17 +686,21 @@ export default async function QuotationDetailPage({
     .eq("id", quotation.client_id)
     .single<Client>();
 
-  const { data: project } = await supabase
-    .from("projects")
-    .select("id,project_name,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
-    .eq("id", quotation.project_id)
-    .single<Project>();
+  const { data: project } = quotation.project_id
+    ? await supabase
+        .from("projects")
+        .select("id,project_name,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
+        .eq("id", quotation.project_id)
+        .single<Project>()
+    : { data: null };
 
-  const { data: projectQuotations, error: projectQuotationsError } = await supabase
-    .from("quotations")
-    .select("id,quotation_no,option_no")
-    .eq("project_id", quotation.project_id)
-    .returns<Array<{ id: string; quotation_no: string | null; option_no: number }>>();
+  const { data: projectQuotations, error: projectQuotationsError } = quotation.project_id
+    ? await supabase
+        .from("quotations")
+        .select("id,quotation_no,option_no")
+        .eq("project_id", quotation.project_id)
+        .returns<Array<{ id: string; quotation_no: string | null; option_no: number }>>()
+    : { data: [], error: null };
 
   const { data: sections, error: sectionsError } = await supabase
     .from("quotation_sections")
@@ -840,10 +846,11 @@ export default async function QuotationDetailPage({
           userDisplayName={displayName}
           userEmail={user.email}
         />
+        <OpportunityQuotationLinkSync />
         <main className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <ContextBackLink
-              fallbackHref={`/clients/projects/${quotation.project_id}`}
+              fallbackHref={quotation.project_id ? `/clients/projects/${quotation.project_id}` : "/quotations"}
               className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
             >
               Back
@@ -873,12 +880,14 @@ export default async function QuotationDetailPage({
                 </div>
                 <div className="flex flex-col gap-3 xl:items-end">
                   <div className="flex flex-wrap gap-2">
-                    <Link
-                      href={`/quotations/${quotation.id}/local-builder`}
-                      className="inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                    >
-                      Open Builder
-                    </Link>
+                    {quotation.project_id ? (
+                      <Link
+                        href={`/quotations/${quotation.id}/local-builder`}
+                        className="inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                      >
+                        Open Builder
+                      </Link>
+                    ) : null}
                     <SecondaryActionLink href={`/quotations/${quotation.id}/pdf`} label="Preview Quotation" />
                     <SecondaryPendingActionLink
                       href={`/quotations/${quotation.id}/download-pdf`}
@@ -886,14 +895,18 @@ export default async function QuotationDetailPage({
                       pendingLabel="Preparing PDF..."
                     />
                   </div>
-                  <p className="text-xs text-zinc-500">Builder now opens the local workflow by default.</p>
+                  <p className="text-xs text-zinc-500">
+                    {quotation.project_id
+                      ? "Builder now opens the local workflow by default."
+                      : "Confirmed project/order will be created after client approval."}
+                  </p>
                 </div>
               </div>
 
               <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                 <InfoValue label="Date" value={quotation.quotation_date} />
                 <InfoValue label="Client" value={client?.company_name ?? "Unknown client"} />
-                <InfoValue label="Project" value={project?.project_name ?? "Unknown project"} />
+                <InfoValue label="Project / reference" value={project?.project_name ?? quotation.legacy_reference ?? "Opportunity reference"} />
                 <InfoValue label="Project year" value={project?.project_year ?? "No year"} />
                 <InfoValue label="Layout" value={layoutModes.find(([value]) => value === quotation.layout_mode)?.[1] ?? quotation.layout_mode} />
                 <InfoValue label="Attention to" value={project?.attention_to} />

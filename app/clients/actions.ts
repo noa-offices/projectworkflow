@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
+import { boolValue, clientPayload, optionalNumberValue, optionalTextValue, textValue } from "@/lib/clients/client-payload";
 import { loadProjectQuotationDependencyCount } from "@/lib/clients/project-dependencies";
 import { requireRecordsManager } from "@/lib/auth";
 import { createAdminClient as createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -11,31 +12,6 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 const projectStatuses = new Set(["active", "on_hold", "completed", "cancelled"]);
 type ClientsMessageTone = "success" | "error" | "warning";
-
-function textValue(formData: FormData, name: string) {
-  const value = formData.get(name);
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function optionalTextValue(formData: FormData, name: string) {
-  const value = textValue(formData, name);
-  return value || null;
-}
-
-function boolValue(formData: FormData, name: string) {
-  return formData.get(name) === "on";
-}
-
-function optionalNumberValue(formData: FormData, name: string) {
-  const value = textValue(formData, name);
-
-  if (!value) {
-    return null;
-  }
-
-  const number = Number.parseInt(value, 10);
-  return Number.isFinite(number) ? number : null;
-}
 
 function redirectWithMessage(message: string, tone: ClientsMessageTone = "success"): never {
   const query = new URLSearchParams();
@@ -62,24 +38,6 @@ function safeSupabaseErrorReason(error: { code?: string | null; message?: string
 
 function actionErrorMessage(actionLabel: string, error: unknown, fallbackMessage?: string) {
   return formatSafeActionError(actionLabel, error, fallbackMessage);
-}
-
-function clientPayload(formData: FormData, userId?: string) {
-  const payload = {
-    company_name: textValue(formData, "company_name"),
-    contact_person: optionalTextValue(formData, "contact_person"),
-    email: optionalTextValue(formData, "email"),
-    phone: optionalTextValue(formData, "phone"),
-    website: optionalTextValue(formData, "website"),
-    address: optionalTextValue(formData, "address"),
-    city: optionalTextValue(formData, "city"),
-    country: textValue(formData, "country") || "UAE",
-    trn: optionalTextValue(formData, "trn"),
-    notes: optionalTextValue(formData, "notes"),
-    is_active: boolValue(formData, "is_active"),
-  };
-
-  return userId ? { ...payload, created_by: userId } : payload;
 }
 
 function projectPayload(formData: FormData, userId?: string) {

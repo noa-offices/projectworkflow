@@ -1,25 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { formatMoney } from "@/lib/currencies";
+import { normalizeClientName } from "@/lib/clients/client-payload";
+import { createConfirmedClient } from "@/app/sales/opportunities/actions";
 
-type SalesOpportunityStage =
+type SalesOpportunityStatus =
+  | "New"
+  | "Contacted"
   | "Qualified"
-  | "Site Visit"
-  | "Design / Specification"
   | "Quotation Required"
   | "Quotation Sent"
   | "Negotiation"
   | "Won"
   | "Lost";
 
+type SalesOpportunitySource = "Email" | "Website" | "Walk-in" | "Phone" | "WhatsApp" | "Referral" | "LinkedIn" | "Other";
 type SalesOpportunitySyncStatus = "local" | "pending" | "synced";
-type SalesOpportunityRecordSource = "existing" | "local-pending";
-type OpportunityClientMode = "existing" | "local-pending";
-type OpportunityProjectMode = "existing" | "local-pending";
-type StageFilter = "All stages" | SalesOpportunityStage | "Archived";
-type ProbabilityFilter = "All probabilities" | "0-40%" | "41-70%" | "71-100%";
+type SalesOpportunityRecordSource = "existing" | "created" | "local" | "local-pending";
+type OpportunityClientMode = "existing" | "local";
+type StatusFilter = "All statuses" | SalesOpportunityStatus | "Archived";
+type SourceFilter = "All sources" | SalesOpportunitySource;
 
 type ClientOption = {
   id: string;
@@ -42,15 +44,23 @@ type SalesOpportunity = {
   clientId?: string;
   clientName: string;
   clientSource?: SalesOpportunityRecordSource;
+  clientConfirmed?: boolean;
   projectId?: string;
+  referenceName?: string;
   projectName: string;
   projectSource?: SalesOpportunityRecordSource;
   contactName?: string;
   phone?: string;
   email?: string;
+  location?: string;
+  deliveryLocation?: string;
   requirement: string;
-  stage: SalesOpportunityStage;
+  source: SalesOpportunitySource;
+  status: SalesOpportunityStatus;
+  stage?: SalesOpportunityStatus;
   probability: number;
+  enquiryDate?: string;
+  quotationSubmissionDate?: string;
   expectedValue?: number;
   assignedTo: string;
   nextFollowUp?: string;
@@ -69,16 +79,19 @@ type SalesOpportunityDraft = {
   clientId: string;
   clientName: string;
   clientSource: SalesOpportunityRecordSource;
-  projectMode: OpportunityProjectMode;
-  projectId: string;
+  referenceName: string;
   projectName: string;
   projectSource: SalesOpportunityRecordSource;
   contactName: string;
   phone: string;
   email: string;
+  deliveryLocation: string;
   requirement: string;
-  stage: SalesOpportunityStage | "";
+  source: SalesOpportunitySource | "";
+  status: SalesOpportunityStatus | "";
   probability: string;
+  enquiryDate: string;
+  quotationSubmissionDate: string;
   expectedValue: string;
   assignedTo: string;
   nextFollowUp: string;
@@ -88,10 +101,10 @@ type SalesOpportunityDraft = {
 
 const LOCAL_STORAGE_KEY = "projectworkflow.sales.opportunities.v1";
 
-const STAGE_OPTIONS: SalesOpportunityStage[] = [
+const STATUS_OPTIONS: SalesOpportunityStatus[] = [
+  "New",
+  "Contacted",
   "Qualified",
-  "Site Visit",
-  "Design / Specification",
   "Quotation Required",
   "Quotation Sent",
   "Negotiation",
@@ -99,8 +112,8 @@ const STAGE_OPTIONS: SalesOpportunityStage[] = [
   "Lost",
 ];
 
-const STAGE_FILTER_OPTIONS: StageFilter[] = ["All stages", ...STAGE_OPTIONS, "Archived"];
-const PROBABILITY_FILTER_OPTIONS: ProbabilityFilter[] = ["All probabilities", "0-40%", "41-70%", "71-100%"];
+const SOURCE_OPTIONS: SalesOpportunitySource[] = ["Email", "Website", "Walk-in", "Phone", "WhatsApp", "Referral", "LinkedIn", "Other"];
+const STATUS_FILTER_OPTIONS: StatusFilter[] = ["All statuses", ...STATUS_OPTIONS, "Archived"];
 
 const SYNC_LABELS: Record<SalesOpportunitySyncStatus, string> = {
   local: "Saved locally",
@@ -124,8 +137,12 @@ function seedOpportunities(): SalesOpportunity[] {
       projectName: "HQ refresh",
       contactName: "Noura Al Mansoori",
       requirement: "Executive desks, workstations, and meeting room storage with phased installation.",
+      source: "Website",
+      status: "Quotation Required",
       stage: "Quotation Required",
       probability: 60,
+      enquiryDate: "2026-06-01",
+      quotationSubmissionDate: "2026-06-14",
       expectedValue: 185000,
       assignedTo: "Aisha Khan",
       nextFollowUp: "2026-06-12",
@@ -143,8 +160,12 @@ function seedOpportunities(): SalesOpportunity[] {
       projectName: "Lobby renovation",
       contactName: "Daniel Foster",
       requirement: "Lobby lounge chairs, side tables, outdoor dining sets, and reception waiting area furniture.",
-      stage: "Design / Specification",
+      source: "Referral",
+      status: "Qualified",
+      stage: "Qualified",
       probability: 40,
+      enquiryDate: "2026-06-02",
+      quotationSubmissionDate: "2026-06-18",
       expectedValue: 320000,
       assignedTo: "Omar Nasser",
       nextFollowUp: "2026-06-13",
@@ -162,8 +183,12 @@ function seedOpportunities(): SalesOpportunity[] {
       projectName: "Reception upgrade",
       contactName: "Dr. Lina Haddad",
       requirement: "Reception counter, visitor seating, staff lockers, shelving, and back-office storage.",
+      source: "Phone",
+      status: "Quotation Sent",
       stage: "Quotation Sent",
       probability: 80,
+      enquiryDate: "2026-06-03",
+      quotationSubmissionDate: "2026-06-09",
       expectedValue: 96500,
       assignedTo: "Maya Thomas",
       nextFollowUp: "2026-06-11",
@@ -181,8 +206,12 @@ function seedOpportunities(): SalesOpportunity[] {
       projectName: "Campus expansion",
       contactName: "Khaled Saeed",
       requirement: "Classroom desks, library shelving, teacher stations, multipurpose hall chairs, and study pods.",
-      stage: "Site Visit",
+      source: "Email",
+      status: "Contacted",
+      stage: "Contacted",
       probability: 40,
+      enquiryDate: "2026-06-04",
+      quotationSubmissionDate: "2026-06-20",
       expectedValue: 410000,
       assignedTo: "Aisha Khan",
       nextFollowUp: "2026-06-15",
@@ -200,8 +229,12 @@ function seedOpportunities(): SalesOpportunity[] {
       projectName: "Floor 8 expansion",
       contactName: "Sami Rahman",
       requirement: "Acoustic pods, modular benching, lockers, and breakout tables for a new shared floor.",
+      source: "LinkedIn",
+      status: "Negotiation",
       stage: "Negotiation",
       probability: 80,
+      enquiryDate: "2026-06-05",
+      quotationSubmissionDate: "2026-06-11",
       expectedValue: 275000,
       assignedTo: "Maya Thomas",
       nextFollowUp: "2026-06-10",
@@ -219,8 +252,12 @@ function seedOpportunities(): SalesOpportunity[] {
       projectName: "Villa fit-out",
       contactName: "Priya Menon",
       requirement: "Wardrobes, display wall, study desk, feature shelving, and loose furniture selection.",
+      source: "Walk-in",
+      status: "Lost",
       stage: "Lost",
       probability: 20,
+      enquiryDate: "2026-06-06",
+      quotationSubmissionDate: "2026-06-16",
       expectedValue: 140000,
       assignedTo: "Omar Nasser",
       nextFollowUp: "Closed",
@@ -237,8 +274,12 @@ function cloneOpportunities(records: SalesOpportunity[]) {
   return records.map((record) => ({ ...record }));
 }
 
-function isSalesOpportunityStage(value: unknown): value is SalesOpportunityStage {
-  return typeof value === "string" && STAGE_OPTIONS.includes(value as SalesOpportunityStage);
+function isSalesOpportunityStatus(value: unknown): value is SalesOpportunityStatus {
+  return typeof value === "string" && STATUS_OPTIONS.includes(value as SalesOpportunityStatus);
+}
+
+function isSalesOpportunitySource(value: unknown): value is SalesOpportunitySource {
+  return typeof value === "string" && SOURCE_OPTIONS.includes(value as SalesOpportunitySource);
 }
 
 function isSalesOpportunitySyncStatus(value: unknown): value is SalesOpportunitySyncStatus {
@@ -246,7 +287,19 @@ function isSalesOpportunitySyncStatus(value: unknown): value is SalesOpportunity
 }
 
 function isSalesOpportunityRecordSource(value: unknown): value is SalesOpportunityRecordSource {
-  return value === "existing" || value === "local-pending";
+  return value === "existing" || value === "created" || value === "local" || value === "local-pending";
+}
+
+function normalizeClientSource(value: unknown): SalesOpportunityRecordSource {
+  if (value === "existing" || value === "created") return value;
+  return "local";
+}
+
+function normalizeLegacyStatus(value: unknown): SalesOpportunityStatus | null {
+  if (isSalesOpportunityStatus(value)) return value;
+  if (value === "Site Visit") return "Contacted";
+  if (value === "Design / Specification") return "Qualified";
+  return null;
 }
 
 function safeString(value: unknown) {
@@ -268,15 +321,18 @@ function normalizeOpportunity(raw: unknown, index: number): SalesOpportunity | n
   const data = raw as Record<string, unknown>;
   const title = safeString(data.title);
   const clientName = safeString(data.clientName);
-  const projectName = safeString(data.projectName);
+  const referenceName = safeString(data.referenceName) || safeString(data.projectName);
+  const projectName = referenceName;
   const requirement = safeString(data.requirement);
-  const stage = isSalesOpportunityStage(data.stage) ? data.stage : null;
-  const probability = safeNumber(data.probability);
+  const status = normalizeLegacyStatus(data.status) ?? normalizeLegacyStatus(data.stage);
+  const source = isSalesOpportunitySource(data.source) ? data.source : "Email";
+  const probability = safeNumber(data.probability) ?? 40;
 
-  if (!title || !clientName || !projectName || !requirement || !stage || probability === undefined) return null;
+  if (!title || !clientName || !requirement || !status) return null;
 
   const createdAt = safeString(data.createdAt) || new Date().toISOString();
   const updatedAt = safeString(data.updatedAt) || createdAt;
+  const createdDate = createdAt.slice(0, 10);
 
   return {
     id: safeString(data.id) || `opp-${index + 1}`,
@@ -284,16 +340,24 @@ function normalizeOpportunity(raw: unknown, index: number): SalesOpportunity | n
     title,
     clientId: safeString(data.clientId) || undefined,
     clientName,
-    clientSource: isSalesOpportunityRecordSource(data.clientSource) ? data.clientSource : "local-pending",
+    clientSource: normalizeClientSource(data.clientSource),
+    clientConfirmed: Boolean(data.clientConfirmed) || Boolean(safeString(data.clientId) && (data.clientSource === "existing" || data.clientSource === "created")),
     projectId: safeString(data.projectId) || undefined,
+    referenceName,
     projectName,
-    projectSource: isSalesOpportunityRecordSource(data.projectSource) ? data.projectSource : "local-pending",
+    projectSource: isSalesOpportunityRecordSource(data.projectSource) ? data.projectSource : "local",
     contactName: safeString(data.contactName) || undefined,
     phone: safeString(data.phone) || undefined,
     email: safeString(data.email) || undefined,
+    location: safeString(data.location) || safeString(data.deliveryLocation) || undefined,
+    deliveryLocation: safeString(data.deliveryLocation) || safeString(data.location) || undefined,
     requirement,
-    stage,
+    source,
+    status,
+    stage: status,
     probability: Math.max(0, Math.min(100, Math.round(probability))),
+    enquiryDate: safeString(data.enquiryDate) || createdDate,
+    quotationSubmissionDate: safeString(data.quotationSubmissionDate) || safeString(data.nextFollowUp) || undefined,
     expectedValue: safeNumber(data.expectedValue),
     assignedTo: safeString(data.assignedTo) || "Unassigned",
     nextFollowUp: safeString(data.nextFollowUp) || undefined,
@@ -320,20 +384,23 @@ function normalizeOpportunityList(raw: unknown) {
 function createEmptyDraft(): SalesOpportunityDraft {
   return {
     title: "",
-    clientMode: "local-pending",
+    clientMode: "local",
     clientId: "",
     clientName: "",
-    clientSource: "local-pending",
-    projectMode: "local-pending",
-    projectId: "",
+    clientSource: "local",
+    referenceName: "",
     projectName: "",
-    projectSource: "local-pending",
+    projectSource: "local",
     contactName: "",
     phone: "",
     email: "",
+    deliveryLocation: "",
     requirement: "",
-    stage: "Qualified",
+    source: "Email",
+    status: "New",
     probability: "40",
+    enquiryDate: new Date().toISOString().slice(0, 10),
+    quotationSubmissionDate: "",
     expectedValue: "",
     assignedTo: "",
     nextFollowUp: "",
@@ -343,8 +410,7 @@ function createEmptyDraft(): SalesOpportunityDraft {
 }
 
 function draftFromOpportunity(opportunity: SalesOpportunity): SalesOpportunityDraft {
-  const clientSource = opportunity.clientId && opportunity.clientSource === "existing" ? "existing" : "local-pending";
-  const projectSource = opportunity.projectId && opportunity.projectSource === "existing" ? "existing" : "local-pending";
+  const clientSource = opportunity.clientId && opportunity.clientSource === "existing" ? "existing" : "local";
 
   return {
     title: opportunity.title,
@@ -352,16 +418,19 @@ function draftFromOpportunity(opportunity: SalesOpportunity): SalesOpportunityDr
     clientId: clientSource === "existing" ? opportunity.clientId ?? "" : "",
     clientName: opportunity.clientName,
     clientSource,
-    projectMode: projectSource,
-    projectId: projectSource === "existing" ? opportunity.projectId ?? "" : "",
-    projectName: opportunity.projectName,
-    projectSource,
+    referenceName: opportunity.referenceName ?? opportunity.projectName,
+    projectName: opportunity.referenceName ?? opportunity.projectName,
+    projectSource: "local",
     contactName: opportunity.contactName ?? "",
     phone: opportunity.phone ?? "",
     email: opportunity.email ?? "",
+    deliveryLocation: opportunity.deliveryLocation ?? opportunity.location ?? "",
     requirement: opportunity.requirement,
-    stage: opportunity.stage,
+    source: opportunity.source,
+    status: opportunity.status,
     probability: String(opportunity.probability),
+    enquiryDate: opportunity.enquiryDate ?? "",
+    quotationSubmissionDate: opportunity.quotationSubmissionDate ?? "",
     expectedValue: opportunity.expectedValue !== undefined ? String(opportunity.expectedValue) : "",
     assignedTo: opportunity.assignedTo,
     nextFollowUp: opportunity.nextFollowUp ?? "",
@@ -386,8 +455,8 @@ function nextOpportunityNo(opportunities: SalesOpportunity[]) {
   return `OPP-${year}-${String(maxForYear + 1).padStart(3, "0")}`;
 }
 
-function stageClassName(stage: SalesOpportunityStage) {
-  switch (stage) {
+function statusClassName(status: SalesOpportunityStatus) {
+  switch (status) {
     case "Won":
       return "border-emerald-200 bg-emerald-50 text-emerald-900";
     case "Lost":
@@ -397,8 +466,10 @@ function stageClassName(stage: SalesOpportunityStage) {
       return "border-amber-200 bg-amber-50 text-amber-900";
     case "Negotiation":
       return "border-sky-200 bg-sky-50 text-sky-900";
-    case "Site Visit":
+    case "Contacted":
       return "border-blue-200 bg-blue-50 text-blue-900";
+    case "New":
+      return "border-sky-200 bg-sky-50 text-sky-900";
     default:
       return "border-indigo-200 bg-indigo-50 text-indigo-900";
   }
@@ -427,32 +498,25 @@ function formatDisplayDate(value?: string) {
   }).format(parsed);
 }
 
-function probabilityMatchesFilter(probability: number, filter: ProbabilityFilter) {
-  if (filter === "All probabilities") return true;
-  if (filter === "0-40%") return probability <= 40;
-  if (filter === "41-70%") return probability >= 41 && probability <= 70;
-  return probability >= 71;
-}
-
 function plannedNextActions(opportunity: SalesOpportunity) {
-  switch (opportunity.stage) {
+  switch (opportunity.status) {
+    case "New":
+      return [
+        "Confirm the enquiry details, decision maker, and furniture scope.",
+        "Set ownership and move the opportunity to contacted once the client is reached.",
+        "Keep client and project references accurate before quotation handoff.",
+      ];
+    case "Contacted":
+      return [
+        "Clarify the furniture scope, room count, and expected submission date.",
+        "Collect missing drawings, dimensions, or material preferences.",
+        "Move to qualified when budget, timeline, and scope are clear.",
+      ];
     case "Qualified":
       return [
         "Confirm scope, project value, and buying timeline.",
         "Schedule the next discovery or site coordination step.",
         "Prepare the opportunity for design/specification review.",
-      ];
-    case "Site Visit":
-      return [
-        "Capture site notes, dimensions, and room-by-room quantities.",
-        "Update the requirement summary after the visit.",
-        "Move to design/specification once the scope is clear.",
-      ];
-    case "Design / Specification":
-      return [
-        "Finalize specification choices and alternates.",
-        "Prepare commercial assumptions before quotation.",
-        "Confirm any long-lead items with the product team.",
       ];
     case "Quotation Required":
       return [
@@ -503,46 +567,176 @@ function FieldLabel({ label }: { label: string }) {
 }
 
 function sourceBadgeClassName(source?: SalesOpportunityRecordSource) {
-  return source === "existing"
+  return source === "existing" || source === "created"
     ? "border-emerald-200 bg-emerald-50 text-emerald-900"
     : "border-amber-200 bg-amber-50 text-amber-900";
 }
 
 function sourceBadgeLabel(kind: "client" | "project", source?: SalesOpportunityRecordSource) {
-  if (source === "existing") return kind === "client" ? "Existing client" : "Existing project";
-  return kind === "client" ? "Local client" : "Local project";
+  if (source === "existing") return kind === "client" ? "Existing client" : "Existing reference";
+  if (source === "created") return kind === "client" ? "Created client" : "Existing reference";
+  return kind === "client" ? "Local client" : "Opportunity reference";
 }
 
-function projectOptionLabel(project: ProjectOption) {
-  return [
-    project.project_name,
-    project.project_number ? ` - ${project.project_number}` : project.project_code ? ` - ${project.project_code}` : "",
-    project.project_year ? ` (${project.project_year})` : "",
-  ].join("");
+function hasConfirmedClient(opportunity: SalesOpportunity) {
+  return Boolean(opportunity.clientConfirmed && opportunity.clientName.trim());
+}
+
+function clientStatusClassName(opportunity: SalesOpportunity) {
+  return hasConfirmedClient(opportunity)
+    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+    : "border-amber-200 bg-amber-50 text-amber-900";
+}
+
+function clientStatusLabel(opportunity: SalesOpportunity) {
+  return hasConfirmedClient(opportunity) ? "Confirmed client" : "Client not confirmed";
+}
+
+type ConfirmedClientRecord = {
+  id: string;
+  company_name: string;
+  contact_person: string | null;
+  phone: string | null;
+  email: string | null;
+};
+
+type CreateConfirmedClientFormState =
+  | {
+      status: "idle";
+    }
+  | {
+      status: "error";
+      message: string;
+    }
+  | {
+      status: "success";
+      requestId: string;
+      client: ConfirmedClientRecord;
+    };
+
+function CreateConfirmedClientForm({
+  opportunity,
+  onCreated,
+  existingClients,
+}: {
+  opportunity: SalesOpportunity;
+  onCreated: (client: ConfirmedClientRecord) => void;
+  existingClients: ClientOption[];
+}) {
+  const [state, formAction, pending] = useActionState<CreateConfirmedClientFormState, FormData>(
+    createConfirmedClient,
+    {
+      status: "idle",
+    },
+  );
+  const handledRequestId = useRef<string | null>(null);
+  const exactExistingClient = existingClients.find(
+    (client) => normalizeClientName(client.company_name) === normalizeClientName(opportunity.clientName),
+  );
+  const isDuplicateName = Boolean(exactExistingClient);
+
+  useEffect(() => {
+    if (state.status !== "success") {
+      return;
+    }
+
+    if (handledRequestId.current === state.requestId) {
+      return;
+    }
+
+    handledRequestId.current = state.requestId;
+    onCreated(state.client);
+  }, [onCreated, state]);
+
+  return (
+    <form action={formAction} className="rounded-md border border-zinc-200 p-4">
+      <h3 className="font-semibold text-zinc-950">Create new confirmed client</h3>
+      <p className="mt-2 text-sm text-zinc-600">
+        Creates the client record first, then confirms this opportunity against it.
+      </p>
+
+      <input type="hidden" name="country" value="UAE" />
+      <input type="hidden" name="is_active" value="on" />
+
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <label className="block">
+          <span className="text-xs font-semibold uppercase text-zinc-500">Client name</span>
+          <input
+            name="company_name"
+            defaultValue={opportunity.clientName}
+            required
+            className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs font-semibold uppercase text-zinc-500">Contact</span>
+          <input
+            name="contact_person"
+            defaultValue={opportunity.contactName ?? ""}
+            className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs font-semibold uppercase text-zinc-500">Phone</span>
+          <input
+            name="phone"
+            defaultValue={opportunity.phone ?? ""}
+            className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs font-semibold uppercase text-zinc-500">Email</span>
+          <input
+            name="email"
+            type="email"
+            defaultValue={opportunity.email ?? ""}
+            className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+          />
+        </label>
+      </div>
+
+      {isDuplicateName ? (
+        <p className="mt-3 text-sm font-medium text-amber-700">
+          A client with this exact name already exists. Link the existing client instead.
+        </p>
+      ) : null}
+
+      {state.status === "error" ? <p className="mt-3 text-sm font-medium text-rose-700">{state.message}</p> : null}
+
+      <div className="mt-3 flex justify-end">
+        <button
+          type="submit"
+          disabled={pending}
+          className="inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+        >
+          {pending ? "Creating..." : "Create and confirm client"}
+        </button>
+      </div>
+    </form>
+  );
 }
 
 export function OpportunitiesPreview({
   clients,
-  projects,
 }: {
   clients: ClientOption[];
   projects: ProjectOption[];
 }) {
   const [opportunities, setOpportunities] = useState<SalesOpportunity[]>(() => cloneOpportunities(seedOpportunities()));
+  const [clientOptions, setClientOptions] = useState<ClientOption[]>(() => clients);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [stageFilter, setStageFilter] = useState<StageFilter>("All stages");
-  const [probabilityFilter, setProbabilityFilter] = useState<ProbabilityFilter>("All probabilities");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("All statuses");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("All sources");
   const [assignedFilter, setAssignedFilter] = useState("All users");
   const [selectedId, setSelectedId] = useState(() => seedOpportunities()[0]?.id ?? "");
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SalesOpportunityDraft>(() => createEmptyDraft());
   const [formError, setFormError] = useState<string | null>(null);
-  const draftProjects = useMemo(
-    () => (draft.clientMode === "existing" && draft.clientId ? projects.filter((project) => project.client_id === draft.clientId) : []),
-    [draft.clientId, draft.clientMode, projects],
-  );
+  const [confirmClientOpportunityId, setConfirmClientOpportunityId] = useState<string | null>(null);
+  const [confirmClientId, setConfirmClientId] = useState("");
+  const [confirmClientError, setConfirmClientError] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -579,7 +773,7 @@ export function OpportunitiesPreview({
     const normalizedQuery = searchQuery.trim().toLowerCase();
 
     return opportunities.filter((opportunity) => {
-      const matchesArchive = stageFilter === "Archived" ? opportunity.isArchived : !opportunity.isArchived;
+      const matchesArchive = statusFilter === "Archived" ? opportunity.isArchived : !opportunity.isArchived;
       const matchesQuery =
         !normalizedQuery ||
         [
@@ -590,8 +784,13 @@ export function OpportunitiesPreview({
           opportunity.contactName,
           opportunity.phone,
           opportunity.email,
+          opportunity.deliveryLocation,
+          opportunity.location,
           opportunity.requirement,
-          opportunity.stage,
+          opportunity.source,
+          opportunity.status,
+          opportunity.enquiryDate,
+          opportunity.quotationSubmissionDate,
           opportunity.expectedValue !== undefined ? String(opportunity.expectedValue) : "",
           opportunity.assignedTo,
           opportunity.linkedEnquiryNo,
@@ -601,12 +800,12 @@ export function OpportunitiesPreview({
       return (
         matchesArchive &&
         matchesQuery &&
-        (stageFilter === "All stages" || stageFilter === "Archived" || opportunity.stage === stageFilter) &&
-        probabilityMatchesFilter(opportunity.probability, probabilityFilter) &&
+        (statusFilter === "All statuses" || statusFilter === "Archived" || opportunity.status === statusFilter) &&
+        (sourceFilter === "All sources" || opportunity.source === sourceFilter) &&
         (assignedFilter === "All users" || opportunity.assignedTo === assignedFilter)
       );
     });
-  }, [assignedFilter, opportunities, probabilityFilter, searchQuery, stageFilter]);
+  }, [assignedFilter, opportunities, searchQuery, sourceFilter, statusFilter]);
 
   const activeOpportunities = opportunities.filter((opportunity) => !opportunity.isArchived);
   const selectedOpportunity =
@@ -614,11 +813,49 @@ export function OpportunitiesPreview({
     filteredOpportunities[0] ??
     activeOpportunities[0] ??
     opportunities[0];
+  const confirmClientOpportunity = confirmClientOpportunityId
+    ? opportunities.find((opportunity) => opportunity.id === confirmClientOpportunityId) ?? null
+    : null;
+
+  function applyCreatedClient(client: ConfirmedClientRecord) {
+    setClientOptions((current) =>
+      current.some((item) => item.id === client.id)
+        ? current
+        : [{ id: client.id, company_name: client.company_name }, ...current],
+    );
+
+    if (!confirmClientOpportunity) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    setOpportunities((current) =>
+      current.map((opportunity) =>
+        opportunity.id === confirmClientOpportunity.id
+          ? {
+              ...opportunity,
+              clientId: client.id,
+              clientName: client.company_name,
+              clientSource: "created",
+              clientConfirmed: true,
+              contactName: client.contact_person ?? opportunity.contactName,
+              phone: client.phone ?? opportunity.phone,
+              email: client.email ?? opportunity.email,
+              updatedAt: now,
+              localSyncStatus: "pending",
+            }
+          : opportunity,
+      ),
+    );
+
+    setSelectedId(confirmClientOpportunity.id);
+    closeConfirmClient();
+  }
 
   function resetFilters() {
     setSearchQuery("");
-    setStageFilter("All stages");
-    setProbabilityFilter("All probabilities");
+    setStatusFilter("All statuses");
+    setSourceFilter("All sources");
     setAssignedFilter("All users");
     setSelectedId(activeOpportunities[0]?.id ?? opportunities[0]?.id ?? "");
   }
@@ -637,11 +874,59 @@ export function OpportunitiesPreview({
     setFormOpen(true);
   }
 
+  function openConfirmClient(opportunity: SalesOpportunity) {
+    setConfirmClientOpportunityId(opportunity.id);
+    setConfirmClientError(null);
+    const exactMatch = clientOptions.find(
+      (client) => normalizeClientName(client.company_name) === normalizeClientName(opportunity.clientName),
+    );
+    setConfirmClientId(exactMatch?.id ?? "");
+  }
+
+  function closeConfirmClient() {
+    setConfirmClientOpportunityId(null);
+    setConfirmClientId("");
+    setConfirmClientError(null);
+  }
+
   function closeForm() {
     setFormOpen(false);
     setEditingId(null);
     setDraft(createEmptyDraft());
     setFormError(null);
+  }
+
+  function confirmExistingClient() {
+    if (!confirmClientOpportunity) return;
+    if (!confirmClientId) {
+      setConfirmClientError("Select an existing client to confirm.");
+      return;
+    }
+
+    const client = clientOptions.find((item) => item.id === confirmClientId);
+    if (!client) {
+      setConfirmClientError("Select a valid existing client.");
+      return;
+    }
+
+    const now = new Date().toISOString();
+    setOpportunities((current) =>
+      current.map((opportunity) =>
+        opportunity.id === confirmClientOpportunity.id
+          ? {
+              ...opportunity,
+              clientId: client.id,
+              clientName: client.company_name,
+              clientSource: "existing",
+              clientConfirmed: true,
+              updatedAt: now,
+              localSyncStatus: "pending",
+            }
+          : opportunity,
+      ),
+    );
+    setSelectedId(confirmClientOpportunity.id);
+    closeConfirmClient();
   }
 
   function updateDraft<Field extends keyof SalesOpportunityDraft>(field: Field, value: SalesOpportunityDraft[Field]) {
@@ -651,38 +936,30 @@ export function OpportunitiesPreview({
   function saveDraft() {
     const title = draft.title.trim();
     const requirement = draft.requirement.trim();
-    const stage = draft.stage;
+    const source = draft.source;
+    const status = draft.status;
     const probability = Number(draft.probability);
     const expectedValue = draft.expectedValue.trim() ? Number(draft.expectedValue) : undefined;
     const existingClient = draft.clientMode === "existing"
-      ? clients.find((client) => client.id === draft.clientId)
+      ? clientOptions.find((client) => client.id === draft.clientId)
       : undefined;
     const clientName = draft.clientMode === "existing"
       ? existingClient?.company_name.trim() ?? ""
       : draft.clientName.trim();
     const clientId = draft.clientMode === "existing" ? existingClient?.id : undefined;
-    const clientSource: SalesOpportunityRecordSource = draft.clientMode === "existing" ? "existing" : "local-pending";
-    const existingProject = draft.projectMode === "existing" && clientId
-      ? projects.find((project) => project.id === draft.projectId && project.client_id === clientId)
-      : undefined;
-    const projectName = draft.projectMode === "existing"
-      ? existingProject?.project_name.trim() ?? ""
-      : draft.projectName.trim();
-    const projectId = draft.projectMode === "existing" ? existingProject?.id : undefined;
-    const projectSource: SalesOpportunityRecordSource = draft.projectMode === "existing" ? "existing" : "local-pending";
+    const clientSource: SalesOpportunityRecordSource = draft.clientMode === "existing" ? "existing" : "local";
+    const clientConfirmed = draft.clientMode === "existing" && Boolean(clientId);
+    const referenceName = draft.referenceName.trim() || draft.projectName.trim();
+    const projectName = referenceName;
+    const projectSource: SalesOpportunityRecordSource = "local";
 
-    if (!title || !clientName || !projectName || !requirement || !stage || !Number.isFinite(probability)) {
-      setFormError("Add a title, client, project, requirement, stage, and probability before saving locally.");
+    if (!title || !clientName || !requirement || !source || !status || !draft.enquiryDate || !draft.quotationSubmissionDate || !draft.assignedTo.trim()) {
+      setFormError("Add a title, client, requirement, status, enquiry date, quotation submission date, and assigned user before saving locally.");
       return;
     }
 
     if (draft.clientMode === "existing" && !clientId) {
-      setFormError("Select an existing client or switch to New local client.");
-      return;
-    }
-
-    if (draft.projectMode === "existing" && !projectId) {
-      setFormError("Select an existing project or switch to New local project.");
+      setFormError("Select an existing client or switch to New client.");
       return;
     }
 
@@ -703,15 +980,23 @@ export function OpportunitiesPreview({
                 clientId,
                 clientName,
                 clientSource,
-                projectId,
+                clientConfirmed,
+                projectId: undefined,
+                referenceName,
                 projectName,
                 projectSource,
                 contactName: draft.contactName.trim() || undefined,
                 phone: draft.phone.trim() || undefined,
                 email: draft.email.trim() || undefined,
+                location: draft.deliveryLocation.trim() || undefined,
+                deliveryLocation: draft.deliveryLocation.trim() || undefined,
                 requirement,
-                stage,
+                source,
+                status,
+                stage: status,
                 probability: Math.max(0, Math.min(100, Math.round(probability))),
+                enquiryDate: draft.enquiryDate,
+                quotationSubmissionDate: draft.quotationSubmissionDate || undefined,
                 expectedValue,
                 assignedTo: draft.assignedTo.trim() || "Unassigned",
                 nextFollowUp: draft.nextFollowUp.trim() || undefined,
@@ -731,15 +1016,23 @@ export function OpportunitiesPreview({
         clientId,
         clientName,
         clientSource,
-        projectId,
+        clientConfirmed,
+        projectId: undefined,
+        referenceName,
         projectName,
         projectSource,
         contactName: draft.contactName.trim() || undefined,
         phone: draft.phone.trim() || undefined,
         email: draft.email.trim() || undefined,
+        location: draft.deliveryLocation.trim() || undefined,
+        deliveryLocation: draft.deliveryLocation.trim() || undefined,
         requirement,
-        stage,
+        source,
+        status,
+        stage: status,
         probability: Math.max(0, Math.min(100, Math.round(probability))),
+        enquiryDate: draft.enquiryDate,
+        quotationSubmissionDate: draft.quotationSubmissionDate || undefined,
         expectedValue,
         assignedTo: draft.assignedTo.trim() || "Unassigned",
         nextFollowUp: draft.nextFollowUp.trim() || undefined,
@@ -773,10 +1066,10 @@ export function OpportunitiesPreview({
   }
 
   const summary = {
-    open: activeOpportunities.filter((opportunity) => opportunity.stage !== "Won" && opportunity.stage !== "Lost").length,
-    quotationRequired: activeOpportunities.filter((opportunity) => opportunity.stage === "Quotation Required").length,
-    quotationSent: activeOpportunities.filter((opportunity) => opportunity.stage === "Quotation Sent").length,
-    wonLost: activeOpportunities.filter((opportunity) => opportunity.stage === "Won" || opportunity.stage === "Lost").length,
+    open: activeOpportunities.filter((opportunity) => opportunity.status !== "Won" && opportunity.status !== "Lost").length,
+    quotationRequired: activeOpportunities.filter((opportunity) => opportunity.status === "Quotation Required").length,
+    quotationSent: activeOpportunities.filter((opportunity) => opportunity.status === "Quotation Sent").length,
+    wonLost: activeOpportunities.filter((opportunity) => opportunity.status === "Won" || opportunity.status === "Lost").length,
   };
 
   return (
@@ -784,10 +1077,10 @@ export function OpportunitiesPreview({
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="grid gap-2">
           <span className="w-fit rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
-            UI preview only - opportunity records are saved in this browser only.
+            Local-first opportunity records are saved in this browser.
           </span>
           <span className="w-fit rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-950">
-            Future version will save locally first, then sync to Supabase.
+            Future server sync can be added later without changing this workflow.
           </span>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -798,12 +1091,6 @@ export function OpportunitiesPreview({
           >
             + New Opportunity
           </button>
-          <Link
-            href="/sales/enquiries"
-            className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900/25 hover:text-emerald-900"
-          >
-            Open Enquiries
-          </Link>
           <Link
             href="/sales/quotations"
             className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900/25 hover:text-emerald-900"
@@ -855,11 +1142,7 @@ export function OpportunitiesPreview({
                           ...current,
                           clientMode: "existing",
                           clientSource: "existing",
-                          projectMode: "existing",
-                          projectSource: "existing",
                           clientName: "",
-                          projectName: "",
-                          projectId: "",
                         }))
                       }
                       className="h-4 w-4 border-zinc-300 text-emerald-900 focus:ring-emerald-900/20"
@@ -870,21 +1153,19 @@ export function OpportunitiesPreview({
                     <input
                       type="radio"
                       name="opportunity-client-mode"
-                      checked={draft.clientMode === "local-pending"}
+                      checked={draft.clientMode === "local"}
                       onChange={() =>
                         setDraft((current) => ({
                           ...current,
-                          clientMode: "local-pending",
+                          clientMode: "local",
                           clientId: "",
-                          clientSource: "local-pending",
-                          projectMode: "local-pending",
-                          projectId: "",
-                          projectSource: "local-pending",
+                          clientSource: "local",
+                          projectSource: "local",
                         }))
                       }
                       className="h-4 w-4 border-zinc-300 text-emerald-900 focus:ring-emerald-900/20"
                     />
-                    New local client
+                    New client
                   </label>
                 </div>
 
@@ -897,16 +1178,13 @@ export function OpportunitiesPreview({
                         setDraft((current) => ({
                           ...current,
                           clientId: event.target.value,
-                          projectId: "",
-                          projectName: "",
-                          projectMode: "existing",
-                          projectSource: "existing",
+                          projectSource: "local",
                         }))
                       }
                       className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
                     >
                       <option value="">Select existing client</option>
-                      {clients.map((client) => (
+                      {clientOptions.map((client) => (
                         <option key={client.id} value={client.id}>
                           {client.company_name}
                         </option>
@@ -915,18 +1193,21 @@ export function OpportunitiesPreview({
                   </label>
                 ) : (
                   <label className="block">
-                    <FieldLabel label="Local Client Name" />
+                    <FieldLabel label="New Client Name" />
                     <input
                       value={draft.clientName}
                       onChange={(event) => updateDraft("clientName", event.target.value)}
                       className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
                     />
+                    <span className="mt-1 block text-xs text-amber-700">
+                      Saved locally for now. Select an existing client to enable quotation creation.
+                    </span>
                   </label>
                 )}
 
                 <div className="grid gap-3 md:grid-cols-3">
                   <label className="block">
-                    <FieldLabel label="Contact" />
+                    <FieldLabel label="Contact Person" />
                     <input
                       value={draft.contactName}
                       onChange={(event) => updateDraft("contactName", event.target.value)}
@@ -954,85 +1235,42 @@ export function OpportunitiesPreview({
               </div>
             </fieldset>
 
-            <fieldset className="rounded-lg border border-zinc-200 p-4 md:col-span-2">
-              <legend className="px-1 text-xs font-semibold uppercase text-zinc-500">Project</legend>
-              <div className="grid gap-3">
-                {draft.clientMode === "existing" ? (
-                  <div className="flex flex-wrap gap-3 text-sm">
-                    <label className="inline-flex items-center gap-2">
-                      <input
-                        type="radio"
-                        name="opportunity-project-mode"
-                        checked={draft.projectMode === "existing"}
-                        onChange={() =>
-                          setDraft((current) => ({
-                            ...current,
-                            projectMode: "existing",
-                            projectSource: "existing",
-                            projectName: "",
-                          }))
-                        }
-                        className="h-4 w-4 border-zinc-300 text-emerald-900 focus:ring-emerald-900/20"
-                      />
-                      Existing project
-                    </label>
-                    <label className="inline-flex items-center gap-2">
-                      <input
-                        type="radio"
-                        name="opportunity-project-mode"
-                        checked={draft.projectMode === "local-pending"}
-                        onChange={() =>
-                          setDraft((current) => ({
-                            ...current,
-                            projectMode: "local-pending",
-                            projectId: "",
-                            projectSource: "local-pending",
-                          }))
-                        }
-                        className="h-4 w-4 border-zinc-300 text-emerald-900 focus:ring-emerald-900/20"
-                      />
-                      New local project
-                    </label>
-                  </div>
-                ) : null}
-
-                {draft.clientMode === "existing" && draft.projectMode === "existing" ? (
-                  <label className="block">
-                    <FieldLabel label="Existing Project" />
-                    <select
-                      value={draft.projectId}
-                      disabled={!draft.clientId}
-                      onChange={(event) => updateDraft("projectId", event.target.value)}
-                      className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10 disabled:bg-zinc-50 disabled:text-zinc-400"
-                    >
-                      <option value="">{draft.clientId ? "Select existing project" : "Select client first"}</option>
-                      {draftProjects.map((project) => (
-                        <option key={project.id} value={project.id}>
-                          {projectOptionLabel(project)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : (
-                  <label className="block">
-                    <FieldLabel label="Local Project Name" />
-                    <input
-                      value={draft.projectName}
-                      onChange={(event) => updateDraft("projectName", event.target.value)}
-                      className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                    />
-                  </label>
-                )}
-              </div>
-            </fieldset>
             <label className="block">
-              <FieldLabel label="Stage" />
+              <FieldLabel label="Location / Delivery Location" />
+              <input
+                value={draft.deliveryLocation}
+                onChange={(event) => updateDraft("deliveryLocation", event.target.value)}
+                placeholder="Site, showroom, tower, city..."
+                className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+              />
+            </label>
+            <label className="block md:col-span-2">
+              <FieldLabel label="Project / Reference Name" />
+              <input
+                value={draft.referenceName}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    referenceName: event.target.value,
+                    projectName: event.target.value,
+                    projectSource: "local",
+                  }))
+                }
+                placeholder="Client reference, room package, quote reference..."
+                className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+              />
+              <span className="mt-1 block text-xs text-zinc-500">
+                This is a sales reference only. Confirmed project/order creation happens after client approval.
+              </span>
+            </label>
+            <label className="block">
+              <FieldLabel label="Source" />
               <select
-                value={draft.stage}
-                onChange={(event) => updateDraft("stage", event.target.value as SalesOpportunityStage)}
+                value={draft.source}
+                onChange={(event) => updateDraft("source", event.target.value as SalesOpportunitySource)}
                 className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
               >
-                {STAGE_OPTIONS.map((option) => (
+                {SOURCE_OPTIONS.map((option) => (
                   <option key={option} value={option}>
                     {option}
                   </option>
@@ -1040,15 +1278,18 @@ export function OpportunitiesPreview({
               </select>
             </label>
             <label className="block">
-              <FieldLabel label="Probability" />
-              <input
-                type="number"
-                min="0"
-                max="100"
-                value={draft.probability}
-                onChange={(event) => updateDraft("probability", event.target.value)}
+              <FieldLabel label="Status" />
+              <select
+                value={draft.status}
+                onChange={(event) => updateDraft("status", event.target.value as SalesOpportunityStatus)}
                 className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-              />
+              >
+                {STATUS_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="block">
               <FieldLabel label="Expected Value" />
@@ -1069,7 +1310,25 @@ export function OpportunitiesPreview({
               />
             </label>
             <label className="block">
-              <FieldLabel label="Next Follow-up" />
+              <FieldLabel label="Enquiry Date" />
+              <input
+                type="date"
+                value={draft.enquiryDate}
+                onChange={(event) => updateDraft("enquiryDate", event.target.value)}
+                className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+              />
+            </label>
+            <label className="block">
+              <FieldLabel label="Quotation Submission Date" />
+              <input
+                type="date"
+                value={draft.quotationSubmissionDate}
+                onChange={(event) => updateDraft("quotationSubmissionDate", event.target.value)}
+                className="mt-1 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+              />
+            </label>
+            <label className="block">
+              <FieldLabel label="Optional Follow-up" />
               <input
                 type="date"
                 value={draft.nextFollowUp}
@@ -1087,7 +1346,7 @@ export function OpportunitiesPreview({
               />
             </label>
             <label className="block md:col-span-2">
-              <FieldLabel label="Requirement" />
+              <FieldLabel label="Requirement / Furniture Scope" />
               <textarea
                 value={draft.requirement}
                 onChange={(event) => updateDraft("requirement", event.target.value)}
@@ -1139,13 +1398,13 @@ export function OpportunitiesPreview({
             />
           </label>
           <label className="block">
-            <FieldLabel label="Stage" />
+            <FieldLabel label="Status" />
             <select
-              value={stageFilter}
-              onChange={(event) => setStageFilter(event.target.value as StageFilter)}
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
               className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
             >
-              {STAGE_FILTER_OPTIONS.map((option) => (
+              {STATUS_FILTER_OPTIONS.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
@@ -1153,13 +1412,14 @@ export function OpportunitiesPreview({
             </select>
           </label>
           <label className="block">
-            <FieldLabel label="Probability" />
+            <FieldLabel label="Source" />
             <select
-              value={probabilityFilter}
-              onChange={(event) => setProbabilityFilter(event.target.value as ProbabilityFilter)}
+              value={sourceFilter}
+              onChange={(event) => setSourceFilter(event.target.value as SourceFilter)}
               className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
             >
-              {PROBABILITY_FILTER_OPTIONS.map((option) => (
+              <option value="All sources">All sources</option>
+              {SOURCE_OPTIONS.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
@@ -1197,11 +1457,11 @@ export function OpportunitiesPreview({
           <div>
             <h2 className="text-lg font-semibold text-zinc-950">ERP sales flow</h2>
             <p className="mt-1 text-sm text-zinc-600">
-              Enquiry &gt; Opportunity &gt; Quotation &gt; Client Approval &gt; Confirmed Project &gt; Procurement
+              Opportunity &gt; Quotation &gt; Client Approval &gt; Confirmed Project &gt; Procurement
             </p>
           </div>
           <p className="max-w-xl text-sm text-zinc-500">
-            This workspace is local-first and intentionally disconnected from quotation creation, project conversion, and procurement.
+            This workspace is local-first. Quotation creation still requires the normal user action after review.
           </p>
         </div>
       </section>
@@ -1233,8 +1493,11 @@ export function OpportunitiesPreview({
                       <span className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
                         {opportunity.opportunityNo}
                       </span>
-                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${stageClassName(opportunity.stage)}`}>
-                        {opportunity.stage}
+                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClassName(opportunity.status)}`}>
+                        {opportunity.status}
+                      </span>
+                      <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-semibold text-zinc-700">
+                        {opportunity.source}
                       </span>
                       <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${syncClassName(opportunity.localSyncStatus)}`}>
                         {SYNC_LABELS[opportunity.localSyncStatus]}
@@ -1247,29 +1510,38 @@ export function OpportunitiesPreview({
                       <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${sourceBadgeClassName(opportunity.clientSource)}`}>
                         {sourceBadgeLabel("client", opportunity.clientSource)}
                       </span>
+                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${clientStatusClassName(opportunity)}`}>
+                        {clientStatusLabel(opportunity)}
+                      </span>
                       <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${sourceBadgeClassName(opportunity.projectSource)}`}>
                         {sourceBadgeLabel("project", opportunity.projectSource)}
                       </span>
                     </div>
                     <h3 className="mt-2 text-base font-semibold text-zinc-950">{opportunity.title}</h3>
                     <p className="mt-1 text-sm text-zinc-600">
-                      {opportunity.clientName} / {opportunity.projectName}
+                      {opportunity.clientName}
+                      {opportunity.referenceName || opportunity.projectName ? ` / ${opportunity.referenceName || opportunity.projectName}` : ""}
                     </p>
+                    {opportunity.deliveryLocation || opportunity.location ? (
+                      <p className="mt-1 text-sm text-zinc-500">
+                        Location: {opportunity.deliveryLocation || opportunity.location}
+                      </p>
+                    ) : null}
                     <p className="mt-2 line-clamp-2 text-sm text-zinc-600">{opportunity.requirement}</p>
                   </button>
 
                   <div className="grid gap-2 text-sm sm:grid-cols-2 lg:min-w-[280px] lg:grid-cols-1">
                     <div className="flex justify-between gap-3">
-                      <span className="text-zinc-500">Probability</span>
-                      <span className="font-medium text-zinc-950">{opportunity.probability}%</span>
+                      <span className="text-zinc-500">Quotation due</span>
+                      <span className="font-medium text-zinc-950">{formatDisplayDate(opportunity.quotationSubmissionDate)}</span>
                     </div>
                     <div className="flex justify-between gap-3">
                       <span className="text-zinc-500">Expected value</span>
                       <span className="font-medium text-zinc-950">{formatExpectedValue(opportunity.expectedValue)}</span>
                     </div>
                     <div className="flex justify-between gap-3">
-                      <span className="text-zinc-500">Next follow-up</span>
-                      <span className="font-medium text-zinc-950">{formatDisplayDate(opportunity.nextFollowUp)}</span>
+                      <span className="text-zinc-500">Contact</span>
+                      <span className="font-medium text-zinc-950">{opportunity.contactName ?? "Not set"}</span>
                     </div>
                     <div className="flex justify-between gap-3">
                       <span className="text-zinc-500">Assigned</span>
@@ -1278,7 +1550,7 @@ export function OpportunitiesPreview({
                   </div>
                 </div>
 
-                <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-4 flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={() => setSelectedId(opportunity.id)}
@@ -1286,6 +1558,15 @@ export function OpportunitiesPreview({
                   >
                     Preview
                   </button>
+                  {!hasConfirmedClient(opportunity) ? (
+                    <button
+                      type="button"
+                      onClick={() => openConfirmClient(opportunity)}
+                      className="h-9 rounded-md border border-amber-200 px-3 text-sm font-semibold text-amber-800 transition hover:border-amber-300 hover:bg-amber-50"
+                    >
+                      Confirm Client
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => openEditForm(opportunity)}
@@ -1320,11 +1601,21 @@ export function OpportunitiesPreview({
               <div>
                 <h2 className="text-xl font-semibold text-zinc-950">{selectedOpportunity.title}</h2>
                 <p className="mt-1 text-sm text-zinc-500">
-                  {selectedOpportunity.opportunityNo} / {selectedOpportunity.clientName} / {selectedOpportunity.projectName}
+                  {selectedOpportunity.opportunityNo} / {selectedOpportunity.clientName}
+                  {selectedOpportunity.referenceName || selectedOpportunity.projectName ? ` / ${selectedOpportunity.referenceName || selectedOpportunity.projectName}` : ""}
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
+                  <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClassName(selectedOpportunity.status)}`}>
+                    {selectedOpportunity.status}
+                  </span>
+                  <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-semibold text-zinc-700">
+                    {selectedOpportunity.source}
+                  </span>
                   <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${sourceBadgeClassName(selectedOpportunity.clientSource)}`}>
                     {sourceBadgeLabel("client", selectedOpportunity.clientSource)}
+                  </span>
+                  <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${clientStatusClassName(selectedOpportunity)}`}>
+                    {clientStatusLabel(selectedOpportunity)}
                   </span>
                   <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${sourceBadgeClassName(selectedOpportunity.projectSource)}`}>
                     {sourceBadgeLabel("project", selectedOpportunity.projectSource)}
@@ -1338,19 +1629,31 @@ export function OpportunitiesPreview({
               </div>
               <dl className="grid gap-3 text-sm">
                 <div className="flex justify-between gap-4 border-b border-zinc-100 pb-2">
-                  <dt className="text-zinc-500">Stage</dt>
-                  <dd className="font-medium text-zinc-950">{selectedOpportunity.stage}</dd>
+                  <dt className="text-zinc-500">Project / reference</dt>
+                  <dd className="font-medium text-zinc-950">{selectedOpportunity.referenceName || selectedOpportunity.projectName || "Not set"}</dd>
                 </div>
                 <div className="flex justify-between gap-4 border-b border-zinc-100 pb-2">
-                  <dt className="text-zinc-500">Probability</dt>
-                  <dd className="font-medium text-zinc-950">{selectedOpportunity.probability}%</dd>
+                  <dt className="text-zinc-500">Status</dt>
+                  <dd className="font-medium text-zinc-950">{selectedOpportunity.status}</dd>
+                </div>
+                <div className="flex justify-between gap-4 border-b border-zinc-100 pb-2">
+                  <dt className="text-zinc-500">Source</dt>
+                  <dd className="font-medium text-zinc-950">{selectedOpportunity.source}</dd>
                 </div>
                 <div className="flex justify-between gap-4 border-b border-zinc-100 pb-2">
                   <dt className="text-zinc-500">Expected value</dt>
                   <dd className="font-medium text-zinc-950">{formatExpectedValue(selectedOpportunity.expectedValue)}</dd>
                 </div>
                 <div className="flex justify-between gap-4 border-b border-zinc-100 pb-2">
-                  <dt className="text-zinc-500">Next follow-up</dt>
+                  <dt className="text-zinc-500">Enquiry date</dt>
+                  <dd className="font-medium text-zinc-950">{formatDisplayDate(selectedOpportunity.enquiryDate)}</dd>
+                </div>
+                <div className="flex justify-between gap-4 border-b border-zinc-100 pb-2">
+                  <dt className="text-zinc-500">Quotation submission</dt>
+                  <dd className="font-medium text-zinc-950">{formatDisplayDate(selectedOpportunity.quotationSubmissionDate)}</dd>
+                </div>
+                <div className="flex justify-between gap-4 border-b border-zinc-100 pb-2">
+                  <dt className="text-zinc-500">Optional follow-up</dt>
                   <dd className="font-medium text-zinc-950">{formatDisplayDate(selectedOpportunity.nextFollowUp)}</dd>
                 </div>
                 <div className="flex justify-between gap-4 border-b border-zinc-100 pb-2">
@@ -1370,6 +1673,10 @@ export function OpportunitiesPreview({
                   <dd className="font-medium text-zinc-950">{selectedOpportunity.email ?? "Not set"}</dd>
                 </div>
                 <div className="flex justify-between gap-4 border-b border-zinc-100 pb-2">
+                  <dt className="text-zinc-500">Location / delivery</dt>
+                  <dd className="font-medium text-zinc-950">{selectedOpportunity.deliveryLocation ?? selectedOpportunity.location ?? "Not set"}</dd>
+                </div>
+                <div className="flex justify-between gap-4 border-b border-zinc-100 pb-2">
                   <dt className="text-zinc-500">Linked enquiry</dt>
                   <dd className="font-medium text-zinc-950">{selectedOpportunity.linkedEnquiryNo ?? "Not linked"}</dd>
                 </div>
@@ -1387,17 +1694,36 @@ export function OpportunitiesPreview({
                 </ul>
               </div>
               <p className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600">
-                {selectedOpportunity.clientSource === "existing" && selectedOpportunity.projectSource === "existing"
-                  ? "Existing linked client/project can safely prefill quotation dropdowns. Please review before creating the quotation."
-                  : "Local pending client/project are reference only until converted to real records later. Select or create the real client/project before creating the quotation."}
+                {hasConfirmedClient(selectedOpportunity)
+                  ? "Confirmed client can safely prefill the quotation client field. Please review before creating the quotation."
+                  : "Add or select a confirmed client before creating a quotation. Edit this opportunity and select an existing client first."}
               </p>
               <div className="grid gap-2 sm:grid-cols-3">
-                <Link
-                  href={`/sales/quotations?fromOpportunity=${encodeURIComponent(selectedOpportunity.id)}`}
-                  className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                >
-                  Create Quotation
-                </Link>
+                {!hasConfirmedClient(selectedOpportunity) ? (
+                  <button
+                    type="button"
+                    onClick={() => openConfirmClient(selectedOpportunity)}
+                    className="inline-flex h-10 items-center justify-center rounded-md border border-amber-200 px-4 text-sm font-semibold text-amber-800 transition hover:border-amber-300 hover:bg-amber-50"
+                  >
+                    Confirm Client
+                  </button>
+                ) : null}
+                {hasConfirmedClient(selectedOpportunity) ? (
+                  <Link
+                    href={`/sales/quotations?fromOpportunity=${encodeURIComponent(selectedOpportunity.id)}`}
+                    className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                  >
+                    Create Quotation
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className="h-10 rounded-md bg-zinc-100 px-4 text-sm font-semibold text-zinc-400"
+                  >
+                    Create Quotation
+                  </button>
+                )}
                 <button type="button" disabled className="h-10 rounded-md bg-zinc-100 px-4 text-sm font-semibold text-zinc-400">
                   Mark Won
                 </button>
@@ -1411,6 +1737,91 @@ export function OpportunitiesPreview({
           )}
         </aside>
       </div>
+
+      {confirmClientOpportunity ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-zinc-950/40 px-4 py-6">
+          <div className="w-full max-w-2xl rounded-lg border border-zinc-200 bg-white p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Confirm Client</p>
+                <h2 className="text-lg font-semibold text-zinc-950">{confirmClientOpportunity.opportunityNo}</h2>
+              </div>
+              <button
+                type="button"
+                onClick={closeConfirmClient}
+                className="text-sm font-semibold text-zinc-500 transition hover:text-zinc-950"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-700">
+                <p className="font-semibold text-zinc-950">{confirmClientOpportunity.title}</p>
+                <dl className="mt-3 grid gap-2">
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-zinc-500">Client</dt>
+                    <dd className="font-medium text-zinc-950">{confirmClientOpportunity.clientName || "Not set"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-zinc-500">Contact</dt>
+                    <dd className="font-medium text-zinc-950">{confirmClientOpportunity.contactName ?? "Not set"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-zinc-500">Phone</dt>
+                    <dd className="font-medium text-zinc-950">{confirmClientOpportunity.phone ?? "Not set"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-zinc-500">Email</dt>
+                    <dd className="font-medium text-zinc-950">{confirmClientOpportunity.email ?? "Not set"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-zinc-500">Opportunity</dt>
+                    <dd className="font-medium text-zinc-950">{confirmClientOpportunity.opportunityNo}</dd>
+                  </div>
+                </dl>
+              </div>
+
+              <div className="grid gap-4">
+                <section className="rounded-md border border-zinc-200 p-4">
+                  <h3 className="font-semibold text-zinc-950">Link existing client</h3>
+                  <label className="mt-3 block">
+                    <span className="text-xs font-semibold uppercase text-zinc-500">Existing client</span>
+                    <select
+                      value={confirmClientId}
+                      onChange={(event) => setConfirmClientId(event.target.value)}
+                      className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+                    >
+                      <option value="">Select existing client</option>
+                      {clientOptions.map((client) => (
+                        <option key={client.id} value={client.id}>
+                          {client.company_name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {confirmClientError ? <p className="mt-2 text-sm font-medium text-rose-700">{confirmClientError}</p> : null}
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={confirmExistingClient}
+                      className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                    >
+                      Confirm client
+                    </button>
+                  </div>
+                </section>
+
+                <CreateConfirmedClientForm
+                  opportunity={confirmClientOpportunity}
+                  onCreated={applyCreatedClient}
+                  existingClients={clientOptions}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

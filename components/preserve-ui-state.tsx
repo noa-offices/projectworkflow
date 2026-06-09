@@ -19,6 +19,7 @@ type StoredUiState = {
 const STORAGE_PREFIX = "preserve-ui-state:v1";
 const TRANSIENT_SEARCH_KEYS = ["message", "undo_item_id", "undo_kind", "undo_section_id"];
 const MAX_STATE_AGE_MS = 5 * 60 * 1000;
+const FORM_OPENING_SEARCH_KEYS = ["addClient", "addProject"];
 
 function normalizedSearch(searchParams: URLSearchParams) {
   const params = new URLSearchParams(searchParams.toString());
@@ -178,6 +179,7 @@ export function PreserveUiState() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const normalized = normalizedSearch(new URLSearchParams(searchParams.toString()));
+  const hasFormOpeningSearch = FORM_OPENING_SEARCH_KEYS.some((key) => searchParams.get(key) === "1");
 
   useEffect(() => {
     const handleSubmit = (event: Event) => {
@@ -224,7 +226,7 @@ export function PreserveUiState() {
   useEffect(() => {
     const exactKey = exactStorageKey(pathname, normalized);
     const fallbackKey = pathStorageKey(pathname);
-    const stored = readStoredUiState([exactKey, fallbackKey]);
+    const stored = readStoredUiState(hasFormOpeningSearch ? [exactKey] : [exactKey, fallbackKey]);
 
     if (!stored) return;
 
@@ -241,7 +243,7 @@ export function PreserveUiState() {
         sessionStorage.removeItem(fallbackKey);
       }, 220);
     });
-  }, [normalized, pathname]);
+  }, [hasFormOpeningSearch, normalized, pathname]);
 
   return null;
 }

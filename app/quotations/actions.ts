@@ -942,6 +942,7 @@ function quotationPayload(formData: FormData, userId?: string) {
     client_id: textValue(formData, "client_id"),
     project_id: textValue(formData, "project_id"),
     quotation_no: optionalTextValue(formData, "quotation_no"),
+    legacy_reference: optionalTextValue(formData, "legacy_reference"),
     title: textValue(formData, "title"),
     quotation_date: textValue(formData, "quotation_date") || new Date().toISOString().slice(0, 10),
     status: textValue(formData, "status") || "draft",
@@ -971,6 +972,7 @@ function createQuotationDraftParams(formData: FormData) {
     currency: textValue(formData, "currency") || null,
     delivery_terms: textValue(formData, "delivery_terms") || null,
     layout_mode: textValue(formData, "layout_mode") || null,
+    legacy_reference: textValue(formData, "legacy_reference") || null,
     newQuotation: "1",
     notes: textValue(formData, "notes") || null,
     payment_terms: textValue(formData, "payment_terms") || null,
@@ -1979,12 +1981,17 @@ export async function createQuotation(formData: FormData) {
   }
 
   const payload = quotationPayload(formData, user.id);
+  const fromOpportunity = textValue(formData, "from_opportunity") === "1";
 
   if (!payload.client_id) {
     redirectQuotationCreateError(formData, redirectPath, "Client is required.");
   }
 
-  if (!payload.project_id) {
+  if (fromOpportunity && !payload.legacy_reference && !payload.title) {
+    redirectQuotationCreateError(formData, redirectPath, "Project / Reference Name or title is required.");
+  }
+
+  if (!fromOpportunity && !payload.project_id) {
     redirectQuotationCreateError(formData, redirectPath, "Project is required.");
   }
 
@@ -2013,45 +2020,51 @@ export async function createQuotation(formData: FormData) {
       redirectQuotationCreateError(formData, redirectPath, "Client could not be found.");
     }
 
-    const { data: project, error: projectError } = await supabase
-      .from("projects")
-      .select("id,client_id,project_name,project_number")
-      .eq("id", payload.project_id)
-      .maybeSingle<{
-        id: string;
-        client_id: string;
-        project_number: string | null;
-        project_name: string | null;
-      }>();
+    if (fromOpportunity) {
+      payload.project_id = "";
+      payload.title = payload.title || payload.legacy_reference || "New quotation";
+      payload.quotation_no = payload.quotation_no || null;
+    } else {
+      const { data: project, error: projectError } = await supabase
+        .from("projects")
+        .select("id,client_id,project_name,project_number")
+        .eq("id", payload.project_id)
+        .maybeSingle<{
+          id: string;
+          client_id: string;
+          project_number: string | null;
+          project_name: string | null;
+        }>();
 
-    if (projectError) {
-      console.error("QUOTATION CREATE PROJECT READ ERROR", {
-        action: "createQuotation",
-        client_id: payload.client_id,
-        project_id: payload.project_id,
-        message: projectError.message,
-      });
-      redirectQuotationCreateError(formData, redirectPath, "Project could not be found.");
+      if (projectError) {
+        console.error("QUOTATION CREATE PROJECT READ ERROR", {
+          action: "createQuotation",
+          client_id: payload.client_id,
+          project_id: payload.project_id,
+          message: projectError.message,
+        });
+        redirectQuotationCreateError(formData, redirectPath, "Project could not be found.");
+      }
+
+      if (!project) {
+        redirectQuotationCreateError(formData, redirectPath, "Project could not be found.");
+      }
+
+      if (!project.client_id) {
+        redirectQuotationCreateError(formData, redirectPath, "Project is missing client link.");
+      }
+
+      if (project.client_id !== payload.client_id) {
+        redirectQuotationCreateError(formData, redirectPath, "Selected project does not belong to the selected client.");
+      }
+
+      payload.title = payload.title || safeProjectQuotationTitle(project.project_name);
+      payload.quotation_no = buildQuotationDocumentNumber({
+        projectNumber: project.project_number,
+        optionNo: 1,
+        revisionNo: 0,
+      }) || safeProjectQuotationNo(project.project_number);
     }
-
-    if (!project) {
-      redirectQuotationCreateError(formData, redirectPath, "Project could not be found.");
-    }
-
-    if (!project.client_id) {
-      redirectQuotationCreateError(formData, redirectPath, "Project is missing client link.");
-    }
-
-    if (project.client_id !== payload.client_id) {
-      redirectQuotationCreateError(formData, redirectPath, "Selected project does not belong to the selected client.");
-    }
-
-    payload.title = payload.title || safeProjectQuotationTitle(project.project_name);
-    payload.quotation_no = buildQuotationDocumentNumber({
-      projectNumber: project.project_number,
-      optionNo: 1,
-      revisionNo: 0,
-    }) || safeProjectQuotationNo(project.project_number);
 
     if (payload.quotation_no) {
       const { data: duplicateQuotation, error: duplicateQuotationError } = await supabase
@@ -2081,9 +2094,14 @@ export async function createQuotation(formData: FormData) {
       }
     }
 
+    const insertPayload = {
+      ...payload,
+      project_id: payload.project_id || null,
+    };
+
     const { data, error } = await supabase
       .from("quotations")
-      .insert(payload)
+      .insert(insertPayload)
       .select("id,title,quotation_no")
       .single<{ id: string; quotation_no: string | null; title: string }>();
 
@@ -2120,6 +2138,20 @@ export async function createQuotation(formData: FormData) {
 
     revalidatePath("/quotations");
     revalidatePath(redirectPath);
+
+    if (fromOpportunity) {
+      const nextParams = new URLSearchParams();
+      const opportunityId = textValue(formData, "from_opportunity_id");
+      const opportunityNo = textValue(formData, "from_opportunity_no");
+
+      nextParams.set("message", "Quotation created.");
+      nextParams.set("linkedOpportunityId", opportunityId);
+      nextParams.set("linkedOpportunityNo", opportunityNo);
+      nextParams.set("linkedQuotationId", data.id);
+      nextParams.set("linkedQuotationNo", data.quotation_no || data.title);
+      redirect(`/quotations/${data.id}?${nextParams.toString()}`);
+    }
+
     redirectWithMessage(`/quotations/${data.id}`, "Quotation created.");
   } catch (error) {
     if (isRedirectError(error)) {

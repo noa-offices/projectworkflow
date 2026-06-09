@@ -155,6 +155,27 @@ function matchesSearch(values: Array<string | null | undefined>, query: string) 
 }
 
 type ClientsSearchParams = NonNullable<Awaited<ClientsPageProps["searchParams"]>>;
+type ClientsTab = "projects" | "clients" | "archive";
+
+function resolveClientsTab(
+  params: ClientsSearchParams,
+  showAddClient: boolean,
+  showAddProject: boolean,
+): ClientsTab {
+  if (showAddClient) {
+    return "clients";
+  }
+
+  if (showAddProject) {
+    return "projects";
+  }
+
+  if (params.tab === "clients" || params.tab === "archive" || params.tab === "projects") {
+    return params.tab;
+  }
+
+  return "projects";
+}
 
 function clientsHref(
   params: ClientsSearchParams,
@@ -557,14 +578,9 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
   const selectedActive = resolvedSearchParams?.active ?? "";
   const selectedYear = resolvedSearchParams?.year ?? "";
   const selectedProjectId = resolvedSearchParams?.project ?? "";
-  const activeTab =
-    resolvedSearchParams?.tab === "clients"
-      ? "clients"
-      : resolvedSearchParams?.tab === "archive"
-        ? "archive"
-        : "projects";
   const showAddClient = resolvedSearchParams?.addClient === "1";
   const showAddProject = resolvedSearchParams?.addProject === "1";
+  const activeTab = resolveClientsTab(pageParams, showAddClient, showAddProject);
   const canManageRecords =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||

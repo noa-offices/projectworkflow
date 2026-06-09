@@ -26,7 +26,8 @@ type Quotation = {
   currency: string;
   grand_total: number;
   id: string;
-  project_id: string;
+  project_id: string | null;
+  legacy_reference: string | null;
   quotation_date: string;
   quotation_no: string | null;
   status: string;
@@ -82,7 +83,7 @@ export function QuotationListLiveFilter({
   const filteredQuotations = useMemo(
     () =>
       quotations.filter((quotation) => {
-        const project = projectMap.get(quotation.project_id);
+        const project = quotation.project_id ? projectMap.get(quotation.project_id) : undefined;
         const clientName = clientMap.get(quotation.client_id);
 
         return (
@@ -98,6 +99,7 @@ export function QuotationListLiveFilter({
               quotationStatusLabel(quotation.status),
               clientName,
               project?.project_name,
+              quotation.legacy_reference,
               project?.project_number,
               project?.project_code,
               project?.project_year,
@@ -232,14 +234,14 @@ export function QuotationListLiveFilter({
             </thead>
             <tbody>
               {filteredQuotations.map((quotation) => {
-                const project = projectMap.get(quotation.project_id);
+                const project = quotation.project_id ? projectMap.get(quotation.project_id) : undefined;
 
                 return (
                   <tr key={quotation.id} className="border-b border-zinc-100 align-top">
-                    <td className="py-3 pr-4 text-zinc-600">{quotation.quotation_no ?? "-"}</td>
+                    <td className="py-3 pr-4 text-zinc-600">{quotation.quotation_no ?? quotation.legacy_reference ?? "-"}</td>
                     <td className="py-3 pr-4 font-medium text-zinc-950">{quotation.title}</td>
                     <td className="py-3 pr-4 text-zinc-600">{clientMap.get(quotation.client_id) ?? "Unknown client"}</td>
-                    <td className="py-3 pr-4 text-zinc-600">{project?.project_name ?? "Unknown project"}</td>
+                    <td className="py-3 pr-4 text-zinc-600">{project?.project_name ?? quotation.legacy_reference ?? "Opportunity reference"}</td>
                     <td className="py-3 pr-4 text-zinc-600">{project?.project_year ?? "No year"}</td>
                     <td className="py-3 pr-4 text-zinc-600">{quotation.quotation_date}</td>
                     <td className="py-3 pr-4"><StatusBadge status={quotation.status} /></td>

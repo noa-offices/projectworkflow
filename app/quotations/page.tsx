@@ -36,7 +36,8 @@ type Project = {
 type Quotation = {
   id: string;
   client_id: string;
-  project_id: string;
+  project_id: string | null;
+  legacy_reference: string | null;
   quotation_no: string | null;
   title: string;
   quotation_date: string;
@@ -124,15 +125,56 @@ function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
   );
 }
 
-function QuotationForm({ clients, projects }: { clients: Client[]; projects: Project[] }) {
+function ClientSelect({ clients }: { clients: Client[] }) {
+  return (
+    <label className="block">
+      <span className="text-xs font-semibold uppercase text-zinc-500">Client</span>
+      <select
+        name="client_id"
+        required
+        className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+      >
+        <option value="">Select client</option>
+        {clients.map((client) => (
+          <option key={client.id} value={client.id}>
+            {client.company_name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function QuotationForm({
+  clients,
+  fromOpportunity,
+  fromOpportunityId,
+  projects,
+}: {
+  clients: Client[];
+  fromOpportunity: boolean;
+  fromOpportunityId: string;
+  projects: Project[];
+}) {
   return (
     <form action={createQuotation} data-quotation-create-form className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-      <ProjectSelectByClient clients={clients} projects={projects} />
+      {fromOpportunity ? (
+        <>
+          <ClientSelect clients={clients} />
+          <Field name="legacy_reference" label="Project / Reference Name" required />
+          <input type="hidden" name="from_opportunity" value="1" />
+          <input type="hidden" name="from_opportunity_id" value={fromOpportunityId} />
+          <input type="hidden" name="from_opportunity_no" value="" />
+          <input type="hidden" name="project_id" value="" />
+        </>
+      ) : (
+        <ProjectSelectByClient clients={clients} projects={projects} />
+      )}
       <Field name="title" label="Title" required />
       <label className="block">
         <span className="text-xs font-semibold uppercase text-zinc-500">Project / Quote No.</span>
         <input
-          value="Generated automatically from the selected project"
+          value={fromOpportunity ? "Confirmed project/order will be created after client approval" : "Generated automatically from the selected project"}
           readOnly
           className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-500 outline-none"
         />
@@ -161,9 +203,14 @@ function QuotationForm({ clients, projects }: { clients: Client[]; projects: Pro
       <TextArea name="notes" label="Notes" />
       <input type="hidden" name="status" value="draft" />
       <input type="hidden" name="is_active" value="on" />
+      {fromOpportunity ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 md:col-span-2 xl:col-span-3">
+          This quotation will use the opportunity reference. Confirmed project/order will be created after client approval.
+        </p>
+      ) : null}
       <div className="flex justify-end md:col-span-2 xl:col-span-3">
         <PendingSubmitButton
-          className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+          className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
           pendingLabel="Creating quotation..."
         >
           Add quotation
@@ -182,6 +229,8 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
   const selectedClientId = resolvedSearchParams?.client ?? "";
   const selectedProjectId = resolvedSearchParams?.project ?? "";
   const selectedYear = resolvedSearchParams?.year ?? "";
+  const fromOpportunity = Boolean(resolvedSearchParams?.fromOpportunity?.trim());
+  const fromOpportunityId = resolvedSearchParams?.fromOpportunity?.trim() ?? "";
   const canManageRecords =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
@@ -202,7 +251,7 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
 
   const { data: quotations, error: quotationsError } = await supabase
     .from("quotations")
-    .select("id,client_id,project_id,quotation_no,title,quotation_date,status,layout_mode,currency,grand_total,is_active")
+    .select("id,client_id,project_id,legacy_reference,quotation_no,title,quotation_date,status,layout_mode,currency,grand_total,is_active")
     .order("created_at", { ascending: false })
     .returns<Quotation[]>();
 
@@ -250,16 +299,23 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
           quotations={quotationList}
         >
           {canManageRecords ? (
-            <details open={!quotationList.length} className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+            <details open={fromOpportunity || !quotationList.length} className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
               <summary className="cursor-pointer text-lg font-semibold text-zinc-950">
                 Create new quotation
               </summary>
               <p className="mt-1 text-sm text-zinc-500">
-                Start with a client and project, then add sections and custom lines.
+                {fromOpportunity
+                  ? "Start from the confirmed client and opportunity reference. Confirmed project/order creation happens after client approval."
+                  : "Start with a client and project, then add sections and custom lines."}
               </p>
               <div className="mt-5">
                 <OpportunityQuotationPrefill clients={clientList} projects={projectList} />
-                <QuotationForm clients={clientList} projects={projectList} />
+                          <QuotationForm
+                            clients={clientList}
+                            fromOpportunity={fromOpportunity}
+                            fromOpportunityId={fromOpportunityId}
+                            projects={projectList}
+                          />
               </div>
             </details>
           ) : null}
