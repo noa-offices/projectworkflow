@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
+import { DocumentSetupDialog } from "@/components/quotations/document-setup-dialog";
 import { LocalQuotationBuilder } from "@/components/quotations/local-quotation-builder";
+import { OpportunityQuotationLinkSync } from "@/components/quotations/opportunity-quotation-link-sync";
 import {
   type ProductLibraryLinkedFamily,
   type ProductLibraryBrand,
@@ -14,6 +16,7 @@ import {
   type ProductTemplateMaterialGroupLink,
 } from "@/components/quotations/finish-selections-editor";
 import { requireActiveUser } from "@/lib/auth";
+import { formatProjectReferenceDisplay } from "@/lib/project-reference";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import {
   brandPriceBaselineDate,
@@ -21,6 +24,7 @@ import {
   productTemplatePriceCheckState,
 } from "@/lib/product-price-check";
 import { createWorkspaceFromServerSnapshot } from "@/lib/local/quotation-workspace";
+import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +38,7 @@ type Quotation = {
   client_id: string;
   legacy_reference: string | null;
   option_no: number | null;
-  project_id: string;
+  project_id: string | null;
   quotation_no: string | null;
   revision_no: number | null;
   title: string;
@@ -48,7 +52,7 @@ type Quotation = {
   overall_discount_value: number;
 };
 
-type Client = { id: string; company_name: string };
+type Client = { id: string; client_number: string | null; company_name: string };
 type Project = {
   id: string;
   project_name: string | null;
@@ -83,15 +87,18 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
 
   const { data: client } = await supabase
     .from("clients")
-    .select("id,company_name")
+    .select("id,client_number,company_name")
     .eq("id", quotation.client_id)
     .maybeSingle<Client>();
 
-  const { data: project } = await supabase
-    .from("projects")
-    .select("id,project_name,project_number,project_code,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
-    .eq("id", quotation.project_id)
-    .maybeSingle<Project>();
+  const projectId = validUuidOrNull(quotation.project_id);
+  const { data: project } = projectId
+    ? await supabase
+        .from("projects")
+        .select("id,project_name,project_number,project_code,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
+        .eq("id", projectId)
+        .maybeSingle<Project>()
+    : { data: null };
 
   const { data: sections } = await supabase
     .from("quotation_sections")
@@ -245,29 +252,82 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
     .order("sort_order", { ascending: true })
     .returns<ProductTemplateMaterialGroupItemLink[]>();
 
+  const resolvedDocumentSetup = resolveDocumentSetup({
+    client,
+    project,
+    quotation,
+  });
+  const workspaceProject = project
+    ? {
+        ...project,
+        attention_email: resolvedDocumentSetup.header.contactEmail || project.attention_email,
+        attention_landline: resolvedDocumentSetup.header.telephone || project.attention_landline,
+        attention_mobile: resolvedDocumentSetup.header.contactPhone || project.attention_mobile,
+        attention_to: resolvedDocumentSetup.header.contactName || project.attention_to,
+        location: resolvedDocumentSetup.header.location || project.location,
+        po_box: resolvedDocumentSetup.header.poBox || project.po_box,
+        project_address: resolvedDocumentSetup.header.projectAddress || project.project_address,
+        project_name: resolvedDocumentSetup.header.reference || project.project_name,
+      }
+    : {
+        attention_email: resolvedDocumentSetup.header.contactEmail,
+        attention_landline: resolvedDocumentSetup.header.telephone,
+        attention_mobile: resolvedDocumentSetup.header.contactPhone,
+        attention_to: resolvedDocumentSetup.header.contactName,
+        location: resolvedDocumentSetup.header.location,
+        po_box: resolvedDocumentSetup.header.poBox,
+        project_address: resolvedDocumentSetup.header.projectAddress,
+        project_name: resolvedDocumentSetup.header.reference,
+      };
   const initialWorkspace = createWorkspaceFromServerSnapshot({
     quotation,
     client: client ?? null,
-    project: project ?? null,
+    project: workspaceProject,
     sections: sections ?? [],
     items: items ?? [],
   });
 
   return (
-    <LocalQuotationBuilder
-      canManageProductLibrary={canManageProductLibrary}
-      clientName={client?.company_name ?? "Unknown client"}
-      initialWorkspace={initialWorkspace}
-      materialGroups={materialGroups ?? []}
-      materials={materials ?? []}
-      productBrands={productBrands ?? []}
-      productCategories={productCategories ?? []}
-      productComponents={productComponents ?? []}
-      productLinkedFamilies={linkedFamilies ?? []}
-      productTemplates={productTemplatesWithPriceChecks}
-      projectName={project?.project_name ?? "Unknown project"}
-      templateMaterialGroupItems={templateMaterialGroupItems ?? []}
-      templateMaterialGroups={templateMaterialGroups ?? []}
-    />
+    <>
+      <OpportunityQuotationLinkSync />
+      <LocalQuotationBuilder
+        canManageProductLibrary={canManageProductLibrary}
+        clientName={resolvedDocumentSetup.header.clientDisplayName}
+        documentSetupAction={
+          <DocumentSetupDialog
+            clientId={quotation.client_id}
+            hasProject={resolvedDocumentSetup.header.hasConfirmedProject}
+            projectId={projectId}
+            quotationId={quotation.id}
+            returnTo={`/quotations/${quotation.id}/local-builder`}
+            setup={resolvedDocumentSetup}
+            triggerClassName="inline-flex h-9 items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+          />
+        }
+        initialWorkspace={initialWorkspace}
+        materialGroups={materialGroups ?? []}
+        materials={materials ?? []}
+        productBrands={productBrands ?? []}
+        productCategories={productCategories ?? []}
+        productComponents={productComponents ?? []}
+        productLinkedFamilies={linkedFamilies ?? []}
+        productTemplates={productTemplatesWithPriceChecks}
+        projectName={
+          resolvedDocumentSetup.header.reference ||
+          formatProjectReferenceDisplay(project) ||
+          "Quotation reference"
+        }
+        templateMaterialGroupItems={templateMaterialGroupItems ?? []}
+        templateMaterialGroups={templateMaterialGroups ?? []}
+      />
+    </>
   );
+}
+
+function validUuidOrNull(value: string | null | undefined) {
+  const trimmed = value?.trim();
+
+  return trimmed && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)
+    ? trimmed
+    : null;
 }

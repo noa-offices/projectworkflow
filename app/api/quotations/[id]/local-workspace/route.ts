@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
   recalculateWorkspace,
+  normalizeNullableUuid,
   type LocalQuotationItem,
   type LocalQuotationSection,
   type LocalQuotationWorkspace,
@@ -10,6 +11,10 @@ import {
   normalizePresentationSettings,
   type QuotationPresentationSettings,
 } from "@/lib/quotations/presentation-settings";
+import {
+  documentSetupRecord,
+  mergeDocumentSetupIntoLayoutSettings,
+} from "@/lib/quotations/document-setup";
 
 type SavePayload = {
   workspace: LocalQuotationWorkspace;
@@ -18,7 +23,8 @@ type SavePayload = {
 type QuotationRecord = {
   id: string;
   client_id: string;
-  project_id: string;
+  layout_settings: unknown;
+  project_id: string | null;
 };
 
 type ProjectSnapshotRecord = {
@@ -143,6 +149,17 @@ function snapshotRecord(value: unknown) {
   return (value ?? {}) as Record<string, unknown>;
 }
 
+function recordValue(value: unknown) {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function stringFromRecord(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function errorResponse(error: string, details?: string, status = 500, hint?: string | null, code?: string) {
   return NextResponse.json(
     {
@@ -252,7 +269,7 @@ export async function POST(
 
     const { data: quotation, error: quotationError } = await supabase
       .from("quotations")
-      .select("id,client_id,project_id")
+      .select("id,client_id,project_id,layout_settings")
       .eq("id", id)
       .single<QuotationRecord>();
 
@@ -487,6 +504,12 @@ export async function POST(
       }
     }
 
+    const currentDocumentSetup = documentSetupRecord(quotation.layout_settings);
+    const currentDocumentSetupHeader = recordValue(currentDocumentSetup.header);
+    const nextLayoutSettings = Object.keys(currentDocumentSetup).length
+      ? mergeDocumentSetupIntoLayoutSettings(workspace.layout_settings, currentDocumentSetup)
+      : workspace.layout_settings;
+
     const { error: updateQuotationError } = await supabase
       .from("quotations")
       .update({
@@ -496,7 +519,7 @@ export async function POST(
         currency: workspace.currency,
         vat_percent: workspace.vat_percent,
         layout_mode: workspace.layout_mode,
-        layout_settings: workspace.layout_settings,
+        layout_settings: nextLayoutSettings,
         overall_discount_type: workspace.overall_discount_type,
         overall_discount_value: workspace.overall_discount_value,
         subtotal: workspace.totals.subtotal,
@@ -510,27 +533,35 @@ export async function POST(
       return errorResponse("Failed to update quotation totals.", supabaseErrorDetails(updateQuotationError));
     }
 
-    const { error: updateProjectError } = await supabase
-      .from("projects")
-      .update({
-        project_name: textOrNull(projectSnapshot.project_name) ?? "Project",
-        location: textOrNull(projectSnapshot.location),
-        attention_to: textOrNull(projectSnapshot.attention_to),
-        attention_mobile: textOrNull(projectSnapshot.attention_mobile),
-        attention_landline: textOrNull(projectSnapshot.attention_landline),
-        attention_email: textOrNull(projectSnapshot.attention_email),
-        po_box: textOrNull(projectSnapshot.po_box),
-        project_address: textOrNull(projectSnapshot.project_address),
-      } satisfies ProjectSnapshotRecord)
-      .eq("id", quotation.project_id);
+    const projectId = normalizeNullableUuid(quotation.project_id);
+    let responseMessage = "Saved to software";
 
-    if (updateProjectError) {
-      return errorResponse("Failed to update project details.", supabaseErrorDetails(updateProjectError));
+    if (projectId) {
+      const { error: updateProjectError } = await supabase
+        .from("projects")
+        .update({
+          project_name: textOrNull(stringFromRecord(currentDocumentSetupHeader, "reference")) ?? textOrNull(projectSnapshot.project_name) ?? "Project",
+          location: textOrNull(stringFromRecord(currentDocumentSetupHeader, "location")) ?? textOrNull(projectSnapshot.location),
+          attention_to: textOrNull(stringFromRecord(currentDocumentSetupHeader, "contactName")) ?? textOrNull(projectSnapshot.attention_to),
+          attention_mobile: textOrNull(stringFromRecord(currentDocumentSetupHeader, "contactPhone")) ?? textOrNull(projectSnapshot.attention_mobile),
+          attention_landline: textOrNull(stringFromRecord(currentDocumentSetupHeader, "telephone")) ?? textOrNull(projectSnapshot.attention_landline),
+          attention_email: textOrNull(stringFromRecord(currentDocumentSetupHeader, "contactEmail")) ?? textOrNull(projectSnapshot.attention_email),
+          po_box: textOrNull(stringFromRecord(currentDocumentSetupHeader, "poBox")) ?? textOrNull(projectSnapshot.po_box),
+          project_address: textOrNull(stringFromRecord(currentDocumentSetupHeader, "projectAddress")) ?? textOrNull(projectSnapshot.project_address),
+        } satisfies ProjectSnapshotRecord)
+        .eq("id", projectId);
+
+      if (updateProjectError) {
+        return errorResponse("Failed to update project details.", supabaseErrorDetails(updateProjectError));
+      }
+    } else {
+      responseMessage = "Quotation saved. Project/order details will be created after client approval.";
     }
 
     return NextResponse.json({
       ok: true,
       savedAt: new Date().toISOString(),
+      message: responseMessage,
     });
   } catch (error) {
     console.error("LOCAL WORKSPACE SAVE UNEXPECTED ERROR", error);

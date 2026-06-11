@@ -6,7 +6,6 @@ import {
   normalizeImageDisplaySettings,
   type ImageDisplaySettings,
 } from "@/lib/image-display-settings";
-import { formatProjectReferenceWithYearDisplay } from "@/lib/project-reference";
 import { formatQuotationMoney, quotationMoneyCell } from "@/lib/quotation-pricing";
 import {
   formatBrandOriginSupplier,
@@ -17,9 +16,11 @@ import {
   DEFAULT_QUOTATION_PDF_SETTINGS,
   type QuotationPdfSettings,
 } from "@/lib/quotations/quotation-pdf-settings";
+import type { ResolvedDocumentSetup } from "@/lib/quotations/document-setup";
 
 export type Client = {
   id: string;
+  client_number?: string | null;
   company_name: string;
 };
 
@@ -41,7 +42,7 @@ export type Project = {
 export type Quotation = {
   id: string;
   client_id: string;
-  project_id: string;
+  project_id: string | null;
   quotation_no: string | null;
   revision_no: number;
   title: string;
@@ -163,6 +164,7 @@ export type QuotationPdfDocumentData = {
   client: Client | null;
   companyProfile: CompanyProfile;
   defaultQuotationNotes: string;
+  documentSetup: ResolvedDocumentSetup;
   customPrintableImageUrlByItemAndColumnId: Map<string, string | null>;
   finishImageUrlByItemAndFinishId: Map<string, string | null>;
   hasLogo: boolean;
@@ -333,7 +335,7 @@ function projectContactLine(project?: Project | null) {
 }
 
 function revisionLabel(quotation: Quotation) {
-  return quotation.revision_no > 0 ? `R${quotation.revision_no}` : "R0";
+  return quotation.revision_no > 0 ? `R${quotation.revision_no}` : "Original";
 }
 
 function discountAmount(item: QuotationItem) {
@@ -1191,12 +1193,14 @@ function PageFooter({
 function QuotationFirstPageHeader({
   client,
   companyProfile,
+  documentSetup,
   hasLogo,
   project,
   quotation,
 }: {
   client: Client | null;
   companyProfile: CompanyProfile;
+  documentSetup: ResolvedDocumentSetup;
   hasLogo: boolean;
   project: Project | null;
   quotation: Quotation;
@@ -1239,12 +1243,17 @@ function QuotationFirstPageHeader({
         <div className="border-b border-zinc-300 pb-2.5">
           <h2 className="text-xs font-bold uppercase tracking-wide text-zinc-500">Client & Project</h2>
           <dl className="mt-2 grid grid-cols-3 gap-x-4 gap-y-1.5">
-            <InfoLine label="Client" value={client?.company_name ?? "Unknown client"} />
-            <InfoLine label="Project" value={project?.project_name ?? "Unknown project"} />
-            <InfoLine label="Location" value={project?.location} />
-            <InfoLine label="Project No. / Year" value={formatProjectReferenceWithYearDisplay(project)} />
-            <InfoLine label="Attention / Contact" value={projectContactLine(project)} />
-            <InfoLine label="Project Address" value={project?.project_address} />
+            <InfoLine label="Client" value={documentSetup.header.clientDisplayName || client?.company_name || "Client"} />
+            <InfoLine label="Project / Reference" value={documentSetup.header.reference} />
+            <InfoLine label="Location" value={documentSetup.header.location || project?.location} />
+            <InfoLine label="Attention / Contact" value={documentSetup.header.contactName || projectContactLine(project)} />
+            {documentSetup.visibility.quotation.showTelephone ? (
+              <InfoLine label="Telephone" value={documentSetup.header.telephone || project?.attention_landline} />
+            ) : null}
+            {documentSetup.visibility.quotation.showPoBox ? (
+              <InfoLine label="PO Box" value={documentSetup.header.poBox || project?.po_box} />
+            ) : null}
+            <InfoLine label="Project Address" value={documentSetup.header.projectAddress || project?.project_address} />
           </dl>
         </div>
       </section>
@@ -1254,10 +1263,12 @@ function QuotationFirstPageHeader({
 
 function QuotationContinuationHeader({
   companyProfile,
+  documentSetup,
   project,
   quotation,
 }: {
   companyProfile: CompanyProfile;
+  documentSetup: ResolvedDocumentSetup;
   project: Project | null;
   quotation: Quotation;
 }) {
@@ -1267,7 +1278,7 @@ function QuotationContinuationHeader({
         <div className="min-w-0">
           <p className="text-[13px] font-bold uppercase tracking-[0.18em] text-zinc-950">Quotation</p>
           <p className="mt-1 text-[10px] text-zinc-600">
-            {companyProfile.displayName} / {project?.project_name ?? quotation.title}
+            {companyProfile.displayName} / {documentSetup.header.reference || project?.project_name || quotation.title}
           </p>
         </div>
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-right">
@@ -1425,7 +1436,7 @@ function NotesTermsSummaryPage({
   data: QuotationPdfDocumentData;
   settings: QuotationPdfSettings;
 }) {
-  const resolvedNotes = settings.notesOverride?.trim() || data.defaultQuotationNotes || DEFAULT_QUOTATION_NOTES;
+  const resolvedNotes = settings.notesOverride?.trim() || data.documentSetup.notes.clientIntroNote || data.defaultQuotationNotes || DEFAULT_QUOTATION_NOTES;
 
   return (
     <div className="grid h-full grid-cols-[minmax(0,1.4fr)_minmax(320px,0.9fr)] gap-5">
@@ -1435,12 +1446,12 @@ function NotesTermsSummaryPage({
             Commercial Terms
           </h2>
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
-            <InfoLine label="Payment Terms" value={data.quotation.payment_terms} />
-            <InfoLine label="Validity" value={data.quotation.validity} />
-            <InfoLine label="Warranty" value={data.quotation.warranty_terms} />
-            <InfoLine label="Delivery Terms" value={data.quotation.delivery_terms} />
-            <InfoLine label="Currency" value={data.quotation.currency} />
-            <InfoLine label="VAT" value={`${data.quotation.vat_percent}%`} />
+            <InfoLine label="Payment Terms" value={data.documentSetup.commercial.paymentTerms} />
+            <InfoLine label="Validity" value={data.documentSetup.commercial.validity} />
+            <InfoLine label="Warranty" value={data.documentSetup.commercial.warrantyTerms} />
+            <InfoLine label="Delivery Terms" value={data.documentSetup.commercial.deliveryTerms} />
+            <InfoLine label="Currency" value={data.documentSetup.commercial.currency} />
+            <InfoLine label="VAT" value={`${data.documentSetup.commercial.vatPercent}%`} />
           </dl>
         </section>
 
@@ -1601,6 +1612,7 @@ export function QuotationPdfDocument({
                   <QuotationFirstPageHeader
                     client={data.client}
                     companyProfile={data.companyProfile}
+                    documentSetup={data.documentSetup}
                     hasLogo={data.hasLogo}
                     project={data.project}
                     quotation={data.quotation}
@@ -1608,6 +1620,7 @@ export function QuotationPdfDocument({
                 ) : (
                   <QuotationContinuationHeader
                     companyProfile={data.companyProfile}
+                    documentSetup={data.documentSetup}
                     project={data.project}
                     quotation={data.quotation}
                   />
@@ -1621,6 +1634,7 @@ export function QuotationPdfDocument({
               <>
                 <QuotationContinuationHeader
                   companyProfile={data.companyProfile}
+                  documentSetup={data.documentSetup}
                   project={data.project}
                   quotation={data.quotation}
                 />

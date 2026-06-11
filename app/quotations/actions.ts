@@ -10,6 +10,7 @@ import {
   requireSettingsManager,
 } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit-log";
+import { nextClientNumber } from "@/lib/clients/client-numbering";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import {
   flattenStandardCategoryPricingRows,
@@ -21,13 +22,33 @@ import {
 } from "@/lib/products/modular-pricing";
 import {
   buildQuotationDocumentNumber,
-  quotationOptionLabel,
   quotationOptionNoFromQuotationNo,
-  quotationRevisionBaseNo,
   quotationRootBaseNo,
 } from "@/lib/quotation-options";
+import {
+  clientSequenceFromNumber,
+  formatClientApprovalNumber,
+  formatConfirmedOrderNumber,
+  formatOpportunityNumber,
+  formatQuotationFolderNumber,
+  formatQuotationNumber,
+  opportunitySequenceFromNumber,
+} from "@/lib/projectworkflow-numbering";
 import { allowedQuotationStatuses, quotationStatusLabel } from "@/lib/quotation-status";
 import { quotationMoneyValue } from "@/lib/quotation-pricing";
+import {
+  clientApprovalDraftFromLayoutSettings,
+  isCancelledClientApprovalStatus,
+  isActiveClientApprovalStatus,
+  mergeClientApprovalDraftIntoLayoutSettings,
+  type ClientApprovalStatus,
+  type ClientApprovalDraft,
+} from "@/lib/quotations/client-approval-draft";
+import {
+  defaultDocumentVisibility,
+  documentSetupRecord,
+  mergeDocumentSetupIntoLayoutSettings,
+} from "@/lib/quotations/document-setup";
 import {
   buildCompanyStyleProductSpecification,
   resolveProductDimensionSnapshot,
@@ -111,6 +132,10 @@ function textValue(formData: FormData, name: string) {
 function optionalTextValue(formData: FormData, name: string) {
   const value = textValue(formData, name);
   return value || null;
+}
+
+function optionalTextFromUnknown(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function boolValue(formData: FormData, name: string) {
@@ -1036,11 +1061,14 @@ function safeQuotationCreateErrorMessage(error: {
 }
 
 type QuotationCopyMode = "duplicate" | "revision" | "option";
+type QuotationActionResult<T> =
+  | { ok: true; data: T; message: string }
+  | { ok: false; error: string };
 
 type QuotationCopySource = {
   id: string;
   client_id: string;
-  project_id: string;
+  project_id: string | null;
   quotation_no: string | null;
   option_no: number;
   revision_no: number;
@@ -1057,6 +1085,7 @@ type QuotationCopySource = {
   layout_settings: Record<string, unknown> | null;
   overall_discount_type: string;
   overall_discount_value: number;
+  grand_total: number | null;
 };
 
 type QuotationSectionCopySource = {
@@ -1669,7 +1698,7 @@ async function insertQuotationItemPriceHistory({
 }
 
 const quotationCopySelect =
-  "id,client_id,project_id,quotation_no,option_no,revision_no,title,quotation_date,currency,vat_percent,payment_terms,validity,delivery_terms,warranty_terms,notes,layout_mode,layout_settings,overall_discount_type,overall_discount_value";
+  "id,client_id,project_id,quotation_no,option_no,revision_no,title,quotation_date,currency,vat_percent,payment_terms,validity,delivery_terms,warranty_terms,notes,layout_mode,layout_settings,overall_discount_type,overall_discount_value,grand_total";
 
 const sectionCopySelect =
   "id,section_title,section_notes,section_type,parent_section_id,section_kind,title_align,title_bold,title_bg,title_size,row_height,sort_order";
@@ -2003,9 +2032,9 @@ export async function createQuotation(formData: FormData) {
     const supabase = await createSupabaseClient();
     const { data: client, error: clientError } = await supabase
       .from("clients")
-      .select("id")
+      .select("id,client_number")
       .eq("id", payload.client_id)
-      .maybeSingle<{ id: string }>();
+      .maybeSingle<{ id: string; client_number: string | null }>();
 
     if (clientError) {
       console.error("QUOTATION CREATE CLIENT READ ERROR", {
@@ -2021,9 +2050,41 @@ export async function createQuotation(formData: FormData) {
     }
 
     if (fromOpportunity) {
+      let clientNumber = client.client_number;
+      if (!clientSequenceFromNumber(clientNumber)) {
+        try {
+          clientNumber = await nextClientNumber(supabase);
+          const { error: clientNumberUpdateError } = await supabase
+            .from("clients")
+            .update({ client_number: clientNumber })
+            .eq("id", payload.client_id);
+
+          if (clientNumberUpdateError) {
+            console.error("QUOTATION CREATE CLIENT NUMBER UPDATE ERROR", {
+              action: "createQuotation",
+              client_id: payload.client_id,
+              message: clientNumberUpdateError.message,
+            });
+            clientNumber = client.client_number;
+          }
+        } catch (numberError) {
+          console.error("QUOTATION CREATE CLIENT NUMBER ASSIGN ERROR", {
+            action: "createQuotation",
+            client_id: payload.client_id,
+            error: numberError,
+          });
+        }
+      }
+
+      const clientSequence = clientSequenceFromNumber(clientNumber);
+      const opportunitySequence = opportunitySequenceFromNumber(textValue(formData, "from_opportunity_no"));
       payload.project_id = "";
       payload.title = payload.title || payload.legacy_reference || "New quotation";
-      payload.quotation_no = payload.quotation_no || null;
+      payload.quotation_no = payload.quotation_no || (
+        clientSequence && opportunitySequence
+          ? formatQuotationNumber(clientSequence, opportunitySequence)
+          : null
+      );
     } else {
       const { data: project, error: projectError } = await supabase
         .from("projects")
@@ -2149,7 +2210,7 @@ export async function createQuotation(formData: FormData) {
       nextParams.set("linkedOpportunityNo", opportunityNo);
       nextParams.set("linkedQuotationId", data.id);
       nextParams.set("linkedQuotationNo", data.quotation_no || data.title);
-      redirect(`/quotations/${data.id}?${nextParams.toString()}`);
+      redirect(`/quotations/${data.id}/local-builder?${nextParams.toString()}`);
     }
 
     redirectWithMessage(`/quotations/${data.id}`, "Quotation created.");
@@ -2711,16 +2772,154 @@ function actionQuotationId(formData: FormData) {
   return textValue(formData, "quotation_id");
 }
 
-function baseQuotationNo(quotationNo: string | null) {
-  return quotationRevisionBaseNo(quotationNo);
+function validUuidOrNull(value: string | null | undefined) {
+  const trimmed = value?.trim();
+
+  return trimmed && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)
+    ? trimmed
+    : null;
 }
 
-function revisionNoFromQuotationNo(quotationNo: string | null, baseNo: string) {
-  if (quotationNo === baseNo) return 0;
+function projectWorkflowQuotationPathParts(quotationNo: string | null | undefined) {
+  const match = quotationNo?.trim().match(/^QN-(\d{4})-(\d{3})((?:-(?:R\d+|OPT\d+))*)$/i);
+  if (!match) return null;
 
-  const match = quotationNo?.match(new RegExp(`^${baseNo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-R(\\d+)$`, "i"));
+  return {
+    baseNo: formatQuotationNumber(Number(match[1]), Number(match[2])),
+    clientSequence: Number(match[1]),
+    opportunitySequence: Number(match[2]),
+    suffixPath: match[3] ?? "",
+  };
+}
 
+function baseQuotationNo(quotationNo: string | null) {
+  return projectWorkflowQuotationPathParts(quotationNo)?.baseNo ?? quotationRootBaseNo(quotationNo);
+}
+
+function normalizedQuotationPath(quotationNo: string | null | undefined) {
+  return quotationNo?.trim().toUpperCase() || null;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function directChildSequence(quotationNo: string | null | undefined, parentQuotationNo: string, type: "revision" | "option") {
+  const suffix = type === "revision" ? "R" : "OPT";
+  const match = normalizedQuotationPath(quotationNo)?.match(new RegExp(`^${escapeRegExp(parentQuotationNo)}-${suffix}(\\d+)$`, "i"));
   return match ? Number.parseInt(match[1], 10) : null;
+}
+
+type QuotationFolderRedirectCandidate = {
+  id: string;
+  quotation_no: string | null;
+  revision_no: number | null;
+  option_no: number | null;
+  is_active: boolean;
+  status: string;
+  quotation_date: string;
+};
+
+function isOriginalQuotationCandidate(quotation: Pick<QuotationFolderRedirectCandidate, "quotation_no" | "revision_no" | "option_no">) {
+  return (
+    !quotationBranchTokensForAction(quotation.quotation_no).length &&
+    (quotation.revision_no ?? 0) <= 0 &&
+    Math.max(quotation.option_no ?? 1, 1) <= 1 &&
+    !/-OPT\d+$/i.test(quotation.quotation_no ?? "")
+  );
+}
+
+function quotationBranchTokensForAction(quotationNo: string | null | undefined) {
+  return Array.from(quotationNo?.trim().matchAll(/-(R|OPT)(\d+)/gi) ?? []);
+}
+
+function latestQuotationCandidate(left: QuotationFolderRedirectCandidate, right: QuotationFolderRedirectCandidate) {
+  const leftTime = new Date(left.quotation_date).getTime();
+  const rightTime = new Date(right.quotation_date).getTime();
+  return rightTime > leftTime ? right : left;
+}
+
+function safeQuotationDeleteRedirectPath({
+  deletedQuotationId,
+  folderSiblings,
+  preferredQuotationId,
+}: {
+  deletedQuotationId: string;
+  folderSiblings: QuotationFolderRedirectCandidate[];
+  preferredQuotationId?: string | null;
+}) {
+  const remainingSiblings = folderSiblings.filter((candidate) => candidate.id !== deletedQuotationId);
+  const preferredQuotation = preferredQuotationId
+    ? remainingSiblings.find((candidate) => (
+        candidate.id === preferredQuotationId &&
+        candidate.is_active &&
+        candidate.status !== "archived"
+      ))
+    : null;
+
+  if (preferredQuotation) {
+    return `/quotations/${preferredQuotation.id}`;
+  }
+
+  const originalQuotation = remainingSiblings.find((candidate) => (
+    candidate.is_active &&
+    candidate.status !== "archived" &&
+    isOriginalQuotationCandidate(candidate)
+  ));
+
+  if (originalQuotation) {
+    return `/quotations/${originalQuotation.id}`;
+  }
+
+  const activeQuotation = remainingSiblings
+    .filter((candidate) => candidate.is_active && candidate.status !== "archived")
+    .reduce<QuotationFolderRedirectCandidate | null>(
+      (latest, candidate) => latest ? latestQuotationCandidate(latest, candidate) : candidate,
+      null,
+    );
+
+  if (activeQuotation) {
+    return `/quotations/${activeQuotation.id}`;
+  }
+
+  const archivedQuotation = remainingSiblings
+    .reduce<QuotationFolderRedirectCandidate | null>(
+      (latest, candidate) => latest ? latestQuotationCandidate(latest, candidate) : candidate,
+      null,
+    );
+
+  return archivedQuotation ? `/quotations/${archivedQuotation.id}` : "/quotations";
+}
+
+function quotationIdFromQuotationPath(path: string) {
+  const match = path.match(/^\/quotations\/([^/?#]+)/);
+  return match?.[1] ?? null;
+}
+
+function nextDirectChildSequence(
+  quotations: Array<{ quotation_no: string | null }>,
+  parentQuotationNo: string,
+  type: "revision" | "option",
+) {
+  return Math.max(
+    0,
+    ...quotations
+      .map((quotation) => directChildSequence(quotation.quotation_no, parentQuotationNo, type))
+      .filter((value): value is number => value !== null && Number.isFinite(value)),
+  ) + 1;
+}
+
+function branchLayoutSettings(
+  layoutSettings: unknown,
+  branch: Record<string, unknown>,
+) {
+  return {
+    ...(recordValue(layoutSettings) ?? {}),
+    quotationBranch: {
+      ...(recordValue(recordValue(layoutSettings)?.quotationBranch) ?? {}),
+      ...branch,
+    },
+  };
 }
 
 function baseRevisionTitle(title: string) {
@@ -2731,166 +2930,6 @@ function baseOptionTitle(title: string) {
   return baseRevisionTitle(title).replace(/\s+-\s+Option\s+[A-Z0-9]+$/i, "").trim();
 }
 
-type QuotationRevisionChainMember = {
-  id: string;
-  quotation_no: string | null;
-  option_no: number;
-  revision_no: number;
-  title: string;
-  is_active?: boolean;
-};
-
-function quotationRevisionLabel(revisionNo: number) {
-  return revisionNo > 0 ? `R${revisionNo}` : "Original";
-}
-
-function quotationBelongsToRevisionChain(
-  quotation: Pick<QuotationRevisionChainMember, "quotation_no">,
-  baseNo: string,
-) {
-  return baseQuotationNo(quotation.quotation_no) === baseNo;
-}
-
-type ProjectQuotationOptionMember = {
-  id: string;
-  quotation_no: string | null;
-  option_no: number;
-  revision_no: number;
-  is_active?: boolean;
-};
-
-function normalizedOptionNo(quotation: Pick<ProjectQuotationOptionMember, "option_no" | "quotation_no">) {
-  return Math.max(quotation.option_no || quotationOptionNoFromQuotationNo(quotation.quotation_no) || 1, 1);
-}
-
-function optionQuotationNo(baseNo: string, optionNo: number) {
-  return buildQuotationDocumentNumber({
-    projectNumber: baseNo,
-    optionNo,
-    revisionNo: 0,
-  }) ?? baseNo;
-}
-
-async function resolveProjectOptionBaseNo({
-  clientId,
-  projectId,
-  sourceQuotationNo,
-  supabase,
-}: {
-  clientId: string;
-  projectId: string;
-  sourceQuotationNo: string | null;
-  supabase: Awaited<ReturnType<typeof createSupabaseClient>>;
-}) {
-  const { data: siblingQuotations, error: siblingQuotationsError } = await supabase
-    .from("quotations")
-    .select("id,quotation_no,option_no,revision_no,is_active")
-    .eq("client_id", clientId)
-    .eq("project_id", projectId)
-    .returns<ProjectQuotationOptionMember[]>();
-
-  if (siblingQuotationsError) {
-    return {
-      baseNo: null,
-      errorMessage: "Quotation options could not be loaded.",
-      siblingQuotations: [] as ProjectQuotationOptionMember[],
-    };
-  }
-
-  const { data: project, error: projectError } = await supabase
-    .from("projects")
-    .select("project_number")
-    .eq("id", projectId)
-    .maybeSingle<{ project_number: string | null }>();
-
-  if (projectError) {
-    console.error("PROJECT QUOTATION BASE READ ERROR", projectError.message);
-  }
-
-  const siblingBaseNo = (siblingQuotations ?? [])
-    .map((quotation) => quotationRootBaseNo(quotation.quotation_no))
-    .find((value): value is string => Boolean(value));
-  const baseNo =
-    quotationRootBaseNo(sourceQuotationNo) ??
-    siblingBaseNo ??
-    project?.project_number?.trim() ??
-    null;
-
-  return {
-    baseNo,
-    errorMessage: null,
-    siblingQuotations: siblingQuotations ?? [],
-  };
-}
-
-async function quotationRevisionChain({
-  clientId,
-  projectId,
-  quotationId,
-  supabase,
-}: {
-  clientId: string;
-  projectId: string;
-  quotationId: string;
-  supabase: Awaited<ReturnType<typeof createSupabaseClient>>;
-}) {
-  const { data: sourceQuotation, error: sourceQuotationError } = await supabase
-    .from("quotations")
-    .select("id,client_id,project_id,quotation_no,option_no,revision_no,title,is_active")
-    .eq("id", quotationId)
-    .eq("client_id", clientId)
-    .eq("project_id", projectId)
-    .maybeSingle<QuotationRevisionChainMember & { client_id: string; project_id: string }>();
-
-  if (sourceQuotationError || !sourceQuotation) {
-    return {
-      errorMessage: "Quotation could not be loaded.",
-      sourceQuotation: null,
-    };
-  }
-
-  const baseNo = baseQuotationNo(sourceQuotation.quotation_no);
-
-  if (!baseNo) {
-    return {
-      errorMessage: "Add a quotation number before creating revisions.",
-      sourceQuotation,
-    };
-  }
-
-  const { data: siblingQuotations, error: siblingQuotationsError } = await supabase
-    .from("quotations")
-    .select("id,quotation_no,option_no,revision_no,title,is_active")
-    .eq("client_id", clientId)
-    .eq("project_id", projectId)
-    .returns<QuotationRevisionChainMember[]>();
-
-  if (siblingQuotationsError) {
-    return {
-      errorMessage: "Revision history could not be loaded.",
-      sourceQuotation,
-    };
-  }
-
-  const chain = (siblingQuotations ?? [])
-    .filter((quotation) => quotationBelongsToRevisionChain(quotation, baseNo))
-    .sort((left, right) => {
-      const revisionCompare = (left.revision_no ?? 0) - (right.revision_no ?? 0);
-      if (revisionCompare !== 0) return revisionCompare;
-
-      return (left.quotation_no ?? "").localeCompare(right.quotation_no ?? "");
-    });
-  const latestQuotation = chain[chain.length - 1] ?? sourceQuotation;
-
-  return {
-    baseNo,
-    chain,
-    errorMessage: null,
-    latestQuotation,
-    sourceQuotation,
-  };
-}
-
 async function copyQuotation(
   formData: FormData,
   mode: QuotationCopyMode,
@@ -2899,8 +2938,11 @@ async function copyQuotation(
   const { user, displayName } = await requireRecordsManager();
   const quotationId = actionQuotationId(formData);
   const redirectPath = returnPath(formData, "/quotations");
+  const resultMode = textValue(formData, "result_mode") === "optimistic";
+  const fail = (error: string): QuotationActionResult<never> => ({ ok: false, error });
 
   if (!quotationId) {
+    if (resultMode) return fail("Quotation is required.");
     redirectWithMessage(redirectPath, "Quotation is required.");
   }
 
@@ -2913,101 +2955,92 @@ async function copyQuotation(
 
   if (sourceError || !source) {
     console.error("QUOTATION COPY READ ERROR", sourceError?.message);
+    if (resultMode) return fail("Quotation could not be copied.");
     redirectWithMessage(redirectPath, "Quotation could not be copied.");
+  }
+
+  const parentQuotationNo = normalizedQuotationPath(source.quotation_no);
+
+  if ((mode === "revision" || mode === "option") && !projectWorkflowQuotationPathParts(parentQuotationNo)) {
+    if (resultMode) return fail("Revisions/options are available for numbered quotation folders.");
+    redirectWithMessage(redirectPath, "Revisions/options are available for numbered quotation folders.");
   }
 
   let title = `${source.title} - Copy`;
   let quotationNo: string | null = null;
   let optionNo = Math.max(source.option_no || 1, 1);
   let revisionNo = 0;
+  let parentBranchMetadata: Record<string, unknown> = {};
 
   if (mode === "revision") {
-    const chainInfo = await quotationRevisionChain({
-      clientId: source.client_id,
-      projectId: source.project_id,
-      quotationId: source.id,
-      supabase,
-    });
-
-    if (chainInfo.errorMessage || !chainInfo.sourceQuotation || !chainInfo.baseNo || !chainInfo.latestQuotation) {
-      console.error("QUOTATION REVISION CHAIN ERROR", chainInfo.errorMessage ?? "Missing revision chain.");
-      redirectWithMessage(redirectPath, chainInfo.errorMessage ?? "Revision could not be created.");
+    if (!parentQuotationNo) {
+      if (resultMode) return fail("Add a quotation number before creating revisions.");
+      redirectWithMessage(redirectPath, "Add a quotation number before creating revisions.");
     }
 
-    if (chainInfo.latestQuotation.id !== source.id) {
-      redirectWithMessage(
-        redirectPath,
-        `Please create revisions from the latest revision (${quotationRevisionLabel(chainInfo.latestQuotation.revision_no ?? 0)}).`,
-      );
+    const { data: siblingQuotations, error: siblingQuotationsError } = await supabase
+      .from("quotations")
+      .select("id,quotation_no")
+      .eq("client_id", source.client_id)
+      .returns<Array<{ id: string; quotation_no: string | null }>>();
+
+    if (siblingQuotationsError) {
+      console.error("QUOTATION REVISION SIBLINGS READ ERROR", siblingQuotationsError.message);
+      if (resultMode) return fail("Could not create revision. The parent quotation was not changed.");
+      redirectWithMessage(redirectPath, "Could not create revision. The parent quotation was not changed.");
     }
 
-    const highestRevisionNo = Math.max(
-      0,
-      ...chainInfo.chain
-        .map((quotation) => quotation.revision_no ?? revisionNoFromQuotationNo(quotation.quotation_no, chainInfo.baseNo))
-        .filter((value): value is number => value !== null && Number.isFinite(value)),
-    );
-    const nextRevisionNo = highestRevisionNo + 1;
+    const nextRevisionNo = nextDirectChildSequence(siblingQuotations ?? [], parentQuotationNo, "revision");
     title = `${baseRevisionTitle(source.title)} Rev ${nextRevisionNo}`;
-    quotationNo = buildQuotationDocumentNumber({
-      projectNumber: chainInfo.baseNo,
-      optionNo: Math.max(chainInfo.sourceQuotation.option_no || source.option_no || 1, 1),
-      revisionNo: nextRevisionNo,
-    });
-    optionNo = Math.max(chainInfo.sourceQuotation.option_no || source.option_no || 1, 1);
+    quotationNo = `${parentQuotationNo}-R${nextRevisionNo}`;
+    optionNo = Math.max(source.option_no || quotationOptionNoFromQuotationNo(source.quotation_no) || 1, 1);
     revisionNo = nextRevisionNo;
+    parentBranchMetadata = {
+      parentQuotationId: source.id,
+      parentQuotationNo,
+      quotationType: "revision",
+      branchPath: quotationNo,
+      sequence: nextRevisionNo,
+    };
   }
 
   if (mode === "option") {
-    const optionInfo = await resolveProjectOptionBaseNo({
-      clientId: source.client_id,
-      projectId: source.project_id,
-      sourceQuotationNo: source.quotation_no,
-      supabase,
-    });
-
-    if (optionInfo.errorMessage || !optionInfo.baseNo) {
-      console.error("QUOTATION OPTION BASE ERROR", optionInfo.errorMessage ?? "Missing option base.");
-      redirectWithMessage(
-        redirectPath,
-        optionInfo.errorMessage ?? "Add a project code or quotation number before creating options.",
-      );
+    if (!parentQuotationNo) {
+      if (resultMode) return fail("Add a quotation number before creating options.");
+      redirectWithMessage(redirectPath, "Add a quotation number before creating options.");
     }
 
-    const highestOptionNo = Math.max(
-      1,
-      ...optionInfo.siblingQuotations
-        .filter((quotation) => quotationRootBaseNo(quotation.quotation_no) === optionInfo.baseNo)
-        .map((quotation) => normalizedOptionNo(quotation)),
-    );
-    const nextOptionNo = highestOptionNo + 1;
-    const sourceBaseQuotationNo = optionQuotationNo(optionInfo.baseNo, 1);
+    const { data: siblingQuotations, error: siblingQuotationsError } = await supabase
+      .from("quotations")
+      .select("id,quotation_no")
+      .eq("client_id", source.client_id)
+      .returns<Array<{ id: string; quotation_no: string | null }>>();
 
-    if (!source.quotation_no) {
-      const { error: sourceUpdateError } = await supabase
-        .from("quotations")
-        .update({
-          option_no: 1,
-          quotation_no: sourceBaseQuotationNo,
-        })
-        .eq("id", source.id);
-
-      if (sourceUpdateError) {
-        console.error("QUOTATION OPTION SOURCE UPDATE ERROR", sourceUpdateError.message);
-        redirectWithMessage(redirectPath, "Original quotation number could not be prepared.");
-      }
+    if (siblingQuotationsError) {
+      console.error("QUOTATION OPTION SIBLINGS READ ERROR", siblingQuotationsError.message);
+      if (resultMode) return fail("Could not create option. The parent quotation was not changed.");
+      redirectWithMessage(redirectPath, "Could not create option. The parent quotation was not changed.");
     }
 
-    optionNo = nextOptionNo;
-    quotationNo = optionQuotationNo(optionInfo.baseNo, nextOptionNo);
-    title = `${baseOptionTitle(source.title)} - ${quotationOptionLabel(nextOptionNo)}`;
+    const nextOptionSequence = nextDirectChildSequence(siblingQuotations ?? [], parentQuotationNo, "option");
+
+    optionNo = nextOptionSequence + 1;
+    quotationNo = `${parentQuotationNo}-OPT${nextOptionSequence}`;
+    title = `${baseOptionTitle(source.title)} - Option ${nextOptionSequence}`;
+    parentBranchMetadata = {
+      parentQuotationId: source.id,
+      parentQuotationNo,
+      quotationType: "option",
+      branchPath: quotationNo,
+      sequence: nextOptionSequence,
+    };
   }
 
   const { data: newQuotation, error: insertError } = await supabase
     .from("quotations")
     .insert({
       client_id: source.client_id,
-      project_id: source.project_id,
+      project_id: validUuidOrNull(source.project_id),
       quotation_no: quotationNo,
       option_no: optionNo,
       revision_no: revisionNo,
@@ -3022,7 +3055,9 @@ async function copyQuotation(
       warranty_terms: source.warranty_terms,
       notes: source.notes,
       layout_mode: source.layout_mode,
-      layout_settings: source.layout_settings ?? {},
+      layout_settings: mode === "revision" || mode === "option"
+        ? branchLayoutSettings(source.layout_settings, parentBranchMetadata)
+        : source.layout_settings ?? {},
       overall_discount_type: source.overall_discount_type,
       overall_discount_value: source.overall_discount_value,
       is_active: true,
@@ -3033,7 +3068,23 @@ async function copyQuotation(
 
   if (insertError || !newQuotation) {
     console.error("QUOTATION COPY CREATE ERROR", insertError?.message);
-    redirectWithMessage(redirectPath, "Quotation could not be copied.");
+    if (resultMode) {
+      return fail(
+        mode === "revision"
+          ? "Could not create revision. The original quotation was not changed."
+          : mode === "option"
+            ? "Could not create option. The original quotation was not changed."
+            : "Quotation could not be copied.",
+      );
+    }
+    redirectWithMessage(
+      redirectPath,
+      mode === "revision"
+        ? "Could not create revision. The original quotation was not changed."
+        : mode === "option"
+          ? "Could not create option. The original quotation was not changed."
+          : "Quotation could not be copied.",
+    );
   }
 
   const { data: sections, error: sectionsError } = await supabase
@@ -3046,6 +3097,7 @@ async function copyQuotation(
 
   if (sectionsError) {
     console.error("QUOTATION COPY SECTIONS READ ERROR", sectionsError.message);
+    if (resultMode) return fail("Quotation sections could not be copied.");
     redirectWithMessage(redirectPath, "Quotation sections could not be copied.");
   }
 
@@ -3067,6 +3119,7 @@ async function copyQuotation(
 
     if (sectionInsertError || !newSection) {
       console.error("QUOTATION COPY SECTION CREATE ERROR", sectionInsertError?.message);
+      if (resultMode) return fail("Quotation sections could not be copied.");
       redirectWithMessage(redirectPath, "Quotation sections could not be copied.");
     }
 
@@ -3088,6 +3141,7 @@ async function copyQuotation(
 
     if (error) {
       console.error("QUOTATION COPY SECTION PARENT UPDATE ERROR", error.message);
+      if (resultMode) return fail("Quotation section hierarchy could not be copied.");
       redirectWithMessage(redirectPath, "Quotation section hierarchy could not be copied.");
     }
   }
@@ -3102,6 +3156,7 @@ async function copyQuotation(
 
   if (itemsError) {
     console.error("QUOTATION COPY ITEMS READ ERROR", itemsError.message);
+    if (resultMode) return fail("Quotation items could not be copied.");
     redirectWithMessage(redirectPath, "Quotation items could not be copied.");
   }
 
@@ -3125,6 +3180,7 @@ async function copyQuotation(
 
     if (itemInsertError) {
       console.error("QUOTATION COPY ITEM CREATE ERROR", itemInsertError.message);
+      if (resultMode) return fail("Quotation items could not be copied.");
       redirectWithMessage(redirectPath, "Quotation items could not be copied.");
     }
   }
@@ -3166,6 +3222,33 @@ async function copyQuotation(
   revalidatePath("/quotations");
   revalidatePath(`/quotations/${newQuotation.id}`);
   revalidatePath(redirectPath);
+  if (resultMode) {
+    return {
+      ok: true,
+      data: {
+        currency: source.currency,
+        grand_total: source.grand_total ?? 0,
+        id: newQuotation.id,
+        option_no: optionNo,
+        quotation_date: new Date().toISOString().slice(0, 10),
+        quotation_no: newQuotation.quotation_no,
+        revision_no: revisionNo,
+        status: "draft",
+        title: newQuotation.title,
+      },
+      message,
+    } satisfies QuotationActionResult<{
+      currency: string;
+      grand_total: number;
+      id: string;
+      option_no: number;
+      quotation_date: string;
+      quotation_no: string | null;
+      revision_no: number;
+      status: string;
+      title: string;
+    }>;
+  }
   redirectWithMessage(redirectPath, message);
 }
 
@@ -3179,6 +3262,16 @@ export async function createQuotationRevision(formData: FormData) {
 
 export async function createQuotationOption(formData: FormData) {
   await copyQuotation(formData, "option", "Option created.");
+}
+
+export async function createQuotationRevisionOptimistic(formData: FormData) {
+  formData.set("result_mode", "optimistic");
+  return await copyQuotation(formData, "revision", "Revision created.");
+}
+
+export async function createQuotationOptionOptimistic(formData: FormData) {
+  formData.set("result_mode", "optimistic");
+  return await copyQuotation(formData, "option", "Option created.");
 }
 
 export async function deactivateQuotation(formData: FormData) {
@@ -3206,8 +3299,111 @@ export async function deactivateQuotation(formData: FormData) {
   redirectWithMessage(redirectPath, "Quotation moved to Archive.");
 }
 
+export async function archiveFolderQuotation(formData: FormData) {
+  const { user, displayName } = await requireRecordsManager();
+  const quotationId = actionQuotationId(formData);
+  const redirectPath = returnPath(formData, "/quotations");
+  const resultMode = textValue(formData, "result_mode") === "optimistic";
+  const fail = (error: string): QuotationActionResult<never> => ({ ok: false, error });
+
+  if (!quotationId) {
+    if (resultMode) return fail("Quotation is required.");
+    redirectWithMessage(redirectPath, "Quotation is required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: quotation, error: quotationError } = await supabase
+    .from("quotations")
+    .select("id,client_id,project_id,quotation_no,revision_no,option_no,title,status,is_active")
+    .eq("id", quotationId)
+    .maybeSingle<{
+      id: string;
+      client_id: string;
+      project_id: string | null;
+      quotation_no: string | null;
+      revision_no: number | null;
+      option_no: number | null;
+      title: string;
+      status: string;
+      is_active: boolean;
+    }>();
+
+  if (quotationError || !quotation) {
+    console.error("QUOTATION FOLDER ARCHIVE READ ERROR", quotationError?.message);
+    if (resultMode) return fail("Quotation could not be archived.");
+    redirectWithMessage(redirectPath, "Quotation could not be archived.");
+  }
+
+  const baseNo = baseQuotationNo(quotation.quotation_no);
+  const { data: siblings, error: siblingsError } = await supabase
+    .from("quotations")
+    .select("id,quotation_no,revision_no,option_no,is_active")
+    .eq("client_id", quotation.client_id)
+    .returns<Array<{ id: string; quotation_no: string | null; revision_no: number | null; option_no: number | null; is_active: boolean }>>();
+
+  if (siblingsError) {
+    console.error("QUOTATION FOLDER ARCHIVE SIBLINGS ERROR", siblingsError.message);
+    if (resultMode) return fail("Quotation could not be archived.");
+    redirectWithMessage(redirectPath, "Quotation could not be archived.");
+  }
+
+  const activeFolderSiblings = (siblings ?? [])
+    .filter((candidate) => candidate.is_active)
+    .filter((candidate) => baseNo ? baseQuotationNo(candidate.quotation_no) === baseNo : candidate.id === quotation.id);
+
+  if (activeFolderSiblings.length <= 1) {
+    if (resultMode) return fail("Keep at least one active quotation in this folder.");
+    redirectWithMessage(redirectPath, "Keep at least one active quotation in this folder.");
+  }
+
+  const { error: updateError } = await supabase
+    .from("quotations")
+    .update({
+      is_active: false,
+      status: "archived",
+      status_note: "Archived from quotation folder.",
+      status_updated_at: new Date().toISOString(),
+      status_updated_by: user.id,
+    })
+    .eq("id", quotation.id);
+
+  if (updateError) {
+    console.error("QUOTATION FOLDER ARCHIVE UPDATE ERROR", updateError.message);
+    if (resultMode) return fail("Quotation could not be archived.");
+    redirectWithMessage(redirectPath, "Quotation could not be archived.");
+  }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation",
+    entityId: quotation.id,
+    action: "quotation_archived",
+    title: "Quotation archived",
+    description: quotationLabel(quotation.title, quotation.quotation_no),
+    metadata: {
+      old_status: quotation.status,
+      quotationLabel: quotationLabel(quotation.title, quotation.quotation_no),
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  const fallbackQuotation = activeFolderSiblings.find((candidate) => candidate.id !== quotation.id);
+  const nextPath = redirectPath === `/quotations/${quotation.id}` && fallbackQuotation
+    ? `/quotations/${fallbackQuotation.id}`
+    : redirectPath;
+
+  revalidatePath("/quotations");
+  revalidatePath(`/quotations/${quotation.id}`);
+  if (fallbackQuotation) revalidatePath(`/quotations/${fallbackQuotation.id}`);
+  revalidatePath(nextPath);
+  if (resultMode) {
+    return { ok: true, data: { id: quotation.id }, message: "Quotation archived." } satisfies QuotationActionResult<{ id: string }>;
+  }
+  redirectWithMessage(nextPath, "Quotation archived.");
+}
+
 export async function restoreQuotation(formData: FormData) {
-  await requireRecordsManager();
+  const { user } = await requireRecordsManager();
   const quotationId = actionQuotationId(formData);
   const redirectPath = returnPath(formData, "/quotations");
 
@@ -3218,8 +3414,15 @@ export async function restoreQuotation(formData: FormData) {
   const supabase = await createSupabaseClient();
   const { error } = await supabase
     .from("quotations")
-    .update({ is_active: true })
-    .eq("id", quotationId);
+    .update({
+      is_active: true,
+      status: "draft",
+      status_note: "Restored from archive.",
+      status_updated_at: new Date().toISOString(),
+      status_updated_by: user.id,
+    })
+    .eq("id", quotationId)
+    .eq("is_active", false);
 
   if (error) {
     console.error("QUOTATION RESTORE ERROR", error.message);
@@ -3235,6 +3438,7 @@ export async function permanentlyDeleteQuotation(formData: FormData) {
   const { profile } = await requireActiveUser();
   const quotationId = actionQuotationId(formData);
   const redirectPath = returnPath(formData, "/quotations");
+  const confirmText = textValue(formData, "confirmText");
 
   if (!quotationId) {
     redirectWithMessage(redirectPath, "Quotation is required.");
@@ -3252,12 +3456,26 @@ export async function permanentlyDeleteQuotation(formData: FormData) {
     );
   }
 
+  if (confirmText !== "DELETE") {
+    redirectWithMessage(redirectPath, "Type DELETE to confirm permanent deletion.");
+  }
+
   const supabase = await createSupabaseClient();
   const { data: quotation, error: quotationError } = await supabase
     .from("quotations")
-    .select("id,project_id,is_active")
+    .select("id,client_id,project_id,quotation_no,revision_no,option_no,is_active,status,quotation_date")
     .eq("id", quotationId)
-    .maybeSingle<{ id: string; project_id: string | null; is_active: boolean }>();
+    .maybeSingle<{
+      id: string;
+      client_id: string;
+      project_id: string | null;
+      quotation_no: string | null;
+      revision_no: number | null;
+      option_no: number | null;
+      is_active: boolean;
+      status: string;
+      quotation_date: string;
+    }>();
 
   if (quotationError) {
     console.error("QUOTATION PERMANENT DELETE READ ERROR", quotationError.message);
@@ -3271,6 +3489,36 @@ export async function permanentlyDeleteQuotation(formData: FormData) {
   if (quotation.is_active) {
     redirectWithMessage(redirectPath, "Archive this quotation before permanent deletion.");
   }
+
+  const baseNo = baseQuotationNo(quotation.quotation_no);
+  const { data: siblings, error: siblingsError } = await supabase
+    .from("quotations")
+    .select("id,quotation_no,revision_no,option_no,is_active,status,quotation_date")
+    .eq("client_id", quotation.client_id)
+    .returns<Array<{
+      id: string;
+      quotation_no: string | null;
+      revision_no: number | null;
+      option_no: number | null;
+      is_active: boolean;
+      status: string;
+      quotation_date: string;
+    }>>();
+
+  if (siblingsError) {
+    console.error("QUOTATION PERMANENT DELETE SIBLINGS ERROR", siblingsError.message);
+    redirectWithMessage(redirectPath, "Quotation folder safety could not be verified.");
+  }
+
+  const folderSiblings = (siblings ?? [])
+    .filter((candidate) => baseNo ? baseQuotationNo(candidate.quotation_no) === baseNo : candidate.id === quotation.id);
+  const successRedirectPath = baseNo
+    ? safeQuotationDeleteRedirectPath({
+        deletedQuotationId: quotation.id,
+        folderSiblings,
+        preferredQuotationId: quotationIdFromQuotationPath(redirectPath),
+      })
+    : "/quotations";
 
   const { data: sections, error: sectionsReadError } = await supabase
     .from("quotation_sections")
@@ -3347,11 +3595,523 @@ export async function permanentlyDeleteQuotation(formData: FormData) {
   revalidatePath("/quotations");
   revalidatePath(`/quotations/${quotationId}`);
   revalidatePath(`/quotations/${quotationId}/builder`);
+  revalidatePath(successRedirectPath);
   if (quotation.project_id) {
     revalidatePath(`/clients/projects/${quotation.project_id}`);
   }
   revalidatePath(redirectPath);
-  redirectWithMessage(redirectPath, "Quotation permanently deleted.");
+  redirectWithMessage(successRedirectPath, "Quotation permanently deleted.");
+}
+
+export async function createClientApprovalDraft(formData: FormData) {
+  const { user, displayName } = await requireRecordsManager();
+  const quotationId = actionQuotationId(formData);
+  const redirectPath = returnPath(formData, quotationId ? `/quotations/${quotationId}` : "/quotations");
+
+  if (!quotationId) {
+    redirectWithMessage("/quotations", "Quotation is required.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: quotation, error: quotationError } = await supabase
+    .from("quotations")
+    .select("id,client_id,project_id,quotation_no,title,legacy_reference,quotation_date,status,is_active,grand_total,currency,layout_settings")
+    .eq("id", quotationId)
+    .maybeSingle<{
+      id: string;
+      client_id: string | null;
+      project_id: string | null;
+      quotation_no: string | null;
+      title: string | null;
+      legacy_reference: string | null;
+      quotation_date: string | null;
+      status: string;
+      is_active: boolean;
+      grand_total: number | null;
+      currency: string | null;
+      layout_settings: unknown;
+    }>();
+
+  if (quotationError || !quotation) {
+    logServerActionError("CLIENT APPROVAL QUOTATION READ ERROR", quotationError, {
+      action: "createClientApprovalDraft",
+      recordId: quotationId,
+      table: "quotations",
+    });
+    redirectWithMessage(redirectPath, actionErrorMessage("Quotation could not be loaded", quotationError));
+  }
+
+  if (!quotation.is_active || quotation.status === "archived") {
+    redirectWithMessage(redirectPath, "Archived quotations cannot be submitted to the client.");
+  }
+
+  if (quotation.status === "cancelled") {
+    redirectWithMessage(redirectPath, "Cancelled quotations cannot be submitted to the client.");
+  }
+
+  if (!["ready_to_send", "ready_for_review"].includes(quotation.status)) {
+    redirectWithMessage(
+      redirectPath,
+      "Mark this quotation as Ready to Send before submitting it to the client.",
+    );
+  }
+
+  const workflowParts = projectWorkflowQuotationPathParts(quotation.quotation_no);
+  if (!workflowParts || !quotation.quotation_no) {
+    redirectWithMessage(redirectPath, "Submit to Client is available for numbered quotation folders.");
+  }
+
+  if (!quotation.client_id) {
+    redirectWithMessage(redirectPath, "Select a client before submitting this quotation.");
+  }
+
+  const existingDraft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);
+  if (existingDraft?.quotationId === quotation.id) {
+    redirectWithMessage(
+      redirectPath,
+      isCancelledClientApprovalStatus(existingDraft.approvalStatus)
+        ? "A cancelled approval exists. Create/reactivate approval workflow will be handled in a future phase."
+        : "Client Decision record already exists for this quotation.",
+    );
+  }
+
+  const { data: client, error: clientError } = await supabase
+    .from("clients")
+    .select("id,company_name")
+    .eq("id", quotation.client_id)
+    .maybeSingle<{ id: string; company_name: string | null }>();
+
+  if (clientError || !client) {
+    logServerActionError("CLIENT APPROVAL CLIENT READ ERROR", clientError, {
+      action: "createClientApprovalDraft",
+      recordId: quotation.client_id,
+      table: "clients",
+    });
+    redirectWithMessage(redirectPath, actionErrorMessage("Client could not be loaded", clientError));
+  }
+
+  const safeProjectId = validUuidOrNull(quotation.project_id);
+  const { data: project, error: projectError } = safeProjectId
+    ? await supabase
+        .from("projects")
+        .select("id,project_name")
+        .eq("id", safeProjectId)
+        .maybeSingle<{ id: string; project_name: string | null }>()
+    : { data: null, error: null };
+
+  if (projectError) {
+    logServerActionError("CLIENT APPROVAL PROJECT READ ERROR", projectError, {
+      action: "createClientApprovalDraft",
+      recordId: safeProjectId,
+      table: "projects",
+    });
+    redirectWithMessage(redirectPath, actionErrorMessage("Project reference could not be loaded", projectError));
+  }
+
+  const documentSetup = documentSetupRecord(quotation.layout_settings);
+  const documentHeader = recordValue(documentSetup.header);
+  const reference =
+    optionalTextFromUnknown(documentHeader?.reference) ??
+    project?.project_name?.trim() ??
+    quotation.legacy_reference?.trim() ??
+    quotation.title?.trim() ??
+    quotation.quotation_no;
+  const now = new Date().toISOString();
+  const approvalDraft: ClientApprovalDraft = {
+    approvalNo: formatClientApprovalNumber(workflowParts.clientSequence, workflowParts.opportunitySequence),
+    quotationId: quotation.id,
+    quotationNo: quotation.quotation_no,
+    folderNo: formatQuotationFolderNumber(workflowParts.clientSequence, workflowParts.opportunitySequence),
+    opportunityNo: formatOpportunityNumber(workflowParts.clientSequence, workflowParts.opportunitySequence),
+    clientId: client.id,
+    clientName: client.company_name?.trim() || "Client",
+    reference,
+    projectName: project?.project_name?.trim() || null,
+    total: quotationMoneyValue(quotation.grand_total ?? 0),
+    currency: normalizeCurrency(quotation.currency),
+    quotationStatus: "sent_to_client",
+    approvalStatus: "Pending Client Approval",
+    createdAt: now,
+    createdBy: user.id,
+    documentSetupReference: optionalTextFromUnknown(documentHeader?.reference),
+    source: "quotation_layout_settings",
+  };
+
+  const { error: updateError } = await supabase
+    .from("quotations")
+    .update({
+      layout_settings: mergeClientApprovalDraftIntoLayoutSettings(quotation.layout_settings, approvalDraft),
+      status: "sent_to_client",
+      status_note: "Submitted to client. Waiting client decision.",
+      status_updated_at: now,
+      status_updated_by: user.id,
+    })
+    .eq("id", quotation.id);
+
+  if (updateError) {
+    logServerActionError("CLIENT APPROVAL QUOTATION UPDATE ERROR", updateError, {
+      action: "createClientApprovalDraft",
+      recordId: quotation.id,
+      table: "quotations",
+    });
+    redirectWithMessage(redirectPath, actionErrorMessage("Submit to Client could not be completed", updateError));
+  }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation",
+    entityId: quotation.id,
+    action: "client_approval_prepared",
+    title: "Client decision record prepared",
+    description: `${approvalDraft.approvalNo} prepared for ${approvalDraft.quotationNo}`,
+    metadata: {
+      approvalNo: approvalDraft.approvalNo,
+      approvalStatus: approvalDraft.approvalStatus,
+      quotationLabel: quotationLabel(quotation.title, quotation.quotation_no),
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  revalidatePath("/quotations");
+  revalidatePath(`/quotations/${quotation.id}`);
+  revalidatePath("/sales/quotations");
+  revalidatePath("/sales/approvals");
+  if (quotation.project_id) {
+    revalidatePath(`/clients/projects/${quotation.project_id}`);
+  }
+  redirectWithMessage(redirectPath, "Quotation submitted to client. Waiting client decision.");
+}
+
+type ClientApprovalDecisionValue = "approve" | "reject" | "revision" | "cancel";
+
+const clientApprovalDecisionValues = new Set<ClientApprovalDecisionValue>([
+  "approve",
+  "reject",
+  "revision",
+  "cancel",
+]);
+
+function approvalDecisionReturnPath(formData: FormData, fallback: string) {
+  const value = textValue(formData, "return_to");
+
+  return value.startsWith("/sales/approvals/") ||
+    value.startsWith("/quotations/") ||
+    value.startsWith("/projects/orders/")
+    ? value
+    : fallback;
+}
+
+function approvalDecisionStatus(decision: ClientApprovalDecisionValue): {
+  approvalStatus: ClientApprovalStatus;
+  quotationStatus: string;
+  successMessage: string;
+  statusNote: string;
+} {
+  switch (decision) {
+    case "approve":
+      return {
+        approvalStatus: "Approved by Client",
+        quotationStatus: "client_confirmed",
+        successMessage: "Client approval recorded. Create Confirmed Order / Project from the approval page.",
+        statusNote: "Client approved quotation. Confirmed Order / Project can be created from the approval page.",
+      };
+    case "reject":
+      return {
+        approvalStatus: "Rejected by Client",
+        quotationStatus: "cancelled",
+        successMessage: "Client rejection recorded.",
+        statusNote: "Rejected by Client.",
+      };
+    case "revision":
+      return {
+        approvalStatus: "Revision Requested",
+        quotationStatus: "revision_required",
+        successMessage: "Client revision request recorded.",
+        statusNote: "Client requested changes.",
+      };
+    case "cancel":
+      return {
+        approvalStatus: "Cancelled",
+        quotationStatus: "cancelled",
+        successMessage: "Client decision record cancelled.",
+        statusNote: "Client decision record cancelled.",
+      };
+  }
+}
+
+export async function recordClientApprovalDecision(formData: FormData) {
+  const { user, displayName } = await requireRecordsManager();
+  const approvalNo = textValue(formData, "approval_no");
+  const rawDecision = textValue(formData, "decision") as ClientApprovalDecisionValue;
+  const decisionNote = optionalTextValue(formData, "decision_note");
+  const redirectPath = approvalDecisionReturnPath(
+    formData,
+    approvalNo ? `/sales/approvals/${encodeURIComponent(approvalNo)}` : "/sales/approvals",
+  );
+
+  if (!approvalNo) {
+    redirectWithMessage("/sales/approvals", "Client Approval / Decision number is required.");
+  }
+
+  if (!clientApprovalDecisionValues.has(rawDecision)) {
+    redirectWithMessage(redirectPath, "Select a valid client decision.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: quotations, error: quotationsError } = await supabase
+    .from("quotations")
+    .select("id,project_id,title,quotation_no,status,layout_settings")
+    .returns<Array<{
+      id: string;
+      project_id: string | null;
+      title: string | null;
+      quotation_no: string | null;
+      status: string;
+      layout_settings: unknown;
+    }>>();
+
+  if (quotationsError) {
+    logServerActionError("CLIENT APPROVAL DECISION LIST ERROR", quotationsError, {
+      action: "recordClientApprovalDecision",
+      table: "quotations",
+    });
+    redirectWithMessage(redirectPath, actionErrorMessage("Client decision could not be loaded", quotationsError));
+  }
+
+  const approvalEntry = (quotations ?? [])
+    .map((quotation) => {
+      const draft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);
+      return draft?.approvalNo === approvalNo ? { quotation, draft } : null;
+    })
+    .find((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+  if (!approvalEntry) {
+    redirectWithMessage("/sales/approvals", "Client Approval / Decision could not be found.");
+  }
+
+  if (!isActiveClientApprovalStatus(approvalEntry.draft.approvalStatus)) {
+    redirectWithMessage(
+      redirectPath,
+      "Decision has already been recorded. Reopening/changing decisions will be handled in a future phase.",
+    );
+  }
+
+  const decision = approvalDecisionStatus(rawDecision);
+  const now = new Date().toISOString();
+  const nextDraft: ClientApprovalDraft = {
+    ...approvalEntry.draft,
+    approvalStatus: decision.approvalStatus,
+    quotationStatus: decision.quotationStatus,
+    decidedAt: now,
+    decidedBy: user.id,
+    decisionNote,
+    previousApprovalStatus: approvalEntry.draft.approvalStatus,
+    cancelledAt: decision.approvalStatus === "Cancelled" ? now : approvalEntry.draft.cancelledAt ?? null,
+    cancelledReason: decision.approvalStatus === "Cancelled"
+      ? decisionNote ?? "Client decision record was cancelled."
+      : approvalEntry.draft.cancelledReason ?? null,
+  };
+  const statusNote = decisionNote
+    ? `${decision.statusNote} ${decisionNote}`
+    : decision.statusNote;
+
+  const { error: updateError } = await supabase
+    .from("quotations")
+    .update({
+      layout_settings: mergeClientApprovalDraftIntoLayoutSettings(
+        approvalEntry.quotation.layout_settings,
+        nextDraft,
+      ),
+      status: decision.quotationStatus,
+      status_note: statusNote,
+      status_updated_at: now,
+      status_updated_by: user.id,
+    })
+    .eq("id", approvalEntry.quotation.id);
+
+  if (updateError) {
+    logServerActionError("CLIENT APPROVAL DECISION UPDATE ERROR", updateError, {
+      action: "recordClientApprovalDecision",
+      recordId: approvalEntry.quotation.id,
+      table: "quotations",
+    });
+    redirectWithMessage(redirectPath, actionErrorMessage("Client decision could not be recorded", updateError));
+  }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation",
+    entityId: approvalEntry.quotation.id,
+    action: "client_approval_decision_recorded",
+    title: "Client decision recorded",
+    description: `${approvalNo} marked ${decision.approvalStatus}`,
+    metadata: {
+      approvalNo,
+      approvalStatus: decision.approvalStatus,
+      decisionNote,
+      oldApprovalStatus: approvalEntry.draft.approvalStatus,
+      oldQuotationStatus: approvalEntry.quotation.status,
+      newQuotationStatus: decision.quotationStatus,
+      quotationLabel: quotationLabel(approvalEntry.quotation.title, approvalEntry.quotation.quotation_no),
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  revalidatePath("/sales/approvals");
+  revalidatePath(`/sales/approvals/${approvalNo}`);
+  revalidatePath(`/quotations/${approvalEntry.quotation.id}`);
+  revalidatePath("/quotations");
+  if (approvalEntry.quotation.project_id) {
+    revalidatePath(`/clients/projects/${approvalEntry.quotation.project_id}`);
+  }
+  redirectWithMessage(redirectPath, decision.successMessage);
+}
+
+function confirmedOrderNumberFromApproval(approvalNo: string) {
+  const match = approvalNo.trim().match(/^CP-(\d{4})-(\d{3})$/i);
+  if (!match) return null;
+
+  return formatConfirmedOrderNumber(Number(match[1]), Number(match[2]));
+}
+
+export async function createConfirmedOrderFromApproval(formData: FormData) {
+  const { user, displayName } = await requireRecordsManager();
+  const approvalNo = textValue(formData, "approval_no");
+  const redirectPath = approvalDecisionReturnPath(
+    formData,
+    approvalNo ? `/sales/approvals/${encodeURIComponent(approvalNo)}` : "/sales/approvals",
+  );
+
+  if (!approvalNo) {
+    redirectWithMessage("/sales/approvals", "Client Approval / Decision number is required.");
+  }
+
+  const orderNo = confirmedOrderNumberFromApproval(approvalNo);
+  if (!orderNo) {
+    redirectWithMessage(redirectPath, "Confirmed Order / Project number could not be generated.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: quotations, error: quotationsError } = await supabase
+    .from("quotations")
+    .select("id,client_id,project_id,title,quotation_no,status,is_active,layout_settings")
+    .returns<Array<{
+      id: string;
+      client_id: string | null;
+      project_id: string | null;
+      title: string | null;
+      quotation_no: string | null;
+      status: string;
+      is_active: boolean;
+      layout_settings: unknown;
+    }>>();
+
+  if (quotationsError) {
+    logServerActionError("CONFIRMED ORDER APPROVAL LIST ERROR", quotationsError, {
+      action: "createConfirmedOrderFromApproval",
+      table: "quotations",
+    });
+    redirectWithMessage(redirectPath, actionErrorMessage("Confirmed Order / Project could not be loaded", quotationsError));
+  }
+
+  const approvalEntry = (quotations ?? [])
+    .map((quotation) => {
+      const draft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);
+      return draft?.approvalNo === approvalNo ? { quotation, draft } : null;
+    })
+    .find((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+  if (!approvalEntry) {
+    redirectWithMessage("/sales/approvals", "Client Approval / Decision could not be found.");
+  }
+
+  if (approvalEntry.draft.approvalStatus !== "Approved by Client") {
+    redirectWithMessage(redirectPath, "Client Approval / Decision must be approved before creating Confirmed Order / Project.");
+  }
+
+  if (!approvalEntry.quotation.is_active || approvalEntry.quotation.status !== "client_confirmed") {
+    redirectWithMessage(redirectPath, "Linked quotation must be approved and active before creating Confirmed Order / Project.");
+  }
+
+  if (approvalEntry.draft.confirmedOrder) {
+    redirectWithMessage(
+      redirectPath,
+      `Confirmed Order / Project ${approvalEntry.draft.confirmedOrder.orderNo} already exists for this approval.`,
+    );
+  }
+
+  const now = new Date().toISOString();
+  const confirmedOrder = {
+    orderNo,
+    approvalNo: approvalEntry.draft.approvalNo,
+    quotationId: approvalEntry.draft.quotationId,
+    quotationNo: approvalEntry.draft.quotationNo,
+    folderNo: approvalEntry.draft.folderNo,
+    opportunityNo: approvalEntry.draft.opportunityNo,
+    clientId: approvalEntry.draft.clientId,
+    clientName: approvalEntry.draft.clientName,
+    reference: approvalEntry.draft.reference,
+    total: approvalEntry.draft.total,
+    currency: approvalEntry.draft.currency,
+    status: "Confirmed" as const,
+    createdAt: now,
+    createdBy: user.id,
+    source: "quotation_layout_settings" as const,
+  };
+  const nextDraft = {
+    ...approvalEntry.draft,
+    confirmedOrder,
+  };
+
+  const { error: updateError } = await supabase
+    .from("quotations")
+    .update({
+      layout_settings: mergeClientApprovalDraftIntoLayoutSettings(
+        approvalEntry.quotation.layout_settings,
+        nextDraft,
+      ),
+      status_note: `Confirmed Order / Project ${orderNo} created from approved quotation.`,
+      status_updated_at: now,
+      status_updated_by: user.id,
+    })
+    .eq("id", approvalEntry.quotation.id);
+
+  if (updateError) {
+    logServerActionError("CONFIRMED ORDER METADATA UPDATE ERROR", updateError, {
+      action: "createConfirmedOrderFromApproval",
+      recordId: approvalEntry.quotation.id,
+      table: "quotations",
+    });
+    redirectWithMessage(redirectPath, actionErrorMessage("Confirmed Order / Project could not be created", updateError));
+  }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation",
+    entityId: approvalEntry.quotation.id,
+    action: "confirmed_order_project_created",
+    title: "Confirmed Order / Project created",
+    description: `${orderNo} created from ${approvalEntry.draft.quotationNo}`,
+    metadata: {
+      approvalNo,
+      orderNo,
+      quotationLabel: quotationLabel(approvalEntry.quotation.title, approvalEntry.quotation.quotation_no),
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  revalidatePath("/sales/approvals");
+  revalidatePath(`/sales/approvals/${approvalNo}`);
+  revalidatePath(`/quotations/${approvalEntry.quotation.id}`);
+  revalidatePath(`/projects/orders/${orderNo}`);
+  revalidatePath("/quotations");
+  if (approvalEntry.quotation.project_id) {
+    revalidatePath(`/clients/projects/${approvalEntry.quotation.project_id}`);
+  }
+  redirectWithMessage(
+    `/projects/orders/${orderNo}`,
+    `Confirmed Order / Project ${orderNo} created. Project/order detail page will be completed in the next phase.`,
+  );
 }
 
 export async function updateQuotation(formData: FormData) {
@@ -3414,6 +4174,158 @@ export async function updateQuotation(formData: FormData) {
   revalidatePath("/quotations");
   revalidatePath(`/quotations/${id}`);
   redirectWithMessage(`/quotations/${id}`, "Quotation updated.");
+}
+
+function documentSetupText(formData: FormData, name: string) {
+  return textValue(formData, name);
+}
+
+function documentSetupBooleanGroup(formData: FormData, prefix: string, defaults: Record<string, boolean>) {
+  return Object.fromEntries(
+    Object.keys(defaults).map((key) => [key, formData.get(`${prefix}.${key}`) === "on"]),
+  );
+}
+
+export async function updateQuotationDocumentSetup(formData: FormData) {
+  const { user, displayName } = await requireRecordsManager();
+  const quotationId = textValue(formData, "quotation_id");
+  const clientId = textValue(formData, "client_id");
+  const projectId = validUuidOrNull(textValue(formData, "project_id"));
+  const redirectPath = returnPath(formData, quotationId ? `/quotations/${quotationId}` : "/quotations");
+
+  if (!quotationId || !clientId) {
+    redirectWithMessage(redirectPath, "Document setup could not be saved. Quotation items were not changed.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: quotation, error: quotationError } = await supabase
+    .from("quotations")
+    .select("id,title,quotation_no,layout_settings")
+    .eq("id", quotationId)
+    .eq("client_id", clientId)
+    .maybeSingle<{ id: string; title: string; quotation_no: string | null; layout_settings: Record<string, unknown> | null }>();
+
+  if (quotationError || !quotation) {
+    console.error("QUOTATION DOCUMENT SETUP READ ERROR", quotationError?.message);
+    redirectWithMessage(redirectPath, "Document setup could not be saved. Quotation items were not changed.");
+  }
+
+  const reference = documentSetupText(formData, "reference");
+  const quotationPayload = {
+    currency: normalizeCurrency(documentSetupText(formData, "currency") || defaultCurrency),
+    delivery_terms: optionalTextValue(formData, "delivery_terms"),
+    legacy_reference: reference || null,
+    notes: optionalTextValue(formData, "client_intro_note"),
+    overall_discount_type: allowedText(formData, "overall_discount_type", discountTypes, "amount"),
+    overall_discount_value: Math.max(numberValue(formData, "overall_discount_value", 0), 0),
+    payment_terms: optionalTextValue(formData, "payment_terms"),
+    quotation_date: documentSetupText(formData, "quotation_date") || new Date().toISOString().slice(0, 10),
+    title: reference || quotation.title,
+    validity: optionalTextValue(formData, "validity"),
+    vat_percent: numberValue(formData, "vat_percent", 5),
+    warranty_terms: optionalTextValue(formData, "warranty_terms"),
+  };
+  const existingSetup = documentSetupRecord(quotation.layout_settings);
+  const nextDocumentSetup = {
+    ...existingSetup,
+    commercial: {
+      currency: quotationPayload.currency,
+      deliveryTerms: quotationPayload.delivery_terms ?? "",
+      overallDiscountType: quotationPayload.overall_discount_type,
+      overallDiscountValue: quotationPayload.overall_discount_value,
+      paymentTerms: quotationPayload.payment_terms ?? "",
+      termsNote: documentSetupText(formData, "terms_note"),
+      validity: quotationPayload.validity ?? "",
+      vatPercent: quotationPayload.vat_percent,
+      warrantyTerms: quotationPayload.warranty_terms ?? "",
+    },
+    header: {
+      clientDisplayName: documentSetupText(formData, "client_display_name"),
+      contactEmail: documentSetupText(formData, "contact_email"),
+      contactName: documentSetupText(formData, "contact_name"),
+      contactPhone: documentSetupText(formData, "contact_phone"),
+      location: documentSetupText(formData, "location"),
+      poBox: documentSetupText(formData, "po_box"),
+      projectAddress: documentSetupText(formData, "project_address"),
+      quotationDate: quotationPayload.quotation_date,
+      reference,
+      telephone: documentSetupText(formData, "telephone"),
+    },
+    notes: {
+      clientClosingNote: documentSetupText(formData, "client_closing_note"),
+      clientIntroNote: documentSetupText(formData, "client_intro_note"),
+      deliveryInstallNote: documentSetupText(formData, "delivery_install_note"),
+      exclusionNote: documentSetupText(formData, "exclusion_note"),
+      footerNote: documentSetupText(formData, "footer_note"),
+      internalNote: documentSetupText(formData, "internal_note"),
+      termsNote: documentSetupText(formData, "terms_note"),
+    },
+    revisionOption: {
+      clientFacingNote: documentSetupText(formData, "revision_option_client_note"),
+      internalNote: documentSetupText(formData, "revision_option_internal_note"),
+      reason: documentSetupText(formData, "revision_option_reason"),
+    },
+    visibility: {
+      quotation: documentSetupBooleanGroup(formData, "quotation", defaultDocumentVisibility.quotation),
+      specification: documentSetupBooleanGroup(formData, "specification", defaultDocumentVisibility.specification),
+      presentation: documentSetupBooleanGroup(formData, "presentation", defaultDocumentVisibility.presentation),
+    },
+  };
+  const { error: quotationUpdateError } = await supabase
+    .from("quotations")
+    .update({
+      ...quotationPayload,
+      layout_settings: mergeDocumentSetupIntoLayoutSettings(quotation.layout_settings, nextDocumentSetup),
+    })
+    .eq("id", quotationId);
+
+  if (quotationUpdateError) {
+    console.error("QUOTATION DOCUMENT SETUP UPDATE ERROR", quotationUpdateError.message);
+    redirectWithMessage(redirectPath, "Document setup could not be saved. Quotation items were not changed.");
+  }
+
+  if (projectId) {
+    const { error: projectUpdateError } = await supabase
+      .from("projects")
+      .update({
+        attention_email: documentSetupText(formData, "contact_email") || null,
+        attention_landline: documentSetupText(formData, "telephone") || null,
+        attention_mobile: documentSetupText(formData, "contact_phone") || null,
+        attention_to: documentSetupText(formData, "contact_name") || null,
+        location: documentSetupText(formData, "location") || null,
+        po_box: documentSetupText(formData, "po_box") || null,
+        project_address: documentSetupText(formData, "project_address") || null,
+        project_name: reference || quotation.title,
+      })
+      .eq("id", projectId);
+
+    if (projectUpdateError) {
+      console.error("QUOTATION DOCUMENT SETUP PROJECT UPDATE ERROR", projectUpdateError.message);
+      redirectWithMessage(redirectPath, "Document setup could not be saved. Quotation items were not changed.");
+    }
+  }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation",
+    entityId: quotation.id,
+    action: "document_setup_updated",
+    title: "Document setup updated",
+    description: quotationLabel(quotationPayload.title, quotation.quotation_no),
+    metadata: {
+      quotationLabel: quotationLabel(quotationPayload.title, quotation.quotation_no),
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  await recalculateQuotationTotals(quotationId);
+  revalidatePath("/quotations");
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(`/quotations/${quotationId}/local-builder`);
+  revalidatePath(`/quotations/${quotationId}/pdf`);
+  revalidatePath(`/quotations/${quotationId}/specification`);
+  revalidatePath(`/quotations/${quotationId}/presentation`);
+  redirectWithMessage(redirectPath, "Document setup saved.");
 }
 
 export async function updateQuotationExtraDiscount(formData: FormData) {
@@ -3493,21 +4405,25 @@ export async function updateQuotationStatus(formData: FormData) {
   const nextStatus = textValue(formData, "status");
   const statusNote = optionalTextValue(formData, "status_note");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}`);
+  const resultMode = textValue(formData, "result_mode") === "optimistic";
+  const fail = (error: string): QuotationActionResult<never> => ({ ok: false, error });
 
   if (!quotationId) {
+    if (resultMode) return fail("Quotation is required.");
     redirectWithMessage("/quotations", "Quotation is required.");
   }
 
   if (!quotationStatuses.has(nextStatus)) {
+    if (resultMode) return fail("Select a valid quotation status.");
     redirectWithMessage(redirectPath, "Select a valid quotation status.");
   }
 
   const supabase = await createSupabaseClient();
   const { data: quotation, error: quotationError } = await supabase
     .from("quotations")
-    .select("id,project_id,title,quotation_no,status")
+    .select("id,project_id,title,quotation_no,status,layout_settings")
     .eq("id", quotationId)
-    .maybeSingle<QuotationStatusState>();
+    .maybeSingle<QuotationStatusState & { layout_settings: unknown }>();
 
   if (quotationError || !quotation) {
     logServerActionError("QUOTATION STATUS READ ERROR", quotationError, {
@@ -3515,17 +4431,38 @@ export async function updateQuotationStatus(formData: FormData) {
       recordId: quotationId,
       table: "quotations",
     });
-    redirectWithMessage(redirectPath, actionErrorMessage("Quotation status could not be updated", quotationError));
+    const error = actionErrorMessage("Quotation status could not be updated", quotationError);
+    if (resultMode) return fail(error);
+    redirectWithMessage(redirectPath, error);
+  }
+
+  const existingApprovalDraft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);
+  const cancelledApprovalDraft = nextStatus === "cancelled" && existingApprovalDraft?.quotationId === quotation.id
+    ? {
+        ...existingApprovalDraft,
+        approvalStatus: "Cancelled" as const,
+        quotationStatus: "cancelled",
+        cancelledAt: new Date().toISOString(),
+        cancelledReason: "Linked quotation was cancelled.",
+      }
+    : null;
+  const updatePayload: Record<string, unknown> = {
+    status: nextStatus,
+    status_note: statusNote,
+    status_updated_at: new Date().toISOString(),
+    status_updated_by: user.id,
+  };
+
+  if (cancelledApprovalDraft) {
+    updatePayload.layout_settings = mergeClientApprovalDraftIntoLayoutSettings(
+      quotation.layout_settings,
+      cancelledApprovalDraft,
+    );
   }
 
   const { error: updateError } = await supabase
     .from("quotations")
-    .update({
-      status: nextStatus,
-      status_note: statusNote,
-      status_updated_at: new Date().toISOString(),
-      status_updated_by: user.id,
-    })
+    .update(updatePayload)
     .eq("id", quotationId);
 
   if (updateError) {
@@ -3534,7 +4471,9 @@ export async function updateQuotationStatus(formData: FormData) {
       recordId: quotationId,
       table: "quotations",
     });
-    redirectWithMessage(redirectPath, actionErrorMessage("Quotation status could not be updated", updateError));
+    const error = actionErrorMessage("Quotation status could not be updated", updateError);
+    if (resultMode) return fail(error);
+    redirectWithMessage(redirectPath, error);
   }
 
   await createAuditLog(supabase, {
@@ -3547,6 +4486,8 @@ export async function updateQuotationStatus(formData: FormData) {
       new_status: nextStatus,
       note: statusNote,
       old_status: quotation.status,
+      approvalStatus: cancelledApprovalDraft?.approvalStatus,
+      approvalNo: cancelledApprovalDraft?.approvalNo,
       quotationLabel: quotationLabel(quotation.title, quotation.quotation_no),
     },
     actorName: displayName,
@@ -3555,7 +4496,20 @@ export async function updateQuotationStatus(formData: FormData) {
 
   revalidatePath("/quotations");
   revalidatePath(`/quotations/${quotationId}`);
-  revalidatePath(`/clients/projects/${quotation.project_id}`);
+  if (cancelledApprovalDraft) {
+    revalidatePath("/sales/approvals");
+    revalidatePath(`/sales/approvals/${cancelledApprovalDraft.approvalNo}`);
+  }
+  if (quotation.project_id) {
+    revalidatePath(`/clients/projects/${quotation.project_id}`);
+  }
+  if (resultMode) {
+    return {
+      ok: true,
+      data: { id: quotationId, status: nextStatus, status_note: statusNote },
+      message: "Status updated.",
+    } satisfies QuotationActionResult<{ id: string; status: string; status_note: string | null }>;
+  }
   redirectWithMessage(redirectPath, "Quotation status updated.");
 }
 

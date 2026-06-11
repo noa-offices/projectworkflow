@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
+import { nextClientNumber } from "@/lib/clients/client-numbering";
 import { boolValue, clientPayload, optionalNumberValue, optionalTextValue, textValue } from "@/lib/clients/client-payload";
 import { loadProjectQuotationDependencyCount } from "@/lib/clients/project-dependencies";
 import { requireRecordsManager } from "@/lib/auth";
@@ -84,7 +85,21 @@ export async function createClient(formData: FormData) {
   }
 
   const supabase = await createSupabaseClient();
-  const { error } = await supabase.from("clients").insert(payload);
+  let clientNumber: string | null = null;
+  try {
+    clientNumber = await nextClientNumber(supabase);
+  } catch (numberError) {
+    logServerActionError("CLIENT NUMBER ASSIGN ERROR", numberError, {
+      action: "createClient",
+      table: "clients",
+      companyName: payload.company_name,
+    });
+  }
+
+  const { error } = await supabase.from("clients").insert({
+    ...payload,
+    ...(clientNumber ? { client_number: clientNumber } : {}),
+  });
 
   if (error) {
     logServerActionError("CLIENT CREATE ERROR", error, {

@@ -354,6 +354,16 @@ function QuotationActionForm({
     <form action={action}>
       <input type="hidden" name="quotation_id" value={quotationId} />
       <input type="hidden" name="return_to" value={`/clients/projects/${projectId}`} />
+      {label === "Delete permanently" ? (
+        <label className="mb-2 block">
+          <span className="text-[11px] font-semibold uppercase text-red-800">Type DELETE to confirm</span>
+          <input
+            name="confirmText"
+            autoComplete="off"
+            className="mt-1 h-8 w-full rounded-md border border-red-200 bg-white px-2 text-sm outline-none transition focus:border-red-700 focus:ring-2 focus:ring-red-900/10"
+          />
+        </label>
+      ) : null}
       {confirm ? (
         <ConfirmSubmitButton message={confirm} className={className}>
           {label}
@@ -803,7 +813,7 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
                                 label="Delete permanently"
                                 quotationId={quotation.id}
                                 projectId={project.id}
-                                confirm="Permanently delete this archived quotation? This will delete its sections and line items. This cannot be undone."
+                                confirm="This will permanently delete this archived quotation only. Other quotations in this folder will not be changed. Type DELETE to confirm."
                                 danger
                               />
                             </div>

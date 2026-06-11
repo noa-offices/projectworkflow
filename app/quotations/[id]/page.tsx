@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AppSidebar } from "@/components/app-sidebar";
+import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
+import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { ContextBackLink } from "@/components/navigation/context-back-link";
 import { PendingLinkButton } from "@/components/pending-link-button";
+import { DocumentSetupDialog } from "@/components/quotations/document-setup-dialog";
 import { LocalDraftLink } from "@/components/quotations/local-draft-link";
 import { OpportunityQuotationLinkSync } from "@/components/quotations/opportunity-quotation-link-sync";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
-import { TopBar } from "@/components/top-bar";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import {
@@ -20,9 +21,32 @@ import {
   quotationStatuses,
 } from "@/lib/quotation-status";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import {
+  clientApprovalDraftFromLayoutSettings,
+  isActiveClientApprovalStatus,
+  isCancelledClientApprovalStatus,
+} from "@/lib/quotations/client-approval-draft";
+import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
+import {
+  formatClientApprovalNumber,
+  formatConfirmedOrderNumber,
+  formatOrderConfirmationNumber,
+  formatPresentationNumber,
+  formatPurchaseOrderNumber,
+  formatSpecificationNumber,
+  formatSupplierRfqNumber,
+  opportunityNumberFromQuotationNumber,
+  quotationFolderNumberFromQuotationNumber,
+} from "@/lib/projectworkflow-numbering";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { profileDisplayName } from "@/lib/user-display";
 import {
+  archiveFolderQuotation,
+  createClientApprovalDraft,
+  createQuotationOption,
+  createQuotationRevision,
+  permanentlyDeleteQuotation,
+  restoreQuotation,
   updateQuotation,
   updateQuotationExtraDiscount,
   updateQuotationStatus,
@@ -37,6 +61,7 @@ type QuotationDetailPageProps = {
 
 type Client = {
   id: string;
+  client_number: string | null;
   company_name: string;
 };
 
@@ -60,10 +85,12 @@ type Quotation = {
   legacy_reference: string | null;
   quotation_no: string | null;
   option_no: number;
+  revision_no: number | null;
   title: string;
   quotation_date: string;
   status: string;
   layout_mode: string;
+  layout_settings: unknown;
   currency: string;
   vat_percent: number;
   overall_discount_type: string;
@@ -83,13 +110,11 @@ type Quotation = {
   is_active: boolean;
 };
 
-const layoutModes = [
-  ["simple_proposal", "Simple Proposal"],
-  ["standard_proposal", "Standard Proposal"],
-  ["comparison", "Comparison"],
-  ["boq_schedule", "BOQ / Schedule"],
-  ["internal_costing", "Internal Costing"],
-] as const;
+type FolderQuotation = Pick<Quotation, "id" | "quotation_no" | "option_no" | "title" | "quotation_date" | "status" | "currency" | "grand_total"> & {
+  is_active?: boolean;
+  revision_no: number | null;
+  status_updated_at?: string | null;
+};
 
 type QuotationSection = {
   id: string;
@@ -248,10 +273,27 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function OptionBadge({ optionNo }: { optionNo: number }) {
+function quotationOptionDisplayLabel(quotationNo: string | null | undefined, optionNo: number | null | undefined) {
+  const lastOption = quotationBranchTokens(quotationNo).filter((token) => token.type === "OPT").at(-1);
+  if (lastOption) return `Option ${lastOption.sequence}`;
+
+  if ((optionNo ?? 1) > 1) {
+    return `Option ${Math.max((optionNo ?? 1) - 1, 1)}`;
+  }
+
+  return quotationOptionLabel(optionNo);
+}
+
+function OptionBadge({
+  optionNo,
+  quotationNo,
+}: {
+  optionNo: number;
+  quotationNo: string | null;
+}) {
   return (
     <span className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-semibold text-zinc-700">
-      {quotationOptionLabel(optionNo)}
+      {quotationOptionDisplayLabel(quotationNo, optionNo)}
     </span>
   );
 }
@@ -337,6 +379,221 @@ function DocumentActionRow({
   );
 }
 
+function FutureDocumentRow({
+  description,
+  title,
+}: {
+  description: string;
+  title: string;
+}) {
+  return (
+    <div className="rounded-md border border-dashed border-zinc-200 bg-zinc-50 px-4 py-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-zinc-950">{title}</p>
+          <p className="mt-1 text-xs text-zinc-500">{description}</p>
+        </div>
+        <span className="inline-flex w-fit rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-500">
+          Future
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function DisabledWorkflowButton({ label }: { label: string }) {
+  return (
+    <button
+      type="button"
+      disabled
+      className="inline-flex h-10 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-4 text-sm font-semibold text-zinc-400"
+    >
+      {label}
+    </button>
+  );
+}
+
+function FolderMutationForm({
+  action,
+  confirmMessage,
+  label,
+  pendingLabel,
+  quotationId,
+  returnTo,
+  className,
+}: {
+  action: (formData: FormData) => Promise<void>;
+  confirmMessage: string;
+  label: string;
+  pendingLabel: string;
+  quotationId: string;
+  returnTo: string;
+  className: string;
+}) {
+  return (
+    <form action={action}>
+      <input type="hidden" name="quotation_id" value={quotationId} />
+      <input type="hidden" name="return_to" value={returnTo} />
+      <ConfirmSubmitButton className={className} message={confirmMessage} pendingLabel={pendingLabel}>
+        {label}
+      </ConfirmSubmitButton>
+    </form>
+  );
+}
+
+type ClientApprovalReviewData = {
+  approvalNo: string;
+  quotationNo: string;
+  folderNo: string;
+  clientName: string;
+  reference: string;
+  total: string;
+  status: string;
+  date: string;
+};
+
+function ClientApprovalPreparationForm({
+  disabledReason,
+  existingApprovalHref,
+  quotationId,
+  returnTo,
+  review,
+}: {
+  disabledReason: string | null;
+  existingApprovalHref: string | null;
+  quotationId: string;
+  returnTo: string;
+  review: ClientApprovalReviewData;
+}) {
+  if (existingApprovalHref) {
+    return (
+      <Link
+        href={existingApprovalHref}
+        className="inline-flex h-10 items-center rounded-md border border-emerald-200 bg-white px-4 text-sm font-semibold text-emerald-900 transition hover:border-emerald-700 hover:text-emerald-800"
+      >
+        Open Approval
+      </Link>
+    );
+  }
+
+  if (disabledReason) {
+    return <DisabledWorkflowButton label="Submit to Client" />;
+  }
+
+  return (
+    <details className="relative">
+      <summary className="inline-flex h-10 cursor-pointer list-none items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800">
+        Submit to Client
+      </summary>
+      <div className="absolute right-0 z-20 mt-2 w-[min(92vw,420px)] rounded-lg border border-zinc-200 bg-white p-4 text-left shadow-xl">
+        <p className="text-sm font-semibold text-zinc-950">Review Client Decision Record</p>
+        <dl className="mt-3 grid gap-2 text-sm">
+          <InfoValue label="CP number" value={review.approvalNo} />
+          <InfoValue label="Quotation no" value={review.quotationNo} />
+          <InfoValue label="Folder no" value={review.folderNo} />
+          <InfoValue label="Client" value={review.clientName} />
+          <InfoValue label="Reference / Project" value={review.reference} />
+          <InfoValue label="Total" value={review.total} />
+          <InfoValue label="Status" value={review.status} />
+          <InfoValue label="Date" value={review.date} />
+        </dl>
+        <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-950">
+          Confirmed Order / Project will be created only after the client approves this quotation.
+        </p>
+        <form action={createClientApprovalDraft} className="mt-3">
+          <input type="hidden" name="quotation_id" value={quotationId} />
+          <input type="hidden" name="return_to" value={returnTo} />
+          <ConfirmSubmitButton
+            className="inline-flex h-10 w-full items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+            message={`Submit to Client\n\nThis will prepare ${review.approvalNo} for ${review.quotationNo} and mark it waiting for client decision. Confirmed Order / Project will be created only after the client approves this quotation.`}
+            pendingLabel="Submitting..."
+          >
+            Confirm Submit to Client
+          </ConfirmSubmitButton>
+        </form>
+      </div>
+    </details>
+  );
+}
+
+function ArchiveFolderQuotationForm({
+  quotationId,
+  returnTo,
+}: {
+  quotationId: string;
+  returnTo: string;
+}) {
+  async function submitArchive(formData: FormData) {
+    "use server";
+    await archiveFolderQuotation(formData);
+  }
+
+  return (
+    <form action={submitArchive}>
+      <input type="hidden" name="quotation_id" value={quotationId} />
+      <input type="hidden" name="return_to" value={returnTo} />
+      <ConfirmSubmitButton
+        className="inline-flex h-9 items-center rounded-md border border-red-200 bg-white px-3 text-sm font-semibold text-red-700 transition hover:border-red-700 hover:text-red-800"
+        message={"Archive Quote\n\nThis will hide only the selected quotation from the active folder. Other quotations in this folder will not be changed."}
+        pendingLabel="Archiving..."
+      >
+        Archive Quote
+      </ConfirmSubmitButton>
+    </form>
+  );
+}
+
+function RestoreFolderQuotationForm({
+  quotationId,
+  returnTo,
+}: {
+  quotationId: string;
+  returnTo: string;
+}) {
+  return (
+    <form action={restoreQuotation}>
+      <input type="hidden" name="quotation_id" value={quotationId} />
+      <input type="hidden" name="return_to" value={returnTo} />
+      <PendingSubmitButton
+        className="inline-flex h-9 items-center rounded-md border border-emerald-200 bg-white px-3 text-sm font-semibold text-emerald-900 transition hover:border-emerald-700 hover:text-emerald-800"
+        pendingLabel="Restoring..."
+      >
+        Restore Quote
+      </PendingSubmitButton>
+    </form>
+  );
+}
+
+function PermanentlyDeleteQuotationForm({
+  quotationId,
+  returnTo,
+}: {
+  quotationId: string;
+  returnTo: string;
+}) {
+  return (
+    <form action={permanentlyDeleteQuotation} className="grid gap-2 rounded-md border border-red-200 bg-red-50 p-3">
+      <input type="hidden" name="quotation_id" value={quotationId} />
+      <input type="hidden" name="return_to" value={returnTo} />
+      <label className="block">
+        <span className="text-xs font-semibold uppercase text-red-800">Type DELETE to confirm</span>
+        <input
+          name="confirmText"
+          autoComplete="off"
+          className="mt-1 h-9 w-full rounded-md border border-red-200 bg-white px-3 text-sm outline-none transition focus:border-red-700 focus:ring-2 focus:ring-red-900/10"
+        />
+      </label>
+      <ConfirmSubmitButton
+        className="inline-flex h-9 items-center justify-center rounded-md bg-red-700 px-3 text-sm font-semibold text-white transition hover:bg-red-800"
+        message={"This will permanently delete this archived quotation only. Other quotations in this folder will not be changed. Type DELETE to confirm."}
+        pendingLabel="Deleting..."
+      >
+        Delete permanently
+      </ConfirmSubmitButton>
+    </form>
+  );
+}
+
 function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
   return (
     <label className="block">
@@ -357,14 +614,23 @@ function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
 }
 
 function StatusUpdateForm({
+  compact = false,
   quotation,
+  returnTo,
 }: {
+  compact?: boolean;
   quotation: Pick<Quotation, "id" | "status" | "status_note">;
+  returnTo?: string;
 }) {
+  async function submitStatus(formData: FormData) {
+    "use server";
+    await updateQuotationStatus(formData);
+  }
+
   return (
-    <form action={updateQuotationStatus} className="grid gap-3">
+    <form action={submitStatus} className={compact ? "grid gap-2" : "grid gap-3"}>
       <input type="hidden" name="quotation_id" value={quotation.id} />
-      <input type="hidden" name="return_to" value={`/quotations/${quotation.id}`} />
+      <input type="hidden" name="return_to" value={returnTo ?? `/quotations/${quotation.id}`} />
       <label className="block">
         <span className="text-xs font-semibold uppercase text-zinc-500">Change status</span>
         <select
@@ -379,32 +645,30 @@ function StatusUpdateForm({
           ))}
         </select>
       </label>
-      <label className="block">
-        <span className="text-xs font-semibold uppercase text-zinc-500">Status note</span>
-        <textarea
-          name="status_note"
-          defaultValue={quotation.status_note ?? ""}
-          rows={2}
-          className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-        />
-      </label>
+      {compact ? (
+        <input type="hidden" name="status_note" value={quotation.status_note ?? ""} />
+      ) : (
+        <label className="block">
+          <span className="text-xs font-semibold uppercase text-zinc-500">Status note</span>
+          <textarea
+            name="status_note"
+            defaultValue={quotation.status_note ?? ""}
+            rows={2}
+            className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+          />
+        </label>
+      )}
       <div className="flex justify-end">
-        <SubmitButton label="Update status" />
+        {compact ? (
+          <PendingSubmitButton className="h-9 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800">
+            Update
+          </PendingSubmitButton>
+        ) : (
+          <SubmitButton label="Update status" />
+        )}
       </div>
     </form>
   );
-}
-
-function projectContactLine(project?: Project | null) {
-  return [
-    project?.attention_mobile ? `Mob: ${project.attention_mobile}` : null,
-    project?.attention_landline ? `Tel: ${project.attention_landline}` : null,
-    project?.attention_email ? `Email: ${project.attention_email}` : null,
-    project?.po_box ? `PO Box: ${project.po_box}` : null,
-    project?.project_address,
-  ]
-    .filter(Boolean)
-    .join(" - ");
 }
 
 function overallDiscountAmount(quotation: Quotation) {
@@ -421,6 +685,14 @@ function money(currency: string, value: number) {
   return formatQuotationMoney(currency, value);
 }
 
+function validUuidOrNull(value: string | null | undefined) {
+  const trimmed = value?.trim();
+
+  return trimmed && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)
+    ? trimmed
+    : null;
+}
+
 function auditMetadataActorName(metadata: Record<string, unknown> | null | undefined) {
   const actorName = metadata?.actorName;
 
@@ -429,10 +701,10 @@ function auditMetadataActorName(metadata: Record<string, unknown> | null | undef
 
 function activityActorName(actorNameById: Map<string, string>, entry: AuditActivityEntry) {
   if (entry.created_by) {
-    return actorNameById.get(entry.created_by) ?? auditMetadataActorName(entry.metadata) ?? "Unknown user";
+    return actorNameById.get(entry.created_by) ?? auditMetadataActorName(entry.metadata) ?? "User";
   }
 
-  return auditMetadataActorName(entry.metadata) ?? "Unknown user";
+  return auditMetadataActorName(entry.metadata) ?? "User";
 }
 
 function activityDayKey(value: string) {
@@ -588,6 +860,7 @@ function QuotationTermsForm({ quotation, mode }: { quotation: Quotation; mode: "
       <input type="hidden" name="id" value={quotation.id} />
       <input type="hidden" name="client_id" value={quotation.client_id} />
       <input type="hidden" name="project_id" value={quotation.project_id ?? ""} />
+      <input type="hidden" name="legacy_reference" value={quotation.legacy_reference ?? ""} />
       <input type="hidden" name="is_active" value={quotation.is_active ? "on" : ""} />
       <input type="hidden" name="audit_scope" value={isDetails ? "details" : "terms"} />
       {isDetails ? (
@@ -601,25 +874,11 @@ function QuotationTermsForm({ quotation, mode }: { quotation: Quotation; mode: "
           <input type="hidden" name="delivery_terms" value={quotation.delivery_terms ?? ""} />
           <input type="hidden" name="warranty_terms" value={quotation.warranty_terms ?? ""} />
           <input type="hidden" name="notes" value={quotation.notes ?? ""} />
+          <input type="hidden" name="quotation_no" value={quotation.quotation_no ?? ""} />
+          <input type="hidden" name="status" value={quotation.status} />
+          <input type="hidden" name="layout_mode" value={quotation.layout_mode} />
           <Field name="title" label="Title" defaultValue={quotation.title} required />
-          <Field name="quotation_no" label="Quotation no" defaultValue={quotation.quotation_no} />
           <Field name="quotation_date" label="Quotation date" type="date" defaultValue={quotation.quotation_date} />
-          <label className="block">
-            <span className="text-xs font-semibold uppercase text-zinc-500">Status</span>
-            <select name="status" defaultValue={quotation.status} className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10">
-              {["draft", "sent", "revised", "approved", "won", "lost", "cancelled"].map((status) => (
-                <option key={status} value={status}>{status}</option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold uppercase text-zinc-500">Layout Mode</span>
-            <select name="layout_mode" defaultValue={quotation.layout_mode} className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10">
-              {layoutModes.map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
-          </label>
         </>
       ) : (
         <>
@@ -682,25 +941,44 @@ export default async function QuotationDetailPage({
 
   const { data: client } = await supabase
     .from("clients")
-    .select("id,company_name")
+    .select("id,client_number,company_name")
     .eq("id", quotation.client_id)
     .single<Client>();
 
-  const { data: project } = quotation.project_id
+  const safeProjectId = validUuidOrNull(quotation.project_id);
+  const { data: project } = safeProjectId
     ? await supabase
         .from("projects")
         .select("id,project_name,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
-        .eq("id", quotation.project_id)
+        .eq("id", safeProjectId)
         .single<Project>()
     : { data: null };
 
-  const { data: projectQuotations, error: projectQuotationsError } = quotation.project_id
+  const rootBaseNo = quotationRootBaseNo(quotation.quotation_no);
+  const { data: projectQuotations, error: projectQuotationsError } = safeProjectId
     ? await supabase
         .from("quotations")
         .select("id,quotation_no,option_no")
-        .eq("project_id", quotation.project_id)
+        .eq("project_id", safeProjectId)
+        .eq("is_active", true)
         .returns<Array<{ id: string; quotation_no: string | null; option_no: number }>>()
     : { data: [], error: null };
+
+  const { data: folderQuotations, error: folderQuotationsError } = safeProjectId
+    ? await supabase
+        .from("quotations")
+        .select("id,quotation_no,option_no,revision_no,title,quotation_date,status,status_updated_at,currency,grand_total,is_active")
+        .eq("project_id", safeProjectId)
+        .order("quotation_date", { ascending: false })
+        .returns<FolderQuotation[]>()
+    : rootBaseNo
+      ? await supabase
+          .from("quotations")
+          .select("id,quotation_no,option_no,revision_no,title,quotation_date,status,status_updated_at,currency,grand_total,is_active")
+          .ilike("quotation_no", `${rootBaseNo}%`)
+          .order("quotation_date", { ascending: false })
+          .returns<FolderQuotation[]>()
+      : { data: null, error: null };
 
   const { data: sections, error: sectionsError } = await supabase
     .from("quotation_sections")
@@ -741,14 +1019,26 @@ export default async function QuotationDetailPage({
   if (sectionsError) console.error("QUOTATION SECTIONS LIST ERROR", sectionsError.message);
   if (itemsError) console.error("QUOTATION ITEMS LIST ERROR", itemsError.message);
   if (projectQuotationsError) console.error("PROJECT QUOTATIONS OPTION LIST ERROR", projectQuotationsError.message);
+  if (folderQuotationsError) console.error("QUOTATION FOLDER LIST ERROR", folderQuotationsError.message);
   if (quotationEventsError) console.error("QUOTATION ACTIVITY LOG ERROR", quotationEventsError.message);
   if (quotationChildEventsError) console.error("QUOTATION CHILD ACTIVITY LOG ERROR", quotationChildEventsError.message);
 
-  const rootBaseNo = quotationRootBaseNo(quotation.quotation_no);
+  const resolvedDocumentSetup = resolveDocumentSetup({
+    client,
+    project,
+    quotation,
+  });
+  const optionCountCandidates = projectQuotations?.length
+    ? projectQuotations
+    : (folderQuotations ?? []).map((candidate) => ({
+        id: candidate.id,
+        option_no: candidate.option_no,
+        quotation_no: candidate.quotation_no,
+      }));
   const optionCountForRootBase = rootBaseNo
     ? Math.max(
         1,
-        ...(projectQuotations ?? [])
+        ...optionCountCandidates
           .filter((candidate) => quotationRootBaseNo(candidate.quotation_no) === rootBaseNo)
           .map((candidate) => candidate.option_no ?? 1),
       )
@@ -759,6 +1049,97 @@ export default async function QuotationDetailPage({
     quotationNo: quotation.quotation_no,
     showOptionNumber,
   });
+  const quotationFolderNo = quotationFolderNumberFromQuotationNumber(quotation.quotation_no);
+  const derivedOpportunityNo = opportunityNumberFromQuotationNumber(quotation.quotation_no);
+  const folderDisplayNo = quotationFolderNo ?? "Legacy";
+  const folderDisplayReference = resolvedDocumentSetup.header.reference;
+  const folderTitle = folderDisplayReference || quotation.title?.trim() || "Quotation folder";
+  const folderNextStep = nextStepLabel(quotation.status);
+  const folderQuotationList = (folderQuotations?.length ? folderQuotations : [quotation as FolderQuotation])
+    .filter((entry, index, entries) => entries.findIndex((candidate) => candidate.id === entry.id) === index)
+    .sort((left, right) => {
+      const leftActive = left.is_active !== false;
+      const rightActive = right.is_active !== false;
+      if (leftActive !== rightActive) return leftActive ? -1 : 1;
+
+      const leftSort = quotationBranchSortKey(left.quotation_no);
+      const rightSort = quotationBranchSortKey(right.quotation_no);
+      if (leftSort !== rightSort) return leftSort.localeCompare(rightSort);
+
+      const leftDate = new Date(left.quotation_date).getTime();
+      const rightDate = new Date(right.quotation_date).getTime();
+      if (leftDate !== rightDate) return rightDate - leftDate;
+
+      return (left.quotation_no ?? "").localeCompare(right.quotation_no ?? "");
+  });
+  const activeFolderQuotations = folderQuotationList.filter((entry) => !isArchivedFolderQuotation(entry));
+  const archivedFolderQuotations = folderQuotationList.filter((entry) => isArchivedFolderQuotation(entry));
+  const activeFolderQuotationCount = activeFolderQuotations.length;
+  const archivedFolderQuotationCount = archivedFolderQuotations.length;
+  const specificationNo = quotation.quotation_no ? formatSpecificationNumber(quotation.quotation_no) : null;
+  const presentationNo = quotation.quotation_no ? formatPresentationNumber(quotation.quotation_no) : null;
+  const workflowSequences = quotationWorkflowSequences(quotation.quotation_no);
+  const clientApprovalNo = workflowSequences
+    ? formatClientApprovalNumber(workflowSequences.clientSequence, workflowSequences.opportunitySequence)
+    : null;
+  const confirmedOrderNo = workflowSequences
+    ? formatConfirmedOrderNumber(workflowSequences.clientSequence, workflowSequences.opportunitySequence)
+    : null;
+  const supplierRfqNo = confirmedOrderNo ? formatSupplierRfqNumber(confirmedOrderNo, 1) : null;
+  const purchaseOrderNo = confirmedOrderNo ? formatPurchaseOrderNumber(confirmedOrderNo, 1) : null;
+  const orderConfirmationNo = confirmedOrderNo ? formatOrderConfirmationNumber(confirmedOrderNo) : null;
+  const variantsAvailableForNumberedFolder = Boolean(workflowSequences);
+  const currentQuotationArchived = isArchivedFolderQuotation(quotation);
+  const currentClientApprovalDraft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);
+  const clientApprovalStatusReady = ["ready_to_send", "ready_for_review"].includes(quotation.status);
+  const currentApprovalActive = currentClientApprovalDraft
+    ? isActiveClientApprovalStatus(currentClientApprovalDraft.approvalStatus)
+    : false;
+  const currentApprovalCancelled = currentClientApprovalDraft
+    ? isCancelledClientApprovalStatus(currentClientApprovalDraft.approvalStatus)
+    : false;
+  const clientApprovalDisabledReason = currentClientApprovalDraft
+    ? currentApprovalCancelled
+      ? quotation.status === "cancelled"
+        ? "Cancelled quotations cannot be submitted to the client."
+        : "A cancelled approval exists. Create/reactivate approval workflow will be handled in a future phase."
+      : null
+    : currentQuotationArchived
+      ? "Archived quotations cannot be submitted to the client."
+      : quotation.status === "cancelled"
+        ? "Cancelled quotations cannot be submitted to the client."
+      : !variantsAvailableForNumberedFolder || !quotation.quotation_no || !clientApprovalNo
+        ? "Submit to Client is available for numbered quotation folders."
+        : !client
+          ? "Select a client before submitting this quotation."
+          : !clientApprovalStatusReady
+            ? "Mark this quotation as Ready to Send before submitting it to the client."
+            : null;
+  const clientApprovalReview: ClientApprovalReviewData = {
+    approvalNo: clientApprovalNo ?? "CP pending",
+    quotationNo: quotation.quotation_no ?? "Legacy quotation",
+    folderNo: quotationFolderNo ?? "Legacy",
+    clientName: resolvedDocumentSetup.header.clientDisplayName,
+    reference: folderDisplayReference || folderTitle,
+    total: money(quotation.currency, quotation.grand_total),
+    status: quotationStatusLabel(quotation.status),
+    date: formatFolderDate(quotation.quotation_date),
+  };
+  const clientDecisionFolderMessage = currentClientApprovalDraft
+    ? currentClientApprovalDraft.approvalStatus === "Approved by Client"
+      ? currentClientApprovalDraft.confirmedOrder
+        ? `Confirmed Order / Project ${currentClientApprovalDraft.confirmedOrder.orderNo} has been created from this quotation.`
+        : "Client approved this quotation. Create Confirmed Order / Project from the approval page."
+      : currentClientApprovalDraft.approvalStatus === "Rejected by Client"
+        ? "Client rejected this quotation."
+        : currentClientApprovalDraft.approvalStatus === "Revision Requested"
+          ? "Client requested changes. Create a new revision from this quotation."
+          : currentApprovalCancelled
+            ? "Client decision was cancelled."
+            : currentApprovalActive
+              ? `Client Decision ${currentClientApprovalDraft.approvalNo} is waiting for client response.`
+              : `Client Decision record ${currentClientApprovalDraft.approvalNo} already exists for this quotation.`
+    : null;
 
   const activityEntries = Array.from(
     new Map(
@@ -776,12 +1157,12 @@ export default async function QuotationDetailPage({
   if (activityActorIds.length) {
     const { data: activityProfiles, error: activityProfilesError } = await supabase
       .from("profiles")
-      .select("id,name,full_name,email")
+      .select("id,full_name,email")
       .in("id", activityActorIds)
-      .returns<Array<{ id: string; name: string | null; full_name: string | null; email: string | null }>>();
+      .returns<Array<{ id: string; full_name: string | null; email: string | null }>>();
 
     if (activityProfilesError) {
-      console.error("QUOTATION ACTIVITY PROFILES ERROR", activityProfilesError.message);
+      console.warn("QUOTATION ACTIVITY PROFILES ERROR", activityProfilesError.message);
     } else {
       for (const profile of activityProfiles ?? []) {
         activityActorNameById.set(profile.id, profileDisplayName(profile));
@@ -837,23 +1218,21 @@ export default async function QuotationDetailPage({
     .filter((entry) => entry.itemCount > 0);
 
   return (
-    <div className="min-h-screen bg-stone-50 lg:flex">
-      <AppSidebar />
-      <div className="flex-1">
-        <TopBar
-          title="Quotation Detail"
-          description="Review quotation details, totals, terms, and line-item snapshots."
-          userDisplayName={displayName}
-          userEmail={user.email}
-        />
+    <ErpAppShell
+      eyebrow="SALES"
+      title="Quotation Folder"
+      description="Sales file for quotation building, documents, approvals, and future order confirmation."
+      userDisplayName={displayName}
+      userEmail={user.email}
+    >
         <OpportunityQuotationLinkSync />
-        <main className="px-5 py-6 sm:px-8">
+        <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <ContextBackLink
-              fallbackHref={quotation.project_id ? `/clients/projects/${quotation.project_id}` : "/quotations"}
+              fallbackHref="/sales/quotations"
               className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
             >
-              Back
+              Back to Quotations
             </ContextBackLink>
             {message ? (
               <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
@@ -867,56 +1246,343 @@ export default async function QuotationDetailPage({
               <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-zinc-500">
-                    {displayQuotationNo ?? quotation.quotation_no ?? "Draft quotation"}
+                    {quotationFolderNo ?? "Legacy quotation"}
                   </p>
                   <h1 className="mt-1 text-2xl font-semibold text-zinc-950">
-                    {quotation.title}
+                    {folderTitle}
                   </h1>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    {showOptionNumber ? <OptionBadge optionNo={quotation.option_no} /> : null}
+                    {showOptionNumber ? <OptionBadge optionNo={quotation.option_no} quotationNo={quotation.quotation_no} /> : null}
                     <StatusBadge status={quotation.status} />
                     <LocalDraftLink quotationId={quotation.id} showLink={false} />
                   </div>
                 </div>
                 <div className="flex flex-col gap-3 xl:items-end">
                   <div className="flex flex-wrap gap-2">
-                    {quotation.project_id ? (
+                    {currentQuotationArchived ? (
+                      <span className="inline-flex h-11 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-5 text-sm font-semibold text-zinc-400" title="Restore this quote before editing.">
+                        Open Builder
+                      </span>
+                    ) : (
                       <Link
                         href={`/quotations/${quotation.id}/local-builder`}
-                        className="inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                        className="inline-flex h-11 items-center rounded-md bg-emerald-900 px-5 text-sm font-semibold text-white transition hover:bg-emerald-800"
                       >
                         Open Builder
                       </Link>
-                    ) : null}
+                    )}
                     <SecondaryActionLink href={`/quotations/${quotation.id}/pdf`} label="Preview Quotation" />
                     <SecondaryPendingActionLink
                       href={`/quotations/${quotation.id}/download-pdf`}
                       label="Download Quotation PDF"
                       pendingLabel="Preparing PDF..."
                     />
+                    <DocumentSetupDialog
+                      clientId={quotation.client_id}
+                      hasProject={resolvedDocumentSetup.header.hasConfirmedProject}
+                      projectId={safeProjectId}
+                      quotationId={quotation.id}
+                      returnTo={`/quotations/${quotation.id}`}
+                      setup={resolvedDocumentSetup}
+                    />
+                    {canManageRecords && variantsAvailableForNumberedFolder && !currentQuotationArchived ? (
+                      <FolderMutationForm
+                        action={createQuotationRevision}
+                        className="inline-flex h-11 items-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                        confirmMessage={"Create Revision\n\nThis will copy the current quotation into a new revision. The original quotation will remain unchanged."}
+                        label="Create Revision"
+                        pendingLabel="Creating revision..."
+                        quotationId={quotation.id}
+                        returnTo={`/quotations/${quotation.id}`}
+                      />
+                    ) : (
+                      <DisabledWorkflowButton label="Create Revision" />
+                    )}
+                    {canManageRecords && variantsAvailableForNumberedFolder && !currentQuotationArchived ? (
+                      <FolderMutationForm
+                        action={createQuotationOption}
+                        className="inline-flex h-11 items-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                        confirmMessage={"Create Option\n\nThis will copy the current quotation into a new option quotation. Use options for alternate brands, materials, or scope. The original quotation will remain unchanged."}
+                        label="Create Option"
+                        pendingLabel="Creating option..."
+                        quotationId={quotation.id}
+                        returnTo={`/quotations/${quotation.id}`}
+                      />
+                    ) : (
+                      <DisabledWorkflowButton label="Create Option" />
+                    )}
+                    <ClientApprovalPreparationForm
+                      disabledReason={canManageRecords ? clientApprovalDisabledReason : "Only record managers can submit quotations to the client."}
+                      existingApprovalHref={currentClientApprovalDraft && currentApprovalActive ? `/sales/approvals/${currentClientApprovalDraft.approvalNo}` : null}
+                      quotationId={quotation.id}
+                      returnTo={`/quotations/${quotation.id}`}
+                      review={clientApprovalReview}
+                    />
                   </div>
                   <p className="text-xs text-zinc-500">
-                    {quotation.project_id
-                      ? "Builder now opens the local workflow by default."
-                      : "Confirmed project/order will be created after client approval."}
+                    {clientDecisionFolderMessage ?? clientApprovalDisabledReason ?? "Review the selected quotation before submitting it to the client for decision."}
                   </p>
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                <InfoValue label="Date" value={quotation.quotation_date} />
-                <InfoValue label="Client" value={client?.company_name ?? "Unknown client"} />
-                <InfoValue label="Project / reference" value={project?.project_name ?? quotation.legacy_reference ?? "Opportunity reference"} />
-                <InfoValue label="Project year" value={project?.project_year ?? "No year"} />
-                <InfoValue label="Layout" value={layoutModes.find(([value]) => value === quotation.layout_mode)?.[1] ?? quotation.layout_mode} />
-                <InfoValue label="Attention to" value={project?.attention_to} />
-                <InfoValue label="Location" value={project?.location} />
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                <InfoValue label="Quotation no" value={displayQuotationNo ?? quotation.quotation_no ?? "Draft quotation"} />
+                <InfoValue label="Quotation folder" value={folderDisplayNo} />
+                <InfoValue label="Client" value={resolvedDocumentSetup.header.clientDisplayName} />
+                <InfoValue label="Opportunity no" value={derivedOpportunityNo ?? "Legacy opportunity"} />
+                <InfoValue label="Reference" value={folderDisplayReference} />
+                <InfoValue label="Date" value={formatFolderDate(quotation.quotation_date)} />
               </div>
-              {projectContactLine(project) ? (
-                <p className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
-                  {projectContactLine(project)}
-                </p>
+
+              <section className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50/60 p-4">
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+                      Current quotation status
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <StatusBadge status={quotation.status} />
+                      <span className="text-sm font-semibold text-zinc-900">
+                        {quotation.quotation_no ?? "Legacy quotation"}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm text-emerald-950">
+                      This control updates the opened quotation only. Select another folder card before changing that quotation&apos;s status.
+                    </p>
+                    {quotation.status_note ? (
+                      <p className="mt-2 text-sm text-zinc-600">
+                        Note: {quotation.status_note}
+                      </p>
+                    ) : null}
+                  </div>
+                  {canManageRecords ? (
+                    <div className="rounded-md border border-emerald-200 bg-white p-3">
+                      <StatusUpdateForm quotation={quotation} returnTo={`/quotations/${quotation.id}`} compact />
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+              <section className="mt-6 rounded-lg border border-zinc-200 bg-zinc-50/60 p-4">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-zinc-950">Quotations in this folder</h2>
+                    <p className="mt-1 text-sm text-zinc-500">Original quotation, revisions, and options stay grouped under one folder.</p>
+                  </div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    {activeFolderQuotationCount} active · {archivedFolderQuotationCount} archived
+                  </p>
+                </div>
+                {!activeFolderQuotations.length ? (
+                  <p className="mt-4 rounded-md border border-dashed border-zinc-200 bg-white p-4 text-sm text-zinc-500">
+                    No active quotations in this folder.
+                  </p>
+                ) : null}
+                <div className="mt-4 grid gap-3">
+                  {activeFolderQuotations.map((folderQuotation) => {
+                    const isCurrentFolderQuotation = folderQuotation.id === quotation.id;
+                    const tokens = quotationBranchTokens(folderQuotation.quotation_no);
+                    const folderTypeLabel = tokens.length
+                      ? tokens.map((token) => token.type === "OPT" ? `Option ${token.sequence}` : `Revision ${token.sequence}`).join(" / ")
+                      : (folderQuotation.option_no ?? 1) > 1
+                        ? `Option ${Math.max((folderQuotation.option_no ?? 1) - 1, 1)}`
+                        : "Original";
+                    const cardReturnTo = `/quotations/${folderQuotation.id}`;
+                    const archiveDisabledReason = activeFolderQuotationCount <= 1
+                      ? "Keep at least one active quotation in this folder."
+                      : null;
+
+                    return (
+                      <article
+                        key={folderQuotation.id}
+                        className={`rounded-lg border px-4 py-4 shadow-sm ${
+                          isCurrentFolderQuotation
+                            ? "border-emerald-300 bg-emerald-50/50"
+                            : "border-zinc-200 bg-white"
+                        }`}
+                      >
+                        <Link
+                          href={`/quotations/${folderQuotation.id}`}
+                          className={`block rounded-md px-1 py-1 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-800/20 ${
+                            isCurrentFolderQuotation ? "hover:bg-emerald-100/50" : "hover:bg-zinc-50"
+                          }`}
+                          aria-label={`Open ${folderQuotation.quotation_no ?? "legacy quotation"}`}
+                        >
+                          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="inline-flex rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-700">
+                                    {folderTypeLabel}
+                                  </span>
+                                  <StatusBadge status={folderQuotation.status} />
+                                  {isCurrentFolderQuotation ? (
+                                    <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-900">
+                                      Current
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <h3 className="mt-2 text-base font-semibold text-zinc-950">
+                                  {folderQuotation.quotation_no ?? "Legacy quotation"}
+                                </h3>
+                                <p className="mt-1 text-sm text-zinc-500">{formatFolderDate(folderQuotation.quotation_date)}</p>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <p className="text-xs font-semibold uppercase text-zinc-500">Total</p>
+                              <p className="mt-1 text-lg font-semibold text-zinc-950">
+                                {money(folderQuotation.currency, folderQuotation.grand_total)}
+                              </p>
+                            </div>
+                          </div>
+                        </Link>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <Link href={`/quotations/${folderQuotation.id}`} className="inline-flex h-9 items-center rounded-md bg-emerald-900 px-3 text-sm font-semibold text-white transition hover:bg-emerald-800">
+                            Open Folder
+                          </Link>
+                          <Link href={`/quotations/${folderQuotation.id}/local-builder`} className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
+                            Open Builder
+                          </Link>
+                          <SecondaryActionLink href={`/quotations/${folderQuotation.id}/pdf`} label="Preview Quotation" />
+                          <SecondaryPendingActionLink href={`/quotations/${folderQuotation.id}/download-pdf`} label="Download PDF" pendingLabel="Preparing PDF..." />
+                          {canManageRecords && variantsAvailableForNumberedFolder ? (
+                            <FolderMutationForm
+                              action={createQuotationRevision}
+                              className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                              confirmMessage={"Create Revision\n\nThis will copy this selected folder card into a new revision. The selected parent quotation will remain unchanged."}
+                              label="Create Revision"
+                              pendingLabel="Creating revision..."
+                              quotationId={folderQuotation.id}
+                              returnTo={cardReturnTo}
+                            />
+                          ) : (
+                            <span className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400">
+                              Create Revision
+                            </span>
+                          )}
+                          {canManageRecords && variantsAvailableForNumberedFolder ? (
+                            <FolderMutationForm
+                              action={createQuotationOption}
+                              className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                              confirmMessage={"Create Option\n\nThis will copy this selected folder card into a new option quotation. Use options for alternate brands, materials, or scope. The selected parent quotation will remain unchanged."}
+                              label="Create Option"
+                              pendingLabel="Creating option..."
+                              quotationId={folderQuotation.id}
+                              returnTo={cardReturnTo}
+                            />
+                          ) : (
+                            <span className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400">
+                              Create Option
+                            </span>
+                          )}
+                          {canManageRecords && !archiveDisabledReason ? (
+                            <ArchiveFolderQuotationForm quotationId={folderQuotation.id} returnTo={cardReturnTo} />
+                          ) : (
+                            <span
+                              className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400"
+                              title={archiveDisabledReason ?? "Only record managers can archive quotations."}
+                            >
+                              Archive Quote
+                            </span>
+                          )}
+                        </div>
+                        {archiveDisabledReason ? (
+                          <p className="mt-2 text-xs text-zinc-500">{archiveDisabledReason}</p>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+              {archivedFolderQuotationCount ? (
+                <section className="mt-4 rounded-lg border border-zinc-200 bg-white p-4">
+                  <details>
+                    <summary className="cursor-pointer list-none">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                          <h2 className="text-lg font-semibold text-zinc-950">Archived quotations</h2>
+                          <p className="mt-1 text-sm text-zinc-500">
+                            Archived revisions and options are hidden from the active working list.
+                          </p>
+                        </div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                          {archivedFolderQuotationCount} archived
+                        </p>
+                      </div>
+                    </summary>
+                    <div className="mt-4 grid gap-3">
+                      {archivedFolderQuotations.map((folderQuotation) => {
+                        const isCurrentFolderQuotation = folderQuotation.id === quotation.id;
+                        const tokens = quotationBranchTokens(folderQuotation.quotation_no);
+                        const folderTypeLabel = tokens.length
+                          ? tokens.map((token) => token.type === "OPT" ? `Option ${token.sequence}` : `Revision ${token.sequence}`).join(" / ")
+                          : (folderQuotation.option_no ?? 1) > 1
+                            ? `Option ${Math.max((folderQuotation.option_no ?? 1) - 1, 1)}`
+                            : "Original";
+                        const cardReturnTo = `/quotations/${folderQuotation.id}`;
+                        const deleteReturnTo = currentQuotationArchived ? cardReturnTo : `/quotations/${quotation.id}`;
+                        return (
+                          <article
+                            key={folderQuotation.id}
+                            className={`rounded-lg border border-zinc-200 bg-zinc-50/80 px-4 py-4 shadow-sm ${
+                              isCurrentFolderQuotation ? "ring-2 ring-emerald-200" : ""
+                            }`}
+                          >
+                            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="inline-flex rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-700">
+                                    {folderTypeLabel}
+                                  </span>
+                                  <span className="inline-flex rounded-full border border-zinc-200 bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-600">
+                                    Archived
+                                  </span>
+                                  <StatusBadge status={folderQuotation.status} />
+                                  {isCurrentFolderQuotation ? (
+                                    <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-900">
+                                      Current
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <h3 className="mt-2 text-base font-semibold text-zinc-700">
+                                  {folderQuotation.quotation_no ?? "Legacy quotation"}
+                                </h3>
+                                <p className="mt-1 text-sm text-zinc-500">
+                                  Archived {formatFolderDate(folderQuotation.status_updated_at ?? folderQuotation.quotation_date)}
+                                </p>
+                              </div>
+                              <div className="shrink-0 text-right">
+                                <p className="text-xs font-semibold uppercase text-zinc-500">Total</p>
+                                <p className="mt-1 text-lg font-semibold text-zinc-800">
+                                  {money(folderQuotation.currency, folderQuotation.grand_total)}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="mt-4 flex flex-wrap gap-2">
+                              <Link href={`/quotations/${folderQuotation.id}`} className="inline-flex h-9 items-center rounded-md bg-zinc-800 px-3 text-sm font-semibold text-white transition hover:bg-zinc-700">
+                                Open Folder
+                              </Link>
+                              <SecondaryActionLink href={`/quotations/${folderQuotation.id}/pdf`} label="Preview" />
+                              <SecondaryPendingActionLink href={`/quotations/${folderQuotation.id}/download-pdf`} label="Download PDF" pendingLabel="Preparing PDF..." />
+                              <span className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400" title="Restore this quote before editing.">
+                                Open Builder
+                              </span>
+                              {canManageRecords ? (
+                                <RestoreFolderQuotationForm quotationId={folderQuotation.id} returnTo={cardReturnTo} />
+                              ) : null}
+                            </div>
+                            {canManageRecords ? (
+                              <div className="mt-3">
+                                <PermanentlyDeleteQuotationForm quotationId={folderQuotation.id} returnTo={deleteReturnTo} />
+                              </div>
+                            ) : null}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </details>
+                </section>
               ) : null}
+              <p className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
+                {folderNextStep} Confirmed Order / Project will be created only after the client approves this quotation.
+              </p>
 
               <section className="mt-6 rounded-lg border border-zinc-200 bg-zinc-50/60 p-4">
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -929,7 +1595,7 @@ export default async function QuotationDetailPage({
                 </div>
                 <div className="mt-4 grid gap-3">
                   <DocumentActionRow
-                    title="Quotation"
+                    title={`Quotation${quotation.quotation_no ? ` - ${quotation.quotation_no}` : ""}`}
                     description="Client-facing commercial quotation."
                     previewHref={`/quotations/${quotation.id}/pdf`}
                     previewLabel="Preview"
@@ -938,7 +1604,7 @@ export default async function QuotationDetailPage({
                     pendingLabel="Preparing PDF..."
                   />
                   <DocumentActionRow
-                    title="Specification Sheet"
+                    title={`Specification Sheet${specificationNo ? ` - ${specificationNo}` : ""}`}
                     description="Technical product specification."
                     previewHref={`/quotations/${id}/specification`}
                     previewLabel="Preview"
@@ -947,7 +1613,7 @@ export default async function QuotationDetailPage({
                     pendingLabel="Preparing Specification..."
                   />
                   <DocumentActionRow
-                    title="Presentation"
+                    title={`Presentation${presentationNo ? ` - ${presentationNo}` : ""}`}
                     description="Visual client presentation."
                     previewHref={`/quotations/${quotation.id}/presentation`}
                     previewLabel="Preview"
@@ -955,32 +1621,25 @@ export default async function QuotationDetailPage({
                     downloadLabel="Download PDF"
                     pendingLabel="Preparing Presentation..."
                   />
-                  <DocumentActionRow
-                    title="Procurement RFQ"
-                    description="Supplier request for quotation."
-                    previewHref={`/quotations/${quotation.id}/procurement-rfq`}
-                    previewLabel="Preview / Edit"
-                    downloadHref={`/quotations/${quotation.id}/download-procurement-rfq`}
-                    downloadLabel="Download PDF"
-                    pendingLabel="Preparing RFQ..."
+                  <FutureDocumentRow
+                    title={`Client Approval / Decision${clientApprovalNo ? ` - ${clientApprovalNo}` : ""}`}
+                    description="Available after quotation is submitted to the client for decision."
                   />
-                  <DocumentActionRow
-                    title="Purchase Order"
-                    description="Supplier purchase order."
-                    previewHref={`/quotations/${quotation.id}/purchase-order`}
-                    previewLabel="Preview / Edit"
-                    downloadHref={`/quotations/${quotation.id}/download-purchase-order`}
-                    downloadLabel="Download PDF"
-                    pendingLabel="Preparing PO..."
+                  <FutureDocumentRow
+                    title={`Confirmed Order${confirmedOrderNo ? ` - ${confirmedOrderNo}` : ""}`}
+                    description="Available after the client approves the submitted quotation."
                   />
-                  <DocumentActionRow
-                    title="Order Confirmation"
-                    description="Client order confirmation document."
-                    previewHref={`/quotations/${quotation.id}/order-confirmation`}
-                    previewLabel="Preview"
-                    downloadHref={`/quotations/${quotation.id}/download-order-confirmation`}
-                    downloadLabel="Download PDF"
-                    pendingLabel="Preparing Confirmation..."
+                  <FutureDocumentRow
+                    title={`Supplier RFQ${supplierRfqNo ? ` - ${supplierRfqNo}` : ""}`}
+                    description="Available after confirmed order/project creation."
+                  />
+                  <FutureDocumentRow
+                    title={`Purchase Order${purchaseOrderNo ? ` - ${purchaseOrderNo}` : ""}`}
+                    description="Available after confirmed order/project and procurement flow."
+                  />
+                  <FutureDocumentRow
+                    title={`Order Confirmation${orderConfirmationNo ? ` - ${orderConfirmationNo}` : ""}`}
+                    description="Available after client approval and confirmed order creation."
                   />
                 </div>
               </section>
@@ -988,7 +1647,7 @@ export default async function QuotationDetailPage({
               {canManageRecords ? (
                 <details className="mt-5" data-state-key={`quotation-details-${quotation.id}`}>
                   <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                    Edit quote details
+                    Edit Details
                   </summary>
                   <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
                     <QuotationTermsForm quotation={quotation} mode="details" />
@@ -1039,9 +1698,12 @@ export default async function QuotationDetailPage({
           </section>
 
           <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+            <details data-state-key={`quotation-status-${quotation.id}`}>
+              <summary className="cursor-pointer text-lg font-semibold text-zinc-950">
+                Quotation Status
+              </summary>
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-zinc-950">Quotation Status</h2>
                 <div className="mt-3 flex items-center gap-3">
                   <StatusBadge status={quotation.status} />
                   <span className="text-sm text-zinc-600">
@@ -1064,11 +1726,8 @@ export default async function QuotationDetailPage({
                           created_by: quotation.status_updated_by,
                           created_at: quotation.status_updated_at,
                         }))
-                      : "Unknown user"} on{" "}
-                    {new Intl.DateTimeFormat("en-US", {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    }).format(new Date(quotation.status_updated_at))}
+                      : "User"} on{" "}
+                    {formatFolderDateTime(quotation.status_updated_at)}
                   </p>
                 ) : null}
                 {quotation.status_note ? (
@@ -1088,19 +1747,39 @@ export default async function QuotationDetailPage({
                 </div>
               </details>
             ) : null}
+            </details>
           </section>
 
           <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <details data-state-key={`quotation-terms-${quotation.id}`}>
+              <summary className="cursor-pointer text-lg font-semibold text-zinc-950">
+                Details & Terms
+              </summary>
+            <div className="mt-4 grid gap-5 xl:grid-cols-2">
               <div>
-                <h2 className="text-lg font-semibold text-zinc-950">Commercial Terms</h2>
-                <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  <InfoValue label="Payment Terms" value={quotation.payment_terms} />
-                  <InfoValue label="Validity" value={quotation.validity} />
-                  <InfoValue label="Delivery Terms" value={quotation.delivery_terms} />
-                  <InfoValue label="Warranty" value={quotation.warranty_terms} />
-                  <InfoValue label="Currency" value={quotation.currency} />
-                  <InfoValue label="VAT %" value={`${quotation.vat_percent}%`} />
+                <h3 className="text-sm font-semibold uppercase text-zinc-500">Client Details</h3>
+                <div className="mt-3 grid gap-4 md:grid-cols-2">
+                  <InfoValue label="Client" value={resolvedDocumentSetup.header.clientDisplayName} />
+                  <InfoValue label="Contact" value={resolvedDocumentSetup.header.contactName} />
+                  <InfoValue label="Phone" value={resolvedDocumentSetup.header.contactPhone} />
+                  <InfoValue label="Telephone" value={resolvedDocumentSetup.header.telephone} />
+                  <InfoValue label="Email" value={resolvedDocumentSetup.header.contactEmail} />
+                  <InfoValue label="PO Box" value={resolvedDocumentSetup.header.poBox} />
+                  <InfoValue label="Location" value={resolvedDocumentSetup.header.location} />
+                  <InfoValue label="Reference" value={folderDisplayReference} />
+                  <InfoValue label="Opportunity no" value={derivedOpportunityNo ?? "Legacy opportunity"} />
+                  <InfoValue label="Submission date" value={formatFolderDate(quotation.quotation_date)} />
+                </div>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold uppercase text-zinc-500">Commercial Terms</h3>
+                <div className="mt-3 grid gap-4 md:grid-cols-2">
+                  <InfoValue label="Payment Terms" value={resolvedDocumentSetup.commercial.paymentTerms} />
+                  <InfoValue label="Validity" value={resolvedDocumentSetup.commercial.validity} />
+                  <InfoValue label="Delivery Terms" value={resolvedDocumentSetup.commercial.deliveryTerms} />
+                  <InfoValue label="Warranty" value={resolvedDocumentSetup.commercial.warrantyTerms} />
+                  <InfoValue label="Currency" value={resolvedDocumentSetup.commercial.currency} />
+                  <InfoValue label="VAT %" value={`${resolvedDocumentSetup.commercial.vatPercent}%`} />
                   <InfoValue
                     label="Extra Discount"
                     value={
@@ -1118,20 +1797,24 @@ export default async function QuotationDetailPage({
             {canManageRecords ? (
               <details className="mt-5" data-state-key={`quotation-terms-${quotation.id}`}>
                 <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                  Edit commercial terms
+                  Edit Folder / Quote Terms
                 </summary>
                 <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
                   <QuotationTermsForm quotation={quotation} mode="terms" />
                 </div>
               </details>
             ) : null}
+            </details>
           </section>
 
           {canManageRecords ? (
             <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+              <details data-state-key={`quotation-activity-${quotation.id}`}>
+                <summary className="cursor-pointer text-lg font-semibold text-zinc-950">
+                  Quotation Activity
+                </summary>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-zinc-950">Quotation Activity</h2>
                   <p className="mt-1 text-sm text-zinc-500">
                     Latest internal quotation history.
                   </p>
@@ -1194,13 +1877,17 @@ export default async function QuotationDetailPage({
               ) : (
                 <p className="mt-4 text-sm text-zinc-500">No activity recorded yet.</p>
               )}
+              </details>
             </section>
           ) : null}
 
           <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+            <details data-state-key={`quotation-items-${quotation.id}`}>
+              <summary className="cursor-pointer text-lg font-semibold text-zinc-950">
+                Items Summary
+              </summary>
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-zinc-950">Items Summary</h2>
                 <p className="mt-1 text-sm text-zinc-500">
                   Compact overview of saved quotation items. Use the builder for detailed editing.
                 </p>
@@ -1208,12 +1895,7 @@ export default async function QuotationDetailPage({
                   <LocalDraftLink quotationId={quotation.id} showLink={false} />
                 </div>
               </div>
-              <Link
-                href={`/quotations/${quotation.id}/local-builder`}
-                className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-              >
-                Open Builder
-              </Link>
+              <p className="text-sm text-zinc-500">Use the builder for row-level edits, snapshots, and pricing changes.</p>
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -1299,9 +1981,66 @@ export default async function QuotationDetailPage({
                 </div>
               </details>
             ) : null}
+            </details>
           </section>
-        </main>
-      </div>
-    </div>
+        </div>
+    </ErpAppShell>
   );
+}
+
+function quotationBranchTokens(quotationNo: string | null | undefined) {
+  return Array.from(quotationNo?.trim().matchAll(/-(R|OPT)(\d+)/gi) ?? [])
+    .map((match) => ({ type: match[1].toUpperCase() as "R" | "OPT", sequence: Number(match[2]) }))
+    .filter((token) => Number.isFinite(token.sequence));
+}
+
+function isArchivedFolderQuotation(quotation: Pick<FolderQuotation, "is_active" | "status">) {
+  return quotation.is_active === false || quotation.status === "archived";
+}
+
+function quotationBranchSortKey(quotationNo: string | null | undefined) {
+  const root = quotationNo?.trim().match(/^(QN-\d{4}-\d{3})/i)?.[1] ?? quotationNo ?? "";
+  const suffix = quotationBranchTokens(quotationNo)
+    .map((token) => `${token.type === "OPT" ? "1" : "2"}-${String(token.sequence).padStart(4, "0")}`)
+    .join("/");
+
+  return `${root}/${suffix}`;
+}
+
+function nextStepLabel(status: string) {
+  switch (status) {
+    case "draft":
+      return "Next step: Open Builder and complete the quotation.";
+    case "sent":
+      return "Next step: Review, preview, and prepare for approval.";
+    case "revised":
+      return "Next step: Review the latest revision with the client.";
+    case "approved":
+      return "Next step: Convert after approval when that phase is enabled.";
+    case "won":
+      return "Next step: Confirm order and hand over to delivery.";
+    default:
+      return "Next step: Keep the folder updated and ready.";
+  }
+}
+
+function quotationWorkflowSequences(quotationNo: string | null | undefined) {
+  const match = quotationNo?.trim().match(/^QN-(\d{4})-(\d{3})(?:-(?:R\d+|OPT\d+))*$/i);
+  if (!match) return null;
+
+  return {
+    clientSequence: Number(match[1]),
+    opportunitySequence: Number(match[2]),
+  };
+}
+
+function formatFolderDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(value));
+}
+
+function formatFolderDateTime(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }

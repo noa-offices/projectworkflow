@@ -1,4 +1,8 @@
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
+import {
+  documentSetupRecord,
+  mergeDocumentSetupIntoLayoutSettings,
+} from "@/lib/quotations/document-setup";
 export type LocalQuotationSection = {
   id: string;
   quotation_id: string;
@@ -84,7 +88,7 @@ export type LocalQuotationWorkspaceIndex = {
   server_quotation_id: string;
   quotation_no: string | null;
   title: string;
-  project_id: string;
+  project_id: string | null;
   client_id: string;
   status: string;
   currency: string;
@@ -118,7 +122,7 @@ export type ServerQuotationWorkspaceSource = {
     client_id: string;
     legacy_reference?: string | null;
     option_no?: number | null;
-    project_id: string;
+    project_id: string | null;
     quotation_no: string | null;
     revision_no?: number | null;
     title: string;
@@ -150,6 +154,21 @@ function exactMoneyValue(value: unknown) {
   const safeValue = Number.isFinite(number) ? number : 0;
 
   return Math.round(safeValue * 100) / 100;
+}
+
+export function normalizeNullableUuid(value: unknown) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "null" || trimmed === "undefined") {
+    return null;
+  }
+
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)
+    ? trimmed
+    : null;
 }
 
 function normalizedLineQty(value: unknown) {
@@ -310,10 +329,11 @@ export function recalculateWorkspace(workspace: LocalQuotationWorkspace): LocalQ
 
 export function createWorkspaceFromServerSnapshot(source: ServerQuotationWorkspaceSource): LocalQuotationWorkspace {
   const local_id = `quotation-${source.quotation.id}`;
+  const projectId = normalizeNullableUuid(source.quotation.project_id);
   const workspace: LocalQuotationWorkspace = {
     local_id,
     server_quotation_id: source.quotation.id,
-    project_id: source.quotation.project_id,
+    project_id: projectId,
     client_id: source.quotation.client_id,
     quotation_no: source.quotation.quotation_no,
     title: source.quotation.title,
@@ -372,7 +392,7 @@ function serverWorkspaceSourceFromLocalWorkspace(workspace: LocalQuotationWorksp
       client_id: workspace.client_id,
       legacy_reference: typeof quotationRecord.legacy_reference === "string" ? quotationRecord.legacy_reference : null,
       option_no: typeof quotationRecord.option_no === "number" ? quotationRecord.option_no : null,
-      project_id: workspace.project_id,
+      project_id: normalizeNullableUuid(workspace.project_id),
       quotation_no: workspace.quotation_no,
       revision_no: typeof quotationRecord.revision_no === "number" ? quotationRecord.revision_no : null,
       title: workspace.title,
@@ -390,6 +410,20 @@ function serverWorkspaceSourceFromLocalWorkspace(workspace: LocalQuotationWorksp
     sections: workspace.sections,
     items: workspace.items,
   };
+}
+
+function definedServerSnapshotFields(snapshot: Record<string, unknown>, fields: string[]) {
+  return Object.fromEntries(fields.flatMap((field) => snapshot[field] !== undefined ? [[field, snapshot[field]]] : []));
+}
+
+function mergeServerDocumentSetup(localLayoutSettings: unknown, serverLayoutSettings: unknown) {
+  const serverDocumentSetup = documentSetupRecord(serverLayoutSettings);
+
+  if (!Object.keys(serverDocumentSetup).length) {
+    return localLayoutSettings;
+  }
+
+  return mergeDocumentSetupIntoLayoutSettings(localLayoutSettings, serverDocumentSetup);
 }
 
 export function syncWorkspaceWithServerSnapshot(
@@ -410,16 +444,35 @@ export function syncWorkspaceWithServerSnapshot(
     project_id: serverWorkspace.project_id,
     client_id: serverWorkspace.client_id,
     quotation_no: serverWorkspace.quotation_no,
+    title: serverWorkspace.title,
+    status: serverWorkspace.status,
+    quotation_date: serverWorkspace.quotation_date,
+    currency: serverWorkspace.currency,
+    vat_percent: serverWorkspace.vat_percent,
+    layout_mode: serverWorkspace.layout_mode,
+    layout_settings: mergeServerDocumentSetup(workspace.layout_settings, serverWorkspace.layout_settings),
+    overall_discount_type: serverWorkspace.overall_discount_type,
+    overall_discount_value: serverWorkspace.overall_discount_value,
     header_snapshot: serverWorkspace.header_snapshot,
     project_snapshot: {
       ...currentProjectSnapshot,
-      ...(serverProjectSnapshot.project_number !== undefined ? { project_number: serverProjectSnapshot.project_number } : {}),
-      ...(serverProjectSnapshot.project_code !== undefined ? { project_code: serverProjectSnapshot.project_code } : {}),
-      ...(serverProjectSnapshot.project_year !== undefined ? { project_year: serverProjectSnapshot.project_year } : {}),
+      ...definedServerSnapshotFields(serverProjectSnapshot, [
+        "attention_email",
+        "attention_landline",
+        "attention_mobile",
+        "attention_to",
+        "location",
+        "po_box",
+        "project_address",
+        "project_code",
+        "project_name",
+        "project_number",
+        "project_year",
+      ]),
     },
     client_snapshot: {
       ...currentClientSnapshot,
-      ...(normalizedSource.client && "company_name" in normalizedSource.client ? { company_name: normalizedSource.client.company_name } : {}),
+      ...(normalizedSource.client ? definedServerSnapshotFields(normalizedSource.client, ["client_number", "company_name"]) : {}),
     },
   });
 }

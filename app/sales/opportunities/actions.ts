@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
+import { nextClientNumber } from "@/lib/clients/client-numbering";
 import { clientPayload, normalizeClientName } from "@/lib/clients/client-payload";
 import { requireRecordsManager } from "@/lib/auth";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
@@ -9,6 +10,7 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 type ConfirmedClient = {
   id: string;
   company_name: string;
+  client_number: string | null;
   contact_person: string | null;
   phone: string | null;
   email: string | null;
@@ -86,10 +88,24 @@ export async function createConfirmedClient(
     };
   }
 
+  let clientNumber: string | null = null;
+  try {
+    clientNumber = await nextClientNumber(supabase);
+  } catch (numberError) {
+    logServerActionError("CONFIRM CLIENT NUMBER ASSIGN ERROR", numberError, {
+      action: "createConfirmedClient",
+      clientName: payload.company_name,
+      table: "clients",
+    });
+  }
+
   const { data: createdClient, error: createError } = await supabase
     .from("clients")
-    .insert(payload)
-    .select("id,company_name,contact_person,phone,email")
+    .insert({
+      ...payload,
+      ...(clientNumber ? { client_number: clientNumber } : {}),
+    })
+    .select("id,company_name,client_number,contact_person,phone,email")
     .single<ConfirmedClient>();
 
   if (createError) {

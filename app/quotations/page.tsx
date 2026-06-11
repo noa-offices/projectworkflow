@@ -174,7 +174,7 @@ function QuotationForm({
       <label className="block">
         <span className="text-xs font-semibold uppercase text-zinc-500">Project / Quote No.</span>
         <input
-          value={fromOpportunity ? "Confirmed project/order will be created after client approval" : "Generated automatically from the selected project"}
+          value={fromOpportunity ? "Confirmed Order / Project will be created only after the client approves this quotation" : "Generated automatically from the selected project"}
           readOnly
           className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-500 outline-none"
         />
@@ -205,7 +205,7 @@ function QuotationForm({
       <input type="hidden" name="is_active" value="on" />
       {fromOpportunity ? (
         <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 md:col-span-2 xl:col-span-3">
-          This quotation will use the opportunity reference. Confirmed project/order will be created after client approval.
+          This quotation will use the opportunity reference. Confirmed Order / Project will be created only after the client approves this quotation.
         </p>
       ) : null}
       <div className="flex justify-end md:col-span-2 xl:col-span-3">
@@ -263,20 +263,26 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
   const projectList = projects ?? [];
   const quotationList = quotations ?? [];
   const projectYears = Array.from(
-    new Set(projectList.map((project) => project.project_year).filter((year): year is number => year !== null)),
+    new Set([
+      ...projectList.map((project) => project.project_year).filter((year): year is number => year !== null),
+      ...quotationList
+        .filter((quotation) => !quotation.project_id)
+        .map((quotation) => new Date(quotation.quotation_date).getFullYear())
+        .filter((year) => Number.isFinite(year)),
+    ]),
   ).sort((a, b) => b - a);
 
   return (
     <ErpAppShell
       title="Quotations"
-      description="All quotations across projects. Project folders are the main workflow."
+      description="Quotation folders across opportunities, clients, revisions, and options."
       userDisplayName={displayName}
       userEmail={user.email}
     >
       <div className="px-5 py-6 sm:px-8">
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-zinc-500">
-            Use this as a global search page. Project-specific quotation work now lives inside each project folder.
+            Open a folder to review numbers, documents, revisions, options, and builder actions.
           </p>
           {message ? (
             <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
@@ -305,7 +311,7 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
               </summary>
               <p className="mt-1 text-sm text-zinc-500">
                 {fromOpportunity
-                  ? "Start from the confirmed client and opportunity reference. Confirmed project/order creation happens after client approval."
+                  ? "Start from the confirmed client and opportunity reference. Confirmed Order / Project creation happens only after the client approves the submitted quotation."
                   : "Start with a client and project, then add sections and custom lines."}
               </p>
               <div className="mt-5">

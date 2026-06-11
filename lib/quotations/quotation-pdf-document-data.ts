@@ -7,6 +7,7 @@ import {
   isRemoteOrAppLogo,
 } from "@/lib/company-profile";
 import { DEFAULT_QUOTATION_NOTES } from "@/lib/quotations/quotation-pdf-settings";
+import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
   columnWidthPercentages,
@@ -94,18 +95,21 @@ export async function loadQuotationPdfDocumentData(id: string): Promise<Quotatio
     notFound();
   }
 
-  const [{ data: client }, { data: project }, { data: sections }, { data: items }, companySettingsRecord] =
+  const projectId = validUuidOrNull(quotation.project_id);
+  const [{ data: client }, projectResult, { data: sections }, { data: items }, companySettingsRecord] =
     await Promise.all([
       supabase
         .from("clients")
-        .select("id,company_name")
+        .select("id,client_number,company_name")
         .eq("id", quotation.client_id)
         .maybeSingle<Client>(),
-      supabase
-        .from("projects")
-        .select("id,project_name,project_number,project_year,project_code,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
-        .eq("id", quotation.project_id)
-        .maybeSingle<Project>(),
+      projectId
+        ? supabase
+            .from("projects")
+            .select("id,project_name,project_number,project_year,project_code,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
+            .eq("id", projectId)
+            .maybeSingle<Project>()
+        : Promise.resolve({ data: null }),
       supabase
         .from("quotation_sections")
         .select("id,section_title,section_notes,parent_section_id,section_kind,sort_order,is_active")
@@ -124,8 +128,14 @@ export async function loadQuotationPdfDocumentData(id: string): Promise<Quotatio
         .returns<QuotationItem[]>(),
       getCompanySettingsRecord(),
     ]);
+  const project = projectResult.data;
   const companyProfile = companyProfileFromRecord(companySettingsRecord);
   const defaultQuotationNotes = companySettingsRecord?.default_quotation_notes?.trim() || DEFAULT_QUOTATION_NOTES;
+  const documentSetup = resolveDocumentSetup({
+    client: client ?? null,
+    project: project ?? null,
+    quotation,
+  });
 
   const activeItems = (items ?? []).filter((item) => item.is_active);
   const specifiedImageEntries = await Promise.all(
@@ -250,5 +260,14 @@ export async function loadQuotationPdfDocumentData(id: string): Promise<Quotatio
     specifiedImageUrlByItemId: new Map(specifiedImageEntries),
     visibleColumnKeys: new Set(pdfColumns.map((column) => column.key)),
     defaultQuotationNotes,
+    documentSetup,
   };
+}
+
+function validUuidOrNull(value: string | null | undefined) {
+  const trimmed = value?.trim();
+
+  return trimmed && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)
+    ? trimmed
+    : null;
 }

@@ -41,6 +41,7 @@ import {
   formatProjectReferenceDisplay,
   formatQuotationDocumentNumberDisplay,
 } from "@/lib/project-reference";
+import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
 import {
   formatBrandOriginSupplier,
   specificationWithoutDuplicateCode,
@@ -1606,6 +1607,7 @@ function MainSectionTotalRow({ currency, label, total, totalColumns }: { currenc
 export function LocalQuotationBuilder({
   canManageProductLibrary,
   clientName,
+  documentSetupAction,
   initialWorkspace,
   materialGroups,
   materials,
@@ -1620,6 +1622,7 @@ export function LocalQuotationBuilder({
 }: {
   canManageProductLibrary: boolean;
   clientName: string;
+  documentSetupAction?: ReactNode;
   initialWorkspace: LocalQuotationWorkspace;
   materialGroups: FinishMaterialGroup[];
   materials: FinishMaterial[];
@@ -1669,8 +1672,14 @@ export function LocalQuotationBuilder({
   const clientSnapshot = (workspace.client_snapshot ?? {}) as Record<string, unknown>;
   const projectSnapshot = (workspace.project_snapshot ?? {}) as Record<string, unknown>;
   const quotationSnapshot = ((workspace.header_snapshot ?? {}) as { quotation?: Record<string, unknown> }).quotation ?? {};
-  const currentClientName = clientName || stringValue(clientSnapshot, "company_name") || "Unknown client";
-  const currentProjectName = stringValue(projectSnapshot, "project_name") || projectName || "Unknown project";
+  const currentClientName = clientName || stringValue(clientSnapshot, "company_name") || "-";
+  const currentProjectName = stringValue(projectSnapshot, "project_name") || projectName || "-";
+  const currentProjectReference = formatProjectReferenceDisplay({
+    project_number: stringValue(projectSnapshot, "project_number"),
+    project_code: stringValue(projectSnapshot, "project_code"),
+    project_year: stringValue(projectSnapshot, "project_year"),
+  });
+  const currentProjectDisplay = [currentProjectName === "-" ? "" : currentProjectName, currentProjectReference].filter(Boolean).join(" - ") || "-";
   const currentDocumentNumber = formatQuotationDocumentNumberDisplay({
     quotation_no: workspace.quotation_no,
     legacy_reference: stringValue(quotationSnapshot, "legacy_reference"),
@@ -1680,6 +1689,7 @@ export function LocalQuotationBuilder({
     project_code: stringValue(projectSnapshot, "project_code"),
     project_year: stringValue(projectSnapshot, "project_year"),
   });
+  const currentQuotationFolderNumber = quotationFolderNumberFromQuotationNumber(workspace.quotation_no);
   const workspaceSignature = useMemo(() => stableSerialize(workspace), [workspace]);
 
   useEffect(() => {
@@ -2585,7 +2595,7 @@ export function LocalQuotationBuilder({
             );
           }
 
-          const result = await response.json() as { savedAt: string };
+          const result = await response.json() as { message?: string; savedAt: string };
           const nextWorkspace = {
             ...workspace,
             has_unsaved_changes: false,
@@ -2596,7 +2606,7 @@ export function LocalQuotationBuilder({
           setWorkspace(nextWorkspace);
           await saveWorkspaceDocument(nextWorkspace);
           setSaveState("saved");
-          setSaveMessage("Saved to software");
+          setSaveMessage(result.message ?? "Saved to software");
         })
         .catch((error) => {
           setSaveState("error");
@@ -3119,10 +3129,13 @@ export function LocalQuotationBuilder({
         <div className="flex flex-col gap-3 px-4 py-3">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
             <div className="flex min-w-0 flex-wrap items-center gap-3">
-              <Link href={`/clients/projects/${workspace.project_id}`} className="inline-flex h-9 items-center border border-zinc-300 px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Back</Link>
+              <Link href={workspace.project_id ? `/clients/projects/${workspace.project_id}` : `/quotations/${workspace.server_quotation_id}`} className="inline-flex h-9 items-center border border-zinc-300 px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Back</Link>
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-zinc-950">{currentDocumentNumber ?? "Draft quotation"} - {workspace.title}</p>
-                <p className="truncate text-xs text-zinc-500">{currentClientName} / {currentProjectName}</p>
+                <p className="truncate text-xs text-zinc-500">
+                  {currentClientName} / {currentProjectDisplay}
+                  {currentQuotationFolderNumber ? ` / ${currentQuotationFolderNumber}` : ""}
+                </p>
               </div>
               <StatusBadge status={workspace.status} />
               <span className="border border-zinc-300 bg-zinc-50 px-2.5 py-1 text-xs font-semibold text-zinc-700">Local Builder</span>
@@ -3969,8 +3982,11 @@ export function LocalQuotationBuilder({
             <div className="flex items-start justify-between gap-4 border-b border-zinc-300 bg-white px-4 py-3">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Quotation Details</p>
-                <p className="text-sm font-semibold text-zinc-950">{currentDocumentNumber ?? "Draft quotation"} / {currentProjectName}</p>
+                <p className="text-sm font-semibold text-zinc-950">{currentDocumentNumber ?? "Draft quotation"} / {currentProjectDisplay}</p>
                 <p className="text-xs text-zinc-500">Client company name stays read-only here. Quotation and linked project details save back when you use Save to Software.</p>
+                {!workspace.project_id ? (
+                  <p className="mt-1 text-xs text-amber-700">Confirmed project/order will be created after client approval.</p>
+                ) : null}
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -4096,16 +4112,18 @@ export function LocalQuotationBuilder({
         <section className="border border-zinc-300 bg-white">
           <div className="flex items-center justify-between gap-3 border-b border-zinc-300 bg-zinc-50 px-3 py-2">
             <div>
-              <p className="text-sm font-semibold text-zinc-950">Quotation Details</p>
-              <p className="text-xs text-zinc-500">Edit quotation and linked project header details used by the saved software snapshot.</p>
+              <p className="text-sm font-semibold text-zinc-950">Document Setup</p>
+              <p className="text-xs text-zinc-500">Edit header, contact, reference, terms, and document notes in the shared setup form.</p>
             </div>
-            <button
-              type="button"
-              onClick={() => setQuoteDetailsOpen(true)}
-              className="border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
-            >
-              Edit Quote Details
-            </button>
+            {documentSetupAction ?? (
+              <button
+                type="button"
+                onClick={() => setQuoteDetailsOpen(true)}
+                className="border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+              >
+                Document Setup
+              </button>
+            )}
           </div>
           <div className="grid border-b border-zinc-300 lg:grid-cols-2">
             <div className="border-b border-zinc-300 lg:border-b-0 lg:border-r">
@@ -4115,7 +4133,7 @@ export function LocalQuotationBuilder({
               <SheetInfo
                 label="Project"
                 value={[
-                  currentProjectName,
+                  currentProjectName === "-" ? "" : currentProjectName,
                   formatProjectReferenceDisplay({
                     project_number: stringValue(projectSnapshot, "project_number"),
                     project_code: stringValue(projectSnapshot, "project_code"),
@@ -4132,6 +4150,7 @@ export function LocalQuotationBuilder({
             <div>
               <div className="border-b border-zinc-300 px-3 py-2 text-center text-sm font-bold uppercase tracking-wide">Reference</div>
               <SheetInfo label="Project / Quote No" value={currentDocumentNumber ?? "Draft"} />
+              <SheetInfo label="Quotation Folder" value={currentQuotationFolderNumber} />
               <SheetInfo label="Date" value={workspace.quotation_date} />
               <SheetInfo label="Status" value={statusLabel(workspace.status)} />
               <SheetInfo label="Layout" value={layoutLabels.get(workspace.layout_mode) ?? workspace.layout_mode} />

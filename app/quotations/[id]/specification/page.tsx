@@ -9,11 +9,11 @@ import {
   normalizeImageDisplaySettings,
   type ImageDisplaySettings,
 } from "@/lib/image-display-settings";
-import { formatProjectReferenceWithYearDisplay } from "@/lib/project-reference";
 import {
   formatBrandOriginSupplier,
   specificationWithoutDuplicateCode,
 } from "@/lib/quotations/format-quotation-row";
+import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
 import { QuotationImageFrame } from "@/components/quotations/quotation-image-frame";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
@@ -25,6 +25,7 @@ type SpecificationPageProps = {
 
 type Client = {
   id: string;
+  client_number?: string | null;
   company_name: string;
 };
 
@@ -46,11 +47,23 @@ type Project = {
 type Quotation = {
   id: string;
   client_id: string;
-  project_id: string;
+  currency?: string | null;
+  delivery_terms?: string | null;
+  layout_settings?: unknown;
+  legacy_reference?: string | null;
+  notes?: string | null;
+  option_no?: number | null;
+  overall_discount_type?: string | null;
+  overall_discount_value?: number | null;
+  payment_terms?: string | null;
+  project_id: string | null;
   quotation_no: string | null;
   revision_no: number;
   title: string;
   quotation_date: string;
+  validity?: string | null;
+  vat_percent?: number | null;
+  warranty_terms?: string | null;
 };
 
 type QuotationSection = {
@@ -148,6 +161,14 @@ type ProductTemplateMaterialGroupOrder = {
   id: string;
   sort_order: number;
 };
+
+function validUuidOrNull(value: string | null | undefined) {
+  const trimmed = value?.trim();
+
+  return trimmed && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)
+    ? trimmed
+    : null;
+}
 
 type MaterialChartSwatch = {
   code: string | null;
@@ -963,7 +984,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
 
   const { data: quotation, error: quotationError } = await supabase
     .from("quotations")
-    .select("id,client_id,project_id,quotation_no,revision_no,title,quotation_date")
+    .select("id,client_id,project_id,quotation_no,revision_no,title,quotation_date,legacy_reference,option_no,layout_settings,currency,vat_percent,overall_discount_type,overall_discount_value,payment_terms,validity,delivery_terms,warranty_terms,notes")
     .eq("id", id)
     .single<Quotation>();
 
@@ -971,9 +992,10 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
     notFound();
   }
 
+  const projectId = validUuidOrNull(quotation.project_id);
   const [
     { data: client },
-    { data: project },
+    projectResult,
     { data: sections },
     { data: items },
     { data: materialGroupOrders, error: materialGroupOrdersError },
@@ -981,14 +1003,16 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
     await Promise.all([
       supabase
         .from("clients")
-        .select("id,company_name")
+        .select("id,client_number,company_name")
         .eq("id", quotation.client_id)
         .single<Client>(),
-      supabase
-        .from("projects")
-        .select("id,project_name,project_number,project_year,project_code,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
-        .eq("id", quotation.project_id)
-        .single<Project>(),
+      projectId
+        ? supabase
+            .from("projects")
+            .select("id,project_name,project_number,project_year,project_code,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
+            .eq("id", projectId)
+            .maybeSingle<Project>()
+        : Promise.resolve({ data: null }),
       supabase
         .from("quotation_sections")
         .select("id,section_title,section_notes,parent_section_id,section_kind,sort_order,is_active")
@@ -1011,6 +1035,12 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
         .eq("is_active", true)
         .returns<ProductTemplateMaterialGroupOrder[]>(),
     ]);
+  const project = projectResult.data;
+  const resolvedDocumentSetup = resolveDocumentSetup({
+    client: client ?? null,
+    project: project ?? null,
+    quotation,
+  });
 
   if (materialGroupOrdersError) {
     console.error("SPECIFICATION MATERIAL GROUP ORDER ERROR", materialGroupOrdersError.message);
@@ -1268,19 +1298,20 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
             <div className="w-full max-w-[680px]">
               <p className="text-xs font-bold uppercase tracking-[0.26em] text-zinc-400">Project Summary</p>
               <h1 className="mt-4 text-[46px] font-bold leading-[1.05] tracking-tight text-zinc-950">
-                {project?.project_name ?? quotation.title}
+                {resolvedDocumentSetup.header.reference}
               </h1>
               <div className="mt-8 h-px w-28 bg-zinc-300" />
               <div className="mt-10 grid gap-x-14 gap-y-8 md:grid-cols-2">
                 <dl className="grid content-start gap-7">
-                  <InfoLine label="Client" value={client?.company_name ?? "Unknown client"} />
-                  <InfoLine label="Location" value={project?.location} />
-                  <InfoLine label="Attention / Contact" value={projectContactLine(project)} />
+                  <InfoLine label="Client" value={resolvedDocumentSetup.header.clientDisplayName || client?.company_name || "Client"} />
+                  <InfoLine label="Location" value={resolvedDocumentSetup.header.location || project?.location} />
+                  <InfoLine label="Attention / Contact" value={resolvedDocumentSetup.header.contactName || projectContactLine(project)} />
                 </dl>
                 <dl className="grid content-start gap-7">
-                  <InfoLine label="Project" value={project?.project_name ?? "Unknown project"} />
-                  <InfoLine label="Project No. / Year" value={formatProjectReferenceWithYearDisplay(project)} />
-                  <InfoLine label="Project Address" value={project?.project_address} />
+                  <InfoLine label="Project / Reference" value={resolvedDocumentSetup.header.reference} />
+                  <InfoLine label="Telephone" value={resolvedDocumentSetup.header.telephone || project?.attention_landline} />
+                  <InfoLine label="PO Box" value={resolvedDocumentSetup.header.poBox || project?.po_box} />
+                  <InfoLine label="Project Address" value={resolvedDocumentSetup.header.projectAddress || project?.project_address} />
                 </dl>
               </div>
             </div>

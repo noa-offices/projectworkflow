@@ -1,8 +1,10 @@
 import { getCompanyProfile, type CompanyProfile } from "@/lib/company-profile";
+import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export type DerivedDocumentClient = {
   id: string;
+  client_number?: string | null;
   company_name: string;
 };
 
@@ -23,7 +25,14 @@ export type DerivedDocumentProject = {
 export type DerivedDocumentQuotation = {
   id: string;
   client_id: string;
-  project_id: string;
+  delivery_terms: string | null;
+  layout_settings?: unknown;
+  legacy_reference?: string | null;
+  option_no?: number | null;
+  overall_discount_type?: string | null;
+  overall_discount_value?: number | null;
+  payment_terms: string | null;
+  project_id: string | null;
   quotation_no: string | null;
   revision_no: number;
   title: string;
@@ -34,9 +43,9 @@ export type DerivedDocumentQuotation = {
   vat_percent: number;
   vat_amount: number;
   grand_total: number;
-  payment_terms: string | null;
-  delivery_terms: string | null;
   notes: string | null;
+  validity?: string | null;
+  warranty_terms?: string | null;
 };
 
 export type DerivedDocumentSection = {
@@ -460,7 +469,7 @@ export async function loadQuotationDerivedDocumentData(id: string): Promise<Deri
   const companyProfile = await getCompanyProfile();
   const { data: quotation, error: quotationError } = await supabase
     .from("quotations")
-    .select("id,client_id,project_id,quotation_no,revision_no,title,quotation_date,currency,subtotal,discount_total,vat_percent,vat_amount,grand_total,payment_terms,delivery_terms,notes")
+    .select("id,client_id,project_id,quotation_no,revision_no,title,quotation_date,currency,subtotal,discount_total,vat_percent,vat_amount,grand_total,payment_terms,validity,delivery_terms,warranty_terms,notes,legacy_reference,option_no,layout_settings,overall_discount_type,overall_discount_value")
     .eq("id", id)
     .maybeSingle<DerivedDocumentQuotation>();
 
@@ -470,6 +479,7 @@ export async function loadQuotationDerivedDocumentData(id: string): Promise<Deri
 
   if (!quotation) return null;
 
+  const projectId = validUuidOrNull(quotation.project_id);
   const [
     clientResponse,
     projectResponse,
@@ -478,14 +488,16 @@ export async function loadQuotationDerivedDocumentData(id: string): Promise<Deri
   ] = await Promise.all([
     supabase
       .from("clients")
-      .select("id,company_name")
+      .select("id,client_number,company_name")
       .eq("id", quotation.client_id)
       .maybeSingle<DerivedDocumentClient>(),
-    supabase
-      .from("projects")
-      .select("id,project_name,project_year,project_code,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
-      .eq("id", quotation.project_id)
-      .maybeSingle<DerivedDocumentProject>(),
+    projectId
+      ? supabase
+          .from("projects")
+          .select("id,project_name,project_year,project_code,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
+          .eq("id", projectId)
+          .maybeSingle<DerivedDocumentProject>()
+      : Promise.resolve({ data: null }),
     supabase
       .from("quotation_sections")
       .select("id,section_title,section_notes,parent_section_id,section_kind,sort_order,is_active")
@@ -505,6 +517,36 @@ export async function loadQuotationDerivedDocumentData(id: string): Promise<Deri
   ]);
 
   const activeItems = (itemsResponse.data ?? []).filter(isDocumentItem);
+  const resolvedDocumentSetup = resolveDocumentSetup({
+    client: clientResponse.data ?? null,
+    project: projectResponse.data ?? null,
+    quotation,
+  });
+  const resolvedProject = projectResponse.data
+    ? {
+        ...projectResponse.data,
+        attention_email: resolvedDocumentSetup.header.contactEmail || projectResponse.data.attention_email,
+        attention_landline: resolvedDocumentSetup.header.telephone || projectResponse.data.attention_landline,
+        attention_mobile: resolvedDocumentSetup.header.contactPhone || projectResponse.data.attention_mobile,
+        attention_to: resolvedDocumentSetup.header.contactName || projectResponse.data.attention_to,
+        location: resolvedDocumentSetup.header.location || projectResponse.data.location,
+        po_box: resolvedDocumentSetup.header.poBox || projectResponse.data.po_box,
+        project_address: resolvedDocumentSetup.header.projectAddress || projectResponse.data.project_address,
+        project_name: resolvedDocumentSetup.header.reference || projectResponse.data.project_name,
+      }
+    : {
+        id: "document-setup",
+        attention_email: resolvedDocumentSetup.header.contactEmail || null,
+        attention_landline: resolvedDocumentSetup.header.telephone || null,
+        attention_mobile: resolvedDocumentSetup.header.contactPhone || null,
+        attention_to: resolvedDocumentSetup.header.contactName || null,
+        location: resolvedDocumentSetup.header.location || null,
+        po_box: resolvedDocumentSetup.header.poBox || null,
+        project_address: resolvedDocumentSetup.header.projectAddress || null,
+        project_code: null,
+        project_name: resolvedDocumentSetup.header.reference,
+        project_year: null,
+      };
   const imageEntries = await Promise.all(
     activeItems.map(async (item) => [
       item.id,
@@ -539,8 +581,16 @@ export async function loadQuotationDerivedDocumentData(id: string): Promise<Deri
     companyProfile,
     imageUrlByItemId,
     items: activeItems,
-    project: projectResponse.data ?? null,
+    project: resolvedProject,
     quotation,
     sections,
   };
+}
+
+function validUuidOrNull(value: string | null | undefined) {
+  const trimmed = value?.trim();
+
+  return trimmed && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)
+    ? trimmed
+    : null;
 }

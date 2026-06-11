@@ -3,7 +3,7 @@ import { OpportunitiesPreview } from "@/components/sales/opportunities-preview";
 import { requireActiveUser } from "@/lib/auth";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
-type Client = { id: string; company_name: string };
+type Client = { id: string; company_name: string; client_number: string | null };
 
 type Project = {
   id: string;
@@ -20,7 +20,7 @@ export default async function SalesOpportunitiesPage() {
 
   const { data: clients, error: clientsError } = await supabase
     .from("clients")
-    .select("id,company_name")
+    .select("id,company_name,client_number")
     .order("company_name", { ascending: true })
     .returns<Client[]>();
 

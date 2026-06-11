@@ -4,6 +4,11 @@ import Link from "next/link";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { formatMoney } from "@/lib/currencies";
 import { normalizeClientName } from "@/lib/clients/client-payload";
+import {
+  clientSequenceFromNumber,
+  formatOpportunityNumber,
+  opportunitySequenceFromNumber,
+} from "@/lib/projectworkflow-numbering";
 import { createConfirmedClient } from "@/app/sales/opportunities/actions";
 
 type SalesOpportunityStatus =
@@ -26,6 +31,7 @@ type SourceFilter = "All sources" | SalesOpportunitySource;
 type ClientOption = {
   id: string;
   company_name: string;
+  client_number: string | null;
 };
 
 type ProjectOption = {
@@ -444,7 +450,7 @@ function createLocalId() {
   return `opp-${Date.now()}`;
 }
 
-function nextOpportunityNo(opportunities: SalesOpportunity[]) {
+function nextLegacyOpportunityNo(opportunities: SalesOpportunity[]) {
   const year = new Date().getFullYear();
   const maxForYear = opportunities.reduce((max, opportunity) => {
     const match = opportunity.opportunityNo.match(new RegExp(`^OPP-${year}-(\\d+)$`));
@@ -453,6 +459,24 @@ function nextOpportunityNo(opportunities: SalesOpportunity[]) {
   }, 0);
 
   return `OPP-${year}-${String(maxForYear + 1).padStart(3, "0")}`;
+}
+
+function nextOpportunityNoForClient(opportunities: SalesOpportunity[], client?: Pick<ClientOption, "client_number"> | null) {
+  const clientSequence = clientSequenceFromNumber(client?.client_number);
+  if (!clientSequence) {
+    return nextLegacyOpportunityNo(opportunities);
+  }
+
+  const clientSequenceText = String(clientSequence).padStart(4, "0");
+  const maxForClient = opportunities.reduce((max, opportunity) => {
+    if (!opportunity.opportunityNo.startsWith(`OP-${clientSequenceText}-`)) {
+      return max;
+    }
+
+    return Math.max(max, opportunitySequenceFromNumber(opportunity.opportunityNo) ?? 0);
+  }, 0);
+
+  return formatOpportunityNumber(clientSequence, maxForClient + 1);
 }
 
 function statusClassName(status: SalesOpportunityStatus) {
@@ -595,6 +619,7 @@ function clientStatusLabel(opportunity: SalesOpportunity) {
 type ConfirmedClientRecord = {
   id: string;
   company_name: string;
+  client_number: string | null;
   contact_person: string | null;
   phone: string | null;
   email: string | null;
@@ -821,7 +846,7 @@ export function OpportunitiesPreview({
     setClientOptions((current) =>
       current.some((item) => item.id === client.id)
         ? current
-        : [{ id: client.id, company_name: client.company_name }, ...current],
+        : [{ id: client.id, company_name: client.company_name, client_number: client.client_number }, ...current],
     );
 
     if (!confirmClientOpportunity) {
@@ -834,6 +859,9 @@ export function OpportunitiesPreview({
         opportunity.id === confirmClientOpportunity.id
           ? {
               ...opportunity,
+              opportunityNo: opportunity.opportunityNo.startsWith("OP-")
+                ? opportunity.opportunityNo
+                : nextOpportunityNoForClient(current, client),
               clientId: client.id,
               clientName: client.company_name,
               clientSource: "created",
@@ -915,6 +943,9 @@ export function OpportunitiesPreview({
         opportunity.id === confirmClientOpportunity.id
           ? {
               ...opportunity,
+              opportunityNo: opportunity.opportunityNo.startsWith("OP-")
+                ? opportunity.opportunityNo
+                : nextOpportunityNoForClient(current, client),
               clientId: client.id,
               clientName: client.company_name,
               clientSource: "existing",
@@ -1011,7 +1042,7 @@ export function OpportunitiesPreview({
     } else {
       const newOpportunity: SalesOpportunity = {
         id: createLocalId(),
-        opportunityNo: nextOpportunityNo(opportunities),
+        opportunityNo: nextOpportunityNoForClient(opportunities, existingClient),
         title,
         clientId,
         clientName,

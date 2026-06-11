@@ -31,13 +31,19 @@ export function quotationRootBaseNo(quotationNo: string | null | undefined) {
 
   if (!revisionBase) return null;
 
-  return revisionBase.replace(/-OPT-[A-Z]+$/i, "").trim() || null;
+  return revisionBase.replace(/-(?:OPT-[A-Z]+|OPT\d+)$/i, "").trim() || null;
 }
 
 export function quotationOptionNoFromQuotationNo(quotationNo: string | null | undefined) {
   const revisionBase = quotationRevisionBaseNo(quotationNo);
 
   if (!revisionBase) return null;
+
+  const numericMatch = revisionBase.match(/-OPT(\d+)$/i);
+  if (numericMatch) {
+    const sequence = Number(numericMatch[1]);
+    return Number.isFinite(sequence) && sequence > 0 ? Math.trunc(sequence) + 1 : null;
+  }
 
   const match = revisionBase.match(/-OPT-([A-Z]+)$/i);
 
@@ -88,10 +94,10 @@ export function buildQuotationDocumentNumber({
     typeof revisionNo === "number" && Number.isFinite(revisionNo) && revisionNo > 0
       ? Math.trunc(revisionNo)
       : 0;
-  const optionCode = quotationOptionCode(normalizedOptionNo);
-  const optionSuffix = optionCode ? `-OPT-${optionCode}` : "";
+  const optionSequence = normalizedOptionNo - 1;
+  const optionSuffix = optionSequence > 0 ? `-OPT${optionSequence}` : "";
   const revisionSuffix = normalizedRevisionNo > 0
-    ? `-R${String(normalizedRevisionNo).padStart(2, "0")}`
+    ? `-R${normalizedRevisionNo}`
     : "";
 
   return `${base}${optionSuffix}${revisionSuffix}`;
