@@ -3,8 +3,8 @@ export const quotationStatuses = [
   ["internal_review", "Internal Review"],
   ["revision_required", "Revision Requested"],
   ["ready_to_send", "Ready to Send"],
-  ["sent_to_client", "Submitted to Client"],
-  ["client_confirmed", "Approved by Client"],
+  ["sent_to_client", "Sent to Client"],
+  ["client_confirmed", "Client Approved"],
   ["cancelled", "Cancelled"],
   ["archived", "Archived"],
 ] as const;

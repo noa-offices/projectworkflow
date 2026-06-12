@@ -19,7 +19,6 @@ import {
   Presentation,
   Settings,
   ShoppingCart,
-  Target,
   Truck,
   Search,
 } from "lucide-react";
@@ -48,10 +47,6 @@ function isProjectsActive(pathname: string) {
 
 function isQuotationsActive(pathname: string) {
   return pathname === "/sales/quotations" || pathname.startsWith("/sales/quotations/") || pathname === "/quotations" || pathname.startsWith("/quotations/");
-}
-
-function isSalesOpportunitiesActive(pathname: string) {
-  return pathname === "/sales/opportunities" || pathname.startsWith("/sales/opportunities/");
 }
 
 function isSalesApprovalsActive(pathname: string) {
@@ -129,9 +124,8 @@ export function ErpSidebar() {
       {
         title: "Sales",
         items: [
-          { label: "Opportunities", href: "/sales/opportunities", icon: Target, active: isSalesOpportunitiesActive(pathname) },
           { label: "Quotations", href: "/sales/quotations", icon: FileText, active: isQuotationsActive(pathname) },
-          { label: "Client Approvals", href: "/sales/approvals", icon: BadgeCheck, active: isSalesApprovalsActive(pathname) },
+          { label: "Approved Quotations", href: "/sales/approvals", icon: BadgeCheck, active: isSalesApprovalsActive(pathname) },
         ],
       },
       {

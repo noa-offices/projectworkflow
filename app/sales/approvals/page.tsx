@@ -1,16 +1,14 @@
 import Link from "next/link";
-import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
+import { createProjectFileFromQuotation } from "@/app/quotations/actions";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { requireActiveUser } from "@/lib/auth";
-import {
-  clientApprovalStatusDisplayLabel,
-  clientApprovalDraftFromLayoutSettings,
-  isActiveClientApprovalStatus,
-  isCancelledClientApprovalStatus,
-} from "@/lib/quotations/client-approval-draft";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { quotationStatusLabel } from "@/lib/quotation-status";
+import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
+import { documentSetupRecord } from "@/lib/quotations/document-setup";
+import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
-import { createConfirmedOrderFromApproval } from "../../quotations/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -18,16 +16,24 @@ type SalesApprovalPageProps = {
   searchParams?: Promise<{ message?: string }>;
 };
 
-type ApprovalQuotationRow = {
+type ApprovedQuotationRow = {
   id: string;
+  client_id: string | null;
   quotation_no: string | null;
   title: string | null;
+  legacy_reference: string | null;
   quotation_date: string | null;
   status: string;
-  is_active: boolean;
   grand_total: number | null;
   currency: string | null;
   layout_settings: unknown;
+  status_updated_at: string | null;
+  updated_at: string | null;
+};
+
+type ClientRow = {
+  id: string;
+  company_name: string | null;
 };
 
 function formatDate(value: string | null | undefined) {
@@ -40,27 +46,9 @@ function formatDate(value: string | null | undefined) {
   }).format(new Date(value));
 }
 
-function coNumberFromApprovalNo(approvalNo: string) {
-  const match = approvalNo.trim().match(/^CP-(\d{4})-(\d{3})$/i);
-  return match ? `CO-${match[1]}-${match[2]}` : "CO pending";
-}
-
-function CreateCoListForm({ approvalNo }: { approvalNo: string }) {
-  const orderNo = coNumberFromApprovalNo(approvalNo);
-
-  return (
-    <form action={createConfirmedOrderFromApproval}>
-      <input type="hidden" name="approval_no" value={approvalNo} />
-      <input type="hidden" name="return_to" value="/sales/approvals" />
-      <ConfirmSubmitButton
-        className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-700"
-        message={`Create Confirmed Order / Project\n\nThis will create ${orderNo} from the approved quotation. Procurement documents will be added later.`}
-        pendingLabel="Creating..."
-      >
-        Create CO
-      </ConfirmSubmitButton>
-    </form>
-  );
+function textFromRecord(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 export default async function SalesApprovalsPage({ searchParams }: SalesApprovalPageProps) {
@@ -69,35 +57,56 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
     searchParams ?? Promise.resolve({} as { message?: string }),
   ]);
   const supabase = await createSupabaseClient();
-  const { data: quotations, error } = await supabase
-    .from("quotations")
-    .select("id,quotation_no,title,quotation_date,status,is_active,grand_total,currency,layout_settings")
-    .order("quotation_date", { ascending: false })
-    .returns<ApprovalQuotationRow[]>();
+  const [{ data: quotations, error }, { data: clients, error: clientsError }] = await Promise.all([
+    supabase
+      .from("quotations")
+      .select("id,client_id,quotation_no,title,legacy_reference,quotation_date,status,grand_total,currency,layout_settings,status_updated_at,updated_at")
+      .eq("status", "client_confirmed")
+      .order("status_updated_at", { ascending: false })
+      .returns<ApprovedQuotationRow[]>(),
+    supabase
+      .from("clients")
+      .select("id,company_name")
+      .returns<ClientRow[]>(),
+  ]);
 
   if (error) {
-    console.error("CLIENT APPROVAL LIST ERROR", error.message);
+    console.error("APPROVED QUOTATIONS LIST ERROR", error.message);
+  }
+  if (clientsError) {
+    console.error("APPROVED QUOTATIONS CLIENT LIST ERROR", clientsError.message);
   }
 
-  const approvals = (quotations ?? [])
-    .map((quotation) => {
-      const draft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);
-      return draft ? { draft, quotation } : null;
-    })
-    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
-    .sort((left, right) => new Date(right.draft.createdAt).getTime() - new Date(left.draft.createdAt).getTime());
-  const activeApprovals = approvals.filter(({ draft }) => isActiveClientApprovalStatus(draft.approvalStatus));
-  const decidedApprovals = approvals.filter(({ draft }) => (
-    !isActiveClientApprovalStatus(draft.approvalStatus) &&
-    !isCancelledClientApprovalStatus(draft.approvalStatus)
-  ));
-  const cancelledApprovals = approvals.filter(({ draft }) => isCancelledClientApprovalStatus(draft.approvalStatus));
+  const clientNames = new Map((clients ?? []).map((client) => [client.id, client.company_name?.trim() || "Client"]));
+  const approvedQuotations = (quotations ?? []).map((quotation) => {
+    const setup = documentSetupRecord(quotation.layout_settings);
+    const header = setup.header && typeof setup.header === "object" && !Array.isArray(setup.header)
+      ? setup.header as Record<string, unknown>
+      : {};
+    const projectFile =
+      projectFileFromLayoutSettings(quotation.layout_settings) ??
+      clientApprovalDraftFromLayoutSettings(quotation.layout_settings)?.confirmedOrder ??
+      null;
+
+    return {
+      ...quotation,
+      clientName: quotation.client_id ? clientNames.get(quotation.client_id) ?? "Client" : "Client",
+      folderNo: projectFile?.folderNo ?? quotationFolderNumberFromQuotationNumber(quotation.quotation_no),
+      projectFile,
+      reference:
+        textFromRecord(header, "reference") ??
+        quotation.legacy_reference?.trim() ??
+        quotation.title?.trim() ??
+        quotation.quotation_no ??
+        "Quotation reference",
+    };
+  });
 
   return (
     <ErpAppShell
       eyebrow="SALES"
-      title="Client Approvals"
-      description="Track quotations submitted to clients and record client decisions. Confirmed orders/projects are created only after client approval."
+      title="Approved Quotations"
+      description="Quotations marked Client Approved. Project files can be opened or created from approved quotations."
       userDisplayName={displayName}
       userEmail={user.email}
     >
@@ -111,67 +120,69 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
         <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-zinc-950">Approval list</h2>
+              <h2 className="text-lg font-semibold text-zinc-950">Approved Quotations</h2>
               <p className="mt-1 text-sm text-zinc-500">
-                Records are prepared from quotation metadata until a dedicated approval table is introduced.
+                {approvedQuotations.length} {approvedQuotations.length === 1 ? "quotation" : "quotations"} marked {quotationStatusLabel("client_confirmed")}.
               </p>
             </div>
-            <span className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-950">
-              {activeApprovals.length} waiting
-            </span>
           </div>
 
-          {activeApprovals.length ? (
+          {approvedQuotations.length ? (
             <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[960px] text-left text-sm">
+              <table className="w-full min-w-[980px] text-left text-sm">
                 <thead>
                   <tr className="border-b border-zinc-200 text-xs font-semibold uppercase text-zinc-500">
-                    <th className="py-3 pr-4">Approval No.</th>
-                    <th className="py-3 pr-4">Quotation No.</th>
-                    <th className="py-3 pr-4">Folder No.</th>
+                    <th className="py-3 pr-4">Quotation No</th>
+                    <th className="py-3 pr-4">Folder No</th>
                     <th className="py-3 pr-4">Client</th>
                     <th className="py-3 pr-4">Reference</th>
                     <th className="py-3 pr-4">Total</th>
-                    <th className="py-3 pr-4">Status</th>
-                    <th className="py-3 pr-4">CO</th>
-                    <th className="py-3 pr-4">Created</th>
+                    <th className="py-3 pr-4">Approved Date</th>
+                    <th className="py-3 pr-4">Project File</th>
                     <th className="py-3">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {activeApprovals.map(({ draft, quotation }) => (
-                    <tr key={`${draft.approvalNo}-${quotation.id}`} className="border-b border-zinc-100 align-top">
-                      <td className="py-3 pr-4 font-semibold text-zinc-950">{draft.approvalNo}</td>
-                      <td className="py-3 pr-4 text-zinc-700">{draft.quotationNo}</td>
-                      <td className="py-3 pr-4 text-zinc-700">{draft.folderNo}</td>
-                      <td className="py-3 pr-4 text-zinc-700">{draft.clientName}</td>
-                      <td className="max-w-xs py-3 pr-4 text-zinc-600">{draft.reference}</td>
+                  {approvedQuotations.map((quotation) => (
+                    <tr key={quotation.id} className="border-b border-zinc-100 align-top">
+                      <td className="py-3 pr-4 font-semibold text-zinc-950">{quotation.quotation_no ?? quotation.title ?? "Quotation"}</td>
+                      <td className="py-3 pr-4 text-zinc-700">{quotation.folderNo ?? "-"}</td>
+                      <td className="py-3 pr-4 text-zinc-700">{quotation.clientName}</td>
+                      <td className="max-w-xs py-3 pr-4 text-zinc-600">{quotation.reference}</td>
                       <td className="py-3 pr-4 font-medium text-zinc-950">
-                        {formatQuotationMoney(draft.currency, draft.total)}
+                        {formatQuotationMoney(quotation.currency, quotation.grand_total ?? 0)}
                       </td>
-                      <td className="py-3 pr-4">
-                        <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-900">
-                          {clientApprovalStatusDisplayLabel(draft.approvalStatus)}
-                        </span>
+                      <td className="py-3 pr-4 text-zinc-600">{formatDate(quotation.status_updated_at ?? quotation.updated_at ?? quotation.quotation_date)}</td>
+                      <td className="py-3 pr-4 font-medium text-zinc-950">
+                        {quotation.projectFile?.orderNo ?? "Not created"}
                       </td>
-                      <td className="py-3 pr-4 text-zinc-500">
-                        {draft.confirmedOrder?.orderNo ?? "-"}
-                      </td>
-                      <td className="py-3 pr-4 text-zinc-600">{formatDate(draft.createdAt)}</td>
                       <td className="py-3">
                         <div className="flex flex-wrap gap-2">
                           <Link
-                            href={`/sales/approvals/${draft.approvalNo}`}
-                            className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-700"
-                          >
-                            Open Approval
-                          </Link>
-                          <Link
                             href={`/quotations/${quotation.id}`}
-                            className="text-sm font-semibold text-zinc-700 transition hover:text-zinc-950"
+                            className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-700"
                           >
                             Open Quotation
                           </Link>
+                          {quotation.projectFile ? (
+                            <Link
+                              href={`/projects/orders/${quotation.projectFile.orderNo}`}
+                              className="text-sm font-semibold text-zinc-700 transition hover:text-zinc-950"
+                            >
+                              Open Project File
+                            </Link>
+                          ) : (
+                            <form action={createProjectFileFromQuotation}>
+                              <input type="hidden" name="quotation_id" value={quotation.id} />
+                              <input type="hidden" name="return_to" value="/sales/approvals" />
+                              <button
+                                type="submit"
+                                className="text-sm font-semibold text-zinc-700 transition hover:text-zinc-950"
+                              >
+                                Create Project File
+                              </button>
+                            </form>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -181,162 +192,12 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
             </div>
           ) : (
             <div className="mt-4 rounded-md border border-dashed border-zinc-200 p-6 text-center">
-              <p className="text-sm font-semibold text-zinc-950">No active Client Decisions waiting.</p>
+              <p className="text-sm font-semibold text-zinc-950">No Client Approved quotations yet.</p>
               <p className="mt-1 text-sm text-zinc-500">
-                Open an active numbered quotation, mark it Ready to Send, then submit it to the client from the folder.
+                Mark a quotation as Client Approved from the quotation folder to show it here.
               </p>
             </div>
           )}
-
-          {decidedApprovals.length ? (
-            <details open className="mt-5 rounded-lg border border-zinc-200 bg-white p-4">
-              <summary className="cursor-pointer list-none">
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <h2 className="text-base font-semibold text-zinc-950">Recorded client decisions</h2>
-                    <p className="mt-1 text-sm text-zinc-500">
-                      Approved, rejected, and revision-requested decisions are not counted as waiting.
-                    </p>
-                  </div>
-                  <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    {decidedApprovals.length} decided
-                  </span>
-                </div>
-              </summary>
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full min-w-[840px] text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-zinc-200 text-xs font-semibold uppercase text-zinc-500">
-                      <th className="py-3 pr-4">Approval No.</th>
-                      <th className="py-3 pr-4">Quotation No.</th>
-                      <th className="py-3 pr-4">Client</th>
-                      <th className="py-3 pr-4">Reference</th>
-                    <th className="py-3 pr-4">Total</th>
-                    <th className="py-3 pr-4">Status</th>
-                    <th className="py-3 pr-4">CO</th>
-                    <th className="py-3">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {decidedApprovals.map(({ draft, quotation }) => (
-                      <tr key={`${draft.approvalNo}-${quotation.id}`} className="border-b border-zinc-100 align-top">
-                        <td className="py-3 pr-4 font-semibold text-zinc-950">{draft.approvalNo}</td>
-                        <td className="py-3 pr-4 text-zinc-700">{draft.quotationNo}</td>
-                        <td className="py-3 pr-4 text-zinc-700">{draft.clientName}</td>
-                        <td className="max-w-xs py-3 pr-4 text-zinc-600">{draft.reference}</td>
-                        <td className="py-3 pr-4 font-medium text-zinc-950">
-                          {formatQuotationMoney(draft.currency, draft.total)}
-                        </td>
-                        <td className="py-3 pr-4">
-                          <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-900">
-                            {clientApprovalStatusDisplayLabel(draft.approvalStatus)}
-                          </span>
-                        </td>
-                        <td className="py-3 pr-4 font-medium text-zinc-950">
-                          {draft.confirmedOrder?.orderNo ?? (
-                            draft.approvalStatus === "Approved by Client" ? "Not created" : "-"
-                          )}
-                        </td>
-                        <td className="py-3">
-                          <div className="flex flex-wrap gap-2">
-                            <Link
-                              href={`/sales/approvals/${draft.approvalNo}`}
-                              className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-700"
-                            >
-                              Open Approval
-                            </Link>
-                            <Link
-                              href={`/quotations/${quotation.id}`}
-                              className="text-sm font-semibold text-zinc-700 transition hover:text-zinc-950"
-                            >
-                              Open Quotation
-                            </Link>
-                            {draft.confirmedOrder ? (
-                              <Link
-                                href={`/projects/orders/${draft.confirmedOrder.orderNo}`}
-                                className="text-sm font-semibold text-zinc-700 transition hover:text-zinc-950"
-                              >
-                                Open CO
-                              </Link>
-                            ) : draft.approvalStatus === "Approved by Client" ? (
-                              <CreateCoListForm approvalNo={draft.approvalNo} />
-                            ) : null}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </details>
-          ) : null}
-
-          {cancelledApprovals.length ? (
-            <details className="mt-5 rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-              <summary className="cursor-pointer list-none">
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <h2 className="text-base font-semibold text-zinc-950">Cancelled / withdrawn approvals</h2>
-                    <p className="mt-1 text-sm text-zinc-500">
-                      Cancelled approvals remain visible for history and are not counted as pending.
-                    </p>
-                  </div>
-                  <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    {cancelledApprovals.length} cancelled
-                  </span>
-                </div>
-              </summary>
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full min-w-[840px] text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-zinc-200 text-xs font-semibold uppercase text-zinc-500">
-                      <th className="py-3 pr-4">Approval No.</th>
-                      <th className="py-3 pr-4">Quotation No.</th>
-                      <th className="py-3 pr-4">Client</th>
-                      <th className="py-3 pr-4">Reference</th>
-                      <th className="py-3 pr-4">Total</th>
-                      <th className="py-3 pr-4">Status</th>
-                      <th className="py-3">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cancelledApprovals.map(({ draft, quotation }) => (
-                      <tr key={`${draft.approvalNo}-${quotation.id}`} className="border-b border-zinc-100 align-top">
-                        <td className="py-3 pr-4 font-semibold text-zinc-950">{draft.approvalNo}</td>
-                        <td className="py-3 pr-4 text-zinc-700">{draft.quotationNo}</td>
-                        <td className="py-3 pr-4 text-zinc-700">{draft.clientName}</td>
-                        <td className="max-w-xs py-3 pr-4 text-zinc-600">{draft.reference}</td>
-                        <td className="py-3 pr-4 font-medium text-zinc-950">
-                          {formatQuotationMoney(draft.currency, draft.total)}
-                        </td>
-                        <td className="py-3 pr-4">
-                          <span className="inline-flex rounded-full border border-zinc-300 bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-700">
-                            {clientApprovalStatusDisplayLabel(draft.approvalStatus)}
-                          </span>
-                        </td>
-                        <td className="py-3">
-                          <div className="flex flex-wrap gap-2">
-                            <Link
-                              href={`/sales/approvals/${draft.approvalNo}`}
-                              className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-700"
-                            >
-                              Open Approval
-                            </Link>
-                            <Link
-                              href={`/quotations/${quotation.id}`}
-                              className="text-sm font-semibold text-zinc-700 transition hover:text-zinc-950"
-                            >
-                              Open Quotation
-                            </Link>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </details>
-          ) : null}
         </section>
       </div>
     </ErpAppShell>

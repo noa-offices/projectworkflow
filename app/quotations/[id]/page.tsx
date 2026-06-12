@@ -21,14 +21,10 @@ import {
   quotationStatuses,
 } from "@/lib/quotation-status";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
-import {
-  clientApprovalDraftFromLayoutSettings,
-  isActiveClientApprovalStatus,
-  isCancelledClientApprovalStatus,
-} from "@/lib/quotations/client-approval-draft";
+import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
+import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import {
-  formatClientApprovalNumber,
   formatConfirmedOrderNumber,
   formatOrderConfirmationNumber,
   formatPresentationNumber,
@@ -42,7 +38,7 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { profileDisplayName } from "@/lib/user-display";
 import {
   archiveFolderQuotation,
-  createClientApprovalDraft,
+  createProjectFileFromQuotation,
   createQuotationOption,
   createQuotationRevision,
   permanentlyDeleteQuotation,
@@ -441,78 +437,27 @@ function FolderMutationForm({
   );
 }
 
-type ClientApprovalReviewData = {
-  approvalNo: string;
-  quotationNo: string;
-  folderNo: string;
-  clientName: string;
-  reference: string;
-  total: string;
-  status: string;
-  date: string;
-};
-
-function ClientApprovalPreparationForm({
-  disabledReason,
-  existingApprovalHref,
+function CreateProjectFileForm({
+  orderNo,
   quotationId,
   returnTo,
-  review,
 }: {
-  disabledReason: string | null;
-  existingApprovalHref: string | null;
+  orderNo: string;
   quotationId: string;
   returnTo: string;
-  review: ClientApprovalReviewData;
 }) {
-  if (existingApprovalHref) {
-    return (
-      <Link
-        href={existingApprovalHref}
-        className="inline-flex h-10 items-center rounded-md border border-emerald-200 bg-white px-4 text-sm font-semibold text-emerald-900 transition hover:border-emerald-700 hover:text-emerald-800"
-      >
-        Open Approval
-      </Link>
-    );
-  }
-
-  if (disabledReason) {
-    return <DisabledWorkflowButton label="Submit to Client" />;
-  }
-
   return (
-    <details className="relative">
-      <summary className="inline-flex h-10 cursor-pointer list-none items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800">
-        Submit to Client
-      </summary>
-      <div className="absolute right-0 z-20 mt-2 w-[min(92vw,420px)] rounded-lg border border-zinc-200 bg-white p-4 text-left shadow-xl">
-        <p className="text-sm font-semibold text-zinc-950">Review Client Decision Record</p>
-        <dl className="mt-3 grid gap-2 text-sm">
-          <InfoValue label="CP number" value={review.approvalNo} />
-          <InfoValue label="Quotation no" value={review.quotationNo} />
-          <InfoValue label="Folder no" value={review.folderNo} />
-          <InfoValue label="Client" value={review.clientName} />
-          <InfoValue label="Reference / Project" value={review.reference} />
-          <InfoValue label="Total" value={review.total} />
-          <InfoValue label="Status" value={review.status} />
-          <InfoValue label="Date" value={review.date} />
-        </dl>
-        <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-950">
-          Confirmed Order / Project will be created only after the client approves this quotation.
-        </p>
-        <form action={createClientApprovalDraft} className="mt-3">
-          <input type="hidden" name="quotation_id" value={quotationId} />
-          <input type="hidden" name="return_to" value={returnTo} />
-          <ConfirmSubmitButton
-            className="inline-flex h-10 w-full items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-            message={`Submit to Client\n\nThis will prepare ${review.approvalNo} for ${review.quotationNo} and mark it waiting for client decision. Confirmed Order / Project will be created only after the client approves this quotation.`}
-            pendingLabel="Submitting..."
-          >
-            Confirm Submit to Client
-          </ConfirmSubmitButton>
-        </form>
-      </div>
-    </details>
+    <form action={createProjectFileFromQuotation}>
+      <input type="hidden" name="quotation_id" value={quotationId} />
+      <input type="hidden" name="return_to" value={returnTo} />
+      <ConfirmSubmitButton
+        className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+        message={`Create Project File\n\nThis will create ${orderNo} from the approved quotation. RFQ, PO, OC, and procurement will not be created.`}
+        pendingLabel="Creating..."
+      >
+        Create Project File
+      </ConfirmSubmitButton>
+    </form>
   );
 }
 
@@ -1051,10 +996,9 @@ export default async function QuotationDetailPage({
   });
   const quotationFolderNo = quotationFolderNumberFromQuotationNumber(quotation.quotation_no);
   const derivedOpportunityNo = opportunityNumberFromQuotationNumber(quotation.quotation_no);
-  const folderDisplayNo = quotationFolderNo ?? "Legacy";
+  const folderDisplayNo = quotationFolderNo ?? "Not prepared";
   const folderDisplayReference = resolvedDocumentSetup.header.reference;
   const folderTitle = folderDisplayReference || quotation.title?.trim() || "Quotation folder";
-  const folderNextStep = nextStepLabel(quotation.status);
   const folderQuotationList = (folderQuotations?.length ? folderQuotations : [quotation as FolderQuotation])
     .filter((entry, index, entries) => entries.findIndex((candidate) => candidate.id === entry.id) === index)
     .sort((left, right) => {
@@ -1079,67 +1023,34 @@ export default async function QuotationDetailPage({
   const specificationNo = quotation.quotation_no ? formatSpecificationNumber(quotation.quotation_no) : null;
   const presentationNo = quotation.quotation_no ? formatPresentationNumber(quotation.quotation_no) : null;
   const workflowSequences = quotationWorkflowSequences(quotation.quotation_no);
-  const clientApprovalNo = workflowSequences
-    ? formatClientApprovalNumber(workflowSequences.clientSequence, workflowSequences.opportunitySequence)
-    : null;
   const confirmedOrderNo = workflowSequences
     ? formatConfirmedOrderNumber(workflowSequences.clientSequence, workflowSequences.opportunitySequence)
     : null;
   const supplierRfqNo = confirmedOrderNo ? formatSupplierRfqNumber(confirmedOrderNo, 1) : null;
   const purchaseOrderNo = confirmedOrderNo ? formatPurchaseOrderNumber(confirmedOrderNo, 1) : null;
   const orderConfirmationNo = confirmedOrderNo ? formatOrderConfirmationNumber(confirmedOrderNo) : null;
-  const variantsAvailableForNumberedFolder = Boolean(workflowSequences);
   const currentQuotationArchived = isArchivedFolderQuotation(quotation);
   const currentClientApprovalDraft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);
-  const clientApprovalStatusReady = ["ready_to_send", "ready_for_review"].includes(quotation.status);
-  const currentApprovalActive = currentClientApprovalDraft
-    ? isActiveClientApprovalStatus(currentClientApprovalDraft.approvalStatus)
-    : false;
-  const currentApprovalCancelled = currentClientApprovalDraft
-    ? isCancelledClientApprovalStatus(currentClientApprovalDraft.approvalStatus)
-    : false;
-  const clientApprovalDisabledReason = currentClientApprovalDraft
-    ? currentApprovalCancelled
-      ? quotation.status === "cancelled"
-        ? "Cancelled quotations cannot be submitted to the client."
-        : "A cancelled approval exists. Create/reactivate approval workflow will be handled in a future phase."
-      : null
-    : currentQuotationArchived
-      ? "Archived quotations cannot be submitted to the client."
-      : quotation.status === "cancelled"
-        ? "Cancelled quotations cannot be submitted to the client."
-      : !variantsAvailableForNumberedFolder || !quotation.quotation_no || !clientApprovalNo
-        ? "Submit to Client is available for numbered quotation folders."
-        : !client
-          ? "Select a client before submitting this quotation."
-          : !clientApprovalStatusReady
-            ? "Mark this quotation as Ready to Send before submitting it to the client."
-            : null;
-  const clientApprovalReview: ClientApprovalReviewData = {
-    approvalNo: clientApprovalNo ?? "CP pending",
-    quotationNo: quotation.quotation_no ?? "Legacy quotation",
-    folderNo: quotationFolderNo ?? "Legacy",
-    clientName: resolvedDocumentSetup.header.clientDisplayName,
-    reference: folderDisplayReference || folderTitle,
-    total: money(quotation.currency, quotation.grand_total),
-    status: quotationStatusLabel(quotation.status),
-    date: formatFolderDate(quotation.quotation_date),
-  };
-  const clientDecisionFolderMessage = currentClientApprovalDraft
-    ? currentClientApprovalDraft.approvalStatus === "Approved by Client"
-      ? currentClientApprovalDraft.confirmedOrder
-        ? `Confirmed Order / Project ${currentClientApprovalDraft.confirmedOrder.orderNo} has been created from this quotation.`
-        : "Client approved this quotation. Create Confirmed Order / Project from the approval page."
-      : currentClientApprovalDraft.approvalStatus === "Rejected by Client"
-        ? "Client rejected this quotation."
-        : currentClientApprovalDraft.approvalStatus === "Revision Requested"
-          ? "Client requested changes. Create a new revision from this quotation."
-          : currentApprovalCancelled
-            ? "Client decision was cancelled."
-            : currentApprovalActive
-              ? `Client Decision ${currentClientApprovalDraft.approvalNo} is waiting for client response.`
-              : `Client Decision record ${currentClientApprovalDraft.approvalNo} already exists for this quotation.`
+  const currentProjectFile =
+    projectFileFromLayoutSettings(quotation.layout_settings) ??
+    currentClientApprovalDraft?.confirmedOrder ??
+    null;
+  const workflowReturnTo = `/quotations/${quotation.id}`;
+  const projectFileNo = currentProjectFile?.orderNo ?? confirmedOrderNo ?? "CO pending";
+  const canCreateProjectFile =
+    canManageRecords &&
+    !currentProjectFile &&
+    Boolean(workflowSequences) &&
+    !currentQuotationArchived &&
+    quotation.status === "client_confirmed";
+  const projectFileBlockedReason = quotation.status === "client_confirmed" && !currentProjectFile && !workflowSequences
+    ? "Prepare this older quotation before creating a Project File."
     : null;
+  const folderWorkflowHelper = currentProjectFile
+    ? `Project File ${currentProjectFile.orderNo} has been created from this approved quotation.`
+    : quotation.status === "client_confirmed"
+      ? "Client approved. Create the Project File when ready."
+      : "Send quotation documents manually, then update the selected quotation status when the client replies.";
 
   const activityEntries = Array.from(
     new Map(
@@ -1246,7 +1157,7 @@ export default async function QuotationDetailPage({
               <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-zinc-500">
-                    {quotationFolderNo ?? "Legacy quotation"}
+                    {quotationFolderNo ?? "Not prepared for client workflow"}
                   </p>
                   <h1 className="mt-1 text-2xl font-semibold text-zinc-950">
                     {folderTitle}
@@ -1285,7 +1196,7 @@ export default async function QuotationDetailPage({
                       returnTo={`/quotations/${quotation.id}`}
                       setup={resolvedDocumentSetup}
                     />
-                    {canManageRecords && variantsAvailableForNumberedFolder && !currentQuotationArchived ? (
+                    {canManageRecords && !currentQuotationArchived ? (
                       <FolderMutationForm
                         action={createQuotationRevision}
                         className="inline-flex h-11 items-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
@@ -1298,7 +1209,7 @@ export default async function QuotationDetailPage({
                     ) : (
                       <DisabledWorkflowButton label="Create Revision" />
                     )}
-                    {canManageRecords && variantsAvailableForNumberedFolder && !currentQuotationArchived ? (
+                    {canManageRecords && !currentQuotationArchived ? (
                       <FolderMutationForm
                         action={createQuotationOption}
                         className="inline-flex h-11 items-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
@@ -1311,16 +1222,9 @@ export default async function QuotationDetailPage({
                     ) : (
                       <DisabledWorkflowButton label="Create Option" />
                     )}
-                    <ClientApprovalPreparationForm
-                      disabledReason={canManageRecords ? clientApprovalDisabledReason : "Only record managers can submit quotations to the client."}
-                      existingApprovalHref={currentClientApprovalDraft && currentApprovalActive ? `/sales/approvals/${currentClientApprovalDraft.approvalNo}` : null}
-                      quotationId={quotation.id}
-                      returnTo={`/quotations/${quotation.id}`}
-                      review={clientApprovalReview}
-                    />
                   </div>
                   <p className="text-xs text-zinc-500">
-                    {clientDecisionFolderMessage ?? clientApprovalDisabledReason ?? "Review the selected quotation before submitting it to the client for decision."}
+                    {folderWorkflowHelper}
                   </p>
                 </div>
               </div>
@@ -1329,38 +1233,69 @@ export default async function QuotationDetailPage({
                 <InfoValue label="Quotation no" value={displayQuotationNo ?? quotation.quotation_no ?? "Draft quotation"} />
                 <InfoValue label="Quotation folder" value={folderDisplayNo} />
                 <InfoValue label="Client" value={resolvedDocumentSetup.header.clientDisplayName} />
-                <InfoValue label="Opportunity no" value={derivedOpportunityNo ?? "Legacy opportunity"} />
+                <InfoValue label="Opportunity no" value={derivedOpportunityNo ?? "Not linked"} />
                 <InfoValue label="Reference" value={folderDisplayReference} />
                 <InfoValue label="Date" value={formatFolderDate(quotation.quotation_date)} />
               </div>
 
-              <section className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50/60 p-4">
-                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
-                      Current quotation status
-                    </p>
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <StatusBadge status={quotation.status} />
-                      <span className="text-sm font-semibold text-zinc-900">
-                        {quotation.quotation_no ?? "Legacy quotation"}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-sm text-emerald-950">
-                      This control updates the opened quotation only. Select another folder card before changing that quotation&apos;s status.
-                    </p>
-                    {quotation.status_note ? (
-                      <p className="mt-2 text-sm text-zinc-600">
-                        Note: {quotation.status_note}
+              <section className="mt-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+                <article className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-4 shadow-sm">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h2 className="text-lg font-semibold text-zinc-950">Quotation Status</h2>
+                      <p className="mt-1 text-sm text-zinc-500">
+                        Send the PDF to the client manually, then update this selected quotation status.
                       </p>
-                    ) : null}
-                  </div>
-                  {canManageRecords ? (
-                    <div className="rounded-md border border-emerald-200 bg-white p-3">
-                      <StatusUpdateForm quotation={quotation} returnTo={`/quotations/${quotation.id}`} compact />
                     </div>
+                    <StatusBadge status={quotation.status} />
+                  </div>
+                  {quotation.status_note ? (
+                    <p className="mt-3 text-sm text-zinc-600">Note: {quotation.status_note}</p>
                   ) : null}
-                </div>
+                  <p className="mt-4 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600">
+                    Use revisions or options when the client requests changes. Set status to Client Approved when the client confirms.
+                  </p>
+                </article>
+
+                <article className="rounded-lg border border-emerald-200 bg-white p-4 shadow-sm">
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      <h2 className="text-lg font-semibold text-zinc-950">Project File</h2>
+                      <p className="mt-1 text-sm text-zinc-500">
+                        {currentProjectFile
+                          ? `Project File ${currentProjectFile.orderNo} has been created from this approved quotation.`
+                          : quotation.status === "client_confirmed"
+                            ? "Create the project file from this approved quotation."
+                            : "Available after the selected quotation is Client Approved."}
+                      </p>
+                    </div>
+                    {currentProjectFile ? (
+                      <Link
+                        href={`/projects/orders/${currentProjectFile.orderNo}`}
+                        className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                      >
+                        Open Project File
+                      </Link>
+                    ) : canCreateProjectFile ? (
+                      <CreateProjectFileForm
+                        orderNo={projectFileNo}
+                        quotationId={quotation.id}
+                        returnTo={workflowReturnTo}
+                      />
+                    ) : (
+                      <DisabledWorkflowButton label="Create Project File" />
+                    )}
+                  </div>
+                  {projectFileBlockedReason ? (
+                    <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-950">
+                      {projectFileBlockedReason}
+                    </p>
+                  ) : null}
+                  <dl className="mt-4 grid gap-3 text-sm">
+                    <InfoValue label="Project file no" value={currentProjectFile?.orderNo ?? projectFileNo} />
+                    <InfoValue label="Source quotation" value={quotation.quotation_no ?? "Older quotation"} />
+                  </dl>
+                </article>
               </section>
               <section className="mt-6 rounded-lg border border-zinc-200 bg-zinc-50/60 p-4">
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -1421,7 +1356,7 @@ export default async function QuotationDetailPage({
                                   ) : null}
                                 </div>
                                 <h3 className="mt-2 text-base font-semibold text-zinc-950">
-                                  {folderQuotation.quotation_no ?? "Legacy quotation"}
+                                  {folderQuotation.quotation_no ?? "Older quotation"}
                                 </h3>
                                 <p className="mt-1 text-sm text-zinc-500">{formatFolderDate(folderQuotation.quotation_date)}</p>
                             </div>
@@ -1442,7 +1377,7 @@ export default async function QuotationDetailPage({
                           </Link>
                           <SecondaryActionLink href={`/quotations/${folderQuotation.id}/pdf`} label="Preview Quotation" />
                           <SecondaryPendingActionLink href={`/quotations/${folderQuotation.id}/download-pdf`} label="Download PDF" pendingLabel="Preparing PDF..." />
-                          {canManageRecords && variantsAvailableForNumberedFolder ? (
+                          {canManageRecords ? (
                             <FolderMutationForm
                               action={createQuotationRevision}
                               className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
@@ -1457,7 +1392,7 @@ export default async function QuotationDetailPage({
                               Create Revision
                             </span>
                           )}
-                          {canManageRecords && variantsAvailableForNumberedFolder ? (
+                          {canManageRecords ? (
                             <FolderMutationForm
                               action={createQuotationOption}
                               className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
@@ -1542,7 +1477,7 @@ export default async function QuotationDetailPage({
                                   ) : null}
                                 </div>
                                 <h3 className="mt-2 text-base font-semibold text-zinc-700">
-                                  {folderQuotation.quotation_no ?? "Legacy quotation"}
+                                  {folderQuotation.quotation_no ?? "Older quotation"}
                                 </h3>
                                 <p className="mt-1 text-sm text-zinc-500">
                                   Archived {formatFolderDate(folderQuotation.status_updated_at ?? folderQuotation.quotation_date)}
@@ -1580,10 +1515,6 @@ export default async function QuotationDetailPage({
                   </details>
                 </section>
               ) : null}
-              <p className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
-                {folderNextStep} Confirmed Order / Project will be created only after the client approves this quotation.
-              </p>
-
               <section className="mt-6 rounded-lg border border-zinc-200 bg-zinc-50/60 p-4">
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                   <div>
@@ -1621,25 +1552,35 @@ export default async function QuotationDetailPage({
                     downloadLabel="Download PDF"
                     pendingLabel="Preparing Presentation..."
                   />
-                  <FutureDocumentRow
-                    title={`Client Approval / Decision${clientApprovalNo ? ` - ${clientApprovalNo}` : ""}`}
-                    description="Available after quotation is submitted to the client for decision."
-                  />
-                  <FutureDocumentRow
-                    title={`Confirmed Order${confirmedOrderNo ? ` - ${confirmedOrderNo}` : ""}`}
-                    description="Available after the client approves the submitted quotation."
-                  />
+                  {currentProjectFile ? (
+                    <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-semibold text-zinc-950">
+                          Project File - {currentProjectFile.orderNo}
+                        </h3>
+                        <p className="mt-1 text-sm text-zinc-500">
+                          Created from this approved quotation.
+                        </p>
+                      </div>
+                      <SecondaryActionLink href={`/projects/orders/${currentProjectFile.orderNo}`} label="Open Project File" />
+                    </div>
+                  ) : (
+                    <FutureDocumentRow
+                      title={`Project File${confirmedOrderNo ? ` - ${confirmedOrderNo}` : ""}`}
+                      description="Available after the selected quotation is Client Approved."
+                    />
+                  )}
                   <FutureDocumentRow
                     title={`Supplier RFQ${supplierRfqNo ? ` - ${supplierRfqNo}` : ""}`}
-                    description="Available after confirmed order/project creation."
+                    description="Available after Project File creation in a future phase."
                   />
                   <FutureDocumentRow
                     title={`Purchase Order${purchaseOrderNo ? ` - ${purchaseOrderNo}` : ""}`}
-                    description="Available after confirmed order/project and procurement flow."
+                    description="Future procurement document."
                   />
                   <FutureDocumentRow
                     title={`Order Confirmation${orderConfirmationNo ? ` - ${orderConfirmationNo}` : ""}`}
-                    description="Available after client approval and confirmed order creation."
+                    description="Future client order document."
                   />
                 </div>
               </section>
@@ -1767,7 +1708,7 @@ export default async function QuotationDetailPage({
                   <InfoValue label="PO Box" value={resolvedDocumentSetup.header.poBox} />
                   <InfoValue label="Location" value={resolvedDocumentSetup.header.location} />
                   <InfoValue label="Reference" value={folderDisplayReference} />
-                  <InfoValue label="Opportunity no" value={derivedOpportunityNo ?? "Legacy opportunity"} />
+                  <InfoValue label="Opportunity no" value={derivedOpportunityNo ?? "Not linked"} />
                   <InfoValue label="Submission date" value={formatFolderDate(quotation.quotation_date)} />
                 </div>
               </div>
@@ -2005,23 +1946,6 @@ function quotationBranchSortKey(quotationNo: string | null | undefined) {
     .join("/");
 
   return `${root}/${suffix}`;
-}
-
-function nextStepLabel(status: string) {
-  switch (status) {
-    case "draft":
-      return "Next step: Open Builder and complete the quotation.";
-    case "sent":
-      return "Next step: Review, preview, and prepare for approval.";
-    case "revised":
-      return "Next step: Review the latest revision with the client.";
-    case "approved":
-      return "Next step: Convert after approval when that phase is enabled.";
-    case "won":
-      return "Next step: Confirm order and hand over to delivery.";
-    default:
-      return "Next step: Keep the folder updated and ready.";
-  }
 }
 
 function quotationWorkflowSequences(quotationNo: string | null | undefined) {

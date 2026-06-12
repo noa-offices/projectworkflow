@@ -1,12 +1,10 @@
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
-import { OpportunityQuotationPrefill } from "@/components/quotations/opportunity-quotation-prefill";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { QuotationListLiveFilter } from "@/components/quotations/quotation-list-live-filter";
-import { ProjectSelectByClient } from "@/components/quotations/project-select-by-client";
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
-import { createQuotation } from "./actions";
+import { createQuotation, createQuotationClient } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -125,13 +123,14 @@ function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
   );
 }
 
-function ClientSelect({ clients }: { clients: Client[] }) {
+function ClientSelect({ clients, selectedClientId }: { clients: Client[]; selectedClientId?: string }) {
   return (
     <label className="block">
       <span className="text-xs font-semibold uppercase text-zinc-500">Client</span>
       <select
         name="client_id"
         required
+        defaultValue={selectedClientId ?? ""}
         className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
       >
         <option value="">Select client</option>
@@ -145,40 +144,64 @@ function ClientSelect({ clients }: { clients: Client[] }) {
   );
 }
 
+function CreateClientPanel() {
+  return (
+    <details className="rounded-md border border-zinc-200 bg-zinc-50 p-3 md:col-span-2 xl:col-span-3">
+      <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
+        Create new client
+      </summary>
+      <form action={createQuotationClient} className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <input type="hidden" name="return_to" value="/sales/quotations" />
+        <Field name="company_name" label="Client / Company Name" required />
+        <Field name="contact_person" label="Contact Person" />
+        <Field name="phone" label="Phone / Mobile" />
+        <Field name="email" label="Email" type="email" />
+        <Field name="address" label="Address / Location" />
+        <Field name="city" label="City" />
+        <Field name="country" label="Country" defaultValue="UAE" />
+        <TextArea name="notes" label="Notes" />
+        <div className="flex justify-end md:col-span-2 xl:col-span-3">
+          <PendingSubmitButton
+            className="h-10 rounded-md border border-emerald-900 px-4 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-zinc-300 disabled:text-zinc-400"
+            pendingLabel="Creating client..."
+          >
+            Create and select client
+          </PendingSubmitButton>
+        </div>
+      </form>
+    </details>
+  );
+}
+
 function QuotationForm({
   clients,
-  fromOpportunity,
-  fromOpportunityId,
-  projects,
+  selectedClientId,
 }: {
   clients: Client[];
-  fromOpportunity: boolean;
-  fromOpportunityId: string;
-  projects: Project[];
+  selectedClientId?: string;
 }) {
   return (
     <form action={createQuotation} data-quotation-create-form className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-      {fromOpportunity ? (
-        <>
-          <ClientSelect clients={clients} />
-          <Field name="legacy_reference" label="Project / Reference Name" required />
-          <input type="hidden" name="from_opportunity" value="1" />
-          <input type="hidden" name="from_opportunity_id" value={fromOpportunityId} />
-          <input type="hidden" name="from_opportunity_no" value="" />
-          <input type="hidden" name="project_id" value="" />
-        </>
-      ) : (
-        <ProjectSelectByClient clients={clients} projects={projects} />
-      )}
+      <input type="hidden" name="return_to" value="/sales/quotations" />
+      <input type="hidden" name="project_id" value="" />
+      <ClientSelect clients={clients} selectedClientId={selectedClientId} />
+      <Field name="legacy_reference" label="Reference / Project Name" required />
       <Field name="title" label="Title" required />
       <label className="block">
-        <span className="text-xs font-semibold uppercase text-zinc-500">Project / Quote No.</span>
+        <span className="text-xs font-semibold uppercase text-zinc-500">Quotation No.</span>
         <input
-          value={fromOpportunity ? "Confirmed Order / Project will be created only after the client approves this quotation" : "Generated automatically from the selected project"}
+          value="Generated automatically"
           readOnly
           className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-500 outline-none"
         />
       </label>
+      <Field name="contact_name" label="Attention / Contact" />
+      <Field name="contact_phone" label="Phone / Mobile" />
+      <Field name="contact_email" label="Email" type="email" />
+      <Field name="telephone" label="Telephone" />
+      <Field name="po_box" label="PO Box" />
+      <Field name="location" label="Location" />
+      <TextArea name="project_address" label="Project Address" />
       <Field name="quotation_date" label="Quotation date" type="date" defaultValue={new Date().toISOString().slice(0, 10)} />
       <label className="block">
         <span className="text-xs font-semibold uppercase text-zinc-500">Layout Mode</span>
@@ -203,11 +226,6 @@ function QuotationForm({
       <TextArea name="notes" label="Notes" />
       <input type="hidden" name="status" value="draft" />
       <input type="hidden" name="is_active" value="on" />
-      {fromOpportunity ? (
-        <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 md:col-span-2 xl:col-span-3">
-          This quotation will use the opportunity reference. Confirmed Order / Project will be created only after the client approves this quotation.
-        </p>
-      ) : null}
       <div className="flex justify-end md:col-span-2 xl:col-span-3">
         <PendingSubmitButton
           className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
@@ -229,8 +247,6 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
   const selectedClientId = resolvedSearchParams?.client ?? "";
   const selectedProjectId = resolvedSearchParams?.project ?? "";
   const selectedYear = resolvedSearchParams?.year ?? "";
-  const fromOpportunity = Boolean(resolvedSearchParams?.fromOpportunity?.trim());
-  const fromOpportunityId = resolvedSearchParams?.fromOpportunity?.trim() ?? "";
   const canManageRecords =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
@@ -275,7 +291,7 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
   return (
     <ErpAppShell
       title="Quotations"
-      description="Quotation folders across opportunities, clients, revisions, and options."
+      description="Create quotations directly from client enquiries, then build revisions, options, and Project Files."
       userDisplayName={displayName}
       userEmail={user.email}
     >
@@ -305,23 +321,18 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
           quotations={quotationList}
         >
           {canManageRecords ? (
-            <details open={fromOpportunity || !quotationList.length} className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+            <details open={!quotationList.length || Boolean(selectedClientId)} className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
               <summary className="cursor-pointer text-lg font-semibold text-zinc-950">
                 Create new quotation
               </summary>
               <p className="mt-1 text-sm text-zinc-500">
-                {fromOpportunity
-                  ? "Start from the confirmed client and opportunity reference. Confirmed Order / Project creation happens only after the client approves the submitted quotation."
-                  : "Start with a client and project, then add sections and custom lines."}
+                Start with a client and document details. Project File creation happens after the quotation is Client Approved.
               </p>
               <div className="mt-5">
-                <OpportunityQuotationPrefill clients={clientList} projects={projectList} />
-                          <QuotationForm
-                            clients={clientList}
-                            fromOpportunity={fromOpportunity}
-                            fromOpportunityId={fromOpportunityId}
-                            projects={projectList}
-                          />
+                <div className="grid gap-4">
+                  <CreateClientPanel />
+                  <QuotationForm clients={clientList} selectedClientId={selectedClientId} />
+                </div>
               </div>
             </details>
           ) : null}

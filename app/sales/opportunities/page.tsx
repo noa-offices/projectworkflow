@@ -1,48 +1,31 @@
+import Link from "next/link";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
-import { OpportunitiesPreview } from "@/components/sales/opportunities-preview";
 import { requireActiveUser } from "@/lib/auth";
-import { createClient as createSupabaseClient } from "@/lib/supabase/server";
-
-type Client = { id: string; company_name: string; client_number: string | null };
-
-type Project = {
-  id: string;
-  client_id: string;
-  project_name: string;
-  project_number: string | null;
-  project_code: string | null;
-  project_year: number | null;
-};
 
 export default async function SalesOpportunitiesPage() {
   const { user, displayName } = await requireActiveUser();
-  const supabase = await createSupabaseClient();
-
-  const { data: clients, error: clientsError } = await supabase
-    .from("clients")
-    .select("id,company_name,client_number")
-    .order("company_name", { ascending: true })
-    .returns<Client[]>();
-
-  const { data: projects, error: projectsError } = await supabase
-    .from("projects")
-    .select("id,client_id,project_name,project_number,project_code,project_year")
-    .order("project_name", { ascending: true })
-    .returns<Project[]>();
-
-  if (clientsError) console.error("SALES OPPORTUNITY CLIENTS LIST ERROR", clientsError.message);
-  if (projectsError) console.error("SALES OPPORTUNITY PROJECTS LIST ERROR", projectsError.message);
 
   return (
     <ErpAppShell
       eyebrow="SALES"
       title="Opportunities"
-      description="Capture furniture sales requests, client details, and quotation submission dates before quotation."
+      description="Opportunities are no longer used. New enquiries now start from Quotations."
       userDisplayName={displayName}
       userEmail={user.email}
     >
       <div className="px-5 py-6 sm:px-8">
-        <OpportunitiesPreview clients={clients ?? []} projects={projects ?? []} />
+        <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-semibold text-zinc-950">Opportunities are no longer used.</h2>
+          <p className="mt-2 text-sm text-zinc-600">
+            New enquiries now start from Quotations. Existing local opportunity data has not been deleted.
+          </p>
+          <Link
+            href="/sales/quotations"
+            className="mt-4 inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+          >
+            Open Quotations
+          </Link>
+        </section>
       </div>
     </ErpAppShell>
   );

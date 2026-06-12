@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
+import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
@@ -55,6 +56,11 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
 
   const entry = (quotations ?? [])
     .map((quotation) => {
+      const projectFile = projectFileFromLayoutSettings(quotation.layout_settings);
+      if (projectFile?.orderNo === decodedOrderNo) {
+        return { quotationId: quotation.id, draft: null, order: projectFile };
+      }
+
       const draft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);
       return draft?.confirmedOrder?.orderNo === decodedOrderNo
         ? { quotationId: quotation.id, draft, order: draft.confirmedOrder }
@@ -69,8 +75,8 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
   return (
     <ErpAppShell
       eyebrow="PROJECTS"
-      title={`Confirmed Order / Project ${entry.order.orderNo}`}
-      description="Confirmed project/order file from an approved client decision. Procurement documents come later."
+      title={`Project File ${entry.order.orderNo}`}
+      description="Project file from a client-approved quotation. Procurement documents come later."
       userDisplayName={displayName}
       userEmail={user.email}
     >
@@ -82,12 +88,14 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
         ) : null}
 
         <div className="mb-5 flex flex-wrap gap-2">
-          <Link
-            href={`/sales/approvals/${entry.order.approvalNo}`}
-            className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900/25 hover:text-emerald-900"
-          >
-            Open Approval
-          </Link>
+          {entry.order.approvalNo ? (
+            <Link
+              href={`/sales/approvals/${entry.order.approvalNo}`}
+              className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900/25 hover:text-emerald-900"
+            >
+              Open History
+            </Link>
+          ) : null}
           <Link
             href={`/quotations/${entry.quotationId}`}
             className="inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
@@ -109,7 +117,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
 
           <dl className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <DetailValue label="CO no" value={entry.order.orderNo} />
-            <DetailValue label="Approval no" value={entry.order.approvalNo} />
+            <DetailValue label="History record" value={entry.order.approvalNo ?? "-"} />
             <DetailValue label="Quotation no" value={entry.order.quotationNo} />
             <DetailValue label="Client" value={entry.order.clientName} />
             <DetailValue label="Reference" value={entry.order.reference} />
