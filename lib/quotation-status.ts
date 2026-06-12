@@ -5,7 +5,8 @@ export const quotationStatuses = [
   ["ready_to_send", "Ready to Send"],
   ["sent_to_client", "Sent to Client"],
   ["client_confirmed", "Client Approved"],
-  ["cancelled", "Cancelled"],
+  ["on_hold", "On Hold"],
+  ["cancelled", "Rejected / Lost"],
   ["archived", "Archived"],
 ] as const;
 
@@ -31,6 +32,8 @@ export function quotationStatusBadgeClassName(status: string | null | undefined)
       return "border-blue-200 bg-blue-50 text-blue-800";
     case "client_confirmed":
       return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    case "on_hold":
+      return "border-amber-200 bg-amber-50 text-amber-800";
     case "cancelled":
       return "border-red-200 bg-red-50 text-red-800";
     case "archived":

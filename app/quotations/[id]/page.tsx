@@ -24,6 +24,7 @@ import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { QuotationStatusSelector } from "@/components/quotations/quotation-status-selector";
 import {
   formatConfirmedOrderNumber,
   formatOrderConfirmationNumber,
@@ -1037,6 +1038,13 @@ export default async function QuotationDetailPage({
     null;
   const workflowReturnTo = `/quotations/${quotation.id}`;
   const projectFileNo = currentProjectFile?.orderNo ?? confirmedOrderNo ?? "CO pending";
+  console.log("[DEBUG canCreateProjectFile]", {
+    quotation_no: quotation.quotation_no,
+    workflowSequences: Boolean(workflowSequences),
+    status: quotation.status,
+    canManageRecords,
+    currentProjectFile: Boolean(currentProjectFile),
+  });
   const canCreateProjectFile =
     canManageRecords &&
     !currentProjectFile &&
@@ -1255,6 +1263,26 @@ export default async function QuotationDetailPage({
                   <p className="mt-4 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600">
                     Use revisions or options when the client requests changes. Set status to Client Approved when the client confirms.
                   </p>
+                  {canManageRecords ? (
+                    <>
+                      <QuotationStatusSelector quotationId={quotation.id} currentStatus={quotation.status} />
+                      {quotation.status === "on_hold" ? (
+                        <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-950">
+                          This quotation is currently on hold. No actions will be taken until the status changes.
+                        </p>
+                      ) : null}
+                      {quotation.status === "cancelled" ? (
+                        <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-900">
+                          This quotation has been rejected or lost. The folder is closed.
+                        </p>
+                      ) : null}
+                      {quotation.status === "revision_required" ? (
+                        <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-900">
+                          Client has requested changes — create a revision below.
+                        </p>
+                      ) : null}
+                    </>
+                  ) : null}
                 </article>
 
                 <article className="rounded-lg border border-emerald-200 bg-white p-4 shadow-sm">

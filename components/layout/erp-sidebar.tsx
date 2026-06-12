@@ -42,7 +42,7 @@ function isDashboardActive(pathname: string) {
 }
 
 function isProjectsActive(pathname: string) {
-  return pathname === "/clients" || pathname.startsWith("/clients/");
+  return pathname === "/clients" || pathname.startsWith("/clients/") || pathname === "/projects/orders" || pathname.startsWith("/projects/orders/");
 }
 
 function isQuotationsActive(pathname: string) {
@@ -131,7 +131,7 @@ export function ErpSidebar() {
       {
         title: "Projects",
         items: [
-          { label: "Active Projects", href: "/clients", icon: FolderKanban, active: isProjectsActive(pathname) },
+          { label: "Active Projects", href: "/projects/orders", icon: FolderKanban, active: isProjectsActive(pathname) },
           { label: "Delivery & Installation", icon: Truck, disabled: true, suffix: "Coming soon" },
           { label: "Project Archive", icon: Archive, disabled: true, suffix: "Coming soon" },
         ],
