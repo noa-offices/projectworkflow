@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { ProjectActivityTimeline } from "@/components/projects/project-activity-timeline";
 import { ProjectExecutionStatus } from "@/components/projects/project-execution-status";
-import { requireActiveUser } from "@/lib/auth";
+import { canAccessProcurement, requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
@@ -72,12 +73,19 @@ function DetailValue({ label, value }: { label: string; value: string }) {
 }
 
 export default async function ConfirmedOrderPage({ params, searchParams }: ConfirmedOrderPageProps) {
-  const [{ user, displayName }, { orderNo }, query] = await Promise.all([
+  const [{ user, profile, displayName }, { orderNo }, query] = await Promise.all([
     requireActiveUser(),
     params,
     searchParams ?? Promise.resolve({} as { message?: string }),
   ]);
   const decodedOrderNo = decodeURIComponent(orderNo);
+  const canProcure = canAccessProcurement(profile?.role);
+  const canEditExecutionStatus = profile?.role === "system_owner" || profile?.role === "admin_manager";
+  // System Owner and Admin Manager only.
+  // procurement_manager gets full activity control in Procurement tab (Phase 3B).
+  const canLog =
+    profile?.role === "system_owner" ||
+    profile?.role === "admin_manager";
   const supabase = await createSupabaseClient();
 
   const { data: quotations, error } = await supabase
@@ -134,6 +142,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
       eyebrow="PROJECTS"
       title={`Project File ${entry.order.orderNo}`}
       description="Project file from a client-approved quotation. Procurement documents come later."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
     >
@@ -152,24 +161,30 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
           >
             Open Quotation
           </Link>
-          <Link
-            href={`/quotations/${entry.quotationId}/procurement-rfq`}
-            className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-          >
-            Procurement RFQ
-          </Link>
-          <Link
-            href={`/quotations/${entry.quotationId}/purchase-order`}
-            className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-          >
-            Purchase Order
-          </Link>
-          <Link
-            href={`/quotations/${entry.quotationId}/order-confirmation`}
-            className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-          >
-            Order Confirmation
-          </Link>
+          {canProcure ? (
+            <>
+              <Link
+                href={`/quotations/${entry.quotationId}/procurement-rfq`}
+                className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+              >
+                Procurement RFQ
+              </Link>
+              <Link
+                href={`/quotations/${entry.quotationId}/purchase-order`}
+                className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+              >
+                Purchase Order
+              </Link>
+              <Link
+                href={`/quotations/${entry.quotationId}/order-confirmation`}
+                className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+              >
+                Order Confirmation
+              </Link>
+            </>
+          ) : (
+            <p className="text-xs text-zinc-400">Procurement documents require Procurement Manager access.</p>
+          )}
         </div>
 
         {/* Section 2: Project File metadata */}
@@ -195,123 +210,132 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
           </dl>
         </section>
 
-        {/* Section 3: Locked Items Matrix */}
-        <section className="mt-6 rounded-lg border border-zinc-200 bg-white shadow-sm">
-          <div className="border-b border-zinc-100 px-5 py-4">
-            <h2 className="text-lg font-semibold text-zinc-950">Locked Items</h2>
-            <p className="mt-1 text-sm text-zinc-500">
-              Snapshot from the approved quotation {entry.order.quotationNo ?? entry.order.orderNo}.
-            </p>
-          </div>
-          <div className="px-5 py-3">
-            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-950">
-              This is a locked snapshot of the approved quotation. Items cannot be edited here.
-            </p>
-          </div>
-          <div className="max-h-[450px] overflow-y-auto rounded-md border border-zinc-200">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 z-10 bg-zinc-50">
-                <tr className="bg-zinc-50">
-                  <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase text-zinc-500">#</th>
-                  <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase text-zinc-500">Item Description</th>
-                  <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase text-zinc-500">Brand</th>
-                  <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase text-zinc-500">Size / Finish</th>
-                  <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase text-zinc-500">Supplier</th>
-                  <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase text-zinc-500">Qty</th>
-                  <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase text-zinc-500">Unit Price</th>
-                  <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase text-zinc-500">Net Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {numberedItems.map(({ item, rowNumber }) => {
-                  if (item.line_style === "heading") {
-                    return (
-                      <tr key={item.id} className="bg-zinc-50">
-                        <td colSpan={8} className="px-4 py-2 text-sm font-semibold text-zinc-950">
-                          {item.item_name_snapshot ?? item.item_code_snapshot ?? ""}
+        <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_280px]">
+
+          {/* LEFT: Locked Items Matrix */}
+          <div>
+            <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+              <div className="border-b border-zinc-100 px-5 py-4">
+                <h2 className="text-lg font-semibold text-zinc-950">Locked Items</h2>
+                <p className="mt-1 text-sm text-zinc-500">
+                  Snapshot from the approved quotation {entry.order.quotationNo ?? entry.order.orderNo}.
+                </p>
+              </div>
+              <div className="px-5 py-3">
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-950">
+                  This is a locked snapshot of the approved quotation. Items cannot be edited here.
+                </p>
+              </div>
+              <div className="max-h-[450px] overflow-y-auto rounded-md border border-zinc-200">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 z-10 bg-zinc-50">
+                    <tr className="bg-zinc-50">
+                      <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase text-zinc-500">#</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase text-zinc-500">Item Description</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase text-zinc-500">Brand</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase text-zinc-500">Size / Finish</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase text-zinc-500">Supplier</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase text-zinc-500">Qty</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase text-zinc-500">Unit Price</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase text-zinc-500">Net Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {numberedItems.map(({ item, rowNumber }) => {
+                      if (item.line_style === "heading") {
+                        return (
+                          <tr key={item.id} className="bg-zinc-50">
+                            <td colSpan={8} className="px-4 py-2 text-sm font-semibold text-zinc-950">
+                              {item.item_name_snapshot ?? item.item_code_snapshot ?? ""}
+                            </td>
+                          </tr>
+                        );
+                      }
+                      const sizeFinish = [item.size_snapshot, item.finish_snapshot].filter(Boolean).join(" / ");
+                      return (
+                        <tr
+                          key={item.id}
+                          className={`border-b border-zinc-100 ${item.is_optional ? "opacity-70" : ""}`}
+                        >
+                          <td className="px-4 py-3 text-sm text-zinc-400">{rowNumber}</td>
+                          <td className="px-4 py-3 text-sm">
+                            <span className={item.is_optional ? "italic text-zinc-500" : "text-zinc-900"}>
+                              {item.item_name_snapshot ?? item.item_code_snapshot ?? "-"}
+                            </span>
+                            {item.is_optional ? (
+                              <span className="ml-2 inline-flex rounded border border-zinc-200 bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-500">
+                                Optional
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-zinc-600">{item.brand_name_snapshot ?? "-"}</td>
+                          <td className="px-4 py-3 text-sm text-zinc-600">{sizeFinish || "-"}</td>
+                          <td className="px-4 py-3 text-sm text-zinc-600">{item.supplier_name_snapshot ?? "-"}</td>
+                          <td className="px-4 py-3 text-right text-sm text-zinc-900">
+                            {item.qty} {item.unit_label}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm text-zinc-900">{formatCurrency(item.unit_price)}</td>
+                          <td className="px-4 py-3 text-right text-sm font-semibold text-zinc-950">{formatCurrency(item.net_total)}</td>
+                        </tr>
+                      );
+                    })}
+                    {numberedItems.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-6 text-center text-sm text-zinc-400">
+                          No items found for this project file.
                         </td>
                       </tr>
-                    );
-                  }
-                  const sizeFinish = [item.size_snapshot, item.finish_snapshot].filter(Boolean).join(" / ");
-                  return (
-                    <tr
-                      key={item.id}
-                      className={`border-b border-zinc-100 ${item.is_optional ? "opacity-70" : ""}`}
-                    >
-                      <td className="px-4 py-3 text-sm text-zinc-400">{rowNumber}</td>
-                      <td className="px-4 py-3 text-sm">
-                        <span className={item.is_optional ? "italic text-zinc-500" : "text-zinc-900"}>
-                          {item.item_name_snapshot ?? item.item_code_snapshot ?? "-"}
-                        </span>
-                        {item.is_optional ? (
-                          <span className="ml-2 inline-flex rounded border border-zinc-200 bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-500">
-                            Optional
-                          </span>
-                        ) : null}
+                    ) : null}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-zinc-200">
+                      <td colSpan={7} className="px-4 py-3 text-right text-sm font-semibold text-zinc-500">
+                        Subtotal
                       </td>
-                      <td className="px-4 py-3 text-sm text-zinc-600">{item.brand_name_snapshot ?? "-"}</td>
-                      <td className="px-4 py-3 text-sm text-zinc-600">{sizeFinish || "-"}</td>
-                      <td className="px-4 py-3 text-sm text-zinc-600">{item.supplier_name_snapshot ?? "-"}</td>
-                      <td className="px-4 py-3 text-right text-sm text-zinc-900">
-                        {item.qty} {item.unit_label}
+                      <td className="px-4 py-3 text-right text-sm font-semibold text-zinc-950">
+                        {formatCurrency(entry.quotationRow.subtotal)}
                       </td>
-                      <td className="px-4 py-3 text-right text-sm text-zinc-900">{formatCurrency(item.unit_price)}</td>
-                      <td className="px-4 py-3 text-right text-sm font-semibold text-zinc-950">{formatCurrency(item.net_total)}</td>
                     </tr>
-                  );
-                })}
-                {numberedItems.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="px-4 py-6 text-center text-sm text-zinc-400">
-                      No items found for this project file.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-              <tfoot>
-                <tr className="border-t border-zinc-200">
-                  <td colSpan={7} className="px-4 py-3 text-right text-sm font-semibold text-zinc-500">
-                    Subtotal
-                  </td>
-                  <td className="px-4 py-3 text-right text-sm font-semibold text-zinc-950">
-                    {formatCurrency(entry.quotationRow.subtotal)}
-                  </td>
-                </tr>
-                <tr>
-                  <td colSpan={7} className="px-4 py-3 text-right text-sm font-semibold text-zinc-500">
-                    VAT {entry.quotationRow.vat_percent}%
-                  </td>
-                  <td className="px-4 py-3 text-right text-sm font-semibold text-zinc-950">
-                    {formatCurrency(entry.quotationRow.vat_amount)}
-                  </td>
-                </tr>
-                <tr className="border-t border-zinc-200 bg-zinc-50">
-                  <td colSpan={7} className="px-4 py-3 text-right text-sm font-bold text-zinc-950">
-                    Grand Total
-                  </td>
-                  <td className="px-4 py-3 text-right text-sm font-bold text-zinc-950">
-                    {formatCurrency(entry.quotationRow.grand_total)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+                    <tr>
+                      <td colSpan={7} className="px-4 py-3 text-right text-sm font-semibold text-zinc-500">
+                        VAT {entry.quotationRow.vat_percent}%
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-semibold text-zinc-950">
+                        {formatCurrency(entry.quotationRow.vat_amount)}
+                      </td>
+                    </tr>
+                    <tr className="border-t border-zinc-200 bg-zinc-50">
+                      <td colSpan={7} className="px-4 py-3 text-right text-sm font-bold text-zinc-950">
+                        Grand Total
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-bold text-zinc-950">
+                        {formatCurrency(entry.quotationRow.grand_total)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </section>
           </div>
-        </section>
 
-        {/* Section 4: Project Execution Status */}
-        <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-zinc-950">Project Execution</h2>
-          <p className="mt-1 text-sm text-zinc-500">
-            Track delivery and installation progress for this project file.
-          </p>
-          <div className="mt-4">
+          {/* RIGHT: Execution Status sidebar */}
+          <div className="space-y-4">
             <ProjectExecutionStatus
-              orderNo={entry.order.orderNo}
+              orderNo={decodedOrderNo}
               quotationId={entry.quotationId}
+              canEdit={canEditExecutionStatus}
             />
           </div>
-        </section>
+
+        </div>
+
+        <div className="mt-6">
+          <ProjectActivityTimeline
+            orderNo={decodedOrderNo}
+            quotationId={entry.quotationId}
+            canLog={canLog}
+          />
+        </div>
 
         {/* Section 5: Project Documents */}
         <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">

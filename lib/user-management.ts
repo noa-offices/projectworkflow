@@ -3,6 +3,7 @@ import type { AccountStatus, AppRole } from "@/lib/supabase/types";
 export const USER_ROLE_OPTIONS = [
   "system_owner",
   "admin_manager",
+  "procurement_manager",
   "sales_designer",
   "viewer",
 ] satisfies AppRole[];
@@ -19,6 +20,8 @@ export function userRoleLabel(role: AppRole | null | undefined) {
       return "System Owner";
     case "admin_manager":
       return "Admin Manager";
+    case "procurement_manager":
+      return "Procurement Manager";
     case "sales_designer":
       return "Sales User";
     case "viewer":

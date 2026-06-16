@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
+import type { AppRole } from "@/lib/supabase/types";
 import {
   Archive,
   BarChart3,
@@ -26,6 +27,7 @@ import {
 type SidebarItem = {
   active?: boolean;
   disabled?: boolean;
+  hidden?: boolean;
   href?: string;
   icon: LucideIcon;
   label: string;
@@ -74,6 +76,7 @@ function isPriceUpdatesActive(pathname: string, priceStatus: string | null) {
 }
 
 function NavRow({ item, indent = false }: { indent?: boolean; item: SidebarItem }) {
+  if (item.hidden) return null;
   const Icon = item.icon;
   const className = [
     "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition",
@@ -109,14 +112,16 @@ function NavRow({ item, indent = false }: { indent?: boolean; item: SidebarItem 
   );
 }
 
-export function ErpSidebar() {
+export function ErpSidebar({ role }: { role: AppRole | null }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const priceStatus = searchParams.get("priceStatus");
   const manage = searchParams.get("manage");
 
   const sections: SidebarSection[] = useMemo(
-    () => [
+    () => {
+      const canProcure = role === "system_owner" || role === "admin_manager" || role === "procurement_manager";
+      return [
       {
         title: "Workspace",
         items: [{ label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, active: isDashboardActive(pathname) }],
@@ -139,9 +144,9 @@ export function ErpSidebar() {
       {
         title: "Procurement",
         items: [
-          { label: "Procurement RFQs", icon: Search, disabled: true, suffix: "Coming soon" },
-          { label: "Purchase Orders", icon: ShoppingCart, disabled: true, suffix: "Coming soon" },
-          { label: "Supplier Confirmations", icon: BadgeCheck, disabled: true, suffix: "Coming soon" },
+          { label: "Procurement RFQs", icon: Search, disabled: true, suffix: canProcure ? "Coming soon" : "No access", hidden: !canProcure },
+          { label: "Purchase Orders", icon: ShoppingCart, disabled: true, suffix: canProcure ? "Coming soon" : "No access", hidden: !canProcure },
+          { label: "Supplier Confirmations", icon: BadgeCheck, disabled: true, suffix: canProcure ? "Coming soon" : "No access", hidden: !canProcure },
         ],
       },
       {
@@ -171,8 +176,9 @@ export function ErpSidebar() {
         title: "System",
         items: [{ label: "Settings", href: "/settings", icon: Settings, active: isSettingsActive(pathname) }],
       },
-    ],
-    [manage, pathname, priceStatus],
+      ];
+    },
+    [manage, pathname, priceStatus, role],
   );
   const activeSectionTitle = sections.find((section) => section.items.some((item) => item.active))?.title;
   const [expandedSections, setExpandedSections] = useState<Set<string>>(() => new Set(["Workspace"]));

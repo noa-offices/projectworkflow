@@ -95,6 +95,25 @@ export async function requireSettingsManager(): Promise<AuthenticatedUser> {
   return authenticatedUser;
 }
 
+export async function requireProcurementManager(): Promise<AuthenticatedUser> {
+  const authenticatedUser = await requireActiveUser();
+  const role = authenticatedUser.profile?.role;
+
+  if (
+    role !== "system_owner" &&
+    role !== "admin_manager" &&
+    role !== "procurement_manager"
+  ) {
+    redirect("/dashboard");
+  }
+
+  return authenticatedUser;
+}
+
+export function canAccessProcurement(role: AppRole | null | undefined): boolean {
+  return role === "system_owner" || role === "admin_manager" || role === "procurement_manager";
+}
+
 export async function requireRecordsManager(): Promise<AuthenticatedUser> {
   const authenticatedUser = await requireActiveUser();
   const role = authenticatedUser.profile?.role;

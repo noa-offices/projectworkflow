@@ -26,36 +26,52 @@ function statusLabel(status: string) {
 }
 
 type Props = {
+  canEdit: boolean;
   orderNo: string;
   quotationId: string;
 };
 
-export function ProjectExecutionStatus({ orderNo, quotationId: _quotationId }: Props) {
+export function ProjectExecutionStatus({ canEdit, orderNo: _orderNo, quotationId: _quotationId }: Props) {
   const [status, setStatus] = useState("in_progress");
 
+  const currentLabel = statusLabel(status);
+  const badgeClass = badgeClassName(status);
+
   return (
-    <div>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-        <label className="flex-1 block">
-          <span className="text-xs font-semibold uppercase text-zinc-500">Execution Status</span>
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-          >
-            {EXECUTION_STATUS_OPTIONS.map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        </label>
-        <div className="sm:pb-1">
-          <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${badgeClassName(status)}`}>
-            {statusLabel(status)}
-          </span>
-        </div>
+    <div className="rounded-md border border-zinc-200 bg-white p-4">
+      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Project Execution Status</p>
+      <div className="mt-3">
+        {canEdit ? (
+          <div className="flex flex-col gap-2">
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              className="h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+            >
+              {EXECUTION_STATUS_OPTIONS.map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="h-9 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+            >
+              Update
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${badgeClass}`}>
+              {currentLabel}
+            </span>
+            <span className="text-xs text-zinc-400">View only</span>
+          </div>
+        )}
       </div>
-      <p className="mt-3 text-xs text-zinc-400">
-        Project execution status for {orderNo} is local only in Phase 3A. Database persistence will be added in Phase 3C.
+      <p className="mt-2 text-[11px] text-zinc-400">
+        {canEdit
+          ? "Only Admin Manager and System Owner can change this status."
+          : "Contact an Admin Manager to update this status."}
       </p>
     </div>
   );
