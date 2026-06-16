@@ -1141,6 +1141,7 @@ export default async function QuotationDetailPage({
       eyebrow="SALES"
       title="Quotation Folder"
       description="Sales file for quotation building, documents, approvals, and future order confirmation."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
     >

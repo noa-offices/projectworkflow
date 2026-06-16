@@ -794,6 +794,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
     <ErpAppShell
       title="Clients & Projects"
       description="Manage client profiles, project details, and contact references."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
     >

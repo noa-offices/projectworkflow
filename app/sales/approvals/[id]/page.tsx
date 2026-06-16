@@ -42,7 +42,7 @@ function DetailValue({ label, value }: { label: string; value: string }) {
 }
 
 export default async function ApprovalDetailPage({ params, searchParams }: ApprovalDetailPageProps) {
-  const [{ user, displayName }, { id }, query] = await Promise.all([
+  const [{ user, profile, displayName }, { id }, query] = await Promise.all([
     requireActiveUser(),
     params,
     searchParams ?? Promise.resolve({} as { message?: string }),
@@ -77,6 +77,7 @@ export default async function ApprovalDetailPage({ params, searchParams }: Appro
       eyebrow="SALES"
       title={`Client Response ${approval.draft.approvalNo}`}
       description="Historical client response record. New quotation workflow is handled directly from the quotation folder."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
     >

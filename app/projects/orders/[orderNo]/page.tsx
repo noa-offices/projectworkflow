@@ -8,6 +8,8 @@ import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-a
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import type React from "react";
+import { DocumentRow } from "@/components/projects/project-document-row";
 
 export const dynamic = "force-dynamic";
 
@@ -185,6 +187,12 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
           ) : (
             <p className="text-xs text-zinc-400">Procurement documents require Procurement Manager access.</p>
           )}
+          <Link
+            href={`/procurement/orders/${decodedOrderNo}`}
+            className="inline-flex h-10 items-center gap-2 rounded-md border border-violet-200 bg-violet-50 px-4 text-sm font-semibold text-violet-800 transition hover:bg-violet-100"
+          >
+            🌐 Open Procurement Workspace
+          </Link>
         </div>
 
         {/* Section 2: Project File metadata */}
@@ -338,39 +346,150 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
         </div>
 
         {/* Section 5: Project Documents */}
-        <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-          <h2 className="text-base font-semibold text-zinc-950">Project Documents</h2>
-          <p className="mt-1 text-sm text-zinc-500">Upload and manage client and supplier documents for this project.</p>
+        <section className="mt-6 rounded-lg border border-zinc-200 bg-white shadow-sm">
 
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div className="border-b border-zinc-100 px-5 py-4">
+            <h2 className="text-base font-semibold text-zinc-950">Project Documents</h2>
+            <p className="mt-0.5 text-sm text-zinc-500">
+              Segregated document directory for this project file.
+            </p>
+          </div>
 
-            <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Client Documents</p>
-              <p className="mt-1 text-xs text-zinc-400">Floor plans, signed specs, site check photos.</p>
-              <div className="mt-3 flex flex-col items-center justify-center rounded-md border border-dashed border-zinc-300 bg-white px-4 py-6 text-center">
-                <p className="text-sm font-medium text-zinc-600">Drop files here</p>
-                <p className="mt-1 text-xs text-zinc-400">PDF, JPG, PNG up to 20MB</p>
-                <button type="button" className="mt-3 inline-flex h-8 items-center rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
-                  Browse files
-                </button>
+          <div className="divide-y divide-zinc-100">
+
+            {/* ─── CORE SALES ─────────────────────────────────────── */}
+            <div className="px-5 py-3">
+              <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
+                📄 Core Sales
+              </p>
+              <div className="space-y-2">
+                <DocumentRow
+                  iconKey="file-text"
+                  label="Approved Quotation"
+                  hint="Signed or client-confirmed quotation PDF"
+                />
+                <DocumentRow
+                  iconKey="clipboard-list"
+                  label="Technical Specifications"
+                  hint="Spec sheets, material finishes, custom requirements"
+                />
               </div>
-              <p className="mt-2 text-[11px] text-zinc-400">Storage wiring will be added in Phase 3C.</p>
             </div>
 
-            <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Supplier Documents</p>
-              <p className="mt-1 text-xs text-zinc-400">Factory order confirmations, proforma invoices, shipping bills.</p>
-              <div className="mt-3 flex flex-col items-center justify-center rounded-md border border-dashed border-zinc-300 bg-white px-4 py-6 text-center">
-                <p className="text-sm font-medium text-zinc-600">Drop files here</p>
-                <p className="mt-1 text-xs text-zinc-400">PDF, JPG, PNG up to 20MB</p>
-                <button type="button" className="mt-3 inline-flex h-8 items-center rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
-                  Browse files
-                </button>
+            {/* ─── DESIGN & DRAWINGS ──────────────────────────────── */}
+            <div className="px-5 py-3">
+              <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
+                📐 Design & Drawings
+              </p>
+              <div className="space-y-2">
+                <DocumentRow
+                  iconKey="ruler"
+                  label="Floor Plans & Furniture Layouts"
+                  hint="CAD files, DWG, PDF layout drawings"
+                />
               </div>
-              <p className="mt-2 text-[11px] text-zinc-400">Storage wiring will be added in Phase 3C.</p>
+            </div>
+
+            {/* ─── PROCUREMENT ────────────────────────────────────── */}
+            <div className="px-5 py-3">
+              <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
+                🏭 Procurement
+              </p>
+              {/* FUTURE PROCUREMENT HOOK (Phase 3B): The three rows below will
+                  auto-populate with generated documents from the Procurement Module.
+                  RFQ files from quotation_procurement_rfqs, PO files from
+                  quotation_purchase_orders, and OC files from
+                  quotation_order_confirmations will be linked here automatically.
+                  Manual uploads below serve as override/supplement only. */}
+              <div className="space-y-2">
+                <DocumentRow
+                  iconKey="clipboard-list"
+                  label="Supplier RFQs"
+                  hint="Auto-populated from Procurement module in Phase 3B. Manual upload available."
+                  procurementLinked
+                />
+                <DocumentRow
+                  iconKey="shopping-cart"
+                  label="Purchase Orders (PO)"
+                  hint="Auto-populated from Procurement module in Phase 3B. Manual upload available."
+                  procurementLinked
+                />
+                <DocumentRow
+                  iconKey="package-check"
+                  label="Order Confirmations (OC)"
+                  hint="Auto-populated from Procurement module in Phase 3B. Manual upload available."
+                  procurementLinked
+                />
+              </div>
+            </div>
+
+            {/* ─── LOGISTICS ──────────────────────────────────────── */}
+            <div className="px-5 py-3">
+              <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
+                🚚 Logistics
+              </p>
+              <div className="space-y-2">
+                <DocumentRow
+                  iconKey="truck"
+                  label="Delivery Notes & Installation Sign-offs"
+                  hint="Signed delivery receipts, installation completion forms"
+                />
+              </div>
+            </div>
+
+            {/* ─── WARRANTY & MAINTENANCE ─────────────────────────── */}
+            <div className="px-5 py-3">
+              <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
+                🛠️ Warranty & Maintenance
+              </p>
+              <div className="space-y-2">
+                <DocumentRow
+                  iconKey="wrench"
+                  label="Warranty & Care Manuals"
+                  hint="Chair mechanism warranties, fabric care sheets, product guarantees"
+                  accept=".pdf,.doc,.docx"
+                />
+              </div>
+            </div>
+
+            {/* ─── SITE EXECUTION ─────────────────────────────────── */}
+            <div className="px-5 py-3">
+              <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
+                📝 Site Execution
+              </p>
+              <div className="space-y-2">
+                <DocumentRow
+                  iconKey="sticky-note"
+                  label="Snag / Punch Lists"
+                  hint="Site damage notes, replacement tracking, pre-sign-off punch items"
+                  accept=".pdf,.doc,.docx,.jpg,.png"
+                />
+              </div>
+            </div>
+
+            {/* ─── MISCELLANEOUS ──────────────────────────────────── */}
+            <div className="px-5 py-3">
+              <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
+                📁 Miscellaneous
+              </p>
+              <div className="space-y-2">
+                <DocumentRow
+                  iconKey="folder-open"
+                  label="Other Documents"
+                  hint="General correspondence, custom attachments, any additional files"
+                />
+              </div>
             </div>
 
           </div>
+
+          <div className="border-t border-zinc-100 px-5 py-3">
+            <p className="text-[11px] text-zinc-400">
+              File storage will be wired to Supabase Storage buckets in Phase 3C.
+              Upload buttons are UI placeholders only.
+            </p>
+          </div>
+
         </section>
       </div>
     </ErpAppShell>

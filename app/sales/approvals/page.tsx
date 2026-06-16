@@ -52,7 +52,7 @@ function textFromRecord(record: Record<string, unknown>, key: string) {
 }
 
 export default async function SalesApprovalsPage({ searchParams }: SalesApprovalPageProps) {
-  const [{ user, displayName }, params] = await Promise.all([
+  const [{ user, profile, displayName }, params] = await Promise.all([
     requireActiveUser(),
     searchParams ?? Promise.resolve({} as { message?: string }),
   ]);
@@ -107,6 +107,7 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
       eyebrow="SALES"
       title="Approved Quotations"
       description="Quotations marked Client Approved. Project files can be opened or created from approved quotations."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
     >

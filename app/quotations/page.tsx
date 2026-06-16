@@ -292,6 +292,7 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
     <ErpAppShell
       title="Quotations"
       description="Create quotations directly from client enquiries, then build revisions, options, and Project Files."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
     >

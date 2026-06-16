@@ -105,6 +105,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
     <ErpAppShell
       title="Settings"
       description="Manage company profile metadata used across quotation and specification documents."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
     >

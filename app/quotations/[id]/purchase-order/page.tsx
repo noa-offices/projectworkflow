@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { PurchaseOrderEditor } from "@/components/quotations/purchase-order-editor";
 import { requireActiveUser } from "@/lib/auth";
 import {
@@ -95,7 +95,16 @@ export async function generateMetadata({ params }: PurchaseOrderPageProps): Prom
 }
 
 export default async function PurchaseOrderPage({ params, searchParams }: PurchaseOrderPageProps) {
-  await requireActiveUser();
+  const { profile } = await requireActiveUser();
+  const userRole = profile?.role ?? null;
+  const canAccessThisPage =
+    userRole === "system_owner" ||
+    userRole === "admin_manager" ||
+    userRole === "procurement_manager";
+
+  if (!canAccessThisPage) {
+    redirect("/dashboard?message=You+do+not+have+permission+to+access+Purchase+Orders.");
+  }
   const { id } = await params;
   const query = await searchParams;
   const printMode = query.print === "1";
@@ -123,7 +132,70 @@ export default async function PurchaseOrderPage({ params, searchParams }: Purcha
       }
     : defaultSettings;
 
+  // Build vendor summary for the overview panel
+  // FUTURE PROCUREMENT HOOK (Phase 3B): Each vendor group here will link to its
+  // own generated PO record in quotation_purchase_orders once multi-PO splitting
+  // is implemented. Currently one settings record covers the selected supplier.
+  const vendorGroups = buildEffectiveDocumentGroups(data.items).map((group) => ({
+    dedupeKey: group.dedupeKey,
+    displayLabel: group.displayLabel,
+    displayType: group.displayType,
+    itemCount: group.items.length,
+    total: group.items.reduce((sum, item) => {
+      const lineTotal = typeof (item as { net_total?: unknown }).net_total === "number"
+        ? (item as { net_total: number }).net_total
+        : 0;
+      return sum + lineTotal;
+    }, 0),
+    currency: group.items.find((item) => (item as { currency?: unknown }).currency)
+      ? String((group.items.find((item) => (item as { currency?: unknown }).currency) as { currency: unknown }).currency)
+      : (data.quotation.currency ?? "AED"),
+  }));
+
   return (
+    <>
+    {!printMode ? (
+      <div className="mx-auto mb-6 max-w-[calc(297mm+2rem+440px+1.25rem)]">
+        <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+          <h2 className="text-sm font-semibold text-zinc-950">Vendor Breakdown for this Quotation</h2>
+          <p className="mt-1 text-xs text-zinc-500">
+            Items are split by supplier. Use the editor below to switch between
+            suppliers and generate individual Purchase Orders.
+          </p>
+          {/* FUTURE PROCUREMENT HOOK (Phase 3B): Replace this summary with
+              a multi-PO generator where each vendor row has its own
+              "Generate PO" button that creates a separate numbered record
+              (PO-XXXX-001, PO-XXXX-002) in quotation_purchase_orders. */}
+          <div className="mt-4 divide-y divide-zinc-100 rounded-md border border-zinc-200">
+            {vendorGroups.map((group) => (
+              <div key={group.dedupeKey} className="flex items-center justify-between px-4 py-3">
+                <div>
+                  <p className="text-sm font-semibold text-zinc-800">{group.displayLabel}</p>
+                  <p className="mt-0.5 text-xs text-zinc-400">
+                    {group.displayType} · {group.itemCount} item{group.itemCount === 1 ? "" : "s"}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-semibold text-zinc-950">
+                    {new Intl.NumberFormat("en-AE", {
+                      style: "currency",
+                      currency: group.currency || "AED",
+                      minimumFractionDigits: 2,
+                    }).format(group.total)}
+                  </p>
+                  <p className="mt-0.5 text-[10px] uppercase tracking-widest text-zinc-400">
+                    Subtotal
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+          {vendorGroups.length === 0 ? (
+            <p className="mt-3 text-sm text-zinc-400">No supplier-assigned items found in this quotation.</p>
+          ) : null}
+        </div>
+      </div>
+    ) : null}
     <PurchaseOrderEditor
       data={{
         client: data.client,
@@ -181,5 +253,6 @@ export default async function PurchaseOrderPage({ params, searchParams }: Purcha
       initialSettings={initialSettings}
       printMode={printMode}
     />
+    </>
   );
 }

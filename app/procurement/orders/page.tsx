@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
@@ -16,8 +17,19 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-export default async function ActiveProjectsPage() {
+export default async function ProcurementOrdersPage() {
   const { user, profile, displayName } = await requireActiveUser();
+
+  const role = profile?.role ?? null;
+  const canAccessProcurement =
+    role === "system_owner" ||
+    role === "admin_manager" ||
+    role === "procurement_manager";
+
+  if (!canAccessProcurement) {
+    redirect("/dashboard?message=You+do+not+have+permission+to+access+the+Procurement+Workspace.");
+  }
+
   const supabase = await createSupabaseClient();
 
   const [{ data: quotations }, { data: clients }] = await Promise.all([
@@ -47,10 +59,10 @@ export default async function ActiveProjectsPage() {
 
   return (
     <ErpAppShell
-      eyebrow="PROJECTS"
-      title="Active Project Files"
-      description="All confirmed project files created from approved quotations."
-      role={profile?.role ?? null}
+      eyebrow="PROCUREMENT"
+      title="Procurement Workspace"
+      description="Multi-vendor procurement folders for all confirmed project files."
+      role={role}
       userDisplayName={displayName}
       userEmail={user.email}
     >
@@ -58,7 +70,7 @@ export default async function ActiveProjectsPage() {
         {projectFiles.length === 0 ? (
           <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-6 py-16 text-center">
             <p className="text-sm text-zinc-500">
-              No project files yet. Create one from an approved quotation.
+              No confirmed project files yet. Procurement folders are created from approved quotations.
             </p>
           </div>
         ) : (
@@ -68,7 +80,7 @@ export default async function ActiveProjectsPage() {
                 <thead className="border-b border-zinc-100 bg-zinc-50">
                   <tr>
                     <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase text-zinc-500">
-                      Project File No
+                      Order No
                     </th>
                     <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase text-zinc-500">
                       Client
@@ -99,10 +111,10 @@ export default async function ActiveProjectsPage() {
                       <td className="px-4 py-3 text-zinc-500">{formatDate(order.createdAt)}</td>
                       <td className="px-4 py-3">
                         <Link
-                          href={`/projects/orders/${encodeURIComponent(order.orderNo)}`}
-                          className="inline-flex h-8 items-center rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
+                          href={`/procurement/orders/${encodeURIComponent(order.orderNo)}`}
+                          className="inline-flex h-8 items-center rounded-md border border-emerald-700 px-3 text-xs font-semibold text-emerald-900 transition hover:bg-emerald-50"
                         >
-                          Open
+                          📂 Open Procurement Folder
                         </Link>
                       </td>
                     </tr>

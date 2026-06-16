@@ -406,7 +406,7 @@ type ArchiveItem = {
 };
 
 export default async function BrandsPage({ searchParams }: BrandsPageProps) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, profile, displayName } = await requireSettingsManager();
   const params = (await searchParams) ?? {};
   const message = stringParam(params.message);
   const searchQuery = stringParam(params.q).trim();
@@ -546,6 +546,7 @@ export default async function BrandsPage({ searchParams }: BrandsPageProps) {
     <ErpAppShell
       title="Brands"
       description="Manage brands, origins, categories, and subcategories used by products and materials."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
     >

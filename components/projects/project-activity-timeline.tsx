@@ -13,7 +13,29 @@ type TimelineEvent = {
   action: string;
   detail?: string;
   timestamp: string;
+  procurementFlag?: boolean;
 };
+
+type MilestoneKey =
+  | "advance_payment_received"
+  | "ready_for_order"
+  | "production_started"
+  | "goods_in_transit"
+  | "delivery_initiated";
+
+type MilestoneOption = {
+  value: MilestoneKey;
+  label: string;
+  eventType: TimelineEventType;
+};
+
+const MILESTONE_OPTIONS: MilestoneOption[] = [
+  { value: "advance_payment_received", label: "💰 Advance Payment Received", eventType: "payment" },
+  { value: "ready_for_order",          label: "📋 Ready for Factory Order",   eventType: "confirmation" },
+  { value: "production_started",       label: "🏭 Production Started at Factory", eventType: "status_change" },
+  { value: "goods_in_transit",         label: "🚢 Goods Shipped / In Transit", eventType: "arrival" },
+  { value: "delivery_initiated",       label: "✅ Delivered & Installation In Progress", eventType: "arrival" },
+];
 
 type ProjectActivityTimelineProps = {
   canLog: boolean;
@@ -83,29 +105,33 @@ function formatTs(iso: string) {
 
 export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId: _quotationId }: ProjectActivityTimelineProps) {
   const [events, setEvents] = useState<TimelineEvent[]>(PLACEHOLDER_EVENTS);
-  const [logText, setLogText] = useState("");
+  const [selectedMilestone, setSelectedMilestone] = useState<MilestoneKey>("advance_payment_received");
+  const [remarkText, setRemarkText] = useState("");
+  const [sendToProcurement, setSendToProcurement] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   function handleLogSubmit() {
-    const trimmed = logText.trim();
-    if (!trimmed) return;
     setIsSubmitting(true);
 
+    const milestone = MILESTONE_OPTIONS.find((m) => m.value === selectedMilestone)!;
+
     // FUTURE PROCUREMENT HOOK: Replace local state append with Supabase insert
-    // into project_activity_logs (order_no, quotation_id, type, actor, action,
-    // detail, created_by) once Phase 3B is live.
+    // into project_activity_logs (order_no, quotation_id, type, milestone_key,
+    // actor, action, detail, procurement_flag, created_by) once Phase 3B is live.
     const newEvent: TimelineEvent = {
       id: crypto.randomUUID(),
-      type: "note",
+      type: milestone.eventType,
       actor: "You",
       actorRole: "manual_entry",
-      action: "Manual update logged",
-      detail: trimmed,
+      action: milestone.label,
+      detail: remarkText.trim() || undefined,
       timestamp: new Date().toISOString(),
+      procurementFlag: sendToProcurement,
     };
 
     setEvents((current) => [newEvent, ...current]);
-    setLogText("");
+    setRemarkText("");
+    setSendToProcurement(false);
     setIsSubmitting(false);
   }
 
@@ -119,30 +145,66 @@ export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId
 
       {canLog ? (
         <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Add Activity Update</p>
-          <div className="mt-2 flex gap-2">
-            <input
-              type="text"
-              value={logText}
-              onChange={(e) => setLogText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleLogSubmit(); }}
-              placeholder="e.g. Customs clearance delayed at port..."
-              className="h-9 flex-1 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-800 outline-none transition placeholder:text-zinc-400 focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            Add Activity Update
+          </p>
+
+          <div className="mt-2 grid gap-2">
+
+            {/* Milestone dropdown */}
+            <select
+              value={selectedMilestone}
+              onChange={(e) => setSelectedMilestone(e.target.value as MilestoneKey)}
               disabled={isSubmitting}
-            />
-            <button
-              type="button"
-              onClick={handleLogSubmit}
-              disabled={isSubmitting || !logText.trim()}
-              className="h-9 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:bg-zinc-300 disabled:cursor-not-allowed"
+              className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
             >
-              Post
-            </button>
+              {MILESTONE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+
+            {/* Optional remark + Post button */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={remarkText}
+                onChange={(e) => setRemarkText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleLogSubmit(); }}
+                placeholder="Optional remark or detail..."
+                disabled={isSubmitting}
+                className="h-9 flex-1 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-800 outline-none transition placeholder:text-zinc-400 focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+              />
+              <button
+                type="button"
+                onClick={handleLogSubmit}
+                disabled={isSubmitting}
+                className="h-9 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:bg-zinc-300 disabled:cursor-not-allowed"
+              >
+                Post
+              </button>
+            </div>
+
+            {/* Send to Procurement toggle */}
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={sendToProcurement}
+                onChange={(e) => setSendToProcurement(e.target.checked)}
+                disabled={isSubmitting}
+                className="h-4 w-4 rounded border-zinc-300 accent-amber-600"
+              />
+              <span className="text-xs font-medium text-zinc-600">
+                ⚠️ Send as direct note to Procurement
+              </span>
+            </label>
+
           </div>
-          <p className="mt-1.5 text-[11px] text-zinc-400">
-            {/* FUTURE PROCUREMENT HOOK: On submit, write to project_activity_logs
-                with created_by = auth.uid(). Realtime subscription on channel
-                project-activity-{orderNo} will broadcast to all page viewers. */}
+
+          <p className="mt-2 text-[11px] text-zinc-400">
+            {/* FUTURE PROCUREMENT HOOK: On submit, write to project_activity_logs with
+                created_by = auth.uid() and procurement_flag = true. Procurement Manager's
+                dashboard will surface all flagged entries via a filtered query on this column.
+                Realtime channel project-activity-{orderNo} broadcasts to all page viewers. */}
             Updates are local only in Phase 3A. Persistent logging ships in Phase 3B.
           </p>
         </div>
@@ -173,7 +235,11 @@ export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId
               </div>
 
               {/* Content */}
-              <div className="mb-6 flex-1 rounded-lg border border-zinc-100 bg-zinc-50 px-4 py-3 transition group-hover:border-zinc-200 group-hover:bg-white group-hover:shadow-sm">
+              <div className={`mb-6 flex-1 rounded-lg border px-4 py-3 transition group-hover:shadow-sm ${
+                event.procurementFlag
+                  ? "border-amber-200 bg-amber-50 group-hover:border-amber-300 group-hover:bg-amber-50"
+                  : "border-zinc-100 bg-zinc-50 group-hover:border-zinc-200 group-hover:bg-white"
+              }`}>
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <p className="text-sm font-semibold text-zinc-950">{event.action}</p>
@@ -185,6 +251,11 @@ export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId
                     {formatTs(event.timestamp)}
                   </time>
                 </div>
+                {event.procurementFlag ? (
+                  <span className="mt-1.5 inline-flex items-center rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+                    Message to Procurement
+                  </span>
+                ) : null}
                 <p className="mt-2 text-xs font-medium text-zinc-400">
                   {/* FUTURE PROCUREMENT HOOK: actor name will come from profiles join
                       on the activity log record's created_by UUID */}

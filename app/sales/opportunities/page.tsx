@@ -3,13 +3,14 @@ import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { requireActiveUser } from "@/lib/auth";
 
 export default async function SalesOpportunitiesPage() {
-  const { user, displayName } = await requireActiveUser();
+  const { user, profile, displayName } = await requireActiveUser();
 
   return (
     <ErpAppShell
       eyebrow="SALES"
       title="Opportunities"
       description="Opportunities are no longer used. New enquiries now start from Quotations."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
     >

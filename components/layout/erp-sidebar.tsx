@@ -21,7 +21,6 @@ import {
   Settings,
   ShoppingCart,
   Truck,
-  Search,
 } from "lucide-react";
 
 type SidebarItem = {
@@ -35,6 +34,7 @@ type SidebarItem = {
 };
 
 type SidebarSection = {
+  hiddenSection?: boolean;
   items: SidebarItem[];
   title: string;
 };
@@ -57,6 +57,18 @@ function isSalesApprovalsActive(pathname: string) {
 
 function isSettingsActive(pathname: string) {
   return pathname === "/settings" || pathname.startsWith("/settings/");
+}
+
+function isProcurementRfqActive(pathname: string) {
+  return pathname.includes("/procurement-rfq");
+}
+
+function isPurchaseOrderActive(pathname: string) {
+  return pathname.includes("/purchase-order");
+}
+
+function isOrderConfirmationActive(pathname: string) {
+  return pathname.includes("/order-confirmation");
 }
 
 function isProductLibraryActive(pathname: string, priceStatus: string | null, manage: string | null) {
@@ -143,10 +155,15 @@ export function ErpSidebar({ role }: { role: AppRole | null }) {
       },
       {
         title: "Procurement",
+        hiddenSection: !canProcure,
         items: [
-          { label: "Procurement RFQs", icon: Search, disabled: true, suffix: canProcure ? "Coming soon" : "No access", hidden: !canProcure },
-          { label: "Purchase Orders", icon: ShoppingCart, disabled: true, suffix: canProcure ? "Coming soon" : "No access", hidden: !canProcure },
-          { label: "Supplier Confirmations", icon: BadgeCheck, disabled: true, suffix: canProcure ? "Coming soon" : "No access", hidden: !canProcure },
+          {
+            label: "Procurement Hub",
+            icon: ShoppingCart,
+            href: "/procurement/orders",
+            active: pathname === "/procurement/orders" || pathname.startsWith("/procurement/orders/"),
+            hidden: !canProcure,
+          },
         ],
       },
       {
@@ -211,7 +228,9 @@ export function ErpSidebar({ role }: { role: AppRole | null }) {
         </div>
       </div>
       <div className="grid gap-6 px-3 py-5">
-        {sections.map((section) => (
+        {sections.map((section) => {
+          if (section.hiddenSection) return null;
+          return (
           <nav key={section.title} className="grid gap-1" aria-label={section.title}>
             <button
               type="button"
@@ -237,7 +256,8 @@ export function ErpSidebar({ role }: { role: AppRole | null }) {
               </div>
             ) : null}
           </nav>
-        ))}
+          );
+        })}
       </div>
     </aside>
   );

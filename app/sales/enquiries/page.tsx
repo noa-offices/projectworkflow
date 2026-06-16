@@ -4,13 +4,14 @@ import { requireActiveUser } from "@/lib/auth";
 import Link from "next/link";
 
 export default async function SalesEnquiriesPage() {
-  const { user, displayName } = await requireActiveUser();
+  const { user, profile, displayName } = await requireActiveUser();
 
   return (
     <ErpAppShell
       eyebrow="SALES"
       title="Leads / Enquiries"
       description="Legacy enquiry records are kept for backward compatibility."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
     >

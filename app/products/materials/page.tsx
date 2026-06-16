@@ -609,7 +609,7 @@ function MaterialCollection({
 }
 
 export default async function BrandMaterialsPage({ searchParams }: MaterialsPageProps) {
-  const { user, displayName } = await requireRecordsManager();
+  const { user, profile, displayName } = await requireRecordsManager();
   const params = (await searchParams) ?? {};
   const selectedBrandId = stringParam(params.brand);
   const message = stringParam(params.message);
@@ -769,6 +769,7 @@ export default async function BrandMaterialsPage({ searchParams }: MaterialsPage
     <ErpAppShell
       title="Brand Material Library"
       description="Manage reusable finish groups and swatches by brand."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
     >

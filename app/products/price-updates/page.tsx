@@ -94,7 +94,7 @@ function templateSearchText(template: ProductTemplate, brandName: string, catego
 }
 
 export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPageProps) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, profile, displayName } = await requireSettingsManager();
   const params = (await searchParams) ?? {};
   const searchQuery = stringParam(params.q).trim();
   const selectedBrand = stringParam(params.brand);
@@ -196,6 +196,7 @@ export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPag
     <ErpAppShell
       title="Price Updates"
       description="Review product templates due for source price checks and price-list follow-up."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
     >

@@ -1540,7 +1540,7 @@ function DetailPriceRow({
 }
 
 export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, profile, displayName } = await requireSettingsManager();
   const params = (await searchParams) ?? {};
   const message = stringParam(params.message);
   const isManagementView = stringParam(params.manage) === "1";
@@ -2123,6 +2123,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
             ? "Review products due for source price checks and price-list follow-up."
             : "Browse reusable product templates by brand, category, or search."
         }
+        role={profile?.role ?? null}
         userDisplayName={displayName}
         userEmail={user.email}
       >
@@ -2366,6 +2367,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
       description={isManagementView
         ? "Add, edit, archive, and maintain reusable product templates and configurable options."
         : "Browse reusable product templates, search by brand or category, and open product details when you need them."}
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
     >
