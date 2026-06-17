@@ -22,6 +22,8 @@ type QuotationsPageProps = {
 
 type Client = { id: string; company_name: string };
 
+type SalespersonProfile = { id: string; full_name: string | null; email: string | null };
+
 type Project = {
   id: string;
   client_id: string;
@@ -44,6 +46,7 @@ type Quotation = {
   currency: string;
   grand_total: number;
   is_active: boolean;
+  salesperson_id: string | null;
 };
 
 const layoutModes = [
@@ -173,18 +176,49 @@ function CreateClientPanel() {
   );
 }
 
+function SalespersonSelect({
+  profiles,
+  currentUserId,
+}: {
+  profiles: SalespersonProfile[];
+  currentUserId: string;
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs font-semibold uppercase text-zinc-500">Sales Person</span>
+      <select
+        name="salesperson_id"
+        defaultValue={currentUserId}
+        className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+      >
+        <option value="">— Unassigned —</option>
+        {profiles.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.full_name ?? p.email ?? p.id}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function QuotationForm({
   clients,
   selectedClientId,
+  salespersonProfiles,
+  currentUserId,
 }: {
   clients: Client[];
   selectedClientId?: string;
+  salespersonProfiles: SalespersonProfile[];
+  currentUserId: string;
 }) {
   return (
     <form action={createQuotation} data-quotation-create-form className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       <input type="hidden" name="return_to" value="/sales/quotations" />
       <input type="hidden" name="project_id" value="" />
       <ClientSelect clients={clients} selectedClientId={selectedClientId} />
+      <SalespersonSelect profiles={salespersonProfiles} currentUserId={currentUserId} />
       <Field name="legacy_reference" label="Reference / Project Name" required />
       <Field name="title" label="Title" required />
       <label className="block">
@@ -259,6 +293,14 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
     .order("company_name", { ascending: true })
     .returns<Client[]>();
 
+  const { data: salespersonProfiles } = await supabase
+    .from("profiles")
+    .select("id,full_name,email")
+    .eq("role", "sales_designer")
+    .eq("account_status", "active")
+    .order("full_name", { ascending: true })
+    .returns<SalespersonProfile[]>();
+
   const { data: projects, error: projectsError } = await supabase
     .from("projects")
     .select("id,client_id,project_name,project_number,project_code,project_year")
@@ -267,7 +309,7 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
 
   const { data: quotations, error: quotationsError } = await supabase
     .from("quotations")
-    .select("id,client_id,project_id,legacy_reference,quotation_no,title,quotation_date,status,layout_mode,currency,grand_total,is_active")
+    .select("id,client_id,project_id,legacy_reference,quotation_no,title,quotation_date,status,layout_mode,currency,grand_total,is_active,salesperson_id")
     .order("created_at", { ascending: false })
     .returns<Quotation[]>();
 
@@ -320,6 +362,7 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
           projectYears={projectYears}
           projects={projectList}
           quotations={quotationList}
+          salespersonProfiles={salespersonProfiles ?? []}
         >
           {canManageRecords ? (
             <details open={!quotationList.length || Boolean(selectedClientId)} className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
@@ -332,7 +375,12 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
               <div className="mt-5">
                 <div className="grid gap-4">
                   <CreateClientPanel />
-                  <QuotationForm clients={clientList} selectedClientId={selectedClientId} />
+                  <QuotationForm
+                    clients={clientList}
+                    selectedClientId={selectedClientId}
+                    salespersonProfiles={salespersonProfiles ?? []}
+                    currentUserId={user.id}
+                  />
                 </div>
               </div>
             </details>

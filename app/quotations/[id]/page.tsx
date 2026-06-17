@@ -46,6 +46,7 @@ import {
   restoreQuotation,
   updateQuotation,
   updateQuotationExtraDiscount,
+  updateQuotationSalesperson,
   updateQuotationStatus,
 } from "../actions";
 
@@ -88,6 +89,7 @@ type Quotation = {
   status: string;
   layout_mode: string;
   layout_settings: unknown;
+  salesperson_id: string | null;
   currency: string;
   vat_percent: number;
   overall_discount_type: string;
@@ -173,6 +175,8 @@ type QuotationItem = {
 type CellLayout = {
   mergeMode?: string;
 };
+
+type SalespersonProfile = { id: string; full_name: string | null; email: string | null };
 
 type AuditActivityEntry = {
   id: string;
@@ -798,6 +802,48 @@ function ExtraDiscountForm({
   );
 }
 
+function ReassignSalespersonForm({
+  quotationId,
+  currentSalespersonId,
+  profiles,
+}: {
+  quotationId: string;
+  currentSalespersonId: string | null;
+  profiles: SalespersonProfile[];
+}) {
+  async function handleReassign(formData: FormData) {
+    "use server";
+    const newId = formData.get("salesperson_id") as string | null;
+    await updateQuotationSalesperson(quotationId, newId || null);
+  }
+
+  return (
+    <form action={handleReassign} className="mt-3 flex items-end gap-2">
+      <label className="flex-1 block">
+        <span className="text-xs font-semibold uppercase text-zinc-500">Reassign Sales Person</span>
+        <select
+          name="salesperson_id"
+          defaultValue={currentSalespersonId ?? ""}
+          className="mt-1 h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+        >
+          <option value="">— Unassigned —</option>
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.full_name ?? p.email ?? p.id}
+            </option>
+          ))}
+        </select>
+      </label>
+      <PendingSubmitButton
+        className="h-9 shrink-0 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
+        pendingLabel="Saving…"
+      >
+        Save
+      </PendingSubmitButton>
+    </form>
+  );
+}
+
 function QuotationTermsForm({ quotation, mode }: { quotation: Quotation; mode: "details" | "terms" }) {
   const isDetails = mode === "details";
 
@@ -1093,6 +1139,33 @@ export default async function QuotationDetailPage({
   const groupedActivityByDay = entriesByDay(groupedActivityEntries, (entry) => entry.latestAt);
   const fullActivityByDay = entriesByDay(activityEntries, (entry) => entry.created_at);
 
+  // Salesperson attribution
+  const canReassignSalesperson =
+    profile?.role === "system_owner" || profile?.role === "admin_manager";
+
+  let salespersonName: string | null = null;
+  let salespersonProfiles: SalespersonProfile[] = [];
+
+  if (quotation.salesperson_id) {
+    const { data: spProfile } = await supabase
+      .from("profiles")
+      .select("id,full_name,email")
+      .eq("id", quotation.salesperson_id)
+      .maybeSingle<SalespersonProfile>();
+    salespersonName = spProfile ? (spProfile.full_name ?? spProfile.email ?? null) : null;
+  }
+
+  if (canReassignSalesperson) {
+    const { data: spProfiles } = await supabase
+      .from("profiles")
+      .select("id,full_name,email")
+      .eq("role", "sales_designer")
+      .eq("account_status", "active")
+      .order("full_name", { ascending: true })
+      .returns<SalespersonProfile[]>();
+    salespersonProfiles = spProfiles ?? [];
+  }
+
   const itemsBySection = new Map<string, QuotationItem[]>();
 
   for (const item of items ?? []) {
@@ -1245,6 +1318,17 @@ export default async function QuotationDetailPage({
                 <InfoValue label="Opportunity no" value={derivedOpportunityNo ?? "Not linked"} />
                 <InfoValue label="Reference" value={folderDisplayReference} />
                 <InfoValue label="Date" value={formatFolderDate(quotation.quotation_date)} />
+                <div>
+                  <p className="text-xs font-semibold uppercase text-zinc-500">Sales Person</p>
+                  <p className="mt-1 text-sm text-zinc-800">{salespersonName ?? "Unassigned"}</p>
+                  {canReassignSalesperson ? (
+                    <ReassignSalespersonForm
+                      quotationId={quotation.id}
+                      currentSalespersonId={quotation.salesperson_id}
+                      profiles={salespersonProfiles}
+                    />
+                  ) : null}
+                </div>
               </div>
 
               <section className="mt-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">

@@ -2181,9 +2181,11 @@ export async function createQuotation(formData: FormData) {
       }
     }
 
+    const salespersonId = optionalTextValue(formData, "salesperson_id");
     const insertPayload = {
       ...payload,
       project_id: payload.project_id || null,
+      salesperson_id: salespersonId || null,
       layout_settings: mergeDocumentSetupIntoLayoutSettings(
         {},
         documentSetupFromCreateForm({ client: { ...client, client_number: clientNumber }, formData, payload }),
@@ -7636,4 +7638,27 @@ export async function restoreQuotationSection(formData: FormData) {
   revalidatePath(`/quotations/${quotationId}/builder`);
   revalidatePath(splitRelativePath(redirectPath).pathname);
   redirectWithMessage(redirectPath, "Section restored.");
+}
+
+export async function updateQuotationSalesperson(
+  quotationId: string,
+  newSalespersonId: string | null,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { profile } = await requireActiveUser();
+  const role = profile?.role;
+
+  if (role !== "system_owner" && role !== "admin_manager") {
+    return { ok: false, error: "Permission denied." };
+  }
+
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase
+    .from("quotations")
+    .update({ salesperson_id: newSalespersonId || null } as never)
+    .eq("id", quotationId);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/quotations/${quotationId}`);
+  return { ok: true };
 }

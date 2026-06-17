@@ -12,6 +12,8 @@ import {
 
 type Client = { id: string; company_name: string };
 
+type SalespersonProfile = { id: string; full_name: string | null };
+
 type Project = {
   id: string;
   client_id: string;
@@ -31,6 +33,7 @@ type Quotation = {
   legacy_reference: string | null;
   quotation_date: string;
   quotation_no: string | null;
+  salesperson_id: string | null;
   status: string;
   title: string;
 };
@@ -48,6 +51,7 @@ type QuotationListLiveFilterProps = {
   projectYears: number[];
   projects: Project[];
   quotations: Quotation[];
+  salespersonProfiles: SalespersonProfile[];
 };
 
 type QuotationFolder = {
@@ -59,6 +63,7 @@ type QuotationFolder = {
   latestQuotation: Quotation;
   projectName: string;
   quotationCount: number;
+  salespersonName: string | null;
   statusSummary: string;
 };
 
@@ -123,6 +128,7 @@ export function QuotationListLiveFilter({
   projectYears,
   projects,
   quotations,
+  salespersonProfiles,
 }: QuotationListLiveFilterProps) {
   const [query, setQuery] = useState(initialFilters?.q?.trim() ?? "");
   const [selectedStatus, setSelectedStatus] = useState(initialFilters?.status ?? "");
@@ -132,6 +138,10 @@ export function QuotationListLiveFilter({
 
   const clientMap = useMemo(() => new Map(clients.map((client) => [client.id, client.company_name])), [clients]);
   const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
+  const salespersonMap = useMemo(
+    () => new Map(salespersonProfiles.map((p) => [p.id, p.full_name])),
+    [salespersonProfiles],
+  );
 
   const folders = useMemo<QuotationFolder[]>(() => {
     const folderMap = new Map<string, Quotation[]>();
@@ -157,11 +167,12 @@ export function QuotationListLiveFilter({
           latestQuotation: latest,
           projectName: project?.project_name ?? latest.legacy_reference ?? "Opportunity reference",
           quotationCount: folderQuotations.length,
+          salespersonName: latest.salesperson_id ? (salespersonMap.get(latest.salesperson_id) ?? null) : null,
           statusSummary: statusSummary(folderQuotations),
         };
       })
       .sort((left, right) => new Date(right.latestQuotation.quotation_date).getTime() - new Date(left.latestQuotation.quotation_date).getTime());
-  }, [clientMap, projectMap, quotations]);
+  }, [clientMap, projectMap, quotations, salespersonMap]);
 
   const filteredFolders = useMemo(
     () =>
@@ -387,6 +398,7 @@ export function QuotationListLiveFilter({
               <tr className="border-b border-zinc-200 text-xs font-semibold uppercase text-zinc-500">
                 <th className="px-4 py-3">Folder</th>
                 <th className="px-4 py-3">Client</th>
+                <th className="px-4 py-3">Sales Person</th>
                 <th className="px-4 py-3">Reference</th>
                 <th className="px-4 py-3">Latest</th>
                 <th className="px-4 py-3">Status</th>
@@ -408,6 +420,13 @@ export function QuotationListLiveFilter({
                       </p>
                     </td>
                     <td className="px-4 py-4 text-zinc-700">{folder.clientName}</td>
+                    <td className="px-4 py-4">
+                      {folder.salespersonName ? (
+                        <span className="text-zinc-700">{folder.salespersonName}</span>
+                      ) : (
+                        <span className="text-zinc-400">Unassigned</span>
+                      )}
+                    </td>
                     <td className="px-4 py-4 text-zinc-600">{folder.projectName}</td>
                     <td className="px-4 py-4 font-medium text-zinc-950">{quotation.quotation_no ?? quotation.legacy_reference ?? "-"}</td>
                     <td className="px-4 py-4 text-zinc-600">{folder.statusSummary}</td>

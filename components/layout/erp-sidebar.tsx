@@ -20,6 +20,7 @@ import {
   Presentation,
   Settings,
   ShoppingCart,
+  TrendingUp,
   Truck,
 } from "lucide-react";
 
@@ -187,7 +188,10 @@ export function ErpSidebar({ role }: { role: AppRole | null }) {
       },
       {
         title: "Insights",
-        items: [{ label: "Reports", icon: BarChart3, disabled: true, suffix: "Coming soon" }],
+        items: [
+          { label: "Reports", icon: BarChart3, disabled: true, suffix: "Coming soon" },
+          { label: "Sales Report", icon: TrendingUp, href: "/insights/sales-report", active: pathname === "/insights/sales-report" },
+        ],
       },
       {
         title: "System",

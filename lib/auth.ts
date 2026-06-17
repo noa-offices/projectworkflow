@@ -12,6 +12,7 @@ export type UserProfile = {
   department?: string | null;
   role: AppRole | null;
   account_status: AccountStatus | null;
+  avatar_url?: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -26,7 +27,7 @@ export async function getProfileForUser(userId: string) {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("profiles")
-    .select("id,email,full_name,phone,job_title,department,role,account_status")
+    .select("id,email,full_name,phone,job_title,department,role,account_status,avatar_url")
     .eq("id", userId)
     .single<UserProfile>();
 
@@ -49,7 +50,7 @@ export async function requireActiveUser(): Promise<AuthenticatedUser> {
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("id,email,full_name,phone,job_title,department,role,account_status")
+    .select("id,email,full_name,phone,job_title,department,role,account_status,avatar_url")
     .eq("id", user.id)
     .single<UserProfile>();
 

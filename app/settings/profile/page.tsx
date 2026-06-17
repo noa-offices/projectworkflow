@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { TopBar } from "@/components/top-bar";
+import { AvatarUpload } from "@/components/settings/avatar-upload";
 import { updateMyProfile } from "@/app/settings/actions";
 import { requireActiveUser } from "@/lib/auth";
 import {
@@ -111,7 +112,14 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
                 </span>
               </div>
 
-              <form action={updateMyProfile} className="mt-6 grid gap-4 md:grid-cols-2">
+              <div className="mt-6 mb-4">
+                <AvatarUpload
+                  currentAvatarUrl={profile?.avatar_url ?? null}
+                  userId={user.id}
+                  displayName={displayName}
+                />
+              </div>
+              <form action={updateMyProfile} className="grid gap-4 md:grid-cols-2">
                 <Field
                   name="full_name"
                   label="Full name"
