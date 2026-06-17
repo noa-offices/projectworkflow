@@ -42,11 +42,22 @@ type AttachedFile = {
   publicUrl: string;
 };
 
+export type VendorDocEntry = {
+  id: string;
+  vendorKey: string;
+  vendorLabel: string;
+  slotKey: string;
+  fileName: string;
+  publicUrl: string;
+};
+
 export type DocumentRowProps = {
   iconKey: string;
   label: string;
   hint: string;
   procurementLinked?: boolean;
+  slotKeyOverride?: string;
+  vendorDocs?: VendorDocEntry[];
   accept?: string;
   orderNo: string;
   initialDoc?: ProjectDocRecord[];
@@ -57,6 +68,8 @@ export function DocumentRow({
   label,
   hint,
   procurementLinked,
+  slotKeyOverride,
+  vendorDocs,
   accept = ".pdf,.doc,.docx,.dwg,.jpg,.png",
   orderNo,
   initialDoc,
@@ -85,7 +98,7 @@ export function DocumentRow({
     if (!file) return;
     e.target.value = "";
 
-    const slotKey = label.toLowerCase().replace(/\s+/g, "_");
+    const slotKey = slotKeyOverride ?? label.toLowerCase().replace(/\s+/g, "_");
     const storagePath = `projects/${orderNo}/${slotKey}/${Date.now()}_${file.name}`;
 
     setIsUploading(true);
@@ -177,6 +190,34 @@ export function DocumentRow({
 
       {/* Hint */}
       <p className="mt-1.5 text-[10px] leading-snug text-zinc-400">{hint}</p>
+
+      {/* Auto-linked vendor docs (read-only) */}
+      {vendorDocs && vendorDocs.length > 0 ? (
+        <div className="mt-2 space-y-1">
+          <p className="text-[9px] font-semibold uppercase tracking-wide text-violet-500">
+            Auto-linked from Procurement
+          </p>
+          {vendorDocs.map((v) => (
+            <div
+              key={v.id}
+              className="flex items-center gap-1.5 rounded border border-violet-100 bg-violet-50 px-2 py-1"
+            >
+              <FileIcon className="h-3 w-3 shrink-0 text-violet-600" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate text-[10px] font-medium text-violet-800">
+                {v.vendorLabel} — {v.fileName}
+              </span>
+              <a
+                href={v.publicUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] font-semibold text-zinc-500 transition hover:text-zinc-800"
+              >
+                View
+              </a>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {/* File list */}
       {attachedFiles.length > 0 ? (

@@ -18,11 +18,14 @@ type VendorStep = {
 };
 
 const VENDOR_STEPS: VendorStep[] = [
-  { key: "rfq", label: "RFQ" },
-  { key: "po_issued", label: "PO Issued" },
-  { key: "deposit_paid", label: "Deposit Paid" },
-  { key: "in_production", label: "In Production" },
-  { key: "shipped", label: "Shipped" },
+  { key: "rfq",                 label: "RFQ" },
+  { key: "po_issued",           label: "PO Issued" },
+  { key: "deposit_paid",        label: "Deposit Paid" },
+  { key: "in_production",       label: "In Production" },
+  { key: "quality_check",       label: "Quality Check" },
+  { key: "ready_for_shipment",  label: "Ready for Shipment" },
+  { key: "in_transit",          label: "In Transit" },
+  { key: "delivered_installed", label: "Delivered & Installed" },
 ];
 
 type MilestoneOption = {
@@ -32,10 +35,13 @@ type MilestoneOption = {
 };
 
 const MILESTONE_OPTIONS: MilestoneOption[] = [
-  { value: "po_issued",     label: "📋 PO Issued",      stepIndex: 1 },
-  { value: "deposit_paid",  label: "💰 Deposit Paid",    stepIndex: 2 },
-  { value: "in_production", label: "🏭 In Production",   stepIndex: 3 },
-  { value: "shipped",       label: "🚢 Shipped",         stepIndex: 4 },
+  { value: "po_issued",           label: "📋 PO Issued",            stepIndex: 1 },
+  { value: "deposit_paid",        label: "💰 Deposit Paid",          stepIndex: 2 },
+  { value: "in_production",       label: "🏭 In Production",         stepIndex: 3 },
+  { value: "quality_check",       label: "🔍 Quality Check (QA)",    stepIndex: 4 },
+  { value: "ready_for_shipment",  label: "📦 Ready for Shipment",    stepIndex: 5 },
+  { value: "in_transit",          label: "🚢 In Transit",            stepIndex: 6 },
+  { value: "delivered_installed", label: "🔧 Delivered & Installed", stepIndex: 7 },
 ];
 
 type DocSlot = {
@@ -85,6 +91,9 @@ export function VendorControlsPanel({
 }: VendorControlsPanelProps) {
   const [activeStep, setActiveStep] = useState(initialStep ?? 0);
   const [milestoneToast, setMilestoneToast] = useState<string | null>(null);
+  const [selectedMilestoneValue, setSelectedMilestoneValue] = useState("");
+  const [milestoneNote, setMilestoneNote] = useState("");
+  const [isApplying, setIsApplying] = useState(false);
   const [etd, setEtd] = useState(initialEtd ?? "");
   const [eta, setEta] = useState(initialEta ?? "");
   const [isSavingProgress, setIsSavingProgress] = useState(false);
@@ -175,46 +184,33 @@ export function VendorControlsPanel({
     }
   }
 
-  function handleStatusChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    const value = e.target.value;
-    console.log("[DEBUG] handleStatusChange called, value:", value);
+  async function handleApply() {
+    if (!selectedMilestoneValue) return;
 
-    if (!value) {
-      console.log("[DEBUG] value is empty, returning");
-      return;
-    }
+    const milestone = MILESTONE_OPTIONS.find((m) => m.value === selectedMilestoneValue);
+    if (!milestone) return;
 
-    const milestone = MILESTONE_OPTIONS.find((m) => m.value === value);
-    console.log("[DEBUG] milestone found:", milestone);
+    setIsApplying(true);
 
-    if (!milestone) {
-      console.log("[DEBUG] no milestone match, returning");
+    const [progressResult, logResult] = await Promise.all([
+      saveVendorProgress(orderNo, vendorKey, milestone.stepIndex, etd, eta),
+      logVendorMilestoneAction(orderNo, quotationId, vendorKey, vendorLabel, selectedMilestoneValue, milestone.label, milestoneNote.trim() || null),
+    ]);
+
+    if (!progressResult.ok || !logResult.ok) {
+      const errorMsg = !progressResult.ok ? progressResult.error : logResult.ok ? "Unknown error" : logResult.error;
+      setMilestoneToast(`⚠ ${errorMsg}`);
+      setTimeout(() => setMilestoneToast(null), 4000);
+      setIsApplying(false);
       return;
     }
 
     setActiveStep(milestone.stepIndex);
-    e.currentTarget.value = "";
-    console.log("[DEBUG] calling saveVendorProgress with:", {
-      orderNo, vendorKey, step: milestone.stepIndex, etd, eta,
-    });
-
-    saveVendorProgress(orderNo, vendorKey, milestone.stepIndex, etd, eta)
-      .then((result) => {
-        console.log("[DEBUG] saveVendorProgress result:", result);
-      })
-      .catch((err) => {
-        console.error("[DEBUG] saveVendorProgress threw:", err);
-      });
-
-    logVendorMilestoneAction(orderNo, quotationId, vendorKey, vendorLabel, value, milestone.label)
-      .then((result) => {
-        const msg = result.ok ? "✓ Milestone logged" : `⚠ ${result.error}`;
-        setMilestoneToast(msg);
-        setTimeout(() => setMilestoneToast(null), 3000);
-      })
-      .catch((err) => {
-        console.error("logVendorMilestoneAction threw:", err);
-      });
+    setSelectedMilestoneValue("");
+    setMilestoneNote("");
+    setMilestoneToast("✓ Milestone logged");
+    setTimeout(() => setMilestoneToast(null), 3000);
+    setIsApplying(false);
   }
 
   async function handleSaveDates() {
@@ -280,16 +276,35 @@ export function VendorControlsPanel({
           ⚡ Update Factory Status
         </p>
         <select
-          defaultValue=""
-          onChange={handleStatusChange}
+          value={selectedMilestoneValue}
+          onChange={(e) => setSelectedMilestoneValue(e.target.value)}
+          disabled={isApplying}
           className="h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10"
         >
           <option value="" disabled>Select milestone...</option>
-          <option value="po_issued">📋 PO Issued</option>
-          <option value="deposit_paid">💰 Deposit Paid</option>
-          <option value="in_production">🏭 In Production</option>
-          <option value="shipped">🚢 Shipped</option>
+          {MILESTONE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
         </select>
+        <div className="mt-2 flex gap-2">
+          <input
+            type="text"
+            value={milestoneNote}
+            onChange={(e) => setMilestoneNote(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleApply(); }}
+            placeholder="Optional note..."
+            disabled={isApplying}
+            className="h-8 flex-1 rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-800 outline-none transition placeholder:text-zinc-400 focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10"
+          />
+          <button
+            type="button"
+            onClick={handleApply}
+            disabled={!selectedMilestoneValue || isApplying}
+            className="h-8 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+          >
+            {isApplying ? "Applying…" : "Apply"}
+          </button>
+        </div>
         {milestoneToast ? (
           <p className={`mt-1.5 text-[11px] font-medium ${
             milestoneToast.startsWith("✓") ? "text-emerald-700" : "text-red-600"

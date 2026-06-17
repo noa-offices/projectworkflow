@@ -10,14 +10,12 @@ import {
   BarChart3,
   BadgeCheck,
   Boxes,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
-  ClipboardCheck,
-  FileDown,
   FileText,
   FolderKanban,
   LayoutDashboard,
-  Presentation,
   Settings,
   ShoppingCart,
   TrendingUp,
@@ -46,6 +44,10 @@ function isDashboardActive(pathname: string) {
 
 function isProjectsActive(pathname: string) {
   return pathname === "/clients" || pathname.startsWith("/clients/") || pathname === "/projects/orders" || pathname.startsWith("/projects/orders/");
+}
+
+function isCompletedProjectsActive(pathname: string) {
+  return pathname === "/projects/completed" || pathname.startsWith("/projects/completed/");
 }
 
 function isQuotationsActive(pathname: string) {
@@ -125,7 +127,13 @@ function NavRow({ item, indent = false }: { indent?: boolean; item: SidebarItem 
   );
 }
 
-export function ErpSidebar({ role }: { role: AppRole | null }) {
+export function ErpSidebar({
+  role,
+  isCompletedProject,
+}: {
+  role: AppRole | null;
+  isCompletedProject?: boolean;
+}) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const priceStatus = searchParams.get("priceStatus");
@@ -149,9 +157,10 @@ export function ErpSidebar({ role }: { role: AppRole | null }) {
       {
         title: "Projects",
         items: [
-          { label: "Active Projects", href: "/projects/orders", icon: FolderKanban, active: isProjectsActive(pathname) },
-          { label: "Delivery & Installation", icon: Truck, disabled: true, suffix: "Coming soon" },
-          { label: "Project Archive", icon: Archive, disabled: true, suffix: "Coming soon" },
+          { label: "Active Projects", href: "/projects/orders", icon: FolderKanban, active: isProjectsActive(pathname) && !isCompletedProject },
+          { label: "Completed Projects", href: "/projects/completed", icon: CheckCircle2, active: isCompletedProjectsActive(pathname) || (isProjectsActive(pathname) && !!isCompletedProject) },
+          { label: "Delivery & Installation", icon: Truck, disabled: true, suffix: "Coming soon", hidden: true },
+          { label: "Project Archive", icon: Archive, disabled: true, suffix: "Coming soon", hidden: true },
         ],
       },
       {
@@ -165,6 +174,15 @@ export function ErpSidebar({ role }: { role: AppRole | null }) {
             active: pathname === "/procurement/orders" || pathname.startsWith("/procurement/orders/"),
             hidden: !canProcure,
           },
+          {
+            label: "Completed Procurement",
+            icon: CheckCircle2,
+            href: "/procurement/completed",
+            active:
+              pathname === "/procurement/completed" ||
+              pathname.startsWith("/procurement/completed/"),
+            hidden: !canProcure,
+          },
         ],
       },
       {
@@ -175,15 +193,6 @@ export function ErpSidebar({ role }: { role: AppRole | null }) {
           { label: "Brands", href: "/products/brands", icon: Boxes, active: pathname === "/products/brands" },
           { label: "Material Library", href: "/products/materials", icon: Boxes, active: pathname === "/products/materials" },
           { label: "Price Updates", href: "/products/price-updates", icon: Boxes, active: isPriceUpdatesActive(pathname, priceStatus) },
-        ],
-      },
-      {
-        title: "Documents",
-        items: [
-          { label: "Order Confirmation", icon: ClipboardCheck, disabled: true, suffix: "Coming soon" },
-          { label: "Specification Sheets", icon: FileText, disabled: true, suffix: "Coming soon" },
-          { label: "Presentations", icon: Presentation, disabled: true, suffix: "Coming soon" },
-          { label: "Delivery Notes", icon: FileDown, disabled: true, suffix: "Coming soon" },
         ],
       },
       {

@@ -7,6 +7,7 @@ type ErpAppShellProps = {
   children: ReactNode;
   description: string;
   eyebrow?: string;
+  isCompletedProject?: boolean;
   role?: AppRole | null;
   title: string;
   userDisplayName?: string;
@@ -17,6 +18,7 @@ export function ErpAppShell({
   children,
   description,
   eyebrow,
+  isCompletedProject,
   role,
   title,
   userDisplayName,
@@ -24,7 +26,7 @@ export function ErpAppShell({
 }: ErpAppShellProps) {
   return (
     <div className="min-h-screen bg-zinc-100 text-zinc-950 lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
-      <ErpSidebar role={role ?? null} />
+      <ErpSidebar role={role ?? null} isCompletedProject={isCompletedProject} />
       <div className="min-w-0">
         <ErpTopbar
           description={description}

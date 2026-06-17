@@ -5,11 +5,14 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { createAuditLog } from "@/lib/audit-log";
 
 const STEP_EMOJI: Record<string, string> = {
-  rfq: "📋",
-  po_issued: "📄",
-  deposit_paid: "💰",
-  in_production: "🏭",
-  shipped: "🚢",
+  rfq:                 "📋",
+  po_issued:           "📄",
+  deposit_paid:        "💰",
+  in_production:       "🏭",
+  quality_check:       "🔍",
+  ready_for_shipment:  "📦",
+  in_transit:          "🚢",
+  delivered_installed: "🔧",
 };
 
 type LogVendorMilestoneResult =
@@ -23,6 +26,7 @@ export async function logVendorMilestoneAction(
   vendorLabel: string,
   stepKey: string,
   stepLabel: string,
+  note?: string | null,
 ): Promise<LogVendorMilestoneResult> {
   const { user, profile } = await requireActiveUser();
 
@@ -38,7 +42,7 @@ export async function logVendorMilestoneAction(
 
   const emoji = STEP_EMOJI[stepKey] ?? "📋";
   const title = `${emoji} ${stepLabel} (${vendorLabel}) — Logged via Procurement`;
-  const description = `Vendor: ${vendorLabel} | Order: ${orderNo} | Step: ${stepLabel}`;
+  const description = note || `Vendor: ${vendorLabel} | Order: ${orderNo} | Step: ${stepLabel}`;
 
   const supabase = await createSupabaseClient();
 

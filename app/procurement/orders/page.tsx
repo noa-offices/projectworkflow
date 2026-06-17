@@ -40,6 +40,8 @@ export default async function ProcurementOrdersPage() {
 
   const projectFiles = (quotations ?? [])
     .flatMap((quotation) => {
+      const settings = quotation.layout_settings as Record<string, unknown> | null;
+      if (typeof settings?.projectCompletedAt === "string") return [];
       const projectFile = projectFileFromLayoutSettings(quotation.layout_settings);
       if (projectFile) return [projectFile];
       const draft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);

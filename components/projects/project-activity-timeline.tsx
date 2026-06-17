@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Truck, CreditCard, ClipboardCheck, RefreshCw, StickyNote } from "lucide-react";
+import { logProjectActivityAction } from "@/lib/projects/log-project-activity-action";
 
 type TimelineEventType = "arrival" | "payment" | "confirmation" | "status_change" | "note";
 
@@ -18,10 +20,16 @@ type TimelineEvent = {
 
 type MilestoneKey =
   | "advance_payment_received"
-  | "ready_for_order"
+  | "order_placed"
   | "production_started"
-  | "goods_in_transit"
-  | "delivery_initiated";
+  | "goods_ready_for_shipment"
+  | "goods_on_transit"
+  | "goods_arrived"
+  | "ready_for_delivery"
+  | "delivered_at_site"
+  | "installation_in_progress"
+  | "final_payment_received"
+  | "project_closed";
 
 type MilestoneOption = {
   value: MilestoneKey;
@@ -30,11 +38,17 @@ type MilestoneOption = {
 };
 
 const MILESTONE_OPTIONS: MilestoneOption[] = [
-  { value: "advance_payment_received", label: "💰 Advance Payment Received", eventType: "payment" },
-  { value: "ready_for_order",          label: "📋 Ready for Factory Order",   eventType: "confirmation" },
-  { value: "production_started",       label: "🏭 Production Started at Factory", eventType: "status_change" },
-  { value: "goods_in_transit",         label: "🚢 Goods Shipped / In Transit", eventType: "arrival" },
-  { value: "delivery_initiated",       label: "✅ Delivered & Installation In Progress", eventType: "arrival" },
+  { value: "advance_payment_received", label: "💰 Advance Payment Received",       eventType: "payment" },
+  { value: "order_placed",             label: "📋 Order Placed",                   eventType: "confirmation" },
+  { value: "production_started",       label: "🏭 Production Started at Factory",  eventType: "status_change" },
+  { value: "goods_ready_for_shipment", label: "📦 Goods Ready for Shipment",       eventType: "status_change" },
+  { value: "goods_on_transit",         label: "🚢 Goods on Transit",               eventType: "arrival" },
+  { value: "goods_arrived",            label: "🛬 Goods Arrived",                  eventType: "arrival" },
+  { value: "ready_for_delivery",       label: "🚛 Ready for Delivery",             eventType: "status_change" },
+  { value: "delivered_at_site",        label: "✅ Delivered at Site",              eventType: "arrival" },
+  { value: "installation_in_progress", label: "🔧 Installation in Progress",       eventType: "status_change" },
+  { value: "final_payment_received",   label: "💳 Final Payment Received",         eventType: "payment" },
+  { value: "project_closed",           label: "🎉 Project Closed",                 eventType: "confirmation" },
 ];
 
 type ProjectActivityTimelineProps = {
@@ -86,18 +100,19 @@ type ActivityLogRow = {
 
 function mapLogToEvent(log: ActivityLogRow): TimelineEvent {
   let type: TimelineEventType = "note";
-  if (log.action === "vendor_milestone_updated") {
-    if (log.title.includes("💰")) type = "payment";
-    else if (log.title.includes("🚢")) type = "arrival";
-    else if (log.title.includes("🏭")) type = "status_change";
-    else if (log.title.includes("📋")) type = "confirmation";
+  if (log.action === "vendor_milestone_updated" || log.entity_type === "project_activity") {
+    if (log.title.includes("💰") || log.title.includes("💳")) type = "payment";
+    else if (log.title.includes("🚢") || log.title.includes("🛬") || log.title.includes("🚛") || log.title.includes("✅")) type = "arrival";
+    else if (log.title.includes("🏭") || log.title.includes("🔧") || log.title.includes("📦")) type = "status_change";
+    else if (log.title.includes("📋") || log.title.includes("🎉")) type = "confirmation";
     else type = "status_change";
   }
+  const isProjectActivity = log.entity_type === "project_activity";
   return {
     id: log.id,
     type,
-    actor: "Procurement Manager",
-    actorRole: "procurement_manager",
+    actor: isProjectActivity ? "Project Team" : "Procurement Manager",
+    actorRole: isProjectActivity ? "manual_entry" : "procurement_manager",
     action: log.title,
     detail: log.description ?? undefined,
     timestamp: log.created_at,
@@ -134,44 +149,44 @@ function formatTs(iso: string) {
   }).format(new Date(iso));
 }
 
-export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId: _quotationId, initialEvents }: ProjectActivityTimelineProps) {
+export function ProjectActivityTimeline({ canLog, orderNo, quotationId: _quotationId, initialEvents }: ProjectActivityTimelineProps) {
+  const router = useRouter();
   const hasLiveEvents = (initialEvents ?? []).length > 0;
-  const [events, setEvents] = useState<TimelineEvent[]>(() => {
+  const currentEvents = useMemo(() => {
     const live = (initialEvents ?? []).map(mapLogToEvent);
     return live.length > 0 ? live : PLACEHOLDER_EVENTS;
-  });
+  }, [initialEvents]);
   const [showAll, setShowAll] = useState(false);
   const [selectedMilestone, setSelectedMilestone] = useState<MilestoneKey>("advance_payment_received");
   const [remarkText, setRemarkText] = useState("");
   const [sendToProcurement, setSendToProcurement] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [postError, setPostError] = useState<string | null>(null);
 
-  const displayedEvents = showAll ? events : events.slice(0, 4);
+  const displayedEvents = showAll ? currentEvents : currentEvents.slice(0, 4);
 
-  function handleLogSubmit() {
+  async function handleLogSubmit() {
     setIsSubmitting(true);
+    setPostError(null);
 
     const milestone = MILESTONE_OPTIONS.find((m) => m.value === selectedMilestone)!;
+    const result = await logProjectActivityAction(
+      orderNo,
+      milestone.value,
+      milestone.label,
+      remarkText.trim() || null,
+    );
 
-    // FUTURE PROCUREMENT HOOK: Replace local state append with Supabase insert
-    // into project_activity_logs (order_no, quotation_id, type, milestone_key,
-    // actor, action, detail, procurement_flag, created_by) once Phase 3B is live.
-    const newEvent: TimelineEvent = {
-      id: crypto.randomUUID(),
-      type: milestone.eventType,
-      actor: "You",
-      actorRole: "manual_entry",
-      action: milestone.label,
-      detail: remarkText.trim() || undefined,
-      timestamp: new Date().toISOString(),
-      procurementFlag: sendToProcurement,
-    };
+    if (!result.ok) {
+      setPostError(result.error);
+      setIsSubmitting(false);
+      return;
+    }
 
-    setEvents((current) => [newEvent, ...current]);
-    setShowAll(true);
     setRemarkText("");
     setSendToProcurement(false);
     setIsSubmitting(false);
+    router.refresh();
   }
 
   return (
@@ -179,7 +194,7 @@ export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-zinc-950">Project Activity</h2>
         <span className="text-xs text-zinc-400">
-          {showAll ? events.length : Math.min(4, events.length)} of {events.length} events
+          {showAll ? currentEvents.length : Math.min(4, currentEvents.length)} of {currentEvents.length} events
         </span>
       </div>
       <p className="mt-1 text-sm text-zinc-500">Timeline of project milestones and procurement events.</p>
@@ -221,7 +236,7 @@ export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId
                 disabled={isSubmitting}
                 className="h-9 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:bg-zinc-300 disabled:cursor-not-allowed"
               >
-                Post
+                {isSubmitting ? "Posting…" : "Post"}
               </button>
             </div>
 
@@ -241,20 +256,16 @@ export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId
 
           </div>
 
+          {postError ? (
+            <p className="mt-2 rounded-md border border-red-100 bg-red-50 px-2.5 py-1.5 text-[11px] text-red-700">
+              {postError}
+            </p>
+          ) : null}
           <p className="mt-2 text-[11px] text-zinc-400">
-            {/* FUTURE PROCUREMENT HOOK: On submit, write to project_activity_logs with
-                created_by = auth.uid() and procurement_flag = true. Procurement Manager's
-                dashboard will surface all flagged entries via a filtered query on this column.
-                Realtime channel project-activity-{orderNo} broadcasts to all page viewers. */}
-            Updates are local only in Phase 3A. Persistent logging ships in Phase 3B.
+            ⚡ Updates are permanently logged to the project activity history.
           </p>
         </div>
       ) : null}
-
-      {/* FUTURE PROCUREMENT HOOK: Replace PLACEHOLDER_EVENTS with a live fetch from
-          quotation_procurement_rfqs, quotation_purchase_orders, and a future
-          project_activity_logs table once Phase 3B procurement tables are wired.
-          Subscribe via Supabase realtime on channel `project-activity-${orderNo}` */}
 
       <ol className="mt-6 space-y-0">
         {displayedEvents.map((event, index) => {
@@ -309,19 +320,19 @@ export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId
         })}
       </ol>
 
-      {events.length > 4 ? (
+      {currentEvents.length > 4 ? (
         <button
           type="button"
           onClick={() => setShowAll((prev) => !prev)}
           className="mt-2 w-full rounded-md border border-zinc-200 py-2 text-xs font-semibold text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-700"
         >
-          {showAll ? "Show less" : `Show all ${events.length} events`}
+          {showAll ? "Show less" : `Show all ${currentEvents.length} events`}
         </button>
       ) : null}
 
       {!hasLiveEvents ? (
         <p className="mt-2 rounded-md border border-dashed border-zinc-200 px-3 py-2 text-center text-xs text-zinc-400">
-          Showing placeholder activity. Live procurement events will appear here in Phase 3B.
+          No activity logged yet. Use the composer above to record the first milestone.
         </p>
       ) : null}
     </section>

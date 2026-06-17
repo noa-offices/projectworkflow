@@ -1,5 +1,5 @@
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
-import { ActiveProjectsTable } from "@/components/projects/active-projects-table";
+import { CompletedProjectsTable, type CompletedProjectFileItem } from "@/components/projects/completed-projects-table";
 import { requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
@@ -7,7 +7,7 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
-export default async function ActiveProjectsPage() {
+export default async function CompletedProjectsPage() {
   const { user, profile, displayName } = await requireActiveUser();
   const supabase = await createSupabaseClient();
 
@@ -26,41 +26,68 @@ export default async function ActiveProjectsPage() {
     (clients ?? []).map((c) => [c.id, c.company_name ?? "-"]),
   );
 
-  const projectFiles = (quotations ?? [])
+  const projectFiles: CompletedProjectFileItem[] = (quotations ?? [])
     .flatMap((quotation) => {
       const settings = quotation.layout_settings as Record<string, unknown> | null;
-      if (typeof settings?.projectCompletedAt === "string") return [];
+      const completedAt = typeof settings?.projectCompletedAt === "string"
+        ? settings.projectCompletedAt
+        : null;
+      if (!completedAt) return [];
+
       const projectFile = projectFileFromLayoutSettings(quotation.layout_settings);
-      if (projectFile) return [projectFile];
+      if (projectFile) {
+        return [{
+          orderNo: projectFile.orderNo,
+          clientId: projectFile.clientId,
+          clientName: projectFile.clientName,
+          resolvedClientName: clientNameById.get(projectFile.clientId) ?? projectFile.clientName,
+          reference: projectFile.reference,
+          currency: projectFile.currency,
+          total: projectFile.total,
+          createdAt: projectFile.createdAt,
+          completedAt,
+        }];
+      }
+
       const draft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);
-      return draft?.confirmedOrder ? [draft.confirmedOrder] : [];
+      if (draft?.confirmedOrder) {
+        const o = draft.confirmedOrder;
+        return [{
+          orderNo: o.orderNo,
+          clientId: o.clientId,
+          clientName: o.clientName,
+          resolvedClientName: clientNameById.get(o.clientId) ?? o.clientName,
+          reference: o.reference,
+          currency: o.currency,
+          total: o.total,
+          createdAt: o.createdAt,
+          completedAt,
+        }];
+      }
+
+      return [];
     })
     .filter((order, index, all) => all.findIndex((o) => o.orderNo === order.orderNo) === index)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-  const projectFilesWithClient = projectFiles.map((order) => ({
-    ...order,
-    resolvedClientName: clientNameById.get(order.clientId) ?? order.clientName,
-  }));
+    .sort((a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime());
 
   return (
     <ErpAppShell
       eyebrow="PROJECTS"
-      title="Active Project Files"
-      description="All confirmed project files created from approved quotations."
+      title="Completed Projects"
+      description="Project files that have been marked as completed."
       role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
     >
       <div className="px-5 py-6 sm:px-8">
-        {projectFilesWithClient.length === 0 ? (
+        {projectFiles.length === 0 ? (
           <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-6 py-16 text-center">
             <p className="text-sm text-zinc-500">
-              No project files yet. Create one from an approved quotation.
+              No completed projects yet. Use &ldquo;Mark as Completed&rdquo; on a Project Activity page.
             </p>
           </div>
         ) : (
-          <ActiveProjectsTable projectFiles={projectFilesWithClient} />
+          <CompletedProjectsTable projectFiles={projectFiles} />
         )}
       </div>
     </ErpAppShell>
