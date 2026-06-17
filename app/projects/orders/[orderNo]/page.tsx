@@ -10,6 +10,7 @@ import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import type React from "react";
 import { DocumentRow } from "@/components/projects/project-document-row";
+import { type ProjectDocRecord } from "@/lib/projects/project-doc-action";
 
 export const dynamic = "force-dynamic";
 
@@ -128,6 +129,34 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
   if (itemsError) {
     console.error("CONFIRMED ORDER ITEMS ERROR", itemsError.message);
   }
+
+  const { data: projectDocs } = await supabase
+    .from("project_document_attachments")
+    .select("id, slot_key, file_name, storage_path, public_url")
+    .eq("order_no", decodedOrderNo)
+    .returns<ProjectDocRecord[]>();
+
+  const projectDocsMap = new Map<string, ProjectDocRecord[]>();
+  for (const doc of projectDocs ?? []) {
+    const existing = projectDocsMap.get(doc.slot_key) ?? [];
+    projectDocsMap.set(doc.slot_key, [...existing, doc]);
+  }
+
+  const { data: activityLogs } = await supabase
+    .from("audit_activity_log")
+    .select("id, entity_type, action, title, description, created_at, created_by")
+    .or(`parent_entity_id.eq.${entry.quotationId},metadata->>orderNo.eq.${decodedOrderNo}`)
+    .order("created_at", { ascending: false })
+    .limit(50)
+    .returns<Array<{
+      id: string;
+      entity_type: string;
+      action: string;
+      title: string;
+      description: string | null;
+      created_at: string;
+      created_by: string | null;
+    }>>();
 
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat("en-AE", { style: "currency", currency: entry.order.currency }).format(value);
@@ -342,6 +371,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
             orderNo={decodedOrderNo}
             quotationId={entry.quotationId}
             canLog={canLog}
+            initialEvents={activityLogs ?? []}
           />
         </div>
 
@@ -355,23 +385,27 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
             </p>
           </div>
 
-          <div className="divide-y divide-zinc-100">
+          <div>
 
             {/* ─── CORE SALES ─────────────────────────────────────── */}
             <div className="px-5 py-3">
               <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
                 📄 Core Sales
               </p>
-              <div className="space-y-2">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <DocumentRow
                   iconKey="file-text"
                   label="Approved Quotation"
                   hint="Signed or client-confirmed quotation PDF"
+                  orderNo={decodedOrderNo}
+                  initialDoc={projectDocsMap.get("approved_quotation") ?? []}
                 />
                 <DocumentRow
                   iconKey="clipboard-list"
                   label="Technical Specifications"
                   hint="Spec sheets, material finishes, custom requirements"
+                  orderNo={decodedOrderNo}
+                  initialDoc={projectDocsMap.get("technical_specifications") ?? []}
                 />
               </div>
             </div>
@@ -381,11 +415,13 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
               <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
                 📐 Design & Drawings
               </p>
-              <div className="space-y-2">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <DocumentRow
                   iconKey="ruler"
                   label="Floor Plans & Furniture Layouts"
                   hint="CAD files, DWG, PDF layout drawings"
+                  orderNo={decodedOrderNo}
+                  initialDoc={projectDocsMap.get("floor_plans_&_furniture_layouts") ?? []}
                 />
               </div>
             </div>
@@ -401,24 +437,30 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
                   quotation_purchase_orders, and OC files from
                   quotation_order_confirmations will be linked here automatically.
                   Manual uploads below serve as override/supplement only. */}
-              <div className="space-y-2">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <DocumentRow
                   iconKey="clipboard-list"
                   label="Supplier RFQs"
                   hint="Auto-populated from Procurement module in Phase 3B. Manual upload available."
                   procurementLinked
+                  orderNo={decodedOrderNo}
+                  initialDoc={projectDocsMap.get("supplier_rfqs") ?? []}
                 />
                 <DocumentRow
                   iconKey="shopping-cart"
                   label="Purchase Orders (PO)"
                   hint="Auto-populated from Procurement module in Phase 3B. Manual upload available."
                   procurementLinked
+                  orderNo={decodedOrderNo}
+                  initialDoc={projectDocsMap.get("purchase_orders_(po)") ?? []}
                 />
                 <DocumentRow
                   iconKey="package-check"
                   label="Order Confirmations (OC)"
                   hint="Auto-populated from Procurement module in Phase 3B. Manual upload available."
                   procurementLinked
+                  orderNo={decodedOrderNo}
+                  initialDoc={projectDocsMap.get("order_confirmations_(oc)") ?? []}
                 />
               </div>
             </div>
@@ -428,11 +470,13 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
               <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
                 🚚 Logistics
               </p>
-              <div className="space-y-2">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <DocumentRow
                   iconKey="truck"
                   label="Delivery Notes & Installation Sign-offs"
                   hint="Signed delivery receipts, installation completion forms"
+                  orderNo={decodedOrderNo}
+                  initialDoc={projectDocsMap.get("delivery_notes_&_installation_sign-offs") ?? []}
                 />
               </div>
             </div>
@@ -442,12 +486,14 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
               <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
                 🛠️ Warranty & Maintenance
               </p>
-              <div className="space-y-2">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <DocumentRow
                   iconKey="wrench"
                   label="Warranty & Care Manuals"
                   hint="Chair mechanism warranties, fabric care sheets, product guarantees"
                   accept=".pdf,.doc,.docx"
+                  orderNo={decodedOrderNo}
+                  initialDoc={projectDocsMap.get("warranty_&_care_manuals") ?? []}
                 />
               </div>
             </div>
@@ -457,12 +503,14 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
               <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
                 📝 Site Execution
               </p>
-              <div className="space-y-2">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <DocumentRow
                   iconKey="sticky-note"
                   label="Snag / Punch Lists"
                   hint="Site damage notes, replacement tracking, pre-sign-off punch items"
                   accept=".pdf,.doc,.docx,.jpg,.png"
+                  orderNo={decodedOrderNo}
+                  initialDoc={projectDocsMap.get("snag_/_punch_lists") ?? []}
                 />
               </div>
             </div>
@@ -472,23 +520,19 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
               <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
                 📁 Miscellaneous
               </p>
-              <div className="space-y-2">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <DocumentRow
                   iconKey="folder-open"
                   label="Other Documents"
                   hint="General correspondence, custom attachments, any additional files"
+                  orderNo={decodedOrderNo}
+                  initialDoc={projectDocsMap.get("other_documents") ?? []}
                 />
               </div>
             </div>
 
           </div>
 
-          <div className="border-t border-zinc-100 px-5 py-3">
-            <p className="text-[11px] text-zinc-400">
-              File storage will be wired to Supabase Storage buckets in Phase 3C.
-              Upload buttons are UI placeholders only.
-            </p>
-          </div>
 
         </section>
       </div>

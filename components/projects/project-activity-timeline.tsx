@@ -41,6 +41,7 @@ type ProjectActivityTimelineProps = {
   canLog: boolean;
   orderNo: string;
   quotationId: string;
+  initialEvents?: ActivityLogRow[];
 };
 
 const PLACEHOLDER_EVENTS: TimelineEvent[] = [
@@ -73,6 +74,36 @@ const PLACEHOLDER_EVENTS: TimelineEvent[] = [
   },
 ];
 
+type ActivityLogRow = {
+  id: string;
+  entity_type: string;
+  action: string;
+  title: string;
+  description: string | null;
+  created_at: string;
+  created_by: string | null;
+};
+
+function mapLogToEvent(log: ActivityLogRow): TimelineEvent {
+  let type: TimelineEventType = "note";
+  if (log.action === "vendor_milestone_updated") {
+    if (log.title.includes("💰")) type = "payment";
+    else if (log.title.includes("🚢")) type = "arrival";
+    else if (log.title.includes("🏭")) type = "status_change";
+    else if (log.title.includes("📋")) type = "confirmation";
+    else type = "status_change";
+  }
+  return {
+    id: log.id,
+    type,
+    actor: "Procurement Manager",
+    actorRole: "procurement_manager",
+    action: log.title,
+    detail: log.description ?? undefined,
+    timestamp: log.created_at,
+  };
+}
+
 function eventIcon(type: TimelineEventType) {
   switch (type) {
     case "arrival": return Truck;
@@ -103,12 +134,19 @@ function formatTs(iso: string) {
   }).format(new Date(iso));
 }
 
-export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId: _quotationId }: ProjectActivityTimelineProps) {
-  const [events, setEvents] = useState<TimelineEvent[]>(PLACEHOLDER_EVENTS);
+export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId: _quotationId, initialEvents }: ProjectActivityTimelineProps) {
+  const hasLiveEvents = (initialEvents ?? []).length > 0;
+  const [events, setEvents] = useState<TimelineEvent[]>(() => {
+    const live = (initialEvents ?? []).map(mapLogToEvent);
+    return live.length > 0 ? live : PLACEHOLDER_EVENTS;
+  });
+  const [showAll, setShowAll] = useState(false);
   const [selectedMilestone, setSelectedMilestone] = useState<MilestoneKey>("advance_payment_received");
   const [remarkText, setRemarkText] = useState("");
   const [sendToProcurement, setSendToProcurement] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const displayedEvents = showAll ? events : events.slice(0, 4);
 
   function handleLogSubmit() {
     setIsSubmitting(true);
@@ -130,6 +168,7 @@ export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId
     };
 
     setEvents((current) => [newEvent, ...current]);
+    setShowAll(true);
     setRemarkText("");
     setSendToProcurement(false);
     setIsSubmitting(false);
@@ -139,7 +178,9 @@ export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId
     <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-zinc-950">Project Activity</h2>
-        <span className="text-xs text-zinc-400">{events.length} events</span>
+        <span className="text-xs text-zinc-400">
+          {showAll ? events.length : Math.min(4, events.length)} of {events.length} events
+        </span>
       </div>
       <p className="mt-1 text-sm text-zinc-500">Timeline of project milestones and procurement events.</p>
 
@@ -216,10 +257,10 @@ export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId
           Subscribe via Supabase realtime on channel `project-activity-${orderNo}` */}
 
       <ol className="mt-6 space-y-0">
-        {events.map((event, index) => {
+        {displayedEvents.map((event, index) => {
           const Icon = eventIcon(event.type);
           const colorClass = nodeColor(event.type);
-          const isLast = index === events.length - 1;
+          const isLast = index === displayedEvents.length - 1;
 
           return (
             <li key={event.id} className="relative flex gap-4 group">
@@ -268,10 +309,21 @@ export function ProjectActivityTimeline({ canLog, orderNo: _orderNo, quotationId
         })}
       </ol>
 
-      <p className="mt-2 rounded-md border border-dashed border-zinc-200 px-3 py-2 text-center text-xs text-zinc-400">
-        {/* FUTURE PROCUREMENT HOOK: This notice is removed once live data is wired in Phase 3B */}
-        Showing placeholder activity. Live procurement events will appear here in Phase 3B.
-      </p>
+      {events.length > 4 ? (
+        <button
+          type="button"
+          onClick={() => setShowAll((prev) => !prev)}
+          className="mt-2 w-full rounded-md border border-zinc-200 py-2 text-xs font-semibold text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-700"
+        >
+          {showAll ? "Show less" : `Show all ${events.length} events`}
+        </button>
+      ) : null}
+
+      {!hasLiveEvents ? (
+        <p className="mt-2 rounded-md border border-dashed border-zinc-200 px-3 py-2 text-center text-xs text-zinc-400">
+          Showing placeholder activity. Live procurement events will appear here in Phase 3B.
+        </p>
+      ) : null}
     </section>
   );
 }

@@ -4,7 +4,7 @@ import { requireActiveUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 
-export type VendorDocRecord = {
+export type ProjectDocRecord = {
   id: string;
   slot_key: string;
   file_name: string;
@@ -13,28 +13,27 @@ export type VendorDocRecord = {
 };
 
 type ActionResult = { ok: true } | { ok: false; error: string };
-type SaveVendorResult = { ok: true; id: string } | { ok: false; error: string };
+type SaveResult = { ok: true; id: string } | { ok: false; error: string };
 
-function canProcureRole(role: string | null | undefined): boolean {
+function canManageRecordsRole(role: string | null | undefined): boolean {
   return (
     role === "system_owner" ||
     role === "admin_manager" ||
-    role === "procurement_manager"
+    role === "procurement_manager" ||
+    role === "sales_designer"
   );
 }
 
-export async function saveVendorDocUrl(
+export async function saveProjectDoc(
   orderNo: string,
-  quotationId: string,
-  vendorKey: string,
   slotKey: string,
   fileName: string,
   storagePath: string,
   publicUrl: string,
-): Promise<SaveVendorResult> {
+): Promise<SaveResult> {
   const { user, profile } = await requireActiveUser();
 
-  if (!canProcureRole(profile?.role)) {
+  if (!canManageRecordsRole(profile?.role)) {
     return { ok: false, error: "Forbidden." };
   }
 
@@ -46,11 +45,9 @@ export async function saveVendorDocUrl(
   const supabase = adminResult.client as any;
 
   const { data, error } = await supabase
-    .from("procurement_vendor_docs")
+    .from("project_document_attachments")
     .insert({
       order_no: orderNo,
-      quotation_id: quotationId,
-      vendor_key: vendorKey,
       slot_key: slotKey,
       file_name: fileName,
       storage_path: storagePath,
@@ -61,9 +58,9 @@ export async function saveVendorDocUrl(
     .single();
 
   if (error || !data?.id) {
-    logServerActionError("SAVE VENDOR DOC ERROR", error, {
-      action: "saveVendorDocUrl",
-      table: "procurement_vendor_docs",
+    logServerActionError("SAVE PROJECT DOC ERROR", error, {
+      action: "saveProjectDoc",
+      table: "project_document_attachments",
       recordId: orderNo,
     });
     return {
@@ -75,15 +72,14 @@ export async function saveVendorDocUrl(
   return { ok: true, id: data.id as string };
 }
 
-export async function deleteVendorDoc(
+export async function deleteProjectDoc(
   orderNo: string,
-  vendorKey: string,
   slotKey: string,
   storagePath: string,
 ): Promise<ActionResult> {
   const { profile } = await requireActiveUser();
 
-  if (!canProcureRole(profile?.role)) {
+  if (!canManageRecordsRole(profile?.role)) {
     return { ok: false, error: "Forbidden." };
   }
 
@@ -99,8 +95,8 @@ export async function deleteVendorDoc(
     .remove([storagePath]);
 
   if (storageErr) {
-    logServerActionError("DELETE VENDOR DOC STORAGE ERROR", storageErr, {
-      action: "deleteVendorDoc",
+    logServerActionError("DELETE PROJECT DOC STORAGE ERROR", storageErr, {
+      action: "deleteProjectDoc",
       storagePath,
     });
     return {
@@ -110,16 +106,15 @@ export async function deleteVendorDoc(
   }
 
   const { error: dbErr } = await adminClient
-    .from("procurement_vendor_docs")
+    .from("project_document_attachments")
     .delete()
     .eq("order_no", orderNo)
-    .eq("vendor_key", vendorKey)
     .eq("slot_key", slotKey);
 
   if (dbErr) {
-    logServerActionError("DELETE VENDOR DOC DB ERROR", dbErr, {
-      action: "deleteVendorDoc",
-      table: "procurement_vendor_docs",
+    logServerActionError("DELETE PROJECT DOC DB ERROR", dbErr, {
+      action: "deleteProjectDoc",
+      table: "project_document_attachments",
       recordId: orderNo,
     });
     return {
@@ -131,64 +126,13 @@ export async function deleteVendorDoc(
   return { ok: true };
 }
 
-export type VendorProgressRecord = {
-  id: string;
-  order_no: string;
-  vendor_key: string;
-  active_step: number;
-  etd: string | null;
-  eta: string | null;
-};
-
-export async function saveVendorProgress(
-  orderNo: string,
-  vendorKey: string,
-  activeStep: number,
-  etd: string,
-  eta: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { user, profile } = await requireActiveUser();
-
-  if (!canProcureRole(profile?.role)) {
-    return { ok: false, error: "Forbidden." };
-  }
-
-  const adminResult = createAdminClient();
-  if (adminResult.error || !adminResult.client) {
-    return { ok: false, error: adminResult.error ?? "Admin client unavailable" };
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const supabase = adminResult.client as any;
-
-  const { error } = await supabase
-    .from("procurement_vendor_progress")
-    .upsert(
-      {
-        order_no: orderNo,
-        vendor_key: vendorKey,
-        active_step: activeStep,
-        etd: etd || null,
-        eta: eta || null,
-        updated_at: new Date().toISOString(),
-        updated_by: user.id,
-      },
-      { onConflict: "order_no,vendor_key" },
-    );
-
-  if (error) {
-    return { ok: false, error: error.message };
-  }
-
-  return { ok: true };
-}
-
-export async function deleteVendorDocById(
+export async function deleteProjectDocById(
   id: string,
   storagePath: string,
 ): Promise<ActionResult> {
   const { profile } = await requireActiveUser();
 
-  if (!canProcureRole(profile?.role)) {
+  if (!canManageRecordsRole(profile?.role)) {
     return { ok: false, error: "Forbidden." };
   }
 
@@ -204,8 +148,8 @@ export async function deleteVendorDocById(
     .remove([storagePath]);
 
   if (storageErr) {
-    logServerActionError("DELETE VENDOR DOC STORAGE ERROR", storageErr, {
-      action: "deleteVendorDocById",
+    logServerActionError("DELETE PROJECT DOC STORAGE ERROR", storageErr, {
+      action: "deleteProjectDocById",
       storagePath,
     });
     return {
@@ -215,14 +159,14 @@ export async function deleteVendorDocById(
   }
 
   const { error: dbErr } = await adminClient
-    .from("procurement_vendor_docs")
+    .from("project_document_attachments")
     .delete()
     .eq("id", id);
 
   if (dbErr) {
-    logServerActionError("DELETE VENDOR DOC DB ERROR", dbErr, {
-      action: "deleteVendorDocById",
-      table: "procurement_vendor_docs",
+    logServerActionError("DELETE PROJECT DOC DB ERROR", dbErr, {
+      action: "deleteProjectDocById",
+      table: "project_document_attachments",
       recordId: id,
     });
     return {

@@ -1,9 +1,14 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useRef, useState } from "react";
 import type React from "react";
 import { logVendorMilestoneAction } from "@/lib/procurement/log-vendor-milestone-action";
-import { saveVendorDocUrl, deleteVendorDoc, type VendorDocRecord } from "@/lib/procurement/vendor-docs-action";
+import {
+  saveVendorDocUrl,
+  deleteVendorDocById,
+  saveVendorProgress,
+  type VendorDocRecord,
+} from "@/lib/procurement/vendor-docs-action";
 import { createClient as createBrowserClient } from "@/lib/supabase/client";
 import { Check, FileText as FileIcon } from "lucide-react";
 
@@ -20,6 +25,19 @@ const VENDOR_STEPS: VendorStep[] = [
   { key: "shipped", label: "Shipped" },
 ];
 
+type MilestoneOption = {
+  value: string;
+  label: string;
+  stepIndex: number;
+};
+
+const MILESTONE_OPTIONS: MilestoneOption[] = [
+  { value: "po_issued",     label: "📋 PO Issued",      stepIndex: 1 },
+  { value: "deposit_paid",  label: "💰 Deposit Paid",    stepIndex: 2 },
+  { value: "in_production", label: "🏭 In Production",   stepIndex: 3 },
+  { value: "shipped",       label: "🚢 Shipped",         stepIndex: 4 },
+];
+
 type DocSlot = {
   key: string;
   label: string;
@@ -32,6 +50,13 @@ const DOC_SLOTS: DocSlot[] = [
   { key: "bl", label: "Shipping / Packing List (BL)", accept: ".pdf,.doc,.docx,.xls,.xlsx" },
 ];
 
+type AttachedFile = {
+  id: string;
+  fileName: string;
+  storagePath: string;
+  publicUrl: string;
+};
+
 function formatDateDisplay(value: string) {
   if (!value) return "";
   return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short" }).format(new Date(value));
@@ -43,25 +68,37 @@ type VendorControlsPanelProps = {
   quotationId: string;
   vendorLabel: string;
   initialDocs?: VendorDocRecord[];
+  initialStep?: number;
+  initialEtd?: string;
+  initialEta?: string;
 };
 
-export function VendorControlsPanel({ vendorKey, orderNo, quotationId, vendorLabel, initialDocs }: VendorControlsPanelProps) {
-  const [activeStep, setActiveStep] = useState(0);
+export function VendorControlsPanel({
+  vendorKey,
+  orderNo,
+  quotationId,
+  vendorLabel,
+  initialDocs,
+  initialStep,
+  initialEtd,
+  initialEta,
+}: VendorControlsPanelProps) {
+  const [activeStep, setActiveStep] = useState(initialStep ?? 0);
   const [milestoneToast, setMilestoneToast] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
-  const [selectedStatus, setSelectedStatus] = useState("");
-  const [etd, setEtd] = useState("");
-  const [eta, setEta] = useState("");
-  const [attachedFiles, setAttachedFiles] = useState<
-    Record<string, { fileName: string; storagePath: string; publicUrl: string }>
-  >(() => {
-    const result: Record<string, { fileName: string; storagePath: string; publicUrl: string }> = {};
+  const [etd, setEtd] = useState(initialEtd ?? "");
+  const [eta, setEta] = useState(initialEta ?? "");
+  const [isSavingProgress, setIsSavingProgress] = useState(false);
+  const [dateSavedToast, setDateSavedToast] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<Record<string, AttachedFile[]>>(() => {
+    const result: Record<string, AttachedFile[]> = {};
     for (const doc of initialDocs ?? []) {
-      result[doc.slot_key] = {
+      if (!result[doc.slot_key]) result[doc.slot_key] = [];
+      result[doc.slot_key].push({
+        id: doc.id,
         fileName: doc.file_name,
         storagePath: doc.storage_path,
         publicUrl: doc.public_url,
-      };
+      });
     }
     return result;
   });
@@ -80,22 +117,26 @@ export function VendorControlsPanel({ vendorKey, orderNo, quotationId, vendorLab
     try {
       const supabase = createBrowserClient();
       const slugKey = vendorKey.replace(/\s+/g, "_").toLowerCase().replace(/[^a-z0-9_-]/g, "");
-      const storagePath = `procurement/${orderNo}/${slugKey}/${slotKey}/${file.name}`;
+      const storagePath = `procurement/${orderNo}/${slugKey}/${slotKey}/${Date.now()}_${file.name}`;
 
       const { error: uploadError } = await supabase.storage
         .from("project-documents")
-        .upload(storagePath, file, { upsert: true });
+        .upload(storagePath, file, { upsert: false });
 
       if (uploadError) {
         setStorageError("Upload failed: " + uploadError.message);
         return;
       }
 
-      const { data: urlData } = supabase.storage
+      // FUTURE: regenerate signed URL on load if expired (check expiry timestamp)
+      const { data: signedData, error: signedError } = await supabase.storage
         .from("project-documents")
-        .getPublicUrl(storagePath);
-
-      const publicUrl = urlData.publicUrl;
+        .createSignedUrl(storagePath, 60 * 60 * 24 * 7); // 7 day expiry
+      if (signedError || !signedData?.signedUrl) {
+        setStorageError("Could not generate file URL.");
+        return;
+      }
+      const publicUrl = signedData.signedUrl;
 
       const result = await saveVendorDocUrl(
         orderNo, quotationId, vendorKey, slotKey, file.name, storagePath, publicUrl,
@@ -108,31 +149,27 @@ export function VendorControlsPanel({ vendorKey, orderNo, quotationId, vendorLab
 
       setAttachedFiles((prev) => ({
         ...prev,
-        [slotKey]: { fileName: file.name, storagePath, publicUrl },
+        [slotKey]: [...(prev[slotKey] ?? []), { id: result.id, fileName: file.name, storagePath, publicUrl }],
       }));
     } finally {
       setIsStoragePending(false);
     }
   }
 
-  async function handleClear(slotKey: string) {
-    const existing = attachedFiles[slotKey];
-    if (!existing) return;
-
+  async function handleClear(slotKey: string, id: string, storagePath: string) {
     setIsStoragePending(true);
     setStorageError(null);
 
     try {
-      const result = await deleteVendorDoc(orderNo, vendorKey, slotKey, existing.storagePath);
+      const result = await deleteVendorDocById(id, storagePath);
       if (!result.ok) {
         setStorageError(result.error);
         return;
       }
-      setAttachedFiles((prev) => {
-        const next = { ...prev };
-        delete next[slotKey];
-        return next;
-      });
+      setAttachedFiles((prev) => ({
+        ...prev,
+        [slotKey]: (prev[slotKey] ?? []).filter((f) => f.id !== id),
+      }));
     } finally {
       setIsStoragePending(false);
     }
@@ -140,41 +177,66 @@ export function VendorControlsPanel({ vendorKey, orderNo, quotationId, vendorLab
 
   function handleStatusChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const value = e.target.value;
-    if (!value) return;
+    console.log("[DEBUG] handleStatusChange called, value:", value);
 
-    const STEP_INDEX: Record<string, number> = {
-      po_issued: 1,
-      deposit_paid: 2,
-      in_production: 3,
-      shipped: 4,
-    };
-    const STEP_LABEL: Record<string, string> = {
-      po_issued: "📋 PO Issued",
-      deposit_paid: "💰 Deposit Paid",
-      in_production: "🏭 In Production",
-      shipped: "🚢 Shipped",
-    };
+    if (!value) {
+      console.log("[DEBUG] value is empty, returning");
+      return;
+    }
 
-    const stepIndex = STEP_INDEX[value] ?? 0;
-    const stepLabel = STEP_LABEL[value] ?? value;
+    const milestone = MILESTONE_OPTIONS.find((m) => m.value === value);
+    console.log("[DEBUG] milestone found:", milestone);
 
-    setActiveStep(stepIndex);
-    setSelectedStatus("");
+    if (!milestone) {
+      console.log("[DEBUG] no milestone match, returning");
+      return;
+    }
 
-    startTransition(async () => {
-      const result = await logVendorMilestoneAction(
-        orderNo, quotationId, vendorKey, vendorLabel, value, stepLabel,
-      );
-      const msg = result.ok ? "✓ Milestone logged" : `⚠ ${result.error}`;
-      setMilestoneToast(msg);
-      setTimeout(() => setMilestoneToast(null), 3000);
+    setActiveStep(milestone.stepIndex);
+    e.currentTarget.value = "";
+    console.log("[DEBUG] calling saveVendorProgress with:", {
+      orderNo, vendorKey, step: milestone.stepIndex, etd, eta,
     });
+
+    saveVendorProgress(orderNo, vendorKey, milestone.stepIndex, etd, eta)
+      .then((result) => {
+        console.log("[DEBUG] saveVendorProgress result:", result);
+      })
+      .catch((err) => {
+        console.error("[DEBUG] saveVendorProgress threw:", err);
+      });
+
+    logVendorMilestoneAction(orderNo, quotationId, vendorKey, vendorLabel, value, milestone.label)
+      .then((result) => {
+        const msg = result.ok ? "✓ Milestone logged" : `⚠ ${result.error}`;
+        setMilestoneToast(msg);
+        setTimeout(() => setMilestoneToast(null), 3000);
+      })
+      .catch((err) => {
+        console.error("logVendorMilestoneAction threw:", err);
+      });
+  }
+
+  async function handleSaveDates() {
+    setIsSavingProgress(true);
+    setStorageError(null);
+    try {
+      const result = await saveVendorProgress(orderNo, vendorKey, activeStep, etd, eta);
+      if (!result.ok) {
+        setStorageError("Failed to save dates: " + result.error);
+        return;
+      }
+      setDateSavedToast(true);
+      setTimeout(() => setDateSavedToast(false), 2000);
+    } finally {
+      setIsSavingProgress(false);
+    }
   }
 
   return (
     <div className="flex flex-col gap-4">
 
-      {/* Step Progress Tracker — visual only, driven by dropdown */}
+      {/* Step Progress Tracker — driven by milestone dropdown */}
       <div>
         <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
           Procurement Progress
@@ -218,10 +280,9 @@ export function VendorControlsPanel({ vendorKey, orderNo, quotationId, vendorLab
           ⚡ Update Factory Status
         </p>
         <select
-          value={selectedStatus}
-          disabled={isPending}
+          defaultValue=""
           onChange={handleStatusChange}
-          className="h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10 disabled:cursor-not-allowed disabled:opacity-60"
+          className="h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10"
         >
           <option value="" disabled>Select milestone...</option>
           <option value="po_issued">📋 PO Issued</option>
@@ -239,30 +300,45 @@ export function VendorControlsPanel({ vendorKey, orderNo, quotationId, vendorLab
       </div>
 
       {/* ETD / ETA Date Inputs */}
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">ETD</span>
-            <input
-              type="date"
-              value={etd}
-              onChange={(e) => setEtd(e.target.value)}
-              className="mt-1 h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10"
-            />
-          </label>
-          <p className="mt-0.5 text-[10px] text-zinc-400">Est. Departure</p>
+      <div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">ETD</span>
+              <input
+                type="date"
+                value={etd}
+                onChange={(e) => setEtd(e.target.value)}
+                className="mt-1 h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10"
+              />
+            </label>
+            <p className="mt-0.5 text-[10px] text-zinc-400">Est. Departure</p>
+          </div>
+          <div>
+            <label className="block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">ETA</span>
+              <input
+                type="date"
+                value={eta}
+                onChange={(e) => setEta(e.target.value)}
+                className="mt-1 h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10"
+              />
+            </label>
+            <p className="mt-0.5 text-[10px] text-zinc-400">Est. Arrival</p>
+          </div>
         </div>
-        <div>
-          <label className="block">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">ETA</span>
-            <input
-              type="date"
-              value={eta}
-              onChange={(e) => setEta(e.target.value)}
-              className="mt-1 h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10"
-            />
-          </label>
-          <p className="mt-0.5 text-[10px] text-zinc-400">Est. Arrival</p>
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            disabled={isSavingProgress}
+            onClick={handleSaveDates}
+            className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-800 hover:text-emerald-900 disabled:opacity-50"
+          >
+            {isSavingProgress ? "Saving…" : "Save dates"}
+          </button>
+          {dateSavedToast ? (
+            <span className="text-[11px] font-medium text-emerald-700">✓ Saved</span>
+          ) : null}
         </div>
       </div>
 
@@ -285,23 +361,43 @@ export function VendorControlsPanel({ vendorKey, orderNo, quotationId, vendorLab
         ) : null}
         <div className="space-y-1.5">
           {DOC_SLOTS.map((slot) => {
-            const attached = attachedFiles[slot.key];
+            const slotFiles = attachedFiles[slot.key] ?? [];
             return (
               <div
                 key={slot.key}
-                className="flex items-center gap-2 rounded-md border border-zinc-100 bg-zinc-50 px-2.5 py-1.5 transition hover:border-zinc-200 hover:bg-white"
+                className="flex items-start gap-2 rounded-md border border-zinc-100 bg-zinc-50 px-2.5 py-1.5 transition hover:border-zinc-200 hover:bg-white"
               >
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-medium text-zinc-700">{slot.label}</p>
-                  {attached ? (
-                    <div className="mt-0.5 flex items-center gap-1">
-                      <FileIcon className="h-3 w-3 shrink-0 text-emerald-700" />
-                      <span className="truncate text-[10px] font-medium text-emerald-800">
-                        {attached.fileName}
-                      </span>
-                    </div>
+                  {slotFiles.length === 0 ? (
+                    <p className="text-[10px] text-zinc-300">No files</p>
                   ) : (
-                    <p className="text-[10px] text-zinc-300">No file</p>
+                    <div className="mt-0.5 space-y-0.5">
+                      {slotFiles.map((f) => (
+                        <div key={f.id} className="flex items-center gap-1">
+                          <FileIcon className="h-3 w-3 shrink-0 text-emerald-700" aria-hidden="true" />
+                          <span className="min-w-0 truncate text-[10px] font-medium text-emerald-800">
+                            {f.fileName}
+                          </span>
+                          <a
+                            href={f.publicUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="ml-0.5 shrink-0 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[9px] font-semibold text-zinc-600 transition hover:border-emerald-800 hover:text-emerald-900"
+                          >
+                            View
+                          </a>
+                          <button
+                            type="button"
+                            disabled={isStoragePending}
+                            onClick={() => handleClear(slot.key, f.id, f.storagePath)}
+                            className="shrink-0 rounded border border-red-100 bg-white px-1.5 py-0.5 text-[9px] font-semibold text-red-500 transition hover:border-red-300 hover:text-red-700 disabled:opacity-50"
+                          >
+                            Del
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
                 <input
@@ -312,35 +408,14 @@ export function VendorControlsPanel({ vendorKey, orderNo, quotationId, vendorLab
                   onChange={(e) => handleFileChange(slot.key, e)}
                   aria-label={`Upload ${slot.label}`}
                 />
-                {attached ? (
-                  <div className="flex shrink-0 gap-1">
-                    <a
-                      href={attached.publicUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded border border-zinc-200 bg-white px-2 py-1 text-[10px] font-semibold text-zinc-600 transition hover:border-emerald-800 hover:text-emerald-900"
-                    >
-                      View
-                    </a>
-                    <button
-                      type="button"
-                      disabled={isStoragePending}
-                      onClick={() => handleClear(slot.key)}
-                      className="rounded border border-red-100 bg-white px-2 py-1 text-[10px] font-semibold text-red-500 transition hover:border-red-300 hover:text-red-700 disabled:opacity-50"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={isStoragePending}
-                    onClick={() => inputRefs.current[slot.key]?.click()}
-                    className="shrink-0 rounded border border-zinc-200 bg-white px-2 py-1 text-[10px] font-semibold text-zinc-600 transition hover:border-emerald-800 hover:text-emerald-900 disabled:opacity-50"
-                  >
-                    {isStoragePending ? "…" : "Upload"}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  disabled={isStoragePending}
+                  onClick={() => inputRefs.current[slot.key]?.click()}
+                  className="mt-0.5 shrink-0 rounded border border-zinc-200 bg-white px-2 py-1 text-[10px] font-semibold text-zinc-600 transition hover:border-emerald-800 hover:text-emerald-900 disabled:opacity-50"
+                >
+                  {isStoragePending ? "…" : "Upload"}
+                </button>
               </div>
             );
           })}

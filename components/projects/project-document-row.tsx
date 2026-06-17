@@ -13,9 +13,14 @@ import {
   Wrench,
   StickyNote,
   FolderOpen,
-  X,
   FileText as FileIcon,
 } from "lucide-react";
+import { createClient as createBrowserClient } from "@/lib/supabase/client";
+import {
+  saveProjectDoc,
+  deleteProjectDocById,
+  type ProjectDocRecord,
+} from "@/lib/projects/project-doc-action";
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   "file-text": FileText,
@@ -30,12 +35,21 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   "folder-open": FolderOpen,
 };
 
+type AttachedFile = {
+  id: string;
+  fileName: string;
+  storagePath: string;
+  publicUrl: string;
+};
+
 export type DocumentRowProps = {
   iconKey: string;
   label: string;
   hint: string;
   procurementLinked?: boolean;
   accept?: string;
+  orderNo: string;
+  initialDoc?: ProjectDocRecord[];
 };
 
 export function DocumentRow({
@@ -44,67 +58,163 @@ export function DocumentRow({
   hint,
   procurementLinked,
   accept = ".pdf,.doc,.docx,.dwg,.jpg,.png",
+  orderNo,
+  initialDoc,
 }: DocumentRowProps) {
   const Icon = ICON_MAP[iconKey] ?? FileText;
   const inputRef = useRef<HTMLInputElement>(null);
-  const [attachedFile, setAttachedFile] = useState<string | null>(null);
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>(() =>
+    (initialDoc ?? []).map((doc) => ({
+      id: doc.id,
+      fileName: doc.file_name,
+      storagePath: doc.storage_path,
+      publicUrl: doc.public_url,
+    })),
+  );
+  const [isUploading, setIsUploading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-    // FUTURE STORAGE HOOK (Phase 3C): Upload file to Supabase Storage bucket
-    // project-documents/{orderNo}/{label-slug}/{file.name}
-    // then store the signed URL in project_document_attachments table.
-    setAttachedFile(file.name);
-
-    // Reset input so the same file can be re-selected if cleared
-    e.target.value = "";
+  function showError(msg: string) {
+    setErrorMsg(msg);
+    setTimeout(() => setErrorMsg(null), 4000);
   }
 
-  function handleClear() {
-    // FUTURE STORAGE HOOK (Phase 3C): Delete file from Supabase Storage
-    // and remove the record from project_document_attachments table.
-    setAttachedFile(null);
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+
+    const slotKey = label.toLowerCase().replace(/\s+/g, "_");
+    const storagePath = `projects/${orderNo}/${slotKey}/${Date.now()}_${file.name}`;
+
+    setIsUploading(true);
+    setErrorMsg(null);
+
+    try {
+      const supabase = createBrowserClient();
+
+      const { error: uploadError } = await supabase.storage
+        .from("project-documents")
+        .upload(storagePath, file, { upsert: false });
+
+      if (uploadError) {
+        showError("Upload failed: " + uploadError.message);
+        return;
+      }
+
+      // FUTURE: regenerate signed URL on load if expired (check expiry timestamp)
+      const { data: signedData, error: signedError } = await supabase.storage
+        .from("project-documents")
+        .createSignedUrl(storagePath, 60 * 60 * 24 * 7); // 7 day expiry
+      if (signedError || !signedData?.signedUrl) {
+        showError("Could not generate file URL.");
+        return;
+      }
+      const publicUrl = signedData.signedUrl;
+
+      const result = await saveProjectDoc(orderNo, slotKey, file.name, storagePath, publicUrl);
+
+      if (!result.ok) {
+        showError(result.error);
+        return;
+      }
+
+      setAttachedFiles((prev) => [
+        ...prev,
+        { id: result.id, fileName: file.name, storagePath, publicUrl },
+      ]);
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  async function handleClear(id: string, storagePath: string) {
+    setIsUploading(true);
+    setErrorMsg(null);
+
+    try {
+      const result = await deleteProjectDocById(id, storagePath);
+
+      if (!result.ok) {
+        showError(result.error);
+        return;
+      }
+
+      setAttachedFiles((prev) => prev.filter((f) => f.id !== id));
+    } finally {
+      setIsUploading(false);
+    }
   }
 
   return (
-    <div className="flex items-center gap-3 rounded-md border border-zinc-100 bg-zinc-50 px-3 py-2.5 transition hover:border-zinc-200 hover:bg-white">
+    <div className="rounded-lg border border-zinc-200 bg-white p-3 transition hover:shadow-sm">
 
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-white">
-        <Icon className="h-4 w-4 text-zinc-500" aria-hidden="true" />
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="text-sm font-medium text-zinc-800">{label}</p>
-          {procurementLinked ? (
-            <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">
-              Procurement linked
-            </span>
-          ) : null}
-        </div>
-        <p className="mt-0.5 truncate text-xs text-zinc-400">{hint}</p>
-
-        {attachedFile ? (
-          <div className="mt-1 flex items-center gap-1.5">
-            <FileIcon className="h-3 w-3 shrink-0 text-emerald-700" aria-hidden="true" />
-            <span className="truncate text-xs font-medium text-emerald-800">{attachedFile}</span>
-            <button
-              type="button"
-              onClick={handleClear}
-              className="ml-0.5 rounded p-0.5 text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
-              aria-label="Remove file"
-            >
-              <X className="h-3 w-3" />
-            </button>
+      {/* Top row: icon + label + add button */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-zinc-100 bg-zinc-50">
+            <Icon className="h-3.5 w-3.5 text-zinc-400" aria-hidden="true" />
           </div>
-        ) : (
-          <p className="mt-1 text-xs text-zinc-300">No files attached</p>
-        )}
+          <div>
+            <p className="text-xs font-semibold text-zinc-800">{label}</p>
+            {procurementLinked ? (
+              <span className="mt-0.5 inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">
+                Procurement linked
+              </span>
+            ) : null}
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={isUploading}
+          onClick={() => inputRef.current?.click()}
+          className="shrink-0 rounded border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] font-semibold text-zinc-500 transition hover:border-emerald-800 hover:text-emerald-900 disabled:opacity-50"
+        >
+          {isUploading ? "…" : "+ Add"}
+        </button>
       </div>
 
-      {/* Hidden native file input */}
+      {/* Hint */}
+      <p className="mt-1.5 text-[10px] leading-snug text-zinc-400">{hint}</p>
+
+      {/* File list */}
+      {attachedFiles.length > 0 ? (
+        <div className="mt-2 space-y-1">
+          {attachedFiles.map((f) => (
+            <div key={f.id} className="flex items-center gap-1.5 rounded border border-zinc-100 bg-zinc-50 px-2 py-1">
+              <FileIcon className="h-3 w-3 shrink-0 text-emerald-600" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate text-[10px] font-medium text-emerald-800">
+                {f.fileName}
+              </span>
+              <a
+                href={f.publicUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] font-semibold text-zinc-500 transition hover:text-zinc-800"
+              >
+                View
+              </a>
+              <button
+                type="button"
+                disabled={isUploading}
+                onClick={() => handleClear(f.id, f.storagePath)}
+                className="text-[10px] font-semibold text-red-400 transition hover:text-red-600 disabled:opacity-50"
+              >
+                Del
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-[10px] text-zinc-300">No files yet</p>
+      )}
+
+      {/* Error */}
+      {errorMsg ? (
+        <p className="mt-1 text-[10px] text-red-500">{errorMsg}</p>
+      ) : null}
+
       <input
         ref={inputRef}
         type="file"
@@ -113,15 +223,6 @@ export function DocumentRow({
         onChange={handleFileChange}
         aria-label={`Upload file for ${label}`}
       />
-
-      <button
-        type="button"
-        onClick={() => inputRef.current?.click()}
-        className="shrink-0 rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-600 transition hover:border-emerald-800 hover:text-emerald-900"
-      >
-        Upload
-      </button>
-
     </div>
   );
 }

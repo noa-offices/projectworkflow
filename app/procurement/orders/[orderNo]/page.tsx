@@ -116,9 +116,10 @@ export default async function ProcurementWorkspacePage({
   // Fetch persisted vendor doc records for this order
   const { data: vendorDocRows } = await supabase
     .from("procurement_vendor_docs")
-    .select("vendor_key,slot_key,file_name,storage_path,public_url")
+    .select("vendor_key,slot_key,id,file_name,storage_path,public_url")
     .eq("order_no", decodedOrderNo)
     .returns<Array<{
+      id: string;
       vendor_key: string;
       slot_key: string;
       file_name: string;
@@ -132,12 +133,23 @@ export default async function ProcurementWorkspacePage({
       vendorDocsMap.set(row.vendor_key, []);
     }
     vendorDocsMap.get(row.vendor_key)!.push({
+      id: row.id,
       slot_key: row.slot_key,
       file_name: row.file_name,
       storage_path: row.storage_path,
       public_url: row.public_url,
     });
   }
+
+  const { data: vendorProgress } = await supabase
+    .from("procurement_vendor_progress")
+    .select("vendor_key, active_step, etd, eta")
+    .eq("order_no", decodedOrderNo)
+    .returns<Array<{ vendor_key: string; active_step: number; etd: string | null; eta: string | null }>>();
+
+  const vendorProgressMap = new Map(
+    (vendorProgress ?? []).map((p) => [p.vendor_key, p]),
+  );
 
   return (
     <ErpAppShell
@@ -250,6 +262,9 @@ export default async function ProcurementWorkspacePage({
                     orderNo={decodedOrderNo}
                     canGenerateDocs={canGenerateDocs}
                     initialDocs={vendorDocsMap.get(group.dedupeKey) ?? []}
+                    initialStep={vendorProgressMap.get(group.dedupeKey)?.active_step ?? 0}
+                    initialEtd={vendorProgressMap.get(group.dedupeKey)?.etd ?? ""}
+                    initialEta={vendorProgressMap.get(group.dedupeKey)?.eta ?? ""}
                   />
                 );
               })}

@@ -30,6 +30,9 @@ export type VendorCardProps = {
   canGenerateDocs: boolean;
   initialPoNumber?: string;
   initialDocs?: VendorDocRecord[];
+  initialStep?: number;
+  initialEtd?: string;
+  initialEta?: string;
 };
 
 export function VendorCard({
@@ -44,6 +47,9 @@ export function VendorCard({
   canGenerateDocs,
   initialPoNumber,
   initialDocs,
+  initialStep,
+  initialEtd,
+  initialEta,
 }: VendorCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [poNumber, setPoNumber] = useState<string | null>(initialPoNumber ?? null);
@@ -213,6 +219,9 @@ export function VendorCard({
               quotationId={quotationId}
               vendorLabel={displayLabel}
               initialDocs={initialDocs}
+              initialStep={initialStep}
+              initialEtd={initialEtd}
+              initialEta={initialEta}
             />
           </div>
 
@@ -226,6 +235,9 @@ export function VendorCard({
               quotationId={quotationId}
               vendorLabel={displayLabel}
               initialDocs={initialDocs}
+              initialStep={initialStep}
+              initialEtd={initialEtd}
+              initialEta={initialEta}
             />
         </div>
       )}
