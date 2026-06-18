@@ -1,5 +1,6 @@
 import { signOut } from "@/app/auth/actions";
 import { GlobalRefreshButton } from "@/components/global-refresh-button";
+import { NotificationBell } from "@/components/notifications/notification-bell";
 
 type ErpTopbarProps = {
   description: string;
@@ -27,6 +28,7 @@ export function ErpTopbar({
         {userDisplayName ? (
           <div className="flex flex-col items-stretch gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm sm:flex-row sm:items-center">
             <GlobalRefreshButton />
+            <NotificationBell />
             <div className="min-w-0 text-right">
               <p className="truncate font-semibold text-zinc-950">{userDisplayName}</p>
               {userEmail ? <p className="mt-1 truncate text-xs text-zinc-500">{userEmail}</p> : null}

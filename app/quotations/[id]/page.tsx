@@ -1666,35 +1666,32 @@ export default async function QuotationDetailPage({
                     pendingLabel="Preparing Presentation..."
                   />
                   {currentProjectFile ? (
-                    <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="min-w-0">
-                        <h3 className="text-sm font-semibold text-zinc-950">
-                          Project File - {currentProjectFile.orderNo}
-                        </h3>
-                        <p className="mt-1 text-sm text-zinc-500">
-                          Created from this approved quotation.
-                        </p>
+                    <>
+                      <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <h3 className="text-sm font-semibold text-zinc-950">
+                            Project File - {currentProjectFile.orderNo}
+                          </h3>
+                          <p className="mt-1 text-sm text-zinc-500">
+                            Created from this approved quotation.
+                          </p>
+                        </div>
+                        <SecondaryActionLink href={`/projects/orders/${currentProjectFile.orderNo}`} label="Open Project File" />
                       </div>
-                      <SecondaryActionLink href={`/projects/orders/${currentProjectFile.orderNo}`} label="Open Project File" />
-                    </div>
-                  ) : (
-                    <FutureDocumentRow
-                      title={`Project File${confirmedOrderNo ? ` - ${confirmedOrderNo}` : ""}`}
-                      description="Available after the selected quotation is Client Approved."
-                    />
-                  )}
-                  <FutureDocumentRow
-                    title={`Supplier RFQ${supplierRfqNo ? ` - ${supplierRfqNo}` : ""}`}
-                    description="Available after Project File creation in a future phase."
-                  />
-                  <FutureDocumentRow
-                    title={`Purchase Order${purchaseOrderNo ? ` - ${purchaseOrderNo}` : ""}`}
-                    description="Future procurement document."
-                  />
-                  <FutureDocumentRow
-                    title={`Order Confirmation${orderConfirmationNo ? ` - ${orderConfirmationNo}` : ""}`}
-                    description="Future client order document."
-                  />
+                      <FutureDocumentRow
+                        title={`Supplier RFQ${supplierRfqNo ? ` - ${supplierRfqNo}` : ""}`}
+                        description="Available after Project File creation in a future phase."
+                      />
+                      <FutureDocumentRow
+                        title={`Purchase Order${purchaseOrderNo ? ` - ${purchaseOrderNo}` : ""}`}
+                        description="Future procurement document."
+                      />
+                      <FutureDocumentRow
+                        title={`Order Confirmation${orderConfirmationNo ? ` - ${orderConfirmationNo}` : ""}`}
+                        description="Future client order document."
+                      />
+                    </>
+                  ) : null}
                 </div>
               </section>
 

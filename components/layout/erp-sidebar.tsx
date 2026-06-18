@@ -9,6 +9,7 @@ import {
   Archive,
   BarChart3,
   BadgeCheck,
+  Bell,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -61,6 +62,10 @@ function isQuotationsActive(pathname: string) {
 
 function isSalesApprovalsActive(pathname: string) {
   return pathname === "/sales/approvals" || pathname.startsWith("/sales/approvals/");
+}
+
+function isNotificationsActive(pathname: string) {
+  return pathname === "/notifications" || pathname.startsWith("/notifications/");
 }
 
 function isSettingsActive(pathname: string) {
@@ -169,7 +174,10 @@ export function ErpSidebar({
       {
         title: "Workspace",
         iconColors: { bg: "bg-indigo-100", icon: "text-indigo-600" },
-        items: [{ label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, active: isDashboardActive(pathname) }],
+        items: [
+          { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, active: isDashboardActive(pathname) },
+          { label: "Notifications", href: "/notifications", icon: Bell, active: isNotificationsActive(pathname) },
+        ],
       },
       {
         title: "Sales",

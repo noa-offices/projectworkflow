@@ -14,6 +14,7 @@ import { type ProjectDocRecord } from "@/lib/projects/project-doc-action";
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
 import { MarkCompletedButton } from "@/components/projects/mark-completed-button";
 import { CancelProjectButton } from "@/components/projects/cancel-project-button";
+import { NotifyButton } from "@/components/notifications/notify-button";
 
 export const dynamic = "force-dynamic";
 
@@ -591,26 +592,12 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
             Open Quotation
           </Link>
           {canProcure ? (
-            <>
-              <Link
-                href={`/quotations/${entry.quotationId}/procurement-rfq`}
-                className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-              >
-                Procurement RFQ
-              </Link>
-              <Link
-                href={`/quotations/${entry.quotationId}/purchase-order`}
-                className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-              >
-                Purchase Order
-              </Link>
-              <Link
-                href={`/quotations/${entry.quotationId}/order-confirmation`}
-                className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-              >
-                Order Confirmation
-              </Link>
-            </>
+            <Link
+              href={`/quotations/${entry.quotationId}/order-confirmation`}
+              className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+            >
+              Order Confirmation
+            </Link>
           ) : (
             <p className="text-xs text-zinc-400">Procurement documents require Procurement Manager access.</p>
           )}
@@ -633,6 +620,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
               />
             </>
           ) : null}
+          <NotifyButton orderNo={decodedOrderNo} />
         </div>
 
         {metadataSection}

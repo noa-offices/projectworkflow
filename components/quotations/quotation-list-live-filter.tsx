@@ -607,15 +607,6 @@ export function QuotationListLiveFilter({
                   <Link href={`/quotations/${quotation.id}`} className="inline-flex h-9 items-center rounded-md bg-emerald-900 px-3 text-sm font-semibold text-white transition hover:bg-emerald-800">
                     Open Folder
                   </Link>
-                  {folder.activeCount > 0 ? (
-                    <Link href={`/quotations/${quotation.id}/local-builder`} className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
-                      Open Builder
-                    </Link>
-                  ) : (
-                    <span className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400" title="Restore a quote before editing.">
-                      Open Builder
-                    </span>
-                  )}
                   {canManageRecords ? (
                     <button
                       type="button"
@@ -699,25 +690,16 @@ export function QuotationListLiveFilter({
                     <td className="px-4 py-3 font-semibold text-zinc-950">{formatQuotationMoney(quotation.currency, quotation.grand_total)}</td>
                     <td className="px-4 py-3 text-zinc-500">{formatListDate(quotation.quotation_date)}</td>
                     <td className="px-4 py-3">
-                      <div className="flex flex-col gap-1.5">
-                        <Link href={`/quotations/${quotation.id}`} className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-700">
+                      <div className="flex flex-col gap-2">
+                        <Link href={`/quotations/${quotation.id}`} className="inline-flex h-9 items-center rounded-md bg-emerald-900 px-3 text-sm font-semibold text-white transition hover:bg-emerald-800">
                           Open Folder
                         </Link>
-                        {folder.activeCount > 0 ? (
-                          <Link href={`/quotations/${quotation.id}/local-builder`} className="text-xs font-semibold text-zinc-500 transition hover:text-zinc-900">
-                            Open Builder
-                          </Link>
-                        ) : (
-                          <span className="text-xs font-semibold text-zinc-300" title="Restore a quote before editing.">
-                            Open Builder
-                          </span>
-                        )}
                         {canManageRecords ? (
                           <button
                             type="button"
                             disabled={archivingKey === folder.key}
                             onClick={() => handleFolderArchive(folder.key, folder.archiveAnchorId, !folder.isFolderArchived)}
-                            className="text-left text-xs font-semibold text-zinc-400 transition hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             {archivingKey === folder.key ? "…" : folder.isFolderArchived ? "Unarchive" : "Archive"}
                           </button>
@@ -727,14 +709,14 @@ export function QuotationListLiveFilter({
                             <button
                               type="button"
                               onClick={() => openDeleteModal(folder)}
-                              className="text-left text-xs font-semibold text-red-400 transition hover:text-red-700"
+                              className="inline-flex h-9 items-center rounded-md border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 transition hover:bg-red-50"
                             >
                               Delete
                             </button>
                           ) : (
                             <span
                               title={folder.deleteBlockReason ?? undefined}
-                              className="cursor-not-allowed text-xs font-semibold text-zinc-300 select-none"
+                              className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400 select-none"
                             >
                               Delete
                             </span>

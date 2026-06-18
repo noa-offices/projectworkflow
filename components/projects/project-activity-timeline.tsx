@@ -159,7 +159,6 @@ export function ProjectActivityTimeline({ canLog, orderNo, quotationId: _quotati
   const [showAll, setShowAll] = useState(false);
   const [selectedMilestone, setSelectedMilestone] = useState<MilestoneKey>("advance_payment_received");
   const [remarkText, setRemarkText] = useState("");
-  const [sendToProcurement, setSendToProcurement] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
 
@@ -184,7 +183,6 @@ export function ProjectActivityTimeline({ canLog, orderNo, quotationId: _quotati
     }
 
     setRemarkText("");
-    setSendToProcurement(false);
     setIsSubmitting(false);
     router.refresh();
   }
@@ -239,20 +237,6 @@ export function ProjectActivityTimeline({ canLog, orderNo, quotationId: _quotati
                 {isSubmitting ? "Posting…" : "Post"}
               </button>
             </div>
-
-            {/* Send to Procurement toggle */}
-            <label className="flex cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                checked={sendToProcurement}
-                onChange={(e) => setSendToProcurement(e.target.checked)}
-                disabled={isSubmitting}
-                className="h-4 w-4 rounded border-zinc-300 accent-amber-600"
-              />
-              <span className="text-xs font-medium text-zinc-600">
-                ⚠️ Send as direct note to Procurement
-              </span>
-            </label>
 
           </div>
 
