@@ -30,6 +30,7 @@ export default async function ActiveProjectsPage() {
     .flatMap((quotation) => {
       const settings = quotation.layout_settings as Record<string, unknown> | null;
       if (typeof settings?.projectCompletedAt === "string") return [];
+      if (typeof settings?.projectCancelledAt === "string") return [];
       const projectFile = projectFileFromLayoutSettings(quotation.layout_settings);
       if (projectFile) return [projectFile];
       const draft = clientApprovalDraftFromLayoutSettings(quotation.layout_settings);

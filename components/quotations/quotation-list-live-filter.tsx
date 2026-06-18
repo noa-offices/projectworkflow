@@ -1,14 +1,20 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
 import {
+  quotationStatusBadgeClassName,
   quotationStatusLabel,
   quotationStatuses,
 } from "@/lib/quotation-status";
+import { archiveFolderAction } from "@/lib/quotations/archive-folder-action";
+import { deleteFolderAction } from "@/lib/quotations/delete-folder-action";
+import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
+import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 
 type Client = { id: string; company_name: string };
 
@@ -29,6 +35,7 @@ type Quotation = {
   grand_total: number;
   id: string;
   is_active: boolean;
+  layout_settings: Record<string, unknown> | null;
   project_id: string | null;
   legacy_reference: string | null;
   quotation_date: string;
@@ -39,6 +46,8 @@ type Quotation = {
 };
 
 type QuotationListLiveFilterProps = {
+  canDeleteFolders: boolean;
+  canManageRecords: boolean;
   children?: ReactNode;
   clients: Client[];
   initialFilters?: {
@@ -56,9 +65,15 @@ type QuotationListLiveFilterProps = {
 
 type QuotationFolder = {
   activeCount: number;
+  allQuotationIds: string[];
+  archiveAnchorId: string;
   archivedCount: number;
   clientName: string;
+  confirmText: string;
+  deleteBlockReason: string | null;
   folderNo: string | null;
+  isFolderArchived: boolean;
+  isFolderDeletable: boolean;
   key: string;
   latestQuotation: Quotation;
   projectName: string;
@@ -121,7 +136,15 @@ function formatListDate(value: string) {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(value));
 }
 
+type DeletingFolderState = {
+  key: string;
+  confirmText: string;
+  allQuotationIds: string[];
+};
+
 export function QuotationListLiveFilter({
+  canDeleteFolders,
+  canManageRecords,
   children,
   clients,
   initialFilters,
@@ -130,11 +153,19 @@ export function QuotationListLiveFilter({
   quotations,
   salespersonProfiles,
 }: QuotationListLiveFilterProps) {
+  const router = useRouter();
   const [query, setQuery] = useState(initialFilters?.q?.trim() ?? "");
   const [selectedStatus, setSelectedStatus] = useState(initialFilters?.status ?? "");
   const [selectedClientId, setSelectedClientId] = useState(initialFilters?.client ?? "");
   const [selectedProjectId, setSelectedProjectId] = useState(initialFilters?.project ?? "");
   const [selectedYear, setSelectedYear] = useState(initialFilters?.year ?? "");
+  const [showArchived, setShowArchived] = useState(false);
+  const [archivingKey, setArchivingKey] = useState<string | null>(null);
+  const [isRefreshing, startRefreshTransition] = useTransition();
+  const [deletingFolder, setDeletingFolder] = useState<DeletingFolderState | null>(null);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const clientMap = useMemo(() => new Map(clients.map((client) => [client.id, client.company_name])), [clients]);
   const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
@@ -158,11 +189,50 @@ export function QuotationListLiveFilter({
         const activeCount = folderQuotations.filter((quotation) => quotation.is_active).length;
         const archivedCount = folderQuotations.length - activeCount;
 
+        // Folder-level archive: any quotation in the folder has folderArchivedAt set
+        const folderArchivedAnchor = folderQuotations.find(
+          (q) => typeof q.layout_settings?.folderArchivedAt === "string",
+        );
+        const isFolderArchived = Boolean(folderArchivedAnchor);
+        // Anchor for archive: existing anchor (for unarchive) or root quotation (for archive)
+        const rootQuotation = folderQuotations.find(isOriginalQuotation) ?? folderQuotations[0];
+        const archiveAnchorId = folderArchivedAnchor?.id ?? rootQuotation.id;
+
+        // Delete eligibility: blocked if any quotation has a non-cancelled project file
+        const allQuotationIds = folderQuotations.map((q) => q.id);
+        const confirmText =
+          derivedFolderNo ??
+          latest.quotation_no ??
+          latest.legacy_reference ??
+          key.slice(0, 16);
+        let isFolderDeletable = true;
+        let deleteBlockReason: string | null = null;
+        for (const q of folderQuotations) {
+          const hasFile =
+            Boolean(projectFileFromLayoutSettings(q.layout_settings)) ||
+            Boolean(clientApprovalDraftFromLayoutSettings(q.layout_settings)?.confirmedOrder);
+          if (hasFile) {
+            const isCancelled = typeof q.layout_settings?.projectCancelledAt === "string";
+            if (!isCancelled) {
+              isFolderDeletable = false;
+              deleteBlockReason =
+                "A Project File was created from this folder. Cancel the project before deleting.";
+              break;
+            }
+          }
+        }
+
         return {
           activeCount,
+          allQuotationIds,
+          archiveAnchorId,
           archivedCount,
           clientName: clientMap.get(latest.client_id) ?? "Unknown client",
+          confirmText,
+          deleteBlockReason,
           folderNo: derivedFolderNo,
+          isFolderArchived,
+          isFolderDeletable,
           key,
           latestQuotation: latest,
           projectName: project?.project_name ?? latest.legacy_reference ?? "Opportunity reference",
@@ -177,6 +247,10 @@ export function QuotationListLiveFilter({
   const filteredFolders = useMemo(
     () =>
       folders.filter((folder) => {
+        // Folder-level archive filter
+        if (!showArchived && folder.isFolderArchived) return false;
+        if (showArchived && !folder.isFolderArchived) return false;
+
         const quotation = folder.latestQuotation;
         const project = quotation.project_id ? projectMap.get(quotation.project_id) : undefined;
         const displayYear = project?.project_year ?? new Date(quotation.quotation_date).getFullYear();
@@ -214,6 +288,7 @@ export function QuotationListLiveFilter({
       selectedProjectId,
       selectedStatus,
       selectedYear,
+      showArchived,
     ],
   );
 
@@ -223,10 +298,126 @@ export function QuotationListLiveFilter({
     setSelectedClientId("");
     setSelectedProjectId("");
     setSelectedYear("");
+    setShowArchived(false);
+  }
+
+  async function handleFolderArchive(folderKey: string, quotationId: string, archive: boolean) {
+    setArchivingKey(folderKey);
+    const result = await archiveFolderAction(quotationId, archive);
+    setArchivingKey(null);
+    if (!result.ok) return;
+    // Wrap router.refresh() in a transition so isRefreshing stays true until
+    // the server re-render completes and new quotations props propagate down.
+    // Without this, the component updates with stale isFolderArchived values
+    // if the user clicks the Archived toggle before the refresh settles.
+    startRefreshTransition(() => {
+      router.refresh();
+    });
+  }
+
+  async function handleDeleteConfirm() {
+    if (!deletingFolder || deleteConfirmInput !== deletingFolder.confirmText) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    const result = await deleteFolderAction(
+      deletingFolder.allQuotationIds,
+      deletingFolder.confirmText,
+    );
+    if (!result.ok) {
+      setDeleteError(result.error);
+      setIsDeleting(false);
+      return;
+    }
+    setDeletingFolder(null);
+    setDeleteConfirmInput("");
+    setIsDeleting(false);
+    startRefreshTransition(() => {
+      router.refresh();
+    });
+  }
+
+  function openDeleteModal(folder: QuotationFolder) {
+    setDeletingFolder({
+      key: folder.key,
+      confirmText: folder.confirmText,
+      allQuotationIds: folder.allQuotationIds,
+    });
+    setDeleteConfirmInput("");
+    setDeleteError(null);
+  }
+
+  function closeDeleteModal() {
+    if (isDeleting) return;
+    setDeletingFolder(null);
+    setDeleteConfirmInput("");
+    setDeleteError(null);
   }
 
   return (
     <>
+      {/* ── Delete confirmation modal ────────────────────────────── */}
+      {deletingFolder ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-2xl"
+          >
+            <h3 className="text-lg font-semibold text-zinc-950">Permanently delete folder?</h3>
+            <p className="mt-2 text-sm text-zinc-600">
+              This will permanently delete{" "}
+              <span className="font-semibold text-zinc-950">{deletingFolder.confirmText}</span>{" "}
+              and all its quotations, revisions, procurement documents, and associated files.{" "}
+              <span className="font-semibold text-red-700">This action cannot be undone.</span>
+            </p>
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-zinc-700">
+                Type{" "}
+                <span className="font-mono font-semibold text-zinc-950">
+                  {deletingFolder.confirmText}
+                </span>{" "}
+                to confirm:
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmInput}
+                onChange={(e) => {
+                  setDeleteConfirmInput(e.target.value);
+                  setDeleteError(null);
+                }}
+                placeholder={deletingFolder.confirmText}
+                // eslint-disable-next-line jsx-a11y/no-autofocus
+                autoFocus
+                className="mt-2 h-10 w-full rounded-md border border-zinc-300 px-3 font-mono text-sm outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-200"
+              />
+            </div>
+            {deleteError ? (
+              <p className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {deleteError}
+              </p>
+            ) : null}
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                disabled={isDeleting || deleteConfirmInput !== deletingFolder.confirmText}
+                onClick={handleDeleteConfirm}
+                className="h-10 flex-1 rounded-md bg-red-600 px-4 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isDeleting ? "Deleting…" : "Permanently Delete"}
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={closeDeleteModal}
+                className="h-10 rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.4fr_1fr_1fr_1fr_1fr_auto]">
           <label className="block">
@@ -298,40 +489,77 @@ export function QuotationListLiveFilter({
               ))}
             </select>
           </label>
-          <div className="flex items-end">
+          <div className="flex items-end gap-2">
             <button
               type="button"
               onClick={resetFilters}
-              className="h-10 w-full rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-600 transition hover:border-emerald-900/25 hover:text-emerald-900"
+              className="h-10 flex-1 rounded-md border border-zinc-200 px-3 text-sm font-semibold text-zinc-600 transition hover:border-emerald-900/25 hover:text-emerald-900"
             >
-              Reset filters
+              Reset
             </button>
           </div>
         </div>
       </section>
 
+      {/* ── View mode toggle: Active vs Archived folders ─────────── */}
+      <div className="mt-4 flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1 shadow-sm w-fit">
+        <button
+          type="button"
+          onClick={() => setShowArchived(false)}
+          className={[
+            "h-8 rounded-md px-4 text-sm font-semibold transition",
+            !showArchived
+              ? "bg-zinc-950 text-white shadow-sm"
+              : "text-zinc-500 hover:text-zinc-800",
+          ].join(" ")}
+        >
+          Active
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowArchived(true)}
+          className={[
+            "h-8 rounded-md px-4 text-sm font-semibold transition",
+            showArchived
+              ? "bg-amber-600 text-white shadow-sm"
+              : "text-zinc-500 hover:text-zinc-800",
+          ].join(" ")}
+        >
+          Archived
+        </button>
+      </div>
+
       {children}
 
-      <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <section className="mt-4 rounded-lg border border-zinc-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-zinc-950">Quotation folders</h2>
+            <h2 className="text-lg font-semibold text-zinc-950">
+              {showArchived ? "Archived Folders" : "Quotation folders"}
+            </h2>
             <p className="mt-1 text-sm text-zinc-500">
-              Folder-first view for originals, revisions, options, and builder access.
+              {showArchived
+                ? "Folders hidden from the default view. Unarchive to restore."
+                : "Folder-first view for originals, revisions, options, and builder access."}
             </p>
           </div>
           <p className="text-xs font-semibold uppercase text-zinc-500">
-            {filteredFolders.length} {filteredFolders.length === 1 ? "folder" : "folders"}
+            {isRefreshing ? (
+              <span className="text-zinc-400">Updating…</span>
+            ) : (
+              <>{filteredFolders.length} {filteredFolders.length === 1 ? "folder" : "folders"}</>
+            )}
           </p>
         </div>
 
         {!filteredFolders.length ? (
-          <p className="mt-4 rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
-            No quotation folders match filters.
+          <p className="mx-5 mb-5 rounded-md border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
+            {showArchived ? "No archived folders." : "No quotation folders match filters."}
           </p>
         ) : null}
 
-        <div className="mt-4 grid gap-3 lg:hidden">
+        {/* ── Mobile cards ────────────────────────────────────────── */}
+        <div className="grid gap-3 px-5 pb-5 pt-1 lg:hidden">
           {filteredFolders.map((folder) => {
             const quotation = folder.latestQuotation;
 
@@ -360,7 +588,9 @@ export function QuotationListLiveFilter({
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase text-zinc-500">Status</p>
-                    <p className="mt-1 text-zinc-700">{folder.statusSummary}</p>
+                    <span className={`mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${quotationStatusBadgeClassName(quotation.status)}`}>
+                      {quotationStatusLabel(quotation.status)}
+                    </span>
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase text-zinc-500">Quotes</p>
@@ -386,16 +616,45 @@ export function QuotationListLiveFilter({
                       Open Builder
                     </span>
                   )}
+                  {canManageRecords ? (
+                    <button
+                      type="button"
+                      disabled={archivingKey === folder.key}
+                      onClick={() => handleFolderArchive(folder.key, folder.archiveAnchorId, !folder.isFolderArchived)}
+                      className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {archivingKey === folder.key ? "…" : folder.isFolderArchived ? "Unarchive" : "Archive"}
+                    </button>
+                  ) : null}
+                  {canDeleteFolders ? (
+                    folder.isFolderDeletable ? (
+                      <button
+                        type="button"
+                        onClick={() => openDeleteModal(folder)}
+                        className="inline-flex h-9 items-center rounded-md border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+                      >
+                        Delete
+                      </button>
+                    ) : (
+                      <span
+                        title={folder.deleteBlockReason ?? undefined}
+                        className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400 select-none"
+                      >
+                        Delete
+                      </span>
+                    )
+                  ) : null}
                 </div>
               </article>
             );
           })}
         </div>
 
-        <div className="mt-4 hidden overflow-hidden rounded-lg border border-zinc-200 lg:block">
+        {/* ── Desktop table ───────────────────────────────────────── */}
+        <div className="hidden overflow-hidden border-t border-zinc-100 lg:block">
           <table className="w-full text-left text-sm">
-            <thead className="bg-zinc-50">
-              <tr className="border-b border-zinc-200 text-xs font-semibold uppercase text-zinc-500">
+            <thead>
+              <tr className="border-b border-zinc-200 bg-zinc-50 text-xs font-semibold uppercase text-zinc-500">
                 <th className="px-4 py-3">Folder</th>
                 <th className="px-4 py-3">Client</th>
                 <th className="px-4 py-3">Sales Person</th>
@@ -412,29 +671,36 @@ export function QuotationListLiveFilter({
                 const quotation = folder.latestQuotation;
 
                 return (
-                  <tr key={folder.key} className="border-b border-zinc-100 align-top last:border-0">
-                    <td className="px-4 py-4">
+                  <tr key={folder.key} className="border-b border-zinc-100 align-top transition-colors hover:bg-zinc-50/80 last:border-0">
+                    <td className="px-4 py-3">
                       <p className="font-semibold text-zinc-950">{folder.folderNo ?? "Legacy"}</p>
-                      <p className="mt-1 text-xs text-zinc-500">
-                        {folder.activeCount} active / {folder.archivedCount} archived
+                      <p className="mt-0.5 text-xs text-zinc-400">
+                        {folder.activeCount} active{folder.archivedCount > 0 ? ` / ${folder.archivedCount} archived` : ""}
                       </p>
                     </td>
-                    <td className="px-4 py-4 text-zinc-700">{folder.clientName}</td>
-                    <td className="px-4 py-4">
+                    <td className="px-4 py-3 text-zinc-700">{folder.clientName}</td>
+                    <td className="px-4 py-3">
                       {folder.salespersonName ? (
                         <span className="text-zinc-700">{folder.salespersonName}</span>
                       ) : (
-                        <span className="text-zinc-400">Unassigned</span>
+                        <span className="text-zinc-400">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-4 text-zinc-600">{folder.projectName}</td>
-                    <td className="px-4 py-4 font-medium text-zinc-950">{quotation.quotation_no ?? quotation.legacy_reference ?? "-"}</td>
-                    <td className="px-4 py-4 text-zinc-600">{folder.statusSummary}</td>
-                    <td className="px-4 py-4 font-medium text-zinc-950">{formatQuotationMoney(quotation.currency, quotation.grand_total)}</td>
-                    <td className="px-4 py-4 text-zinc-600">{formatListDate(quotation.quotation_date)}</td>
-                    <td className="px-4 py-4">
-                      <div className="flex flex-col gap-2">
-                        <Link href={`/quotations/${quotation.id}`} className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800">
+                    <td className="max-w-[200px] px-4 py-3 text-zinc-600">{folder.projectName}</td>
+                    <td className="px-4 py-3 font-medium text-zinc-950">{quotation.quotation_no ?? quotation.legacy_reference ?? "-"}</td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${quotationStatusBadgeClassName(quotation.status)}`}>
+                        {quotationStatusLabel(quotation.status)}
+                      </span>
+                      {folder.quotationCount > 1 ? (
+                        <p className="mt-1 text-[11px] text-zinc-400">{folder.quotationCount} versions</p>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-3 font-semibold text-zinc-950">{formatQuotationMoney(quotation.currency, quotation.grand_total)}</td>
+                    <td className="px-4 py-3 text-zinc-500">{formatListDate(quotation.quotation_date)}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col gap-1.5">
+                        <Link href={`/quotations/${quotation.id}`} className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-700">
                           Open Folder
                         </Link>
                         {folder.activeCount > 0 ? (
@@ -442,10 +708,38 @@ export function QuotationListLiveFilter({
                             Open Builder
                           </Link>
                         ) : (
-                          <span className="text-xs font-semibold text-zinc-400" title="Restore a quote before editing.">
+                          <span className="text-xs font-semibold text-zinc-300" title="Restore a quote before editing.">
                             Open Builder
                           </span>
                         )}
+                        {canManageRecords ? (
+                          <button
+                            type="button"
+                            disabled={archivingKey === folder.key}
+                            onClick={() => handleFolderArchive(folder.key, folder.archiveAnchorId, !folder.isFolderArchived)}
+                            className="text-left text-xs font-semibold text-zinc-400 transition hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {archivingKey === folder.key ? "…" : folder.isFolderArchived ? "Unarchive" : "Archive"}
+                          </button>
+                        ) : null}
+                        {canDeleteFolders ? (
+                          folder.isFolderDeletable ? (
+                            <button
+                              type="button"
+                              onClick={() => openDeleteModal(folder)}
+                              className="text-left text-xs font-semibold text-red-400 transition hover:text-red-700"
+                            >
+                              Delete
+                            </button>
+                          ) : (
+                            <span
+                              title={folder.deleteBlockReason ?? undefined}
+                              className="cursor-not-allowed text-xs font-semibold text-zinc-300 select-none"
+                            >
+                              Delete
+                            </span>
+                          )
+                        ) : null}
                       </div>
                     </td>
                   </tr>

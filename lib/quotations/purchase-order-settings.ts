@@ -40,6 +40,8 @@ export type PurchaseOrderItemOverride = {
   description: string;
   size: string;
   finish: string;
+  priceListCode: string;
+  productDetails: string;
   quantity: number | null;
   unitPrice: number | null;
   lineTotal: number | null;
@@ -115,6 +117,8 @@ export const DEFAULT_PURCHASE_ORDER_ITEM_OVERRIDE: PurchaseOrderItemOverride = {
   description: "",
   size: "",
   finish: "",
+  priceListCode: "",
+  productDetails: "",
   quantity: null,
   unitPrice: null,
   lineTotal: null,
@@ -235,6 +239,8 @@ export function normalizePurchaseOrderSettings(
           description: normalizedString(rawValue, "description"),
           size: normalizedString(rawValue, "size"),
           finish: normalizedString(rawValue, "finish"),
+          priceListCode: normalizedString(rawValue, "priceListCode"),
+          productDetails: normalizedString(rawValue, "productDetails"),
           quantity: normalizedNumberOrNull(rawValue, "quantity"),
           unitPrice: normalizedNumberOrNull(rawValue, "unitPrice"),
           lineTotal: normalizedNumberOrNull(rawValue, "lineTotal"),
@@ -244,6 +250,8 @@ export function normalizePurchaseOrderSettings(
           || normalizedValue.description.length > 0
           || normalizedValue.size.length > 0
           || normalizedValue.finish.length > 0
+          || normalizedValue.priceListCode.length > 0
+          || normalizedValue.productDetails.length > 0
           || normalizedValue.quantity !== null
           || normalizedValue.unitPrice !== null
           || normalizedValue.lineTotal !== null

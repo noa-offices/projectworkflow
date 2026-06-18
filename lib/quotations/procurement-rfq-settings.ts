@@ -36,6 +36,8 @@ export type ProcurementRfqItemOverride = {
   description: string;
   size: string;
   finish: string;
+  priceListCode: string;
+  productDetails: string;
   quantity: number | null;
   remark: string;
 };
@@ -102,6 +104,8 @@ export const DEFAULT_PROCUREMENT_RFQ_ITEM_OVERRIDE: ProcurementRfqItemOverride =
   description: "",
   size: "",
   finish: "",
+  priceListCode: "",
+  productDetails: "",
   quantity: null,
   remark: "",
 };
@@ -220,6 +224,8 @@ export function normalizeProcurementRfqSettings(
           description: normalizedString(rawValue, "description"),
           size: normalizedString(rawValue, "size"),
           finish: normalizedString(rawValue, "finish"),
+          priceListCode: normalizedString(rawValue, "priceListCode"),
+          productDetails: normalizedString(rawValue, "productDetails"),
           quantity: normalizedNumberOrNull(rawValue, "quantity"),
           remark: normalizedString(rawValue, "remark"),
         };
@@ -227,6 +233,8 @@ export function normalizeProcurementRfqSettings(
           || normalizedValue.description.length > 0
           || normalizedValue.size.length > 0
           || normalizedValue.finish.length > 0
+          || normalizedValue.priceListCode.length > 0
+          || normalizedValue.productDetails.length > 0
           || normalizedValue.quantity !== null
           || normalizedValue.remark.length > 0;
 

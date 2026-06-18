@@ -47,6 +47,7 @@ type Quotation = {
   grand_total: number;
   is_active: boolean;
   salesperson_id: string | null;
+  layout_settings: Record<string, unknown> | null;
 };
 
 const layoutModes = [
@@ -285,6 +286,8 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
     profile?.role === "sales_designer";
+  const canDeleteFolders =
+    profile?.role === "system_owner" || profile?.role === "admin_manager";
   const supabase = await createSupabaseClient();
 
   const { data: clients, error: clientsError } = await supabase
@@ -309,7 +312,7 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
 
   const { data: quotations, error: quotationsError } = await supabase
     .from("quotations")
-    .select("id,client_id,project_id,legacy_reference,quotation_no,title,quotation_date,status,layout_mode,currency,grand_total,is_active,salesperson_id")
+    .select("id,client_id,project_id,legacy_reference,quotation_no,title,quotation_date,status,layout_mode,currency,grand_total,is_active,salesperson_id,layout_settings")
     .order("created_at", { ascending: false })
     .returns<Quotation[]>();
 
@@ -351,6 +354,8 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
         </div>
 
         <QuotationListLiveFilter
+          canDeleteFolders={canDeleteFolders}
+          canManageRecords={canManageRecords}
           clients={clientList}
           initialFilters={{
             client: selectedClientId,

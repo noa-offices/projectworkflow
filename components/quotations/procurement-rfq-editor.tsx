@@ -100,6 +100,8 @@ type PreviewGroup = {
     item: ProcurementRfqItem;
     description: string;
     finish: string;
+    priceListCode: string;
+    productDetails: string;
     quantity: number;
     remark: string;
     size: string;
@@ -409,6 +411,8 @@ export function ProcurementRfqEditor({
           item,
           description: override?.description || documentItemTitle(item),
           finish: override?.finish || selectedFinishSummaries(item).join("\n"),
+          priceListCode: override?.priceListCode || item.supplier_price_list_code_snapshot || "",
+          productDetails: override?.productDetails || compactSpecification(item.specification_snapshot) || "",
           quantity: override?.quantity ?? item.qty,
           remark: override?.remark ?? "",
           size: override?.size || item.size_snapshot || "",
@@ -442,10 +446,10 @@ export function ProcurementRfqEditor({
         isRateOnly: entry.item.is_rate_only,
         context: (context.area || context.section) ? [context.area, context.section].filter(Boolean).join(" / ") : null,
         code: entry.item.item_code_snapshot,
-        supplierPriceListCode: entry.item.supplier_price_list_code_snapshot,
+        supplierPriceListCode: entry.priceListCode,
         model: entry.item.model_snapshot,
         brandOrigin: [entry.item.brand_name_snapshot, entry.item.origin_snapshot].filter(Boolean).join(" / ") || null,
-        specification: compactSpecification(entry.item.specification_snapshot),
+        specification: entry.productDetails || null,
         size: entry.size,
         finish: entry.finish,
         quantity: entry.quantity,
@@ -514,6 +518,8 @@ export function ProcurementRfqEditor({
             description: "",
             size: "",
             finish: "",
+            priceListCode: "",
+            productDetails: "",
             quantity: null,
             remark: "",
           }),
@@ -830,13 +836,16 @@ export function ProcurementRfqEditor({
                         <div className="border-t border-zinc-200 px-4 py-4">
                           <div className="grid gap-3">
                             {orderedItems.map((item, index) => {
-                              const override = settings.itemOverrides[item.id] ?? {
-                                hidden: false,
-                                description: "",
-                                size: "",
-                                finish: "",
-                                quantity: null,
-                                remark: "",
+                              const storedOverride = settings.itemOverrides[item.id];
+                              const override = {
+                                hidden: storedOverride?.hidden ?? false,
+                                description: storedOverride?.description || documentItemTitle(item),
+                                size: storedOverride?.size || item.size_snapshot || "",
+                                finish: storedOverride?.finish || selectedFinishSummaries(item).join("\n"),
+                                priceListCode: storedOverride?.priceListCode || item.supplier_price_list_code_snapshot || "",
+                                productDetails: storedOverride?.productDetails || compactSpecification(item.specification_snapshot) || "",
+                                quantity: storedOverride?.quantity ?? item.qty,
+                                remark: storedOverride?.remark ?? "",
                               };
                               const isItemExpanded = expandedItemId === item.id;
 
@@ -876,6 +885,10 @@ export function ProcurementRfqEditor({
                                         </div>
                                         <Field label="RFQ Size Override" value={override.size} onChange={(value) => updateItemOverride(item.id, { size: value })} />
                                         <Field label="RFQ Finish Override" value={override.finish} onChange={(value) => updateItemOverride(item.id, { finish: value })} />
+                                        <Field label="RFQ Supplier Price List Code Override" value={override.priceListCode} onChange={(value) => updateItemOverride(item.id, { priceListCode: value })} />
+                                        <div className="md:col-span-2">
+                                          <TextAreaField label="RFQ Product Details Override" value={override.productDetails} onChange={(value) => updateItemOverride(item.id, { productDetails: value })} rows={3} />
+                                        </div>
                                         <Field
                                           label="RFQ Quantity Override"
                                           type="number"

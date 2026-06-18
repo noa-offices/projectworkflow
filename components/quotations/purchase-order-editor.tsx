@@ -99,6 +99,8 @@ type PurchaseOrderPreviewItem = {
   description: string;
   size: string;
   finish: string;
+  priceListCode: string;
+  productDetails: string;
   quantity: number;
   unitPrice: number | null;
   lineTotal: number | null;
@@ -397,6 +399,8 @@ export function PurchaseOrderEditor({
         description: override.description || documentItemTitle(item),
         size: override.size || item.size_snapshot || "",
         finish: override.finish || selectedFinishSummaries(item).join("\n"),
+        priceListCode: override.priceListCode || item.supplier_price_list_code_snapshot || "",
+        productDetails: override.productDetails || compactSpecification(item.specification_snapshot) || "",
         quantity,
         unitPrice,
         lineTotal,
@@ -418,10 +422,10 @@ export function PurchaseOrderEditor({
       lineTotalLabel: entry.lineTotalLabel,
       context: (context.area || context.section) ? [context.area, context.section].filter(Boolean).join(" / ") : null,
       code: entry.item.item_code_snapshot,
-      supplierPriceListCode: entry.item.supplier_price_list_code_snapshot,
+      supplierPriceListCode: entry.priceListCode,
       model: entry.item.model_snapshot,
       brandOrigin: [entry.item.brand_name_snapshot, entry.item.origin_snapshot].filter(Boolean).join(" / ") || null,
-      specification: compactSpecification(entry.item.specification_snapshot),
+      specification: entry.productDetails || null,
       finish: entry.finish,
       quantity: entry.quantity,
       remark: entry.remark,
@@ -804,9 +808,18 @@ export function PurchaseOrderEditor({
                     <div className="border-t border-zinc-200 px-4 py-4">
                       <div className="grid gap-3">
                         {selectedItems.map((item, index) => {
+                          const storedOverride = settings.itemOverrides[item.id];
                           const override = {
-                            ...DEFAULT_PURCHASE_ORDER_ITEM_OVERRIDE,
-                            ...(settings.itemOverrides[item.id] ?? {}),
+                            hidden: storedOverride?.hidden ?? false,
+                            description: storedOverride?.description || documentItemTitle(item),
+                            size: storedOverride?.size || item.size_snapshot || "",
+                            finish: storedOverride?.finish || selectedFinishSummaries(item).join("\n"),
+                            priceListCode: storedOverride?.priceListCode || item.supplier_price_list_code_snapshot || "",
+                            productDetails: storedOverride?.productDetails || compactSpecification(item.specification_snapshot) || "",
+                            quantity: storedOverride?.quantity ?? item.qty,
+                            unitPrice: storedOverride?.unitPrice ?? null,
+                            lineTotal: storedOverride?.lineTotal ?? null,
+                            remark: storedOverride?.remark ?? "",
                           };
                           const isExpanded = expandedItemId === item.id;
 
@@ -841,6 +854,10 @@ export function PurchaseOrderEditor({
                                     </div>
                                     <Field label="PO Size Override" value={override.size} onChange={(value) => updateItemOverride(item.id, { size: value })} />
                                     <Field label="PO Finish Override" value={override.finish} onChange={(value) => updateItemOverride(item.id, { finish: value })} />
+                                    <Field label="PO Supplier Price List Code Override" value={override.priceListCode} onChange={(value) => updateItemOverride(item.id, { priceListCode: value })} />
+                                    <div className="md:col-span-2">
+                                      <TextAreaField label="PO Product Details Override" value={override.productDetails} onChange={(value) => updateItemOverride(item.id, { productDetails: value })} rows={3} />
+                                    </div>
                                     <Field
                                       label="PO Quantity Override"
                                       type="number"

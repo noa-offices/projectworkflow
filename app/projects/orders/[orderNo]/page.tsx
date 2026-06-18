@@ -13,6 +13,7 @@ import { DocumentRow, type VendorDocEntry } from "@/components/projects/project-
 import { type ProjectDocRecord } from "@/lib/projects/project-doc-action";
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
 import { MarkCompletedButton } from "@/components/projects/mark-completed-button";
+import { CancelProjectButton } from "@/components/projects/cancel-project-button";
 
 export const dynamic = "force-dynamic";
 
@@ -175,6 +176,9 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
   const layoutSettingsObj = entry.quotationRow.layout_settings as Record<string, unknown> | null;
   const completedAt = typeof layoutSettingsObj?.projectCompletedAt === "string"
     ? layoutSettingsObj.projectCompletedAt
+    : null;
+  const cancelledAt = typeof layoutSettingsObj?.projectCancelledAt === "string"
+    ? layoutSettingsObj.projectCancelledAt
     : null;
 
   const { data: rawPiOcDocs } = await (supabase as any)
@@ -506,6 +510,37 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
     );
   }
 
+  // ── Cancelled project — simplified read-only view ────────────────────
+  if (cancelledAt) {
+    return (
+      <ErpAppShell
+        eyebrow="PROJECTS"
+        title={`Project File ${entry.order.orderNo}`}
+        description="Cancelled project — read-only view."
+        role={profile?.role ?? null}
+        userDisplayName={displayName}
+        userEmail={user.email}
+      >
+        <div className="px-5 py-6 sm:px-8">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3">
+            <Link
+              href="/projects/orders"
+              className="text-sm font-semibold text-red-800 transition hover:text-red-950"
+            >
+              ← Back to Active Projects
+            </Link>
+            <span className="text-sm font-semibold text-red-900">
+              ✕ Cancelled {formatDate(cancelledAt)}
+            </span>
+          </div>
+          {metadataSection}
+          <div className="mt-6">{lockedItemsSection}</div>
+          {documentsSection}
+        </div>
+      </ErpAppShell>
+    );
+  }
+
   // ── Active project — full workspace ──────────────────────────────────
   return (
     <ErpAppShell
@@ -586,11 +621,17 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
             🌐 Open Procurement Workspace
           </Link>
           {canEditExecutionStatus ? (
-            <MarkCompletedButton
-              quotationId={entry.quotationId}
-              orderNo={decodedOrderNo}
-              completedAt={completedAt}
-            />
+            <>
+              <MarkCompletedButton
+                quotationId={entry.quotationId}
+                orderNo={decodedOrderNo}
+                completedAt={completedAt}
+              />
+              <CancelProjectButton
+                quotationId={entry.quotationId}
+                orderNo={decodedOrderNo}
+              />
+            </>
           ) : null}
         </div>
 
