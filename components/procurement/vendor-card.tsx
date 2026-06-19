@@ -116,6 +116,12 @@ export function VendorCard({
               >
                 RFQ →
               </Link>
+              <Link
+                href={`/quotations/${quotationId}/delivery-note`}
+                className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-800 hover:text-emerald-900"
+              >
+                Delivery Note →
+              </Link>
               {poNumber ? (
                 <Link
                   href={`/quotations/${quotationId}/purchase-order`}

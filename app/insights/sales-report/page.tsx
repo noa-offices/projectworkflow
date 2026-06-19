@@ -1,11 +1,16 @@
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
-import { SalesReportCharts } from "@/components/insights/sales-report-charts";
+import { DateRangeSelector } from "@/components/insights/date-range-selector";
+import { SalesPerformanceCharts } from "@/components/insights/sales-performance-charts";
+import { SalesRepSparkline } from "@/components/insights/sales-rep-sparkline";
 import { SalesRepCard } from "@/components/insights/sales-rep-card";
 import { requireActiveUser } from "@/lib/auth";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import type { AggMonthPoint, RepSeriesData } from "@/components/insights/sales-performance-charts";
 
 export const dynamic = "force-dynamic";
+
+// ─── Row types ────────────────────────────────────────────────────────────────
 
 type QuotationRow = {
   id: string;
@@ -25,16 +30,53 @@ type SalespersonProfileRow = {
   avatar_url: string | null;
 };
 
-type RepStat = {
-  id: string;
-  name: string;
-  avatarUrl: string | null;
-  totalQuotes: number;
-  totalQuotedAmount: number;
-  approvedCount: number;
-  approvedAmount: number;
-  approvalRate: number;
+// ─── Date range helpers ───────────────────────────────────────────────────────
+
+const VALID_RANGES = ["30d", "3m", "6m", "1y"] as const;
+type RangeKey = (typeof VALID_RANGES)[number];
+
+const RANGE_LABELS: Record<RangeKey, string> = {
+  "30d": "Last 30 Days",
+  "3m": "Last 3 Months",
+  "6m": "Last 6 Months",
+  "1y": "Last 1 Year",
 };
+
+function getRangeStart(range: RangeKey, from: Date): Date {
+  const d = new Date(from);
+  switch (range) {
+    case "30d": d.setDate(d.getDate() - 30); break;
+    case "3m":  d.setMonth(d.getMonth() - 3); break;
+    case "1y":  d.setFullYear(d.getFullYear() - 1); break;
+    default:    d.setMonth(d.getMonth() - 6); // 6m
+  }
+  return d;
+}
+
+function monthKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthLabel(key: string): string {
+  const [year, month] = key.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit" }).format(
+    new Date(year, month - 1, 1),
+  );
+}
+
+// All month keys (YYYY-MM strings) inclusive between from and to
+function getMonthKeys(from: Date, to: Date): string[] {
+  const keys: string[] = [];
+  const d = new Date(from.getFullYear(), from.getMonth(), 1);
+  const end = new Date(to.getFullYear(), to.getMonth(), 1);
+  while (d <= end) {
+    keys.push(monthKey(d));
+    d.setMonth(d.getMonth() + 1);
+  }
+  return keys;
+}
+
+// ─── Formatting helpers ───────────────────────────────────────────────────────
 
 function formatAED(value: number): string {
   return new Intl.NumberFormat("en-AE", {
@@ -45,70 +87,132 @@ function formatAED(value: number): string {
   }).format(value);
 }
 
-function monthKey(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+function pctChange(current: number, prior: number): number | null {
+  if (prior === 0) return null;
+  return ((current - prior) / prior) * 100;
 }
 
-function monthLabel(key: string): string {
-  const [year, month] = key.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric" }).format(
-    new Date(year, month - 1, 1),
+function fmtPct(n: number | null): string {
+  if (n === null) return "—";
+  return `${n >= 0 ? "+" : ""}${n.toFixed(0)}%`;
+}
+
+// ─── Inline server components ─────────────────────────────────────────────────
+
+function ChangeBadge({ value }: { value: number | null }) {
+  if (value === null) return null;
+  const positive = value >= 0;
+  return (
+    <span
+      className={`mt-1.5 inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+        positive
+          ? "bg-emerald-50 text-emerald-700"
+          : "bg-red-50 text-red-700"
+      }`}
+    >
+      {positive ? "▲" : "▼"} {fmtPct(value)}
+    </span>
   );
 }
+
+type LeaderboardRow = {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+  approvedAmount: number;
+  approvalRate: number;
+  currentRank: number;
+  priorRank: number | null;
+};
 
 const REP_COLORS = ["#14532d", "#5b21b6", "#b45309", "#075985", "#9f1239", "#0f766e"];
 
-function KpiTile({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="px-4 py-3">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{label}</p>
-      <p className="mt-1 text-xl font-semibold text-zinc-950">{value}</p>
-    </div>
-  );
-}
+function SalesLeaderboard({
+  rangeLabel,
+  rows,
+}: {
+  rangeLabel: string;
+  rows: LeaderboardRow[];
+}) {
+  const maxAmount = rows[0]?.approvedAmount ?? 0;
 
-function SalesLeaderboard({ reps }: { reps: RepStat[] }) {
-  const maxAmount = reps[0]?.approvedAmount ?? 0;
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-      <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">Leaderboard</h2>
-      {reps.length === 0 ? (
-        <p className="text-xs text-zinc-400">No data.</p>
+    <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+      <div className="border-b border-zinc-100 px-4 py-3">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+          Top Sales Performers
+        </h2>
+        <p className="mt-0.5 text-[11px] text-zinc-400">{rangeLabel}</p>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="px-4 py-6 text-center text-xs text-zinc-400">
+          No approved deals in this period.
+        </p>
       ) : (
-        <div className="space-y-3">
-          {reps.map((rep, i) => {
-            const barPct = maxAmount > 0 ? (rep.approvedAmount / maxAmount) * 100 : 0;
+        <div className="divide-y divide-zinc-50">
+          {rows.map((row, i) => {
+            const barPct = maxAmount > 0 ? (row.approvedAmount / maxAmount) * 100 : 0;
             const color = REP_COLORS[i % REP_COLORS.length];
-            const initial = rep.name.trim().charAt(0).toUpperCase() || "?";
+            const initial = row.name.trim().charAt(0).toUpperCase() || "?";
+
+            // Rank trend: positive = moved up (improved), negative = moved down
+            const rankTrend =
+              row.priorRank !== null ? row.priorRank - row.currentRank : null;
+
             return (
-              <div key={rep.id} className="flex items-center gap-2">
-                <span className="w-4 shrink-0 text-right text-[10px] font-semibold text-zinc-400">
-                  {i + 1}
-                </span>
-                <div
-                  className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-white"
-                  style={{ backgroundColor: color }}
-                >
-                  {rep.avatarUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={rep.avatarUrl} alt={rep.name} className="h-full w-full object-cover" />
-                  ) : (
-                    initial
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline justify-between gap-1">
-                    <p className="truncate text-xs font-medium text-zinc-800">{rep.name}</p>
-                    <p className="shrink-0 text-[10px] font-semibold text-zinc-500">
-                      {formatAED(rep.approvedAmount)}
+              <div key={row.id} className="px-4 py-3">
+                <div className="flex items-center gap-2">
+                  {/* Rank number */}
+                  <span className="w-4 shrink-0 text-right text-[10px] font-semibold text-zinc-400">
+                    {row.currentRank}
+                  </span>
+
+                  {/* Avatar */}
+                  <div
+                    className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-white"
+                    style={{ backgroundColor: color }}
+                  >
+                    {row.avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={row.avatarUrl} alt={row.name} className="h-full w-full object-cover" />
+                    ) : (
+                      initial
+                    )}
+                  </div>
+
+                  {/* Name + conversion rate */}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-zinc-800">{row.name}</p>
+                    <p className="text-[10px] text-zinc-400">
+                      {(row.approvalRate * 100).toFixed(0)}% conversion
                     </p>
                   </div>
-                  <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-zinc-100">
-                    <div
-                      className="h-1 rounded-full"
-                      style={{ width: `${barPct}%`, backgroundColor: color }}
-                    />
+
+                  {/* Approved amount */}
+                  <div className="shrink-0 text-right">
+                    <p className="text-[11px] font-semibold text-zinc-700">
+                      {formatAED(row.approvedAmount)}
+                    </p>
+                    {/* Rank trend */}
+                    <p className="text-[10px]">
+                      {rankTrend === null || rankTrend === 0 ? (
+                        <span className="text-zinc-400">—</span>
+                      ) : rankTrend > 0 ? (
+                        <span className="font-semibold text-emerald-600">▲{rankTrend}</span>
+                      ) : (
+                        <span className="font-semibold text-red-600">▼{Math.abs(rankTrend)}</span>
+                      )}
+                    </p>
                   </div>
+                </div>
+
+                {/* Progress bar */}
+                <div className="mt-2 ml-6 h-1 w-full overflow-hidden rounded-full bg-zinc-100">
+                  <div
+                    className="h-1 rounded-full transition-all"
+                    style={{ width: `${barPct}%`, backgroundColor: color }}
+                  />
                 </div>
               </div>
             );
@@ -119,14 +223,38 @@ function SalesLeaderboard({ reps }: { reps: RepStat[] }) {
   );
 }
 
-export default async function SalesReportPage() {
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+type PageProps = {
+  searchParams?: Promise<{ range?: string }>;
+};
+
+export default async function SalesReportPage({ searchParams }: PageProps) {
   const { user, profile, displayName } = await requireActiveUser();
   const supabase = await createSupabaseClient();
 
+  // ── Range param ─────────────────────────────────────────────────────────────
+  const resolved = await searchParams;
+  const rawRange = resolved?.range ?? "6m";
+  const range: RangeKey = (VALID_RANGES as readonly string[]).includes(rawRange)
+    ? (rawRange as RangeKey)
+    : "6m";
+  const rangeLabel = RANGE_LABELS[range];
+
+  // ── Date boundaries ─────────────────────────────────────────────────────────
+  const now = new Date();
+  const rangeStart = getRangeStart(range, now);
+  // Prior period: same duration, immediately before rangeStart
+  const priorStart = getRangeStart(range, rangeStart);
+  const priorEnd = rangeStart;
+
+  // ── Fetch ────────────────────────────────────────────────────────────────────
   const [{ data: quotations }, { data: salespersonProfiles }] = await Promise.all([
     supabase
       .from("quotations")
-      .select("id,salesperson_id,status,grand_total,currency,created_at,status_updated_at,layout_settings")
+      .select(
+        "id,salesperson_id,status,grand_total,currency,created_at,status_updated_at,layout_settings",
+      )
       .returns<QuotationRow[]>(),
     supabase
       .from("profiles")
@@ -140,62 +268,173 @@ export default async function SalesReportPage() {
   const allQuotations = quotations ?? [];
   const allProfiles = salespersonProfiles ?? [];
 
+  // ── Approved definition ──────────────────────────────────────────────────────
+  // Matches the existing page's definition exactly: client_confirmed + project file exists
   function isApproved(q: QuotationRow): boolean {
-    return q.status === "client_confirmed" && projectFileFromLayoutSettings(q.layout_settings) !== null;
+    return (
+      q.status === "client_confirmed" &&
+      projectFileFromLayoutSettings(q.layout_settings) !== null
+    );
   }
 
-  // Per-rep stats
+  // ── Period filtering (by created_at) ────────────────────────────────────────
+  const currentQuotes = allQuotations.filter(
+    (q) => new Date(q.created_at) >= rangeStart,
+  );
+  const priorQuotes = allQuotations.filter((q) => {
+    const d = new Date(q.created_at);
+    return d >= priorStart && d < priorEnd;
+  });
+  const currentApproved = currentQuotes.filter(isApproved);
+  const priorApproved = priorQuotes.filter(isApproved);
+
+  // ── Company-wide KPI totals ──────────────────────────────────────────────────
+  const kpiCurrent = {
+    totalQuotes: currentQuotes.length,
+    totalQuotedAmount: currentQuotes.reduce((s, q) => s + (q.grand_total ?? 0), 0),
+    approvedCount: currentApproved.length,
+    approvedAmount: currentApproved.reduce((s, q) => s + (q.grand_total ?? 0), 0),
+  };
+  const kpiPrior = {
+    totalQuotes: priorQuotes.length,
+    totalQuotedAmount: priorQuotes.reduce((s, q) => s + (q.grand_total ?? 0), 0),
+    approvedCount: priorApproved.length,
+    approvedAmount: priorApproved.reduce((s, q) => s + (q.grand_total ?? 0), 0),
+  };
+
+  const conversionCurrent =
+    kpiCurrent.totalQuotes > 0
+      ? (kpiCurrent.approvedCount / kpiCurrent.totalQuotes) * 100
+      : 0;
+  const conversionPrior =
+    kpiPrior.totalQuotes > 0
+      ? (kpiPrior.approvedCount / kpiPrior.totalQuotes) * 100
+      : 0;
+
+  // ── Month keys for selected range ────────────────────────────────────────────
+  const monthKeys = getMonthKeys(rangeStart, now);
+
+  // ── Aggregate monthly breakdown (for bar chart + KPI sparklines) ─────────────
+  const aggQuotedByMonth = new Map<string, number>(monthKeys.map((k) => [k, 0]));
+  const aggApprovedByMonth = new Map<string, number>(monthKeys.map((k) => [k, 0]));
+
+  for (const q of currentQuotes) {
+    const k = monthKey(new Date(q.created_at));
+    if (aggQuotedByMonth.has(k)) {
+      aggQuotedByMonth.set(k, (aggQuotedByMonth.get(k) ?? 0) + (q.grand_total ?? 0));
+      if (isApproved(q)) {
+        aggApprovedByMonth.set(k, (aggApprovedByMonth.get(k) ?? 0) + (q.grand_total ?? 0));
+      }
+    }
+  }
+
+  const aggMonthData: AggMonthPoint[] = monthKeys.map((k) => ({
+    month: monthLabel(k),
+    quoted: aggQuotedByMonth.get(k) ?? 0,
+    approved: aggApprovedByMonth.get(k) ?? 0,
+  }));
+
+  // Sparkline data arrays for KPI tiles 2 and 3
+  const kpiQuotedSparkline = aggMonthData.map((m) => m.quoted);
+  const kpiApprovedSparkline = aggMonthData.map((m) => m.approved);
+
+  // ── Per-rep stats ────────────────────────────────────────────────────────────
+  type RepStat = {
+    id: string;
+    name: string;
+    avatarUrl: string | null;
+    totalQuotes: number;
+    totalQuotedAmount: number;
+    approvedCount: number;
+    currentApprovedAmount: number;
+    approvalRate: number;
+    priorApprovedAmount: number;
+    monthlyApproved: Array<{ month: string; value: number }>;
+  };
+
   const repStats: RepStat[] = allProfiles.map((p) => {
-    const repQuotes = allQuotations.filter((q) => q.salesperson_id === p.id);
-    const approvedQuotes = repQuotes.filter(isApproved);
-    const totalQuotes = repQuotes.length;
-    const totalQuotedAmount = repQuotes.reduce((sum, q) => sum + (q.grand_total ?? 0), 0);
-    const approvedCount = approvedQuotes.length;
-    const approvedAmount = approvedQuotes.reduce((sum, q) => sum + (q.grand_total ?? 0), 0);
-    const approvalRate = totalQuotes > 0 ? approvedCount / totalQuotes : 0;
+    const repCurrent = currentQuotes.filter((q) => q.salesperson_id === p.id);
+    const repCurrentApproved = repCurrent.filter(isApproved);
+    const repPriorApproved = priorQuotes
+      .filter((q) => q.salesperson_id === p.id)
+      .filter(isApproved);
+
+    // Monthly approved for this rep (for sparkline + line chart)
+    const monthMap = new Map<string, number>(monthKeys.map((k) => [k, 0]));
+    for (const q of repCurrentApproved) {
+      const k = monthKey(new Date(q.created_at));
+      if (monthMap.has(k)) {
+        monthMap.set(k, (monthMap.get(k) ?? 0) + (q.grand_total ?? 0));
+      }
+    }
+
+    const totalQuotes = repCurrent.length;
+    const approvedCount = repCurrentApproved.length;
     return {
       id: p.id,
       name: p.full_name ?? p.email ?? p.id,
       avatarUrl: p.avatar_url ?? null,
       totalQuotes,
-      totalQuotedAmount,
+      totalQuotedAmount: repCurrent.reduce((s, q) => s + (q.grand_total ?? 0), 0),
       approvedCount,
-      approvedAmount,
-      approvalRate,
+      currentApprovedAmount: repCurrentApproved.reduce(
+        (s, q) => s + (q.grand_total ?? 0),
+        0,
+      ),
+      approvalRate: totalQuotes > 0 ? approvedCount / totalQuotes : 0,
+      priorApprovedAmount: repPriorApproved.reduce(
+        (s, q) => s + (q.grand_total ?? 0),
+        0,
+      ),
+      monthlyApproved: monthKeys.map((k) => ({
+        month: monthLabel(k),
+        value: monthMap.get(k) ?? 0,
+      })),
     };
   });
 
-  repStats.sort((a, b) => b.approvedAmount - a.approvedAmount);
+  // Sort by current approved amount desc → determines current rank
+  repStats.sort((a, b) => b.currentApprovedAmount - a.currentApprovedAmount);
 
-  // Company-wide totals
-  const totalQuotesAll = repStats.reduce((s, r) => s + r.totalQuotes, 0);
-  const totalQuotedAll = repStats.reduce((s, r) => s + r.totalQuotedAmount, 0);
-  const approvedCountAll = repStats.reduce((s, r) => s + r.approvedCount, 0);
-  const approvedAmountAll = repStats.reduce((s, r) => s + r.approvedAmount, 0);
-  const overallRate = totalQuotesAll > 0 ? ((approvedCountAll / totalQuotesAll) * 100).toFixed(0) : "0";
-
-  // Month keys for last 6 months (oldest → newest)
-  const now = new Date();
-  const monthKeys: string[] = [];
-  for (let i = 5; i >= 0; i--) {
-    monthKeys.push(monthKey(new Date(now.getFullYear(), now.getMonth() - i, 1)));
+  // ── Rank trend ───────────────────────────────────────────────────────────────
+  // Sort a copy by prior approved amount to get prior ranks.
+  // Reps tied at 0 in the prior period all share the bottom rank.
+  const priorSorted = [...repStats].sort(
+    (a, b) => b.priorApprovedAmount - a.priorApprovedAmount,
+  );
+  const priorRankMap = new Map<string, number>();
+  for (let i = 0; i < priorSorted.length; i++) {
+    const rep = priorSorted[i];
+    const prev = priorSorted[i - 1];
+    const priorRank =
+      i > 0 && rep.priorApprovedAmount === prev.priorApprovedAmount
+        ? priorRankMap.get(prev.id)!
+        : i + 1;
+    priorRankMap.set(rep.id, priorRank);
   }
 
-  // Per-rep monthly approved value
-  const perRepMonthlyData = repStats.map((rep) => {
-    const repApproved = allQuotations.filter(
-      (q) => q.salesperson_id === rep.id && isApproved(q),
-    );
-    const map = new Map(monthKeys.map((k) => [k, 0]));
-    for (const q of repApproved) {
-      const k = monthKey(new Date(q.status_updated_at ?? q.created_at));
-      if (map.has(k)) map.set(k, (map.get(k) ?? 0) + (q.grand_total ?? 0));
-    }
-    return {
-      name: rep.name,
-      data: monthKeys.map((k) => ({ month: monthLabel(k), value: map.get(k) ?? 0 })),
-    };
-  });
+  // ── Leaderboard rows ─────────────────────────────────────────────────────────
+  const leaderboardRows: LeaderboardRow[] = repStats.map((rep, i) => ({
+    id: rep.id,
+    name: rep.name,
+    avatarUrl: rep.avatarUrl,
+    approvedAmount: rep.currentApprovedAmount,
+    approvalRate: rep.approvalRate,
+    currentRank: i + 1,
+    priorRank: priorRankMap.get(rep.id) ?? null,
+  }));
+
+  // ── Per-rep series for line chart ────────────────────────────────────────────
+  const perRepSeriesData: RepSeriesData[] = repStats.map((rep) => ({
+    name: rep.name,
+    data: rep.monthlyApproved,
+  }));
+
+  // ── KPI % changes ────────────────────────────────────────────────────────────
+  const quotesChange = pctChange(kpiCurrent.totalQuotes, kpiPrior.totalQuotes);
+  const quotedChange = pctChange(kpiCurrent.totalQuotedAmount, kpiPrior.totalQuotedAmount);
+  const approvedChange = pctChange(kpiCurrent.approvedAmount, kpiPrior.approvedAmount);
+  const conversionChange = pctChange(conversionCurrent, conversionPrior);
 
   return (
     <ErpAppShell
@@ -208,56 +447,144 @@ export default async function SalesReportPage() {
     >
       <div className="px-5 py-5 sm:px-8">
 
-        {/* KPI strip — single bordered container */}
-        <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-          <div className="grid grid-cols-2 divide-x divide-y divide-zinc-100 sm:grid-cols-4 sm:divide-y-0">
-            <KpiTile label="Total Quotes" value={totalQuotesAll} />
-            <KpiTile label="Total Quoted" value={formatAED(totalQuotedAll)} />
-            <KpiTile label="Approved Projects" value={approvedCountAll} />
-            <KpiTile label="Approved Value" value={`${formatAED(approvedAmountAll)} · ${overallRate}%`} />
-          </div>
+        {/* ── Filter bar ──────────────────────────────────────────────────── */}
+        <div className="mb-5 flex items-center justify-between gap-4">
+          <p className="text-xs text-zinc-500">
+            Showing <span className="font-semibold text-zinc-700">{rangeLabel.toLowerCase()}</span>
+            {" "}vs. prior equivalent period
+          </p>
+          <DateRangeSelector current={range} />
         </div>
 
-        {/* Chart + Leaderboard */}
-        <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_280px]">
-          <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              Monthly Approved Value — Last 6 Months
-            </h2>
-            <div className="mt-3">
-              <SalesReportCharts perRepData={perRepMonthlyData} />
-            </div>
-          </section>
-          <SalesLeaderboard reps={repStats} />
-        </div>
+        {/* ── Two-column grid ──────────────────────────────────────────────── */}
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
 
-        {/* Per-rep cards */}
-        <section className="mt-4">
-          <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            Sales Designers ({allProfiles.length})
-          </h2>
-          {allProfiles.length === 0 ? (
-            <p className="rounded-md border border-dashed border-zinc-200 p-6 text-center text-sm text-zinc-400">
-              No active sales designers found.
-            </p>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {repStats.map((rep) => (
-                <SalesRepCard
-                  key={rep.id}
-                  name={rep.name}
-                  avatarUrl={rep.avatarUrl}
-                  totalQuotes={rep.totalQuotes}
-                  totalQuotedAmount={formatAED(rep.totalQuotedAmount)}
-                  approvedCount={rep.approvedCount}
-                  approvedAmount={formatAED(rep.approvedAmount)}
-                  approvalRate={rep.approvalRate}
+          {/* ── LEFT COLUMN ──────────────────────────────────────────────── */}
+          <div className="grid gap-5">
+
+            {/* KPI strip — 4 individual tiles */}
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+
+              {/* Tile 1: Total Quotes */}
+              <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                  Total Quotes
+                </p>
+                <p className="mt-2 text-2xl font-bold text-zinc-950">
+                  {kpiCurrent.totalQuotes}
+                </p>
+                <ChangeBadge value={quotesChange} />
+                <p className="mt-1 text-[10px] text-zinc-400">
+                  vs {kpiPrior.totalQuotes} prior period
+                </p>
+              </div>
+
+              {/* Tile 2: Total Quoted Value + sparkline */}
+              <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+                <div className="p-4 pb-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                    Total Quoted
+                  </p>
+                  <p className="mt-2 text-2xl font-bold text-zinc-950">
+                    {formatAED(kpiCurrent.totalQuotedAmount)}
+                  </p>
+                  <ChangeBadge value={quotedChange} />
+                </div>
+                <SalesRepSparkline
+                  data={kpiQuotedSparkline}
+                  color="#6366f1"
+                  uniqueId="kpi-quoted"
                 />
-              ))}
-            </div>
-          )}
-        </section>
+              </div>
 
+              {/* Tile 3: Total Approved Value + sparkline */}
+              <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+                <div className="p-4 pb-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                    Approved Value
+                  </p>
+                  <p className="mt-2 text-2xl font-bold text-zinc-950">
+                    {formatAED(kpiCurrent.approvedAmount)}
+                  </p>
+                  <ChangeBadge value={approvedChange} />
+                </div>
+                <SalesRepSparkline
+                  data={kpiApprovedSparkline}
+                  color="#10b981"
+                  uniqueId="kpi-approved"
+                />
+              </div>
+
+              {/* Tile 4: Overall Conversion Rate + progress bar */}
+              <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                  Conversion Rate
+                </p>
+                <p className="mt-2 text-2xl font-bold text-zinc-950">
+                  {conversionCurrent.toFixed(0)}%
+                </p>
+                <ChangeBadge value={conversionChange} />
+                <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-zinc-100">
+                  <div
+                    className="h-1 rounded-full bg-emerald-500 transition-all"
+                    style={{ width: `${Math.min(conversionCurrent, 100)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Performance Trends charts */}
+            <div>
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                Performance Trends
+              </h2>
+              <SalesPerformanceCharts
+                perRepData={perRepSeriesData}
+                aggMonthData={aggMonthData}
+              />
+            </div>
+
+            {/* Sales Designers per-rep cards */}
+            <section>
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                Sales Designers ({allProfiles.length})
+              </h2>
+              {allProfiles.length === 0 ? (
+                <p className="rounded-md border border-dashed border-zinc-200 p-6 text-center text-sm text-zinc-400">
+                  No active sales designers found.
+                </p>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {repStats.map((rep, i) => (
+                    <SalesRepCard
+                      key={rep.id}
+                      name={rep.name}
+                      avatarUrl={rep.avatarUrl}
+                      totalQuotes={rep.totalQuotes}
+                      totalQuotedAmount={formatAED(rep.totalQuotedAmount)}
+                      approvedCount={rep.approvedCount}
+                      approvedAmount={formatAED(rep.currentApprovedAmount)}
+                      approvalRate={rep.approvalRate}
+                      isTopPerformer={i === 0 && rep.currentApprovedAmount > 0}
+                      sparkline={
+                        <SalesRepSparkline
+                          data={rep.monthlyApproved.map((m) => m.value)}
+                          color="#10b981"
+                          uniqueId={rep.id}
+                        />
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+
+          {/* ── RIGHT COLUMN: Leaderboard (sticky on desktop) ─────────────── */}
+          <aside className="xl:sticky xl:top-4 xl:self-start">
+            <SalesLeaderboard rows={leaderboardRows} rangeLabel={rangeLabel} />
+          </aside>
+        </div>
       </div>
     </ErpAppShell>
   );

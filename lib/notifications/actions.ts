@@ -17,6 +17,7 @@ export type NotificationRow = {
   body: string;
   order_no: string | null;
   sent_to_role: string | null;
+  broadcast_id: string | null;
   read_at: string | null;
   created_at: string;
   requires_response: boolean;
@@ -141,12 +142,15 @@ export async function sendNotificationToRole(
     return { ok: false, error: `No active users found with role "${role}".` };
   }
 
+  const broadcastId = crypto.randomUUID();
+
   const rows = (recipients as { id: string }[]).map((p) => ({
     recipient_id: p.id,
     sender_id: user.id,
     body,
     order_no: orderNo ?? null,
     sent_to_role: role,
+    broadcast_id: broadcastId,
     requires_response: requiresResponse ?? false,
   }));
 
@@ -281,7 +285,7 @@ export async function getSentNotifications(): Promise<{ ok: true; data: SentNoti
 
   const { data, error } = await supabase
     .from("notifications")
-    .select("id,recipient_id,sender_id,body,order_no,sent_to_role,read_at,created_at,requires_response,response")
+    .select("id,recipient_id,sender_id,body,order_no,sent_to_role,broadcast_id,read_at,created_at,requires_response,response")
     .eq("sender_id", user.id)
     .order("created_at", { ascending: false });
 
@@ -299,8 +303,12 @@ export async function getSentNotifications(): Promise<{ ok: true; data: SentNoti
     if (row.sent_to_role === null) {
       direct.push(row as DirectSentNotification);
     } else {
-      // Group key: role + body + order_no — uniquely identifies a single broadcast event
-      const key = `${row.sent_to_role}::${row.order_no ?? ""}::${row.body}`;
+      // New rows carry a broadcast_id set at send time — use it as the exact group key.
+      // Old rows (broadcast_id = null) fall back to the legacy composite key so they
+      // continue to group correctly without any data migration.
+      const key = row.broadcast_id !== null
+        ? `bc::${row.broadcast_id}`
+        : `legacy::${row.sent_to_role}::${row.order_no ?? ""}::${row.body}`;
       const existing = broadcastMap.get(key);
       if (existing) {
         existing.total += 1;

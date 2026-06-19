@@ -9,6 +9,7 @@ import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { VendorCard, type VendorCardItem } from "@/components/procurement/vendor-card";
 import { type VendorDocRecord } from "@/lib/procurement/vendor-docs-action";
+import { NotifyButton } from "@/components/notifications/notify-button";
 
 export const dynamic = "force-dynamic";
 
@@ -182,6 +183,7 @@ export default async function ProcurementWorkspacePage({
           >
             Open Source Quotation
           </Link>
+          <NotifyButton orderNo={decodedOrderNo} />
         </div>
 
         {/* Identity card */}

@@ -14,9 +14,6 @@ import {
   getRecentNotificationsWithSenders,
   type EnrichedNotification,
 } from "@/components/notifications/notification-queries";
-// TEMPORARY DEBUG IMPORT — remove after notification delivery is verified
-import { sendTestNotificationToSelf } from "@/components/notifications/debug-test-action";
-
 const POLL_MS = 30_000;
 
 function relativeTime(iso: string): string {
@@ -36,8 +33,6 @@ export function NotificationBell() {
   const [items, setItems] = useState<EnrichedNotification[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
-  // TEMPORARY DEBUG STATE — remove after notification delivery is verified
-  const [isSendingTest, setIsSendingTest] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const refreshCount = useCallback(async () => {
@@ -111,27 +106,9 @@ export function NotificationBell() {
     }
   }
 
-  // TEMPORARY DEBUG HANDLER — remove after notification delivery is verified
-  async function handleSendTest() {
-    setIsSendingTest(true);
-    await sendTestNotificationToSelf();
-    setIsSendingTest(false);
-    await refreshCount();
-  }
-
   const badge = count >= 10 ? "9+" : count > 0 ? String(count) : null;
 
   return (
-    <>
-      {/* TEMPORARY DEBUG BUTTON — remove after notification delivery is verified */}
-      <button
-        type="button"
-        disabled={isSendingTest}
-        onClick={handleSendTest}
-        className="rounded border border-dashed border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-700 transition hover:bg-amber-100 disabled:opacity-50"
-      >
-        {isSendingTest ? "Sending…" : "🧪 Test notif"}
-      </button>
     <div ref={containerRef} className="relative">
       <button
         type="button"
@@ -250,6 +227,5 @@ export function NotificationBell() {
         </div>
       )}
     </div>
-    </>
   );
 }
