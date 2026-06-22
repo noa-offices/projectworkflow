@@ -288,52 +288,10 @@ export function ERPDashboard({
                           </td>
                           <td className="px-4 py-3 align-top text-zinc-400">—</td>
                           <td className="px-4 py-3 align-top">
-                            {isExpanded ? (
-                              <div>
-                                {activityLoading && expandedActivity === null ? (
-                                  <p className="text-xs text-zinc-400">Loading…</p>
-                                ) : expandedActivity !== null && expandedActivity.length === 0 ? (
-                                  <p className="rounded-md border border-dashed border-zinc-200 px-2.5 py-2 text-[11px] text-zinc-400">
-                                    No activity logged for this project yet.
-                                  </p>
-                                ) : (
-                                  <div className="divide-y divide-zinc-100">
-                                    {(expandedActivity ?? []).map((entry) => (
-                                      <div key={entry.id} className="py-2 first:pt-0 last:pb-0">
-                                        <div className="flex items-start justify-between gap-2">
-                                          <p className="text-xs font-medium leading-snug text-zinc-800">
-                                            {entry.title}
-                                          </p>
-                                          <time className="shrink-0 text-[10px] text-zinc-400">
-                                            {relativeTime(entry.created_at)}
-                                          </time>
-                                        </div>
-                                        {entry.description && (
-                                          <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">
-                                            {entry.description}
-                                          </p>
-                                        )}
-                                        <p className="mt-1 text-[10px] text-zinc-400">
-                                          by {entry.actorName ?? "System"}
-                                        </p>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                                <Link
-                                  href={`/projects/orders/${encodeURIComponent(project.orderNo)}`}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="mt-2.5 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 transition hover:text-emerald-900"
-                                >
-                                  View Project →
-                                </Link>
-                              </div>
-                            ) : (
-                              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
-                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                                Active
-                              </span>
-                            )}
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                              Active
+                            </span>
                           </td>
                         </tr>
                       );
@@ -343,6 +301,44 @@ export function ERPDashboard({
               )}
             </div>
           </DashboardCard>
+
+          {expandedOrderNo && (
+            <DashboardCard className="overflow-hidden">
+              <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-4 py-3">
+                <p className="text-sm font-semibold text-zinc-950">
+                  {expandedOrderNo} — Recent Activity
+                </p>
+                <Link
+                  href={`/projects/orders/${encodeURIComponent(expandedOrderNo)}`}
+                  className="shrink-0 text-xs font-semibold text-emerald-700 transition hover:text-emerald-900"
+                >
+                  View Project →
+                </Link>
+              </div>
+              <div className="px-4 py-3">
+                {activityLoading && expandedActivity === null ? (
+                  <p className="text-xs text-zinc-400">Loading…</p>
+                ) : expandedActivity !== null && expandedActivity.length === 0 ? (
+                  <p className="text-sm text-zinc-400">No activity logged yet.</p>
+                ) : (
+                  <div className="divide-y divide-zinc-100">
+                    {(expandedActivity ?? []).map((entry) => (
+                      <div key={entry.id} className="py-3 first:pt-0 last:pb-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-medium leading-snug text-zinc-800">{entry.title}</p>
+                          <time className="shrink-0 text-[11px] text-zinc-400">{relativeTime(entry.created_at)}</time>
+                        </div>
+                        {entry.description && (
+                          <p className="mt-0.5 text-xs leading-snug text-zinc-500">{entry.description}</p>
+                        )}
+                        <p className="mt-1 text-[11px] text-zinc-400">by {entry.actorName ?? "System"}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </DashboardCard>
+          )}
 
         </div>
 

@@ -14,6 +14,7 @@ import { type ProjectDocRecord } from "@/lib/projects/project-doc-action";
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
 import { MarkCompletedButton } from "@/components/projects/mark-completed-button";
 import { CancelProjectButton } from "@/components/projects/cancel-project-button";
+import { ReopenProjectButton } from "@/components/projects/reopen-project-button";
 import { NotifyButton } from "@/components/notifications/notify-button";
 
 export const dynamic = "force-dynamic";
@@ -502,6 +503,12 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
             <span className="text-sm font-semibold text-emerald-900">
               ✓ Completed {formatDate(completedAt)}
             </span>
+            {canEditExecutionStatus && (
+              <ReopenProjectButton
+                quotationId={entry.quotationId}
+                orderNo={decodedOrderNo}
+              />
+            )}
           </div>
           {metadataSection}
           <div className="mt-6">{lockedItemsSection}</div>

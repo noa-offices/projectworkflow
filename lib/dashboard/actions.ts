@@ -2,6 +2,7 @@
 
 import { requireActiveUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 // ─── Exported types ───────────────────────────────────────────────────────────
@@ -142,9 +143,8 @@ export async function getProjectRecentActivity(orderNo: string): Promise<Activit
     .from("audit_activity_log")
     .select("id, title, description, created_at, metadata")
     .filter("metadata->>orderNo", "eq", orderNo)
-    .eq("entity_type", "project_activity")
     .order("created_at", { ascending: false })
-    .limit(5);
+    .limit(3);
 
   if (error || !data) return [];
 
@@ -182,14 +182,15 @@ export type DashboardSalesData = {
 };
 
 // ─── 5. getDashboardSalesData ─────────────────────────────────────────────────
-// Session client is sufficient — profiles SELECT RLS uses current_user_is_active(),
-// same as the sales-report page which reads profiles without an admin client.
-// Quotations are filtered at the DB level (status + is_active + year range) to
-// avoid fetching all rows. Profiles join is done in JS, matching sales-report pattern.
+// Profiles query uses admin client — RLS profiles_select_own restricts non-system-owners
+// to their own row only, so the session client returns only the current user's profile.
 
 export async function getDashboardSalesData(): Promise<DashboardSalesData> {
   await requireActiveUser();
   const supabase = await createClient();
+  const adminResult = createAdminClient();
+  if (!adminResult.client) throw new Error(adminResult.error ?? "Admin client unavailable");
+  const adminClient = adminResult.client;
 
   const year = new Date().getFullYear();
   const yearStart = `${year}-01-01`;
@@ -209,7 +210,7 @@ export async function getDashboardSalesData(): Promise<DashboardSalesData> {
       // ->> extracts as text; returns SQL NULL when the key is absent (= not cancelled).
       .filter("layout_settings->>projectCancelledAt", "is", null)
       .returns<Array<{ id: string; salesperson_id: string | null; grand_total: number }>>(),
-    supabase
+    adminClient
       .from("profiles")
       .select("id, full_name, avatar_url")
       .eq("role", "sales_designer")
