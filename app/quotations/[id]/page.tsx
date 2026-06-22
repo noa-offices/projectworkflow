@@ -1271,45 +1271,7 @@ export default async function QuotationDetailPage({
                       label="Download Quotation PDF"
                       pendingLabel="Preparing PDF..."
                     />
-                    <ExportExcelButton
-                      data={{
-                        quotationNo: quotation.quotation_no,
-                        quotationDate: quotation.quotation_date,
-                        title: quotation.title,
-                        currency: quotation.currency,
-                        subtotal: quotation.subtotal,
-                        discountTotal: quotation.discount_total,
-                        vatPercent: quotation.vat_percent,
-                        vatAmount: quotation.vat_amount,
-                        grandTotal: quotation.grand_total,
-                        paymentTerms: quotation.payment_terms,
-                        clientName: client?.company_name ?? null,
-                        projectName: project?.project_name ?? null,
-                        sections: (sections ?? [])
-                          .filter((s) => s.is_active)
-                          .map((s) => ({ id: s.id, section_title: s.section_title, section_kind: s.section_kind })),
-                        items: (items ?? [])
-                          .filter((item) => item.is_active)
-                          .map((item) => ({
-                            id: item.id,
-                            section_id: item.section_id,
-                            item_type: item.item_type,
-                            line_style: item.line_style,
-                            is_active: item.is_active,
-                            item_name_snapshot: item.item_name_snapshot,
-                            origin_snapshot: item.origin_snapshot,
-                            size_snapshot: item.size_snapshot,
-                            finish_snapshot: item.finish_snapshot,
-                            supplier_name_snapshot: item.supplier_name_snapshot,
-                            qty: item.qty,
-                            unit_label: item.unit_label,
-                            unit_price: item.unit_price,
-                            net_total: item.net_total,
-                            is_optional: item.is_optional,
-                            is_rate_only: item.is_rate_only,
-                          })),
-                      }}
-                    />
+                    <ExportExcelButton quotationId={quotation.id} />
                     <DocumentSetupDialog
                       clientId={quotation.client_id}
                       hasProject={resolvedDocumentSetup.header.hasConfirmedProject}

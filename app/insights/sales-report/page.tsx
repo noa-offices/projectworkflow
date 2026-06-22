@@ -6,6 +6,7 @@ import { SalesRepCard } from "@/components/insights/sales-rep-card";
 import { requireActiveUser } from "@/lib/auth";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { AggMonthPoint, RepSeriesData } from "@/components/insights/sales-performance-charts";
 
 export const dynamic = "force-dynamic";
@@ -249,6 +250,9 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
   const priorEnd = rangeStart;
 
   // ── Fetch ────────────────────────────────────────────────────────────────────
+  const adminResult = createAdminClient();
+  if (!adminResult.client) throw new Error(adminResult.error ?? "Admin client unavailable");
+  const adminClient = adminResult.client;
   const [{ data: quotations }, { data: salespersonProfiles }] = await Promise.all([
     supabase
       .from("quotations")
@@ -256,7 +260,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
         "id,salesperson_id,status,grand_total,currency,created_at,status_updated_at,layout_settings",
       )
       .returns<QuotationRow[]>(),
-    supabase
+    adminClient
       .from("profiles")
       .select("id,full_name,email,avatar_url")
       .eq("role", "sales_designer")

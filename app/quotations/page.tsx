@@ -4,6 +4,7 @@ import { QuotationListLiveFilter } from "@/components/quotations/quotation-list-
 import { requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createQuotation, createQuotationClient } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -296,7 +297,9 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
     .order("company_name", { ascending: true })
     .returns<Client[]>();
 
-  const { data: salespersonProfiles } = await supabase
+  const adminResult = createAdminClient();
+  if (!adminResult.client) throw new Error(adminResult.error ?? "Admin client unavailable");
+  const { data: salespersonProfiles } = await adminResult.client
     .from("profiles")
     .select("id,full_name,email")
     .eq("role", "sales_designer")
