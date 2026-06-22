@@ -10,6 +10,7 @@ import {
   BarChart3,
   BadgeCheck,
   Bell,
+  Building2,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -62,6 +63,10 @@ function isQuotationsActive(pathname: string) {
 
 function isSalesApprovalsActive(pathname: string) {
   return pathname === "/sales/approvals" || pathname.startsWith("/sales/approvals/");
+}
+
+function isClientsActive(pathname: string) {
+  return pathname === "/sales/clients" || pathname.startsWith("/sales/clients/");
 }
 
 function isNotificationsActive(pathname: string) {
@@ -185,6 +190,7 @@ export function ErpSidebar({
         items: [
           { label: "Quotations", href: "/sales/quotations", icon: FileText, active: isQuotationsActive(pathname) },
           { label: "Approved Quotations", href: "/sales/approvals", icon: BadgeCheck, active: isSalesApprovalsActive(pathname) },
+          { label: "Clients", href: "/sales/clients", icon: Building2, active: isClientsActive(pathname) },
         ],
       },
       {
