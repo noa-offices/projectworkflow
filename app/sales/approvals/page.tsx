@@ -63,6 +63,7 @@ export default async function SalesApprovalsPage({ searchParams }: SalesApproval
       .select("id,client_id,quotation_no,title,legacy_reference,quotation_date,status,grand_total,currency,layout_settings,status_updated_at,updated_at")
       .eq("status", "client_confirmed")
       .order("status_updated_at", { ascending: false })
+      .limit(200)
       .returns<ApprovedQuotationRow[]>(),
     supabase
       .from("clients")

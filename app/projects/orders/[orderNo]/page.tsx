@@ -102,6 +102,8 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
   const { data: quotations, error } = await supabase
     .from("quotations")
     .select("id,layout_settings,quotation_no,title,currency,grand_total,vat_percent,overall_discount_type,overall_discount_value,subtotal,discount_total,vat_amount,payment_terms,delivery_terms,notes,status")
+    .eq("status", "client_confirmed")
+    .limit(200)
     .returns<ConfirmedOrderQuotationRow[]>();
 
   if (error) {
