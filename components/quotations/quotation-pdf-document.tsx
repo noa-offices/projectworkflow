@@ -1170,10 +1170,12 @@ export function deserializeQuotationPdfDocumentData(data: SerializedQuotationPdf
 }
 
 function PageFooter({
+  companyProfile,
   pageNumber,
   totalPages,
   settings,
 }: {
+  companyProfile: CompanyProfile;
   pageNumber: number;
   totalPages: number;
   settings: QuotationPdfSettings;
@@ -1181,11 +1183,11 @@ function PageFooter({
   const layout = quotationPdfLayoutMetrics(settings);
   return (
     <footer className={`mt-auto grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 border-t border-zinc-200 pt-2 text-zinc-500 ${layout.footerTextClassName}`}>
-      <span className="whitespace-nowrap">Noa Office Solutions LLC</span>
+      <span className="whitespace-nowrap">{companyProfile.companyName}</span>
       <span className="min-w-0 text-center">
-        Dubai | info@noaoffices.com | +971 4 3809234 | Abu Dhabi | sales@noaoffices.com | +971 2 5754022
+        {[companyProfile.city, companyProfile.phone, companyProfile.email].filter(Boolean).join(" | ")}
       </span>
-      <span className="whitespace-nowrap text-right">www.noaoffices.com | Page {pageNumber} of {totalPages}</span>
+      <span className="whitespace-nowrap text-right">{companyProfile.website ? `${companyProfile.website} | ` : ""}Page {pageNumber} of {totalPages}</span>
     </footer>
   );
 }
@@ -1517,11 +1519,13 @@ function NotesTermsSummaryPage({
 
 function PageFrame({
   children,
+  companyProfile,
   pageNumber,
   totalPages,
   settings,
 }: {
   children: ReactNode;
+  companyProfile: CompanyProfile;
   pageNumber: number;
   totalPages: number;
   settings: QuotationPdfSettings;
@@ -1534,7 +1538,7 @@ function PageFrame({
     >
       <div className="flex min-h-0 flex-1 flex-col">
         {children}
-        <PageFooter pageNumber={pageNumber} totalPages={totalPages} settings={settings} />
+        <PageFooter companyProfile={companyProfile} pageNumber={pageNumber} totalPages={totalPages} settings={settings} />
       </div>
     </article>
   );
@@ -1602,6 +1606,7 @@ export function QuotationPdfDocument({
         {pages.map((page) => (
           <PageFrame
             key={`${page.type}-${page.pageNumber}`}
+            companyProfile={data.companyProfile}
             pageNumber={page.pageNumber}
             settings={settings}
             totalPages={totalPages}

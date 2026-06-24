@@ -45,6 +45,12 @@ type DeliveryNoteEditorItem = {
 
 export type DeliveryNoteEditorData = {
   client: DeliveryNoteClient | null;
+  companyProfile?: {
+    companyName: string;
+    phone: string | null;
+    email: string | null;
+    website: string | null;
+  };
   project: DeliveryNoteProject | null;
   quotation: DeliveryNoteQuotation;
   items: DeliveryNoteEditorItem[];
@@ -311,6 +317,7 @@ export function DeliveryNoteEditor({
   const document = (
     <DeliveryNoteDocument
       companyLogoUrl={defaultLogoUrl}
+      companyProfile={data.companyProfile}
       items={docItems}
       settings={settings}
     />

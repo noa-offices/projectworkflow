@@ -76,6 +76,12 @@ export default async function DeliveryNotePage({ params, searchParams }: Deliver
 
   const editorData: DeliveryNoteEditorData = {
     client: data.client,
+    companyProfile: {
+      companyName: data.companyProfile.displayName,
+      phone: data.companyProfile.phone ?? null,
+      email: data.companyProfile.email ?? null,
+      website: data.companyProfile.website ?? null,
+    },
     project: data.project
       ? {
           id: data.project.id,

@@ -71,8 +71,8 @@ function buildDefaultSettings(data: NonNullable<Awaited<ReturnType<typeof loadQu
       quotationReference: data.quotation.quotation_no ?? "",
       projectDisplayName: data.project?.project_name ?? data.quotation.title,
       clientDisplayName: data.client?.company_name ?? "",
-      preparedBy: "Noa Offices",
-      companyDisplayName: "Noa Offices",
+      preparedBy: data.companyProfile.displayName || "",
+      companyDisplayName: data.companyProfile.displayName || "",
       phone: data.companyProfile.phone ?? "",
       email: data.companyProfile.email ?? "",
       address,
@@ -205,6 +205,7 @@ export default async function PurchaseOrderPage({ params, searchParams }: Purcha
           email: data.companyProfile.email,
           address: [data.companyProfile.addressLine1, data.companyProfile.addressLine2, data.companyProfile.city, data.companyProfile.country].filter(Boolean).join(", "),
           trn: data.companyProfile.trn,
+          website: data.companyProfile.website ?? null,
         },
         items: data.items.map((item) => ({
           id: item.id,

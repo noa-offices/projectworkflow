@@ -10,6 +10,12 @@ import {
 
 type PurchaseOrderDocumentProps = {
   companyLogoUrl: string | null;
+  companyProfile: {
+    displayName: string;
+    phone: string | null;
+    email: string | null;
+    website: string | null;
+  };
   hasPriceValues: boolean;
   poCurrency: string;
   settings: {
@@ -276,6 +282,7 @@ function ClosingSections({
 
 export function PurchaseOrderDocument({
   companyLogoUrl,
+  companyProfile,
   hasPriceValues,
   items,
   poCurrency,
@@ -331,7 +338,13 @@ export function PurchaseOrderDocument({
             )}
           </div>
 
-          <DocumentFooter pageNumber={page.pageIndex + 1} totalPages={page.totalPages} />
+          <DocumentFooter
+            pageNumber={page.pageIndex + 1}
+            totalPages={page.totalPages}
+            companyName={companyProfile.displayName}
+            companyContact={[companyProfile.phone, companyProfile.email].filter(Boolean).join(" | ") || null}
+            companyWebsite={companyProfile.website ?? null}
+          />
         </DocumentPage>
       ))}
     </>

@@ -20,6 +20,12 @@ export type DeliveryNoteDocItem = {
 
 type DeliveryNoteDocumentProps = {
   companyLogoUrl: string | null;
+  companyProfile?: {
+    companyName: string;
+    phone: string | null;
+    email: string | null;
+    website: string | null;
+  };
   items: DeliveryNoteDocItem[];
   settings: DeliveryNoteSettings;
 };
@@ -67,16 +73,18 @@ function LogoBlock({
   );
 }
 
-function SignatureBlock() {
+function SignatureBlock({ companyName }: { companyName: string }) {
   return (
     <div className="mt-auto border-t border-zinc-200 pt-4">
       <div className="grid grid-cols-2 gap-0 divide-x divide-zinc-200">
         <div className="pr-6 space-y-3">
           <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Delivered by</p>
-          <div>
-            <p className="text-[8px] font-semibold text-zinc-600">Company</p>
-            <p className="mt-0.5 text-[9px] font-semibold text-zinc-900">Noa Office Solutions LLC</p>
-          </div>
+          {companyName ? (
+            <div>
+              <p className="text-[8px] font-semibold text-zinc-600">Company</p>
+              <p className="mt-0.5 text-[9px] font-semibold text-zinc-900">{companyName}</p>
+            </div>
+          ) : null}
           <SignatureLine label="Signature" />
           <SignatureLine label="Name" />
           <SignatureLine label="Date" />
@@ -209,6 +217,7 @@ function buildDeliveryNotePages(
 
 export function DeliveryNoteDocument({
   companyLogoUrl,
+  companyProfile,
   items,
   settings,
 }: DeliveryNoteDocumentProps) {
@@ -263,7 +272,7 @@ export function DeliveryNoteDocument({
                 </div>
                 <div className="shrink-0 pt-1">
                   <LogoBlock
-                    companyDisplayName="Noa Office Solutions LLC"
+                    companyDisplayName={companyProfile?.companyName ?? ""}
                     logoMode={settings.logoMode}
                     logoUrl={companyLogoUrl}
                     showLogo={settings.showLogo}
@@ -334,10 +343,16 @@ export function DeliveryNoteDocument({
             ) : null}
 
             {/* Signature block pushed to bottom of last page */}
-            {page.showSignature ? <SignatureBlock /> : null}
+            {page.showSignature ? <SignatureBlock companyName={companyProfile?.companyName ?? ""} /> : null}
           </div>
 
-          <DocumentFooter pageNumber={page.pageIndex + 1} totalPages={page.totalPages} />
+          <DocumentFooter
+            pageNumber={page.pageIndex + 1}
+            totalPages={page.totalPages}
+            companyName={companyProfile?.companyName ?? ""}
+            companyContact={[companyProfile?.phone, companyProfile?.email].filter(Boolean).join(" | ") || null}
+            companyWebsite={companyProfile?.website ?? null}
+          />
         </DocumentPage>
       ))}
     </>

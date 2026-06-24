@@ -74,12 +74,12 @@ function buildDefaultSettings(data: NonNullable<Awaited<ReturnType<typeof loadQu
       quotationDate: formatDateInput(data.quotation.quotation_date),
       projectDisplayName: data.project?.project_name ?? data.quotation.title,
       clientDisplayName: data.client?.company_name ?? "",
-      preparedBy: data.companyProfile.displayName || "Noa Offices",
+      preparedBy: data.companyProfile.displayName || "",
       projectContact: data.project?.attention_to?.trim() || "",
       phone: defaultProjectPhone(data.project) || data.companyProfile.phone || "",
       email: data.project?.attention_email?.trim() || data.companyProfile.email || "",
       poBox: data.project?.po_box?.trim() || "",
-      companyDisplayName: "Noa Offices",
+      companyDisplayName: data.companyProfile.displayName || "",
     },
     notes: {
       ...DEFAULT_PROCUREMENT_RFQ_SETTINGS.notes,
@@ -127,6 +127,7 @@ export default async function ProcurementRfqPage({ params, searchParams }: Procu
           displayName: data.companyProfile.displayName,
           phone: data.companyProfile.phone,
           email: data.companyProfile.email,
+          website: data.companyProfile.website ?? null,
         },
         items: data.items.map((item) => ({
           id: item.id,

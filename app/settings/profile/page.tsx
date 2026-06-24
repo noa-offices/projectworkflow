@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { AppSidebar } from "@/components/app-sidebar";
+import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
-import { TopBar } from "@/components/top-bar";
 import { AvatarUpload } from "@/components/settings/avatar-upload";
 import { updateMyProfile } from "@/app/settings/actions";
 import { requireActiveUser } from "@/lib/auth";
@@ -74,16 +73,14 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
     : "border-emerald-200 bg-emerald-50 text-emerald-950";
 
   return (
-    <div className="min-h-screen bg-stone-50 lg:flex">
-      <AppSidebar />
-      <div className="flex-1">
-        <TopBar
-          title="My Profile"
-          description="Review your account details and keep your contact information up to date."
-          userDisplayName={displayName}
-          userEmail={user.email}
-        />
-        <main className="px-5 py-6 sm:px-8">
+    <ErpAppShell
+      eyebrow="SYSTEM"
+      title="My Profile"
+      description="Review your account details and keep your contact information up to date."
+      userDisplayName={displayName}
+      userEmail={user.email}
+    >
+      <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex items-center justify-between gap-4">
             <Link
               href="/settings"
@@ -196,8 +193,7 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
               </div>
             </section>
           </div>
-        </main>
       </div>
-    </div>
+    </ErpAppShell>
   );
 }

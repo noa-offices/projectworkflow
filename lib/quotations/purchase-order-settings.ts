@@ -93,7 +93,7 @@ export const DEFAULT_PURCHASE_ORDER_DOCUMENT_DETAILS: PurchaseOrderDocumentDetai
   projectDisplayName: "",
   clientDisplayName: "",
   preparedBy: "",
-  companyDisplayName: "Noa Offices",
+  companyDisplayName: "",
   phone: "",
   email: "",
   address: "",

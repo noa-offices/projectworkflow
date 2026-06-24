@@ -267,7 +267,13 @@ export function OrderConfirmationDocument({
     return (
       <PrintPage orientation={print.orientation}>
         <div className="flex flex-1 items-center justify-center text-sm text-zinc-500">{defaultEmptyMessage}</div>
-        <DocumentFooter pageNumber={1} totalPages={1} />
+        <DocumentFooter
+          pageNumber={1}
+          totalPages={1}
+          companyName={settings.documentDetails.companyDisplayName}
+          companyContact={[settings.documentDetails.companyPhone, settings.documentDetails.companyEmail].filter(Boolean).join(" | ") || null}
+          companyWebsite={settings.documentDetails.companyWebsite || null}
+        />
       </PrintPage>
     );
   }
@@ -294,7 +300,13 @@ export function OrderConfirmationDocument({
               <ClosingSections terms={page.closing?.terms ?? null} />
             )}
           </div>
-          <DocumentFooter pageNumber={page.pageIndex + 1} totalPages={page.totalPages} />
+          <DocumentFooter
+            pageNumber={page.pageIndex + 1}
+            totalPages={page.totalPages}
+            companyName={settings.documentDetails.companyDisplayName}
+            companyContact={[settings.documentDetails.companyPhone, settings.documentDetails.companyEmail].filter(Boolean).join(" | ") || null}
+            companyWebsite={settings.documentDetails.companyWebsite || null}
+          />
         </PrintPage>
       ))}
     </>

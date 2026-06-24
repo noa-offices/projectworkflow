@@ -9,6 +9,12 @@ import {
 
 type ProcurementRfqDocumentProps = {
   companyLogoUrl: string | null;
+  companyProfile: {
+    displayName: string;
+    phone: string | null;
+    email: string | null;
+    website: string | null;
+  };
   currentScopeLabel: string;
   defaultEmptyMessage?: string;
   groups: ProcurementRfqDocumentGroup[];
@@ -250,6 +256,7 @@ function ClosingSections({
 
 export function ProcurementRfqDocument({
   companyLogoUrl,
+  companyProfile,
   currentScopeLabel,
   defaultEmptyMessage = "No visible RFQ items for the selected supplier / brand scope.",
   groups,
@@ -304,7 +311,13 @@ export function ProcurementRfqDocument({
             )}
           </div>
 
-          <DocumentFooter pageNumber={page.pageIndex + 1} totalPages={page.totalPages} />
+          <DocumentFooter
+            pageNumber={page.pageIndex + 1}
+            totalPages={page.totalPages}
+            companyName={companyProfile.displayName}
+            companyContact={[companyProfile.phone, companyProfile.email].filter(Boolean).join(" | ") || null}
+            companyWebsite={companyProfile.website ?? null}
+          />
         </DocumentPage>
       ))}
     </>

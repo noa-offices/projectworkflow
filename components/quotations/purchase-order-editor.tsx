@@ -30,6 +30,7 @@ type PurchaseOrderCompanyProfile = {
   email: string | null;
   address: string | null;
   trn: string | null;
+  website: string | null;
 };
 
 type PurchaseOrderProject = {
@@ -632,6 +633,7 @@ export function PurchaseOrderEditor({
   const purchaseOrderDocument = (
     <PurchaseOrderDocument
       companyLogoUrl={defaultLogoUrl}
+      companyProfile={data.companyProfile}
       hasPriceValues={hasPriceValues}
       items={documentItems}
       poCurrency={poCurrency}

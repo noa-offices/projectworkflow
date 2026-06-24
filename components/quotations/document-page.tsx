@@ -1,8 +1,5 @@
 import type { ReactNode } from "react";
 
-const FOOTER_SECONDARY_TEXT = "Dubai | info@noaoffices.com | +971 4 3809234 | Abu Dhabi | sales@noaoffices.com | +971 2 5754022";
-const FOOTER_RIGHT_PREFIX = "www.noaoffices.com";
-
 export function DocumentPage({
   children,
   orientation = "landscape",
@@ -30,17 +27,23 @@ export function DocumentHeader({
 }
 
 export function DocumentFooter({
+  companyName = "",
+  companyContact,
+  companyWebsite,
   pageNumber,
   totalPages,
 }: {
+  companyName?: string;
+  companyContact?: string | null;
+  companyWebsite?: string | null;
   pageNumber: number;
   totalPages: number;
 }) {
   return (
     <footer className="mt-auto flex items-center gap-3 border-t border-zinc-300 pt-2 text-[7.5px] leading-4 text-zinc-500">
-      <p className="shrink-0 font-semibold text-zinc-700">Noa Office Solutions LLC</p>
-      <p className="min-w-0 flex-1 text-center leading-4">{FOOTER_SECONDARY_TEXT}</p>
-      <p className="shrink-0 text-right">{FOOTER_RIGHT_PREFIX} | Page {pageNumber} of {totalPages}</p>
+      <p className="shrink-0 font-semibold text-zinc-700">{companyName}</p>
+      <p className="min-w-0 flex-1 text-center leading-4">{companyContact ?? ""}</p>
+      <p className="shrink-0 text-right">{companyWebsite ? `${companyWebsite} | ` : ""}Page {pageNumber} of {totalPages}</p>
     </footer>
   );
 }

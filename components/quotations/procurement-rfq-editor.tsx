@@ -25,6 +25,7 @@ type ProcurementRfqCompanyProfile = {
   displayName: string;
   phone: string | null;
   email: string | null;
+  website: string | null;
 };
 
 type ProcurementRfqProject = {
@@ -657,6 +658,7 @@ export function ProcurementRfqEditor({
   const rfqDocument = (
     <ProcurementRfqDocument
       companyLogoUrl={defaultLogoUrl}
+      companyProfile={data.companyProfile}
       currentScopeLabel={currentScopeLabel}
       groups={documentGroups}
       notes={settings.notes}

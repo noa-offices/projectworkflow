@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AppSidebar } from "@/components/app-sidebar";
+import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { LocalDraftLink } from "@/components/quotations/local-draft-link";
-import { TopBar } from "@/components/top-bar";
 import {
   createQuotation,
   createQuotationOption,
@@ -496,16 +495,14 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
   }
 
   return (
-    <div className="min-h-screen bg-stone-50 lg:flex">
-      <AppSidebar />
-      <div className="flex-1">
-        <TopBar
-          title={project.project_name}
-          description={`${client?.company_name ?? "Unknown client"} project folder`}
-          userDisplayName={displayName}
-          userEmail={user.email}
-        />
-        <main className="px-5 py-6 sm:px-8">
+    <ErpAppShell
+      eyebrow="PROJECTS"
+      title={project.project_name}
+      description={`${client?.company_name ?? "Unknown client"} project folder`}
+      userDisplayName={displayName}
+      userEmail={user.email}
+    >
+      <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <Link
               href="/clients"
@@ -835,8 +832,7 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
               </p>
             </div>
           </section>
-        </main>
       </div>
-    </div>
+    </ErpAppShell>
   );
 }
