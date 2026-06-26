@@ -28,6 +28,8 @@ export default async function DashboardPage() {
       role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
     >
       <ERPDashboard
         stats={stats}

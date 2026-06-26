@@ -26,6 +26,7 @@ import {
   Tag,
   TrendingUp,
   Truck,
+  User,
 } from "lucide-react";
 
 type SidebarItem = {
@@ -109,6 +110,17 @@ function isSalesReportActive(pathname: string) {
   return pathname === "/insights/sales-report" || pathname.startsWith("/insights/sales-report");
 }
 
+function sidebarRoleLabel(role: AppRole): string {
+  switch (role) {
+    case "system_owner": return "System Owner";
+    case "admin_manager": return "Admin Manager";
+    case "sales_designer": return "Sales User";
+    case "procurement_manager": return "Procurement";
+    case "viewer": return "Viewer";
+    default: return role;
+  }
+}
+
 function NavRow({
   iconColors,
   indent = false,
@@ -167,9 +179,15 @@ function NavRow({
 export function ErpSidebar({
   role,
   isCompletedProject,
+  userDisplayName,
+  userAvatarUrl,
+  userRole,
 }: {
   role: AppRole | null;
   isCompletedProject?: boolean;
+  userDisplayName?: string;
+  userAvatarUrl?: string | null;
+  userRole?: AppRole | null;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -277,7 +295,7 @@ export function ErpSidebar({
   }
 
   return (
-    <aside className="border-b border-zinc-200 bg-white lg:min-h-screen lg:border-b-0 lg:border-r">
+    <aside className="flex flex-col border-b border-zinc-200 bg-white lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r">
       <div className="flex items-center gap-3 border-b border-zinc-200 px-5 py-5">
         <span className="flex h-10 w-10 items-center justify-center rounded-md bg-emerald-900 text-sm font-bold text-white">
           PW
@@ -287,7 +305,7 @@ export function ErpSidebar({
           <p className="text-xs text-zinc-500">ERP Command Center</p>
         </div>
       </div>
-      <div className="grid gap-6 px-3 py-5">
+      <div className="flex-1 overflow-y-auto grid content-start gap-6 px-3 py-5">
         {sections.map((section) => {
           if (section.hiddenSection) return null;
           return (
@@ -323,6 +341,34 @@ export function ErpSidebar({
           </nav>
           );
         })}
+      </div>
+
+      {/* User profile card */}
+      <div className="border-t border-zinc-200 px-3 py-3">
+        <Link
+          href="/settings/profile"
+          className="flex items-center gap-3 rounded-md px-3 py-2 transition hover:bg-zinc-100"
+        >
+          {userAvatarUrl ? (
+            <img
+              src={userAvatarUrl}
+              alt={userDisplayName ?? "Profile"}
+              className="h-8 w-8 shrink-0 rounded-full object-cover"
+            />
+          ) : (
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100">
+              <User className="h-4 w-4 text-zinc-500" aria-hidden="true" />
+            </span>
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[13px] font-medium text-zinc-900">
+              {userDisplayName ?? "My Profile"}
+            </p>
+            {userRole ? (
+              <p className="truncate text-xs text-zinc-500">{sidebarRoleLabel(userRole)}</p>
+            ) : null}
+          </div>
+        </Link>
       </div>
     </aside>
   );

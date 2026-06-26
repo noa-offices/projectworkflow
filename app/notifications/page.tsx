@@ -13,6 +13,8 @@ export default async function NotificationsPage() {
       role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
     >
       <NotificationsTabs />
     </ErpAppShell>

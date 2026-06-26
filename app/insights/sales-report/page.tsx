@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { DateRangeSelector } from "@/components/insights/date-range-selector";
 import { SalesPerformanceCharts } from "@/components/insights/sales-performance-charts";
@@ -7,6 +8,8 @@ import { requireActiveUser } from "@/lib/auth";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { loadTeamStats, loadProfileStatsForUser } from "@/lib/settings/profile-stats-loader";
+import type { TeamMemberStat } from "@/lib/settings/profile-stats-loader";
 import type { AggMonthPoint, RepSeriesData } from "@/components/insights/sales-performance-charts";
 
 export const dynamic = "force-dynamic";
@@ -96,6 +99,37 @@ function pctChange(current: number, prior: number): number | null {
 function fmtPct(n: number | null): string {
   if (n === null) return "—";
   return `${n >= 0 ? "+" : ""}${n.toFixed(0)}%`;
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function roleLabel(role: string | null): string {
+  switch (role) {
+    case "system_owner": return "System Owner";
+    case "admin_manager": return "Admin Manager";
+    case "sales_designer": return "Sales User";
+    case "viewer": return "Viewer";
+    default: return "Unknown";
+  }
+}
+
+function relativeTime(value: string): string {
+  const diff = Date.now() - new Date(value).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return mins <= 1 ? "Just now" : `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days} days ago`;
+  return new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" }).format(new Date(value));
+}
+
+function statusBadgeClass(status: string): string {
+  if (status === "client_confirmed") return "bg-emerald-100 text-emerald-800";
+  if (status === "sent_to_client" || status === "ready_to_send") return "bg-blue-100 text-blue-800";
+  if (status === "draft") return "bg-zinc-100 text-zinc-600";
+  return "bg-amber-100 text-amber-800";
 }
 
 // ─── Inline server components ─────────────────────────────────────────────────
@@ -227,7 +261,7 @@ function SalesLeaderboard({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 type PageProps = {
-  searchParams?: Promise<{ range?: string }>;
+  searchParams?: Promise<{ range?: string; user?: string }>;
 };
 
 export default async function SalesReportPage({ searchParams }: PageProps) {
@@ -237,6 +271,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
   // ── Range param ─────────────────────────────────────────────────────────────
   const resolved = await searchParams;
   const rawRange = resolved?.range ?? "6m";
+  const rawUser = resolved?.user;
   const range: RangeKey = (VALID_RANGES as readonly string[]).includes(rawRange)
     ? (rawRange as RangeKey)
     : "6m";
@@ -250,10 +285,14 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
   const priorEnd = rangeStart;
 
   // ── Fetch ────────────────────────────────────────────────────────────────────
+  const today = now.toISOString().slice(0, 10);
+
   const adminResult = createAdminClient();
   if (!adminResult.client) throw new Error(adminResult.error ?? "Admin client unavailable");
   const adminClient = adminResult.client;
-  const [{ data: quotations }, { data: salespersonProfiles }] = await Promise.all([
+
+  const teamDateRange = { from: rangeStart.toISOString().slice(0, 10), to: today };
+  const [{ data: quotations }, { data: salespersonProfiles }, teamStats] = await Promise.all([
     supabase
       .from("quotations")
       .select(
@@ -267,10 +306,29 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
       .eq("account_status", "active")
       .order("full_name", { ascending: true })
       .returns<SalespersonProfileRow[]>(),
+    profile?.role === "system_owner"
+      ? loadTeamStats(teamDateRange)
+      : Promise.resolve(null),
   ]);
 
   const allQuotations = quotations ?? [];
   const allProfiles = salespersonProfiles ?? [];
+
+  // ── Selected user (Team Overview drill-down) ─────────────────────────────────
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const selectedUserId =
+    rawUser &&
+    UUID_RE.test(rawUser) &&
+    profile?.role === "system_owner" &&
+    teamStats != null &&
+    teamStats.some((m) => m.userId === rawUser)
+      ? rawUser
+      : null;
+
+  const selectedUserInfo = teamStats?.find((m) => m.userId === selectedUserId) ?? null;
+  const selectedUserStats = selectedUserId
+    ? await loadProfileStatsForUser(selectedUserId, teamDateRange)
+    : null;
 
   // ── Approved definition ──────────────────────────────────────────────────────
   // Matches the existing page's definition exactly: client_confirmed + project file exists
@@ -448,6 +506,8 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
       role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
     >
       <div className="px-5 py-5 sm:px-8">
 
@@ -589,6 +649,278 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
             <SalesLeaderboard rows={leaderboardRows} rangeLabel={rangeLabel} />
           </aside>
         </div>
+
+        {/* ── Team Overview — system_owner only ───────────────────────────── */}
+        {profile?.role === "system_owner" && teamStats && teamStats.length > 0 ? (
+          <div className="mt-5 rounded-lg border border-zinc-200 bg-white shadow-sm">
+            <div className="border-b border-zinc-100 px-5 py-4">
+              <h2 className="text-sm font-semibold text-zinc-950">Team Overview</h2>
+              <p className="mt-0.5 text-xs text-zinc-400">
+                All active users — quotations created in selected period · Click a row for details
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-zinc-200 text-sm">
+                <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
+                  <tr>
+                    <th className="px-5 py-3 text-left font-semibold">Team Member</th>
+                    <th className="px-5 py-3 text-left font-semibold">Role</th>
+                    <th className="px-5 py-3 text-right font-semibold">Quotes Created</th>
+                    <th className="px-5 py-3 text-right font-semibold">Approved</th>
+                    <th className="px-5 py-3 text-right font-semibold">Win Rate</th>
+                    <th className="px-5 py-3 text-right font-semibold">Total Value</th>
+                    <th className="px-5 py-3 w-8" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {(teamStats as TeamMemberStat[]).map((member, index) => {
+                    const isSelected = member.userId === selectedUserId;
+                    const rowHref = isSelected
+                      ? `?range=${range}`
+                      : `?range=${range}&user=${member.userId}`;
+                    return (
+                      <tr
+                        key={member.userId}
+                        className={`transition-colors ${
+                          isSelected
+                            ? "border-l-2 border-emerald-600 bg-emerald-50"
+                            : index === 0
+                            ? "bg-emerald-50/40 hover:bg-zinc-50"
+                            : "hover:bg-zinc-50"
+                        }`}
+                      >
+                        <td className="px-0">
+                          <Link href={rowHref} className="block px-5 py-4 font-medium text-zinc-950">
+                            {member.displayName}
+                            {index === 0 && (
+                              <span className="ml-2 text-xs text-emerald-700">Top performer</span>
+                            )}
+                          </Link>
+                        </td>
+                        <td className="px-0">
+                          <Link href={rowHref} className="block px-5 py-4 text-zinc-500">
+                            {roleLabel(member.role)}
+                          </Link>
+                        </td>
+                        <td className="px-0">
+                          <Link href={rowHref} className="block px-5 py-4 text-right text-zinc-950">
+                            {member.totalQuotations}
+                          </Link>
+                        </td>
+                        <td className="px-0">
+                          <Link href={rowHref} className="block px-5 py-4 text-right text-zinc-950">
+                            {member.approvedQuotations}
+                          </Link>
+                        </td>
+                        <td className="px-0">
+                          <Link href={rowHref} className="block px-5 py-4 text-right text-zinc-950">
+                            {member.totalQuotations > 0
+                              ? Math.round((member.approvedQuotations / member.totalQuotations) * 100) + "%"
+                              : "—"}
+                          </Link>
+                        </td>
+                        <td className="px-0">
+                          <Link href={rowHref} className="block px-5 py-4 text-right font-medium text-zinc-950">
+                            {member.currency}{" "}
+                            {new Intl.NumberFormat("en-US", {
+                              minimumFractionDigits: 0,
+                              maximumFractionDigits: 0,
+                            }).format(member.totalValue)}
+                          </Link>
+                        </td>
+                        <td className="px-5 py-4 text-center">
+                          {isSelected ? (
+                            <Link
+                              href={`?range=${range}`}
+                              className="text-xs font-medium text-zinc-400 hover:text-zinc-700"
+                              aria-label="Close detail"
+                            >
+                              ×
+                            </Link>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* ── User detail panel ── */}
+            {selectedUserStats && selectedUserInfo ? (
+              <div className="border-t border-emerald-200 bg-emerald-50/30 p-5">
+                <div className="mb-4 flex items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-zinc-950">
+                      {selectedUserInfo.displayName} — Activity Detail
+                    </h3>
+                    <p className="mt-0.5 text-xs text-zinc-400">
+                      {rangeLabel} · {roleLabel(selectedUserInfo.role)}
+                    </p>
+                  </div>
+                  <Link
+                    href={`?range=${range}`}
+                    className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
+                  >
+                    Close ×
+                  </Link>
+                </div>
+
+                {/* Stat cards */}
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                      Quotes Created
+                    </p>
+                    <p className="mt-2 text-2xl font-bold text-zinc-950">
+                      {selectedUserStats.totalQuotations}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                      Approved
+                    </p>
+                    <p className="mt-2 text-2xl font-bold text-zinc-950">
+                      {selectedUserStats.approvedQuotations}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                      Win Rate
+                    </p>
+                    <p className="mt-2 text-2xl font-bold text-zinc-950">
+                      {selectedUserStats.totalQuotations > 0
+                        ? Math.round(
+                            (selectedUserStats.approvedQuotations / selectedUserStats.totalQuotations) * 100,
+                          ) + "%"
+                        : "—"}
+                    </p>
+                  </div>
+                  <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+                    <div className="p-4 pb-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                        Total Value
+                      </p>
+                      <p className="mt-2 text-2xl font-bold text-zinc-950">
+                        {formatAED(selectedUserStats.totalValue)}
+                      </p>
+                    </div>
+                    <SalesRepSparkline
+                      data={selectedUserStats.monthlyData.map((m) => m.value)}
+                      color="#10b981"
+                      uniqueId={`detail-${selectedUserId}`}
+                    />
+                  </div>
+                </div>
+
+                {/* Monthly trend chart */}
+                <div className="mt-4">
+                  <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Monthly Activity
+                  </h4>
+                  <SalesPerformanceCharts
+                    perRepData={[]}
+                    aggMonthData={selectedUserStats.monthlyData.map((m) => ({
+                      month: m.month,
+                      quoted: m.total,
+                      approved: m.approved,
+                    }))}
+                  />
+                </div>
+
+                {/* Recent quotations */}
+                <div className="mt-4 rounded-lg border border-zinc-200 bg-white shadow-sm">
+                  <div className="border-b border-zinc-200 px-4 py-3">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                      Recent Quotations
+                    </h4>
+                  </div>
+                  {selectedUserStats.recentQuotations.length === 0 ? (
+                    <p className="px-4 py-5 text-center text-xs text-zinc-400">
+                      No quotations in this period.
+                    </p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-zinc-100 text-sm">
+                        <thead>
+                          <tr className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                            <th className="px-4 py-2.5">No.</th>
+                            <th className="px-4 py-2.5">Title</th>
+                            <th className="px-4 py-2.5">Status</th>
+                            <th className="px-4 py-2.5 text-right">Value</th>
+                            <th className="px-4 py-2.5">Date</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-50">
+                          {selectedUserStats.recentQuotations.map((q) => (
+                            <tr key={q.id} className="hover:bg-zinc-50">
+                              <td className="px-4 py-3 font-mono text-xs text-zinc-500">
+                                <Link href={`/quotations/${q.id}`} className="hover:underline">
+                                  {q.quotation_no ?? "—"}
+                                </Link>
+                              </td>
+                              <td className="px-4 py-3 text-zinc-800">
+                                <Link href={`/quotations/${q.id}`} className="hover:underline">
+                                  {q.title ?? "—"}
+                                </Link>
+                              </td>
+                              <td className="px-4 py-3">
+                                <span
+                                  className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusBadgeClass(q.status)}`}
+                                >
+                                  {q.status.replaceAll("_", " ")}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-right text-zinc-700">
+                                {q.currency ?? selectedUserStats.currency}{" "}
+                                {new Intl.NumberFormat("en-US", {
+                                  minimumFractionDigits: 0,
+                                  maximumFractionDigits: 0,
+                                }).format(q.grand_total ?? 0)}
+                              </td>
+                              <td className="px-4 py-3 text-xs text-zinc-400">
+                                {new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" }).format(
+                                  new Date(q.created_at),
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Recent activity */}
+                <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                  <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Recent Activity
+                  </h4>
+                  {selectedUserStats.recentActivity.length === 0 ? (
+                    <p className="text-center text-xs text-zinc-400">No activity in this period.</p>
+                  ) : (
+                    <div className="divide-y divide-zinc-100">
+                      {selectedUserStats.recentActivity.slice(0, 8).map((entry) => (
+                        <div key={entry.id} className="flex items-start gap-3 py-2.5">
+                          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-medium text-zinc-950">{entry.title}</p>
+                            {entry.description ? (
+                              <p className="mt-0.5 text-[11px] text-zinc-400">{entry.description}</p>
+                            ) : null}
+                          </div>
+                          <p className="shrink-0 text-[11px] text-zinc-400">
+                            {relativeTime(entry.created_at)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </ErpAppShell>
   );

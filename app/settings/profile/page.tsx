@@ -2,15 +2,20 @@ import Link from "next/link";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { AvatarUpload } from "@/components/settings/avatar-upload";
-import { ProfileActivity } from "@/components/settings/profile-activity";
+import { ProfileDashboardShell } from "@/components/settings/profile-dashboard-shell";
 import { updateMyProfile } from "@/app/settings/actions";
 import { requireActiveUser } from "@/lib/auth";
-import { loadProfileStats, loadTeamStats } from "@/lib/settings/profile-stats-loader";
+import {
+  loadProfileStats,
+  loadTeamStats,
+  getDateRangePreset,
+} from "@/lib/settings/profile-stats-loader";
 import {
   userRoleLabel,
   userStatusBadgeClass,
   userStatusLabel,
 } from "@/lib/user-management";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +24,16 @@ type ProfilePageProps = {
     message?: string;
     messageScope?: string;
     messageType?: string;
+    preset?: string;
   }>;
 };
+
+const VALID_PRESETS = ["this_month", "last_3_months", "last_6_months", "this_year"] as const;
+type Preset = (typeof VALID_PRESETS)[number];
+
+function isValidPreset(value: string | undefined): value is Preset {
+  return VALID_PRESETS.includes(value as Preset);
+}
 
 function isProfileMessage(message: string) {
   return message === "Profile updated."
@@ -66,10 +79,54 @@ function Field({
 
 export default async function ProfilePage({ searchParams }: ProfilePageProps) {
   const { user, profile, displayName } = await requireActiveUser();
-  const stats = await loadProfileStats(user.id);
-  const isSystemOwner = profile?.role === "system_owner";
-  const teamStats = isSystemOwner ? await loadTeamStats() : null;
   const params = (await searchParams) ?? {};
+
+  const preset: Preset = isValidPreset(params.preset) ? params.preset : "last_6_months";
+  const dateRange = getDateRangePreset(preset);
+
+  const isSystemOwner = profile?.role === "system_owner";
+
+  const supabase = await createClient();
+
+  const [stats, teamStats, allQuotationsResult] = await Promise.all([
+    loadProfileStats(user.id, dateRange),
+    isSystemOwner ? loadTeamStats(dateRange) : Promise.resolve(null),
+    supabase
+      .from("quotations")
+      .select("id,status,client_id,grand_total,company_name:clients(company_name)")
+      .eq("created_by", user.id)
+      .eq("is_active", true)
+      .gte("created_at", dateRange.from)
+      .lte("created_at", dateRange.to)
+      .limit(500),
+  ]);
+
+  type AllQuotationRow = {
+    id: string;
+    status: string;
+    client_id: string | null;
+    grand_total: number | null;
+    company_name: { company_name: string | null } | null;
+  };
+
+  const allRows = (allQuotationsResult.data as AllQuotationRow[] | null) ?? [];
+
+  const allQuotations = allRows.map((q) => ({ status: q.status }));
+
+  // Compute top 5 clients by total value
+  const clientTotals: Record<string, { clientName: string; total: number; count: number }> = {};
+  for (const q of allRows) {
+    const clientName = q.company_name?.company_name?.trim() || "Unknown Client";
+    if (!clientTotals[clientName]) {
+      clientTotals[clientName] = { clientName, total: 0, count: 0 };
+    }
+    clientTotals[clientName].total += q.grand_total ?? 0;
+    clientTotals[clientName].count += 1;
+  }
+  const topClients = Object.values(clientTotals)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 5);
+
   const showMessage = params.messageScope === "profile"
     && typeof params.message === "string"
     && isProfileMessage(params.message);
@@ -84,6 +141,8 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
       description="Review your account details and keep your contact information up to date."
       userDisplayName={displayName}
       userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
     >
       <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex items-center justify-between gap-4">
@@ -199,7 +258,8 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
             </section>
           </div>
 
-          <ProfileActivity
+          <ProfileDashboardShell
+            initialPreset={preset}
             totalQuotations={stats.totalQuotations}
             approvedQuotations={stats.approvedQuotations}
             totalValue={stats.totalValue}
@@ -209,6 +269,8 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
             recentQuotations={stats.recentQuotations}
             teamStats={teamStats}
             monthlyData={stats.monthlyData}
+            allQuotations={allQuotations}
+            topClients={topClients}
           />
       </div>
     </ErpAppShell>

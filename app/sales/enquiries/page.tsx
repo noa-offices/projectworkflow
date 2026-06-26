@@ -14,6 +14,8 @@ export default async function SalesEnquiriesPage() {
       role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
     >
       <div className="px-5 py-6 sm:px-8">
         <section className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-5 text-amber-950">

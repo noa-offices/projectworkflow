@@ -167,6 +167,8 @@ export default async function CompletedProcurementDetailPage({
       role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
     >
       <div className="px-5 py-6 sm:px-8">
 

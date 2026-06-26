@@ -16,7 +16,7 @@ type UsersPageProps = {
 };
 
 export default async function UsersPage({ searchParams }: UsersPageProps) {
-  const { user, displayName } = await requireSystemOwner();
+  const { user, profile, displayName } = await requireSystemOwner();
   const message = (await searchParams)?.message;
   const supabase = await createClient();
   const { data: profiles, error } = await supabase
@@ -36,6 +36,8 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
       description="Approve users, manage roles, and control account access."
       userDisplayName={displayName}
       userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
     >
       <div className="px-5 py-6 sm:px-8">
         <div className="mb-5 flex items-center justify-between gap-4">

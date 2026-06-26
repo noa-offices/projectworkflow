@@ -492,6 +492,8 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
         role={profile?.role ?? null}
         userDisplayName={displayName}
         userEmail={user.email}
+        userAvatarUrl={profile?.avatar_url ?? null}
+        userRole={profile?.role ?? null}
         isCompletedProject
       >
         <div className="px-5 py-6 sm:px-8">
@@ -530,6 +532,8 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
         role={profile?.role ?? null}
         userDisplayName={displayName}
         userEmail={user.email}
+        userAvatarUrl={profile?.avatar_url ?? null}
+        userRole={profile?.role ?? null}
       >
         <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3">
@@ -560,6 +564,8 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
       role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
     >
       <div className="px-5 py-6 sm:px-8">
         {query.message ? (

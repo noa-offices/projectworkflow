@@ -10,8 +10,10 @@ type ErpAppShellProps = {
   isCompletedProject?: boolean;
   role?: AppRole | null;
   title: string;
+  userAvatarUrl?: string | null;
   userDisplayName?: string;
   userEmail?: string | null;
+  userRole?: AppRole | null;
 };
 
 export function ErpAppShell({
@@ -21,12 +23,20 @@ export function ErpAppShell({
   isCompletedProject,
   role,
   title,
+  userAvatarUrl,
   userDisplayName,
   userEmail,
+  userRole,
 }: ErpAppShellProps) {
   return (
     <div className="min-h-screen bg-zinc-100 text-zinc-950 lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
-      <ErpSidebar role={role ?? null} isCompletedProject={isCompletedProject} />
+      <ErpSidebar
+        role={role ?? null}
+        isCompletedProject={isCompletedProject}
+        userDisplayName={userDisplayName}
+        userAvatarUrl={userAvatarUrl}
+        userRole={userRole}
+      />
       <div className="min-w-0">
         <ErpTopbar
           description={description}

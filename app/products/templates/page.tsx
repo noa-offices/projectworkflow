@@ -2126,6 +2126,8 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
         role={profile?.role ?? null}
         userDisplayName={displayName}
         userEmail={user.email}
+        userAvatarUrl={profile?.avatar_url ?? null}
+        userRole={profile?.role ?? null}
       >
         <div className="px-5 py-6 sm:px-8">
             <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -2370,6 +2372,8 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
       role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
     >
       <div className="px-5 py-6 sm:px-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

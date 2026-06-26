@@ -30,16 +30,6 @@ type QuotationEntry = {
   created_at: string;
 };
 
-type TeamMemberStat = {
-  userId: string;
-  displayName: string;
-  role: string | null;
-  totalQuotations: number;
-  approvedQuotations: number;
-  totalValue: number;
-  currency: string;
-};
-
 type MonthlyDataPoint = {
   month: string;
   year: number;
@@ -49,6 +39,20 @@ type MonthlyDataPoint = {
   value: number;
 };
 
+type DateRange = { from: string; to: string };
+
+type TopClient = {
+  clientName: string;
+  total: number;
+  count: number;
+};
+
+type AllQuotationEntry = {
+  status: string;
+};
+
+type Preset = "this_month" | "last_3_months" | "last_6_months" | "this_year";
+
 type ProfileActivityProps = {
   totalQuotations: number;
   approvedQuotations: number;
@@ -57,9 +61,30 @@ type ProfileActivityProps = {
   role: string | null;
   recentActivity: ActivityEntry[];
   recentQuotations: QuotationEntry[];
-  teamStats?: TeamMemberStat[] | null;
   monthlyData: MonthlyDataPoint[];
+  allQuotations?: AllQuotationEntry[];
+  topClients?: TopClient[];
+  onDateRangeChange?: (range: DateRange | null) => void;
+  onPresetChange?: (preset: Preset) => void;
+  selectedPreset?: string;
 };
+
+const PRESET_LABELS: Record<Preset, string> = {
+  this_month: "This Month",
+  last_3_months: "Last 3 Months",
+  last_6_months: "Last 6 Months",
+  this_year: "This Year",
+};
+
+const PRESET_KEYS: Preset[] = ["this_month", "last_3_months", "last_6_months", "this_year"];
+
+const PIPELINE_STATUSES: { key: string; label: string }[] = [
+  { key: "draft", label: "Draft" },
+  { key: "ready_to_send", label: "Ready to Send" },
+  { key: "sent_to_client", label: "Sent to Client" },
+  { key: "client_confirmed", label: "Client Approved" },
+  { key: "cancelled", label: "Cancelled" },
+];
 
 function dotColor(entityType: string): string {
   if (entityType.startsWith("quotation")) return "bg-emerald-500";
@@ -89,16 +114,6 @@ function statusBadge(status: string): string {
 
 function statusLabel(status: string): string {
   return status.replaceAll("_", " ");
-}
-
-function roleLabel(role: string | null): string {
-  switch (role) {
-    case "system_owner": return "System Owner";
-    case "admin_manager": return "Admin Manager";
-    case "sales_designer": return "Sales User";
-    case "viewer": return "Viewer";
-    default: return "Unknown";
-  }
 }
 
 function ActivityFeed({ recentActivity }: { recentActivity: ActivityEntry[] }) {
@@ -197,16 +212,35 @@ function QuotationsTable({
 function MonthlyChart({
   monthlyData,
   title,
+  currency,
+  totalValue,
 }: {
   monthlyData: MonthlyDataPoint[];
   title: string;
+  currency: string;
+  totalValue: number;
 }) {
+  const formattedTotal = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(totalValue);
+
   return (
     <div className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-      <h2 className="text-sm font-semibold text-zinc-950">{title}</h2>
-      <p className="mt-1 text-xs text-zinc-500">
-        Light green = created · Dark green = client approved
-      </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-950">{title}</h2>
+          <p className="mt-1 text-xs text-zinc-500">
+            Light green = created · Dark green = client approved
+          </p>
+        </div>
+        <div className="text-right shrink-0">
+          <p className="text-xs text-zinc-500">Total Value</p>
+          <p className="mt-0.5 text-sm font-semibold text-zinc-950">
+            {currency} {formattedTotal}
+          </p>
+        </div>
+      </div>
       <div className="mt-4">
         <ResponsiveContainer width="100%" height={240}>
           <BarChart data={monthlyData} barGap={4}>
@@ -225,7 +259,8 @@ function MonthlyChart({
             />
             <Tooltip
               contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e4e4e7" }}
-              formatter={(value, name) => [
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              formatter={(value: any, name: any) => [
                 value,
                 name === "total" ? "Quotes Created" : "Approved",
               ]}
@@ -239,50 +274,70 @@ function MonthlyChart({
   );
 }
 
-function TeamOverviewTable({ teamStats }: { teamStats: TeamMemberStat[] }) {
+function PipelineBreakdown({ allQuotations }: { allQuotations: AllQuotationEntry[] }) {
+  const counts: Record<string, number> = {};
+  for (const q of allQuotations) {
+    counts[q.status] = (counts[q.status] ?? 0) + 1;
+  }
+
+  return (
+    <div className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+      <h2 className="text-sm font-semibold text-zinc-950">Pipeline Breakdown</h2>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {PIPELINE_STATUSES.map(({ key, label }) => {
+          const count = counts[key] ?? 0;
+          return (
+            <div
+              key={key}
+              className="flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs"
+            >
+              <span className="text-zinc-600">{label}</span>
+              <span className="rounded-full bg-zinc-200 px-1.5 py-0.5 text-xs font-semibold text-zinc-800">
+                {count}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TopClientsTable({
+  topClients,
+  currency,
+}: {
+  topClients: TopClient[];
+  currency: string;
+}) {
+  if (topClients.length === 0) return null;
   return (
     <div className="mt-6 rounded-lg border border-zinc-200 bg-white shadow-sm">
       <div className="border-b border-zinc-200 px-5 py-4">
-        <h2 className="text-sm font-semibold text-zinc-950">Team Overview</h2>
-        <p className="mt-1 text-xs text-zinc-500">
-          Quotation performance across all active team members
-        </p>
+        <h2 className="text-sm font-semibold text-zinc-950">Top Clients by Value</h2>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-zinc-200 text-sm">
-          <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
-            <tr>
-              <th className="px-5 py-3 text-left font-semibold">Team Member</th>
-              <th className="px-5 py-3 text-left font-semibold">Role</th>
-              <th className="px-5 py-3 text-right font-semibold">Quotes</th>
-              <th className="px-5 py-3 text-right font-semibold">Approved</th>
-              <th className="px-5 py-3 text-right font-semibold">Win Rate</th>
-              <th className="px-5 py-3 text-right font-semibold">Total Value</th>
+          <thead>
+            <tr className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              <th className="px-5 py-3 w-8">#</th>
+              <th className="px-5 py-3">Client</th>
+              <th className="px-5 py-3 text-right">Quotes</th>
+              <th className="px-5 py-3 text-right">Value</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100">
-            {teamStats.map((member, index) => (
-              <tr key={member.userId} className={index === 0 ? "bg-emerald-50/40" : ""}>
-                <td className="px-5 py-4 font-medium text-zinc-950">
-                  {member.displayName}
-                  {index === 0 && (
-                    <span className="ml-2 text-xs text-emerald-700">Top performer</span>
-                  )}
-                </td>
-                <td className="px-5 py-4 text-zinc-500">{roleLabel(member.role)}</td>
-                <td className="px-5 py-4 text-right text-zinc-950">{member.totalQuotations}</td>
-                <td className="px-5 py-4 text-right text-zinc-950">{member.approvedQuotations}</td>
-                <td className="px-5 py-4 text-right text-zinc-950">
-                  {member.totalQuotations > 0
-                    ? Math.round((member.approvedQuotations / member.totalQuotations) * 100) + "%"
-                    : "—"}
-                </td>
-                <td className="px-5 py-4 text-right font-medium text-zinc-950">
-                  {member.currency}{" "}
+            {topClients.map((client, index) => (
+              <tr key={client.clientName} className="hover:bg-zinc-50">
+                <td className="px-5 py-3 text-xs font-medium text-zinc-400">{index + 1}</td>
+                <td className="px-5 py-3 font-medium text-zinc-950">{client.clientName}</td>
+                <td className="px-5 py-3 text-right text-zinc-700">{client.count}</td>
+                <td className="px-5 py-3 text-right font-medium text-zinc-950">
+                  {currency}{" "}
                   {new Intl.NumberFormat("en-US", {
                     minimumFractionDigits: 0,
                     maximumFractionDigits: 0,
-                  }).format(member.totalValue)}
+                  }).format(client.total)}
                 </td>
               </tr>
             ))}
@@ -301,8 +356,11 @@ export function ProfileActivity({
   role,
   recentActivity,
   recentQuotations,
-  teamStats,
   monthlyData,
+  allQuotations = [],
+  topClients = [],
+  onPresetChange,
+  selectedPreset = "last_6_months",
 }: ProfileActivityProps) {
   const winRate =
     totalQuotations > 0
@@ -316,11 +374,36 @@ export function ProfileActivity({
 
   const isManagement = role === "system_owner" || role === "admin_manager";
   const isSalesDesigner = role === "sales_designer";
+  const isSystemOwner = role === "system_owner";
+  const showPipeline = isSalesDesigner || isSystemOwner;
+
+  const chartTitle = "My Quotation Activity";
 
   return (
     <>
+      {/* Section 0 — Date Range Selector */}
+      <div className="mt-6 flex flex-wrap gap-2">
+        {PRESET_KEYS.map((preset) => {
+          const isActive = selectedPreset === preset;
+          return (
+            <button
+              key={preset}
+              type="button"
+              onClick={() => onPresetChange?.(preset)}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                isActive
+                  ? "bg-emerald-900 text-white"
+                  : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+              }`}
+            >
+              {PRESET_LABELS[preset]}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Section 1 — Stats Grid (all roles) */}
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
             Quotations Created
@@ -344,28 +427,35 @@ export function ProfileActivity({
         </div>
       </div>
 
-      {/* Section 2A — Sales Designer view */}
+      {/* Section 2 — Pipeline Breakdown (sales_designer + system_owner) */}
+      {showPipeline ? (
+        <PipelineBreakdown allQuotations={allQuotations} />
+      ) : null}
+
+      {/* Section 3A — Sales Designer view */}
       {isSalesDesigner ? (
         <>
           <MonthlyChart
             monthlyData={monthlyData}
-            title="My Quotation Activity — Last 6 Months"
+            title={chartTitle}
+            currency={currency}
+            totalValue={totalValue}
           />
+          <TopClientsTable topClients={topClients} currency={currency} />
           <ActivityFeed recentActivity={recentActivity} />
           <QuotationsTable recentQuotations={recentQuotations} currency={currency} />
         </>
       ) : null}
 
-      {/* Section 2B — Management view (system_owner or admin_manager) */}
+      {/* Section 3B — Management view (system_owner or admin_manager) */}
       {isManagement ? (
         <>
           <MonthlyChart
             monthlyData={monthlyData}
-            title="Team Quotation Activity — Last 6 Months"
+            title={chartTitle}
+            currency={currency}
+            totalValue={totalValue}
           />
-          {teamStats && teamStats.length > 0 ? (
-            <TeamOverviewTable teamStats={teamStats} />
-          ) : null}
           <ActivityFeed recentActivity={recentActivity} />
         </>
       ) : null}

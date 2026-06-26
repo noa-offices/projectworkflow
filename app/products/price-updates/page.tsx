@@ -199,6 +199,8 @@ export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPag
       role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
     >
       <PriceUpdatesReview
         initialFilters={{

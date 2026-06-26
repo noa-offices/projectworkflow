@@ -13,6 +13,8 @@ export default async function SalesOpportunitiesPage() {
       role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
+      userAvatarUrl={profile?.avatar_url ?? null}
+      userRole={profile?.role ?? null}
     >
       <div className="px-5 py-6 sm:px-8">
         <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
