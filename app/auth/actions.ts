@@ -114,3 +114,48 @@ export async function signOut() {
   await supabase.auth.signOut();
   redirect("/login");
 }
+
+export async function requestPasswordReset(formData: FormData) {
+  const email = formValue(formData, "email");
+
+  if (!email) {
+    redirect("/forgot-password?message=Email+is+required&type=error");
+  }
+
+  const supabase = await createClient();
+  await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: process.env.NEXT_PUBLIC_SITE_URL + "/auth/callback?next=/reset-password",
+  });
+
+  redirect(
+    "/forgot-password?message=If+that+email+exists+you+will+receive+a+reset+link&type=success",
+  );
+}
+
+export async function updatePassword(formData: FormData) {
+  const password = formValue(formData, "password");
+  const confirmPassword = formValue(formData, "confirmPassword");
+
+  if (!password || !confirmPassword) {
+    redirect("/reset-password?message=Password+is+required&type=error");
+  }
+
+  if (password !== confirmPassword) {
+    redirect("/reset-password?message=Passwords+do+not+match&type=error");
+  }
+
+  if (password.length < 8) {
+    redirect(
+      "/reset-password?message=Password+must+be+at+least+8+characters&type=error",
+    );
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.auth.updateUser({ password });
+
+  if (error) {
+    redirect("/reset-password?message=Password+could+not+be+updated&type=error");
+  }
+
+  redirect("/dashboard?message=Password+updated+successfully");
+}
