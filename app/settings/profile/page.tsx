@@ -2,8 +2,10 @@ import Link from "next/link";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { AvatarUpload } from "@/components/settings/avatar-upload";
+import { ProfileActivity } from "@/components/settings/profile-activity";
 import { updateMyProfile } from "@/app/settings/actions";
 import { requireActiveUser } from "@/lib/auth";
+import { loadProfileStats, loadTeamStats } from "@/lib/settings/profile-stats-loader";
 import {
   userRoleLabel,
   userStatusBadgeClass,
@@ -64,6 +66,9 @@ function Field({
 
 export default async function ProfilePage({ searchParams }: ProfilePageProps) {
   const { user, profile, displayName } = await requireActiveUser();
+  const stats = await loadProfileStats(user.id);
+  const isSystemOwner = profile?.role === "system_owner";
+  const teamStats = isSystemOwner ? await loadTeamStats() : null;
   const params = (await searchParams) ?? {};
   const showMessage = params.messageScope === "profile"
     && typeof params.message === "string"
@@ -193,6 +198,18 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
               </div>
             </section>
           </div>
+
+          <ProfileActivity
+            totalQuotations={stats.totalQuotations}
+            approvedQuotations={stats.approvedQuotations}
+            totalValue={stats.totalValue}
+            currency={stats.currency}
+            role={profile?.role ?? null}
+            recentActivity={stats.recentActivity}
+            recentQuotations={stats.recentQuotations}
+            teamStats={teamStats}
+            monthlyData={stats.monthlyData}
+          />
       </div>
     </ErpAppShell>
   );

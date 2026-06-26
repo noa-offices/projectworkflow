@@ -105,6 +105,10 @@ function isPriceUpdatesActive(pathname: string, priceStatus: string | null) {
   return pathname === "/products/price-updates" || ((pathname === "/products" || pathname === "/products/templates") && priceStatus === "due");
 }
 
+function isSalesReportActive(pathname: string) {
+  return pathname === "/insights/sales-report" || pathname.startsWith("/insights/sales-report");
+}
+
 function NavRow({
   iconColors,
   indent = false,
@@ -241,8 +245,7 @@ export function ErpSidebar({
         title: "Insights",
         iconColors: { bg: "bg-violet-100", icon: "text-violet-600" },
         items: [
-          { label: "Reports", icon: BarChart3, disabled: true, suffix: "Coming soon" },
-          { label: "Sales Report", icon: TrendingUp, href: "/insights/sales-report", active: pathname === "/insights/sales-report" },
+          { label: "Sales Report", href: "/insights/sales-report", icon: BarChart3, active: isSalesReportActive(pathname) },
         ],
       },
       {
