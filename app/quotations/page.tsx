@@ -221,8 +221,7 @@ function QuotationForm({
       <input type="hidden" name="project_id" value="" />
       <ClientSelect clients={clients} selectedClientId={selectedClientId} />
       <SalespersonSelect profiles={salespersonProfiles} currentUserId={currentUserId} />
-      <Field name="legacy_reference" label="Reference / Project Name" required />
-      <Field name="title" label="Title" required />
+      <Field name="legacy_reference" label="Project / Reference Name" required />
       <label className="block">
         <span className="text-xs font-semibold uppercase text-zinc-500">Quotation No.</span>
         <input

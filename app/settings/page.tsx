@@ -1,7 +1,8 @@
 import Link from "next/link";
+import { ChevronRight, Users } from "lucide-react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
-import { resetTestData, updateCompanySettings, updateDocumentDefaults } from "@/app/settings/actions";
+import { updateCompanySettings, updateDocumentDefaults } from "@/app/settings/actions";
 import { requireActiveUser } from "@/lib/auth";
 import { getCompanyProfile, getCompanySettingsRecord, companyAddressLines } from "@/lib/company-profile";
 import { DEFAULT_QUOTATION_NOTES } from "@/lib/quotations/quotation-pdf-settings";
@@ -78,6 +79,18 @@ function formatDateTime(value?: string | null) {
   }).format(new Date(value));
 }
 
+function avatarInitials(name: string) {
+  const initials = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("");
+
+  return initials ? initials.toUpperCase() : "?";
+}
+
 export default async function SettingsPage({ searchParams }: SettingsPageProps) {
   const { user, profile, displayName } = await requireActiveUser();
   const params = (await searchParams) ?? {};
@@ -152,8 +165,8 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                   <div className="md:col-span-2">
                     <Field name="logo_url" label="Logo URL / logo path" defaultValue={companySettings?.logo_url} />
                   </div>
-                  <div className="md:col-span-2 flex items-center justify-between gap-4 rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
-                    <span>
+                  <div className="md:col-span-2 flex items-center justify-between border-t border-zinc-200 bg-zinc-50 px-6 py-4">
+                    <span className="text-xs text-zinc-500">
                       Last updated: {formatDateTime(companySettings?.updated_at)}
                       {companySettings?.updated_at ? ` by ${lastUpdatedBy}` : ""}
                     </span>
@@ -213,8 +226,8 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                       />
                     </div>
                   </div>
-                  <div className="flex items-center justify-between gap-4 rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
-                    <span>
+                  <div className="flex items-center justify-between border-t border-zinc-200 bg-zinc-50 px-6 py-4">
+                    <span className="text-xs text-zinc-500">
                       Last updated: {formatDateTime(companySettings?.updated_at)}
                       {companySettings?.updated_at ? ` by ${lastUpdatedBy}` : ""}
                     </span>
@@ -240,37 +253,43 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
             <div className="grid gap-4">
               <Link
                 href="/settings/profile"
-                className="group rounded-lg border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-emerald-900/25 hover:shadow-md"
+                className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm transition hover:bg-zinc-50"
               >
-                <div className="flex h-full flex-col justify-between gap-6">
-                  <div>
-                    <h2 className="text-base font-semibold text-zinc-950">My Profile</h2>
-                    <p className="mt-2 text-sm leading-6 text-zinc-500">
-                      Review your account details and keep your internal profile information current.
-                    </p>
-                  </div>
-                  <span className="text-sm font-semibold text-emerald-900 transition group-hover:text-emerald-800">
-                    Open profile
+                {profile?.avatar_url ? (
+                  <img
+                    src={profile.avatar_url}
+                    alt=""
+                    className="h-10 w-10 shrink-0 rounded-full object-cover"
+                  />
+                ) : (
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-sm font-semibold text-emerald-900">
+                    {avatarInitials(displayName)}
                   </span>
+                )}
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-base font-semibold text-zinc-950">My Profile</h2>
+                  <p className="mt-1 text-sm leading-6 text-zinc-500">
+                    Review your account details and keep your internal profile information current.
+                  </p>
                 </div>
+                <ChevronRight className="h-5 w-5 shrink-0 text-zinc-400" />
               </Link>
 
               {profile?.role === "system_owner" ? (
                 <Link
                   href="/settings/users"
-                  className="group rounded-lg border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-emerald-900/25 hover:shadow-md"
+                  className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm transition hover:bg-zinc-50"
                 >
-                  <div className="flex h-full flex-col justify-between gap-6">
-                    <div>
-                      <h2 className="text-base font-semibold text-zinc-950">User Management</h2>
-                      <p className="mt-2 text-sm leading-6 text-zinc-500">
-                        Approve users and manage account roles.
-                      </p>
-                    </div>
-                    <span className="text-sm font-semibold text-emerald-900 transition group-hover:text-emerald-800">
-                      Open settings
-                    </span>
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-purple-50 text-purple-700">
+                    <Users className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-base font-semibold text-zinc-950">User Management</h2>
+                    <p className="mt-1 text-sm leading-6 text-zinc-500">
+                      Approve users and manage account roles.
+                    </p>
                   </div>
+                  <ChevronRight className="h-5 w-5 shrink-0 text-zinc-400" />
                 </Link>
               ) : null}
 
@@ -321,37 +340,6 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                   </div>
                 </div>
               </section>
-
-              {profile?.role === "system_owner" && process.env.NODE_ENV !== "production" ? (
-                <section className="rounded-lg border border-red-200 bg-white p-5 shadow-sm">
-                  <h2 className="text-base font-semibold text-zinc-950">Danger Zone</h2>
-                  <p className="mt-2 text-sm leading-6 text-zinc-600">
-                    Reset test data in non-production. This deletes projects, linked quotations,
-                    quotation items, quotation sections, presentation/RFQ/PO/order confirmation settings,
-                    and linked audit rows. It does not delete clients, product templates, brands,
-                    materials, company settings, or users.
-                  </p>
-                  <form action={resetTestData} className="mt-4 grid gap-3">
-                    <label className="block">
-                      <span className="text-xs font-semibold uppercase text-zinc-500">
-                        Type RESET TEST DATA
-                      </span>
-                      <input
-                        name="confirmation_text"
-                        className="mt-1 h-10 w-full rounded-md border border-red-200 px-3 text-sm outline-none transition focus:border-red-500 focus:ring-2 focus:ring-red-500/10"
-                      />
-                    </label>
-                    <div className="flex justify-end">
-                      <PendingSubmitButton
-                        className="rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
-                        pendingLabel="Resetting test data..."
-                      >
-                        Reset test data
-                      </PendingSubmitButton>
-                    </div>
-                  </form>
-                </section>
-              ) : null}
             </div>
           </div>
       </div>
