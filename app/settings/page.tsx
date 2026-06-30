@@ -5,7 +5,7 @@ import { resetTestData, updateCompanySettings, updateDocumentDefaults } from "@/
 import { requireActiveUser } from "@/lib/auth";
 import { getCompanyProfile, getCompanySettingsRecord, companyAddressLines } from "@/lib/company-profile";
 import { DEFAULT_QUOTATION_NOTES } from "@/lib/quotations/quotation-pdf-settings";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 type SettingsPageProps = {
   searchParams?: Promise<{
@@ -82,13 +82,15 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
   const { user, profile, displayName } = await requireActiveUser();
   const params = (await searchParams) ?? {};
   const canManageSettings =
-    profile?.role === "system_owner" || profile?.role === "admin_manager";
+    profile?.role === "system_owner" ||
+    profile?.role === "admin_manager" ||
+    profile?.role === "procurement_manager";
   const companyProfile = await getCompanyProfile();
   const companySettings = await getCompanySettingsRecord();
-  const supabase = await createClient();
   const updatedById = companySettings?.updated_by ?? null;
-  const { data: updatedByProfile } = updatedById
-    ? await supabase
+  const adminResult = createAdminClient();
+  const { data: updatedByProfile } = updatedById && adminResult.client
+    ? await adminResult.client
       .from("profiles")
       .select("full_name,email")
       .eq("id", updatedById)

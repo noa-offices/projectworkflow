@@ -92,7 +92,7 @@ async function activeUser(): Promise<AuthFailure | ActiveUserAuthSuccess> {
 }
 
 function canManageRecords(profile: ProfileRecord | null) {
-  return ["system_owner", "admin_manager", "sales_designer"].includes(profile?.role ?? "");
+  return ["system_owner", "admin_manager", "sales_designer", "designer"].includes(profile?.role ?? "");
 }
 
 export async function loadOrderConfirmationSettings(quotationId: string): Promise<LoadResult> {

@@ -919,7 +919,8 @@ export default async function QuotationDetailPage({
   const canManageRecords =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
-    profile?.role === "sales_designer";
+    profile?.role === "sales_designer" ||
+    profile?.role === "designer";
   const supabase = await createSupabaseClient();
 
   const { data: quotation, error: quotationError } = await supabase

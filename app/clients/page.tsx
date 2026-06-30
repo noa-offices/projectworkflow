@@ -584,7 +584,8 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
   const canManageRecords =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
-    profile?.role === "sales_designer";
+    profile?.role === "sales_designer" ||
+    profile?.role === "designer";
   const supabase = await createSupabaseClient();
 
   const { data: clients, error: clientsError } = await supabase

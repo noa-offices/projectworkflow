@@ -412,7 +412,8 @@ export default async function ProjectFolderPage({ params, searchParams }: Projec
   const canManageRecords =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
-    profile?.role === "sales_designer";
+    profile?.role === "sales_designer" ||
+    profile?.role === "designer";
   const supabase = await createSupabaseClient();
 
   const { data: project, error: projectError } = await supabase

@@ -89,7 +89,7 @@ export async function requireSettingsManager(): Promise<AuthenticatedUser> {
   const authenticatedUser = await requireActiveUser();
   const role = authenticatedUser.profile?.role;
 
-  if (role !== "system_owner" && role !== "admin_manager") {
+  if (role !== "system_owner" && role !== "admin_manager" && role !== "designer") {
     redirect("/dashboard");
   }
 
@@ -122,7 +122,25 @@ export async function requireRecordsManager(): Promise<AuthenticatedUser> {
   if (
     role !== "system_owner" &&
     role !== "admin_manager" &&
-    role !== "sales_designer"
+    role !== "sales_designer" &&
+    role !== "designer"
+  ) {
+    redirect("/dashboard");
+  }
+
+  return authenticatedUser;
+}
+
+export async function requireProductLibraryManager(): Promise<AuthenticatedUser> {
+  const authenticatedUser = await requireActiveUser();
+  const role = authenticatedUser.profile?.role;
+
+  if (
+    role !== "system_owner" &&
+    role !== "admin_manager" &&
+    role !== "procurement_manager" &&
+    role !== "sales_designer" &&
+    role !== "designer"
   ) {
     redirect("/dashboard");
   }

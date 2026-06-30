@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
-import { requireSettingsManager } from "@/lib/auth";
+import { requireProductLibraryManager } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit-log";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import {
@@ -656,7 +656,7 @@ async function duplicateCategoryExists({
 }
 
 export async function createMainCategoryFromTemplates(formData: FormData) {
-  const { user } = await requireSettingsManager();
+  const { user } = await requireProductLibraryManager();
   const brandId = textValueFromNames(formData, ["quick_brand_id", "brand_id"]);
   const name = textValueFromNames(formData, ["quick_name", "name"]);
   const returnMode = textValueFromNames(formData, ["quick_return_mode", "return_mode"]);
@@ -709,7 +709,7 @@ export async function createMainCategoryFromTemplates(formData: FormData) {
 }
 
 export async function createSubCategoryFromTemplates(formData: FormData) {
-  const { user } = await requireSettingsManager();
+  const { user } = await requireProductLibraryManager();
   const brandId = textValueFromNames(formData, ["quick_brand_id", "brand_id"]);
   const parentId = textValueFromNames(formData, ["quick_parent_id", "parent_id"]);
   const name = textValueFromNames(formData, ["quick_name", "name"]);
@@ -1309,7 +1309,7 @@ function componentPayload(formData: FormData, userId?: string) {
 }
 
 export async function createProductTemplate(formData: FormData) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, displayName } = await requireProductLibraryManager();
   const initialPayload = createTemplatePayload(formData, user.id);
   const templateId = textValue(formData, "id");
   const redirectPath = returnPath(formData, "/products/templates?addTemplate=1");
@@ -1367,7 +1367,7 @@ export async function createProductTemplate(formData: FormData) {
 }
 
 export async function updateProductTemplate(formData: FormData) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, displayName } = await requireProductLibraryManager();
   const id = textValue(formData, "id");
   const initialPayload = templatePayload(formData);
   const submittedImageSettings = templateImageMetadataValue(formData);
@@ -1458,7 +1458,7 @@ export async function updateProductTemplate(formData: FormData) {
 
 export async function updateProductTemplateForQuotationModal(formData: FormData): Promise<ProductTemplateModalActionResult> {
   try {
-    const { user, displayName } = await requireSettingsManager();
+    const { user, displayName } = await requireProductLibraryManager();
     const id = textValue(formData, "id");
     const initialPayload = templatePayload(formData);
     const submittedImageSettings = templateImageMetadataValue(formData);
@@ -1584,7 +1584,7 @@ export async function updateProductTemplateForQuotationModal(formData: FormData)
 }
 
 export async function updateProductTemplateDefaultPrice(formData: FormData) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, displayName } = await requireProductLibraryManager();
   const redirectPath = returnPath(formData);
   const productTemplateId = textValue(formData, "product_template_id");
   const newDefaultUnitPrice = numberValue(formData, "new_default_unit_price", Number.NaN);
@@ -1688,7 +1688,7 @@ export async function updateProductTemplateDefaultPrice(formData: FormData) {
 }
 
 export async function updateProductTemplateDetailPrice(formData: FormData) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, displayName } = await requireProductLibraryManager();
   const redirectPath = returnPath(formData);
   const productTemplateId = textValue(formData, "product_template_id");
   const sourceTable = detailPriceSourceValue(textValue(formData, "source_table"));
@@ -1868,7 +1868,7 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
 }
 
 export async function archiveProductTemplate(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) {
@@ -1887,7 +1887,7 @@ export async function archiveProductTemplate(formData: FormData) {
 }
 
 export async function markProductTemplateDiscontinued(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) {
@@ -1906,7 +1906,7 @@ export async function markProductTemplateDiscontinued(formData: FormData) {
 }
 
 export async function restoreProductTemplate(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) {
@@ -1925,7 +1925,7 @@ export async function restoreProductTemplate(formData: FormData) {
 }
 
 export async function permanentlyDeleteProductTemplate(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) {
@@ -1981,7 +1981,7 @@ export async function deactivateProductTemplate(formData: FormData) {
 }
 
 export async function createLinkedProductFamily(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const parentTemplateId = textValue(formData, "parent_template_id");
   const linkedTemplateId = textValue(formData, "linked_template_id");
   const payload = {
@@ -2016,7 +2016,7 @@ export async function createLinkedProductFamily(formData: FormData) {
 }
 
 export async function updateLinkedProductFamily(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
   const payload = {
     label: optionalTextValue(formData, "label"),
@@ -2049,7 +2049,7 @@ export async function updateLinkedProductFamily(formData: FormData) {
 }
 
 export async function deactivateLinkedProductFamily(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) {
@@ -2072,7 +2072,7 @@ export async function deactivateLinkedProductFamily(formData: FormData) {
 }
 
 export async function restoreLinkedProductFamily(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) {
@@ -2095,7 +2095,7 @@ export async function restoreLinkedProductFamily(formData: FormData) {
 }
 
 export async function permanentlyDeleteLinkedProductFamily(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) {
@@ -2118,7 +2118,7 @@ export async function permanentlyDeleteLinkedProductFamily(formData: FormData) {
 }
 
 export async function createProductTemplateMaterialGroup(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const redirectPath = returnPath(formData);
   const productTemplateId = textValue(formData, "product_template_id");
   const materialGroupId = textValue(formData, "material_group_id");
@@ -2251,7 +2251,7 @@ export async function createProductTemplateMaterialGroup(formData: FormData) {
 }
 
 export async function updateProductTemplateMaterialGroup(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const redirectPath = returnPath(formData);
   const id = textValue(formData, "id");
   const selectionMode = selectionModeValue(formData);
@@ -2363,7 +2363,7 @@ export async function updateProductTemplateMaterialGroup(formData: FormData) {
 }
 
 export async function deactivateProductTemplateMaterialGroup(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const redirectPath = returnPath(formData);
   const id = textValue(formData, "id");
 
@@ -2388,7 +2388,7 @@ export async function deactivateProductTemplateMaterialGroup(formData: FormData)
 }
 
 export async function updateProductTemplateImage(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
   const field = textValue(formData, "image_field");
   const path = optionalTextValue(formData, "image_path");
@@ -2454,7 +2454,7 @@ export async function updateProductTemplateImage(formData: FormData) {
 }
 
 export async function updateProductTemplateImageSettings(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
   const field = textValue(formData, "image_field");
 
@@ -2504,7 +2504,7 @@ export async function updateProductTemplateImageSettings(formData: FormData) {
 }
 
 export async function createProductComponent(formData: FormData) {
-  const { user } = await requireSettingsManager();
+  const { user } = await requireProductLibraryManager();
   const payload = componentPayload(formData, user.id);
 
   if (
@@ -2550,7 +2550,7 @@ export async function createProductComponent(formData: FormData) {
 }
 
 export async function updateProductComponent(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
   const payload = componentPayload(formData);
 
@@ -2586,7 +2586,7 @@ export async function updateProductComponent(formData: FormData) {
 }
 
 export async function deactivateProductComponent(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) {
@@ -2609,7 +2609,7 @@ export async function deactivateProductComponent(formData: FormData) {
 }
 
 export async function deactivateProductComponentGroup(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const templateId = textValue(formData, "template_id");
   const optionType = textValue(formData, "option_type");
   const componentGroup = textValue(formData, "component_group");
@@ -2641,7 +2641,7 @@ export async function markProductTemplatePriceChecked(
   note?: string | null,
   redirectPath = "/products/templates",
 ) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, displayName } = await requireProductLibraryManager();
 
   if (!templateId) {
     redirectWithMessageToPath(redirectPath, "Template id is required.");
@@ -2682,7 +2682,7 @@ export async function markTemplatePriceCheckedForQuotationModal(formData: FormDa
   const note = optionalTextValue(formData, "price_check_note");
 
   try {
-    const { user, displayName } = await requireSettingsManager();
+    const { user, displayName } = await requireProductLibraryManager();
 
     if (!templateId) {
       return { ok: false, message: "Template id is required." };
@@ -2717,7 +2717,7 @@ export async function markTemplatePriceCheckedForQuotationModal(formData: FormDa
 }
 
 export async function markVisibleProductTemplatesPriceChecked(formData: FormData) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, displayName } = await requireProductLibraryManager();
   const ids = Array.from(new Set(
     formData
       .getAll("template_id[]")
@@ -2775,7 +2775,7 @@ export async function markVisibleProductTemplatesPriceChecked(formData: FormData
 }
 
 export async function markBrandPriceListChecked(brandId: string, note?: string | null) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, displayName } = await requireProductLibraryManager();
 
   if (!brandId) {
     redirectWithMessage("Brand id is required.");
@@ -2833,7 +2833,7 @@ export async function markBrandPriceListCheckedAction(formData: FormData) {
 }
 
 export async function markBrandTemplatesPriceChecked(formData: FormData) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, displayName } = await requireProductLibraryManager();
   const brandId = textValue(formData, "brand_id");
 
   if (!brandId) {
@@ -2907,7 +2907,7 @@ export async function markBrandTemplatesPriceChecked(formData: FormData) {
 }
 
 export async function createBrandPriceListUpdate(formData: FormData) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, displayName } = await requireProductLibraryManager();
   const brandId = textValue(formData, "brand_id");
   const title = textValue(formData, "title");
 
@@ -2971,7 +2971,7 @@ export async function createBrandPriceListUpdate(formData: FormData) {
 }
 
 export async function updateBrandPriceListUpdate(formData: FormData) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, displayName } = await requireProductLibraryManager();
   const id = textValue(formData, "id");
   const title = textValue(formData, "title");
 
@@ -3031,7 +3031,7 @@ export async function updateBrandPriceListUpdate(formData: FormData) {
 }
 
 export async function archiveBrandPriceListUpdate(formData: FormData) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, displayName } = await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) {
@@ -3077,7 +3077,7 @@ export async function archiveBrandPriceListUpdate(formData: FormData) {
 }
 
 export async function markComponentPriceChecked(formData: FormData) {
-  const { user } = await requireSettingsManager();
+  const { user } = await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) {

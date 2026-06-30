@@ -74,7 +74,9 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
   const { id } = await params;
   const { profile, user } = await requireActiveUser();
   const canManageProductLibrary =
-    profile?.role === "system_owner" || profile?.role === "admin_manager";
+    profile?.role === "system_owner" ||
+    profile?.role === "admin_manager" ||
+    profile?.role === "designer";
   const supabase = await createSupabaseClient();
 
   const { data: quotation, error: quotationError } = await supabase

@@ -107,7 +107,9 @@ function roleLabel(role: string | null): string {
   switch (role) {
     case "system_owner": return "System Owner";
     case "admin_manager": return "Admin Manager";
+    case "procurement_manager": return "Procurement Manager";
     case "sales_designer": return "Sales User";
+    case "designer": return "Designer";
     case "viewer": return "Viewer";
     default: return "Unknown";
   }

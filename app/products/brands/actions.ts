@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireSettingsManager } from "@/lib/auth";
+import { requireProductLibraryManager } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import { createClient } from "@/lib/supabase/server";
@@ -37,7 +37,7 @@ function redirectToBrands(message: string, params: Record<string, string> = {}):
 }
 
 export async function createBrand(formData: FormData) {
-  const { user } = await requireSettingsManager();
+  const { user } = await requireProductLibraryManager();
   const name = textValue(formData, "name");
 
   if (!name) {
@@ -82,7 +82,7 @@ export async function createBrand(formData: FormData) {
 }
 
 export async function updateBrand(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
   const name = textValue(formData, "name");
 
@@ -115,7 +115,7 @@ export async function updateBrand(formData: FormData) {
 }
 
 export async function archiveBrand(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) redirectWithMessage("Brand id is required.");
@@ -133,7 +133,7 @@ export async function archiveBrand(formData: FormData) {
 }
 
 export async function restoreBrand(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) redirectToBrands("Brand id is required.", { status: "archive" });
@@ -151,7 +151,7 @@ export async function restoreBrand(formData: FormData) {
 }
 
 export async function permanentlyDeleteBrand(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) redirectToBrands("Brand id is required.", { status: "archive" });
@@ -189,7 +189,7 @@ export async function permanentlyDeleteBrand(formData: FormData) {
 }
 
 export async function createCategory(formData: FormData) {
-  const { user } = await requireSettingsManager();
+  const { user } = await requireProductLibraryManager();
   const brandId = textValue(formData, "brand_id");
   const parentId = optionalTextValue(formData, "parent_id");
   const name = textValue(formData, "name");
@@ -220,7 +220,7 @@ export async function createCategory(formData: FormData) {
 }
 
 export async function updateCategory(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
   const brandId = textValue(formData, "brand_id");
   const parentId = optionalTextValue(formData, "parent_id");
@@ -254,7 +254,7 @@ export async function updateCategory(formData: FormData) {
 }
 
 export async function archiveCategory(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) redirectWithMessage("Category id is required.");
@@ -275,7 +275,7 @@ export async function archiveCategory(formData: FormData) {
 }
 
 export async function restoreCategory(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) redirectToBrands("Category id is required.", { status: "archive" });
@@ -329,7 +329,7 @@ export async function restoreCategory(formData: FormData) {
 }
 
 export async function permanentlyDeleteCategory(formData: FormData) {
-  await requireSettingsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
 
   if (!id) redirectToBrands("Category id is required.", { status: "archive" });

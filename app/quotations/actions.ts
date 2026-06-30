@@ -3563,7 +3563,8 @@ export async function permanentlyDeleteQuotation(formData: FormData) {
   const canManageRecords =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
-    profile?.role === "sales_designer";
+    profile?.role === "sales_designer" ||
+    profile?.role === "designer";
 
   if (!canManageRecords) {
     redirectWithMessage(

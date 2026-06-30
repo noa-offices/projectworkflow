@@ -6,7 +6,6 @@ import {
   USER_ROLE_OPTIONS,
   USER_STATUS_OPTIONS,
   userRoleLabel,
-  userStatusBadgeClass,
   userStatusLabel,
 } from "@/lib/user-management";
 import type { AccountStatus, AppRole } from "@/lib/supabase/types";
@@ -16,6 +15,7 @@ export type UserManagementProfileRow = {
   id: string;
   email: string | null;
   full_name: string | null;
+  avatar_url: string | null;
   role: AppRole;
   account_status: AccountStatus;
   created_at: string;
@@ -32,6 +32,37 @@ function formatDate(value: string) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function userInitials(fullName: string | null, email: string | null) {
+  const trimmedName = fullName?.trim();
+
+  if (trimmedName) {
+    const initials = trimmedName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join("");
+
+    if (initials) return initials.toUpperCase();
+  }
+
+  const trimmedEmail = email?.trim();
+  return trimmedEmail ? trimmedEmail.slice(0, 2).toUpperCase() : "?";
+}
+
+function statusPillTone(status: AccountStatus) {
+  switch (status) {
+    case "active":
+      return { dot: "bg-emerald-500", pill: "bg-emerald-50 text-emerald-800" };
+    case "pending":
+      return { dot: "bg-amber-500", pill: "bg-amber-50 text-amber-800" };
+    case "disabled":
+      return { dot: "bg-red-500", pill: "bg-red-50 text-red-800" };
+    default:
+      return { dot: "bg-zinc-400", pill: "bg-zinc-100 text-zinc-600" };
+  }
 }
 
 function SummaryCard({
@@ -64,98 +95,178 @@ function UserRow({
 }) {
   const [role, setRole] = useState<AppRole>(profile.role);
   const [accountStatus, setAccountStatus] = useState<AccountStatus>(profile.account_status);
+  const [isEditing, setIsEditing] = useState(false);
   const isSelf = profile.id === currentUserId;
   const isDirty = role !== profile.role || accountStatus !== profile.account_status;
   const formId = `user-access-${profile.id}`;
-  const rowChanged = isDirty;
+  const initials = userInitials(profile.full_name, profile.email);
+
+  function handleCancel() {
+    setRole(profile.role);
+    setAccountStatus(profile.account_status);
+    setIsEditing(false);
+  }
+
+  if (isEditing) {
+    const tone = statusPillTone(accountStatus);
+
+    return (
+      <tr className="bg-emerald-50/40">
+        <td colSpan={5} className="px-5 py-4">
+          <form
+            id={formId}
+            action={updateUserAccess.bind(null, profile.id)}
+            className="flex flex-wrap items-end gap-4"
+          >
+            <input type="hidden" name="role" value={role} />
+            <input type="hidden" name="account_status" value={accountStatus} />
+
+            <div className="flex items-center gap-3">
+              {profile.avatar_url ? (
+                <img
+                  src={profile.avatar_url}
+                  alt=""
+                  className="h-8 w-8 shrink-0 rounded-full object-cover"
+                />
+              ) : (
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-xs font-semibold text-emerald-900">
+                  {initials}
+                </span>
+              )}
+              <div className="min-w-0">
+                <p className="truncate font-medium text-zinc-950">
+                  {profile.full_name?.trim() || "Unnamed user"}
+                </p>
+                <p className="truncate text-xs text-zinc-500">
+                  {profile.email?.trim() || "No email"}
+                </p>
+              </div>
+            </div>
+
+            <label className="grid gap-1">
+              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
+                Role
+              </span>
+              <select
+                value={role}
+                onChange={(event) => setRole(event.target.value as AppRole)}
+                className="h-10 min-w-44 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+              >
+                {USER_ROLE_OPTIONS.map((option) => (
+                  <option
+                    key={option}
+                    value={option}
+                    disabled={isSelf && option !== "system_owner"}
+                  >
+                    {userRoleLabel(option)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="grid gap-1">
+              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
+                Access
+              </span>
+              <select
+                value={accountStatus}
+                onChange={(event) => setAccountStatus(event.target.value as AccountStatus)}
+                className="h-10 min-w-44 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+              >
+                {USER_STATUS_OPTIONS.map((option) => (
+                  <option
+                    key={option}
+                    value={option}
+                    disabled={isSelf && option !== "active"}
+                  >
+                    {userStatusLabel(option)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <span
+              className={`inline-flex h-10 w-fit items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold ${tone.pill}`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
+              {userStatusLabel(accountStatus)}
+            </span>
+
+            <div className="flex items-center gap-2">
+              <PendingSubmitButton
+                disabled={!isDirty}
+                className="h-10 rounded-md bg-emerald-900 px-3 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-500"
+                pendingLabel="Saving changes..."
+              >
+                Save Changes
+              </PendingSubmitButton>
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="h-10 rounded-md border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+              >
+                Cancel
+              </button>
+            </div>
+
+            {isSelf ? (
+              <p className="w-full text-xs leading-5 text-zinc-500">
+                Your own row stays active and keeps the System Owner role.
+              </p>
+            ) : null}
+          </form>
+        </td>
+      </tr>
+    );
+  }
+
+  const tone = statusPillTone(profile.account_status);
 
   return (
-    <tr className={rowChanged ? "bg-emerald-50/40 align-top" : "align-top"}>
-      <td className="px-5 py-4">
-        <p className="font-medium text-zinc-950">
-          {profile.full_name?.trim() || "Unnamed user"}
-        </p>
-        <p className="mt-1 break-all text-zinc-500">
-          {profile.email?.trim() || "No email"}
-        </p>
-      </td>
-      <td className="px-5 py-4">
-        <label className="grid gap-2">
-          <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
-            Role
-          </span>
-          <select
-            value={role}
-            onChange={(event) => setRole(event.target.value as AppRole)}
-            className="h-10 min-w-44 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-          >
-            {USER_ROLE_OPTIONS.map((option) => (
-              <option
-                key={option}
-                value={option}
-                disabled={isSelf && option !== "system_owner"}
-              >
-                {userRoleLabel(option)}
-              </option>
-            ))}
-          </select>
-        </label>
-      </td>
-      <td className="px-5 py-4">
-        <div className="grid gap-3">
-          <span
-            className={`inline-flex w-fit rounded-full border px-2.5 py-1 text-xs font-semibold ${userStatusBadgeClass(accountStatus)}`}
-          >
-            {userStatusLabel(accountStatus)}
-          </span>
-          <label className="grid gap-2">
-            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
-              Access
+    <tr className="hover:bg-zinc-50">
+      <td className="px-5 py-3">
+        <div className="flex items-center gap-3">
+          {profile.avatar_url ? (
+            <img
+              src={profile.avatar_url}
+              alt=""
+              className="h-8 w-8 shrink-0 rounded-full object-cover"
+            />
+          ) : (
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-xs font-semibold text-emerald-900">
+              {initials}
             </span>
-            <select
-              value={accountStatus}
-              onChange={(event) => setAccountStatus(event.target.value as AccountStatus)}
-              className="h-10 min-w-44 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-            >
-              {USER_STATUS_OPTIONS.map((option) => (
-                <option
-                  key={option}
-                  value={option}
-                  disabled={isSelf && option !== "active"}
-                >
-                  {userStatusLabel(option)}
-                </option>
-              ))}
-            </select>
-          </label>
-          {isSelf ? (
-            <p className="text-xs leading-5 text-zinc-500">
-              Your own row stays active and keeps the System Owner role.
+          )}
+          <div className="min-w-0">
+            <p className="truncate font-medium text-zinc-950">
+              {profile.full_name?.trim() || "Unnamed user"}
             </p>
-          ) : null}
+            <p className="truncate text-xs text-zinc-500">
+              {profile.email?.trim() || "No email"}
+            </p>
+          </div>
         </div>
       </td>
-      <td className="whitespace-nowrap px-5 py-4 text-zinc-500">
-        {formatDate(profile.created_at)}
+      <td className="px-5 py-3 text-zinc-700">{userRoleLabel(profile.role)}</td>
+      <td className="px-5 py-3">
+        <span
+          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${tone.pill}`}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
+          {userStatusLabel(profile.account_status)}
+        </span>
       </td>
-      <td className="whitespace-nowrap px-5 py-4 text-zinc-500">
+      <td className="whitespace-nowrap px-5 py-3 text-xs text-zinc-500">
         {formatDate(profile.updated_at)}
       </td>
-      <td className="px-5 py-4">
-        <form id={formId} action={updateUserAccess.bind(null, profile.id)} className="grid gap-3">
-          <input type="hidden" name="role" value={role} />
-          <input type="hidden" name="account_status" value={accountStatus} />
-          <div className="text-xs text-zinc-500">
-            {isDirty ? "Unsaved changes" : "No changes"}
-          </div>
-          <PendingSubmitButton
-            disabled={!isDirty}
-            className="h-10 rounded-md bg-emerald-900 px-3 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-500"
-            pendingLabel="Saving changes..."
-          >
-            Save Changes
-          </PendingSubmitButton>
-        </form>
+      <td className="px-5 py-3 text-right">
+        <button
+          type="button"
+          onClick={() => setIsEditing(true)}
+          className="h-8 rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+        >
+          Edit
+        </button>
       </td>
     </tr>
   );
@@ -267,13 +378,12 @@ export function UserManagementTable({
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-[980px] divide-y divide-zinc-200 text-left text-sm">
+          <table className="w-full min-w-[760px] divide-y divide-zinc-200 text-left text-sm">
             <thead className="bg-zinc-50 text-xs uppercase tracking-[0.16em] text-zinc-500">
               <tr>
                 <th className="px-5 py-3 font-semibold">User</th>
                 <th className="px-5 py-3 font-semibold">Role</th>
                 <th className="px-5 py-3 font-semibold">Status</th>
-                <th className="px-5 py-3 font-semibold">Created</th>
                 <th className="px-5 py-3 font-semibold">Updated</th>
                 <th className="px-5 py-3 font-semibold">Actions</th>
               </tr>
@@ -288,7 +398,7 @@ export function UserManagementTable({
               ))}
               {!filteredProfiles.length ? (
                 <tr>
-                  <td colSpan={6} className="px-5 py-10 text-center text-zinc-500">
+                  <td colSpan={5} className="px-5 py-10 text-center text-zinc-500">
                     No users match the current filters.
                   </td>
                 </tr>
@@ -300,31 +410,72 @@ export function UserManagementTable({
 
       <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold text-zinc-950">Role Guide</h2>
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-            <h3 className="text-sm font-semibold text-zinc-950">System Owner</h3>
-            <p className="mt-2 text-sm leading-6 text-zinc-600">
-              Full access including settings, approvals, and high-risk admin actions.
-            </p>
-          </div>
-          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-            <h3 className="text-sm font-semibold text-zinc-950">Admin Manager</h3>
-            <p className="mt-2 text-sm leading-6 text-zinc-600">
-              Manage company settings, products, clients, and quotations without owner-only danger actions.
-            </p>
-          </div>
-          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-            <h3 className="text-sm font-semibold text-zinc-950">Sales User</h3>
-            <p className="mt-2 text-sm leading-6 text-zinc-600">
-              Create and edit quotations, clients, and project records as part of the sales workflow.
-            </p>
-          </div>
-          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-            <h3 className="text-sm font-semibold text-zinc-950">Viewer</h3>
-            <p className="mt-2 text-sm leading-6 text-zinc-600">
-              Read-only access for review and coordination without editing business records.
-            </p>
-          </div>
+        <p className="mt-1 text-sm text-zinc-500">
+          Permission matrix across all roles.
+        </p>
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full divide-y divide-zinc-200 text-sm">
+            <thead>
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">Role</th>
+                <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-zinc-500">Quotations</th>
+                <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-zinc-500">Product Library</th>
+                <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-zinc-500">Company Settings</th>
+                <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-zinc-500">Procurement</th>
+                <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-zinc-500">Team Overview</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              <tr className="hover:bg-zinc-50">
+                <td className="px-4 py-3 font-medium text-zinc-950">System Owner</td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+              </tr>
+              <tr className="hover:bg-zinc-50">
+                <td className="px-4 py-3 font-medium text-zinc-950">Admin Manager</td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-zinc-300 font-semibold">✕</span></td>
+              </tr>
+              <tr className="hover:bg-zinc-50">
+                <td className="px-4 py-3 font-medium text-zinc-950">Procurement Manager</td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-zinc-300 font-semibold">✕</span></td>
+              </tr>
+              <tr className="hover:bg-zinc-50">
+                <td className="px-4 py-3 font-medium text-zinc-950">Sales User</td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-zinc-300 font-semibold">✕</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-zinc-300 font-semibold">✕</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-zinc-300 font-semibold">✕</span></td>
+              </tr>
+              <tr className="hover:bg-zinc-50">
+                <td className="px-4 py-3 font-medium text-zinc-950">Designer</td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-emerald-600 font-semibold">✓</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-zinc-300 font-semibold">✕</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-zinc-300 font-semibold">✕</span></td>
+              </tr>
+              <tr className="hover:bg-zinc-50">
+                <td className="px-4 py-3 font-medium text-zinc-950">Viewer</td>
+                <td className="px-4 py-3 text-center"><span className="text-zinc-300 font-semibold">✕</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-zinc-300 font-semibold">✕</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-zinc-300 font-semibold">✕</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-zinc-300 font-semibold">✕</span></td>
+                <td className="px-4 py-3 text-center"><span className="text-zinc-300 font-semibold">✕</span></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </section>
     </div>

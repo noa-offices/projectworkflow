@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
-import { requireActiveUser, requireSettingsManager, requireSystemOwner } from "@/lib/auth";
+import { requireActiveUser, requireSystemOwner } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit-log";
 import { DEFAULT_QUOTATION_NOTES } from "@/lib/quotations/quotation-pdf-settings";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -45,6 +45,20 @@ function redirectToProfile(message: string, messageType: SettingsMessageType = "
 
 function actionErrorMessage(actionLabel: string, error: unknown, fallbackMessage?: string) {
   return formatSafeActionError(actionLabel, error, fallbackMessage);
+}
+
+// Scoped to company settings only — do not generalize into lib/auth.ts,
+// requireSettingsManager() is shared by unrelated callers (quotations
+// product-library actions, price updates page) that must stay admin-tier.
+async function requireCompanySettingsManager() {
+  const authenticatedUser = await requireActiveUser();
+  const role = authenticatedUser.profile?.role;
+
+  if (role !== "system_owner" && role !== "admin_manager" && role !== "procurement_manager") {
+    redirect("/dashboard");
+  }
+
+  return authenticatedUser;
 }
 
 async function latestCompanySettingsId(supabase: Awaited<ReturnType<typeof createClient>>) {
@@ -90,7 +104,7 @@ async function saveCompanySettingsRecord(
 }
 
 export async function updateCompanySettings(formData: FormData) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, displayName } = await requireCompanySettingsManager();
   const supabase = await createClient();
   const vatPercent = Math.min(Math.max(numberValue(formData, "vat_percent", 5), 0), 100);
   const payload = {
@@ -134,7 +148,7 @@ export async function updateCompanySettings(formData: FormData) {
 }
 
 export async function updateDocumentDefaults(formData: FormData) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, displayName } = await requireCompanySettingsManager();
   const supabase = await createClient();
   const defaultQuotationNotes = textValue(formData, "default_quotation_notes") || DEFAULT_QUOTATION_NOTES;
   const payload = {

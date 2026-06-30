@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
-import { requireSettingsManager } from "@/lib/auth";
+import { requireProductLibraryManager } from "@/lib/auth";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import { createClient } from "@/lib/supabase/server";
@@ -406,7 +406,7 @@ type ArchiveItem = {
 };
 
 export default async function BrandsPage({ searchParams }: BrandsPageProps) {
-  const { user, profile, displayName } = await requireSettingsManager();
+  const { user, profile, displayName } = await requireProductLibraryManager();
   const params = (await searchParams) ?? {};
   const message = stringParam(params.message);
   const searchQuery = stringParam(params.q).trim();

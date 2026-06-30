@@ -20,7 +20,8 @@ function canManageRecordsRole(role: string | null | undefined): boolean {
     role === "system_owner" ||
     role === "admin_manager" ||
     role === "procurement_manager" ||
-    role === "sales_designer"
+    role === "sales_designer" ||
+    role === "designer"
   );
 }
 

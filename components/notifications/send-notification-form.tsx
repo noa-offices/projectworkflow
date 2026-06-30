@@ -16,6 +16,7 @@ const ROLES: { value: AppRole; label: string }[] = [
   { value: "admin_manager", label: "Admin Manager" },
   { value: "procurement_manager", label: "Procurement Manager" },
   { value: "sales_designer", label: "Sales Designer" },
+  { value: "designer", label: "Designer" },
   { value: "viewer", label: "Viewer" },
 ];
 

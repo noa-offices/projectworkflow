@@ -286,7 +286,8 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
   const canManageRecords =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
-    profile?.role === "sales_designer";
+    profile?.role === "sales_designer" ||
+    profile?.role === "designer";
   const canDeleteFolders =
     profile?.role === "system_owner" || profile?.role === "admin_manager";
   const supabase = await createSupabaseClient();

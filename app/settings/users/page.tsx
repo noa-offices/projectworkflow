@@ -21,7 +21,7 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
   const supabase = await createClient();
   const { data: profiles, error } = await supabase
     .from("profiles")
-    .select("id,email,full_name,role,account_status,created_at,updated_at")
+    .select("id,email,full_name,avatar_url,role,account_status,created_at,updated_at")
     .order("created_at", { ascending: false })
     .returns<UserManagementProfileRow[]>();
 

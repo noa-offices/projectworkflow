@@ -31,7 +31,7 @@ import {
 import { ProductLibraryBrowseControls } from "@/components/products/product-library-browse-controls";
 import { TemplateMaterialGroupSelectionPanel } from "@/components/products/template-material-group-selection-panel";
 import { ProductTemplateForm } from "@/components/products/product-template-form";
-import { requireSettingsManager } from "@/lib/auth";
+import { requireProductLibraryManager } from "@/lib/auth";
 import {
   defaultCurrency,
   formatMoney,
@@ -1540,7 +1540,7 @@ function DetailPriceRow({
 }
 
 export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps) {
-  const { user, profile, displayName } = await requireSettingsManager();
+  const { user, profile, displayName } = await requireProductLibraryManager();
   const params = (await searchParams) ?? {};
   const message = stringParam(params.message);
   const isManagementView = stringParam(params.manage) === "1";
