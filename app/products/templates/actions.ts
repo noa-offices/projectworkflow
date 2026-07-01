@@ -1118,6 +1118,7 @@ function accessoryPricingValue(formData: FormData) {
           group_name: typeof row.group_name === "string" && row.group_name.trim()
             ? row.group_name.trim()
             : "Accessories",
+          group_is_required: row.group_is_required === true,
           sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
           is_active: row.is_active !== false,
           items,
@@ -1129,6 +1130,7 @@ function accessoryPricingValue(formData: FormData) {
       groups.push({
         id: "accessories",
         group_name: "Accessories",
+        group_is_required: false,
         sort_order: groups.length,
         is_active: true,
         items: flatRows
@@ -1363,7 +1365,10 @@ export async function createProductTemplate(formData: FormData) {
   });
 
   revalidatePath("/products/templates");
-  redirectWithMessageToPath(redirectPath, "Product template created successfully.");
+  redirectWithMessageToPath(
+    `/products/templates?manage=1&panelBrand=${template.brand_id}&template=${template.id}&editTemplate=${template.id}#template-${template.id}-materials`,
+    "Product template created. Add material groups below.",
+  );
 }
 
 export async function updateProductTemplate(formData: FormData) {
@@ -1579,6 +1584,73 @@ export async function updateProductTemplateForQuotationModal(formData: FormData)
     return {
       ok: false,
       message: actionErrorMessage("Product template could not be updated", error),
+    };
+  }
+}
+
+export async function createProductTemplateForQuotationModal(formData: FormData): Promise<ProductTemplateModalActionResult> {
+  try {
+    const { user, displayName } = await requireProductLibraryManager();
+    const initialPayload = createTemplatePayload(formData, user.id);
+    const templateId = textValue(formData, "id");
+
+    if (!initialPayload.brand_id || !initialPayload.template_name) {
+      return { ok: false, message: "Brand and item name/template name are required." };
+    }
+
+    await validateProductTemplateCategories({
+      brandId: initialPayload.brand_id,
+      mainCategoryId: initialPayload.main_category_id,
+      subCategoryId: initialPayload.sub_category_id,
+    });
+    const payload = await normalizeTemplateImagePayload(initialPayload, templateId);
+
+    const supabase = await createClient();
+    const { data: template, error } = await supabase
+      .from("product_templates")
+      .insert(payload)
+      .select("id,brand_id,template_name")
+      .single<{ id: string; brand_id: string; template_name: string }>();
+
+    if (error || !template) {
+      logServerActionError("PRODUCT TEMPLATE MODAL CREATE ERROR", error, {
+        action: "createProductTemplateForQuotationModal",
+        recordId: templateId || null,
+        table: "product_templates",
+      });
+      return {
+        ok: false,
+        message: actionErrorMessage("Product template could not be saved", error),
+      };
+    }
+
+    await createAuditLog(supabase, {
+      entityType: "product_template",
+      entityId: template.id,
+      action: "created",
+      title: `${safeTemplateLabel(template.template_name)} created`,
+      description: "Product template created.",
+      metadata: {
+        brandId: template.brand_id,
+        templateName: template.template_name,
+      },
+      actorName: displayName,
+      createdBy: user.id,
+    });
+
+    revalidatePath("/products/templates");
+    return {
+      ok: true,
+      message: "Product template created.",
+      template: await fetchProductLibraryTemplateForClient(supabase, template.id),
+    };
+  } catch (error) {
+    logServerActionError("PRODUCT TEMPLATE MODAL CREATE UNEXPECTED ERROR", error, {
+      action: "createProductTemplateForQuotationModal",
+    });
+    return {
+      ok: false,
+      message: actionErrorMessage("Product template could not be created", error),
     };
   }
 }

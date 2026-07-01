@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
 import {
+  createProductTemplateForQuotationModal,
   markTemplatePriceCheckedForQuotationModal,
   updateProductTemplateForQuotationModal,
 } from "@/app/products/templates/actions";
@@ -173,6 +174,7 @@ type CategoryPricingRow = {
 type AccessoryPricingRow = {
   id?: string;
   group_name?: string;
+  group_is_required?: boolean;
   items?: AccessoryPricingItem[];
   item_name?: string;
   supplier_price_list_code?: string;
@@ -519,6 +521,7 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
     .map((group, groupIndex) => ({
       id: group.id ?? `add-on-group-${groupIndex}`,
       group_name: group.group_name?.trim() || "Accessories",
+      group_is_required: group.group_is_required === true,
       is_active: group.is_active !== false,
       sort_order: numberValue(group.sort_order, groupIndex),
       items: (group.items ?? [])
@@ -540,6 +543,7 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
         {
           id: "accessories",
           group_name: "Accessories",
+          group_is_required: false,
           is_active: true,
           sort_order: groups.length,
           items: flatRows,
@@ -963,11 +967,11 @@ export function ProductLibrarySelector({
   const [discountValues, setDiscountValues] = useState<Record<string, string>>({});
   const [selectedFinishesByTemplate, setSelectedFinishesByTemplate] = useState<Record<string, FinishSelectionEditorRow[]>>({});
   const [templatePriceOverrides, setTemplatePriceOverrides] = useState<Record<string, number | undefined>>({});
-  const [templateEditor, setTemplateEditor] = useState<{
-    currentPreviewUnitPrice: number;
-    mode: "edit" | "price_check";
-    templateId: string;
-  } | null>(null);
+  const [templateEditor, setTemplateEditor] = useState<
+    | { currentPreviewUnitPrice: number; mode: "edit" | "price_check"; templateId: string }
+    | { defaultBrandId?: string; mode: "create" }
+    | null
+  >(null);
   const [templateActionMessageById, setTemplateActionMessageById] = useState<Record<string, string>>({});
   const [pendingPriceUpdateChoice, setPendingPriceUpdateChoice] = useState<{
     previousUnitPrice: number;
@@ -1093,6 +1097,10 @@ export function ProductLibrarySelector({
       ...current,
       [nextTemplate.id]: "",
     }));
+  };
+
+  const addTemplateRecord = (newTemplate: ProductLibraryTemplate) => {
+    setTemplateRecords((current) => [...current, newTemplate]);
   };
 
   const closeTemplateEditor = () => {
@@ -1233,6 +1241,17 @@ export function ProductLibrarySelector({
                         >
                           {brand.name} <span className="font-semibold text-zinc-400">({brandCount})</span>
                         </summary>
+                        {canManageProductLibrary ? (
+                          <div className="border-t border-zinc-100 px-2 py-1">
+                            <button
+                              type="button"
+                              onClick={() => setTemplateEditor({ defaultBrandId: brand.id, mode: "create" })}
+                              className="w-full rounded border border-zinc-300 bg-white px-2 py-1 text-[10px] font-semibold text-emerald-900 transition hover:border-emerald-500 hover:bg-emerald-50"
+                            >
+                              + Add new product
+                            </button>
+                          </div>
+                        ) : null}
                         <div className="border-t border-zinc-100 py-1">
                           {brandCategories.map((category) => {
                             const categorySubcategories = subcategories.filter(
@@ -1491,6 +1510,13 @@ export function ProductLibrarySelector({
                   const hasMixedWorkstationCurrencies = usesWorkstationFlow && workstationCurrencies.length > 1;
                   const missingRequiredWorkstationSelection = usesWorkstationFlow && !selectedSizeRow;
                   const missingRequiredModularSelection = usesModularPricing && selectedModularItems.length === 0;
+                  const missingRequiredAccessorySelection = accessoryGroups.some(
+                    (group) =>
+                      group.group_is_required === true &&
+                      group.items.every(
+                        (item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) === 0,
+                      ),
+                  );
                   const derivedDesking = isDesking && selectedSizeRow
                     ? deskingSizePricingCalculation({
                         accessoryQuantities: templateAccessoryQuantities,
@@ -2891,10 +2917,17 @@ export function ProductLibrarySelector({
                             ) : null}
                             {accessoryGroups.length ? (
                               <div className="space-y-2">
-                                {accessoryGroups.map((group) => (
+                                {accessoryGroups.map((group) => {
+                                  const groupHasNoSelection = group.group_is_required === true &&
+                                    group.items.every((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) === 0);
+
+                                  return (
                                   <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
                                     <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
                                       {group.group_name}
+                                      {group.group_is_required ? (
+                                        <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">Required</span>
+                                      ) : null}
                                     </legend>
                                     <div className="mt-1 space-y-2">
                                       {group.items.map((accessory) => {
@@ -2949,8 +2982,14 @@ export function ProductLibrarySelector({
                                         );
                                       })}
                                     </div>
+                                    {groupHasNoSelection ? (
+                                      <p className="mt-1 text-[10px] text-amber-700">
+                                        Select at least one item from this group to continue.
+                                      </p>
+                                    ) : null}
                                   </fieldset>
-                                ))}
+                                  );
+                                })}
                               </div>
                             ) : null}
                           </div>
@@ -2960,10 +2999,17 @@ export function ProductLibrarySelector({
                             <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
                               Accessories / Optional Items
                             </p>
-                            {accessoryGroups.map((group) => (
+                            {accessoryGroups.map((group) => {
+                              const groupHasNoSelection = group.group_is_required === true &&
+                                group.items.every((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) === 0);
+
+                              return (
                               <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
                                 <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
                                   {group.group_name}
+                                  {group.group_is_required ? (
+                                    <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">Required</span>
+                                  ) : null}
                                 </legend>
                                 <div className="mt-1 space-y-2">
                                   {group.items.map((accessory) => {
@@ -3018,8 +3064,14 @@ export function ProductLibrarySelector({
                                     );
                                   })}
                                 </div>
+                                {groupHasNoSelection ? (
+                                  <p className="mt-1 text-[10px] text-amber-700">
+                                    Select at least one item from this group to continue.
+                                  </p>
+                                ) : null}
                               </fieldset>
-                            ))}
+                              );
+                            })}
                           </div>
                         ) : null}
                         {selectedLinkedProducts.length ? (
@@ -4084,7 +4136,7 @@ export function ProductLibrarySelector({
                                   onAddLocalItem?.(localProductItem);
                                   setIsOpen(false);
                                 }}
-                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredModularSelection || needsUpdatedPriceDecision}
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision}
                                   className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                                 >
                                   Add to Local Workspace
@@ -4092,7 +4144,7 @@ export function ProductLibrarySelector({
                               ) : (
                                 <button
                                   type="submit"
-                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredModularSelection || needsUpdatedPriceDecision}
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision}
                                   className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                                 >
                                   Add
@@ -4311,7 +4363,11 @@ export function ProductLibrarySelector({
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Product Library</p>
                 <h3 className="text-sm font-semibold text-zinc-950">
-                  {templateEditor.mode === "price_check" ? "Check / Update Price" : "Edit Template"}
+                  {templateEditor.mode === "create"
+                    ? "Add New Product"
+                    : templateEditor.mode === "price_check"
+                      ? "Check / Update Price"
+                      : "Edit Template"}
                 </h3>
               </div>
               <button
@@ -4323,7 +4379,31 @@ export function ProductLibrarySelector({
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              {templateById.get(templateEditor.templateId) ? (
+              {templateEditor.mode === "create" ? (
+                <ProductTemplateForm
+                  brands={brands}
+                  categories={categories}
+                  compactAccordionMode
+                  defaultBrandId={templateEditor.defaultBrandId}
+                  onCancel={closeTemplateEditor}
+                  onSubmitAction={async (formData) => {
+                    const result = await createProductTemplateForQuotationModal(formData);
+
+                    if (!result.ok || !result.template) {
+                      return;
+                    }
+
+                    const newTemplate = result.template as ProductLibraryTemplate;
+                    addTemplateRecord(newTemplate);
+                    setTemplateEditor({
+                      currentPreviewUnitPrice: 0,
+                      mode: "edit",
+                      templateId: newTemplate.id,
+                    });
+                  }}
+                  returnTo={returnTo}
+                />
+              ) : templateById.get(templateEditor.templateId) ? (
                 <ProductTemplateForm
                   brands={brands}
                   categories={categories}

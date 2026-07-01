@@ -59,6 +59,7 @@ export type CategoryPricingRow = {
 export type AccessoryPricingRow = {
   id?: string;
   group_name?: string;
+  group_is_required?: boolean;
   items?: AccessoryPricingItem[];
   item_name?: string;
   supplier_price_list_code?: string;
@@ -239,6 +240,7 @@ function normalizeAccessoryGroup(row: AccessoryPricingRow, index: number): Acces
   return {
     id: row.id || `add-on-group-${index}`,
     group_name: row.group_name?.trim() || "Accessories",
+    group_is_required: row.group_is_required === true,
     is_active: row.is_active !== false,
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
     items: (row.items?.length ? row.items : flatItem).map(normalizeAccessoryItem),
@@ -1507,6 +1509,10 @@ export function AccessoryPricingTable({
               <label className="flex items-center gap-2 text-xs text-zinc-600">
                 <input type="checkbox" checked={group.is_active !== false} onChange={(e) => updateGroup(groupIndex, { is_active: e.target.checked })} />
                 Active
+              </label>
+              <label className="flex items-center gap-2 text-xs text-zinc-600" title="When on, user must select at least one item from this group before adding the product to a quotation">
+                <input type="checkbox" checked={group.group_is_required === true} onChange={(e) => updateGroup(groupIndex, { group_is_required: e.target.checked })} />
+                Required selection
               </label>
               <button type="button" onClick={() => setGroups((current) => current.filter((_, index) => index !== groupIndex))} className="ml-auto text-xs font-semibold text-red-700">Remove group</button>
             </div>
