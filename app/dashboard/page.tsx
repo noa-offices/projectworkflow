@@ -6,6 +6,7 @@ import {
   getActiveProjects,
   getDashboardSalesData,
   getMonthlySalesData,
+  getHrExpiryAlerts,
 } from "@/lib/dashboard/actions";
 
 export const dynamic = "force-dynamic";
@@ -13,11 +14,15 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const { user, profile, displayName } = await requireActiveUser();
 
-  const [stats, projects, salesData, monthlyData] = await Promise.all([
+  const isManager =
+    profile?.role === "system_owner" || profile?.role === "admin_manager";
+
+  const [stats, projects, salesData, monthlyData, hrAlerts] = await Promise.all([
     getDashboardStats(),
     getActiveProjects(),
     getDashboardSalesData(),
     getMonthlySalesData(),
+    isManager ? getHrExpiryAlerts() : Promise.resolve([]),
   ]);
 
   return (
@@ -37,6 +42,7 @@ export default async function DashboardPage() {
         salesData={salesData}
         monthlyData={monthlyData}
         fetchedAt={new Date().toISOString()}
+        hrAlerts={hrAlerts}
       />
     </ErpAppShell>
   );

@@ -16,6 +16,7 @@ import {
   userStatusLabel,
 } from "@/lib/user-management";
 import { createClient } from "@/lib/supabase/server";
+import type { HrRow } from "@/app/settings/hr/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +78,45 @@ function Field({
   );
 }
 
+function formatHrDate(dateStr: string): string {
+  const parts = dateStr.split("-");
+  if (parts.length !== 3) return dateStr;
+  const [year, month, day] = parts;
+  return `${day}/${month}/${year}`;
+}
+
+function hrExpiryTone(dateStr: string | null): string | undefined {
+  if (!dateStr) return undefined;
+  const days = Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86_400_000);
+  if (days <= 10) return "text-red-700 font-semibold";
+  if (days <= 30) return "text-amber-700 font-semibold";
+  if (days <= 60) return "text-yellow-700";
+  return undefined;
+}
+
+function hrLeaveBalanceTone(balance: number): string | undefined {
+  if (balance <= 5) return "text-red-700 font-semibold";
+  if (balance <= 10) return "text-amber-700";
+  return "text-emerald-700";
+}
+
+function HrSummaryField({
+  label,
+  tone,
+  value,
+}: {
+  label: string;
+  tone?: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">{label}</p>
+      <p className={`mt-2 text-sm font-medium text-zinc-950 ${tone ?? ""}`}>{value}</p>
+    </div>
+  );
+}
+
 export default async function ProfilePage({ searchParams }: ProfilePageProps) {
   const { user, profile, displayName } = await requireActiveUser();
   const params = (await searchParams) ?? {};
@@ -126,6 +166,12 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
   const topClients = Object.values(clientTotals)
     .sort((a, b) => b.total - a.total)
     .slice(0, 5);
+
+  const { data: hrData } = await supabase
+    .from("profiles_hr")
+    .select("*")
+    .eq("profile_id", user.id)
+    .maybeSingle<HrRow>();
 
   const showMessage = params.messageScope === "profile"
     && typeof params.message === "string"
@@ -257,6 +303,48 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
               </div>
             </section>
           </div>
+
+          {hrData ? (
+            <section className="mt-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-zinc-950">My HR Summary</h2>
+                  <p className="mt-1 text-sm text-zinc-500">Managed by your HR team.</p>
+                </div>
+                <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-600">
+                  Read only
+                </span>
+              </div>
+              <dl className="mt-5 grid gap-4 sm:grid-cols-2">
+                <HrSummaryField label="Date of Joining" value={hrData.date_of_joining ? formatHrDate(hrData.date_of_joining) : "—"} />
+                <HrSummaryField
+                  label="Leave Balance"
+                  value={`${hrData.annual_leave_days - hrData.leave_taken_this_year} of ${hrData.annual_leave_days} days`}
+                  tone={hrLeaveBalanceTone(hrData.annual_leave_days - hrData.leave_taken_this_year)}
+                />
+                <HrSummaryField
+                  label="Emirates ID Expiry"
+                  value={hrData.emirates_id_expiry ? formatHrDate(hrData.emirates_id_expiry) : "—"}
+                  tone={hrExpiryTone(hrData.emirates_id_expiry)}
+                />
+                <HrSummaryField
+                  label="Passport Expiry"
+                  value={hrData.passport_expiry ? formatHrDate(hrData.passport_expiry) : "—"}
+                  tone={hrExpiryTone(hrData.passport_expiry)}
+                />
+                {hrData.emergency_contact_name ? (
+                  <HrSummaryField label="Emergency Contact" value={hrData.emergency_contact_name} />
+                ) : null}
+                {hrData.emergency_contact_phone ? (
+                  <HrSummaryField label="Emergency Phone" value={hrData.emergency_contact_phone} />
+                ) : null}
+              </dl>
+            </section>
+          ) : (
+            <p className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-500">
+              Your HR details have not been set up yet.
+            </p>
+          )}
 
           <ProfileDashboardShell
             initialPreset={preset}

@@ -13,6 +13,8 @@ import {
   Truck,
   Wifi,
 } from "lucide-react";
+import { AlertsPanel } from "@/components/dashboard/alerts-panel";
+import type { DashboardAlert } from "@/components/dashboard/alerts-panel";
 import { DashboardCard } from "@/components/dashboard/dashboard-card";
 import { KPIWidget } from "@/components/dashboard/kpi-widget";
 import { KpiSparkline, MonthlyBarChart } from "@/components/dashboard/dashboard-charts";
@@ -84,6 +86,7 @@ type Props = {
   salesData: DashboardSalesData;
   monthlyData: MonthlyTotal[];
   fetchedAt: string;
+  hrAlerts?: DashboardAlert[];
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -94,6 +97,7 @@ export function ERPDashboard({
   salesData,
   monthlyData,
   fetchedAt,
+  hrAlerts,
 }: Props) {
   const [online, setOnline] = useState(() =>
     typeof window === "undefined" ? true : window.navigator.onLine,
@@ -344,6 +348,11 @@ export function ERPDashboard({
 
         {/* ── Sidebar ──────────────────────────────────────────────────────── */}
         <aside className="grid gap-4 xl:content-start">
+
+          {/* HR & Document Expiry Alerts */}
+          {hrAlerts && hrAlerts.length > 0 ? (
+            <AlertsPanel alerts={hrAlerts} />
+          ) : null}
 
           {/* System Status */}
           <DashboardCard className="p-4">

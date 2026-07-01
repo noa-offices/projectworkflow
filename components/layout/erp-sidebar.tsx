@@ -17,6 +17,7 @@ import {
   DollarSign,
   FileText,
   FolderKanban,
+  HardHat,
   Layers,
   LayoutDashboard,
   Package,
@@ -27,6 +28,7 @@ import {
   TrendingUp,
   Truck,
   User,
+  Users2,
 } from "lucide-react";
 
 type SidebarItem = {
@@ -269,7 +271,23 @@ export function ErpSidebar({
       {
         title: "System",
         iconColors: { bg: "bg-zinc-100", icon: "text-zinc-500" },
-        items: [{ label: "Settings", href: "/settings", icon: Settings, active: isSettingsActive(pathname) }],
+        items: [
+          { label: "Settings", href: "/settings", icon: Settings, active: isSettingsActive(pathname) },
+          {
+            label: "HR Management",
+            href: "/settings/hr",
+            icon: Users2,
+            active: pathname.startsWith("/settings/hr"),
+            hidden: role !== "system_owner" && role !== "admin_manager",
+          },
+          {
+            label: "Workers",
+            href: "/settings/workers",
+            icon: HardHat,
+            active: pathname.startsWith("/settings/workers"),
+            hidden: role !== "system_owner" && role !== "admin_manager",
+          },
+        ],
       },
       ];
     },

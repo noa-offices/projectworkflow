@@ -5,6 +5,9 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { AlertTriangle, Clock, IdCard } from "lucide-react";
+import type { DashboardAlert } from "@/components/dashboard/alerts-panel";
+import { sendNotificationToRole } from "@/lib/notifications/actions";
 // ─── Exported types ───────────────────────────────────────────────────────────
 
 export type DashboardStats = {
@@ -304,4 +307,208 @@ export async function getMonthlySalesData(): Promise<MonthlyTotal[]> {
   }
 
   return totals;
+}
+
+// ─── 7. getHrExpiryAlerts ────────────────────────────────────────────────────
+// Loads upcoming document expiry alerts for profiles_hr and workers.
+// Also sends in-app notifications at the exact threshold days (60/30/10/0),
+// deduplicating via hr_expiry_notifications and worker_expiry_notifications.
+// Returns an empty array on any error so the dashboard never breaks.
+
+const ALERT_THRESHOLDS = [60, 30, 10, 0] as const;
+
+function expiryTone(daysUntil: number): string {
+  if (daysUntil <= 0) return "bg-red-100 text-red-800";
+  if (daysUntil <= 10) return "bg-red-50 text-red-700";
+  if (daysUntil <= 30) return "bg-amber-50 text-amber-700";
+  return "bg-yellow-50 text-yellow-700";
+}
+
+function expiryIcon(daysUntil: number) {
+  if (daysUntil <= 10) return AlertTriangle;
+  if (daysUntil <= 30) return Clock;
+  return IdCard;
+}
+
+function formatExpiryDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString("en", { dateStyle: "medium" });
+}
+
+function expiryDetail(daysUntil: number, dateStr: string): string {
+  if (daysUntil <= 0) return `Expired on ${formatExpiryDate(dateStr)}`;
+  if (daysUntil === 1) return "Expires tomorrow";
+  return `Expires in ${daysUntil} days (${formatExpiryDate(dateStr)})`;
+}
+
+function notificationBody(name: string, fieldLabel: string, daysUntil: number, dateStr: string): string {
+  if (daysUntil <= 0) {
+    return `EXPIRED: ${name}'s ${fieldLabel} expired today`;
+  }
+  return `${name}'s ${fieldLabel} expires in ${daysUntil} days (expires ${formatExpiryDate(dateStr)})`;
+}
+
+function daysUntilDate(dateStr: string): number {
+  return Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86_400_000);
+}
+
+function nearestThreshold(daysUntil: number): (typeof ALERT_THRESHOLDS)[number] | null {
+  return (ALERT_THRESHOLDS.find((t) => t === daysUntil) ?? null) as (typeof ALERT_THRESHOLDS)[number] | null;
+}
+
+export async function getHrExpiryAlerts(): Promise<DashboardAlert[]> {
+  try {
+    await requireActiveUser();
+
+    const adminResult = createAdminClient();
+    if (!adminResult.client) return [];
+    const adminClient = adminResult.client;
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    // ── Parallel data fetch ────────────────────────────────────────────────────
+    const [hrResult, workersResult] = await Promise.all([
+      adminClient
+        .from("profiles_hr")
+        .select("profile_id, emirates_id_expiry, passport_expiry, profiles!inner(full_name, email)")
+        .returns<Array<{
+          profile_id: string;
+          emirates_id_expiry: string | null;
+          passport_expiry: string | null;
+          profiles: { full_name: string | null; email: string | null } | null;
+        }>>(),
+      adminClient
+        .from("workers")
+        .select("id, full_name, emirates_id_expiry, passport_expiry, status")
+        .neq("status", "offboarded")
+        .returns<Array<{
+          id: string;
+          full_name: string;
+          emirates_id_expiry: string | null;
+          passport_expiry: string | null;
+          status: string;
+        }>>(),
+    ]);
+
+    const hrRows = hrResult.data ?? [];
+    const workerRows = workersResult.data ?? [];
+
+    // ── Build alerts ──────────────────────────────────────────────────────────
+
+    const alerts: (DashboardAlert & { _daysUntil: number })[] = [];
+
+    // HR profile alerts
+    for (const row of hrRows) {
+      const name = row.profiles?.full_name?.trim() || row.profiles?.email?.trim() || "Unknown";
+
+      for (const [field, label] of [
+        ["emirates_id_expiry", "Emirates ID"],
+        ["passport_expiry", "Passport"],
+      ] as const) {
+        const dateStr = row[field];
+        if (!dateStr) continue;
+        const daysUntil = daysUntilDate(dateStr);
+        if (daysUntil > 60) continue;
+
+        alerts.push({
+          title: `${name} — ${label}`,
+          detail: expiryDetail(daysUntil, dateStr),
+          icon: expiryIcon(daysUntil),
+          tone: expiryTone(daysUntil),
+          _daysUntil: daysUntil,
+        });
+
+        // In-app notification at exact thresholds
+        try {
+          const threshold = nearestThreshold(daysUntil);
+          if (threshold !== null) {
+            const { data: existing } = await adminClient
+              .from("hr_expiry_notifications")
+              .select("id")
+              .eq("profile_id", row.profile_id)
+              .eq("field_name", field)
+              .eq("threshold_days", threshold)
+              .eq("sent_at", today)
+              .maybeSingle<{ id: string }>();
+
+            if (!existing) {
+              const body = notificationBody(name, label, daysUntil, dateStr);
+              await Promise.allSettled([
+                sendNotificationToRole("system_owner", body),
+                sendNotificationToRole("admin_manager", body),
+                adminClient.from("hr_expiry_notifications").insert({
+                  profile_id: row.profile_id,
+                  field_name: field,
+                  threshold_days: threshold,
+                  sent_at: today,
+                } as never),
+              ]);
+            }
+          }
+        } catch {
+          // Notification failures must not break the alerts panel.
+        }
+      }
+    }
+
+    // Worker alerts
+    for (const row of workerRows) {
+      const name = row.full_name?.trim() || "Unknown worker";
+
+      for (const [field, label] of [
+        ["emirates_id_expiry", "Emirates ID"],
+        ["passport_expiry", "Passport"],
+      ] as const) {
+        const dateStr = row[field];
+        if (!dateStr) continue;
+        const daysUntil = daysUntilDate(dateStr);
+        if (daysUntil > 60) continue;
+
+        alerts.push({
+          title: `${name} (worker) — ${label}`,
+          detail: expiryDetail(daysUntil, dateStr),
+          icon: expiryIcon(daysUntil),
+          tone: expiryTone(daysUntil),
+          _daysUntil: daysUntil,
+        });
+
+        // In-app notification at exact thresholds
+        try {
+          const threshold = nearestThreshold(daysUntil);
+          if (threshold !== null) {
+            const { data: existing } = await adminClient
+              .from("worker_expiry_notifications")
+              .select("id")
+              .eq("worker_id", row.id)
+              .eq("field_name", field)
+              .eq("threshold_days", threshold)
+              .eq("sent_at", today)
+              .maybeSingle<{ id: string }>();
+
+            if (!existing) {
+              const body = notificationBody(name, label, daysUntil, dateStr);
+              await Promise.allSettled([
+                sendNotificationToRole("system_owner", body),
+                sendNotificationToRole("admin_manager", body),
+                adminClient.from("worker_expiry_notifications").insert({
+                  worker_id: row.id,
+                  field_name: field,
+                  threshold_days: threshold,
+                  sent_at: today,
+                } as never),
+              ]);
+            }
+          }
+        } catch {
+          // Notification failures must not break the alerts panel.
+        }
+      }
+    }
+
+    // Sort most urgent first
+    alerts.sort((a, b) => a._daysUntil - b._daysUntil);
+
+    return alerts.map(({ _daysUntil: _, ...alert }) => alert);
+  } catch {
+    return [];
+  }
 }
