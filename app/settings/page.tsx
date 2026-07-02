@@ -295,7 +295,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
 
               {profile?.role === "system_owner" || profile?.role === "admin_manager" ? (
                 <Link
-                  href="/settings/hr"
+                  href="/hr"
                   className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm transition hover:bg-zinc-50"
                 >
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-teal-50 text-teal-700">

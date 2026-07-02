@@ -1,11 +1,20 @@
 import type { LucideIcon } from "lucide-react";
+import { AlertTriangle, Clock, IdCard } from "lucide-react";
 import { DashboardCard } from "@/components/dashboard/dashboard-card";
+
+export type AlertIconKey = "critical" | "warning" | "info";
 
 export type DashboardAlert = {
   detail: string;
-  icon: LucideIcon;
+  icon: AlertIconKey;
   tone: string;
   title: string;
+};
+
+const ALERT_ICONS: Record<AlertIconKey, LucideIcon> = {
+  critical: AlertTriangle,
+  warning: Clock,
+  info: IdCard,
 };
 
 export function AlertsPanel({ alerts }: { alerts: DashboardAlert[] }) {
@@ -20,7 +29,7 @@ export function AlertsPanel({ alerts }: { alerts: DashboardAlert[] }) {
       </div>
       <div className="mt-4 grid gap-3">
         {alerts.map((alert) => {
-          const Icon = alert.icon;
+          const Icon = ALERT_ICONS[alert.icon];
           return (
             <article key={alert.title} className="flex gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
               <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${alert.tone}`}>

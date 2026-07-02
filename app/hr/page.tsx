@@ -1,9 +1,9 @@
-import Link from "next/link";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { HrManagementTable } from "@/components/settings/hr-management-table";
+import { HrWorkersTable } from "@/components/settings/hr-workers-table";
 import { requireSettingsManager } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { HrRow } from "@/app/settings/hr/actions";
+import type { HrRow, WorkerHrRow } from "@/app/hr/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +61,18 @@ export default async function HrManagementPage({ searchParams }: HrPageProps) {
     console.error("HR PAGE HR DATA ERROR", hrError.message);
   }
 
+  const { data: workersHrData, error: workersHrError } = await adminClient
+    .from("workers")
+    .select(
+      "id,full_name,date_of_joining,annual_leave_days,leave_taken_this_year,emirates_id_expiry,passport_expiry,emergency_contact_name,emergency_contact_phone,hr_notes,vacation_dates",
+    )
+    .order("full_name", { ascending: true })
+    .returns<WorkerHrRow[]>();
+
+  if (workersHrError) {
+    console.error("HR PAGE WORKERS DATA ERROR", workersHrError.message);
+  }
+
   const messageClassName =
     messageType === "error"
       ? "border-red-200 bg-red-50 text-red-900"
@@ -71,26 +83,24 @@ export default async function HrManagementPage({ searchParams }: HrPageProps) {
       eyebrow="SYSTEM"
       title="HR Management"
       description="Manage leave balances and document expiry for all staff."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
       userAvatarUrl={profile?.avatar_url ?? null}
       userRole={profile?.role ?? null}
     >
       <div className="px-5 py-6 sm:px-8">
-        <div className="mb-5 flex items-center justify-between gap-4">
-          <Link
-            href="/settings"
-            className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
-          >
-            Back to settings
-          </Link>
-          {message ? (
+        {message ? (
+          <div className="mb-5">
             <p className={`rounded-md border px-3 py-2 text-sm ${messageClassName}`}>
               {message}
             </p>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
         <HrManagementTable profiles={profileList} hrData={hrData ?? []} />
+        <div className="mt-8">
+          <HrWorkersTable workers={workersHrData ?? []} />
+        </div>
       </div>
     </ErpAppShell>
   );

@@ -17,7 +17,6 @@ import {
   DollarSign,
   FileText,
   FolderKanban,
-  HardHat,
   Layers,
   LayoutDashboard,
   Package,
@@ -78,6 +77,10 @@ function isNotificationsActive(pathname: string) {
 
 function isSettingsActive(pathname: string) {
   return pathname === "/settings" || pathname.startsWith("/settings/");
+}
+
+function isHrActive(pathname: string) {
+  return pathname === "/hr" || pathname.startsWith("/hr/");
 }
 
 function isProcurementRfqActive(pathname: string) {
@@ -275,16 +278,9 @@ export function ErpSidebar({
           { label: "Settings", href: "/settings", icon: Settings, active: isSettingsActive(pathname) },
           {
             label: "HR Management",
-            href: "/settings/hr",
+            href: "/hr",
             icon: Users2,
-            active: pathname.startsWith("/settings/hr"),
-            hidden: role !== "system_owner" && role !== "admin_manager",
-          },
-          {
-            label: "Workers",
-            href: "/settings/workers",
-            icon: HardHat,
-            active: pathname.startsWith("/settings/workers"),
+            active: isHrActive(pathname),
             hidden: role !== "system_owner" && role !== "admin_manager",
           },
         ],

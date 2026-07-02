@@ -16,7 +16,7 @@ import {
   userStatusLabel,
 } from "@/lib/user-management";
 import { createClient } from "@/lib/supabase/server";
-import type { HrRow } from "@/app/settings/hr/actions";
+import type { HrRow } from "@/app/hr/actions";
 
 export const dynamic = "force-dynamic";
 

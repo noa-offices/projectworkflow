@@ -5,8 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
-import { AlertTriangle, Clock, IdCard } from "lucide-react";
-import type { DashboardAlert } from "@/components/dashboard/alerts-panel";
+import type { AlertIconKey, DashboardAlert } from "@/components/dashboard/alerts-panel";
 import { sendNotificationToRole } from "@/lib/notifications/actions";
 // ─── Exported types ───────────────────────────────────────────────────────────
 
@@ -324,10 +323,10 @@ function expiryTone(daysUntil: number): string {
   return "bg-yellow-50 text-yellow-700";
 }
 
-function expiryIcon(daysUntil: number) {
-  if (daysUntil <= 10) return AlertTriangle;
-  if (daysUntil <= 30) return Clock;
-  return IdCard;
+function expiryIcon(daysUntil: number): AlertIconKey {
+  if (daysUntil <= 10) return "critical";
+  if (daysUntil <= 30) return "warning";
+  return "info";
 }
 
 function formatExpiryDate(dateStr: string): string {

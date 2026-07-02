@@ -383,7 +383,7 @@ function WorkerItem({ worker }: { worker: WorkerRow }) {
 
 // ─── Add New Worker form ───────────────────────────────────────────────────────
 
-function AddWorkerForm({ onClose }: { onClose: () => void }) {
+export function AddWorkerForm({ onClose }: { onClose: () => void }) {
   return (
     <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
       <p className="mb-3 text-sm font-semibold text-zinc-950">New Worker</p>

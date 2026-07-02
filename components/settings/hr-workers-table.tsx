@@ -4,48 +4,27 @@ import { useDeferredValue, useMemo, useState } from "react";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { VacationDatesEditor } from "@/components/settings/vacation-dates-editor";
 import { VacationHistoryModal } from "@/components/settings/vacation-history-modal";
+import { AddWorkerForm } from "@/components/settings/workers-table";
 import {
-  addStaffVacationEntry,
-  editStaffVacationEntry,
-  removeStaffVacationEntry,
-  upsertUserHrDetails,
-  type HrRow,
+  addWorkerVacationEntry,
+  editWorkerVacationEntry,
+  removeWorkerVacationEntry,
+  upsertWorkerHrDetails,
+  type WorkerHrRow,
 } from "@/app/hr/actions";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type HrProfile = {
-  id: string;
-  full_name: string | null;
-  email: string | null;
-  avatar_url: string | null;
-  role: string | null;
-  account_status: string | null;
-};
-
-type HrManagementTableProps = {
-  profiles: HrProfile[];
-  hrData: HrRow[];
-};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function userInitials(fullName: string | null, email: string | null): string {
-  const trimmedName = fullName?.trim();
+function workerInitials(fullName: string): string {
+  const initials = fullName
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("");
 
-  if (trimmedName) {
-    const initials = trimmedName
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0])
-      .join("");
-
-    if (initials) return initials.toUpperCase();
-  }
-
-  const trimmedEmail = email?.trim();
-  return trimmedEmail ? trimmedEmail.slice(0, 2).toUpperCase() : "?";
+  return initials ? initials.toUpperCase() : "?";
 }
 
 function daysUntilExpiry(dateStr: string | null): number | null {
@@ -106,14 +85,12 @@ function Field({
   label,
   name,
   onChange,
-  readOnly = false,
   type = "text",
 }: {
   defaultValue?: string | number | null;
   label: string;
   name: string;
   onChange?: () => void;
-  readOnly?: boolean;
   type?: string;
 }) {
   return (
@@ -126,35 +103,23 @@ function Field({
         type={type}
         step={type === "number" ? "1" : undefined}
         defaultValue={defaultValue ?? ""}
-        readOnly={readOnly}
         onChange={onChange}
-        className={`h-10 rounded-md border px-3 text-sm outline-none transition ${
-          readOnly
-            ? "border-zinc-200 bg-zinc-100 text-zinc-500"
-            : "border-zinc-200 bg-white text-zinc-800 focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-        }`}
+        className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
       />
     </label>
   );
 }
 
-// ─── HrRow component ──────────────────────────────────────────────────────────
+// ─── WorkerHrItem row component ────────────────────────────────────────────────
 
-function HrRow({
-  hr,
-  profile,
-}: {
-  hr: HrRow | undefined;
-  profile: HrProfile;
-}) {
+function WorkerHrItem({ worker }: { worker: WorkerHrRow }) {
   const [isEditing, setIsEditing] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [showVacationModal, setShowVacationModal] = useState(false);
-  const [annualLeaveDays, setAnnualLeaveDays] = useState(hr?.annual_leave_days ?? 30);
-  const [leaveTaken, setLeaveTaken] = useState(hr?.leave_taken_this_year ?? 0);
+  const [annualLeaveDays, setAnnualLeaveDays] = useState(worker.annual_leave_days);
+  const [leaveTaken, setLeaveTaken] = useState(worker.leave_taken_this_year);
   const leaveBalance = annualLeaveDays - leaveTaken;
-  const initials = userInitials(profile.full_name, profile.email);
-  const displayName = profile.full_name?.trim() || "Unnamed user";
+  const initials = workerInitials(worker.full_name);
 
   function markDirty() {
     setIsDirty(true);
@@ -163,8 +128,8 @@ function HrRow({
   function handleCancel() {
     setIsEditing(false);
     setIsDirty(false);
-    setAnnualLeaveDays(hr?.annual_leave_days ?? 30);
-    setLeaveTaken(hr?.leave_taken_this_year ?? 0);
+    setAnnualLeaveDays(worker.annual_leave_days);
+    setLeaveTaken(worker.leave_taken_this_year);
   }
 
   if (isEditing) {
@@ -174,40 +139,24 @@ function HrRow({
           <div className="space-y-4">
             {/* Identity header */}
             <div className="flex items-center gap-3">
-              {profile.avatar_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={profile.avatar_url}
-                  alt=""
-                  className="h-8 w-8 shrink-0 rounded-full object-cover"
-                />
-              ) : (
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-xs font-semibold text-emerald-900">
-                  {initials}
-                </span>
-              )}
-              <div className="min-w-0">
-                <p className="truncate font-medium text-zinc-950">
-                  {profile.full_name?.trim() || "Unnamed user"}
-                </p>
-                <p className="truncate text-xs text-zinc-500">
-                  {profile.email?.trim() || "No email"}
-                </p>
-              </div>
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-xs font-semibold text-zinc-700">
+                {initials}
+              </span>
+              <p className="truncate font-medium text-zinc-950">{worker.full_name}</p>
             </div>
 
+            {/* Form fields */}
             <form
-              action={upsertUserHrDetails.bind(null, profile.id)}
+              action={upsertWorkerHrDetails.bind(null, worker.id)}
               className="space-y-4"
             >
-              {/* Form fields */}
               <div className="grid gap-3 md:grid-cols-2">
                 {/* Row 1 */}
                 <Field
                   name="date_of_joining"
                   label="Date of joining"
                   type="date"
-                  defaultValue={hr?.date_of_joining ?? ""}
+                  defaultValue={worker.date_of_joining ?? ""}
                   onChange={markDirty}
                 />
                 <label className="grid gap-1">
@@ -262,14 +211,14 @@ function HrRow({
                   name="emirates_id_expiry"
                   label="Emirates ID expiry"
                   type="date"
-                  defaultValue={hr?.emirates_id_expiry ?? ""}
+                  defaultValue={worker.emirates_id_expiry ?? ""}
                   onChange={markDirty}
                 />
                 <Field
                   name="passport_expiry"
                   label="Passport expiry"
                   type="date"
-                  defaultValue={hr?.passport_expiry ?? ""}
+                  defaultValue={worker.passport_expiry ?? ""}
                   onChange={markDirty}
                 />
 
@@ -277,13 +226,13 @@ function HrRow({
                 <Field
                   name="emergency_contact_name"
                   label="Emergency contact name"
-                  defaultValue={hr?.emergency_contact_name ?? ""}
+                  defaultValue={worker.emergency_contact_name ?? ""}
                   onChange={markDirty}
                 />
                 <Field
                   name="emergency_contact_phone"
                   label="Emergency contact phone"
-                  defaultValue={hr?.emergency_contact_phone ?? ""}
+                  defaultValue={worker.emergency_contact_phone ?? ""}
                   onChange={markDirty}
                 />
 
@@ -295,7 +244,7 @@ function HrRow({
                   <textarea
                     name="hr_notes"
                     rows={3}
-                    defaultValue={hr?.hr_notes ?? ""}
+                    defaultValue={worker.hr_notes ?? ""}
                     onChange={markDirty}
                     className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
                   />
@@ -324,10 +273,10 @@ function HrRow({
             {/* Vacation dates */}
             <div className="border-t border-zinc-200 pt-3">
               <VacationDatesEditor
-                vacationDates={hr?.vacation_dates ?? []}
-                addVacationAction={addStaffVacationEntry.bind(null, profile.id)}
-                editVacationAction={editStaffVacationEntry.bind(null, profile.id)}
-                removeVacationAction={removeStaffVacationEntry.bind(null, profile.id)}
+                vacationDates={worker.vacation_dates ?? []}
+                addVacationAction={addWorkerVacationEntry.bind(null, worker.id)}
+                editVacationAction={editWorkerVacationEntry.bind(null, worker.id)}
+                removeVacationAction={removeWorkerVacationEntry.bind(null, worker.id)}
               />
             </div>
           </div>
@@ -338,56 +287,34 @@ function HrRow({
 
   // ── Default compact row ────────────────────────────────────────────────────
 
-  const balance = hr ? leaveBalance : null;
-
   return (
     <>
     <tr className="hover:bg-zinc-50">
-      {/* Staff Member */}
+      {/* Worker */}
       <td className="px-5 py-3">
         <div className="flex items-center gap-3">
-          {profile.avatar_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={profile.avatar_url}
-              alt=""
-              className="h-8 w-8 shrink-0 rounded-full object-cover"
-            />
-          ) : (
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-xs font-semibold text-emerald-900">
-              {initials}
-            </span>
-          )}
-          <div className="min-w-0">
-            <p className="truncate font-medium text-zinc-950">
-              {profile.full_name?.trim() || "Unnamed user"}
-            </p>
-            <p className="truncate text-xs text-zinc-500">
-              {profile.email?.trim() || "No email"}
-            </p>
-          </div>
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-xs font-semibold text-zinc-700">
+            {initials}
+          </span>
+          <p className="truncate font-medium text-zinc-950">{worker.full_name}</p>
         </div>
       </td>
 
       {/* Leave Balance */}
       <td className="px-5 py-3 text-sm">
-        {balance === null ? (
-          <span className="text-zinc-400">—</span>
-        ) : (
-          <span className={leaveBalanceColorClass(balance)}>
-            {balance} days
-          </span>
-        )}
+        <span className={leaveBalanceColorClass(leaveBalance)}>
+          {leaveBalance} days
+        </span>
       </td>
 
       {/* Emirates ID Expiry */}
-      <td className={`whitespace-nowrap px-5 py-3 text-sm ${expiryColorClass(hr?.emirates_id_expiry ?? null)}`}>
-        {formatDateDisplay(hr?.emirates_id_expiry ?? null)}
+      <td className={`whitespace-nowrap px-5 py-3 text-sm ${expiryColorClass(worker.emirates_id_expiry)}`}>
+        {formatDateDisplay(worker.emirates_id_expiry)}
       </td>
 
       {/* Passport Expiry */}
-      <td className={`whitespace-nowrap px-5 py-3 text-sm ${expiryColorClass(hr?.passport_expiry ?? null)}`}>
-        {formatDateDisplay(hr?.passport_expiry ?? null)}
+      <td className={`whitespace-nowrap px-5 py-3 text-sm ${expiryColorClass(worker.passport_expiry)}`}>
+        {formatDateDisplay(worker.passport_expiry)}
       </td>
 
       {/* Actions */}
@@ -412,8 +339,8 @@ function HrRow({
     </tr>
     {showVacationModal ? (
       <VacationHistoryModal
-        personName={displayName}
-        vacationDates={hr?.vacation_dates ?? []}
+        personName={worker.full_name}
+        vacationDates={worker.vacation_dates ?? []}
         onClose={() => setShowVacationModal(false)}
       />
     ) : null}
@@ -421,49 +348,42 @@ function HrRow({
   );
 }
 
-// ─── HrManagementTable ────────────────────────────────────────────────────────
+// ─── HrWorkersTable ─────────────────────────────────────────────────────────────
 
-export function HrManagementTable({ hrData, profiles }: HrManagementTableProps) {
+export function HrWorkersTable({ workers }: { workers: WorkerHrRow[] }) {
   const [search, setSearch] = useState("");
+  const [showAddForm, setShowAddForm] = useState(false);
   const deferredSearch = useDeferredValue(search);
 
-  const hrByProfileId = useMemo(
-    () => new Map(hrData.map((row) => [row.profile_id, row])),
-    [hrData],
-  );
-
   const summary = useMemo(() => {
-    const emiratesExpiring = hrData.filter((row) => {
-      const days = daysUntilExpiry(row.emirates_id_expiry);
+    const emiratesExpiring = workers.filter((w) => {
+      const days = daysUntilExpiry(w.emirates_id_expiry);
       return days !== null && days <= 60;
     }).length;
-    const passportExpiring = hrData.filter((row) => {
-      const days = daysUntilExpiry(row.passport_expiry);
+    const passportExpiring = workers.filter((w) => {
+      const days = daysUntilExpiry(w.passport_expiry);
       return days !== null && days <= 60;
     }).length;
-    const lowLeave = hrData.filter(
-      (row) => row.annual_leave_days - row.leave_taken_this_year <= 5,
+    const lowLeave = workers.filter(
+      (w) => w.annual_leave_days - w.leave_taken_this_year <= 5,
     ).length;
 
     return { emiratesExpiring, passportExpiring, lowLeave };
-  }, [hrData]);
+  }, [workers]);
 
-  const filteredProfiles = useMemo(() => {
+  const filteredWorkers = useMemo(() => {
     const normalized = deferredSearch.trim().toLowerCase();
 
-    return profiles.filter(
-      (p) =>
-        normalized.length === 0 ||
-        p.full_name?.toLowerCase().includes(normalized) ||
-        p.email?.toLowerCase().includes(normalized),
+    return workers.filter(
+      (w) => normalized.length === 0 || w.full_name.toLowerCase().includes(normalized),
     );
-  }, [deferredSearch, profiles]);
+  }, [deferredSearch, workers]);
 
   return (
     <div className="grid gap-5">
       {/* Summary cards */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard label="Total Staff" tone="text-zinc-950" value={profiles.length} />
+        <SummaryCard label="Total Workers" tone="text-zinc-950" value={workers.length} />
         <SummaryCard
           label="Emirates ID Expiring"
           tone="text-amber-900"
@@ -481,14 +401,29 @@ export function HrManagementTable({ hrData, profiles }: HrManagementTableProps) 
         />
       </div>
 
+      {/* Add new worker */}
+      <div>
+        {showAddForm ? (
+          <AddWorkerForm onClose={() => setShowAddForm(false)} />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowAddForm(true)}
+            className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+          >
+            + Add Worker
+          </button>
+        )}
+      </div>
+
       {/* Table section */}
       <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
         <div className="border-b border-zinc-200 px-5 py-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-zinc-950">Staff HR Records</h2>
+              <h2 className="text-lg font-semibold text-zinc-950">Field Workers</h2>
               <p className="mt-1 text-sm text-zinc-500">
-                Manage leave balances, document expiry dates, and emergency contacts.
+                Manage leave balances, document expiry dates, and emergency contacts for field workers.
               </p>
             </div>
             <label className="grid gap-1">
@@ -498,7 +433,7 @@ export function HrManagementTable({ hrData, profiles }: HrManagementTableProps) 
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search name or email"
+                placeholder="Search worker name"
                 className="h-10 min-w-0 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10 lg:w-60"
               />
             </label>
@@ -509,7 +444,7 @@ export function HrManagementTable({ hrData, profiles }: HrManagementTableProps) 
           <table className="w-full min-w-[760px] divide-y divide-zinc-200 text-left text-sm">
             <thead className="bg-zinc-50 text-xs uppercase tracking-[0.16em] text-zinc-500">
               <tr>
-                <th className="px-5 py-3 font-semibold">Staff Member</th>
+                <th className="px-5 py-3 font-semibold">Worker</th>
                 <th className="px-5 py-3 font-semibold">Leave Balance</th>
                 <th className="px-5 py-3 font-semibold">Emirates ID</th>
                 <th className="px-5 py-3 font-semibold">Passport</th>
@@ -517,17 +452,13 @@ export function HrManagementTable({ hrData, profiles }: HrManagementTableProps) 
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
-              {filteredProfiles.map((profile) => (
-                <HrRow
-                  key={profile.id}
-                  profile={profile}
-                  hr={hrByProfileId.get(profile.id)}
-                />
+              {filteredWorkers.map((worker) => (
+                <WorkerHrItem key={worker.id} worker={worker} />
               ))}
-              {!filteredProfiles.length ? (
+              {!filteredWorkers.length ? (
                 <tr>
                   <td colSpan={5} className="px-5 py-10 text-center text-zinc-500">
-                    No staff members match the current search.
+                    No field workers match the current search.
                   </td>
                 </tr>
               ) : null}
