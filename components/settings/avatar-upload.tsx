@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { createClient as createBrowserClient } from "@/lib/supabase/client";
 import { saveAvatarUrl } from "@/lib/settings/avatar-action";
+import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
 
 type AvatarUploadProps = {
   currentAvatarUrl: string | null;
@@ -12,7 +13,7 @@ type AvatarUploadProps = {
 
 export function AvatarUpload({ currentAvatarUrl, userId, displayName }: AvatarUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(currentAvatarUrl);
+  const [uploadedPreviewUrl, setUploadedPreviewUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [savedToast, setSavedToast] = useState(false);
@@ -49,13 +50,13 @@ export function AvatarUpload({ currentAvatarUrl, userId, displayName }: AvatarUp
         return;
       }
 
-      const result = await saveAvatarUrl(signedData.signedUrl);
+      const result = await saveAvatarUrl(storagePath);
       if (!result.ok) {
         setErrorMsg("Could not save avatar: " + result.error);
         return;
       }
 
-      setPreviewUrl(signedData.signedUrl);
+      setUploadedPreviewUrl(signedData.signedUrl);
       setSavedToast(true);
       setTimeout(() => setSavedToast(false), 2500);
     } finally {
@@ -66,11 +67,16 @@ export function AvatarUpload({ currentAvatarUrl, userId, displayName }: AvatarUp
   return (
     <div className="flex items-center gap-4">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
-        {previewUrl ? (
+        {uploadedPreviewUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={previewUrl} alt="Avatar" className="h-full w-full object-cover" />
+          <img src={uploadedPreviewUrl} alt="Avatar" className="h-full w-full object-cover" />
         ) : (
-          <span className="text-sm font-semibold text-zinc-600">{initials}</span>
+          <ResolvedAvatar
+            path={currentAvatarUrl}
+            alt="Avatar"
+            className="h-full w-full object-cover"
+            fallback={<span className="text-sm font-semibold text-zinc-600">{initials}</span>}
+          />
         )}
       </div>
       <div className="flex flex-col gap-1">

@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import type { AppRole } from "@/lib/supabase/types";
+import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
 import {
   Archive,
   BarChart3,
@@ -363,17 +364,16 @@ export function ErpSidebar({
           href="/settings/profile"
           className="flex items-center gap-3 rounded-md px-3 py-2 transition hover:bg-zinc-100"
         >
-          {userAvatarUrl ? (
-            <img
-              src={userAvatarUrl}
-              alt={userDisplayName ?? "Profile"}
-              className="h-8 w-8 shrink-0 rounded-full object-cover"
-            />
-          ) : (
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100">
-              <User className="h-4 w-4 text-zinc-500" aria-hidden="true" />
-            </span>
-          )}
+          <ResolvedAvatar
+            path={userAvatarUrl ?? null}
+            alt={userDisplayName ?? "Profile"}
+            className="h-8 w-8 shrink-0 rounded-full object-cover"
+            fallback={
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100">
+                <User className="h-4 w-4 text-zinc-500" aria-hidden="true" />
+              </span>
+            }
+          />
           <div className="min-w-0 flex-1">
             <p className="truncate text-[13px] font-medium text-zinc-900">
               {userDisplayName ?? "My Profile"}

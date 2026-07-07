@@ -1,4 +1,7 @@
+"use client";
+
 import type { ReactNode } from "react";
+import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
 
 export type SalesRepCardProps = {
   name: string;
@@ -59,16 +62,18 @@ export function SalesRepCard({
       <div className="p-3">
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full">
-            {avatarUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={avatarUrl} alt={name} className="h-full w-full object-cover" />
-            ) : (
-              <span
-                className={`flex h-full w-full items-center justify-center text-xs font-semibold text-white ${avatarColorClass(name)}`}
-              >
-                {initial}
-              </span>
-            )}
+            <ResolvedAvatar
+              path={avatarUrl}
+              alt={name}
+              className="h-full w-full object-cover"
+              fallback={
+                <span
+                  className={`flex h-full w-full items-center justify-center text-xs font-semibold text-white ${avatarColorClass(name)}`}
+                >
+                  {initial}
+                </span>
+              }
+            />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">

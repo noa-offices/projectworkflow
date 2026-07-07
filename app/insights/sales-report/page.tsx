@@ -4,6 +4,7 @@ import { DateRangeSelector } from "@/components/insights/date-range-selector";
 import { SalesPerformanceCharts } from "@/components/insights/sales-performance-charts";
 import { SalesRepSparkline } from "@/components/insights/sales-rep-sparkline";
 import { SalesRepCard } from "@/components/insights/sales-rep-card";
+import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
 import { requireActiveUser } from "@/lib/auth";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
@@ -210,12 +211,12 @@ function SalesLeaderboard({
                     className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-white"
                     style={{ backgroundColor: color }}
                   >
-                    {row.avatarUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={row.avatarUrl} alt={row.name} className="h-full w-full object-cover" />
-                    ) : (
-                      initial
-                    )}
+                    <ResolvedAvatar
+                      path={row.avatarUrl}
+                      alt={row.name}
+                      className="h-full w-full object-cover"
+                      fallback={initial}
+                    />
                   </div>
 
                   {/* Name + conversion rate */}

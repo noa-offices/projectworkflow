@@ -4,6 +4,7 @@ import { useDeferredValue, useMemo, useState } from "react";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { VacationDatesEditor } from "@/components/settings/vacation-dates-editor";
 import { VacationHistoryModal } from "@/components/settings/vacation-history-modal";
+import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
 import {
   addStaffVacationEntry,
   editStaffVacationEntry,
@@ -174,18 +175,16 @@ function HrRow({
           <div className="space-y-4">
             {/* Identity header */}
             <div className="flex items-center gap-3">
-              {profile.avatar_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={profile.avatar_url}
-                  alt=""
-                  className="h-8 w-8 shrink-0 rounded-full object-cover"
-                />
-              ) : (
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-xs font-semibold text-emerald-900">
-                  {initials}
-                </span>
-              )}
+              <ResolvedAvatar
+                path={profile.avatar_url}
+                alt=""
+                className="h-8 w-8 shrink-0 rounded-full object-cover"
+                fallback={
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-xs font-semibold text-emerald-900">
+                    {initials}
+                  </span>
+                }
+              />
               <div className="min-w-0">
                 <p className="truncate font-medium text-zinc-950">
                   {profile.full_name?.trim() || "Unnamed user"}
@@ -346,18 +345,16 @@ function HrRow({
       {/* Staff Member */}
       <td className="px-5 py-3">
         <div className="flex items-center gap-3">
-          {profile.avatar_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={profile.avatar_url}
-              alt=""
-              className="h-8 w-8 shrink-0 rounded-full object-cover"
-            />
-          ) : (
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-xs font-semibold text-emerald-900">
-              {initials}
-            </span>
-          )}
+          <ResolvedAvatar
+            path={profile.avatar_url}
+            alt=""
+            className="h-8 w-8 shrink-0 rounded-full object-cover"
+            fallback={
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-xs font-semibold text-emerald-900">
+                {initials}
+              </span>
+            }
+          />
           <div className="min-w-0">
             <p className="truncate font-medium text-zinc-950">
               {profile.full_name?.trim() || "Unnamed user"}

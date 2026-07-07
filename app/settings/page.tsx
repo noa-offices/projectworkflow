@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ChevronRight, HardHat, Users, Users2 } from "lucide-react";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
+import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
 import { updateCompanySettings, updateDocumentDefaults } from "@/app/settings/actions";
 import { requireActiveUser } from "@/lib/auth";
 import { getCompanyProfile, getCompanySettingsRecord, companyAddressLines } from "@/lib/company-profile";
@@ -255,17 +256,16 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                 href="/settings/profile"
                 className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm transition hover:bg-zinc-50"
               >
-                {profile?.avatar_url ? (
-                  <img
-                    src={profile.avatar_url}
-                    alt=""
-                    className="h-10 w-10 shrink-0 rounded-full object-cover"
-                  />
-                ) : (
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-sm font-semibold text-emerald-900">
-                    {avatarInitials(displayName)}
-                  </span>
-                )}
+                <ResolvedAvatar
+                  path={profile?.avatar_url ?? null}
+                  alt=""
+                  className="h-10 w-10 shrink-0 rounded-full object-cover"
+                  fallback={
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-sm font-semibold text-emerald-900">
+                      {avatarInitials(displayName)}
+                    </span>
+                  }
+                />
                 <div className="min-w-0 flex-1">
                   <h2 className="text-base font-semibold text-zinc-950">My Profile</h2>
                   <p className="mt-1 text-sm leading-6 text-zinc-500">
