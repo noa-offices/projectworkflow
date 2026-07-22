@@ -15,7 +15,7 @@ import {
   type ProductTemplateMaterialGroupItemLink,
   type ProductTemplateMaterialGroupLink,
 } from "@/components/quotations/finish-selections-editor";
-import { requireActiveUser } from "@/lib/auth";
+import { canManageProductLibrary as canUseProductLibrary, requireActiveUser } from "@/lib/auth";
 import { formatProjectReferenceDisplay } from "@/lib/project-reference";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import {
@@ -73,10 +73,7 @@ type QuotationItem = Parameters<typeof createWorkspaceFromServerSnapshot>[0]["it
 export default async function LocalQuotationBuilderPage({ params }: PageProps) {
   const { id } = await params;
   const { profile, user } = await requireActiveUser();
-  const canManageProductLibrary =
-    profile?.role === "system_owner" ||
-    profile?.role === "admin_manager" ||
-    profile?.role === "designer";
+  const canManageProductLibrary = canUseProductLibrary(profile?.role);
   const supabase = await createSupabaseClient();
 
   const { data: quotation, error: quotationError } = await supabase

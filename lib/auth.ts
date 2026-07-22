@@ -115,6 +115,16 @@ export function canAccessProcurement(role: AppRole | null | undefined): boolean 
   return role === "system_owner" || role === "admin_manager" || role === "procurement_manager";
 }
 
+export function canManageProductLibrary(role: AppRole | null | undefined): boolean {
+  return (
+    role === "system_owner" ||
+    role === "admin_manager" ||
+    role === "procurement_manager" ||
+    role === "sales_designer" ||
+    role === "designer"
+  );
+}
+
 export async function requireRecordsManager(): Promise<AuthenticatedUser> {
   const authenticatedUser = await requireActiveUser();
   const role = authenticatedUser.profile?.role;
@@ -131,7 +141,7 @@ export async function requireRecordsManager(): Promise<AuthenticatedUser> {
   return authenticatedUser;
 }
 
-export async function requireProductLibraryManager(): Promise<AuthenticatedUser> {
+export async function requireQuotationActionUser(): Promise<AuthenticatedUser> {
   const authenticatedUser = await requireActiveUser();
   const role = authenticatedUser.profile?.role;
 
@@ -142,6 +152,15 @@ export async function requireProductLibraryManager(): Promise<AuthenticatedUser>
     role !== "sales_designer" &&
     role !== "designer"
   ) {
+    redirect("/dashboard");
+  }
+
+  return authenticatedUser;
+}
+
+export async function requireProductLibraryManager(): Promise<AuthenticatedUser> {
+  const authenticatedUser = await requireActiveUser();
+  if (!canManageProductLibrary(authenticatedUser.profile?.role)) {
     redirect("/dashboard");
   }
 

@@ -58,7 +58,7 @@ import {
   SharedQuotationMoreMenu,
   SharedQuotationRowDetailsPanel,
 } from "@/components/quotations/shared-quotation-row-details-panel";
-import { requireActiveUser } from "@/lib/auth";
+import { canManageProductLibrary as canUseProductLibrary, requireActiveUser } from "@/lib/auth";
 import { defaultCurrency, formatMoney, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import { formatProjectReferenceDisplay } from "@/lib/project-reference";
@@ -3139,10 +3139,7 @@ export default async function QuotationBuilderPage({
     profile?.role === "admin_manager" ||
     profile?.role === "sales_designer" ||
     profile?.role === "designer";
-  const canManageProductLibrary =
-    profile?.role === "system_owner" ||
-    profile?.role === "admin_manager" ||
-    profile?.role === "designer";
+  const canManageProductLibrary = canUseProductLibrary(profile?.role);
   const supabase = await createSupabaseClient();
 
   const { data: quotation, error: quotationError } = await supabase

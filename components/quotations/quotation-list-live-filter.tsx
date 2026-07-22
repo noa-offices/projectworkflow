@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useMemo, useState, useTransition } from "react";
@@ -47,7 +46,6 @@ type Quotation = {
 
 type QuotationListLiveFilterProps = {
   canDeleteFolders: boolean;
-  canManageRecords: boolean;
   children?: ReactNode;
   clients: Client[];
   initialFilters?: {
@@ -144,7 +142,6 @@ type DeletingFolderState = {
 
 export function QuotationListLiveFilter({
   canDeleteFolders,
-  canManageRecords,
   children,
   clients,
   initialFilters,
@@ -351,6 +348,16 @@ export function QuotationListLiveFilter({
     setDeletingFolder(null);
     setDeleteConfirmInput("");
     setDeleteError(null);
+  }
+
+  function openFolder(quotationId: string) {
+    router.push(`/quotations/${quotationId}`);
+  }
+
+  function handleFolderRowKeyDown(event: React.KeyboardEvent, quotationId: string) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    openFolder(quotationId);
   }
 
   return (
@@ -564,7 +571,15 @@ export function QuotationListLiveFilter({
             const quotation = folder.latestQuotation;
 
             return (
-              <article key={folder.key} className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
+              <article
+                key={folder.key}
+                aria-label={`Open ${folder.folderNo ?? folder.projectName}`}
+                className="cursor-pointer rounded-lg border border-zinc-200 bg-zinc-50 p-4 transition hover:border-emerald-900/25 hover:bg-emerald-50/30"
+                onClick={() => openFolder(quotation.id)}
+                onKeyDown={(event) => handleFolderRowKeyDown(event, quotation.id)}
+                role="link"
+                tabIndex={0}
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-xs font-semibold uppercase text-zinc-500">Folder No</p>
@@ -603,39 +618,45 @@ export function QuotationListLiveFilter({
                     <p className="mt-1 text-zinc-700">{formatListDate(quotation.quotation_date)}</p>
                   </div>
                 </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Link href={`/quotations/${quotation.id}`} className="inline-flex h-9 items-center rounded-md bg-emerald-900 px-3 text-sm font-semibold text-white transition hover:bg-emerald-800">
-                    Open Folder
-                  </Link>
-                  {canManageRecords ? (
+                {canDeleteFolders ? (
+                <details
+                  className="relative mt-4 inline-block"
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                >
+                  <summary className="inline-flex h-9 cursor-pointer list-none items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
+                    Actions <span aria-hidden="true">&#9662;</span>
+                  </summary>
+                  <div className="absolute left-0 z-20 mt-2 grid min-w-44 gap-1 rounded-md border border-zinc-200 bg-white p-2 shadow-lg">
                     <button
                       type="button"
                       disabled={archivingKey === folder.key}
                       onClick={() => handleFolderArchive(folder.key, folder.archiveAnchorId, !folder.isFolderArchived)}
-                      className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                      className="rounded-md px-3 py-2 text-left text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-400"
                     >
-                      {archivingKey === folder.key ? "…" : folder.isFolderArchived ? "Unarchive" : "Archive"}
+                      {archivingKey === folder.key ? "..." : folder.isFolderArchived ? "Unarchive" : "Archive"}
                     </button>
-                  ) : null}
-                  {canDeleteFolders ? (
-                    folder.isFolderDeletable ? (
-                      <button
-                        type="button"
-                        onClick={() => openDeleteModal(folder)}
-                        className="inline-flex h-9 items-center rounded-md border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 transition hover:bg-red-50"
-                      >
-                        Delete
-                      </button>
-                    ) : (
-                      <span
-                        title={folder.deleteBlockReason ?? undefined}
-                        className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400 select-none"
-                      >
-                        Delete
-                      </span>
-                    )
-                  ) : null}
-                </div>
+                    {
+                      folder.isFolderDeletable ? (
+                        <button
+                          type="button"
+                          onClick={() => openDeleteModal(folder)}
+                          className="rounded-md px-3 py-2 text-left text-sm font-semibold text-red-600 transition hover:bg-red-50"
+                        >
+                          Delete
+                        </button>
+                      ) : (
+                        <span
+                          title={folder.deleteBlockReason ?? undefined}
+                          className="cursor-not-allowed rounded-md px-3 py-2 text-sm font-semibold text-zinc-400 select-none"
+                        >
+                          Delete
+                        </span>
+                      )
+                    }
+                  </div>
+                </details>
+                ) : null}
               </article>
             );
           })}
@@ -654,7 +675,7 @@ export function QuotationListLiveFilter({
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Total</th>
                 <th className="px-4 py-3">Updated</th>
-                <th className="px-4 py-3">Open</th>
+                <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -662,7 +683,15 @@ export function QuotationListLiveFilter({
                 const quotation = folder.latestQuotation;
 
                 return (
-                  <tr key={folder.key} className="border-b border-zinc-100 align-top transition-colors hover:bg-zinc-50/80 last:border-0">
+                  <tr
+                    key={folder.key}
+                    aria-label={`Open ${folder.folderNo ?? folder.projectName}`}
+                    className="cursor-pointer border-b border-zinc-100 align-top transition-colors hover:bg-emerald-50/30 last:border-0"
+                    onClick={() => openFolder(quotation.id)}
+                    onKeyDown={(event) => handleFolderRowKeyDown(event, quotation.id)}
+                    role="link"
+                    tabIndex={0}
+                  >
                     <td className="px-4 py-3">
                       <p className="font-semibold text-zinc-950">{folder.folderNo ?? "Legacy"}</p>
                       <p className="mt-0.5 text-xs text-zinc-400">
@@ -690,39 +719,45 @@ export function QuotationListLiveFilter({
                     <td className="px-4 py-3 font-semibold text-zinc-950">{formatQuotationMoney(quotation.currency, quotation.grand_total)}</td>
                     <td className="px-4 py-3 text-zinc-500">{formatListDate(quotation.quotation_date)}</td>
                     <td className="px-4 py-3">
-                      <div className="flex flex-col gap-2">
-                        <Link href={`/quotations/${quotation.id}`} className="inline-flex h-9 items-center rounded-md bg-emerald-900 px-3 text-sm font-semibold text-white transition hover:bg-emerald-800">
-                          Open Folder
-                        </Link>
-                        {canManageRecords ? (
+                      {canDeleteFolders ? (
+                      <details
+                        className="relative inline-block"
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
+                        <summary className="inline-flex h-9 cursor-pointer list-none items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
+                          Actions <span aria-hidden="true">&#9662;</span>
+                        </summary>
+                        <div className="absolute right-0 z-20 mt-2 grid min-w-44 gap-1 rounded-md border border-zinc-200 bg-white p-2 shadow-lg">
                           <button
                             type="button"
                             disabled={archivingKey === folder.key}
                             onClick={() => handleFolderArchive(folder.key, folder.archiveAnchorId, !folder.isFolderArchived)}
-                            className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="rounded-md px-3 py-2 text-left text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-400"
                           >
-                            {archivingKey === folder.key ? "…" : folder.isFolderArchived ? "Unarchive" : "Archive"}
+                            {archivingKey === folder.key ? "..." : folder.isFolderArchived ? "Unarchive" : "Archive"}
                           </button>
-                        ) : null}
-                        {canDeleteFolders ? (
-                          folder.isFolderDeletable ? (
-                            <button
-                              type="button"
-                              onClick={() => openDeleteModal(folder)}
-                              className="inline-flex h-9 items-center rounded-md border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 transition hover:bg-red-50"
-                            >
-                              Delete
-                            </button>
-                          ) : (
-                            <span
-                              title={folder.deleteBlockReason ?? undefined}
-                              className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400 select-none"
-                            >
-                              Delete
-                            </span>
-                          )
-                        ) : null}
-                      </div>
+                          {
+                            folder.isFolderDeletable ? (
+                              <button
+                                type="button"
+                                onClick={() => openDeleteModal(folder)}
+                                className="rounded-md px-3 py-2 text-left text-sm font-semibold text-red-600 transition hover:bg-red-50"
+                              >
+                                Delete
+                              </button>
+                            ) : (
+                              <span
+                                title={folder.deleteBlockReason ?? undefined}
+                                className="cursor-not-allowed rounded-md px-3 py-2 text-sm font-semibold text-zinc-400 select-none"
+                              >
+                                Delete
+                              </span>
+                            )
+                          }
+                        </div>
+                      </details>
+                      ) : null}
                     </td>
                   </tr>
                 );

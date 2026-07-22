@@ -3,7 +3,7 @@
 import "server-only";
 
 import { revalidatePath } from "next/cache";
-import { requireActiveUser } from "@/lib/auth";
+import { requireQuotationActionUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
@@ -50,12 +50,7 @@ export async function deleteFolderAction(
   quotationIds: string[],
   folderLabel: string | null,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { profile } = await requireActiveUser();
-
-  // Stricter than canManageRecords — only the two highest roles may delete folders.
-  const canDelete =
-    profile?.role === "system_owner" || profile?.role === "admin_manager";
-  if (!canDelete) return { ok: false, error: "Forbidden." };
+  await requireQuotationActionUser();
 
   if (!quotationIds.length) return { ok: false, error: "No quotations specified." };
 

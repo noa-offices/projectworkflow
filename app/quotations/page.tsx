@@ -1,8 +1,8 @@
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
+import { QuotationFolderForm } from "@/components/quotations/quotation-folder-form";
 import { QuotationListLiveFilter } from "@/components/quotations/quotation-list-live-filter";
 import { requireActiveUser } from "@/lib/auth";
-import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createQuotation, createQuotationClient } from "./actions";
@@ -50,14 +50,6 @@ type Quotation = {
   salesperson_id: string | null;
   layout_settings: Record<string, unknown> | null;
 };
-
-const layoutModes = [
-  ["simple_proposal", "Simple Proposal"],
-  ["standard_proposal", "Standard Proposal"],
-  ["comparison", "Comparison"],
-  ["boq_schedule", "BOQ / Schedule"],
-  ["internal_costing", "Internal Costing"],
-] as const;
 
 function Field({
   name,
@@ -109,46 +101,6 @@ function TextArea({
   );
 }
 
-function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
-  return (
-    <label className="block">
-      <span className="text-xs font-semibold uppercase text-zinc-500">Currency</span>
-      <select
-        name="currency"
-        defaultValue={normalizeCurrency(defaultValue ?? defaultCurrency)}
-        className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-      >
-        {supportedCurrencies.map((currency) => (
-          <option key={currency.code} value={currency.code}>
-            {currency.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function ClientSelect({ clients, selectedClientId }: { clients: Client[]; selectedClientId?: string }) {
-  return (
-    <label className="block">
-      <span className="text-xs font-semibold uppercase text-zinc-500">Client</span>
-      <select
-        name="client_id"
-        required
-        defaultValue={selectedClientId ?? ""}
-        className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-      >
-        <option value="">Select client</option>
-        {clients.map((client) => (
-          <option key={client.id} value={client.id}>
-            {client.company_name}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
 function CreateClientPanel() {
   return (
     <details className="rounded-md border border-zinc-200 bg-zinc-50 p-3 md:col-span-2 xl:col-span-3">
@@ -178,32 +130,6 @@ function CreateClientPanel() {
   );
 }
 
-function SalespersonSelect({
-  profiles,
-  currentUserId,
-}: {
-  profiles: SalespersonProfile[];
-  currentUserId: string;
-}) {
-  return (
-    <label className="block">
-      <span className="text-xs font-semibold uppercase text-zinc-500">Sales Person</span>
-      <select
-        name="salesperson_id"
-        defaultValue={currentUserId}
-        className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-      >
-        <option value="">— Unassigned —</option>
-        {profiles.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.full_name ?? p.email ?? p.id}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
 function QuotationForm({
   clients,
   selectedClientId,
@@ -216,60 +142,15 @@ function QuotationForm({
   currentUserId: string;
 }) {
   return (
-    <form action={createQuotation} data-quotation-create-form className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-      <input type="hidden" name="return_to" value="/sales/quotations" />
-      <input type="hidden" name="project_id" value="" />
-      <ClientSelect clients={clients} selectedClientId={selectedClientId} />
-      <SalespersonSelect profiles={salespersonProfiles} currentUserId={currentUserId} />
-      <Field name="legacy_reference" label="Project / Reference Name" required />
-      <label className="block">
-        <span className="text-xs font-semibold uppercase text-zinc-500">Quotation No.</span>
-        <input
-          value="Generated automatically"
-          readOnly
-          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-500 outline-none"
-        />
-      </label>
-      <Field name="contact_name" label="Attention / Contact" />
-      <Field name="contact_phone" label="Phone / Mobile" />
-      <Field name="contact_email" label="Email" type="email" />
-      <Field name="telephone" label="Telephone" />
-      <Field name="po_box" label="PO Box" />
-      <Field name="location" label="Location" />
-      <TextArea name="project_address" label="Project Address" />
-      <Field name="quotation_date" label="Quotation date" type="date" defaultValue={new Date().toISOString().slice(0, 10)} />
-      <label className="block">
-        <span className="text-xs font-semibold uppercase text-zinc-500">Layout Mode</span>
-        <select
-          name="layout_mode"
-          defaultValue="standard_proposal"
-          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-        >
-          {layoutModes.map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <CurrencySelect />
-      <Field name="vat_percent" label="VAT %" type="number" defaultValue={5} />
-      <Field name="payment_terms" label="Payment terms" />
-      <Field name="validity" label="Validity" />
-      <Field name="delivery_terms" label="Delivery terms" />
-      <Field name="warranty_terms" label="Warranty terms" />
-      <TextArea name="notes" label="Notes" />
-      <input type="hidden" name="status" value="draft" />
-      <input type="hidden" name="is_active" value="on" />
-      <div className="flex justify-end md:col-span-2 xl:col-span-3">
-        <PendingSubmitButton
-          className="h-10 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
-          pendingLabel="Creating quotation..."
-        >
-          Add quotation
-        </PendingSubmitButton>
-      </div>
-    </form>
+    <QuotationFolderForm
+      action={createQuotation}
+      clients={clients}
+      currentUserId={currentUserId}
+      mode="create"
+      returnTo="/sales/quotations"
+      salespersonProfiles={salespersonProfiles}
+      values={{ clientId: selectedClientId }}
+    />
   );
 }
 
@@ -287,8 +168,12 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
     profile?.role === "admin_manager" ||
     profile?.role === "sales_designer" ||
     profile?.role === "designer";
-  const canDeleteFolders =
-    profile?.role === "system_owner" || profile?.role === "admin_manager";
+  const canManageQuotationFolders =
+    profile?.role === "system_owner" ||
+    profile?.role === "admin_manager" ||
+    profile?.role === "procurement_manager" ||
+    profile?.role === "sales_designer" ||
+    profile?.role === "designer";
   const supabase = await createSupabaseClient();
 
   const { data: clients, error: clientsError } = await supabase
@@ -359,8 +244,7 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
         </div>
 
         <QuotationListLiveFilter
-          canDeleteFolders={canDeleteFolders}
-          canManageRecords={canManageRecords}
+          canDeleteFolders={canManageQuotationFolders}
           clients={clientList}
           initialFilters={{
             client: selectedClientId,

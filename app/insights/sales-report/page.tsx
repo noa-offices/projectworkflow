@@ -6,6 +6,10 @@ import { SalesRepSparkline } from "@/components/insights/sales-rep-sparkline";
 import { SalesRepCard } from "@/components/insights/sales-rep-card";
 import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
 import { requireActiveUser } from "@/lib/auth";
+import {
+  quotationOptionNoFromQuotationNo,
+  quotationRootBaseNo,
+} from "@/lib/quotation-options";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -19,6 +23,9 @@ export const dynamic = "force-dynamic";
 
 type QuotationRow = {
   id: string;
+  quotation_no: string | null;
+  option_no: number | null;
+  revision_no: number | null;
   salesperson_id: string | null;
   status: string;
   grand_total: number;
@@ -133,6 +140,90 @@ function statusBadgeClass(status: string): string {
   if (status === "sent_to_client" || status === "ready_to_send") return "bg-blue-100 text-blue-800";
   if (status === "draft") return "bg-zinc-100 text-zinc-600";
   return "bg-amber-100 text-amber-800";
+}
+
+function quotationRevisionSequence(quotation: QuotationRow): number {
+  if (typeof quotation.revision_no === "number" && Number.isFinite(quotation.revision_no)) {
+    return Math.max(Math.trunc(quotation.revision_no), 0);
+  }
+
+  const match = quotation.quotation_no?.trim().match(/-R(\d+)$/i);
+  if (!match) return 0;
+
+  const sequence = Number.parseInt(match[1], 10);
+  return Number.isFinite(sequence) ? Math.max(sequence, 0) : 0;
+}
+
+function quotationOptionSequence(quotation: QuotationRow): number {
+  if (typeof quotation.option_no === "number" && Number.isFinite(quotation.option_no)) {
+    return Math.max(Math.trunc(quotation.option_no), 1);
+  }
+
+  return quotationOptionNoFromQuotationNo(quotation.quotation_no) ?? 1;
+}
+
+function quotationFolderKey(quotation: QuotationRow): string {
+  return quotationRootBaseNo(quotation.quotation_no) ?? quotation.id;
+}
+
+function quotationSortTime(quotation: QuotationRow): number {
+  const statusUpdatedAt = quotation.status_updated_at ? new Date(quotation.status_updated_at).getTime() : 0;
+  const createdAt = new Date(quotation.created_at).getTime();
+  return Math.max(
+    Number.isFinite(statusUpdatedAt) ? statusUpdatedAt : 0,
+    Number.isFinite(createdAt) ? createdAt : 0,
+  );
+}
+
+function primaryQuotationRank(quotation: QuotationRow): number | null {
+  const revisionBase = quotation.quotation_no?.trim().replace(/-R\d+$/i, "") ?? "";
+  const hasOptionSuffix = /-(?:OPT-[A-Z]+|OPT\d+)$/i.test(revisionBase);
+  const optionSequence = quotationOptionSequence(quotation);
+
+  if (hasOptionSuffix || optionSequence > 1) return null;
+  return quotation.option_no === null ? 0 : 1;
+}
+
+function latestPrimaryQuotationsByFolder(quotations: QuotationRow[]): QuotationRow[] {
+  const byFolder = new Map<string, QuotationRow[]>();
+
+  for (const quotation of quotations) {
+    const key = quotationFolderKey(quotation);
+    byFolder.set(key, [...(byFolder.get(key) ?? []), quotation]);
+  }
+
+  return Array.from(byFolder.entries()).map(([folderKey, folderQuotations]) => {
+    const latestRevision = Math.max(...folderQuotations.map(quotationRevisionSequence));
+    const latestRevisionQuotations = folderQuotations.filter(
+      (quotation) => quotationRevisionSequence(quotation) === latestRevision,
+    );
+    const primaryQuotations = latestRevisionQuotations
+      .map((quotation) => ({ quotation, rank: primaryQuotationRank(quotation) }))
+      .filter((entry): entry is { quotation: QuotationRow; rank: number } => entry.rank !== null)
+      .sort((left, right) => left.rank - right.rank || quotationSortTime(right.quotation) - quotationSortTime(left.quotation));
+
+    const primaryQuotation = primaryQuotations[0]?.quotation;
+    if (!primaryQuotation) {
+      throw new Error(`Sales Report cannot identify a primary quotation for folder ${folderKey}.`);
+    }
+
+    return primaryQuotation;
+  });
+}
+
+function actualApprovedQuotationsByFolder(quotations: QuotationRow[]): QuotationRow[] {
+  const approvedByFolder = new Map<string, QuotationRow>();
+
+  for (const quotation of quotations) {
+    const key = quotationFolderKey(quotation);
+    const current = approvedByFolder.get(key);
+
+    if (!current || quotationSortTime(quotation) > quotationSortTime(current)) {
+      approvedByFolder.set(key, quotation);
+    }
+  }
+
+  return Array.from(approvedByFolder.values());
 }
 
 // ─── Inline server components ─────────────────────────────────────────────────
@@ -299,7 +390,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
     supabase
       .from("quotations")
       .select(
-        "id,salesperson_id,status,grand_total,currency,created_at,status_updated_at,layout_settings",
+        "id,quotation_no,option_no,revision_no,salesperson_id,status,grand_total,currency,created_at,status_updated_at,layout_settings",
       )
       .returns<QuotationRow[]>(),
     adminClient
@@ -314,7 +405,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
       : Promise.resolve(null),
   ]);
 
-  const allQuotations = quotations ?? [];
+  const allQuotationRows = quotations ?? [];
   const allProfiles = salespersonProfiles ?? [];
 
   // ── Selected user (Team Overview drill-down) ─────────────────────────────────
@@ -342,16 +433,24 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
     );
   }
 
+  const quotedQuotations = latestPrimaryQuotationsByFolder(allQuotationRows);
+  const approvedQuotations = actualApprovedQuotationsByFolder(allQuotationRows.filter(isApproved));
+
   // ── Period filtering (by created_at) ────────────────────────────────────────
-  const currentQuotes = allQuotations.filter(
+  const currentQuotes = quotedQuotations.filter(
     (q) => new Date(q.created_at) >= rangeStart,
   );
-  const priorQuotes = allQuotations.filter((q) => {
+  const priorQuotes = quotedQuotations.filter((q) => {
     const d = new Date(q.created_at);
     return d >= priorStart && d < priorEnd;
   });
-  const currentApproved = currentQuotes.filter(isApproved);
-  const priorApproved = priorQuotes.filter(isApproved);
+  const currentApproved = approvedQuotations.filter(
+    (q) => new Date(q.created_at) >= rangeStart,
+  );
+  const priorApproved = approvedQuotations.filter((q) => {
+    const d = new Date(q.created_at);
+    return d >= priorStart && d < priorEnd;
+  });
 
   // ── Company-wide KPI totals ──────────────────────────────────────────────────
   const kpiCurrent = {
@@ -387,9 +486,13 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
     const k = monthKey(new Date(q.created_at));
     if (aggQuotedByMonth.has(k)) {
       aggQuotedByMonth.set(k, (aggQuotedByMonth.get(k) ?? 0) + (q.grand_total ?? 0));
-      if (isApproved(q)) {
-        aggApprovedByMonth.set(k, (aggApprovedByMonth.get(k) ?? 0) + (q.grand_total ?? 0));
-      }
+    }
+  }
+
+  for (const q of currentApproved) {
+    const k = monthKey(new Date(q.created_at));
+    if (aggApprovedByMonth.has(k)) {
+      aggApprovedByMonth.set(k, (aggApprovedByMonth.get(k) ?? 0) + (q.grand_total ?? 0));
     }
   }
 
@@ -419,10 +522,8 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
 
   const repStats: RepStat[] = allProfiles.map((p) => {
     const repCurrent = currentQuotes.filter((q) => q.salesperson_id === p.id);
-    const repCurrentApproved = repCurrent.filter(isApproved);
-    const repPriorApproved = priorQuotes
-      .filter((q) => q.salesperson_id === p.id)
-      .filter(isApproved);
+    const repCurrentApproved = currentApproved.filter((q) => q.salesperson_id === p.id);
+    const repPriorApproved = priorApproved.filter((q) => q.salesperson_id === p.id);
 
     // Monthly approved for this rep (for sparkline + line chart)
     const monthMap = new Map<string, number>(monthKeys.map((k) => [k, 0]));

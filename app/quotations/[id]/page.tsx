@@ -1,11 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { ExportExcelButton } from "@/components/quotations/export-excel-button";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { ContextBackLink } from "@/components/navigation/context-back-link";
 import { PendingLinkButton } from "@/components/pending-link-button";
 import { DocumentSetupDialog } from "@/components/quotations/document-setup-dialog";
+import { QuotationFolderActionDialog } from "@/components/quotations/quotation-folder-action-dialog";
+import { QuotationFolderForm } from "@/components/quotations/quotation-folder-form";
 import { LocalDraftLink } from "@/components/quotations/local-draft-link";
 import { OpportunityQuotationLinkSync } from "@/components/quotations/opportunity-quotation-link-sync";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
@@ -37,15 +40,18 @@ import {
   quotationFolderNumberFromQuotationNumber,
 } from "@/lib/projectworkflow-numbering";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { profileDisplayName } from "@/lib/user-display";
 import {
   archiveFolderQuotation,
   createProjectFileFromQuotation,
   createQuotationOption,
   createQuotationRevision,
+  duplicateQuotation,
   permanentlyDeleteQuotation,
   restoreQuotation,
   updateQuotation,
+  updateQuotationEnquiryDetails,
   updateQuotationExtraDiscount,
   updateQuotationSalesperson,
   updateQuotationStatus,
@@ -114,6 +120,13 @@ type FolderQuotation = Pick<Quotation, "id" | "quotation_no" | "option_no" | "ti
   is_active?: boolean;
   revision_no: number | null;
   status_updated_at?: string | null;
+};
+
+type CopyDestinationQuotation = Pick<Quotation, "id" | "client_id" | "project_id" | "quotation_no" | "title" | "quotation_date" | "status" | "is_active">;
+
+type CopyDestinationFolder = {
+  id: string;
+  label: string;
 };
 
 type QuotationSection = {
@@ -415,6 +428,20 @@ function DisabledWorkflowButton({ label }: { label: string }) {
   );
 }
 
+function HeaderActionMenu({ children, label }: { children: ReactNode; label: string }) {
+  return (
+    <details className="relative">
+      <summary className="inline-flex h-11 cursor-pointer list-none items-center gap-2 rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
+        <span>{label}</span>
+        <span aria-hidden="true">&#9662;</span>
+      </summary>
+      <div className="absolute right-0 z-20 mt-2 grid min-w-60 gap-2 rounded-md border border-zinc-200 bg-white p-2 shadow-lg">
+        {children}
+      </div>
+    </details>
+  );
+}
+
 function FolderMutationForm({
   action,
   confirmMessage,
@@ -440,6 +467,104 @@ function FolderMutationForm({
         {label}
       </ConfirmSubmitButton>
     </form>
+  );
+}
+
+function CopyQuotationDestinationForm({
+  destinationFolders,
+  quotationId,
+  returnTo,
+}: {
+  destinationFolders: CopyDestinationFolder[];
+  quotationId: string;
+  returnTo: string;
+}) {
+  return (
+    <QuotationFolderActionDialog label="Copy Quotation" title="Copy Quotation">
+      <form action={duplicateQuotation} className="grid gap-3">
+        <input type="hidden" name="quotation_id" value={quotationId} />
+        <input type="hidden" name="return_to" value={returnTo} />
+        <fieldset className="grid gap-2">
+          <legend className="text-xs font-semibold uppercase text-zinc-500">Copy quotation to:</legend>
+          <label className="flex items-center gap-2 text-sm text-zinc-700">
+            <input type="radio" name="duplicate_destination_mode" value="existing_enquiry" defaultChecked />
+            <span>Existing enquiry/folder</span>
+          </label>
+          <select
+            name="destination_quotation_id"
+            defaultValue=""
+            className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+          >
+            <option value="">Choose destination folder</option>
+            {destinationFolders.map((folder) => (
+              <option key={folder.id} value={folder.id}>
+                {folder.label}
+              </option>
+            ))}
+          </select>
+          <label className="flex items-center gap-2 text-sm text-zinc-700">
+            <input type="radio" name="duplicate_destination_mode" value="create_new_enquiry" />
+            <span>Create new enquiry</span>
+          </label>
+        </fieldset>
+        <div>
+          <ConfirmSubmitButton
+            className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+            message="Copy Quotation\n\nThis will copy the selected quotation using the chosen destination."
+            pendingLabel="Copying..."
+          >
+            Copy quotation
+          </ConfirmSubmitButton>
+        </div>
+      </form>
+    </QuotationFolderActionDialog>
+  );
+}
+
+function EditEnquiryDetailsDialog({
+  clients,
+  quotation,
+  resolvedDocumentSetup,
+  salespersonProfiles,
+}: {
+  clients: Client[];
+  quotation: Quotation;
+  resolvedDocumentSetup: ReturnType<typeof resolveDocumentSetup>;
+  salespersonProfiles: SalespersonProfile[];
+}) {
+  return (
+    <QuotationFolderActionDialog label="Edit quotation folder" title="Edit quotation folder">
+      <QuotationFolderForm
+        action={updateQuotationEnquiryDetails}
+        clients={clients}
+        mode="edit"
+        quotationId={quotation.id}
+        returnTo={`/quotations/${quotation.id}`}
+        salespersonProfiles={salespersonProfiles}
+        values={{
+          clientId: quotation.client_id,
+          contactEmail: resolvedDocumentSetup.header.contactEmail,
+          contactName: resolvedDocumentSetup.header.contactName,
+          contactPhone: resolvedDocumentSetup.header.contactPhone,
+          currency: quotation.currency,
+          deliveryTerms: quotation.delivery_terms,
+          layoutMode: quotation.layout_mode,
+          location: resolvedDocumentSetup.header.location,
+          notes: quotation.notes,
+          paymentTerms: quotation.payment_terms,
+          poBox: resolvedDocumentSetup.header.poBox,
+          projectAddress: resolvedDocumentSetup.header.projectAddress,
+          quotationDate: quotation.quotation_date,
+          quotationNo: quotation.quotation_no,
+          reference: quotation.legacy_reference ?? quotation.title,
+          salespersonId: quotation.salesperson_id,
+          telephone: resolvedDocumentSetup.header.telephone,
+          validity: quotation.validity,
+          vatPercent: quotation.vat_percent,
+          warrantyTerms: quotation.warranty_terms,
+        }}
+      />
+    </QuotationFolderActionDialog>
   );
 }
 
@@ -921,6 +1046,12 @@ export default async function QuotationDetailPage({
     profile?.role === "admin_manager" ||
     profile?.role === "sales_designer" ||
     profile?.role === "designer";
+  const canUseQuotationActions =
+    profile?.role === "system_owner" ||
+    profile?.role === "admin_manager" ||
+    profile?.role === "procurement_manager" ||
+    profile?.role === "sales_designer" ||
+    profile?.role === "designer";
   const supabase = await createSupabaseClient();
 
   const { data: quotation, error: quotationError } = await supabase
@@ -938,6 +1069,12 @@ export default async function QuotationDetailPage({
     .select("id,client_number,company_name")
     .eq("id", quotation.client_id)
     .single<Client>();
+
+  const { data: clients, error: clientsError } = await supabase
+    .from("clients")
+    .select("id,client_number,company_name")
+    .order("company_name", { ascending: true })
+    .returns<Client[]>();
 
   const safeProjectId = validUuidOrNull(quotation.project_id);
   const { data: project } = safeProjectId
@@ -973,6 +1110,15 @@ export default async function QuotationDetailPage({
           .order("quotation_date", { ascending: false })
           .returns<FolderQuotation[]>()
       : { data: null, error: null };
+
+  const { data: copyDestinationQuotations, error: copyDestinationQuotationsError } = await supabase
+    .from("quotations")
+    .select("id,client_id,project_id,quotation_no,title,quotation_date,status,is_active")
+    .eq("is_active", true)
+    .neq("id", quotation.id)
+    .order("quotation_date", { ascending: false })
+    .limit(200)
+    .returns<CopyDestinationQuotation[]>();
 
   const { data: sections, error: sectionsError } = await supabase
     .from("quotation_sections")
@@ -1011,9 +1157,11 @@ export default async function QuotationDetailPage({
     .returns<AuditActivityEntry[]>();
 
   if (sectionsError) console.error("QUOTATION SECTIONS LIST ERROR", sectionsError.message);
+  if (clientsError) console.error("QUOTATION CLIENTS LIST ERROR", clientsError.message);
   if (itemsError) console.error("QUOTATION ITEMS LIST ERROR", itemsError.message);
   if (projectQuotationsError) console.error("PROJECT QUOTATIONS OPTION LIST ERROR", projectQuotationsError.message);
   if (folderQuotationsError) console.error("QUOTATION FOLDER LIST ERROR", folderQuotationsError.message);
+  if (copyDestinationQuotationsError) console.error("COPY DESTINATION QUOTATIONS LIST ERROR", copyDestinationQuotationsError.message);
   if (quotationEventsError) console.error("QUOTATION ACTIVITY LOG ERROR", quotationEventsError.message);
   if (quotationChildEventsError) console.error("QUOTATION CHILD ACTIVITY LOG ERROR", quotationChildEventsError.message);
 
@@ -1067,6 +1215,25 @@ export default async function QuotationDetailPage({
   });
   const activeFolderQuotations = folderQuotationList.filter((entry) => !isArchivedFolderQuotation(entry));
   const archivedFolderQuotations = folderQuotationList.filter((entry) => isArchivedFolderQuotation(entry));
+  const currentDestinationFolderKey = quotationDestinationFolderKey(quotation);
+  const copyDestinationFolders = Array.from(
+    new Map(
+      (copyDestinationQuotations ?? [])
+        .filter((candidate) => !isArchivedFolderQuotation(candidate))
+        .map((candidate): [string, CopyDestinationFolder] | null => {
+          const key = quotationDestinationFolderKey(candidate);
+          if (!key || key === currentDestinationFolderKey) return null;
+
+          const folderNo = quotationFolderNumberFromQuotationNumber(candidate.quotation_no);
+          const label = folderNo
+            ? `${folderNo} - ${candidate.title}`
+            : `${candidate.title} - ${formatFolderDate(candidate.quotation_date)}`;
+
+          return [key, { id: candidate.id, label }];
+        })
+        .filter((entry): entry is [string, CopyDestinationFolder] => Boolean(entry)),
+    ).values(),
+  );
   const activeFolderQuotationCount = activeFolderQuotations.length;
   const archivedFolderQuotationCount = archivedFolderQuotations.length;
   const specificationNo = quotation.quotation_no ? formatSpecificationNumber(quotation.quotation_no) : null;
@@ -1142,8 +1309,7 @@ export default async function QuotationDetailPage({
   const fullActivityByDay = entriesByDay(activityEntries, (entry) => entry.created_at);
 
   // Salesperson attribution
-  const canReassignSalesperson =
-    profile?.role === "system_owner" || profile?.role === "admin_manager";
+  const canReassignSalesperson = canUseQuotationActions;
 
   let salespersonName: string | null = null;
   let salespersonProfiles: SalespersonProfile[] = [];
@@ -1157,15 +1323,19 @@ export default async function QuotationDetailPage({
     salespersonName = spProfile ? (spProfile.full_name ?? spProfile.email ?? null) : null;
   }
 
-  if (canReassignSalesperson) {
-    const { data: spProfiles } = await supabase
-      .from("profiles")
-      .select("id,full_name,email")
-      .eq("role", "sales_designer")
-      .eq("account_status", "active")
-      .order("full_name", { ascending: true })
-      .returns<SalespersonProfile[]>();
-    salespersonProfiles = spProfiles ?? [];
+  if (canUseQuotationActions) {
+    const adminResult = createAdminClient();
+
+    if (adminResult.client) {
+      const { data: spProfiles } = await adminResult.client
+        .from("profiles")
+        .select("id,full_name,email")
+        .eq("role", "sales_designer")
+        .eq("account_status", "active")
+        .order("full_name", { ascending: true })
+        .returns<SalespersonProfile[]>();
+      salespersonProfiles = spProfiles ?? [];
+    }
   }
 
   const itemsBySection = new Map<string, QuotationItem[]>();
@@ -1269,46 +1439,70 @@ export default async function QuotationDetailPage({
                       </Link>
                     )}
                     <SecondaryActionLink href={`/quotations/${quotation.id}/pdf`} label="Preview Quotation" />
-                    <SecondaryPendingActionLink
-                      href={`/quotations/${quotation.id}/download-pdf`}
-                      label="Download Quotation PDF"
-                      pendingLabel="Preparing PDF..."
-                    />
-                    <ExportExcelButton quotationId={quotation.id} />
-                    <DocumentSetupDialog
-                      clientId={quotation.client_id}
-                      hasProject={resolvedDocumentSetup.header.hasConfirmedProject}
-                      projectId={safeProjectId}
-                      quotationId={quotation.id}
-                      returnTo={`/quotations/${quotation.id}`}
-                      setup={resolvedDocumentSetup}
-                    />
-                    {canManageRecords && !currentQuotationArchived ? (
-                      <FolderMutationForm
-                        action={createQuotationRevision}
-                        className="inline-flex h-11 items-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
-                        confirmMessage={"Create Revision\n\nThis will copy the current quotation into a new revision. The original quotation will remain unchanged."}
-                        label="Create Revision"
-                        pendingLabel="Creating revision..."
+                    <HeaderActionMenu label="Documents">
+                      <SecondaryPendingActionLink
+                        href={`/quotations/${quotation.id}/download-pdf`}
+                        label="Download Quotation PDF"
+                        pendingLabel="Preparing PDF..."
+                      />
+                      <ExportExcelButton quotationId={quotation.id} />
+                      <DocumentSetupDialog
+                        clientId={quotation.client_id}
+                        hasProject={resolvedDocumentSetup.header.hasConfirmedProject}
+                        projectId={safeProjectId}
                         quotationId={quotation.id}
                         returnTo={`/quotations/${quotation.id}`}
+                        setup={resolvedDocumentSetup}
+                        triggerClassName="inline-flex h-9 items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
                       />
-                    ) : (
-                      <DisabledWorkflowButton label="Create Revision" />
-                    )}
-                    {canManageRecords && !currentQuotationArchived ? (
-                      <FolderMutationForm
-                        action={createQuotationOption}
-                        className="inline-flex h-11 items-center rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
-                        confirmMessage={"Create Option\n\nThis will copy the current quotation into a new option quotation. Use options for alternate brands, materials, or scope. The original quotation will remain unchanged."}
-                        label="Create Option"
-                        pendingLabel="Creating option..."
-                        quotationId={quotation.id}
-                        returnTo={`/quotations/${quotation.id}`}
-                      />
-                    ) : (
-                      <DisabledWorkflowButton label="Create Option" />
-                    )}
+                    </HeaderActionMenu>
+                    <HeaderActionMenu label="Actions">
+                      {canUseQuotationActions && !currentQuotationArchived ? (
+                        <EditEnquiryDetailsDialog
+                          clients={clients ?? (client ? [client] : [])}
+                          quotation={quotation}
+                          resolvedDocumentSetup={resolvedDocumentSetup}
+                          salespersonProfiles={salespersonProfiles}
+                        />
+                      ) : (
+                        <DisabledWorkflowButton label="Edit enquiry details" />
+                      )}
+                      {canUseQuotationActions && !currentQuotationArchived ? (
+                        <FolderMutationForm
+                          action={createQuotationRevision}
+                          className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                          confirmMessage={"Create Revision\n\nThis will copy the current quotation into a new revision. The original quotation will remain unchanged."}
+                          label="Create Revision"
+                          pendingLabel="Creating revision..."
+                          quotationId={quotation.id}
+                          returnTo={`/quotations/${quotation.id}`}
+                        />
+                      ) : (
+                        <DisabledWorkflowButton label="Create Revision" />
+                      )}
+                      {canUseQuotationActions && !currentQuotationArchived ? (
+                        <FolderMutationForm
+                          action={createQuotationOption}
+                          className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                          confirmMessage={"Create Option\n\nThis will copy the current quotation into a new option quotation. Use options for alternate brands, materials, or scope. The original quotation will remain unchanged."}
+                          label="Create Option"
+                          pendingLabel="Creating option..."
+                          quotationId={quotation.id}
+                          returnTo={`/quotations/${quotation.id}`}
+                        />
+                      ) : (
+                        <DisabledWorkflowButton label="Create Option" />
+                      )}
+                      {canUseQuotationActions && !currentQuotationArchived ? (
+                        <CopyQuotationDestinationForm
+                          destinationFolders={copyDestinationFolders}
+                          quotationId={quotation.id}
+                          returnTo={`/quotations/${quotation.id}`}
+                        />
+                      ) : (
+                        <DisabledWorkflowButton label="Copy Quotation" />
+                      )}
+                    </HeaderActionMenu>
                   </div>
                   <p className="text-xs text-zinc-500">
                     {folderWorkflowHelper}
@@ -1353,7 +1547,7 @@ export default async function QuotationDetailPage({
                   <p className="mt-4 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600">
                     Use revisions or options when the client requests changes. Set status to Client Approved when the client confirms.
                   </p>
-                  {canManageRecords ? (
+                  {canUseQuotationActions ? (
                     <>
                       <QuotationStatusSelector quotationId={quotation.id} currentStatus={quotation.status} />
                       {quotation.status === "on_hold" ? (
@@ -1495,7 +1689,7 @@ export default async function QuotationDetailPage({
                           </Link>
                           <SecondaryActionLink href={`/quotations/${folderQuotation.id}/pdf`} label="Preview Quotation" />
                           <SecondaryPendingActionLink href={`/quotations/${folderQuotation.id}/download-pdf`} label="Download PDF" pendingLabel="Preparing PDF..." />
-                          {canManageRecords ? (
+                          {canUseQuotationActions ? (
                             <FolderMutationForm
                               action={createQuotationRevision}
                               className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
@@ -1510,7 +1704,7 @@ export default async function QuotationDetailPage({
                               Create Revision
                             </span>
                           )}
-                          {canManageRecords ? (
+                          {canUseQuotationActions ? (
                             <FolderMutationForm
                               action={createQuotationOption}
                               className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
@@ -1793,7 +1987,7 @@ export default async function QuotationDetailPage({
                 ) : null}
               </div>
             </div>
-            {canManageRecords ? (
+            {canUseQuotationActions ? (
               <details className="mt-5" data-state-key={`quotation-status-${quotation.id}`}>
                 <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
                   Change status
@@ -2052,6 +2246,15 @@ function quotationBranchTokens(quotationNo: string | null | undefined) {
 
 function isArchivedFolderQuotation(quotation: Pick<FolderQuotation, "is_active" | "status">) {
   return quotation.is_active === false || quotation.status === "archived";
+}
+
+function quotationDestinationFolderKey(quotation: Pick<Quotation, "id" | "project_id" | "quotation_no">) {
+  if (quotation.project_id) return `project:${quotation.project_id}`;
+
+  const rootBaseNo = quotationRootBaseNo(quotation.quotation_no);
+  if (rootBaseNo) return `root:${rootBaseNo}`;
+
+  return `quotation:${quotation.id}`;
 }
 
 function quotationBranchSortKey(quotationNo: string | null | undefined) {

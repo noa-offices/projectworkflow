@@ -1,6 +1,6 @@
 "use server";
 
-import { requireActiveUser } from "@/lib/auth";
+import { requireQuotationActionUser } from "@/lib/auth";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 
@@ -8,13 +8,7 @@ export async function archiveFolderAction(
   quotationId: string,
   archive: boolean,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { profile } = await requireActiveUser();
-
-  const canManage =
-    profile?.role === "system_owner" ||
-    profile?.role === "admin_manager" ||
-    profile?.role === "sales_designer";
-  if (!canManage) return { ok: false, error: "Forbidden." };
+  await requireQuotationActionUser();
 
   const supabase = await createSupabaseClient();
 
