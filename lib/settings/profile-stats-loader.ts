@@ -1,17 +1,27 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  actualApprovedQuotationsByFolder,
+  latestPrimaryQuotationsByFolder,
+} from "@/lib/quotations/sales-attribution";
 
 type DateRange = { from: string; to: string };
 
 type QuotationRow = {
   id: string;
   quotation_no: string | null;
+  option_no: number | null;
+  revision_no: number | null;
+  approved_salesperson_id: string | null;
+  salesperson_id: string | null;
   title: string | null;
   status: string;
   grand_total: number | null;
   currency: string | null;
   created_at: string;
+  status_updated_at: string | null;
+  layout_settings: unknown;
 };
 
 type MonthlyData = {
@@ -78,6 +88,74 @@ function buildMonthlyBuckets(from: string, to: string): MonthlyData[] {
   return buckets;
 }
 
+function isWithinDateRange(quotation: QuotationRow, dateRange: DateRange | null) {
+  if (dateRange === null) return true;
+  const createdAt = new Date(quotation.created_at).getTime();
+  return (
+    createdAt >= new Date(dateRange.from).getTime() &&
+    createdAt <= new Date(dateRange.to).getTime()
+  );
+}
+
+function commercialQuotationRows(
+  rows: QuotationRow[],
+  userId: string,
+  dateRange: DateRange | null,
+) {
+  const quoted = latestPrimaryQuotationsByFolder(rows)
+    .filter(
+      (quotation) =>
+        quotation.salesperson_id === userId && isWithinDateRange(quotation, dateRange),
+    )
+    .sort(
+      (left, right) =>
+        new Date(right.created_at).getTime() - new Date(left.created_at).getTime(),
+    );
+  const approved = actualApprovedQuotationsByFolder(rows).filter(
+    (quotation) =>
+      quotation.approved_salesperson_id === userId &&
+      isWithinDateRange(quotation, dateRange),
+  );
+
+  return { approved, quoted };
+}
+
+function commercialProfileStats(
+  rows: QuotationRow[],
+  userId: string,
+  range: DateRange,
+  dateRange: DateRange | null,
+) {
+  const { approved, quoted } = commercialQuotationRows(rows, userId, dateRange);
+  const monthlyData = buildMonthlyBuckets(range.from, range.to);
+
+  for (const quotation of quoted) {
+    const date = new Date(quotation.created_at);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    const bucket = monthlyData.find((month) => month.monthKey === key);
+    if (bucket) {
+      bucket.total++;
+      bucket.value += quotation.grand_total ?? 0;
+    }
+  }
+
+  for (const quotation of approved) {
+    const date = new Date(quotation.created_at);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    const bucket = monthlyData.find((month) => month.monthKey === key);
+    if (bucket) bucket.approved++;
+  }
+
+  return {
+    approvedQuotations: approved.length,
+    currency: quoted[0]?.currency ?? "AED",
+    monthlyData,
+    recentQuotations: quoted.slice(0, 5),
+    totalQuotations: quoted.length,
+    totalValue: quoted.reduce((sum, quotation) => sum + (quotation.grand_total ?? 0), 0),
+  };
+}
+
 // ── loadProfileStats ──────────────────────────────────────────────────────────
 
 export async function loadProfileStats(
@@ -89,19 +167,10 @@ export async function loadProfileStats(
   // Effective range: caller-supplied or last-6-months default for bucket generation
   const range = dateRange ?? getDateRangePreset("last_6_months");
 
-  let quotationsQuery = supabase
+  const quotationsQuery = supabase
     .from("quotations")
-    .select("id,quotation_no,title,status,grand_total,currency,created_at")
-    .eq("created_by", userId)
-    .eq("is_active", true)
-    .order("created_at", { ascending: false })
-    .limit(500);
-
-  if (dateRange !== null) {
-    quotationsQuery = quotationsQuery
-      .gte("created_at", dateRange.from)
-      .lte("created_at", dateRange.to);
-  }
+    .select("id,quotation_no,option_no,revision_no,approved_salesperson_id,salesperson_id,title,status,grand_total,currency,created_at,status_updated_at,layout_settings")
+    .order("created_at", { ascending: false });
 
   let activityQuery = supabase
     .from("audit_activity_log")
@@ -132,34 +201,11 @@ export async function loadProfileStats(
     console.warn("loadProfileStats: audit_activity_log query failed", activityError.message);
   }
 
-  const rows = quotationRows ?? [];
-
-  const totalQuotations = rows.length;
-  const approvedQuotations = rows.filter((q) => q.status === "client_confirmed").length;
-  const totalValue = rows.reduce((sum, q) => sum + (q.grand_total ?? 0), 0);
-  const currency = rows[0]?.currency ?? "AED";
-  const recentQuotations = rows.slice(0, 5);
-
-  const monthlyData = buildMonthlyBuckets(range.from, range.to);
-  for (const q of rows) {
-    const d = new Date(q.created_at);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const bucket = monthlyData.find((m) => m.monthKey === key);
-    if (bucket) {
-      bucket.total++;
-      if (q.status === "client_confirmed") bucket.approved++;
-      bucket.value += q.grand_total ?? 0;
-    }
-  }
+  const stats = commercialProfileStats(quotationRows ?? [], userId, range, dateRange);
 
   return {
-    totalQuotations,
-    approvedQuotations,
-    totalValue,
-    currency,
-    recentQuotations,
+    ...stats,
     recentActivity: activityRows ?? [],
-    monthlyData,
   };
 }
 
@@ -171,14 +217,6 @@ type TeamProfileRow = {
   email: string | null;
   role: string | null;
   account_status: string | null;
-};
-
-type TeamQuotationRow = {
-  id: string;
-  created_by: string | null;
-  status: string;
-  grand_total: number | null;
-  currency: string | null;
 };
 
 export type TeamMemberStat = {
@@ -198,17 +236,10 @@ export async function loadTeamStats(
   if (!adminResult.client) return null;
   const admin = adminResult.client;
 
-  let teamQuotationsQuery = admin
+  const teamQuotationsQuery = admin
     .from("quotations")
-    .select("id,created_by,status,grand_total,currency")
-    .eq("is_active", true)
-    .limit(500);
-
-  if (dateRange !== null) {
-    teamQuotationsQuery = teamQuotationsQuery
-      .gte("created_at", dateRange.from)
-      .lte("created_at", dateRange.to);
-  }
+    .select("id,quotation_no,option_no,revision_no,approved_salesperson_id,salesperson_id,title,status,grand_total,currency,created_at,status_updated_at,layout_settings")
+    .order("created_at", { ascending: false });
 
   const [
     { data: profileRows, error: profileError },
@@ -220,7 +251,7 @@ export async function loadTeamStats(
       .eq("account_status", "active")
       .order("full_name", { ascending: true })
       .returns<TeamProfileRow[]>(),
-    teamQuotationsQuery.returns<TeamQuotationRow[]>(),
+    teamQuotationsQuery.returns<QuotationRow[]>(),
   ]);
 
   if (profileError) {
@@ -235,11 +266,11 @@ export async function loadTeamStats(
   const quotations = quotationRows ?? [];
 
   const stats: TeamMemberStat[] = (profileRows ?? []).map((profile) => {
-    const userQuotations = quotations.filter((q) => q.created_by === profile.id);
-    const totalQuotations = userQuotations.length;
-    const approvedQuotations = userQuotations.filter((q) => q.status === "client_confirmed").length;
-    const totalValue = userQuotations.reduce((sum, q) => sum + (q.grand_total ?? 0), 0);
-    const currency = userQuotations[0]?.currency ?? "AED";
+    const { approved, quoted } = commercialQuotationRows(quotations, profile.id, dateRange);
+    const totalQuotations = quoted.length;
+    const approvedQuotations = approved.length;
+    const totalValue = quoted.reduce((sum, quotation) => sum + (quotation.grand_total ?? 0), 0);
+    const currency = quoted[0]?.currency ?? "AED";
     const displayName = profile.full_name?.trim() || profile.email?.trim() || "Unknown";
 
     return {
@@ -270,19 +301,10 @@ export async function loadProfileStatsForUser(
 
   const range = dateRange ?? getDateRangePreset("last_6_months");
 
-  let quotationsQuery = admin
+  const quotationsQuery = admin
     .from("quotations")
-    .select("id,quotation_no,title,status,grand_total,currency,created_at")
-    .eq("created_by", userId)
-    .eq("is_active", true)
-    .order("created_at", { ascending: false })
-    .limit(500);
-
-  if (dateRange !== null) {
-    quotationsQuery = quotationsQuery
-      .gte("created_at", dateRange.from)
-      .lte("created_at", dateRange.to);
-  }
+    .select("id,quotation_no,option_no,revision_no,approved_salesperson_id,salesperson_id,title,status,grand_total,currency,created_at,status_updated_at,layout_settings")
+    .order("created_at", { ascending: false });
 
   let activityQuery = admin
     .from("audit_activity_log")
@@ -380,34 +402,11 @@ export async function loadProfileStatsForUser(
     return result.error ? null : result.count ?? 0;
   }
 
-  const rows = quotationRows ?? [];
-
-  const totalQuotations = rows.length;
-  const approvedQuotations = rows.filter((q) => q.status === "client_confirmed").length;
-  const totalValue = rows.reduce((sum, q) => sum + (q.grand_total ?? 0), 0);
-  const currency = rows[0]?.currency ?? "AED";
-  const recentQuotations = rows.slice(0, 5);
-
-  const monthlyData = buildMonthlyBuckets(range.from, range.to);
-  for (const q of rows) {
-    const d = new Date(q.created_at);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const bucket = monthlyData.find((m) => m.monthKey === key);
-    if (bucket) {
-      bucket.total++;
-      if (q.status === "client_confirmed") bucket.approved++;
-      bucket.value += q.grand_total ?? 0;
-    }
-  }
+  const stats = commercialProfileStats(quotationRows ?? [], userId, range, dateRange);
 
   return {
-    totalQuotations,
-    approvedQuotations,
-    totalValue,
-    currency,
-    recentQuotations,
+    ...stats,
     recentActivity: activityRows ?? [],
-    monthlyData,
     contributions: {
       clientsCreated: countOrNull(clientsCreatedResult),
       copiesCreated: countOrNull(copiesCreatedResult),

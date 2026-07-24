@@ -25,6 +25,7 @@ import {
   quotationStatuses,
 } from "@/lib/quotation-status";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
+import { quotationApprovalDisplay } from "@/lib/quotations/approval-display";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
@@ -84,6 +85,7 @@ type Project = {
 };
 
 type Quotation = {
+  approved_salesperson_id: string | null;
   id: string;
   client_id: string;
   project_id: string | null;
@@ -116,7 +118,7 @@ type Quotation = {
   is_active: boolean;
 };
 
-type FolderQuotation = Pick<Quotation, "id" | "quotation_no" | "option_no" | "title" | "quotation_date" | "status" | "currency" | "grand_total"> & {
+type FolderQuotation = Pick<Quotation, "id" | "quotation_no" | "option_no" | "title" | "quotation_date" | "status" | "currency" | "grand_total" | "approved_salesperson_id" | "layout_settings"> & {
   is_active?: boolean;
   revision_no: number | null;
   status_updated_at?: string | null;
@@ -280,10 +282,16 @@ function SubmitButton({ label }: { label: string }) {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({
+  quotation,
+}: {
+  quotation: Pick<Quotation, "approved_salesperson_id" | "layout_settings" | "status">;
+}) {
+  const approvalDisplay = quotationApprovalDisplay(quotation);
+
   return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${quotationStatusBadgeClassName(status)}`}>
-      {quotationStatusLabel(status)}
+    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${approvalDisplay?.badgeClassName ?? quotationStatusBadgeClassName(quotation.status)}`}>
+      {approvalDisplay?.label ?? quotationStatusLabel(quotation.status)}
     </span>
   );
 }
@@ -583,7 +591,7 @@ function CreateProjectFileForm({
       <input type="hidden" name="return_to" value={returnTo} />
       <ConfirmSubmitButton
         className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-        message={`Create Project File\n\nThis will create ${orderNo} from the approved quotation. RFQ, PO, OC, and procurement will not be created.`}
+        message={`Create Project File\n\nThis will create ${orderNo} from the client-confirmed quotation. RFQ, PO, OC, and procurement will not be created.`}
         pendingLabel="Creating..."
       >
         Create Project File
@@ -944,28 +952,34 @@ function ReassignSalespersonForm({
   }
 
   return (
-    <form action={handleReassign} className="mt-3 flex items-end gap-2">
-      <label className="flex-1 block">
-        <span className="text-xs font-semibold uppercase text-zinc-500">Reassign Sales Person</span>
-        <select
-          name="salesperson_id"
-          defaultValue={currentSalespersonId ?? ""}
-          className="mt-1 h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+    <form action={handleReassign} className="mt-3">
+      <div className="flex items-end gap-2">
+        <label className="block flex-1">
+          <span className="text-xs font-semibold uppercase text-zinc-500">Reassign Sales Manager</span>
+          <select
+            name="salesperson_id"
+            defaultValue={currentSalespersonId ?? ""}
+            required
+            className="mt-1 h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+          >
+            <option value="">Select Sales Manager</option>
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.full_name ?? p.email ?? p.id}
+              </option>
+            ))}
+          </select>
+        </label>
+        <PendingSubmitButton
+          className="h-9 shrink-0 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
+          pendingLabel="Saving…"
         >
-          <option value="">— Unassigned —</option>
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.full_name ?? p.email ?? p.id}
-            </option>
-          ))}
-        </select>
-      </label>
-      <PendingSubmitButton
-        className="h-9 shrink-0 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
-        pendingLabel="Saving…"
-      >
-        Save
-      </PendingSubmitButton>
+          Save
+        </PendingSubmitButton>
+      </div>
+      <p className="mt-1.5 text-xs text-zinc-500">
+        Applies to every quotation, revision, option, and copy in this folder.
+      </p>
     </form>
   );
 }
@@ -1101,14 +1115,14 @@ export default async function QuotationDetailPage({
   const { data: folderQuotations, error: folderQuotationsError } = safeProjectId
     ? await supabase
         .from("quotations")
-        .select("id,quotation_no,option_no,revision_no,title,quotation_date,status,status_updated_at,currency,grand_total,is_active")
+        .select("id,quotation_no,option_no,revision_no,title,quotation_date,status,status_updated_at,currency,grand_total,is_active,approved_salesperson_id,layout_settings")
         .eq("project_id", safeProjectId)
         .order("quotation_date", { ascending: false })
         .returns<FolderQuotation[]>()
     : rootBaseNo
       ? await supabase
           .from("quotations")
-          .select("id,quotation_no,option_no,revision_no,title,quotation_date,status,status_updated_at,currency,grand_total,is_active")
+          .select("id,quotation_no,option_no,revision_no,title,quotation_date,status,status_updated_at,currency,grand_total,is_active,approved_salesperson_id,layout_settings")
           .ilike("quotation_no", `${rootBaseNo}%`)
           .order("quotation_date", { ascending: false })
           .returns<FolderQuotation[]>()
@@ -1254,6 +1268,7 @@ export default async function QuotationDetailPage({
     projectFileFromLayoutSettings(quotation.layout_settings) ??
     currentClientApprovalDraft?.confirmedOrder ??
     null;
+  const currentApprovalDisplay = quotationApprovalDisplay(quotation);
   const workflowReturnTo = `/quotations/${quotation.id}`;
   const projectFileNo = currentProjectFile?.orderNo ?? confirmedOrderNo ?? "CO pending";
   console.log("[DEBUG canCreateProjectFile]", {
@@ -1268,14 +1283,16 @@ export default async function QuotationDetailPage({
     !currentProjectFile &&
     Boolean(workflowSequences) &&
     !currentQuotationArchived &&
-    quotation.status === "client_confirmed";
-  const projectFileBlockedReason = quotation.status === "client_confirmed" && !currentProjectFile && !workflowSequences
+    currentApprovalDisplay?.state === "project_file_pending";
+  const projectFileBlockedReason = currentApprovalDisplay?.state === "project_file_pending" && !workflowSequences
     ? "Prepare this older quotation before creating a Project File."
     : null;
   const folderWorkflowHelper = currentProjectFile
-    ? `Project File ${currentProjectFile.orderNo} has been created from this approved quotation.`
-    : quotation.status === "client_confirmed"
-      ? "Client approved. Create the Project File when ready."
+    ? currentApprovalDisplay?.state === "owner_attribution_pending"
+      ? `Project File ${currentProjectFile.orderNo} exists, but approved Sales Manager attribution is pending.`
+      : `Project File ${currentProjectFile.orderNo} has been created from this approved quotation.`
+    : currentApprovalDisplay?.state === "project_file_pending"
+      ? "Client confirmed. Create the Project File when ready."
       : "Send quotation documents manually, then update the selected quotation status when the client replies.";
 
   const activityEntries = Array.from(
@@ -1423,7 +1440,7 @@ export default async function QuotationDetailPage({
                   </h1>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     {showOptionNumber ? <OptionBadge optionNo={quotation.option_no} quotationNo={quotation.quotation_no} /> : null}
-                    <StatusBadge status={quotation.status} />
+                    <StatusBadge quotation={quotation} />
                     <LocalDraftLink quotationId={quotation.id} showLink={false} />
                   </div>
                 </div>
@@ -1542,13 +1559,13 @@ export default async function QuotationDetailPage({
                         Send the PDF to the client manually, then update this selected quotation status.
                       </p>
                     </div>
-                    <StatusBadge status={quotation.status} />
+                    <StatusBadge quotation={quotation} />
                   </div>
                   {quotation.status_note ? (
                     <p className="mt-3 text-sm text-zinc-600">Note: {quotation.status_note}</p>
                   ) : null}
                   <p className="mt-4 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600">
-                    Use revisions or options when the client requests changes. Set status to Client Approved when the client confirms.
+                    Use revisions or options when the client requests changes. Set status to Client Confirmed when the client confirms.
                   </p>
                   {canUseQuotationActions ? (
                     <>
@@ -1578,10 +1595,12 @@ export default async function QuotationDetailPage({
                       <h2 className="text-lg font-semibold text-zinc-950">Project File</h2>
                       <p className="mt-1 text-sm text-zinc-500">
                         {currentProjectFile
-                          ? `Project File ${currentProjectFile.orderNo} has been created from this approved quotation.`
-                          : quotation.status === "client_confirmed"
-                            ? "Create the project file from this approved quotation."
-                            : "Available after the selected quotation is Client Approved."}
+                          ? currentApprovalDisplay?.state === "owner_attribution_pending"
+                            ? `Project File ${currentProjectFile.orderNo} exists, but approved Sales Manager attribution is pending.`
+                            : `Project File ${currentProjectFile.orderNo} has been created from this approved quotation.`
+                          : currentApprovalDisplay?.state === "project_file_pending"
+                            ? "Create the Project File from this client-confirmed quotation."
+                            : "Available after the selected quotation is Client Confirmed."}
                       </p>
                     </div>
                     {currentProjectFile ? (
@@ -1663,7 +1682,7 @@ export default async function QuotationDetailPage({
                                   <span className="inline-flex rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-700">
                                     {folderTypeLabel}
                                   </span>
-                                  <StatusBadge status={folderQuotation.status} />
+                                  <StatusBadge quotation={folderQuotation} />
                                   {isCurrentFolderQuotation ? (
                                     <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-900">
                                       Current
@@ -1784,7 +1803,7 @@ export default async function QuotationDetailPage({
                                   <span className="inline-flex rounded-full border border-zinc-200 bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-600">
                                     Archived
                                   </span>
-                                  <StatusBadge status={folderQuotation.status} />
+                                  <StatusBadge quotation={folderQuotation} />
                                   {isCurrentFolderQuotation ? (
                                     <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-900">
                                       Current
@@ -1958,7 +1977,7 @@ export default async function QuotationDetailPage({
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div>
                 <div className="mt-3 flex items-center gap-3">
-                  <StatusBadge status={quotation.status} />
+                  <StatusBadge quotation={quotation} />
                   <span className="text-sm text-zinc-600">
                     Current: {quotationStatusLabel(quotation.status)}
                   </span>

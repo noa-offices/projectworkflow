@@ -4,7 +4,7 @@ export const quotationStatuses = [
   ["revision_required", "Revision Requested"],
   ["ready_to_send", "Ready to Send"],
   ["sent_to_client", "Sent to Client"],
-  ["client_confirmed", "Client Approved"],
+  ["client_confirmed", "Client Confirmed"],
   ["on_hold", "On Hold"],
   ["cancelled", "Rejected / Lost"],
   ["archived", "Archived"],

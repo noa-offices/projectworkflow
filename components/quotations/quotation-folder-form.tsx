@@ -109,8 +109,11 @@ export function QuotationFolderForm({
   salespersonProfiles: QuotationFolderFormSalesperson[];
   values?: QuotationFolderFormValues;
 }) {
+  const requestedSalespersonId = values?.salespersonId ?? currentUserId ?? "";
   const selectedSalespersonId = mode === "create"
-    ? (values?.salespersonId ?? currentUserId ?? "")
+    ? (salespersonProfiles.some((profile) => profile.id === requestedSalespersonId)
+      ? requestedSalespersonId
+      : "")
     : (values?.salespersonId ?? "");
 
   return (
@@ -138,10 +141,11 @@ export function QuotationFolderForm({
         <span className="text-xs font-semibold uppercase text-zinc-500">Sales Person</span>
         <select
           name="salesperson_id"
+          required={mode === "create"}
           defaultValue={selectedSalespersonId}
           className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
         >
-          <option value="">Unassigned</option>
+          <option value="">{mode === "create" ? "Select Sales Manager" : "Unassigned"}</option>
           {salespersonProfiles.map((p) => (
             <option key={p.id} value={p.id}>
               {p.full_name ?? p.email ?? p.id}

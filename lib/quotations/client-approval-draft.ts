@@ -21,7 +21,9 @@ export type ClientApprovalDraft = {
   reference: string;
   projectName: string | null;
   total: number;
+  vatAmount?: number | null;
   currency: string;
+  quotationFolderKey?: string | null;
   quotationStatus: string;
   approvalStatus: ClientApprovalStatus;
   createdAt: string;
@@ -48,7 +50,9 @@ export type ConfirmedOrderRecord = {
   clientName: string;
   reference: string;
   total: number;
+  vatAmount?: number | null;
   currency: string;
+  quotationFolderKey?: string | null;
   status: "Confirmed";
   createdAt: string;
   createdBy: string;
@@ -114,7 +118,9 @@ function confirmedOrderRecordValue(value: unknown): ConfirmedOrderRecord | null 
     clientName,
     reference,
     total,
+    vatAmount: numberValue(record.vatAmount),
     currency,
+    quotationFolderKey: stringValue(record.quotationFolderKey),
     status: "Confirmed",
     createdAt,
     createdBy,
@@ -182,7 +188,9 @@ export function clientApprovalDraftFromLayoutSettings(layoutSettings: unknown): 
     reference: stringValue(draft.reference) ?? quotationNo,
     projectName: stringValue(draft.projectName),
     total,
+    vatAmount: numberValue(draft.vatAmount),
     currency,
+    quotationFolderKey: stringValue(draft.quotationFolderKey),
     quotationStatus,
     approvalStatus: approvalStatusValue(draft.approvalStatus),
     createdAt,

@@ -11,7 +11,9 @@ export type ProjectFileRecord = {
   clientName: string;
   reference: string;
   total: number;
+  vatAmount?: number | null;
   currency: string;
+  quotationFolderKey?: string | null;
   status: "Confirmed";
   createdAt: string;
   createdBy: string;
@@ -73,7 +75,9 @@ export function projectFileRecordValue(value: unknown): ProjectFileRecord | null
     clientName,
     reference,
     total,
+    vatAmount: numberValue(record.vatAmount),
     currency,
+    quotationFolderKey: stringValue(record.quotationFolderKey),
     status: "Confirmed",
     createdAt,
     createdBy,

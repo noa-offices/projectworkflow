@@ -35,6 +35,7 @@ type Project = {
 };
 
 type Quotation = {
+  approved_salesperson_id: string | null;
   id: string;
   client_id: string;
   project_id: string | null;
@@ -203,7 +204,7 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
 
   const { data: quotations, error: quotationsError } = await supabase
     .from("quotations")
-    .select("id,client_id,project_id,legacy_reference,quotation_no,title,quotation_date,status,layout_mode,currency,grand_total,is_active,salesperson_id,layout_settings")
+    .select("id,client_id,project_id,legacy_reference,quotation_no,title,quotation_date,status,layout_mode,currency,grand_total,is_active,approved_salesperson_id,salesperson_id,layout_settings")
     .order("created_at", { ascending: false })
     .returns<Quotation[]>();
 
@@ -267,7 +268,7 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
                 Create new quotation
               </summary>
               <p className="mt-1 text-sm text-zinc-500">
-                Start with a client and document details. Project File creation happens after the quotation is Client Approved.
+                Start with a client and document details. Project File creation happens after the quotation is Client Confirmed.
               </p>
               <div className="mt-5">
                 <div className="grid gap-4">

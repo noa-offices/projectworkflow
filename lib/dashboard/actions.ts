@@ -3,6 +3,7 @@
 import { requireActiveUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { quotationApprovalDisplay } from "@/lib/quotations/approval-display";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
@@ -15,8 +16,10 @@ export type DashboardStats = {
   completedProjects: number;
   pendingQuotations: number;
   quotationWorkflow: {
-    clientConfirmed: number;
+    clientApproved: number;
+    clientConfirmedPending: number;
     draft: number;
+    ownerAttributionPending: number;
     readyToSend: number;
     sentToClient: number;
   };
@@ -61,8 +64,9 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   // stored in layout_settings.projectCompletedAt, not projects.project_status.
   const { data: quotations } = await supabase
     .from("quotations")
-    .select("id, project_id, quotation_no, quotation_date, status, is_active, layout_settings")
+    .select("id, project_id, quotation_no, quotation_date, status, is_active, approved_salesperson_id, layout_settings")
     .returns<Array<{
+      approved_salesperson_id: string | null;
       id: string;
       project_id: string | null;
       quotation_no: string | null;
@@ -111,8 +115,10 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   }
 
   const workflow = {
-    clientConfirmed: 0,
+    clientApproved: 0,
+    clientConfirmedPending: 0,
     draft: 0,
+    ownerAttributionPending: 0,
     readyToSend: 0,
     sentToClient: 0,
   };
@@ -120,11 +126,20 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 
   for (const quotation of quotationFolders.values()) {
     if (!quotation.is_active) continue;
-    if (PENDING_STATUSES.includes(quotation.status)) pendingQuotations++;
+    const approvalDisplay = quotationApprovalDisplay(quotation);
+    if (
+      PENDING_STATUSES.includes(quotation.status) ||
+      approvalDisplay?.state === "project_file_pending" ||
+      approvalDisplay?.state === "owner_attribution_pending"
+    ) {
+      pendingQuotations++;
+    }
     if (quotation.status === "draft") workflow.draft++;
     if (quotation.status === "ready_to_send") workflow.readyToSend++;
     if (quotation.status === "sent_to_client") workflow.sentToClient++;
-    if (quotation.status === "client_confirmed") workflow.clientConfirmed++;
+    if (approvalDisplay?.state === "project_file_pending") workflow.clientConfirmedPending++;
+    if (approvalDisplay?.state === "owner_attribution_pending") workflow.ownerAttributionPending++;
+    if (approvalDisplay?.state === "approved") workflow.clientApproved++;
   }
 
   return {

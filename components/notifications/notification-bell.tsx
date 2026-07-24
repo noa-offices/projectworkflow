@@ -86,7 +86,7 @@ export function NotificationBell() {
     }
     if (item.order_no) {
       setIsOpen(false);
-      router.push(`/projects/orders/${item.order_no}`);
+      router.push(item.order_no.startsWith("/") ? item.order_no : `/projects/orders/${item.order_no}`);
     }
   }
 

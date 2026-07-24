@@ -6,10 +6,9 @@ import { SalesRepSparkline } from "@/components/insights/sales-rep-sparkline";
 import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
 import { requireActiveUser } from "@/lib/auth";
 import {
-  quotationOptionNoFromQuotationNo,
-  quotationRootBaseNo,
-} from "@/lib/quotation-options";
-import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+  actualApprovedQuotationsByFolder,
+  latestPrimaryQuotationsByFolder,
+} from "@/lib/quotations/sales-attribution";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadTeamStats, loadProfileStatsForUser } from "@/lib/settings/profile-stats-loader";
@@ -25,6 +24,7 @@ type QuotationRow = {
   quotation_no: string | null;
   option_no: number | null;
   revision_no: number | null;
+  approved_salesperson_id: string | null;
   salesperson_id: string | null;
   status: string;
   grand_total: number;
@@ -155,90 +155,6 @@ function statusBadgeClass(status: string): string {
   return "bg-amber-100 text-amber-800";
 }
 
-function quotationRevisionSequence(quotation: QuotationRow): number {
-  if (typeof quotation.revision_no === "number" && Number.isFinite(quotation.revision_no)) {
-    return Math.max(Math.trunc(quotation.revision_no), 0);
-  }
-
-  const match = quotation.quotation_no?.trim().match(/-R(\d+)$/i);
-  if (!match) return 0;
-
-  const sequence = Number.parseInt(match[1], 10);
-  return Number.isFinite(sequence) ? Math.max(sequence, 0) : 0;
-}
-
-function quotationOptionSequence(quotation: QuotationRow): number {
-  if (typeof quotation.option_no === "number" && Number.isFinite(quotation.option_no)) {
-    return Math.max(Math.trunc(quotation.option_no), 1);
-  }
-
-  return quotationOptionNoFromQuotationNo(quotation.quotation_no) ?? 1;
-}
-
-function quotationFolderKey(quotation: QuotationRow): string {
-  return quotationRootBaseNo(quotation.quotation_no) ?? quotation.id;
-}
-
-function quotationSortTime(quotation: QuotationRow): number {
-  const statusUpdatedAt = quotation.status_updated_at ? new Date(quotation.status_updated_at).getTime() : 0;
-  const createdAt = new Date(quotation.created_at).getTime();
-  return Math.max(
-    Number.isFinite(statusUpdatedAt) ? statusUpdatedAt : 0,
-    Number.isFinite(createdAt) ? createdAt : 0,
-  );
-}
-
-function primaryQuotationRank(quotation: QuotationRow): number | null {
-  const revisionBase = quotation.quotation_no?.trim().replace(/-R\d+$/i, "") ?? "";
-  const hasOptionSuffix = /-(?:OPT-[A-Z]+|OPT\d+)$/i.test(revisionBase);
-  const optionSequence = quotationOptionSequence(quotation);
-
-  if (hasOptionSuffix || optionSequence > 1) return null;
-  return quotation.option_no === null ? 0 : 1;
-}
-
-function latestPrimaryQuotationsByFolder(quotations: QuotationRow[]): QuotationRow[] {
-  const byFolder = new Map<string, QuotationRow[]>();
-
-  for (const quotation of quotations) {
-    const key = quotationFolderKey(quotation);
-    byFolder.set(key, [...(byFolder.get(key) ?? []), quotation]);
-  }
-
-  return Array.from(byFolder.entries()).map(([folderKey, folderQuotations]) => {
-    const latestRevision = Math.max(...folderQuotations.map(quotationRevisionSequence));
-    const latestRevisionQuotations = folderQuotations.filter(
-      (quotation) => quotationRevisionSequence(quotation) === latestRevision,
-    );
-    const primaryQuotations = latestRevisionQuotations
-      .map((quotation) => ({ quotation, rank: primaryQuotationRank(quotation) }))
-      .filter((entry): entry is { quotation: QuotationRow; rank: number } => entry.rank !== null)
-      .sort((left, right) => left.rank - right.rank || quotationSortTime(right.quotation) - quotationSortTime(left.quotation));
-
-    const primaryQuotation = primaryQuotations[0]?.quotation;
-    if (!primaryQuotation) {
-      throw new Error(`Sales Report cannot identify a primary quotation for folder ${folderKey}.`);
-    }
-
-    return primaryQuotation;
-  });
-}
-
-function actualApprovedQuotationsByFolder(quotations: QuotationRow[]): QuotationRow[] {
-  const approvedByFolder = new Map<string, QuotationRow>();
-
-  for (const quotation of quotations) {
-    const key = quotationFolderKey(quotation);
-    const current = approvedByFolder.get(key);
-
-    if (!current || quotationSortTime(quotation) > quotationSortTime(current)) {
-      approvedByFolder.set(key, quotation);
-    }
-  }
-
-  return Array.from(approvedByFolder.values());
-}
-
 // ─── Inline server components ─────────────────────────────────────────────────
 
 function ChangeBadge({ value }: { value: number | null }) {
@@ -292,7 +208,7 @@ function SalesLeaderboard({
 
       {rows.length === 0 ? (
         <p className="px-4 py-6 text-center text-xs text-zinc-400">
-          No approved deals in this period.
+          No Client Approved deals in this period.
         </p>
       ) : (
         <div className="divide-y divide-zinc-50">
@@ -403,8 +319,8 @@ function SalesTeamPerformanceTable({
                 <th className="px-4 py-2.5 font-medium">Sales person</th>
                 <th className="px-3 py-2.5 text-right font-medium">Quotes</th>
                 <th className="px-3 py-2.5 text-right font-medium">Quoted</th>
-                <th className="px-3 py-2.5 text-right font-medium">Approved</th>
-                <th className="px-3 py-2.5 text-right font-medium">Approved value</th>
+                <th className="px-3 py-2.5 text-right font-medium">Client Approved</th>
+                <th className="px-3 py-2.5 text-right font-medium">Client Approved value</th>
                 <th className="px-4 py-2.5 text-right font-medium">Conversion</th>
               </tr>
             </thead>
@@ -588,7 +504,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
     supabase
       .from("quotations")
       .select(
-        "id,quotation_no,option_no,revision_no,salesperson_id,status,grand_total,currency,created_at,status_updated_at,layout_settings",
+        "id,quotation_no,option_no,revision_no,approved_salesperson_id,salesperson_id,status,grand_total,currency,created_at,status_updated_at,layout_settings",
       )
       .returns<QuotationRow[]>(),
     adminClient
@@ -644,16 +560,8 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
   ) ?? false;
 
   // ── Approved definition ──────────────────────────────────────────────────────
-  // Matches the existing page's definition exactly: client_confirmed + project file exists
-  function isApproved(q: QuotationRow): boolean {
-    return (
-      q.status === "client_confirmed" &&
-      projectFileFromLayoutSettings(q.layout_settings) !== null
-    );
-  }
-
   const quotedQuotations = latestPrimaryQuotationsByFolder(allQuotationRows);
-  const approvedQuotations = actualApprovedQuotationsByFolder(allQuotationRows.filter(isApproved));
+  const approvedQuotations = actualApprovedQuotationsByFolder(allQuotationRows);
 
   // ── Period filtering (by created_at) ────────────────────────────────────────
   const currentQuotes = quotedQuotations.filter((q) => {
@@ -743,8 +651,8 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
 
   const repStats: RepStat[] = allProfiles.map((p) => {
     const repCurrent = currentQuotes.filter((q) => q.salesperson_id === p.id);
-    const repCurrentApproved = currentApproved.filter((q) => q.salesperson_id === p.id);
-    const repPriorApproved = priorApproved.filter((q) => q.salesperson_id === p.id);
+    const repCurrentApproved = currentApproved.filter((q) => q.approved_salesperson_id === p.id);
+    const repPriorApproved = priorApproved.filter((q) => q.approved_salesperson_id === p.id);
 
     // Monthly approved for this rep (for sparkline + line chart)
     const monthMap = new Map<string, number>(monthKeys.map((k) => [k, 0]));
@@ -830,7 +738,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
     <ErpAppShell
       eyebrow="INSIGHTS"
       title="Sales Report"
-      description="Approval rates, quoted value, and project conversion per sales person."
+      description="Project File-qualified approvals, quoted value, and conversion per sales person."
       role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
@@ -897,7 +805,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
               <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
                 <div className="p-4 pb-2">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                    Approved Value
+                    Client Approved Value
                   </p>
                   <p className="mt-2 text-2xl font-bold text-zinc-950">
                     {formatAED(kpiCurrent.approvedAmount)}
@@ -970,7 +878,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                     <th className="px-5 py-3 text-left font-semibold">Team Member</th>
                     <th className="px-5 py-3 text-left font-semibold">Role</th>
                     <th className="px-5 py-3 text-right font-semibold">Quotes Created</th>
-                    <th className="px-5 py-3 text-right font-semibold">Approved</th>
+                    <th className="px-5 py-3 text-right font-semibold">Client Approved</th>
                     <th className="px-5 py-3 text-right font-semibold">Win Rate</th>
                     <th className="px-5 py-3 text-right font-semibold">Total Value</th>
                     <th className="px-5 py-3 w-8" />
@@ -1093,7 +1001,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                   </div>
                   <div className="rounded-lg border border-zinc-200 bg-white p-3">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                      Approved
+                      Client Approved
                     </p>
                     <p className="mt-1 text-xl font-bold text-zinc-950">
                       {selectedUserStats.approvedQuotations}

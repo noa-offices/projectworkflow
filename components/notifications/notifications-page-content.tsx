@@ -71,7 +71,7 @@ export function NotificationsPageContent({
       );
     }
     if (item.order_no) {
-      router.push(`/projects/orders/${item.order_no}`);
+      router.push(item.order_no.startsWith("/") ? item.order_no : `/projects/orders/${item.order_no}`);
     }
   }
 

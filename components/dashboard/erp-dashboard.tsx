@@ -111,7 +111,7 @@ export function ERPDashboard({
     {
       label: "Confirmed Value",
       value: formatAED(salesData.yearlyTurnover),
-      description: `From ${salesData.dealCount} confirmed project${salesData.dealCount !== 1 ? "s" : ""}.`,
+      description: `From ${salesData.dealCount} client-confirmed quotation${salesData.dealCount !== 1 ? "s" : ""}.`,
       trend: `Calendar year ${new Date().getFullYear()}`,
       href: "/sales/approvals",
       icon: BadgeCheck,
@@ -162,7 +162,7 @@ export function ERPDashboard({
     { label: "Clients", href: "/sales/clients", icon: Users, visible: true },
     { label: "Procurement", href: "/procurement/orders", icon: PackageSearch, visible: canAccessProcurement },
     { label: "Send Notification", href: "/notifications", icon: Bell, visible: canSendNotifications },
-    { label: "Approved Quotations", href: "/sales/approvals", icon: ReceiptText, visible: true },
+    { label: "Client Approvals", href: "/sales/approvals", icon: ReceiptText, visible: true },
   ].filter((action) => action.visible);
   const attentionItems = [
     stats.pendingQuotations > 0
@@ -186,7 +186,9 @@ export function ERPDashboard({
     { label: "Draft", count: stats.quotationWorkflow.draft, status: "draft" },
     { label: "Ready to Send", count: stats.quotationWorkflow.readyToSend, status: "ready_to_send" },
     { label: "Sent to Client", count: stats.quotationWorkflow.sentToClient, status: "sent_to_client" },
-    { label: "Client Approved", count: stats.quotationWorkflow.clientConfirmed, status: "client_confirmed" },
+    { label: "Client Confirmed · Project File Pending", count: stats.quotationWorkflow.clientConfirmedPending, status: "client_confirmed" },
+    { label: "Client Approved · Owner Attribution Pending", count: stats.quotationWorkflow.ownerAttributionPending, status: "client_confirmed" },
+    { label: "Client Approved", count: stats.quotationWorkflow.clientApproved, status: "client_confirmed" },
   ];
 
   return (
@@ -432,7 +434,7 @@ export function ERPDashboard({
               <MonthlyBarChart data={monthlyData} color="#10b981" />
             </div>
             <p className="mt-1 text-xs text-zinc-500">
-              From {salesData.dealCount} confirmed project{salesData.dealCount !== 1 ? "s" : ""}
+              From {salesData.dealCount} client-confirmed quotation{salesData.dealCount !== 1 ? "s" : ""}
             </p>
           </DashboardCard>
 

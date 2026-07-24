@@ -10,6 +10,7 @@ import {
   Archive,
   BarChart3,
   BadgeCheck,
+  BadgeDollarSign,
   Bell,
   Building2,
   CheckCircle2,
@@ -114,6 +115,10 @@ function isPriceUpdatesActive(pathname: string, priceStatus: string | null) {
 
 function isSalesReportActive(pathname: string) {
   return pathname === "/insights/sales-report" || pathname.startsWith("/insights/sales-report");
+}
+
+function isCommissionsActive(pathname: string) {
+  return pathname === "/commissions" || pathname.startsWith("/commissions/");
 }
 
 function sidebarRoleLabel(role: AppRole): string {
@@ -223,6 +228,10 @@ export function ErpSidebar({
         role === "admin_manager" ||
         role === "procurement_manager" ||
         role === "designer";
+      const canViewCommissions =
+        role === "system_owner" || role === "admin_manager" || role === "sales_designer";
+      const canViewCommissionSettings =
+        role === "system_owner" || role === "admin_manager";
       return [
       {
         title: "Workspace",
@@ -291,6 +300,13 @@ export function ErpSidebar({
         iconColors: { bg: "bg-violet-100", icon: "text-violet-600" },
         items: [
           { label: "Sales Report", href: "/insights/sales-report", icon: BarChart3, active: isSalesReportActive(pathname) },
+          {
+            label: role === "sales_designer" ? "My Commission" : "Commissions",
+            href: "/commissions",
+            icon: BadgeDollarSign,
+            active: isCommissionsActive(pathname),
+            hidden: !canViewCommissions,
+          },
         ],
       },
       {
@@ -298,6 +314,13 @@ export function ErpSidebar({
         iconColors: { bg: "bg-zinc-100", icon: "text-zinc-500" },
         items: [
           { label: "Settings", href: "/settings", icon: Settings, active: isSettingsActive(pathname), hidden: role === "viewer" },
+          {
+            label: "Commission Settings",
+            href: "/settings/commissions",
+            icon: BadgeDollarSign,
+            active: pathname === "/settings/commissions",
+            hidden: !canViewCommissionSettings,
+          },
           {
             label: "HR Management",
             href: "/hr",

@@ -53,6 +53,7 @@ import {
   projectFileFromLayoutSettings,
   type ProjectFileRecord,
 } from "@/lib/quotations/project-file";
+import { quotationSalesFolderKey } from "@/lib/quotations/sales-attribution";
 import {
   buildCompanyStyleProductSpecification,
   resolveProductDimensionSnapshot,
@@ -1162,6 +1163,7 @@ type QuotationCopySource = {
   quotation_no: string | null;
   option_no: number;
   revision_no: number;
+  salesperson_id: string | null;
   title: string;
   quotation_date: string;
   status: string;
@@ -1790,7 +1792,7 @@ async function insertQuotationItemPriceHistory({
 }
 
 const quotationCopySelect =
-  "id,client_id,project_id,quotation_no,option_no,revision_no,title,quotation_date,status,currency,vat_percent,payment_terms,validity,delivery_terms,warranty_terms,notes,layout_mode,layout_settings,overall_discount_type,overall_discount_value,grand_total,is_active";
+  "id,client_id,project_id,quotation_no,option_no,revision_no,salesperson_id,title,quotation_date,status,currency,vat_percent,payment_terms,validity,delivery_terms,warranty_terms,notes,layout_mode,layout_settings,overall_discount_type,overall_discount_value,grand_total,is_active";
 
 const sectionCopySelect =
   "id,section_title,section_notes,section_type,parent_section_id,section_kind,title_align,title_bold,title_bg,title_size,row_height,sort_order";
@@ -2118,6 +2120,11 @@ export async function createQuotation(formData: FormData) {
     redirectQuotationCreateError(formData, redirectPath, "Select valid quotation settings.");
   }
 
+  const salespersonId = optionalTextValue(formData, "salesperson_id");
+  if (!salespersonId || !(await isActiveSalespersonProfile(salespersonId))) {
+    redirectQuotationCreateError(formData, redirectPath, "Select a valid active Sales Manager.");
+  }
+
   try {
     const supabase = await createSupabaseClient();
     const { data: client, error: clientError } = await supabase
@@ -2206,7 +2213,6 @@ export async function createQuotation(formData: FormData) {
       }
     }
 
-    const salespersonId = optionalTextValue(formData, "salesperson_id");
     const insertPayload = {
       ...payload,
       project_id: payload.project_id || null,
@@ -3112,6 +3118,7 @@ async function copyQuotation(
   let parentBranchMetadata: Record<string, unknown> = {};
   let clientId = source.client_id;
   let projectId = validUuidOrNull(source.project_id);
+  let salespersonId = source.salesperson_id;
   let successRedirectPath = redirectPath;
   let successMessage = message;
 
@@ -3196,6 +3203,7 @@ async function copyQuotation(
       ?? normalizedQuotationPath(destination.quotation_no);
     clientId = destination.client_id;
     projectId = validUuidOrNull(destination.project_id);
+    salespersonId = destination.salesperson_id;
     revisionNo = 0;
 
     if (destinationParentQuotationNo) {
@@ -3329,6 +3337,7 @@ async function copyQuotation(
       quotation_no: quotationNo,
       option_no: optionNo,
       revision_no: revisionNo,
+      salesperson_id: salespersonId,
       title,
       quotation_date: new Date().toISOString().slice(0, 10),
       status: "draft",
@@ -3908,7 +3917,7 @@ export async function createClientApprovalDraft(formData: FormData) {
   const supabase = await createSupabaseClient();
   const { data: quotation, error: quotationError } = await supabase
     .from("quotations")
-    .select("id,client_id,project_id,quotation_no,title,legacy_reference,quotation_date,status,is_active,grand_total,currency,layout_settings")
+    .select("id,client_id,project_id,quotation_no,title,legacy_reference,quotation_date,status,is_active,grand_total,vat_amount,currency,layout_settings")
     .eq("id", quotationId)
     .maybeSingle<{
       id: string;
@@ -3921,6 +3930,7 @@ export async function createClientApprovalDraft(formData: FormData) {
       status: string;
       is_active: boolean;
       grand_total: number | null;
+      vat_amount: number | null;
       currency: string | null;
       layout_settings: unknown;
     }>();
@@ -4021,7 +4031,9 @@ export async function createClientApprovalDraft(formData: FormData) {
     reference,
     projectName: project?.project_name?.trim() || null,
     total: quotationMoneyValue(quotation.grand_total ?? 0),
+    vatAmount: quotation.vat_amount ?? 0,
     currency: normalizeCurrency(quotation.currency),
+    quotationFolderKey: quotationSalesFolderKey(quotation),
     quotationStatus: "sent_to_client",
     approvalStatus: "Pending Client Approval",
     createdAt: now,
@@ -4287,13 +4299,14 @@ export async function createConfirmedOrderFromApproval(formData: FormData) {
   const supabase = await createSupabaseClient();
   const { data: quotations, error: quotationsError } = await supabase
     .from("quotations")
-    .select("id,client_id,project_id,title,quotation_no,status,is_active,layout_settings")
+    .select("id,client_id,project_id,title,quotation_no,salesperson_id,status,is_active,layout_settings")
     .returns<Array<{
       id: string;
       client_id: string | null;
       project_id: string | null;
       title: string | null;
       quotation_no: string | null;
+      salesperson_id: string | null;
       status: string;
       is_active: boolean;
       layout_settings: unknown;
@@ -4330,6 +4343,10 @@ export async function createConfirmedOrderFromApproval(formData: FormData) {
     redirectWithMessage(redirectPath, "Linked quotation must be approved and active before creating a Project File.");
   }
 
+  if (!approvalEntry.quotation.salesperson_id) {
+    redirectWithMessage(redirectPath, "Assign a Sales Manager before creating a Project File.");
+  }
+
   if (approvalEntry.draft.confirmedOrder) {
     redirectWithMessage(
       redirectPath,
@@ -4349,7 +4366,11 @@ export async function createConfirmedOrderFromApproval(formData: FormData) {
     clientName: approvalEntry.draft.clientName,
     reference: approvalEntry.draft.reference,
     total: approvalEntry.draft.total,
+    vatAmount: approvalEntry.draft.vatAmount ?? null,
     currency: approvalEntry.draft.currency,
+    quotationFolderKey:
+      approvalEntry.draft.quotationFolderKey ??
+      quotationSalesFolderKey(approvalEntry.quotation),
     status: "Confirmed" as const,
     createdAt: now,
     createdBy: user.id,
@@ -4367,6 +4388,7 @@ export async function createConfirmedOrderFromApproval(formData: FormData) {
         approvalEntry.quotation.layout_settings,
         nextDraft,
       ),
+      approved_salesperson_id: approvalEntry.quotation.salesperson_id,
       status_note: `Project File ${orderNo} created from approved quotation.`,
       status_updated_at: now,
       status_updated_by: user.id,
@@ -4402,6 +4424,8 @@ export async function createConfirmedOrderFromApproval(formData: FormData) {
   revalidatePath(`/quotations/${approvalEntry.quotation.id}`);
   revalidatePath(`/projects/orders/${orderNo}`);
   revalidatePath("/quotations");
+  revalidatePath("/insights/sales-report");
+  revalidatePath("/settings/profile");
   if (approvalEntry.quotation.project_id) {
     revalidatePath(`/clients/projects/${approvalEntry.quotation.project_id}`);
   }
@@ -4430,7 +4454,7 @@ export async function createProjectFileFromQuotation(formData: FormData) {
   const supabase = await createSupabaseClient();
   const { data: quotation, error: quotationError } = await supabase
     .from("quotations")
-    .select("id,client_id,project_id,title,legacy_reference,quotation_no,status,is_active,grand_total,currency,layout_settings")
+    .select("id,client_id,project_id,title,legacy_reference,quotation_no,salesperson_id,status,is_active,grand_total,vat_amount,currency,layout_settings")
     .eq("id", quotationId)
     .maybeSingle<{
       id: string;
@@ -4439,9 +4463,11 @@ export async function createProjectFileFromQuotation(formData: FormData) {
       title: string | null;
       legacy_reference: string | null;
       quotation_no: string | null;
+      salesperson_id: string | null;
       status: string;
       is_active: boolean;
       grand_total: number | null;
+      vat_amount: number | null;
       currency: string | null;
       layout_settings: unknown;
     }>();
@@ -4461,6 +4487,10 @@ export async function createProjectFileFromQuotation(formData: FormData) {
 
   if (quotation.status !== "client_confirmed") {
     redirectWithMessage(redirectPath, "Set the quotation status to Client Approved before creating a Project File.");
+  }
+
+  if (!quotation.salesperson_id) {
+    redirectWithMessage(redirectPath, "Assign a Sales Manager before creating a Project File.");
   }
 
   if (!quotation.client_id) {
@@ -4562,7 +4592,9 @@ export async function createProjectFileFromQuotation(formData: FormData) {
     clientName: client.company_name?.trim() || "Client",
     reference,
     total: quotationMoneyValue(quotation.grand_total ?? 0),
+    vatAmount: quotation.vat_amount ?? 0,
     currency: normalizeCurrency(quotation.currency),
+    quotationFolderKey: quotationSalesFolderKey(quotation),
     status: "Confirmed",
     createdAt: now,
     createdBy: user.id,
@@ -4573,6 +4605,7 @@ export async function createProjectFileFromQuotation(formData: FormData) {
     .from("quotations")
     .update({
       layout_settings: mergeProjectFileIntoLayoutSettings(quotation.layout_settings, projectFile),
+      approved_salesperson_id: quotation.salesperson_id,
       status_note: `Project File ${orderNo} created from approved quotation.`,
       status_updated_at: now,
       status_updated_by: user.id,
@@ -4605,6 +4638,8 @@ export async function createProjectFileFromQuotation(formData: FormData) {
   revalidatePath("/quotations");
   revalidatePath(`/quotations/${quotation.id}`);
   revalidatePath(`/projects/orders/${orderNo}`);
+  revalidatePath("/insights/sales-report");
+  revalidatePath("/settings/profile");
   if (quotation.project_id) {
     revalidatePath(`/clients/projects/${quotation.project_id}`);
   }
@@ -7923,20 +7958,131 @@ export async function updateQuotationSalesperson(
   quotationId: string,
   newSalespersonId: string | null,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  await requireQuotationActionUser();
+  const { user, displayName } = await requireQuotationActionUser();
 
-  if (newSalespersonId && !(await isActiveSalespersonProfile(newSalespersonId))) {
-    return { ok: false, error: "Select a valid active sales person." };
+  if (!newSalespersonId || !(await isActiveSalespersonProfile(newSalespersonId))) {
+    return { ok: false, error: "Select a valid active Sales Manager." };
   }
 
   const supabase = await createSupabaseClient();
-  const { error } = await supabase
+  const { data: selectedQuotation, error: selectedQuotationError } = await supabase
     .from("quotations")
-    .update({ salesperson_id: newSalespersonId || null } as never)
-    .eq("id", quotationId);
+    .select("id,quotation_no,salesperson_id,title")
+    .eq("id", quotationId)
+    .maybeSingle<{
+      id: string;
+      quotation_no: string | null;
+      salesperson_id: string | null;
+      title: string;
+    }>();
 
-  if (error) return { ok: false, error: error.message };
+  if (selectedQuotationError || !selectedQuotation) {
+    return { ok: false, error: "Quotation ownership could not be loaded." };
+  }
 
-  revalidatePath(`/quotations/${quotationId}`);
+  const { data: quotationRows, error: quotationRowsError } = await supabase
+    .from("quotations")
+    .select("id,quotation_no,salesperson_id");
+
+  if (quotationRowsError || !quotationRows) {
+    return { ok: false, error: "Quotation folder ownership could not be loaded." };
+  }
+
+  const folderKey = quotationSalesFolderKey(selectedQuotation);
+  const folderRows = (
+    quotationRows as Array<{
+      id: string;
+      quotation_no: string | null;
+      salesperson_id: string | null;
+    }>
+  ).filter((quotation) => quotationSalesFolderKey(quotation) === folderKey);
+  const folderQuotationIds = folderRows.map((quotation) => quotation.id);
+
+  if (!folderQuotationIds.length) {
+    return { ok: false, error: "No quotation records were found for this folder." };
+  }
+
+  if (folderRows.every((quotation) => quotation.salesperson_id === newSalespersonId)) {
+    return { ok: true };
+  }
+
+  const { data: updatedRows, error: updateError } = await supabase
+    .from("quotations")
+    .update({ salesperson_id: newSalespersonId } as never)
+    .in("id", folderQuotationIds)
+    .select("id")
+    .returns<Array<{ id: string }>>();
+
+  if (updateError) return { ok: false, error: updateError.message };
+
+  const updatedIds = new Set((updatedRows ?? []).map((quotation) => quotation.id));
+  if (
+    updatedIds.size !== folderQuotationIds.length ||
+    folderQuotationIds.some((id) => !updatedIds.has(id))
+  ) {
+    return {
+      ok: false,
+      error: "Quotation ownership was not updated for every record in the folder.",
+    };
+  }
+
+  const profileIds = Array.from(
+    new Set(
+      [selectedQuotation.salesperson_id, newSalespersonId].filter(
+        (value): value is string => Boolean(value),
+      ),
+    ),
+  );
+  const adminResult = createAdminClient();
+  const profileNameById = new Map<string, string>();
+
+  if (adminResult.client && profileIds.length) {
+    const { data: profiles } = await adminResult.client
+      .from("profiles")
+      .select("id,full_name,email")
+      .in("id", profileIds)
+      .returns<Array<{ id: string; full_name: string | null; email: string | null }>>();
+
+    for (const profile of profiles ?? []) {
+      profileNameById.set(
+        profile.id,
+        profile.full_name?.trim() || profile.email?.trim() || profile.id,
+      );
+    }
+  }
+
+  const auditCreated = await createAuditLog(supabase, {
+    entityType: "quotation",
+    entityId: selectedQuotation.id,
+    action: "quotation_salesperson_reassigned",
+    title: "Sales Manager reassigned",
+    description: quotationLabel(selectedQuotation.title, selectedQuotation.quotation_no),
+    metadata: {
+      folderKey,
+      newSalespersonId,
+      newSalespersonName: profileNameById.get(newSalespersonId) ?? null,
+      previousSalespersonId: selectedQuotation.salesperson_id,
+      previousSalespersonName: selectedQuotation.salesperson_id
+        ? (profileNameById.get(selectedQuotation.salesperson_id) ?? null)
+        : null,
+      quotationCount: folderQuotationIds.length,
+    },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  if (!auditCreated) {
+    return {
+      ok: false,
+      error: "Ownership was updated, but the audit history could not be recorded.",
+    };
+  }
+
+  revalidatePath("/quotations");
+  revalidatePath("/sales/quotations");
+  revalidatePath("/insights/sales-report");
+  for (const id of folderQuotationIds) {
+    revalidatePath(`/quotations/${id}`);
+  }
   return { ok: true };
 }

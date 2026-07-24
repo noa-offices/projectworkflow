@@ -138,13 +138,13 @@ function QuotedVsApprovedBarChart({ data }: { data: AggMonthPoint[] }) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           formatter={(value: any, name: any) => [
             `AED ${fmtAED(typeof value === "number" ? value : 0)}`,
-            name === "quoted" ? "Quoted" : "Approved",
+            name === "quoted" ? "Quoted" : "Client Approved",
           ]}
         />
         <Legend
           wrapperStyle={{ fontSize: 10, paddingTop: 8 }}
           iconSize={8}
-          formatter={(value) => (value === "quoted" ? "Quoted" : "Approved")}
+          formatter={(value) => (value === "quoted" ? "Quoted" : "Client Approved")}
         />
         <Bar dataKey="quoted" name="quoted" fill="#6366f1" radius={[2, 2, 0, 0]} />
         <Bar dataKey="approved" name="approved" fill="#10b981" radius={[2, 2, 0, 0]} />
@@ -166,13 +166,13 @@ export function SalesPerformanceCharts({
     <div className="grid gap-3 sm:grid-cols-2">
       <div className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-          Monthly Approved Value
+          Monthly Client Approved Value
         </h3>
         <RepApprovedLineChart seriesData={perRepData} />
       </div>
       <div className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-          Monthly Quoted vs. Approved
+          Monthly Quoted vs. Client Approved
         </h3>
         <QuotedVsApprovedBarChart data={aggMonthData} />
       </div>

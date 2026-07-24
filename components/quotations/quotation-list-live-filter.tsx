@@ -11,6 +11,7 @@ import {
   quotationStatuses,
 } from "@/lib/quotation-status";
 import { archiveFolderAction } from "@/lib/quotations/archive-folder-action";
+import { quotationApprovalDisplay } from "@/lib/quotations/approval-display";
 import { deleteFolderAction } from "@/lib/quotations/delete-folder-action";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
@@ -29,6 +30,7 @@ type Project = {
 };
 
 type Quotation = {
+  approved_salesperson_id: string | null;
   client_id: string;
   currency: string;
   grand_total: number;
@@ -121,13 +123,24 @@ function folderDisplayNo(quotations: Quotation[]) {
 function statusSummary(quotations: Quotation[]) {
   const counts = new Map<string, number>();
   for (const quotation of quotations) {
-    const label = quotation.is_active ? quotationStatusLabel(quotation.status) : "Archived";
+    const label = quotation.is_active ? quotationListStatusLabel(quotation) : "Archived";
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
 
   return Array.from(counts.entries())
     .map(([label, count]) => (count > 1 ? `${label} x${count}` : label))
     .join(", ");
+}
+
+function quotationListStatusLabel(quotation: Quotation) {
+  return quotationApprovalDisplay(quotation)?.label ?? quotationStatusLabel(quotation.status);
+}
+
+function quotationListStatusBadgeClassName(quotation: Quotation) {
+  return (
+    quotationApprovalDisplay(quotation)?.badgeClassName ??
+    quotationStatusBadgeClassName(quotation.status)
+  );
 }
 
 function formatListDate(value: string) {
@@ -265,7 +278,7 @@ export function QuotationListLiveFilter({
               folder.folderNo,
               quotation.title,
               quotation.status,
-              quotationStatusLabel(quotation.status),
+              quotationListStatusLabel(quotation),
               folder.clientName,
               folder.projectName,
               quotation.legacy_reference,
@@ -603,8 +616,8 @@ export function QuotationListLiveFilter({
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase text-zinc-500">Status</p>
-                    <span className={`mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${quotationStatusBadgeClassName(quotation.status)}`}>
-                      {quotationStatusLabel(quotation.status)}
+                    <span className={`mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${quotationListStatusBadgeClassName(quotation)}`}>
+                      {quotationListStatusLabel(quotation)}
                     </span>
                   </div>
                   <div>
@@ -709,8 +722,8 @@ export function QuotationListLiveFilter({
                     <td className="max-w-[200px] px-4 py-3 text-zinc-600">{folder.projectName}</td>
                     <td className="px-4 py-3 font-medium text-zinc-950">{quotation.quotation_no ?? quotation.legacy_reference ?? "-"}</td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${quotationStatusBadgeClassName(quotation.status)}`}>
-                        {quotationStatusLabel(quotation.status)}
+                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${quotationListStatusBadgeClassName(quotation)}`}>
+                        {quotationListStatusLabel(quotation)}
                       </span>
                       {folder.quotationCount > 1 ? (
                         <p className="mt-1 text-[11px] text-zinc-400">{folder.quotationCount} versions</p>

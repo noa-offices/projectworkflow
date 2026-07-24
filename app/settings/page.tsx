@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import {
   Building2,
+  BadgeDollarSign,
   ChevronRight,
   FileText,
   HardHat,
@@ -86,6 +87,8 @@ export default async function SettingsPage() {
   const canManagePeople =
     profile?.role === "system_owner" || profile?.role === "admin_manager";
   const isSystemOwner = profile?.role === "system_owner";
+  const canViewCommissionSettings =
+    profile?.role === "system_owner" || profile?.role === "admin_manager";
 
   return (
     <ErpAppShell
@@ -155,6 +158,18 @@ export default async function SettingsPage() {
               icon={ShieldCheck}
               title="Role Guide"
               description="Review effective feature permissions across application roles."
+            />
+          </SettingsGroup>
+        ) : null}
+
+        {canViewCommissionSettings ? (
+          <SettingsGroup title="Sales & Commission">
+            <SettingsItem
+              href="/settings/commissions"
+              icon={BadgeDollarSign}
+              title="Commission Settings"
+              description="Review effective-dated Sales Manager commission rules and version history."
+              badge={isSystemOwner ? "Editable" : "Read only"}
             />
           </SettingsGroup>
         ) : null}

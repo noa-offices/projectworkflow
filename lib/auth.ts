@@ -85,6 +85,48 @@ export async function requireSystemOwner(): Promise<AuthenticatedUser> {
   return authenticatedUser;
 }
 
+export function canViewCommissions(role: AppRole | null | undefined): boolean {
+  return role === "system_owner" || role === "admin_manager" || role === "sales_designer";
+}
+
+export function canManageCommissions(role: AppRole | null | undefined): boolean {
+  return role === "system_owner";
+}
+
+export function canEditCommissions(role: AppRole | null | undefined): boolean {
+  return role === "system_owner" || role === "admin_manager";
+}
+
+export async function requireCommissionViewer(): Promise<AuthenticatedUser> {
+  const authenticatedUser = await requireActiveUser();
+
+  if (!canViewCommissions(authenticatedUser.profile?.role)) {
+    redirect("/dashboard");
+  }
+
+  return authenticatedUser;
+}
+
+export async function requireCommissionManager(): Promise<AuthenticatedUser> {
+  const authenticatedUser = await requireActiveUser();
+
+  if (!canManageCommissions(authenticatedUser.profile?.role)) {
+    redirect("/commissions");
+  }
+
+  return authenticatedUser;
+}
+
+export async function requireCommissionEditor(): Promise<AuthenticatedUser> {
+  const authenticatedUser = await requireActiveUser();
+
+  if (!canEditCommissions(authenticatedUser.profile?.role)) {
+    redirect("/commissions");
+  }
+
+  return authenticatedUser;
+}
+
 export async function requireSettingsManager(): Promise<AuthenticatedUser> {
   const authenticatedUser = await requireActiveUser();
   const role = authenticatedUser.profile?.role;

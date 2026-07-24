@@ -9,7 +9,7 @@ const STATUS_OPTIONS = [
   ["internal_review", "Internal Review"],
   ["sent_to_client", "Sent to Client"],
   ["revision_required", "Revision Requested"],
-  ["client_confirmed", "Client Approved"],
+  ["client_confirmed", "Client Confirmed"],
   ["on_hold", "On Hold"],
   ["cancelled", "Rejected / Lost"],
 ] as const;
