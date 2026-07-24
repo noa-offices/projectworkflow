@@ -3,6 +3,7 @@ export type AppRole =
   | "admin_manager"
   | "procurement_manager"
   | "sales_designer"
+  | "sales_coordinator"
   | "designer"
   | "viewer";
 

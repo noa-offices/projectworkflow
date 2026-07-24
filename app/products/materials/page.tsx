@@ -6,7 +6,7 @@ import {
   BatchMaterialDialogButton,
   MaterialDialogButton,
 } from "@/components/products/material-library-dialogs";
-import { requireRecordsManager } from "@/lib/auth";
+import { requireProductLibraryManager } from "@/lib/auth";
 import {
   materialCollectionLabel,
   materialDisplayCategory,
@@ -609,7 +609,7 @@ function MaterialCollection({
 }
 
 export default async function BrandMaterialsPage({ searchParams }: MaterialsPageProps) {
-  const { user, profile, displayName } = await requireRecordsManager();
+  const { user, profile, displayName } = await requireProductLibraryManager();
   const params = (await searchParams) ?? {};
   const selectedBrandId = stringParam(params.brand);
   const message = stringParam(params.message);

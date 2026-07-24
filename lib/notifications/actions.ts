@@ -1,6 +1,7 @@
 "use server";
 
-import { requireActiveUser } from "@/lib/auth";
+import { canSendNotifications, requireActiveUser } from "@/lib/auth";
+import { USER_ROLE_OPTIONS } from "@/lib/user-management";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { createAuditLog } from "@/lib/audit-log";
@@ -72,6 +73,9 @@ export async function sendNotification(
   requiresResponse?: boolean,
 ): Promise<ActionResult> {
   const { user, profile } = await requireActiveUser();
+  if (!canSendNotifications(profile?.role)) {
+    return { ok: false, error: "Permission denied." };
+  }
 
   const { client, error: clientError } = getAdminClient();
   if (!client) return { ok: false, error: clientError! };
@@ -120,6 +124,12 @@ export async function sendNotificationToRole(
   requiresResponse?: boolean,
 ): Promise<ActionResult> {
   const { user, profile } = await requireActiveUser();
+  if (!canSendNotifications(profile?.role)) {
+    return { ok: false, error: "Permission denied." };
+  }
+  if (!USER_ROLE_OPTIONS.some((value) => value === role)) {
+    return { ok: false, error: "Select a valid recipient role." };
+  }
 
   const { client, error: clientError } = getAdminClient();
   if (!client) return { ok: false, error: clientError! };

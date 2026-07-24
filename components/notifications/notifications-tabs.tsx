@@ -269,7 +269,7 @@ function SentTab() {
 
 // ─── Main exported tabs shell ────────────────────────────────────────────────
 
-export function NotificationsTabs() {
+export function NotificationsTabs({ canSend }: { canSend: boolean }) {
   const [tab, setTab] = useState<Tab>("received");
   const [showForm, setShowForm] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -282,7 +282,7 @@ export function NotificationsTabs() {
 
   return (
     <>
-      {showForm && (
+      {canSend && showForm && (
         <SendNotificationForm
           onClose={() => setShowForm(false)}
           onSent={handleSent}
@@ -318,13 +318,15 @@ export function NotificationsTabs() {
           </div>
 
           {/* New notification button */}
-          <button
-            type="button"
-            onClick={() => setShowForm(true)}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
-          >
-            <span aria-hidden="true">+</span> New
-          </button>
+          {canSend ? (
+            <button
+              type="button"
+              onClick={() => setShowForm(true)}
+              className="inline-flex h-9 items-center gap-1.5 rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+            >
+              <span aria-hidden="true">+</span> New
+            </button>
+          ) : null}
         </div>
       </div>
 

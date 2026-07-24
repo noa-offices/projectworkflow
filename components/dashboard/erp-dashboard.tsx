@@ -1,23 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
+  AlertTriangle,
+  BadgeCheck,
+  Bell,
   Building2,
-  Cloud,
-  Database,
+  ChevronRight,
   FileText,
   Library,
   PackageSearch,
+  Plus,
   ReceiptText,
-  Truck,
-  Wifi,
+  Users,
 } from "lucide-react";
-import { AlertsPanel } from "@/components/dashboard/alerts-panel";
 import type { DashboardAlert } from "@/components/dashboard/alerts-panel";
 import { DashboardCard } from "@/components/dashboard/dashboard-card";
 import { KPIWidget } from "@/components/dashboard/kpi-widget";
-import { KpiSparkline, MonthlyBarChart } from "@/components/dashboard/dashboard-charts";
+import { MonthlyBarChart } from "@/components/dashboard/dashboard-charts";
+import type { AppRole } from "@/lib/supabase/types";
 import {
   getProjectRecentActivity,
   type ActivityEntry,
@@ -51,33 +53,6 @@ function relativeTime(iso: string): string {
 
 // ─── Module shortcuts ─────────────────────────────────────────────────────────
 
-const MODULE_SHORTCUTS = [
-  {
-    title: "Quotation Builder",
-    description: "Create, price, and save client quotation workspaces.",
-    href: "/quotations",
-    icon: FileText,
-  },
-  {
-    title: "Product Library",
-    description: "Maintain templates, finishes, product images, and source pricing.",
-    href: "/products",
-    icon: Library,
-  },
-  {
-    title: "Procurement",
-    description: "Review supplier RFQs and purchasing work in progress.",
-    href: "/procurement",
-    icon: PackageSearch,
-  },
-  {
-    title: "Order Confirmation",
-    description: "Prepare client approval documents and order handoff details.",
-    href: "/quotations",
-    icon: ReceiptText,
-  },
-];
-
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 type Props = {
@@ -85,8 +60,11 @@ type Props = {
   projects: DashboardProject[];
   salesData: DashboardSalesData;
   monthlyData: MonthlyTotal[];
-  fetchedAt: string;
   hrAlerts?: DashboardAlert[];
+  role: AppRole | null;
+  canAccessProcurement: boolean;
+  canManageProducts: boolean;
+  canSendNotifications: boolean;
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -96,71 +74,59 @@ export function ERPDashboard({
   projects,
   salesData,
   monthlyData,
-  fetchedAt,
   hrAlerts,
+  role,
+  canAccessProcurement,
+  canManageProducts,
+  canSendNotifications,
 }: Props) {
-  const [online, setOnline] = useState(() =>
-    typeof window === "undefined" ? true : window.navigator.onLine,
-  );
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedOrderNo, setExpandedOrderNo] = useState<string | null>(null);
   const [expandedActivity, setExpandedActivity] = useState<ActivityEntry[] | null>(null);
   const [activityLoading, setActivityLoading] = useState(false);
 
-  useEffect(() => {
-    const on = () => setOnline(true);
-    const off = () => setOnline(false);
-    window.addEventListener("online", on);
-    window.addEventListener("offline", off);
-    return () => {
-      window.removeEventListener("online", on);
-      window.removeEventListener("offline", off);
-    };
-  }, []);
-
   // ── KPI sparkline data ───────────────────────────────────────────────────
-  // Placeholder trend arrays — no historical time-series is stored.
-  // Shape rises from 0 to currentValue over 4 points as an illustrative curve.
-  function sparkData(v: number): number[] {
-    return [0, Math.round(v / 3), Math.round((v * 2) / 3), v];
-  }
-
+  const attentionCount = stats.pendingQuotations + (hrAlerts?.length ?? 0);
   const kpis = [
     {
       label: "Active Projects",
       value: String(stats.activeProjects),
       description: "Currently in-progress projects.",
       trend: "From confirmed project files",
+      href: "/projects/orders",
       icon: Building2,
       accent: "bg-emerald-100 text-emerald-700",
       cardBg: "bg-emerald-50",
-      sparkColor: "#10b981",
-      gradientId: "spark-active",
-      sparkData: sparkData(stats.activeProjects),
-    },
-    {
-      label: "Completed Projects",
-      value: String(stats.completedProjects),
-      description: "Successfully closed projects.",
-      trend: "From confirmed project files",
-      icon: Truck,
-      accent: "bg-blue-100 text-blue-700",
-      cardBg: "bg-blue-50",
-      sparkColor: "#3b82f6",
-      gradientId: "spark-completed",
-      sparkData: sparkData(stats.completedProjects),
     },
     {
       label: "Pending Quotations",
       value: String(stats.pendingQuotations),
-      description: "Quotations awaiting client approval.",
-      trend: "Excludes confirmed and archived",
+      description: "Active folders awaiting completion.",
+      trend: "Counts each quotation folder once",
+      href: "/sales/quotations",
       icon: FileText,
       accent: "bg-indigo-100 text-indigo-700",
       cardBg: "bg-indigo-50",
-      sparkColor: "#6366f1",
-      gradientId: "spark-pending",
-      sparkData: sparkData(stats.pendingQuotations),
+    },
+    {
+      label: "Confirmed Value",
+      value: formatAED(salesData.yearlyTurnover),
+      description: `From ${salesData.dealCount} confirmed project${salesData.dealCount !== 1 ? "s" : ""}.`,
+      trend: `Calendar year ${new Date().getFullYear()}`,
+      href: "/sales/approvals",
+      icon: BadgeCheck,
+      accent: "bg-blue-100 text-blue-700",
+      cardBg: "bg-blue-50",
+    },
+    {
+      label: "Attention Items",
+      value: String(attentionCount),
+      description: "Verified items requiring follow-up.",
+      trend: attentionCount ? "Review the list below" : "Nothing urgent right now",
+      href: "#attention-required",
+      icon: AlertTriangle,
+      accent: "bg-amber-100 text-amber-700",
+      cardBg: "bg-amber-50",
     },
   ];
 
@@ -190,31 +156,104 @@ export function ERPDashboard({
   // ── Sales performance — max total for progress bar scaling ────────────────
   const attributed = salesData.salesByPerson.filter((p) => p.salesperson_id !== null);
   const maxTotal = attributed[0]?.total ?? salesData.salesByPerson[0]?.total ?? 1;
+  const quickActions = [
+    { label: "New Quotation", href: "/sales/quotations", icon: Plus, visible: role !== null && role !== "viewer" },
+    { label: "Add Product", href: "/products/manage", icon: Library, visible: canManageProducts },
+    { label: "Clients", href: "/sales/clients", icon: Users, visible: true },
+    { label: "Procurement", href: "/procurement/orders", icon: PackageSearch, visible: canAccessProcurement },
+    { label: "Send Notification", href: "/notifications", icon: Bell, visible: canSendNotifications },
+    { label: "Approved Quotations", href: "/sales/approvals", icon: ReceiptText, visible: true },
+  ].filter((action) => action.visible);
+  const attentionItems = [
+    stats.pendingQuotations > 0
+      ? {
+          label: "Quotation folders awaiting completion",
+          count: stats.pendingQuotations,
+          href: "/sales/quotations",
+          tone: "bg-amber-50 text-amber-700",
+        }
+      : null,
+    hrAlerts && hrAlerts.length > 0
+      ? {
+          label: "HR and worker documents nearing expiry",
+          count: hrAlerts.length,
+          href: "/hr",
+          tone: "bg-red-50 text-red-700",
+        }
+      : null,
+  ].filter((item): item is NonNullable<typeof item> => item !== null);
+  const workflowStages = [
+    { label: "Draft", count: stats.quotationWorkflow.draft, status: "draft" },
+    { label: "Ready to Send", count: stats.quotationWorkflow.readyToSend, status: "ready_to_send" },
+    { label: "Sent to Client", count: stats.quotationWorkflow.sentToClient, status: "sent_to_client" },
+    { label: "Client Approved", count: stats.quotationWorkflow.clientConfirmed, status: "client_confirmed" },
+  ];
 
   return (
     <div className="grid gap-5 px-4 py-5 sm:px-6 lg:px-8">
 
       {/* ── KPI Row ─────────────────────────────────────────────────────── */}
-      <section className="grid gap-4 sm:grid-cols-3">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {kpis.map((kpi) => (
-          <KPIWidget
-            key={kpi.label}
-            label={kpi.label}
-            value={kpi.value}
-            description={kpi.description}
-            trend={kpi.trend}
-            icon={kpi.icon}
-            accent={kpi.accent}
-            cardBg={kpi.cardBg}
-            sparkline={
-              <KpiSparkline
-                data={kpi.sparkData}
-                color={kpi.sparkColor}
-                gradientId={kpi.gradientId}
-              />
-            }
-          />
+          <Link key={kpi.label} href={kpi.href} className="group">
+            <KPIWidget
+              label={kpi.label}
+              value={kpi.value}
+              description={kpi.description}
+              trend={kpi.trend}
+              icon={kpi.icon}
+              accent={kpi.accent}
+              cardBg={kpi.cardBg}
+            />
+          </Link>
         ))}
+      </section>
+
+      <section id="attention-required" className="grid gap-4 lg:grid-cols-2">
+        <DashboardCard className="overflow-hidden">
+          <div className="border-b border-zinc-100 px-4 py-3">
+            <p className="text-sm font-semibold text-zinc-950">Attention Required</p>
+            <p className="mt-0.5 text-xs text-zinc-500">Verified items that need follow-up.</p>
+          </div>
+          {attentionItems.length ? (
+            <div className="divide-y divide-zinc-100">
+              {attentionItems.map((item) => (
+                <Link
+                  key={item.label}
+                  href={item.href}
+                  className="flex items-center gap-3 px-4 py-3 transition hover:bg-zinc-50"
+                >
+                  <span className={`rounded-md px-2 py-1 text-xs font-semibold ${item.tone}`}>
+                    {item.count}
+                  </span>
+                  <span className="flex-1 text-sm font-medium text-zinc-800">{item.label}</span>
+                  <ChevronRight className="h-4 w-4 text-zinc-400" />
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <p className="px-4 py-5 text-sm text-zinc-500">No urgent items requiring attention.</p>
+          )}
+        </DashboardCard>
+
+        <DashboardCard className="overflow-hidden">
+          <div className="border-b border-zinc-100 px-4 py-3">
+            <p className="text-sm font-semibold text-zinc-950">Quotation Workflow</p>
+            <p className="mt-0.5 text-xs text-zinc-500">Latest active quotation in each folder.</p>
+          </div>
+          <div className="grid grid-cols-2 divide-x divide-y divide-zinc-100 sm:grid-cols-4 sm:divide-y-0">
+            {workflowStages.map((stage) => (
+              <Link
+                key={stage.status}
+                href={`/sales/quotations?status=${stage.status}`}
+                className="px-3 py-3 transition hover:bg-zinc-50"
+              >
+                <p className="text-xl font-bold text-zinc-950">{stage.count}</p>
+                <p className="mt-1 text-xs text-zinc-500">{stage.label}</p>
+              </Link>
+            ))}
+          </div>
+        </DashboardCard>
       </section>
 
       {/* ── Main content + sidebar ────────────────────────────────────────── */}
@@ -223,30 +262,32 @@ export function ERPDashboard({
         <div className="grid gap-5">
 
           {/* ── Module shortcuts ──────────────────────────────────────────── */}
-          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {MODULE_SHORTCUTS.map((shortcut) => {
-              const Icon = shortcut.icon;
-              return (
-                <Link key={shortcut.title} href={shortcut.href} className="group">
-                  <DashboardCard className="h-full p-4 transition-shadow group-hover:shadow-md">
-                    <span className="flex h-9 w-9 items-center justify-center rounded-md bg-zinc-100 text-zinc-600 transition-colors group-hover:bg-emerald-50 group-hover:text-emerald-800">
-                      <Icon className="h-4 w-4" aria-hidden="true" />
-                    </span>
-                    <p className="mt-3 text-sm font-semibold text-zinc-950">{shortcut.title}</p>
-                    <p className="mt-1 text-xs leading-5 text-zinc-500">{shortcut.description}</p>
-                  </DashboardCard>
-                </Link>
-              );
-            })}
+          <section>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Quick Actions</p>
+            <div className="flex flex-wrap gap-2">
+              {quickActions.map((action) => {
+                const Icon = action.icon;
+                return (
+                  <Link
+                    key={action.label}
+                    href={action.href}
+                    className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 shadow-sm transition hover:border-emerald-300 hover:text-emerald-800"
+                  >
+                    <Icon className="h-4 w-4" aria-hidden="true" />
+                    {action.label}
+                  </Link>
+                );
+              })}
+            </div>
           </section>
 
           {/* ── Active Project Pipeline ──────────────────────────────────── */}
           <DashboardCard className="overflow-hidden">
             <div className="flex items-center justify-between gap-4 border-b border-zinc-100 px-4 py-3">
               <div>
-                <p className="text-sm font-semibold text-zinc-950">Active Project Pipeline</p>
+                <p className="text-sm font-semibold text-zinc-950">Recent Work</p>
                 <p className="mt-0.5 text-xs text-zinc-500">
-                  {projects.length} active project{projects.length !== 1 ? "s" : ""}
+                  {projects.length} active project handoff{projects.length !== 1 ? "s" : ""}
                   {" — click a row to see recent activity"}
                 </p>
               </div>
@@ -261,7 +302,7 @@ export function ERPDashboard({
 
             <div className="max-h-[320px] overflow-auto">
               {filteredProjects.length === 0 ? (
-                <p className="px-4 py-8 text-center text-sm text-zinc-400">
+                <p className="px-4 py-5 text-center text-sm text-zinc-400">
                   {searchQuery ? "No projects match the filter." : "No active projects."}
                 </p>
               ) : (
@@ -348,46 +389,36 @@ export function ERPDashboard({
 
         {/* ── Sidebar ──────────────────────────────────────────────────────── */}
         <aside className="grid gap-4 xl:content-start">
-
-          {/* HR & Document Expiry Alerts */}
-          {hrAlerts && hrAlerts.length > 0 ? (
-            <AlertsPanel alerts={hrAlerts} />
-          ) : null}
-
-          {/* System Status */}
-          <DashboardCard className="p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-zinc-950">System Status</p>
-                <p className="mt-0.5 text-xs text-zinc-500">Connection state and data refresh.</p>
+          {canAccessProcurement ? (
+            <Link href="/procurement/orders">
+              <DashboardCard className="p-4 transition hover:border-blue-200 hover:shadow-md">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-md bg-blue-50 text-blue-700">
+                    <PackageSearch className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-zinc-950">Procurement Workspace</p>
+                    <p className="mt-0.5 text-xs text-zinc-500">Review purchasing and vendor progress.</p>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-zinc-400" />
+                </div>
+              </DashboardCard>
+            </Link>
+          ) : (
+            <DashboardCard className="p-4">
+              <p className="text-sm font-semibold text-zinc-950">Project Summary</p>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <Link href="/projects/orders" className="rounded-md bg-emerald-50 px-3 py-2">
+                  <p className="text-lg font-bold text-emerald-800">{stats.activeProjects}</p>
+                  <p className="text-xs text-emerald-700">Active</p>
+                </Link>
+                <Link href="/projects/completed" className="rounded-md bg-zinc-50 px-3 py-2">
+                  <p className="text-lg font-bold text-zinc-800">{stats.completedProjects}</p>
+                  <p className="text-xs text-zinc-500">Completed</p>
+                </Link>
               </div>
-              <span
-                className={`flex h-9 w-9 items-center justify-center rounded-md ${
-                  online ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
-                }`}
-              >
-                <Database className="h-4 w-4" aria-hidden="true" />
-              </span>
-            </div>
-            <dl className="mt-3 space-y-2">
-              <div className="flex items-center justify-between rounded-md bg-zinc-50 px-3 py-2 text-xs">
-                <dt className="flex items-center gap-2 text-zinc-500">
-                  <Wifi className="h-3.5 w-3.5" />
-                  Status
-                </dt>
-                <dd className={`font-semibold ${online ? "text-emerald-700" : "text-amber-700"}`}>
-                  {online ? "Online" : "Offline"}
-                </dd>
-              </div>
-              <div className="flex items-center justify-between rounded-md bg-zinc-50 px-3 py-2 text-xs">
-                <dt className="flex items-center gap-2 text-zinc-500">
-                  <Cloud className="h-3.5 w-3.5" />
-                  Last Refresh
-                </dt>
-                <dd className="font-semibold text-zinc-950">{relativeTime(fetchedAt)}</dd>
-              </div>
-            </dl>
-          </DashboardCard>
+            </DashboardCard>
+          )}
 
           {/* Yearly Turnover */}
           <DashboardCard className="overflow-hidden p-4">

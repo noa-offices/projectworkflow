@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { HrManagementTable } from "@/components/settings/hr-management-table";
 import { HrWorkersTable } from "@/components/settings/hr-workers-table";
@@ -90,6 +91,12 @@ export default async function HrManagementPage({ searchParams }: HrPageProps) {
       userRole={profile?.role ?? null}
     >
       <div className="px-5 py-6 sm:px-8">
+        <Link
+          href="/settings"
+          className="mb-5 inline-flex text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
+        >
+          Back to settings
+        </Link>
         {message ? (
           <div className="mb-5">
             <p className={`rounded-md border px-3 py-2 text-sm ${messageClassName}`}>

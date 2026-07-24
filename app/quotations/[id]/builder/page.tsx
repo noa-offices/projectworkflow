@@ -3137,7 +3137,9 @@ export default async function QuotationBuilderPage({
   const canManageRecords =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
+    profile?.role === "procurement_manager" ||
     profile?.role === "sales_designer" ||
+    profile?.role === "sales_coordinator" ||
     profile?.role === "designer";
   const canManageProductLibrary = canUseProductLibrary(profile?.role);
   const supabase = await createSupabaseClient();

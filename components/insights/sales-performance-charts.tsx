@@ -55,7 +55,7 @@ function RepApprovedLineChart({ seriesData }: { seriesData: RepSeriesData[] }) {
   });
 
   return (
-    <ResponsiveContainer width="100%" height={200}>
+    <ResponsiveContainer width="100%" height={165}>
       <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 4 }}>
         <CartesianGrid stroke="#f4f4f5" vertical={false} />
         <XAxis
@@ -112,7 +112,7 @@ function QuotedVsApprovedBarChart({ data }: { data: AggMonthPoint[] }) {
   }
 
   return (
-    <ResponsiveContainer width="100%" height={200}>
+    <ResponsiveContainer width="100%" height={165}>
       <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 4 }}>
         <CartesianGrid stroke="#f4f4f5" vertical={false} />
         <XAxis
@@ -163,15 +163,15 @@ export function SalesPerformanceCharts({
   perRepData: RepSeriesData[];
 }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
-      <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+    <div className="grid gap-3 sm:grid-cols-2">
+      <div className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
           Monthly Approved Value
         </h3>
         <RepApprovedLineChart seriesData={perRepData} />
       </div>
-      <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+      <div className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
           Monthly Quoted vs. Approved
         </h3>
         <QuotedVsApprovedBarChart data={aggMonthData} />

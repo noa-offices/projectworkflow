@@ -85,7 +85,7 @@ async function activeRecordsManager(): Promise<AuthFailure | AuthSuccess> {
 
   if (
     profile?.account_status !== "active" ||
-    !["system_owner", "admin_manager", "sales_designer"].includes(profile?.role ?? "")
+    !["system_owner", "admin_manager", "procurement_manager", "sales_designer", "sales_coordinator"].includes(profile?.role ?? "")
   ) {
     return { supabase, error: "Forbidden.", status: 403 } satisfies AuthFailure;
   }

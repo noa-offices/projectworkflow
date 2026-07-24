@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireRecordsManager } from "@/lib/auth";
+import { requireProductLibraryManager } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
 function textValue(formData: FormData, name: string) {
@@ -58,7 +58,7 @@ function parseBatchRows(value: string) {
 }
 
 export async function createMaterialGroup(formData: FormData) {
-  await requireRecordsManager();
+  await requireProductLibraryManager();
   const brandId = textValue(formData, "brand_id");
   const groupName = textValue(formData, "group_name");
   const redirectPath = returnTo(formData);
@@ -86,7 +86,7 @@ export async function createMaterialGroup(formData: FormData) {
 }
 
 export async function updateMaterialGroup(formData: FormData) {
-  await requireRecordsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
   const brandId = textValue(formData, "brand_id");
   const groupName = textValue(formData, "group_name");
@@ -118,7 +118,7 @@ export async function updateMaterialGroup(formData: FormData) {
 }
 
 export async function deactivateMaterialGroup(formData: FormData) {
-  await requireRecordsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
   const redirectPath = returnTo(formData);
 
@@ -140,7 +140,7 @@ export async function deactivateMaterialGroup(formData: FormData) {
 }
 
 export async function createMaterial(formData: FormData) {
-  await requireRecordsManager();
+  await requireProductLibraryManager();
   const brandId = textValue(formData, "brand_id");
   const groupId = textValue(formData, "material_group_id");
   const materialName = textValue(formData, "material_name");
@@ -176,7 +176,7 @@ export async function createMaterial(formData: FormData) {
 }
 
 export async function createMaterialsBatch(formData: FormData) {
-  await requireRecordsManager();
+  await requireProductLibraryManager();
   const brandId = textValue(formData, "brand_id");
   const groupId = textValue(formData, "material_group_id");
   const redirectPath = returnTo(formData);
@@ -239,7 +239,7 @@ export async function createMaterialsBatch(formData: FormData) {
 }
 
 export async function updateMaterial(formData: FormData) {
-  await requireRecordsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
   const brandId = textValue(formData, "brand_id");
   const groupId = textValue(formData, "material_group_id");
@@ -279,7 +279,7 @@ export async function updateMaterial(formData: FormData) {
 }
 
 export async function deactivateMaterial(formData: FormData) {
-  await requireRecordsManager();
+  await requireProductLibraryManager();
   const id = textValue(formData, "id");
   const redirectPath = returnTo(formData);
 

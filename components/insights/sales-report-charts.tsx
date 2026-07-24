@@ -67,7 +67,7 @@ export function SalesReportCharts({ perRepData }: SalesReportChartsProps) {
           viewBox={`0 0 ${W} ${H}`}
           className="w-full"
           style={{ minWidth: 280 }}
-          aria-label="Monthly approved value by sales designer"
+          aria-label="Monthly approved value by sales person"
         >
           {/* Y-axis grid + labels */}
           {yTicks.map((tick, i) => {

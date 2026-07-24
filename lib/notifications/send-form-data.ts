@@ -1,6 +1,6 @@
 "use server";
 
-import { requireActiveUser } from "@/lib/auth";
+import { canSendNotifications, requireActiveUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getSentNotifications,
@@ -38,7 +38,10 @@ export type SentNotificationsEnriched = {
 export async function getActiveProfilesForSelect(): Promise<
   { ok: true; data: ProfileForSelect[] } | { ok: false; error: string }
 > {
-  await requireActiveUser();
+  const { profile } = await requireActiveUser();
+  if (!canSendNotifications(profile?.role)) {
+    return { ok: false, error: "Permission denied." };
+  }
 
   const adminResult = createAdminClient();
   if (adminResult.error || !adminResult.client) {

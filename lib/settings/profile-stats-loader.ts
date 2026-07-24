@@ -288,9 +288,46 @@ export async function loadProfileStatsForUser(
     .from("audit_activity_log")
     .select("id,action,title,description,entity_type,created_at")
     .eq("created_by", userId)
-    .in("entity_type", ["quotation", "quotation_item", "quotation_section"])
+    .in("entity_type", [
+      "quotation",
+      "quotation_item",
+      "quotation_section",
+      "product_template",
+      "product_template_price",
+      "product_template_detail_price",
+      "brand",
+      "brand_price_list_update",
+    ])
     .order("created_at", { ascending: false })
-    .limit(10);
+    .limit(30);
+
+  function auditCountQuery(entityType: string, actions: string[]) {
+    let query = admin
+      .from("audit_activity_log")
+      .select("id", { count: "exact", head: true })
+      .eq("created_by", userId)
+      .eq("entity_type", entityType)
+      .in("action", actions);
+
+    if (dateRange !== null) {
+      query = query
+        .gte("created_at", dateRange.from)
+        .lte("created_at", dateRange.to);
+    }
+
+    return query;
+  }
+
+  let clientsCreatedQuery = admin
+    .from("clients")
+    .select("id", { count: "exact", head: true })
+    .eq("created_by", userId);
+
+  if (dateRange !== null) {
+    clientsCreatedQuery = clientsCreatedQuery
+      .gte("created_at", dateRange.from)
+      .lte("created_at", dateRange.to);
+  }
 
   if (dateRange !== null) {
     activityQuery = activityQuery
@@ -301,9 +338,35 @@ export async function loadProfileStatsForUser(
   const [
     { data: quotationRows, error: quotationError },
     { data: activityRows, error: activityError },
+    clientsCreatedResult,
+    quotationItemsAddedResult,
+    productTemplatesCreatedResult,
+    productTemplatesUpdatedResult,
+    revisionsCreatedResult,
+    optionsCreatedResult,
+    copiesCreatedResult,
+    enquiryUpdatesResult,
+    documentActionsResult,
   ] = await Promise.all([
     quotationsQuery.returns<QuotationRow[]>(),
     activityQuery.returns<ActivityRow[]>(),
+    clientsCreatedQuery,
+    auditCountQuery("quotation_item", ["quotation_item_added"]),
+    auditCountQuery("product_template", [
+      "created",
+      "product_template_created_from_quote",
+      "product_template_variant_created_from_quote",
+    ]),
+    auditCountQuery("product_template", ["updated"]),
+    auditCountQuery("quotation", ["revision_created"]),
+    auditCountQuery("quotation", ["quotation_option_created"]),
+    auditCountQuery("quotation", ["quotation_created"]).eq("metadata->>mode", "duplicate"),
+    auditCountQuery("quotation", ["enquiry_details_updated"]),
+    auditCountQuery("quotation", [
+      "document_setup_updated",
+      "project_file_created",
+      "confirmed_order_project_created",
+    ]),
   ]);
 
   if (quotationError) {
@@ -311,6 +374,10 @@ export async function loadProfileStatsForUser(
   }
   if (activityError) {
     console.warn("loadProfileStatsForUser: audit_activity_log query failed", activityError.message);
+  }
+
+  function countOrNull(result: { count: number | null; error: { message: string } | null }) {
+    return result.error ? null : result.count ?? 0;
   }
 
   const rows = quotationRows ?? [];
@@ -341,5 +408,16 @@ export async function loadProfileStatsForUser(
     recentQuotations,
     recentActivity: activityRows ?? [],
     monthlyData,
+    contributions: {
+      clientsCreated: countOrNull(clientsCreatedResult),
+      copiesCreated: countOrNull(copiesCreatedResult),
+      documentActions: countOrNull(documentActionsResult),
+      enquiryUpdates: countOrNull(enquiryUpdatesResult),
+      optionsCreated: countOrNull(optionsCreatedResult),
+      productTemplatesCreated: countOrNull(productTemplatesCreatedResult),
+      productTemplatesUpdated: countOrNull(productTemplatesUpdatedResult),
+      quotationItemsAdded: countOrNull(quotationItemsAddedResult),
+      revisionsCreated: countOrNull(revisionsCreatedResult),
+    },
   };
 }

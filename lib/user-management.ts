@@ -5,6 +5,7 @@ export const USER_ROLE_OPTIONS = [
   "admin_manager",
   "procurement_manager",
   "sales_designer",
+  "sales_coordinator",
   "designer",
   "viewer",
 ] satisfies AppRole[];
@@ -24,7 +25,9 @@ export function userRoleLabel(role: AppRole | null | undefined) {
     case "procurement_manager":
       return "Procurement Manager";
     case "sales_designer":
-      return "Sales User";
+      return "Sales Manager";
+    case "sales_coordinator":
+      return "Sales Coordinator";
     case "designer":
       return "Designer";
     case "viewer":

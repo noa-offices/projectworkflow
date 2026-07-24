@@ -120,7 +120,8 @@ function sidebarRoleLabel(role: AppRole): string {
   switch (role) {
     case "system_owner": return "System Owner";
     case "admin_manager": return "Admin Manager";
-    case "sales_designer": return "Sales User";
+    case "sales_designer": return "Sales Manager";
+    case "sales_coordinator": return "Sales Coordinator";
     case "procurement_manager": return "Procurement";
     case "viewer": return "Viewer";
     default: return role;
@@ -203,6 +204,25 @@ export function ErpSidebar({
   const sections: SidebarSection[] = useMemo(
     () => {
       const canProcure = role === "system_owner" || role === "admin_manager" || role === "procurement_manager";
+      const canManageProducts =
+        role === "system_owner" ||
+        role === "admin_manager" ||
+        role === "procurement_manager" ||
+        role === "sales_designer" ||
+        role === "sales_coordinator" ||
+        role === "designer";
+      const canManageMaterials =
+        role === "system_owner" ||
+        role === "admin_manager" ||
+        role === "procurement_manager" ||
+        role === "sales_designer" ||
+        role === "sales_coordinator" ||
+        role === "designer";
+      const canManagePriceUpdates =
+        role === "system_owner" ||
+        role === "admin_manager" ||
+        role === "procurement_manager" ||
+        role === "designer";
       return [
       {
         title: "Workspace",
@@ -256,13 +276,14 @@ export function ErpSidebar({
       },
       {
         title: "Products",
+        hiddenSection: !canManageProducts,
         iconColors: { bg: "bg-amber-100", icon: "text-amber-700" },
         items: [
-          { label: "Product Library", href: "/products", icon: Package, active: isProductLibraryActive(pathname, priceStatus, manage) },
-          { label: "Product Management", href: "/products/manage", icon: SlidersHorizontal, active: isProductManagementActive(pathname, manage) },
-          { label: "Brands", href: "/products/brands", icon: Tag, active: pathname === "/products/brands" },
-          { label: "Material Library", href: "/products/materials", icon: Layers, active: pathname === "/products/materials" },
-          { label: "Price Updates", href: "/products/price-updates", icon: DollarSign, active: isPriceUpdatesActive(pathname, priceStatus) },
+          { label: "Product Library", href: "/products", icon: Package, active: isProductLibraryActive(pathname, priceStatus, manage), hidden: !canManageProducts },
+          { label: "Product Management", href: "/products/manage", icon: SlidersHorizontal, active: isProductManagementActive(pathname, manage), hidden: !canManageProducts },
+          { label: "Brands", href: "/products/brands", icon: Tag, active: pathname === "/products/brands", hidden: !canManageProducts },
+          { label: "Material Library", href: "/products/materials", icon: Layers, active: pathname === "/products/materials", hidden: !canManageMaterials },
+          { label: "Price Updates", href: "/products/price-updates", icon: DollarSign, active: isPriceUpdatesActive(pathname, priceStatus), hidden: !canManagePriceUpdates },
         ],
       },
       {
@@ -276,7 +297,7 @@ export function ErpSidebar({
         title: "System",
         iconColors: { bg: "bg-zinc-100", icon: "text-zinc-500" },
         items: [
-          { label: "Settings", href: "/settings", icon: Settings, active: isSettingsActive(pathname) },
+          { label: "Settings", href: "/settings", icon: Settings, active: isSettingsActive(pathname), hidden: role === "viewer" },
           {
             label: "HR Management",
             href: "/hr",

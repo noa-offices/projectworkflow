@@ -3,7 +3,6 @@ import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { DateRangeSelector } from "@/components/insights/date-range-selector";
 import { SalesPerformanceCharts } from "@/components/insights/sales-performance-charts";
 import { SalesRepSparkline } from "@/components/insights/sales-rep-sparkline";
-import { SalesRepCard } from "@/components/insights/sales-rep-card";
 import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
 import { requireActiveUser } from "@/lib/auth";
 import {
@@ -44,25 +43,38 @@ type SalespersonProfileRow = {
 
 // ─── Date range helpers ───────────────────────────────────────────────────────
 
-const VALID_RANGES = ["30d", "3m", "6m", "1y"] as const;
+const VALID_RANGES = ["7d", "30d", "3m", "6m", "ytd", "1y", "custom"] as const;
 type RangeKey = (typeof VALID_RANGES)[number];
 
 const RANGE_LABELS: Record<RangeKey, string> = {
+  "7d": "Last 7 Days",
   "30d": "Last 30 Days",
   "3m": "Last 3 Months",
   "6m": "Last 6 Months",
+  "ytd": "Year to Date",
   "1y": "Last 1 Year",
+  "custom": "Custom Range",
 };
 
 function getRangeStart(range: RangeKey, from: Date): Date {
   const d = new Date(from);
   switch (range) {
+    case "7d":  d.setDate(d.getDate() - 7); break;
     case "30d": d.setDate(d.getDate() - 30); break;
     case "3m":  d.setMonth(d.getMonth() - 3); break;
+    case "ytd": d.setMonth(0, 1); d.setHours(0, 0, 0, 0); break;
     case "1y":  d.setFullYear(d.getFullYear() - 1); break;
     default:    d.setMonth(d.getMonth() - 6); // 6m
   }
   return d;
+}
+
+function dateParam(value: string | undefined, endOfDay = false): Date | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = new Date(`${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`);
+  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value
+    ? null
+    : date;
 }
 
 function monthKey(date: Date): string {
@@ -116,7 +128,8 @@ function roleLabel(role: string | null): string {
     case "system_owner": return "System Owner";
     case "admin_manager": return "Admin Manager";
     case "procurement_manager": return "Procurement Manager";
-    case "sales_designer": return "Sales User";
+    case "sales_designer": return "Sales Manager";
+    case "sales_coordinator": return "Sales Coordinator";
     case "designer": return "Designer";
     case "viewer": return "Viewer";
     default: return "Unknown";
@@ -248,6 +261,9 @@ type LeaderboardRow = {
   id: string;
   name: string;
   avatarUrl: string | null;
+  totalQuotes: number;
+  totalQuotedAmount: number;
+  approvedCount: number;
   approvedAmount: number;
   approvalRate: number;
   currentRank: number;
@@ -354,8 +370,161 @@ function SalesLeaderboard({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+function SalesTeamPerformanceTable({
+  rows,
+  rangeLabel,
+  canOpenDetails,
+  hrefForUser,
+}: {
+  rows: LeaderboardRow[];
+  rangeLabel: string;
+  canOpenDetails: boolean;
+  hrefForUser: (userId: string) => string;
+}) {
+  return (
+    <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+      <div className="flex flex-wrap items-end justify-between gap-2 border-b border-zinc-100 px-4 py-3">
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-900">Sales Team Performance</h2>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            {rangeLabel}
+            {canOpenDetails ? " · Select a sales person to view their activity profile." : ""}
+          </p>
+        </div>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="p-6 text-center text-sm text-zinc-400">No sales activity in this period.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
+              <tr>
+                <th className="px-4 py-2.5 font-medium">Sales person</th>
+                <th className="px-3 py-2.5 text-right font-medium">Quotes</th>
+                <th className="px-3 py-2.5 text-right font-medium">Quoted</th>
+                <th className="px-3 py-2.5 text-right font-medium">Approved</th>
+                <th className="px-3 py-2.5 text-right font-medium">Approved value</th>
+                <th className="px-4 py-2.5 text-right font-medium">Conversion</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {rows.map((row, index) => (
+                <tr key={row.id} className={canOpenDetails ? "hover:bg-emerald-50/50" : undefined}>
+                  <td className="px-4 py-3">
+                    {canOpenDetails ? (
+                      <Link
+                        className="flex items-center gap-2.5 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+                        href={hrefForUser(row.id)}
+                      >
+                        <span className="w-5 text-center text-xs font-semibold text-zinc-400">
+                          {index + 1}
+                        </span>
+                        <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-zinc-100 text-xs font-semibold text-zinc-600">
+                          <ResolvedAvatar
+                            path={row.avatarUrl}
+                            alt={row.name}
+                            className="h-full w-full object-cover"
+                            fallback={row.name.trim().charAt(0).toUpperCase() || "?"}
+                          />
+                        </span>
+                        <span className="font-medium text-zinc-900 underline-offset-2 hover:underline">
+                          {row.name}
+                        </span>
+                      </Link>
+                    ) : (
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-5 text-center text-xs font-semibold text-zinc-400">
+                          {index + 1}
+                        </span>
+                        <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-zinc-100 text-xs font-semibold text-zinc-600">
+                          <ResolvedAvatar
+                            path={row.avatarUrl}
+                            alt={row.name}
+                            className="h-full w-full object-cover"
+                            fallback={row.name.trim().charAt(0).toUpperCase() || "?"}
+                          />
+                        </span>
+                        <span className="font-medium text-zinc-900">{row.name}</span>
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-3 py-3 text-right tabular-nums text-zinc-700">{row.totalQuotes}</td>
+                  <td className="px-3 py-3 text-right tabular-nums text-zinc-700">
+                    {formatAED(row.totalQuotedAmount)}
+                  </td>
+                  <td className="px-3 py-3 text-right tabular-nums text-zinc-700">{row.approvedCount}</td>
+                  <td className="px-3 py-3 text-right tabular-nums font-medium text-zinc-900">
+                    {formatAED(row.approvedAmount)}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-zinc-700">
+                    {(row.approvalRate * 100).toFixed(1)}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+const STAFF_DETAIL_TABS = ["quotations", "products", "clients", "documents"] as const;
+type StaffDetailTab = (typeof STAFF_DETAIL_TABS)[number];
+
+type StaffActivityEntry = {
+  id: string;
+  action: string;
+  title: string;
+  description: string | null;
+  entity_type: string;
+  created_at: string;
+};
+
+function StaffActivityList({
+  emptyMessage,
+  entries,
+}: {
+  emptyMessage: string;
+  entries: StaffActivityEntry[];
+}) {
+  if (entries.length === 0) {
+    return <p className="py-5 text-center text-xs text-zinc-400">{emptyMessage}</p>;
+  }
+
+  return (
+    <div className="divide-y divide-zinc-100">
+      {entries.map((entry) => (
+        <div key={entry.id} className="flex items-start gap-3 py-2.5">
+          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-zinc-950">{entry.title}</p>
+            {entry.description ? (
+              <p className="mt-0.5 text-[11px] text-zinc-400">{entry.description}</p>
+            ) : null}
+          </div>
+          <p className="shrink-0 text-[11px] text-zinc-400">
+            {relativeTime(entry.created_at)}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function activityCount(value: number | null) {
+  return value === null ? "Unavailable" : value.toLocaleString("en-US");
+}
+
 type PageProps = {
-  searchParams?: Promise<{ range?: string; user?: string }>;
+  searchParams?: Promise<{
+    detailTab?: string;
+    from?: string;
+    range?: string;
+    to?: string;
+    user?: string;
+  }>;
 };
 
 export default async function SalesReportPage({ searchParams }: PageProps) {
@@ -366,26 +535,55 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
   const resolved = await searchParams;
   const rawRange = resolved?.range ?? "6m";
   const rawUser = resolved?.user;
-  const range: RangeKey = (VALID_RANGES as readonly string[]).includes(rawRange)
+  const rawDetailTab = resolved?.detailTab ?? "quotations";
+  const detailTab: StaffDetailTab = (STAFF_DETAIL_TABS as readonly string[]).includes(rawDetailTab)
+    ? (rawDetailTab as StaffDetailTab)
+    : "quotations";
+  const requestedRange: RangeKey = (VALID_RANGES as readonly string[]).includes(rawRange)
     ? (rawRange as RangeKey)
     : "6m";
-  const rangeLabel = RANGE_LABELS[range];
+  const customFrom = dateParam(resolved?.from);
+  const customTo = dateParam(resolved?.to, true);
+  const hasValidCustomRange =
+    requestedRange === "custom" &&
+    customFrom !== null &&
+    customTo !== null &&
+    customFrom <= customTo;
+  const range: RangeKey =
+    requestedRange === "custom" && !hasValidCustomRange ? "6m" : requestedRange;
 
   // ── Date boundaries ─────────────────────────────────────────────────────────
   const now = new Date();
-  const rangeStart = getRangeStart(range, now);
+  const rangeStart = hasValidCustomRange && customFrom ? customFrom : getRangeStart(range, now);
+  const rangeEnd = hasValidCustomRange && customTo ? customTo : now;
+  const rangeLabel = hasValidCustomRange
+    ? `${new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" }).format(rangeStart)} – ${new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" }).format(rangeEnd)}`
+    : RANGE_LABELS[range];
+  const baseReportParams = new URLSearchParams({ range });
+  if (hasValidCustomRange && resolved?.from && resolved?.to) {
+    baseReportParams.set("from", resolved.from);
+    baseReportParams.set("to", resolved.to);
+  }
+  function reportHref(params: Record<string, string> = {}) {
+    const next = new URLSearchParams(baseReportParams);
+    for (const [key, value] of Object.entries(params)) {
+      next.set(key, value);
+    }
+    return `?${next.toString()}`;
+  }
   // Prior period: same duration, immediately before rangeStart
-  const priorStart = getRangeStart(range, rangeStart);
+  const priorStart =
+    range === "custom" || range === "ytd"
+      ? new Date(rangeStart.getTime() - (rangeEnd.getTime() - rangeStart.getTime()))
+      : getRangeStart(range, rangeStart);
   const priorEnd = rangeStart;
 
   // ── Fetch ────────────────────────────────────────────────────────────────────
-  const today = now.toISOString().slice(0, 10);
-
   const adminResult = createAdminClient();
   if (!adminResult.client) throw new Error(adminResult.error ?? "Admin client unavailable");
   const adminClient = adminResult.client;
 
-  const teamDateRange = { from: rangeStart.toISOString().slice(0, 10), to: today };
+  const teamDateRange = { from: rangeStart.toISOString(), to: rangeEnd.toISOString() };
   const [{ data: quotations }, { data: salespersonProfiles }, teamStats] = await Promise.all([
     supabase
       .from("quotations")
@@ -423,6 +621,27 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
   const selectedUserStats = selectedUserId
     ? await loadProfileStatsForUser(selectedUserId, teamDateRange)
     : null;
+  const selectedRecentActivity = selectedUserStats?.recentActivity ?? [];
+  const selectedProductActivity = selectedRecentActivity.filter(
+    (entry) =>
+      entry.entity_type.startsWith("product_template") ||
+      entry.entity_type === "brand" ||
+      entry.entity_type === "brand_price_list_update" ||
+      entry.action === "quotation_item_added",
+  );
+  const selectedClientActivity = selectedRecentActivity.filter(
+    (entry) => entry.action === "enquiry_details_updated",
+  );
+  const selectedDocumentActivity = selectedRecentActivity.filter((entry) =>
+    [
+      "document_setup_updated",
+      "project_file_created",
+      "confirmed_order_project_created",
+    ].includes(entry.action),
+  );
+  const hasSelectedTrend = selectedUserStats?.monthlyData.some(
+    (month) => month.total > 0 || month.approved > 0,
+  ) ?? false;
 
   // ── Approved definition ──────────────────────────────────────────────────────
   // Matches the existing page's definition exactly: client_confirmed + project file exists
@@ -437,16 +656,18 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
   const approvedQuotations = actualApprovedQuotationsByFolder(allQuotationRows.filter(isApproved));
 
   // ── Period filtering (by created_at) ────────────────────────────────────────
-  const currentQuotes = quotedQuotations.filter(
-    (q) => new Date(q.created_at) >= rangeStart,
-  );
+  const currentQuotes = quotedQuotations.filter((q) => {
+    const createdAt = new Date(q.created_at);
+    return createdAt >= rangeStart && createdAt <= rangeEnd;
+  });
   const priorQuotes = quotedQuotations.filter((q) => {
     const d = new Date(q.created_at);
     return d >= priorStart && d < priorEnd;
   });
-  const currentApproved = approvedQuotations.filter(
-    (q) => new Date(q.created_at) >= rangeStart,
-  );
+  const currentApproved = approvedQuotations.filter((q) => {
+    const createdAt = new Date(q.created_at);
+    return createdAt >= rangeStart && createdAt <= rangeEnd;
+  });
   const priorApproved = approvedQuotations.filter((q) => {
     const d = new Date(q.created_at);
     return d >= priorStart && d < priorEnd;
@@ -476,7 +697,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
       : 0;
 
   // ── Month keys for selected range ────────────────────────────────────────────
-  const monthKeys = getMonthKeys(rangeStart, now);
+  const monthKeys = getMonthKeys(rangeStart, rangeEnd);
 
   // ── Aggregate monthly breakdown (for bar chart + KPI sparklines) ─────────────
   const aggQuotedByMonth = new Map<string, number>(monthKeys.map((k) => [k, 0]));
@@ -584,6 +805,9 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
     id: rep.id,
     name: rep.name,
     avatarUrl: rep.avatarUrl,
+    totalQuotes: rep.totalQuotes,
+    totalQuotedAmount: rep.totalQuotedAmount,
+    approvedCount: rep.approvedCount,
     approvedAmount: rep.currentApprovedAmount,
     approvalRate: rep.approvalRate,
     currentRank: i + 1,
@@ -606,7 +830,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
     <ErpAppShell
       eyebrow="INSIGHTS"
       title="Sales Report"
-      description="Approval rates, quoted value, and project conversion per sales designer."
+      description="Approval rates, quoted value, and project conversion per sales person."
       role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
@@ -621,7 +845,11 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
             Showing <span className="font-semibold text-zinc-700">{rangeLabel.toLowerCase()}</span>
             {" "}vs. prior equivalent period
           </p>
-          <DateRangeSelector current={range} />
+          <DateRangeSelector
+            current={range}
+            customFrom={hasValidCustomRange ? resolved?.from : undefined}
+            customTo={hasValidCustomRange ? resolved?.to : undefined}
+          />
         </div>
 
         {/* ── Two-column grid ──────────────────────────────────────────────── */}
@@ -712,40 +940,12 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
               />
             </div>
 
-            {/* Sales Designers per-rep cards */}
-            <section>
-              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                Sales Designers ({allProfiles.length})
-              </h2>
-              {allProfiles.length === 0 ? (
-                <p className="rounded-md border border-dashed border-zinc-200 p-6 text-center text-sm text-zinc-400">
-                  No active sales designers found.
-                </p>
-              ) : (
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {repStats.map((rep, i) => (
-                    <SalesRepCard
-                      key={rep.id}
-                      name={rep.name}
-                      avatarUrl={rep.avatarUrl}
-                      totalQuotes={rep.totalQuotes}
-                      totalQuotedAmount={formatAED(rep.totalQuotedAmount)}
-                      approvedCount={rep.approvedCount}
-                      approvedAmount={formatAED(rep.currentApprovedAmount)}
-                      approvalRate={rep.approvalRate}
-                      isTopPerformer={i === 0 && rep.currentApprovedAmount > 0}
-                      sparkline={
-                        <SalesRepSparkline
-                          data={rep.monthlyApproved.map((m) => m.value)}
-                          color="#10b981"
-                          uniqueId={rep.id}
-                        />
-                      }
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
+            <SalesTeamPerformanceTable
+              rows={leaderboardRows}
+              rangeLabel={rangeLabel}
+              canOpenDetails={profile?.role === "system_owner"}
+              hrefForUser={(userId) => reportHref({ user: userId })}
+            />
           </div>
 
           {/* ── RIGHT COLUMN: Leaderboard (sticky on desktop) ─────────────── */}
@@ -780,8 +980,8 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                   {(teamStats as TeamMemberStat[]).map((member, index) => {
                     const isSelected = member.userId === selectedUserId;
                     const rowHref = isSelected
-                      ? `?range=${range}`
-                      : `?range=${range}&user=${member.userId}`;
+                      ? reportHref()
+                      : reportHref({ user: member.userId });
                     return (
                       <tr
                         key={member.userId}
@@ -835,7 +1035,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                         <td className="px-5 py-4 text-center">
                           {isSelected ? (
                             <Link
-                              href={`?range=${range}`}
+                              href={reportHref()}
                               className="text-xs font-medium text-zinc-400 hover:text-zinc-700"
                               aria-label="Close detail"
                             >
@@ -854,16 +1054,27 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
             {selectedUserStats && selectedUserInfo ? (
               <div className="border-t border-emerald-200 bg-emerald-50/30 p-5">
                 <div className="mb-4 flex items-center justify-between gap-4">
-                  <div>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-900 text-sm font-semibold text-white">
+                      {selectedUserInfo.displayName
+                        .split(/\s+/)
+                        .filter(Boolean)
+                        .slice(0, 2)
+                        .map((part) => part[0])
+                        .join("")
+                        .toUpperCase() || "?"}
+                    </span>
+                    <div className="min-w-0">
                     <h3 className="text-sm font-semibold text-zinc-950">
-                      {selectedUserInfo.displayName} — Activity Detail
+                      {selectedUserInfo.displayName}
                     </h3>
                     <p className="mt-0.5 text-xs text-zinc-400">
-                      {rangeLabel} · {roleLabel(selectedUserInfo.role)}
+                      Sales Activity Profile · {rangeLabel} · {roleLabel(selectedUserInfo.role)}
                     </p>
+                    </div>
                   </div>
                   <Link
-                    href={`?range=${range}`}
+                    href={reportHref()}
                     className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
                   >
                     Close ×
@@ -871,28 +1082,28 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                 </div>
 
                 {/* Stat cards */}
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-lg border border-zinc-200 bg-white p-3">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
                       Quotes Created
                     </p>
-                    <p className="mt-2 text-2xl font-bold text-zinc-950">
+                    <p className="mt-1 text-xl font-bold text-zinc-950">
                       {selectedUserStats.totalQuotations}
                     </p>
                   </div>
-                  <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                  <div className="rounded-lg border border-zinc-200 bg-white p-3">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
                       Approved
                     </p>
-                    <p className="mt-2 text-2xl font-bold text-zinc-950">
+                    <p className="mt-1 text-xl font-bold text-zinc-950">
                       {selectedUserStats.approvedQuotations}
                     </p>
                   </div>
-                  <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                  <div className="rounded-lg border border-zinc-200 bg-white p-3">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
                       Win Rate
                     </p>
-                    <p className="mt-2 text-2xl font-bold text-zinc-950">
+                    <p className="mt-1 text-xl font-bold text-zinc-950">
                       {selectedUserStats.totalQuotations > 0
                         ? Math.round(
                             (selectedUserStats.approvedQuotations / selectedUserStats.totalQuotations) * 100,
@@ -900,27 +1111,21 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                         : "—"}
                     </p>
                   </div>
-                  <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-                    <div className="p-4 pb-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                        Total Value
-                      </p>
-                      <p className="mt-2 text-2xl font-bold text-zinc-950">
-                        {formatAED(selectedUserStats.totalValue)}
-                      </p>
-                    </div>
-                    <SalesRepSparkline
-                      data={selectedUserStats.monthlyData.map((m) => m.value)}
-                      color="#10b981"
-                      uniqueId={`detail-${selectedUserId}`}
-                    />
+                  <div className="rounded-lg border border-zinc-200 bg-white p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                      Total Value
+                    </p>
+                    <p className="mt-1 text-xl font-bold text-zinc-950">
+                      {formatAED(selectedUserStats.totalValue)}
+                    </p>
                   </div>
                 </div>
 
                 {/* Monthly trend chart */}
-                <div className="mt-4">
+                {hasSelectedTrend ? (
+                <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-4">
                   <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    Monthly Activity
+                    Activity Trend
                   </h4>
                   <SalesPerformanceCharts
                     perRepData={[]}
@@ -931,9 +1136,101 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                     }))}
                   />
                 </div>
+                ) : (
+                  <div className="mt-4 rounded-lg border border-dashed border-zinc-200 bg-white px-4 py-5 text-center text-xs text-zinc-400">
+                    No quotation trend data for this period.
+                  </div>
+                )}
+
+                <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-4">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Contribution Breakdown
+                  </h4>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="rounded-md bg-zinc-50 px-3 py-2.5">
+                      <p className="text-[10px] uppercase tracking-wide text-zinc-500">Products added</p>
+                      <p className="mt-1 text-base font-semibold text-zinc-950">
+                        {activityCount(selectedUserStats.contributions.quotationItemsAdded)}
+                      </p>
+                    </div>
+                    <div className="rounded-md bg-zinc-50 px-3 py-2.5">
+                      <p className="text-[10px] uppercase tracking-wide text-zinc-500">Templates created / edited</p>
+                      <p className="mt-1 text-base font-semibold text-zinc-950">
+                        {activityCount(selectedUserStats.contributions.productTemplatesCreated)}
+                        {" / "}
+                        {activityCount(selectedUserStats.contributions.productTemplatesUpdated)}
+                      </p>
+                    </div>
+                    <div className="rounded-md bg-zinc-50 px-3 py-2.5">
+                      <p className="text-[10px] uppercase tracking-wide text-zinc-500">Clients created</p>
+                      <p className="mt-1 text-base font-semibold text-zinc-950">
+                        {activityCount(selectedUserStats.contributions.clientsCreated)}
+                      </p>
+                    </div>
+                    <div className="rounded-md bg-zinc-50 px-3 py-2.5">
+                      <p className="text-[10px] uppercase tracking-wide text-zinc-500">Revisions / options / copies</p>
+                      <p className="mt-1 text-base font-semibold text-zinc-950">
+                        {activityCount(selectedUserStats.contributions.revisionsCreated)}
+                        {" / "}
+                        {activityCount(selectedUserStats.contributions.optionsCreated)}
+                        {" / "}
+                        {activityCount(selectedUserStats.contributions.copiesCreated)}
+                      </p>
+                    </div>
+                    <div className="rounded-md bg-zinc-50 px-3 py-2.5">
+                      <p className="text-[10px] uppercase tracking-wide text-zinc-500">Enquiry updates</p>
+                      <p className="mt-1 text-base font-semibold text-zinc-950">
+                        {activityCount(selectedUserStats.contributions.enquiryUpdates)}
+                      </p>
+                    </div>
+                    <div className="rounded-md bg-zinc-50 px-3 py-2.5">
+                      <p className="text-[10px] uppercase tracking-wide text-zinc-500">Document actions</p>
+                      <p className="mt-1 text-base font-semibold text-zinc-950">
+                        {activityCount(selectedUserStats.contributions.documentActions)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-4">
+                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Recent Activity
+                  </h4>
+                  <StaffActivityList
+                    entries={selectedRecentActivity.slice(0, 8)}
+                    emptyMessage="No logged activity in this period."
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Detailed Activity
+                  </h4>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      ["quotations", "Quotations"],
+                      ["products", "Products"],
+                      ["clients", "Clients & enquiries"],
+                      ["documents", "Documents"],
+                    ].map(([tab, label]) => (
+                      <Link
+                        key={tab}
+                        href={reportHref({ user: selectedUserId ?? "", detailTab: tab })}
+                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                          detailTab === tab
+                            ? "bg-emerald-900 text-white"
+                            : "border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+                        }`}
+                      >
+                        {label}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
 
                 {/* Recent quotations */}
-                <div className="mt-4 rounded-lg border border-zinc-200 bg-white shadow-sm">
+                {detailTab === "quotations" ? (
+                <div className="mt-3 rounded-lg border border-zinc-200 bg-white">
                   <div className="border-b border-zinc-200 px-4 py-3">
                     <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
                       Recent Quotations
@@ -994,33 +1291,80 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                     </div>
                   )}
                 </div>
+                ) : null}
 
-                {/* Recent activity */}
-                <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-                  <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    Recent Activity
-                  </h4>
-                  {selectedUserStats.recentActivity.length === 0 ? (
-                    <p className="text-center text-xs text-zinc-400">No activity in this period.</p>
-                  ) : (
-                    <div className="divide-y divide-zinc-100">
-                      {selectedUserStats.recentActivity.slice(0, 8).map((entry) => (
-                        <div key={entry.id} className="flex items-start gap-3 py-2.5">
-                          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs font-medium text-zinc-950">{entry.title}</p>
-                            {entry.description ? (
-                              <p className="mt-0.5 text-[11px] text-zinc-400">{entry.description}</p>
-                            ) : null}
-                          </div>
-                          <p className="shrink-0 text-[11px] text-zinc-400">
-                            {relativeTime(entry.created_at)}
-                          </p>
-                        </div>
-                      ))}
+                {detailTab === "products" ? (
+                  <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-4">
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <div className="rounded-md bg-zinc-50 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-zinc-500">Products added</p>
+                        <p className="mt-1 text-lg font-semibold text-zinc-950">
+                          {activityCount(selectedUserStats.contributions.quotationItemsAdded)}
+                        </p>
+                      </div>
+                      <div className="rounded-md bg-zinc-50 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-zinc-500">Templates created</p>
+                        <p className="mt-1 text-lg font-semibold text-zinc-950">
+                          {activityCount(selectedUserStats.contributions.productTemplatesCreated)}
+                        </p>
+                      </div>
+                      <div className="rounded-md bg-zinc-50 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-zinc-500">Templates edited</p>
+                        <p className="mt-1 text-lg font-semibold text-zinc-950">
+                          {activityCount(selectedUserStats.contributions.productTemplatesUpdated)}
+                        </p>
+                      </div>
                     </div>
-                  )}
-                </div>
+                    <StaffActivityList
+                      entries={selectedProductActivity.slice(0, 10)}
+                      emptyMessage="No logged product activity in this period."
+                    />
+                  </div>
+                ) : null}
+
+                {detailTab === "clients" ? (
+                  <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-4">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="rounded-md bg-zinc-50 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-zinc-500">Clients created</p>
+                        <p className="mt-1 text-lg font-semibold text-zinc-950">
+                          {activityCount(selectedUserStats.contributions.clientsCreated)}
+                        </p>
+                      </div>
+                      <div className="rounded-md bg-zinc-50 p-3">
+                        <p className="text-[10px] uppercase tracking-wide text-zinc-500">Enquiry updates</p>
+                        <p className="mt-1 text-lg font-semibold text-zinc-950">
+                          {activityCount(selectedUserStats.contributions.enquiryUpdates)}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="mt-3 text-[11px] text-zinc-400">
+                      Enquiry creation is unavailable because there is no separate creator-owned enquiry record.
+                    </p>
+                    <StaffActivityList
+                      entries={selectedClientActivity.slice(0, 10)}
+                      emptyMessage="No logged client or enquiry activity in this period."
+                    />
+                  </div>
+                ) : null}
+
+                {detailTab === "documents" ? (
+                  <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-4">
+                    <div className="rounded-md bg-zinc-50 p-3">
+                      <p className="text-[10px] uppercase tracking-wide text-zinc-500">Document actions</p>
+                      <p className="mt-1 text-lg font-semibold text-zinc-950">
+                        {activityCount(selectedUserStats.contributions.documentActions)}
+                      </p>
+                      <p className="mt-1 text-[11px] text-zinc-400">
+                        Logged document setup and project-file creation actions.
+                      </p>
+                    </div>
+                    <StaffActivityList
+                      entries={selectedDocumentActivity.slice(0, 10)}
+                      emptyMessage="No logged document activity in this period."
+                    />
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>

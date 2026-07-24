@@ -1,6 +1,6 @@
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PriceUpdatesReview, type PriceUpdatesReviewRow } from "@/components/products/price-updates-review";
-import { requireSettingsManager } from "@/lib/auth";
+import { requireProductPricingManager } from "@/lib/auth";
 import { formatMoney } from "@/lib/currencies";
 import { brandPriceBaselineDate, latestBrandPriceListUpdate, productTemplatePriceCheckState } from "@/lib/product-price-check";
 import { createClient } from "@/lib/supabase/server";
@@ -94,7 +94,7 @@ function templateSearchText(template: ProductTemplate, brandName: string, catego
 }
 
 export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPageProps) {
-  const { user, profile, displayName } = await requireSettingsManager();
+  const { user, profile, displayName } = await requireProductPricingManager();
   const params = (await searchParams) ?? {};
   const searchQuery = stringParam(params.q).trim();
   const selectedBrand = stringParam(params.brand);

@@ -585,6 +585,7 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
     profile?.role === "sales_designer" ||
+    profile?.role === "sales_coordinator" ||
     profile?.role === "designer";
   const supabase = await createSupabaseClient();
 

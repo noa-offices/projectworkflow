@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
 import type { AlertIconKey, DashboardAlert } from "@/components/dashboard/alerts-panel";
 import { sendNotificationToRole } from "@/lib/notifications/actions";
 // ─── Exported types ───────────────────────────────────────────────────────────
@@ -13,6 +14,12 @@ export type DashboardStats = {
   activeProjects: number;
   completedProjects: number;
   pendingQuotations: number;
+  quotationWorkflow: {
+    clientConfirmed: number;
+    draft: number;
+    readyToSend: number;
+    sentToClient: number;
+  };
 };
 
 export type DashboardProject = {
@@ -52,24 +59,39 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   // as the sidebar pages (/projects/orders and /projects/completed). The
   // `projects` table is NOT the source of truth here — completion status is
   // stored in layout_settings.projectCompletedAt, not projects.project_status.
-  const [{ data: quotations }, { count: quotationsCount }] = await Promise.all([
-    supabase
-      .from("quotations")
-      .select("id, layout_settings")
-      .returns<Array<{ id: string; layout_settings: unknown }>>(),
-    supabase
-      .from("quotations")
-      .select("id", { count: "exact" })
-      .eq("is_active", true)
-      .in("status", PENDING_STATUSES)
-      .limit(0),
-  ]);
+  const { data: quotations } = await supabase
+    .from("quotations")
+    .select("id, project_id, quotation_no, quotation_date, status, is_active, layout_settings")
+    .returns<Array<{
+      id: string;
+      project_id: string | null;
+      quotation_no: string | null;
+      quotation_date: string;
+      status: string;
+      is_active: boolean;
+      layout_settings: unknown;
+    }>>();
 
   let activeProjects = 0;
   let completedProjects = 0;
   const seen = new Set<string>();
+  const quotationFolders = new Map<string, NonNullable<typeof quotations>[number]>();
 
   for (const quotation of quotations ?? []) {
+    const folderNo = quotationFolderNumberFromQuotationNumber(quotation.quotation_no);
+    const folderKey = folderNo ?? (quotation.project_id ? `project:${quotation.project_id}` : `legacy:${quotation.id}`);
+    const currentRepresentative = quotationFolders.get(folderKey);
+    if (
+      quotation.is_active &&
+      (!currentRepresentative ||
+        !currentRepresentative.is_active ||
+        new Date(quotation.quotation_date) > new Date(currentRepresentative.quotation_date))
+    ) {
+      quotationFolders.set(folderKey, quotation);
+    } else if (!currentRepresentative) {
+      quotationFolders.set(folderKey, quotation);
+    }
+
     const settings = quotation.layout_settings as Record<string, unknown> | null;
 
     const pf = projectFileFromLayoutSettings(quotation.layout_settings);
@@ -88,10 +110,28 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     // Cancelled orders count as neither active nor completed.
   }
 
+  const workflow = {
+    clientConfirmed: 0,
+    draft: 0,
+    readyToSend: 0,
+    sentToClient: 0,
+  };
+  let pendingQuotations = 0;
+
+  for (const quotation of quotationFolders.values()) {
+    if (!quotation.is_active) continue;
+    if (PENDING_STATUSES.includes(quotation.status)) pendingQuotations++;
+    if (quotation.status === "draft") workflow.draft++;
+    if (quotation.status === "ready_to_send") workflow.readyToSend++;
+    if (quotation.status === "sent_to_client") workflow.sentToClient++;
+    if (quotation.status === "client_confirmed") workflow.clientConfirmed++;
+  }
+
   return {
     activeProjects,
     completedProjects,
-    pendingQuotations: quotationsCount ?? 0,
+    pendingQuotations,
+    quotationWorkflow: workflow,
   };
 }
 

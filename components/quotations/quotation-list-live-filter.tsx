@@ -663,7 +663,7 @@ export function QuotationListLiveFilter({
         </div>
 
         {/* ── Desktop table ───────────────────────────────────────── */}
-        <div className="hidden overflow-hidden border-t border-zinc-100 lg:block">
+        <div className="hidden overflow-visible border-t border-zinc-100 lg:block">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-zinc-200 bg-zinc-50 text-xs font-semibold uppercase text-zinc-500">
@@ -679,7 +679,7 @@ export function QuotationListLiveFilter({
               </tr>
             </thead>
             <tbody>
-              {filteredFolders.map((folder) => {
+              {filteredFolders.map((folder, folderIndex) => {
                 const quotation = folder.latestQuotation;
 
                 return (
@@ -728,7 +728,7 @@ export function QuotationListLiveFilter({
                         <summary className="inline-flex h-9 cursor-pointer list-none items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
                           Actions <span aria-hidden="true">&#9662;</span>
                         </summary>
-                        <div className="absolute right-0 z-20 mt-2 grid min-w-44 gap-1 rounded-md border border-zinc-200 bg-white p-2 shadow-lg">
+                        <div className={`absolute right-0 z-20 grid min-w-44 gap-1 rounded-md border border-zinc-200 bg-white p-2 shadow-lg ${folderIndex === filteredFolders.length - 1 ? "bottom-full mb-2" : "mt-2"}`}>
                           <button
                             type="button"
                             disabled={archivingKey === folder.key}

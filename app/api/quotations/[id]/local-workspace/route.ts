@@ -263,7 +263,7 @@ export async function POST(
       .eq("id", user.id)
       .maybeSingle<{ role: string | null; account_status: string | null }>();
 
-    if (profile?.account_status !== "active" || !["system_owner", "admin_manager", "sales_designer"].includes(profile?.role ?? "")) {
+    if (profile?.account_status !== "active" || !["system_owner", "admin_manager", "procurement_manager", "sales_designer", "sales_coordinator", "designer"].includes(profile?.role ?? "")) {
       return errorResponse("Forbidden", undefined, 403);
     }
 

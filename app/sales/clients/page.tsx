@@ -67,7 +67,10 @@ export default async function ClientsPage() {
   }));
 
   const canManage =
-    profile?.role === "system_owner" || profile?.role === "admin_manager";
+    profile?.role === "system_owner" ||
+    profile?.role === "admin_manager" ||
+    profile?.role === "sales_designer" ||
+    profile?.role === "sales_coordinator";
 
   return (
     <ErpAppShell

@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase/server";
 
 type SettingsMessageType = "success" | "error";
 type SettingsMessageScope = "settings" | "profile";
+type SettingsPath = "/settings" | "/settings/company" | "/settings/documents";
 
 function textValue(formData: FormData, name: string) {
   const value = formData.get(name);
@@ -26,12 +27,16 @@ function numberValue(formData: FormData, name: string, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-function redirectToSettings(message: string, messageType: SettingsMessageType = "success"): never {
+function redirectToSettings(
+  message: string,
+  messageType: SettingsMessageType = "success",
+  path: SettingsPath = "/settings",
+): never {
   const query = new URLSearchParams();
   query.set("message", message);
   query.set("messageType", messageType);
   query.set("messageScope", "settings" satisfies SettingsMessageScope);
-  redirect(`/settings?${query.toString()}`);
+  redirect(`${path}?${query.toString()}`);
 }
 
 function redirectToProfile(message: string, messageType: SettingsMessageType = "success"): never {
@@ -47,8 +52,7 @@ function actionErrorMessage(actionLabel: string, error: unknown, fallbackMessage
 }
 
 // Scoped to company settings only — do not generalize into lib/auth.ts,
-// requireSettingsManager() is shared by unrelated callers (quotations
-// product-library actions, price updates page) that must stay admin-tier.
+// HR and workers keep their stricter admin-tier guard.
 async function requireCompanySettingsManager() {
   const authenticatedUser = await requireActiveUser();
   const role = authenticatedUser.profile?.role;
@@ -60,7 +64,10 @@ async function requireCompanySettingsManager() {
   return authenticatedUser;
 }
 
-async function latestCompanySettingsId(supabase: Awaited<ReturnType<typeof createClient>>) {
+async function latestCompanySettingsId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  redirectPath: SettingsPath,
+) {
   const { data: existingSettings, error: readError } = await supabase
     .from("company_settings")
     .select("id")
@@ -73,7 +80,11 @@ async function latestCompanySettingsId(supabase: Awaited<ReturnType<typeof creat
       action: "latestCompanySettingsId",
       table: "company_settings",
     });
-    redirectToSettings(actionErrorMessage("Company settings could not be loaded", readError), "error");
+    redirectToSettings(
+      actionErrorMessage("Company settings could not be loaded", readError),
+      "error",
+      redirectPath,
+    );
   }
 
   return existingSettings?.id ?? null;
@@ -82,8 +93,9 @@ async function latestCompanySettingsId(supabase: Awaited<ReturnType<typeof creat
 async function saveCompanySettingsRecord(
   supabase: Awaited<ReturnType<typeof createClient>>,
   payload: Record<string, unknown>,
+  redirectPath: SettingsPath,
 ) {
-  const existingSettingsId = await latestCompanySettingsId(supabase);
+  const existingSettingsId = await latestCompanySettingsId(supabase, redirectPath);
   const mutation = existingSettingsId
     ? supabase.from("company_settings").update(payload).eq("id", existingSettingsId)
     : supabase.from("company_settings").insert(payload);
@@ -96,7 +108,11 @@ async function saveCompanySettingsRecord(
       recordId: existingSettingsId,
       table: "company_settings",
     });
-    redirectToSettings(actionErrorMessage("Company settings could not be saved", error), "error");
+    redirectToSettings(
+      actionErrorMessage("Company settings could not be saved", error),
+      "error",
+      redirectPath,
+    );
   }
 
   return existingSettingsId;
@@ -122,7 +138,11 @@ export async function updateCompanySettings(formData: FormData) {
     logo_url: optionalTextValue(formData, "logo_url"),
     updated_by: user.id,
   };
-  const existingSettingsId = await saveCompanySettingsRecord(supabase, payload);
+  const existingSettingsId = await saveCompanySettingsRecord(
+    supabase,
+    payload,
+    "/settings/company",
+  );
 
   await createAuditLog(supabase, {
     entityType: "company_settings",
@@ -140,10 +160,11 @@ export async function updateCompanySettings(formData: FormData) {
   });
 
   revalidatePath("/settings");
+  revalidatePath("/settings/company");
   revalidatePath("/quotations/[id]", "page");
   revalidatePath("/quotations/[id]/pdf", "page");
   revalidatePath("/quotations/[id]/specification", "page");
-  redirectToSettings("Company profile saved.");
+  redirectToSettings("Company profile saved.", "success", "/settings/company");
 }
 
 export async function updateDocumentDefaults(formData: FormData) {
@@ -154,7 +175,11 @@ export async function updateDocumentDefaults(formData: FormData) {
     default_quotation_notes: defaultQuotationNotes,
     updated_by: user.id,
   };
-  const existingSettingsId = await saveCompanySettingsRecord(supabase, payload);
+  const existingSettingsId = await saveCompanySettingsRecord(
+    supabase,
+    payload,
+    "/settings/documents",
+  );
 
   await createAuditLog(supabase, {
     entityType: "company_settings",
@@ -170,9 +195,10 @@ export async function updateDocumentDefaults(formData: FormData) {
   });
 
   revalidatePath("/settings");
+  revalidatePath("/settings/documents");
   revalidatePath("/quotations/[id]/pdf", "page");
   revalidatePath("/quotations/[id]/download-pdf", "page");
-  redirectToSettings("Document defaults saved.");
+  redirectToSettings("Document defaults saved.", "success", "/settings/documents");
 }
 
 export async function updateMyProfile(formData: FormData) {

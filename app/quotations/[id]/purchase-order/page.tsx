@@ -100,7 +100,8 @@ export default async function PurchaseOrderPage({ params, searchParams }: Purcha
   const canAccessThisPage =
     userRole === "system_owner" ||
     userRole === "admin_manager" ||
-    userRole === "procurement_manager";
+    userRole === "procurement_manager" ||
+    userRole === "sales_coordinator";
 
   if (!canAccessThisPage) {
     redirect("/dashboard?message=You+do+not+have+permission+to+access+Purchase+Orders.");

@@ -89,7 +89,7 @@ export async function requireSettingsManager(): Promise<AuthenticatedUser> {
   const authenticatedUser = await requireActiveUser();
   const role = authenticatedUser.profile?.role;
 
-  if (role !== "system_owner" && role !== "admin_manager" && role !== "designer") {
+  if (role !== "system_owner" && role !== "admin_manager") {
     redirect("/dashboard");
   }
 
@@ -115,12 +115,24 @@ export function canAccessProcurement(role: AppRole | null | undefined): boolean 
   return role === "system_owner" || role === "admin_manager" || role === "procurement_manager";
 }
 
+export function canSendNotifications(role: AppRole | null | undefined): boolean {
+  return (
+    role === "system_owner" ||
+    role === "admin_manager" ||
+    role === "procurement_manager" ||
+    role === "sales_designer" ||
+    role === "sales_coordinator" ||
+    role === "designer"
+  );
+}
+
 export function canManageProductLibrary(role: AppRole | null | undefined): boolean {
   return (
     role === "system_owner" ||
     role === "admin_manager" ||
     role === "procurement_manager" ||
     role === "sales_designer" ||
+    role === "sales_coordinator" ||
     role === "designer"
   );
 }
@@ -133,6 +145,7 @@ export async function requireRecordsManager(): Promise<AuthenticatedUser> {
     role !== "system_owner" &&
     role !== "admin_manager" &&
     role !== "sales_designer" &&
+    role !== "sales_coordinator" &&
     role !== "designer"
   ) {
     redirect("/dashboard");
@@ -150,6 +163,27 @@ export async function requireQuotationActionUser(): Promise<AuthenticatedUser> {
     role !== "admin_manager" &&
     role !== "procurement_manager" &&
     role !== "sales_designer" &&
+    role !== "sales_coordinator" &&
+    role !== "designer"
+  ) {
+    redirect("/dashboard");
+  }
+
+  return authenticatedUser;
+}
+
+export async function requireQuotationManager(): Promise<AuthenticatedUser> {
+  return requireQuotationActionUser();
+}
+
+export async function requireProductPricingManager(): Promise<AuthenticatedUser> {
+  const authenticatedUser = await requireActiveUser();
+  const role = authenticatedUser.profile?.role;
+
+  if (
+    role !== "system_owner" &&
+    role !== "admin_manager" &&
+    role !== "procurement_manager" &&
     role !== "designer"
   ) {
     redirect("/dashboard");

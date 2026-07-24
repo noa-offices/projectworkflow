@@ -1,6 +1,6 @@
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { NotificationsTabs } from "@/components/notifications/notifications-tabs";
-import { requireActiveUser } from "@/lib/auth";
+import { canSendNotifications, requireActiveUser } from "@/lib/auth";
 
 export default async function NotificationsPage() {
   const { user, profile, displayName } = await requireActiveUser();
@@ -16,7 +16,7 @@ export default async function NotificationsPage() {
       userAvatarUrl={profile?.avatar_url ?? null}
       userRole={profile?.role ?? null}
     >
-      <NotificationsTabs />
+      <NotificationsTabs canSend={canSendNotifications(profile?.role)} />
     </ErpAppShell>
   );
 }

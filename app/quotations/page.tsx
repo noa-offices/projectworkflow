@@ -166,13 +166,16 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
   const canManageRecords =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
+    profile?.role === "procurement_manager" ||
     profile?.role === "sales_designer" ||
+    profile?.role === "sales_coordinator" ||
     profile?.role === "designer";
   const canManageQuotationFolders =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
     profile?.role === "procurement_manager" ||
     profile?.role === "sales_designer" ||
+    profile?.role === "sales_coordinator" ||
     profile?.role === "designer";
   const supabase = await createSupabaseClient();
 

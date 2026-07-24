@@ -14,7 +14,12 @@ function adminClient() {
 
 async function requireManager(): Promise<{ ok: false; error: string } | null> {
   const { profile } = await requireActiveUser();
-  if (profile?.role !== "system_owner" && profile?.role !== "admin_manager") {
+  if (
+    profile?.role !== "system_owner" &&
+    profile?.role !== "admin_manager" &&
+    profile?.role !== "sales_designer" &&
+    profile?.role !== "sales_coordinator"
+  ) {
     return { ok: false, error: "Permission denied." };
   }
   return null;

@@ -1,6 +1,11 @@
 import { ERPDashboard } from "@/components/dashboard/erp-dashboard";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
-import { requireActiveUser } from "@/lib/auth";
+import {
+  canAccessProcurement,
+  canManageProductLibrary,
+  canSendNotifications,
+  requireActiveUser,
+} from "@/lib/auth";
 import {
   getDashboardStats,
   getActiveProjects,
@@ -41,8 +46,11 @@ export default async function DashboardPage() {
         projects={projects}
         salesData={salesData}
         monthlyData={monthlyData}
-        fetchedAt={new Date().toISOString()}
         hrAlerts={hrAlerts}
+        role={profile?.role ?? null}
+        canAccessProcurement={canAccessProcurement(profile?.role)}
+        canManageProducts={canManageProductLibrary(profile?.role)}
+        canSendNotifications={canSendNotifications(profile?.role)}
       />
     </ErpAppShell>
   );

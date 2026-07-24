@@ -6,9 +6,9 @@ import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import {
   requireActiveUser,
+  requireProductLibraryManager,
   requireQuotationActionUser,
-  requireRecordsManager,
-  requireSettingsManager,
+  requireQuotationManager as requireRecordsManager,
 } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit-log";
 import { nextClientNumber } from "@/lib/clients/client-numbering";
@@ -2096,7 +2096,10 @@ export async function createQuotation(formData: FormData) {
   if (
     role !== "system_owner" &&
     role !== "admin_manager" &&
-    role !== "sales_designer"
+    role !== "procurement_manager" &&
+    role !== "sales_designer" &&
+    role !== "sales_coordinator" &&
+    role !== "designer"
   ) {
     redirectQuotationCreateError(formData, redirectPath, "You do not have permission to create quotations.");
   }
@@ -2356,7 +2359,7 @@ export async function createQuotationClient(formData: FormData) {
 }
 
 export async function saveQuotationItemToProductLibrary(formData: FormData) {
-  const { user, displayName } = await requireSettingsManager();
+  const { user, displayName } = await requireProductLibraryManager();
   const quotationItemId = textValue(formData, "quotation_item_id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(
@@ -2730,7 +2733,7 @@ export async function saveQuotationItemToProductLibrary(formData: FormData) {
 }
 
 export async function createBrandMainCategoryFromQuoteForm(formData: FormData) {
-  const { user } = await requireSettingsManager();
+  const { user } = await requireProductLibraryManager();
   const brandId = textValue(formData, "brand_id");
   const quotationId = textValue(formData, "quotation_id");
   const quotationItemId = textValue(formData, "quotation_item_id");
@@ -2811,7 +2814,7 @@ export async function createBrandMainCategoryFromQuoteForm(formData: FormData) {
 }
 
 export async function createBrandSubcategoryFromQuoteForm(formData: FormData) {
-  const { user } = await requireSettingsManager();
+  const { user } = await requireProductLibraryManager();
   const brandId = textValue(formData, "brand_id");
   const parentId = textValue(formData, "parent_id");
   const quotationId = textValue(formData, "quotation_id");
@@ -3734,7 +3737,9 @@ export async function permanentlyDeleteQuotation(formData: FormData) {
   const canManageRecords =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
+    profile?.role === "procurement_manager" ||
     profile?.role === "sales_designer" ||
+    profile?.role === "sales_coordinator" ||
     profile?.role === "designer";
 
   if (!canManageRecords) {
