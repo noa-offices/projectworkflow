@@ -177,11 +177,22 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
     .sort((a, b) => b.total - a.total)
     .slice(0, 5);
 
-  const { data: hrData } = await supabase
-    .from("profiles_hr")
-    .select("*")
-    .eq("profile_id", user.id)
-    .maybeSingle<HrRow>();
+  const [{ data: hrData }, { count: pendingLeaveRequests }] = await Promise.all([
+    supabase
+      .from("profiles_hr")
+      .select("*")
+      .eq("profile_id", user.id)
+      .maybeSingle<HrRow>(),
+    supabase
+      .from("leave_requests")
+      .select("id", { count: "exact", head: true })
+      .eq("profile_id", user.id)
+      .eq("status", "pending_approval"),
+  ]);
+  const today = new Date().toISOString().slice(0, 10);
+  const upcomingVacation = [...(hrData?.vacation_dates ?? [])]
+    .filter((entry) => entry.end_date >= today)
+    .sort((a, b) => a.start_date.localeCompare(b.start_date))[0] ?? null;
 
   const showMessage = params.messageScope === "profile"
     && typeof params.message === "string"
@@ -272,6 +283,11 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
                   value={`${hrData.annual_leave_days - hrData.leave_taken_this_year} of ${hrData.annual_leave_days} days`}
                   tone={hrLeaveBalanceTone(hrData.annual_leave_days - hrData.leave_taken_this_year)}
                 />
+                <HrSummaryField label="Pending Requests" value={String(pendingLeaveRequests ?? 0)} />
+                <HrSummaryField
+                  label="Upcoming Vacation"
+                  value={upcomingVacation ? `${formatHrDate(upcomingVacation.start_date)} – ${formatHrDate(upcomingVacation.end_date)}` : "None"}
+                />
                 <HrSummaryField
                   label="Emirates ID Expiry"
                   value={hrData.emirates_id_expiry ? formatHrDate(hrData.emirates_id_expiry) : "—"}
@@ -289,6 +305,10 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
                   <HrSummaryField label="Emergency Phone" value={hrData.emergency_contact_phone} />
                 ) : null}
               </dl>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Link href="/settings/profile/vacation-requests" className="rounded-md bg-emerald-900 px-3 py-2 text-xs font-semibold text-white">Apply for Vacation</Link>
+                <Link href="/settings/profile/vacation-requests" className="rounded-md border border-zinc-200 px-3 py-2 text-xs font-semibold text-zinc-700">My Requests</Link>
+              </div>
               </div>
             </details>
           ) : (

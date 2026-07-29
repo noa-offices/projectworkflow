@@ -1,7 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { dayCountLabel, formatDateDisplay } from "@/components/settings/vacation-dates-editor";
+import {
+  dayCountLabel,
+  formatDateDisplay,
+  type VacationEntrySource,
+} from "@/components/settings/vacation-dates-editor";
 import type { VacationEntry } from "@/app/hr/actions";
 
 function entryYear(entry: VacationEntry): number {
@@ -9,10 +13,12 @@ function entryYear(entry: VacationEntry): number {
 }
 
 export function VacationHistoryModal({
+  entrySources,
   onClose,
   personName,
   vacationDates,
 }: {
+  entrySources?: Record<string, VacationEntrySource>;
   onClose: () => void;
   personName: string;
   vacationDates: VacationEntry[];
@@ -67,6 +73,7 @@ export function VacationHistoryModal({
           {filteredEntries.length ? (
             filteredEntries.map((entry) => {
               const days = dayCountLabel(entry.start_date, entry.end_date);
+              const source = entrySources?.[entry.id];
               return (
                 <div
                   key={entry.id}
@@ -76,6 +83,18 @@ export function VacationHistoryModal({
                     {formatDateDisplay(entry.start_date)} – {formatDateDisplay(entry.end_date)}
                     {days ? `  · ${days}` : ""}
                   </p>
+                  {source ? (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-xs font-medium text-zinc-600">
+                        {source.label}
+                      </span>
+                      {source.balanceAdjusted ? (
+                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                          Balance adjusted
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {entry.note ? <p className="mt-0.5 text-zinc-500">{entry.note}</p> : null}
                 </div>
               );

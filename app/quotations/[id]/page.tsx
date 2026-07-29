@@ -22,7 +22,6 @@ import {
 import {
   quotationStatusBadgeClassName,
   quotationStatusLabel,
-  quotationStatuses,
 } from "@/lib/quotation-status";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { quotationApprovalDisplay } from "@/lib/quotations/approval-display";
@@ -55,15 +54,16 @@ import {
   updateQuotationEnquiryDetails,
   updateQuotationExtraDiscount,
   updateQuotationSalesperson,
-  updateQuotationStatus,
 } from "../actions";
 
 export const dynamic = "force-dynamic";
 
 type QuotationDetailPageProps = {
   params: Promise<{ id: string }>;
-  searchParams?: Promise<{ message?: string }>;
+  searchParams?: Promise<{ message?: string; tab?: string }>;
 };
+
+type QuotationFolderTab = "overview" | "quotations" | "documents" | "activity";
 
 type Client = {
   id: string;
@@ -129,23 +129,6 @@ type CopyDestinationQuotation = Pick<Quotation, "id" | "client_id" | "project_id
 type CopyDestinationFolder = {
   id: string;
   label: string;
-};
-
-type QuotationSection = {
-  id: string;
-  quotation_id: string;
-  section_title: string;
-  section_notes: string | null;
-  section_type: string;
-  parent_section_id: string | null;
-  section_kind: "main" | "sub";
-  title_align: string;
-  title_bold: boolean;
-  title_bg: string;
-  title_size: string;
-  row_height: number | null;
-  sort_order: number;
-  is_active: boolean;
 };
 
 type QuotationItem = {
@@ -385,12 +368,17 @@ function DocumentActionRow({
   pendingLabel: string;
 }) {
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0">
-        <h3 className="text-sm font-semibold text-zinc-950">{title}</h3>
-        <p className="mt-1 text-sm text-zinc-500">{description}</p>
+    <div className="flex min-h-44 flex-col rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+      <div className="flex min-w-0 items-start gap-3">
+        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-xs font-bold text-emerald-800" aria-hidden="true">
+          {title.slice(0, 1)}
+        </span>
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-zinc-950">{title}</h3>
+          <p className="mt-1 text-sm leading-5 text-zinc-500">{description}</p>
+        </div>
       </div>
-      <div className="flex flex-wrap gap-2 sm:justify-end">
+      <div className="mt-auto flex flex-wrap gap-2 pt-4">
         <SecondaryActionLink href={previewHref} label={previewLabel} />
         <SecondaryPendingActionLink
           href={downloadHref}
@@ -697,64 +685,6 @@ function CurrencySelect({ defaultValue }: { defaultValue?: string | null }) {
   );
 }
 
-function StatusUpdateForm({
-  compact = false,
-  quotation,
-  returnTo,
-}: {
-  compact?: boolean;
-  quotation: Pick<Quotation, "id" | "status" | "status_note">;
-  returnTo?: string;
-}) {
-  async function submitStatus(formData: FormData) {
-    "use server";
-    await updateQuotationStatus(formData);
-  }
-
-  return (
-    <form action={submitStatus} className={compact ? "grid gap-2" : "grid gap-3"}>
-      <input type="hidden" name="quotation_id" value={quotation.id} />
-      <input type="hidden" name="return_to" value={returnTo ?? `/quotations/${quotation.id}`} />
-      <label className="block">
-        <span className="text-xs font-semibold uppercase text-zinc-500">Change status</span>
-        <select
-          name="status"
-          defaultValue={quotation.status}
-          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-        >
-          {quotationStatuses.map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </label>
-      {compact ? (
-        <input type="hidden" name="status_note" value={quotation.status_note ?? ""} />
-      ) : (
-        <label className="block">
-          <span className="text-xs font-semibold uppercase text-zinc-500">Status note</span>
-          <textarea
-            name="status_note"
-            defaultValue={quotation.status_note ?? ""}
-            rows={2}
-            className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-          />
-        </label>
-      )}
-      <div className="flex justify-end">
-        {compact ? (
-          <PendingSubmitButton className="h-9 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800">
-            Update
-          </PendingSubmitButton>
-        ) : (
-          <SubmitButton label="Update status" />
-        )}
-      </div>
-    </form>
-  );
-}
-
 function overallDiscountAmount(quotation: Quotation) {
   const itemNetTotal = Math.max(quotation.subtotal - quotation.discount_total, 0);
 
@@ -1054,7 +984,19 @@ export default async function QuotationDetailPage({
 }: QuotationDetailPageProps) {
   const { id } = await params;
   const { user, profile, displayName } = await requireActiveUser();
-  const message = (await searchParams)?.message;
+  const resolvedSearchParams = await searchParams;
+  const message = resolvedSearchParams?.message;
+  const requestedTab = resolvedSearchParams?.tab;
+  const activeTab: QuotationFolderTab =
+    requestedTab === "quotations" || requestedTab === "documents" || requestedTab === "activity"
+      ? requestedTab
+      : "overview";
+  const tabClassName = (tab: QuotationFolderTab) =>
+    `px-1 pb-3 transition ${
+      activeTab === tab
+        ? "border-b-2 border-emerald-800 text-emerald-900"
+        : "hover:text-emerald-900"
+    }`;
   const canManageRecords =
     profile?.role === "system_owner" ||
     profile?.role === "admin_manager" ||
@@ -1137,14 +1079,6 @@ export default async function QuotationDetailPage({
     .limit(200)
     .returns<CopyDestinationQuotation[]>();
 
-  const { data: sections, error: sectionsError } = await supabase
-    .from("quotation_sections")
-    .select("id,quotation_id,section_title,section_notes,section_type,parent_section_id,section_kind,title_align,title_bold,title_bg,title_size,row_height,sort_order,is_active")
-    .eq("quotation_id", id)
-    .order("sort_order", { ascending: true })
-    .order("section_title", { ascending: true })
-    .returns<QuotationSection[]>();
-
   const { data: items, error: itemsError } = await supabase
     .from("quotation_items")
     .select(
@@ -1173,7 +1107,6 @@ export default async function QuotationDetailPage({
     .limit(20)
     .returns<AuditActivityEntry[]>();
 
-  if (sectionsError) console.error("QUOTATION SECTIONS LIST ERROR", sectionsError.message);
   if (clientsError) console.error("QUOTATION CLIENTS LIST ERROR", clientsError.message);
   if (itemsError) console.error("QUOTATION ITEMS LIST ERROR", itemsError.message);
   if (projectQuotationsError) console.error("PROJECT QUOTATIONS OPTION LIST ERROR", projectQuotationsError.message);
@@ -1358,16 +1291,6 @@ export default async function QuotationDetailPage({
     }
   }
 
-  const itemsBySection = new Map<string, QuotationItem[]>();
-
-  for (const item of items ?? []) {
-    if (!item.is_active) continue;
-
-    const key = item.section_id ?? "unsectioned";
-    const sectionItems = itemsBySection.get(key) ?? [];
-    sectionItems.push(item);
-    itemsBySection.set(key, sectionItems);
-  }
   const itemCurrencies = new Set(
     (items ?? [])
       .filter((item) => item.is_active)
@@ -1376,30 +1299,26 @@ export default async function QuotationDetailPage({
   const hasMixedCurrencies =
     itemCurrencies.size > 1 ||
     (itemCurrencies.size === 1 && !itemCurrencies.has(normalizeCurrency(quotation.currency)));
-  const activeItems = (items ?? []).filter((item) => item.is_active);
-  const summaryItems = activeItems.filter((item) =>
+  const activeItemCount = (items ?? []).filter((item) =>
+    item.is_active &&
     !["note", "blank", "subtotal"].includes(item.item_type) &&
     !["heading", "note", "no_quote"].includes(item.line_style),
+  ).length;
+  const recentFolderQuotations = [...folderQuotationList]
+    .sort((left, right) => new Date(right.quotation_date).getTime() - new Date(left.quotation_date).getTime())
+    .slice(0, 3);
+  const latestOverviewActivity = groupedActivityEntries[0] ?? null;
+  const hasFolderBranches = folderQuotationList.some((folderQuotation) =>
+    quotationBranchTokens(folderQuotation.quotation_no).length > 0 || (folderQuotation.option_no ?? 1) > 1,
   );
-  const activeSections = (sections ?? []).filter((section) => section.is_active);
-  const mainSectionCount = activeSections.filter((section) => section.section_kind === "main").length;
-  const subsectionCount = activeSections.filter((section) => section.section_kind !== "main").length;
-  const totalQuantity = summaryItems.reduce((total, item) => total + Number(item.qty || 0), 0);
-  const sectionById = new Map(activeSections.map((section) => [section.id, section]));
-  const nonEmptySectionSummaries = activeSections
-    .map((section) => {
-      const sectionItems = (itemsBySection.get(section.id) ?? []).filter((item) =>
-        !["note", "blank", "subtotal"].includes(item.item_type) &&
-        !["heading", "note", "no_quote"].includes(item.line_style),
-      );
-
-      return {
-        section,
-        itemCount: sectionItems.length,
-        totalQuantity: sectionItems.reduce((total, item) => total + Number(item.qty || 0), 0),
-      };
-    })
-    .filter((entry) => entry.itemCount > 0);
+  const workflowStages = ["Draft", "Sent to Client", "Client Confirmed", "Project File"];
+  const workflowStageIndex = currentProjectFile
+    ? 3
+    : quotation.status === "client_confirmed" || currentApprovalDisplay?.state === "project_file_pending"
+      ? 2
+      : quotation.status === "sent_to_client"
+        ? 1
+        : 0;
 
   return (
     <ErpAppShell
@@ -1413,8 +1332,8 @@ export default async function QuotationDetailPage({
       userRole={profile?.role ?? null}
     >
         <OpportunityQuotationLinkSync />
-        <div className="px-5 py-6 sm:px-8">
-          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="px-5 py-6 sm:px-8 xl:grid xl:grid-cols-[minmax(0,1fr)_340px] xl:gap-x-5">
+          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between xl:col-span-2">
             <ContextBackLink
               fallbackHref="/sales/quotations"
               className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
@@ -1428,8 +1347,8 @@ export default async function QuotationDetailPage({
             ) : null}
           </div>
 
-          <section className="grid gap-5 xl:grid-cols-[1fr_340px]">
-            <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+          <section className="grid gap-5 xl:contents">
+            <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm xl:col-start-1 xl:row-start-2">
               <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-zinc-500">
@@ -1487,6 +1406,16 @@ export default async function QuotationDetailPage({
                       ) : (
                         <DisabledWorkflowButton label="Edit enquiry details" />
                       )}
+                      {canManageRecords ? (
+                        <QuotationFolderActionDialog label="Edit quote details" title="Edit quote details">
+                          <QuotationTermsForm quotation={quotation} mode="details" />
+                        </QuotationFolderActionDialog>
+                      ) : null}
+                      {canManageRecords ? (
+                        <QuotationFolderActionDialog label="Edit commercial terms" title="Edit commercial terms">
+                          <QuotationTermsForm quotation={quotation} mode="terms" />
+                        </QuotationFolderActionDialog>
+                      ) : null}
                       {canUseQuotationActions && !currentQuotationArchived ? (
                         <FolderMutationForm
                           action={createQuotationRevision}
@@ -1524,22 +1453,19 @@ export default async function QuotationDetailPage({
                       )}
                     </HeaderActionMenu>
                   </div>
-                  <p className="text-xs text-zinc-500">
-                    {folderWorkflowHelper}
-                  </p>
+                  {activeTab !== "overview" ? (
+                    <p className="text-xs text-zinc-500">{folderWorkflowHelper}</p>
+                  ) : null}
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                <InfoValue label="Quotation no" value={displayQuotationNo ?? quotation.quotation_no ?? "Draft quotation"} />
-                <InfoValue label="Quotation folder" value={folderDisplayNo} />
-                <InfoValue label="Client" value={resolvedDocumentSetup.header.clientDisplayName} />
-                <InfoValue label="Opportunity no" value={derivedOpportunityNo ?? "Not linked"} />
-                <InfoValue label="Reference" value={folderDisplayReference} />
-                <InfoValue label="Date" value={formatFolderDate(quotation.quotation_date)} />
-                <div>
+              <div className="mt-5 grid overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50/40 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="border-b border-zinc-200 p-4 sm:border-r">
+                  <InfoValue label="Client" value={resolvedDocumentSetup.header.clientDisplayName} />
+                </div>
+                <div className="border-b border-zinc-200 p-4 xl:border-r">
                   <p className="text-xs font-semibold uppercase text-zinc-500">Sales Person</p>
-                  <p className="mt-1 text-sm text-zinc-800">{salespersonName ?? "Unassigned"}</p>
+                  <p className="mt-1 text-sm font-medium text-zinc-800">{salespersonName ?? "Unassigned"}</p>
                   {canReassignSalesperson ? (
                     <ReassignSalespersonForm
                       quotationId={quotation.id}
@@ -1548,25 +1474,62 @@ export default async function QuotationDetailPage({
                     />
                   ) : null}
                 </div>
+                <div className="border-b border-zinc-200 p-4 sm:border-r xl:border-r">
+                  <InfoValue label="Opportunity no" value={derivedOpportunityNo ?? "Not linked"} />
+                </div>
+                <div className="border-b border-zinc-200 p-4 xl:border-b-0 xl:border-r">
+                  <InfoValue label="Quotation folder" value={folderDisplayNo} />
+                </div>
+                <div className="border-b border-zinc-200 p-4 sm:border-b-0 sm:border-r">
+                  <InfoValue label="Date" value={formatFolderDate(quotation.quotation_date)} />
+                </div>
+                <div className="p-4">
+                  <InfoValue label="Current quotation" value={displayQuotationNo ?? quotation.quotation_no ?? "Draft quotation"} />
+                </div>
               </div>
 
-              <section className="mt-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <nav className="mt-5 flex gap-6 overflow-x-auto border-b border-zinc-200 text-sm font-semibold text-zinc-500" aria-label="Quotation folder sections">
+                <Link href={`/quotations/${quotation.id}?tab=overview`} className={tabClassName("overview")}>Overview</Link>
+                <Link href={`/quotations/${quotation.id}?tab=quotations`} className={tabClassName("quotations")}>Quotations in Folder</Link>
+                <Link href={`/quotations/${quotation.id}?tab=documents`} className={tabClassName("documents")}>Documents</Link>
+                <Link href={`/quotations/${quotation.id}?tab=activity`} className={tabClassName("activity")}>Activity</Link>
+              </nav>
+
+              {activeTab === "overview" ? (
+              <details className="mt-5 rounded-lg border border-zinc-200 bg-zinc-50/60 p-4">
+                <summary className="cursor-pointer list-none">
+                  <span className="block text-sm font-semibold text-zinc-950">Workflow progress</span>
+                  <span className="mt-3 flex items-center gap-2 overflow-x-auto pb-1">
+                    {workflowStages.map((stage, index) => (
+                      <span key={stage} className="flex shrink-0 items-center gap-2">
+                        <span
+                          aria-current={index === workflowStageIndex ? "step" : undefined}
+                          className={`inline-flex h-8 items-center rounded-full border px-3 text-xs font-semibold ${
+                            index === workflowStageIndex
+                              ? "border-emerald-800 bg-emerald-900 text-white"
+                              : index < workflowStageIndex
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                                : "border-zinc-200 bg-white text-zinc-500"
+                          }`}
+                        >
+                          {stage}
+                        </span>
+                        {index < workflowStages.length - 1 ? <span className="text-zinc-300" aria-hidden="true">&rarr;</span> : null}
+                      </span>
+                    ))}
+                  </span>
+                </summary>
+                <section className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
                 <article className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-4 shadow-sm">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <h2 className="text-lg font-semibold text-zinc-950">Quotation Status</h2>
-                      <p className="mt-1 text-sm text-zinc-500">
-                        Send the PDF to the client manually, then update this selected quotation status.
-                      </p>
                     </div>
                     <StatusBadge quotation={quotation} />
                   </div>
                   {quotation.status_note ? (
                     <p className="mt-3 text-sm text-zinc-600">Note: {quotation.status_note}</p>
                   ) : null}
-                  <p className="mt-4 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600">
-                    Use revisions or options when the client requests changes. Set status to Client Confirmed when the client confirms.
-                  </p>
                   {canUseQuotationActions ? (
                     <>
                       <QuotationStatusSelector quotationId={quotation.id} currentStatus={quotation.status} />
@@ -1630,8 +1593,58 @@ export default async function QuotationDetailPage({
                     <InfoValue label="Source quotation" value={quotation.quotation_no ?? "Older quotation"} />
                   </dl>
                 </article>
-              </section>
-              <section className="mt-6 rounded-lg border border-zinc-200 bg-zinc-50/60 p-4">
+                </section>
+              </details>
+              ) : null}
+              {activeTab === "overview" ? (
+                <div className="mt-4 grid gap-4">
+                  <section className="grid overflow-hidden rounded-lg border border-zinc-200 bg-white sm:grid-cols-3">
+                    <div className="border-b border-zinc-200 p-4 sm:border-b-0 sm:border-r">
+                      <InfoValue label="Quotations" value={folderQuotationList.length} />
+                    </div>
+                    <div className="border-b border-zinc-200 p-4 sm:border-b-0 sm:border-r">
+                      <InfoValue label="Active items" value={activeItemCount} />
+                    </div>
+                    <div className="p-4">
+                      <InfoValue label="Final total" value={money(quotation.currency, quotation.grand_total)} />
+                    </div>
+                  </section>
+
+                  <section className="rounded-lg border border-zinc-200 bg-white p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <h2 className="text-sm font-semibold text-zinc-950">Latest activity</h2>
+                      <Link href={`/quotations/${quotation.id}?tab=activity`} className="text-xs font-semibold text-emerald-900">View activity</Link>
+                    </div>
+                    {canManageRecords && latestOverviewActivity ? (
+                      <div className="mt-3 flex flex-col gap-1 text-sm text-zinc-700 sm:flex-row sm:items-center sm:justify-between">
+                        <p>{latestOverviewActivity.summary}</p>
+                        <p className="shrink-0 text-xs text-zinc-500">{formatFolderDate(latestOverviewActivity.latestAt)}</p>
+                      </div>
+                    ) : (
+                      <p className="mt-3 text-sm text-zinc-500">{canManageRecords ? "No activity recorded yet." : "Activity is available to quotation record managers."}</p>
+                    )}
+                  </section>
+
+                  {hasFolderBranches ? (
+                    <section className="rounded-lg border border-zinc-200 bg-white p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <h2 className="text-sm font-semibold text-zinc-950">Recent quotations</h2>
+                        <Link href={`/quotations/${quotation.id}?tab=quotations`} className="text-xs font-semibold text-emerald-900">View all</Link>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {recentFolderQuotations.map((folderQuotation) => (
+                          <Link key={folderQuotation.id} href={`/quotations/${folderQuotation.id}`} className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-800 hover:text-emerald-900">
+                            {folderQuotation.quotation_no ?? "Older quotation"}
+                          </Link>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+                </div>
+              ) : null}
+              {activeTab === "quotations" ? (
+              <>
+              <section className="mt-5 rounded-lg border border-zinc-200 bg-zinc-50/60 p-4">
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <h2 className="text-lg font-semibold text-zinc-950">Quotations in this folder</h2>
@@ -1711,46 +1724,44 @@ export default async function QuotationDetailPage({
                           </Link>
                           <SecondaryActionLink href={`/quotations/${folderQuotation.id}/pdf`} label="Preview Quotation" />
                           <SecondaryPendingActionLink href={`/quotations/${folderQuotation.id}/download-pdf`} label="Download PDF" pendingLabel="Preparing PDF..." />
-                          {canUseQuotationActions ? (
-                            <FolderMutationForm
-                              action={createQuotationRevision}
-                              className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
-                              confirmMessage={"Create Revision\n\nThis will copy this selected folder card into a new revision. The selected parent quotation will remain unchanged."}
-                              label="Create Revision"
-                              pendingLabel="Creating revision..."
-                              quotationId={folderQuotation.id}
-                              returnTo={cardReturnTo}
-                            />
-                          ) : (
-                            <span className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400">
-                              Create Revision
-                            </span>
-                          )}
-                          {canUseQuotationActions ? (
-                            <FolderMutationForm
-                              action={createQuotationOption}
-                              className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
-                              confirmMessage={"Create Option\n\nThis will copy this selected folder card into a new option quotation. Use options for alternate brands, materials, or scope. The selected parent quotation will remain unchanged."}
-                              label="Create Option"
-                              pendingLabel="Creating option..."
-                              quotationId={folderQuotation.id}
-                              returnTo={cardReturnTo}
-                            />
-                          ) : (
-                            <span className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400">
-                              Create Option
-                            </span>
-                          )}
-                          {canManageRecords && !archiveDisabledReason ? (
-                            <ArchiveFolderQuotationForm quotationId={folderQuotation.id} returnTo={cardReturnTo} />
-                          ) : (
-                            <span
-                              className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400"
-                              title={archiveDisabledReason ?? "Only record managers can archive quotations."}
-                            >
-                              Archive Quote
-                            </span>
-                          )}
+                          <details className="relative">
+                            <summary className="inline-flex h-9 cursor-pointer list-none items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
+                              More actions
+                            </summary>
+                            <div className="absolute right-0 z-20 mt-2 grid min-w-52 gap-2 rounded-md border border-zinc-200 bg-white p-2 shadow-lg">
+                              {canUseQuotationActions ? (
+                                <FolderMutationForm
+                                  action={createQuotationRevision}
+                                  className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                                  confirmMessage={"Create Revision\n\nThis will copy this selected folder card into a new revision. The selected parent quotation will remain unchanged."}
+                                  label="Create Revision"
+                                  pendingLabel="Creating revision..."
+                                  quotationId={folderQuotation.id}
+                                  returnTo={cardReturnTo}
+                                />
+                              ) : (
+                                <span className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400">Create Revision</span>
+                              )}
+                              {canUseQuotationActions ? (
+                                <FolderMutationForm
+                                  action={createQuotationOption}
+                                  className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                                  confirmMessage={"Create Option\n\nThis will copy this selected folder card into a new option quotation. Use options for alternate brands, materials, or scope. The selected parent quotation will remain unchanged."}
+                                  label="Create Option"
+                                  pendingLabel="Creating option..."
+                                  quotationId={folderQuotation.id}
+                                  returnTo={cardReturnTo}
+                                />
+                              ) : (
+                                <span className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400">Create Option</span>
+                              )}
+                              {canManageRecords && !archiveDisabledReason ? (
+                                <ArchiveFolderQuotationForm quotationId={folderQuotation.id} returnTo={cardReturnTo} />
+                              ) : (
+                                <span className="inline-flex h-9 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400" title={archiveDisabledReason ?? "Only record managers can archive quotations."}>Archive Quote</span>
+                              )}
+                            </div>
+                          </details>
                         </div>
                         {archiveDisabledReason ? (
                           <p className="mt-2 text-xs text-zinc-500">{archiveDisabledReason}</p>
@@ -1849,7 +1860,10 @@ export default async function QuotationDetailPage({
                   </details>
                 </section>
               ) : null}
-              <section className="mt-6 rounded-lg border border-zinc-200 bg-zinc-50/60 p-4">
+              </>
+              ) : null}
+              {activeTab === "documents" ? (
+              <section className="mt-5 rounded-lg border border-zinc-200 bg-zinc-50/60 p-4">
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <h2 className="text-lg font-semibold text-zinc-950">Documents & Exports</h2>
@@ -1858,7 +1872,7 @@ export default async function QuotationDetailPage({
                     </p>
                   </div>
                 </div>
-                <div className="mt-4 grid gap-3">
+                <div className="mt-4 grid gap-3 lg:grid-cols-3">
                   <DocumentActionRow
                     title={`Quotation${quotation.quotation_no ? ` - ${quotation.quotation_no}` : ""}`}
                     description="Client-facing commercial quotation."
@@ -1915,21 +1929,12 @@ export default async function QuotationDetailPage({
                   ) : null}
                 </div>
               </section>
-
-              {canManageRecords ? (
-                <details className="mt-5" data-state-key={`quotation-details-${quotation.id}`}>
-                  <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                    Edit Details
-                  </summary>
-                  <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                    <QuotationTermsForm quotation={quotation} mode="details" />
-                  </div>
-                </details>
               ) : null}
+
             </div>
 
-            <aside className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-              <h2 className="text-sm font-semibold uppercase text-zinc-500">Totals</h2>
+            <aside className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm xl:sticky xl:top-6 xl:col-start-2 xl:row-span-6 xl:row-start-2 xl:self-start">
+              <h2 className="text-base font-semibold text-zinc-950">Summary</h2>
               {hasMixedCurrencies ? (
                 <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
                   Currency conversion is not enabled yet. Mixed-currency totals should be reviewed manually.
@@ -1942,7 +1947,7 @@ export default async function QuotationDetailPage({
                 </div>
                 <div className="flex justify-between gap-4">
                   <span className="text-zinc-500">Item Discount</span>
-                  <span className="font-medium text-zinc-950">{money(quotation.currency, quotation.discount_total)}</span>
+                  <span className="font-medium text-red-700">{money(quotation.currency, quotation.discount_total)}</span>
                 </div>
                 {Number(overallDiscountAmount(quotation) || 0) > 0 ? (
                   <div className="flex justify-between gap-4">
@@ -1959,7 +1964,7 @@ export default async function QuotationDetailPage({
                   <span className="text-zinc-500">VAT {quotation.vat_percent}%</span>
                   <span className="font-medium text-zinc-950">{money(quotation.currency, quotation.vat_amount)}</span>
                 </div>
-                <div className="border-t border-zinc-200 pt-3">
+                <div className="rounded-lg bg-emerald-50 p-4">
                   <p className="text-xs font-semibold uppercase text-zinc-500">Final Total</p>
                   <p className="mt-1 text-2xl font-semibold text-zinc-950">
                     {money(quotation.currency, quotation.grand_total)}
@@ -1969,119 +1974,9 @@ export default async function QuotationDetailPage({
             </aside>
           </section>
 
-          <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-            <details data-state-key={`quotation-status-${quotation.id}`}>
-              <summary className="cursor-pointer text-lg font-semibold text-zinc-950">
-                Quotation Status
-              </summary>
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-              <div>
-                <div className="mt-3 flex items-center gap-3">
-                  <StatusBadge quotation={quotation} />
-                  <span className="text-sm text-zinc-600">
-                    Current: {quotationStatusLabel(quotation.status)}
-                  </span>
-                </div>
-                {quotation.status_updated_at ? (
-                  <p className="mt-3 text-sm text-zinc-500">
-                    Updated by {quotation.status_updated_by
-                      ? (activityActorName(activityActorNameById, {
-                          id: "status-meta",
-                          entity_type: "quotation",
-                          entity_id: quotation.id,
-                          parent_entity_type: null,
-                          parent_entity_id: null,
-                          action: "quotation_status_updated",
-                          title: "Quotation status updated",
-                          description: null,
-                          metadata: null,
-                          created_by: quotation.status_updated_by,
-                          created_at: quotation.status_updated_at,
-                        }))
-                      : "User"} on{" "}
-                    {formatFolderDateTime(quotation.status_updated_at)}
-                  </p>
-                ) : null}
-                {quotation.status_note ? (
-                  <p className="mt-2 text-sm text-zinc-600">
-                    Note: {quotation.status_note}
-                  </p>
-                ) : null}
-              </div>
-            </div>
-            {canUseQuotationActions ? (
-              <details className="mt-5" data-state-key={`quotation-status-${quotation.id}`}>
-                <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                  Change status
-                </summary>
-                <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                  <StatusUpdateForm quotation={quotation} />
-                </div>
-              </details>
-            ) : null}
-            </details>
-          </section>
-
-          <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-            <details data-state-key={`quotation-terms-${quotation.id}`}>
-              <summary className="cursor-pointer text-lg font-semibold text-zinc-950">
-                Details & Terms
-              </summary>
-            <div className="mt-4 grid gap-5 xl:grid-cols-2">
-              <div>
-                <h3 className="text-sm font-semibold uppercase text-zinc-500">Client Details</h3>
-                <div className="mt-3 grid gap-4 md:grid-cols-2">
-                  <InfoValue label="Client" value={resolvedDocumentSetup.header.clientDisplayName} />
-                  <InfoValue label="Contact" value={resolvedDocumentSetup.header.contactName} />
-                  <InfoValue label="Phone" value={resolvedDocumentSetup.header.contactPhone} />
-                  <InfoValue label="Telephone" value={resolvedDocumentSetup.header.telephone} />
-                  <InfoValue label="Email" value={resolvedDocumentSetup.header.contactEmail} />
-                  <InfoValue label="PO Box" value={resolvedDocumentSetup.header.poBox} />
-                  <InfoValue label="Location" value={resolvedDocumentSetup.header.location} />
-                  <InfoValue label="Reference" value={folderDisplayReference} />
-                  <InfoValue label="Opportunity no" value={derivedOpportunityNo ?? "Not linked"} />
-                  <InfoValue label="Submission date" value={formatFolderDate(quotation.quotation_date)} />
-                </div>
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold uppercase text-zinc-500">Commercial Terms</h3>
-                <div className="mt-3 grid gap-4 md:grid-cols-2">
-                  <InfoValue label="Payment Terms" value={resolvedDocumentSetup.commercial.paymentTerms} />
-                  <InfoValue label="Validity" value={resolvedDocumentSetup.commercial.validity} />
-                  <InfoValue label="Delivery Terms" value={resolvedDocumentSetup.commercial.deliveryTerms} />
-                  <InfoValue label="Warranty" value={resolvedDocumentSetup.commercial.warrantyTerms} />
-                  <InfoValue label="Currency" value={resolvedDocumentSetup.commercial.currency} />
-                  <InfoValue label="VAT %" value={`${resolvedDocumentSetup.commercial.vatPercent}%`} />
-                  <InfoValue
-                    label="Extra Discount"
-                    value={
-                      quotation.overall_discount_type === "percent"
-                        ? `${quotation.overall_discount_value}%`
-                        : money(quotation.currency, quotation.overall_discount_value)
-                    }
-                  />
-                </div>
-                {quotation.notes ? (
-                  <p className="mt-4 whitespace-pre-wrap text-sm text-zinc-600">{quotation.notes}</p>
-                ) : null}
-              </div>
-            </div>
-            {canManageRecords ? (
-              <details className="mt-5" data-state-key={`quotation-terms-${quotation.id}`}>
-                <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                  Edit Folder / Quote Terms
-                </summary>
-                <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                  <QuotationTermsForm quotation={quotation} mode="terms" />
-                </div>
-              </details>
-            ) : null}
-            </details>
-          </section>
-
-          {canManageRecords ? (
-            <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-              <details data-state-key={`quotation-activity-${quotation.id}`}>
+          {activeTab === "activity" ? canManageRecords ? (
+            <section className="mt-5 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm xl:col-start-1">
+              <details open data-state-key={`quotation-activity-${quotation.id}`}>
                 <summary className="cursor-pointer text-lg font-semibold text-zinc-950">
                   Quotation Activity
                 </summary>
@@ -2151,110 +2046,12 @@ export default async function QuotationDetailPage({
               )}
               </details>
             </section>
+          ) : (
+            <section className="mt-5 rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-500 shadow-sm xl:col-start-1">
+              Activity is available to quotation record managers.
+            </section>
           ) : null}
 
-          <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-            <details data-state-key={`quotation-items-${quotation.id}`}>
-              <summary className="cursor-pointer text-lg font-semibold text-zinc-950">
-                Items Summary
-              </summary>
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <p className="mt-1 text-sm text-zinc-500">
-                  Compact overview of saved quotation items. Use the builder for detailed editing.
-                </p>
-                <div className="mt-3">
-                  <LocalDraftLink quotationId={quotation.id} showLink={false} />
-                </div>
-              </div>
-              <p className="text-sm text-zinc-500">Use the builder for row-level edits, snapshots, and pricing changes.</p>
-            </div>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-              <InfoValue label="Total items" value={summaryItems.length} />
-              <InfoValue label="Main sections" value={mainSectionCount} />
-              <InfoValue label="Subsections" value={subsectionCount} />
-              <InfoValue label="Total quantity" value={totalQuantity.toLocaleString("en-US")} />
-              <InfoValue label="Final total" value={money(quotation.currency, quotation.grand_total)} />
-            </div>
-
-            {nonEmptySectionSummaries.length ? (
-              <div className="mt-5 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-                <h3 className="text-sm font-semibold text-zinc-950">Section Summary</h3>
-                <div className="mt-3 grid gap-2 md:grid-cols-2">
-                  {nonEmptySectionSummaries.map(({ itemCount, section, totalQuantity: sectionQuantity }) => {
-                    const parentSection = section.parent_section_id
-                      ? sectionById.get(section.parent_section_id)
-                      : null;
-
-                    return (
-                      <div key={section.id} className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm">
-                        <p className="font-semibold text-zinc-950">
-                          {parentSection ? `${parentSection.section_title} / ${section.section_title}` : section.section_title}
-                        </p>
-                        <p className="mt-1 text-xs text-zinc-500">
-                          {itemCount} {itemCount === 1 ? "item" : "items"} / Qty {sectionQuantity.toLocaleString("en-US")}
-                        </p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : (
-              <p className="mt-5 rounded-md border border-dashed border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-500">
-                No saved line items yet. Open the builder to add quotation sections and items.
-              </p>
-            )}
-
-            {nonEmptySectionSummaries.length ? (
-              <details className="mt-5 rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3">
-                <summary className="cursor-pointer text-sm font-semibold text-emerald-900">
-                  View line items
-                </summary>
-                <div className="mt-4 grid gap-4">
-                  {nonEmptySectionSummaries.map(({ section }) => {
-                    const sectionItems = (itemsBySection.get(section.id) ?? []).filter((item) =>
-                      !["note", "blank", "subtotal"].includes(item.item_type) &&
-                      !["heading", "note", "no_quote"].includes(item.line_style),
-                    );
-                    const parentSection = section.parent_section_id
-                      ? sectionById.get(section.parent_section_id)
-                      : null;
-
-                    return (
-                      <article key={section.id} className="rounded-md border border-zinc-200 bg-white p-4">
-                        <h3 className="text-sm font-semibold text-zinc-950">
-                          {parentSection ? `${parentSection.section_title} / ${section.section_title}` : section.section_title}
-                        </h3>
-                        <ul className="mt-3 divide-y divide-zinc-100">
-                          {sectionItems.map((item) => (
-                            <li key={item.id} className="py-2 text-sm">
-                              <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                                <div>
-                                  <p className="font-medium text-zinc-900">
-                                    {item.item_name_snapshot ?? item.item_code_snapshot ?? "Custom item"}
-                                  </p>
-                                  {item.specification_snapshot ? (
-                                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500">
-                                      {item.specification_snapshot}
-                                    </p>
-                                  ) : null}
-                                </div>
-                                <span className="shrink-0 text-xs font-semibold text-zinc-500">
-                                  Qty {Number(item.qty || 0).toLocaleString("en-US")} {item.unit_label}
-                                </span>
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      </article>
-                    );
-                  })}
-                </div>
-              </details>
-            ) : null}
-            </details>
-          </section>
         </div>
     </ErpAppShell>
   );
@@ -2300,11 +2097,4 @@ function quotationWorkflowSequences(quotationNo: string | null | undefined) {
 
 function formatFolderDate(value: string) {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(value));
-}
-
-function formatFolderDateTime(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
 }

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Bell } from "lucide-react";
 import {
   getUnreadCount,
@@ -27,8 +26,15 @@ function relativeTime(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+function notificationHref(item: EnrichedNotification) {
+  const destination = item.order_no?.trim();
+  if (!destination) return null;
+  return destination.startsWith("/")
+    ? destination
+    : `/projects/orders/${encodeURIComponent(destination)}`;
+}
+
 export function NotificationBell() {
-  const router = useRouter();
   const [count, setCount] = useState(0);
   const [items, setItems] = useState<EnrichedNotification[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -74,19 +80,18 @@ export function NotificationBell() {
     return () => document.removeEventListener("mousedown", handler);
   }, [isOpen]);
 
-  async function handleItemClick(item: EnrichedNotification) {
+  function handleItemClick(item: EnrichedNotification, closeDropdown = false) {
     if (!item.read_at) {
-      await markNotificationRead(item.id);
       setItems((prev) =>
         prev.map((n) =>
           n.id === item.id ? { ...n, read_at: new Date().toISOString() } : n,
         ),
       );
       setCount((c) => Math.max(0, c - 1));
+      void markNotificationRead(item.id);
     }
-    if (item.order_no) {
+    if (closeDropdown) {
       setIsOpen(false);
-      router.push(item.order_no.startsWith("/") ? item.order_no : `/projects/orders/${item.order_no}`);
     }
   }
 
@@ -147,14 +152,10 @@ export function NotificationBell() {
                 No notifications yet.
               </li>
             ) : (
-              items.map((item) => (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    onClick={() => handleItemClick(item)}
-                    className={`w-full px-4 py-3 text-left transition hover:bg-zinc-50 ${item.read_at ? "opacity-60" : ""}`}
-                  >
-                    <div className="flex items-start gap-2">
+              items.map((item) => {
+                const href = notificationHref(item);
+                const content = (
+                  <div className="flex items-start gap-2">
                       {!item.read_at && (
                         <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-600" />
                       )}
@@ -180,8 +181,28 @@ export function NotificationBell() {
                           )}
                         </div>
                       </div>
-                    </div>
-                  </button>
+                  </div>
+                );
+
+                return (
+                  <li key={item.id}>
+                  {href ? (
+                    <Link
+                      href={href}
+                      onClick={() => handleItemClick(item, true)}
+                      className={`block w-full px-4 py-3 text-left transition hover:bg-zinc-50 ${item.read_at ? "opacity-60" : ""}`}
+                    >
+                      {content}
+                    </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleItemClick(item)}
+                      className={`w-full px-4 py-3 text-left transition hover:bg-zinc-50 ${item.read_at ? "opacity-60" : ""}`}
+                    >
+                      {content}
+                    </button>
+                  )}
                   {item.requires_response && (
                     <div className="border-t border-zinc-50 px-4 pb-3">
                       {item.response !== null ? (
@@ -210,8 +231,9 @@ export function NotificationBell() {
                       )}
                     </div>
                   )}
-                </li>
-              ))
+                  </li>
+                );
+              })
             )}
           </ul>
 

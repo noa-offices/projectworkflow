@@ -12,6 +12,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { formatSalesReportAEDMillions } from "@/lib/insights/sales-report-money";
 
 // ─── Types (re-exported so page.tsx can import them) ──────────────────────────
 
@@ -29,12 +30,6 @@ export type AggMonthPoint = {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const SERIES_COLORS = ["#14532d", "#5b21b6", "#b45309", "#075985", "#9f1239", "#0f766e"];
-
-function fmtAED(v: number): string {
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
-  return String(Math.round(v));
-}
 
 // ─── Chart 1: Per-rep monthly approved (LineChart) ───────────────────────────
 
@@ -68,7 +63,9 @@ function RepApprovedLineChart({ seriesData }: { seriesData: RepSeriesData[] }) {
           tick={{ fontSize: 9, fill: "#a1a1aa" }}
           axisLine={false}
           tickLine={false}
-          tickFormatter={fmtAED}
+          tickFormatter={(value) =>
+            formatSalesReportAEDMillions(value, { includeCurrency: false })
+          }
           width={38}
         />
         <Tooltip
@@ -80,7 +77,7 @@ function RepApprovedLineChart({ seriesData }: { seriesData: RepSeriesData[] }) {
           }}
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           formatter={(value: any) => [
-            `AED ${fmtAED(typeof value === "number" ? value : 0)}`,
+            formatSalesReportAEDMillions(typeof value === "number" ? value : 0),
           ]}
         />
         <Legend
@@ -125,7 +122,9 @@ function QuotedVsApprovedBarChart({ data }: { data: AggMonthPoint[] }) {
           tick={{ fontSize: 9, fill: "#a1a1aa" }}
           axisLine={false}
           tickLine={false}
-          tickFormatter={fmtAED}
+          tickFormatter={(value) =>
+            formatSalesReportAEDMillions(value, { includeCurrency: false })
+          }
           width={38}
         />
         <Tooltip
@@ -137,7 +136,7 @@ function QuotedVsApprovedBarChart({ data }: { data: AggMonthPoint[] }) {
           }}
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           formatter={(value: any, name: any) => [
-            `AED ${fmtAED(typeof value === "number" ? value : 0)}`,
+            formatSalesReportAEDMillions(typeof value === "number" ? value : 0),
             name === "quoted" ? "Quoted" : "Client Approved",
           ]}
         />

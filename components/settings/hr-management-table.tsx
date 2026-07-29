@@ -2,7 +2,10 @@
 
 import { useDeferredValue, useMemo, useState } from "react";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
-import { VacationDatesEditor } from "@/components/settings/vacation-dates-editor";
+import {
+  VacationDatesEditor,
+  type VacationEntrySource,
+} from "@/components/settings/vacation-dates-editor";
 import { VacationHistoryModal } from "@/components/settings/vacation-history-modal";
 import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
 import {
@@ -12,6 +15,7 @@ import {
   upsertUserHrDetails,
   type HrRow,
 } from "@/app/hr/actions";
+import type { LeaveRequestRow } from "@/lib/hr/leave-requests";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +31,12 @@ type HrProfile = {
 type HrManagementTableProps = {
   profiles: HrProfile[];
   hrData: HrRow[];
+  leaveRequests: Array<
+    Pick<
+      LeaveRequestRow,
+      "profile_id" | "status" | "approved_vacation_entry_id" | "balance_deducted"
+    >
+  >;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -143,19 +153,53 @@ function Field({
 
 function HrRow({
   hr,
+  leaveRequests,
   profile,
 }: {
   hr: HrRow | undefined;
+  leaveRequests: HrManagementTableProps["leaveRequests"];
   profile: HrProfile;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [showVacationModal, setShowVacationModal] = useState(false);
   const [annualLeaveDays, setAnnualLeaveDays] = useState(hr?.annual_leave_days ?? 30);
-  const [leaveTaken, setLeaveTaken] = useState(hr?.leave_taken_this_year ?? 0);
+  const leaveTaken = hr?.leave_taken_this_year ?? 0;
   const leaveBalance = annualLeaveDays - leaveTaken;
   const initials = userInitials(profile.full_name, profile.email);
   const displayName = profile.full_name?.trim() || "Unnamed user";
+  const approvedRequests = useMemo(
+    () =>
+      leaveRequests.filter(
+        (request) => request.profile_id === profile.id && request.status === "approved",
+      ),
+    [leaveRequests, profile.id],
+  );
+  const approvedThroughRequests = approvedRequests.reduce(
+    (total, request) => total + Number(request.balance_deducted),
+    0,
+  );
+  const historicalBaseline = leaveTaken - approvedThroughRequests;
+  const vacationEntrySources = useMemo(() => {
+    const requestByEntryId = new Map(
+      approvedRequests
+        .filter((request) => request.approved_vacation_entry_id)
+        .map((request) => [request.approved_vacation_entry_id, request]),
+    );
+
+    return Object.fromEntries(
+      (hr?.vacation_dates ?? []).map((entry) => {
+        const request = requestByEntryId.get(entry.id);
+        const source: VacationEntrySource = request
+          ? {
+              label: "Workflow-approved request",
+              balanceAdjusted: Number(request.balance_deducted) > 0,
+            }
+          : { label: "Manual record", balanceAdjusted: false };
+        return [entry.id, source];
+      }),
+    );
+  }, [approvedRequests, hr?.vacation_dates]);
 
   function markDirty() {
     setIsDirty(true);
@@ -165,7 +209,6 @@ function HrRow({
     setIsEditing(false);
     setIsDirty(false);
     setAnnualLeaveDays(hr?.annual_leave_days ?? 30);
-    setLeaveTaken(hr?.leave_taken_this_year ?? 0);
   }
 
   if (isEditing) {
@@ -228,23 +271,24 @@ function HrRow({
                 </label>
 
                 {/* Row 2 */}
-                <label className="grid gap-1">
+                <div className="grid gap-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
                     Leave taken this year
                   </span>
-                  <input
-                    name="leave_taken_this_year"
-                    type="number"
-                    step="1"
-                    min={0}
-                    value={leaveTaken}
-                    onChange={(e) => {
-                      setLeaveTaken(Math.max(0, Number.parseInt(e.target.value, 10) || 0));
-                      markDirty();
-                    }}
-                    className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                  />
-                </label>
+                  <div className="flex h-10 items-center justify-between rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm text-zinc-700">
+                    <span>{leaveTaken} days</span>
+                    <span className="text-xs font-medium text-zinc-500">Automatic</span>
+                  </div>
+                  <p className="text-xs text-zinc-500">
+                    Includes historical manager-entered usage and approved annual-leave requests.
+                  </p>
+                  {historicalBaseline >= 0 ? (
+                    <div className="text-xs text-zinc-500">
+                      <p>Historical/manual baseline: {historicalBaseline} days</p>
+                      <p>Approved through requests: {approvedThroughRequests} days</p>
+                    </div>
+                  ) : null}
+                </div>
                 <div className="grid gap-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
                     Leave balance
@@ -324,6 +368,7 @@ function HrRow({
             <div className="border-t border-zinc-200 pt-3">
               <VacationDatesEditor
                 vacationDates={hr?.vacation_dates ?? []}
+                entrySources={vacationEntrySources}
                 addVacationAction={addStaffVacationEntry.bind(null, profile.id)}
                 editVacationAction={editStaffVacationEntry.bind(null, profile.id)}
                 removeVacationAction={removeStaffVacationEntry.bind(null, profile.id)}
@@ -411,6 +456,7 @@ function HrRow({
       <VacationHistoryModal
         personName={displayName}
         vacationDates={hr?.vacation_dates ?? []}
+        entrySources={vacationEntrySources}
         onClose={() => setShowVacationModal(false)}
       />
     ) : null}
@@ -420,7 +466,7 @@ function HrRow({
 
 // ─── HrManagementTable ────────────────────────────────────────────────────────
 
-export function HrManagementTable({ hrData, profiles }: HrManagementTableProps) {
+export function HrManagementTable({ hrData, leaveRequests, profiles }: HrManagementTableProps) {
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
 
@@ -519,6 +565,7 @@ export function HrManagementTable({ hrData, profiles }: HrManagementTableProps) 
                   key={profile.id}
                   profile={profile}
                   hr={hrByProfileId.get(profile.id)}
+                  leaveRequests={leaveRequests}
                 />
               ))}
               {!filteredProfiles.length ? (

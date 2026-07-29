@@ -4,6 +4,11 @@ import { useState } from "react";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import type { VacationEntry } from "@/app/hr/actions";
 
+export type VacationEntrySource = {
+  label: "Workflow-approved request" | "Manual record";
+  balanceAdjusted: boolean;
+};
+
 export function formatDateDisplay(dateStr: string): string {
   const parts = dateStr.split("-");
   if (parts.length !== 3) return dateStr;
@@ -95,11 +100,13 @@ function VacationEntryEditForm({
 
 export function VacationDatesEditor({
   addVacationAction,
+  entrySources,
   editVacationAction,
   removeVacationAction,
   vacationDates,
 }: {
   addVacationAction: (formData: FormData) => void | Promise<void>;
+  entrySources?: Record<string, VacationEntrySource>;
   editVacationAction: (entryId: string, formData: FormData) => void | Promise<void>;
   removeVacationAction: (entryId: string, formData: FormData) => void | Promise<void>;
   vacationDates: VacationEntry[];
@@ -120,6 +127,7 @@ export function VacationDatesEditor({
         <ul className="grid gap-1.5">
           {vacationDates.map((entry) => {
             const entryDays = dayCountLabel(entry.start_date, entry.end_date);
+            const source = entrySources?.[entry.id];
 
             return editingId === entry.id ? (
               <li key={entry.id}>
@@ -138,6 +146,16 @@ export function VacationDatesEditor({
                   {formatDateDisplay(entry.start_date)} – {formatDateDisplay(entry.end_date)}
                   {entryDays ? `  · ${entryDays}` : ""}
                 </span>
+                {source ? (
+                  <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-xs font-medium text-zinc-600">
+                    {source.label}
+                  </span>
+                ) : null}
+                {source?.balanceAdjusted ? (
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                    Balance adjusted
+                  </span>
+                ) : null}
                 {entry.note ? <span className="text-zinc-500">{entry.note}</span> : null}
                 <div className="ml-auto flex items-center gap-1.5">
                   <button

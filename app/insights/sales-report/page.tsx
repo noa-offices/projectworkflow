@@ -15,6 +15,7 @@ import { loadTeamStats, loadProfileStatsForUser } from "@/lib/settings/profile-s
 import type { TeamMemberStat } from "@/lib/settings/profile-stats-loader";
 import type { AggMonthPoint, RepSeriesData } from "@/components/insights/sales-performance-charts";
 import { DATE_RANGE_OPTIONS, getRangeStart, resolveDateRange } from "@/lib/insights/date-ranges";
+import { formatSalesReportAEDMillions } from "@/lib/insights/sales-report-money";
 
 export const dynamic = "force-dynamic";
 
@@ -69,15 +70,6 @@ function getMonthKeys(from: Date, to: Date): string[] {
 }
 
 // ─── Formatting helpers ───────────────────────────────────────────────────────
-
-function formatAED(value: number): string {
-  return new Intl.NumberFormat("en-AE", {
-    style: "currency",
-    currency: "AED",
-    maximumFractionDigits: 0,
-    minimumFractionDigits: 0,
-  }).format(value);
-}
 
 function pctChange(current: number, prior: number): number | null {
   if (prior === 0) return null;
@@ -181,7 +173,10 @@ function SalesLeaderboard({
       ) : (
         <div className="divide-y divide-zinc-50">
           {rows.map((row, i) => {
-            const barPct = maxAmount > 0 ? (row.approvedAmount / maxAmount) * 100 : 0;
+            const barPct = Math.min(
+              100,
+              Math.max(0, maxAmount > 0 ? (row.approvedAmount / maxAmount) * 100 : 0),
+            );
             const color = REP_COLORS[i % REP_COLORS.length];
             const initial = row.name.trim().charAt(0).toUpperCase() || "?";
 
@@ -221,7 +216,7 @@ function SalesLeaderboard({
                   {/* Approved amount */}
                   <div className="shrink-0 text-right">
                     <p className="text-[11px] font-semibold text-zinc-700">
-                      {formatAED(row.approvedAmount)}
+                      {formatSalesReportAEDMillions(row.approvedAmount)}
                     </p>
                     {/* Rank trend */}
                     <p className="text-[10px]">
@@ -237,9 +232,9 @@ function SalesLeaderboard({
                 </div>
 
                 {/* Progress bar */}
-                <div className="mt-2 ml-6 h-1 w-full overflow-hidden rounded-full bg-zinc-100">
+                <div className="mt-2 ml-6 h-1 w-[calc(100%_-_1.5rem)] max-w-full overflow-hidden rounded-full bg-zinc-100">
                   <div
-                    className="h-1 rounded-full transition-all"
+                    className="h-1 max-w-full rounded-full transition-all"
                     style={{ width: `${barPct}%`, backgroundColor: color }}
                   />
                 </div>
@@ -335,11 +330,11 @@ function SalesTeamPerformanceTable({
                   </td>
                   <td className="px-3 py-3 text-right tabular-nums text-zinc-700">{row.totalQuotes}</td>
                   <td className="px-3 py-3 text-right tabular-nums text-zinc-700">
-                    {formatAED(row.totalQuotedAmount)}
+                    {formatSalesReportAEDMillions(row.totalQuotedAmount)}
                   </td>
                   <td className="px-3 py-3 text-right tabular-nums text-zinc-700">{row.approvedCount}</td>
                   <td className="px-3 py-3 text-right tabular-nums font-medium text-zinc-900">
-                    {formatAED(row.approvedAmount)}
+                    {formatSalesReportAEDMillions(row.approvedAmount)}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-zinc-700">
                     {(row.approvalRate * 100).toFixed(1)}%
@@ -744,7 +739,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                     Total Quoted
                   </p>
                   <p className="mt-2 text-2xl font-bold text-zinc-950">
-                    {formatAED(kpiCurrent.totalQuotedAmount)}
+                    {formatSalesReportAEDMillions(kpiCurrent.totalQuotedAmount)}
                   </p>
                   <ChangeBadge value={quotedChange} />
                 </div>
@@ -762,7 +757,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                     Client Approved Value
                   </p>
                   <p className="mt-2 text-2xl font-bold text-zinc-950">
-                    {formatAED(kpiCurrent.approvedAmount)}
+                    {formatSalesReportAEDMillions(kpiCurrent.approvedAmount)}
                   </p>
                   <ChangeBadge value={approvedChange} />
                 </div>
@@ -887,11 +882,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                         </td>
                         <td className="px-0">
                           <Link href={rowHref} className="block px-5 py-4 text-right font-medium text-zinc-950">
-                            {member.currency}{" "}
-                            {new Intl.NumberFormat("en-US", {
-                              minimumFractionDigits: 0,
-                              maximumFractionDigits: 0,
-                            }).format(member.totalValue)}
+                            {formatSalesReportAEDMillions(member.totalValue)}
                           </Link>
                         </td>
                         <td className="px-5 py-4 text-center">
@@ -978,7 +969,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                       Total Value
                     </p>
                     <p className="mt-1 text-xl font-bold text-zinc-950">
-                      {formatAED(selectedUserStats.totalValue)}
+                      {formatSalesReportAEDMillions(selectedUserStats.totalValue)}
                     </p>
                   </div>
                 </div>
@@ -1135,11 +1126,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                                 </span>
                               </td>
                               <td className="px-4 py-3 text-right text-zinc-700">
-                                {q.currency ?? selectedUserStats.currency}{" "}
-                                {new Intl.NumberFormat("en-US", {
-                                  minimumFractionDigits: 0,
-                                  maximumFractionDigits: 0,
-                                }).format(q.grand_total ?? 0)}
+                                {formatSalesReportAEDMillions(q.grand_total ?? 0)}
                               </td>
                               <td className="px-4 py-3 text-xs text-zinc-400">
                                 {new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" }).format(

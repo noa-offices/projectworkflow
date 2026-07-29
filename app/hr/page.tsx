@@ -2,14 +2,20 @@ import Link from "next/link";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { HrManagementTable } from "@/components/settings/hr-management-table";
 import { HrWorkersTable } from "@/components/settings/hr-workers-table";
+import {
+  LeaveRequestsAdminTable,
+  type HrLeaveRequestRow,
+} from "@/components/settings/leave-requests-admin-table";
 import { requireSettingsManager } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { HrRow, WorkerHrRow } from "@/app/hr/actions";
+import type { LeaveRequestRow } from "@/lib/hr/leave-requests";
 
 export const dynamic = "force-dynamic";
 
 type HrPageProps = {
   searchParams?: Promise<{
+    leaveRequest?: string;
     message?: string;
     messageType?: string;
   }>;
@@ -74,6 +80,30 @@ export default async function HrManagementPage({ searchParams }: HrPageProps) {
     console.error("HR PAGE WORKERS DATA ERROR", workersHrError.message);
   }
 
+  const { data: leaveRequestsData, error: leaveRequestsError } = await adminClient
+    .from("leave_requests")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .returns<LeaveRequestRow[]>();
+
+  if (leaveRequestsError) {
+    console.error("HR PAGE LEAVE REQUESTS ERROR", leaveRequestsError.message);
+  }
+
+  const profileById = new Map(profileList.map((item) => [item.id, item]));
+  const hrByProfileId = new Map((hrData ?? []).map((item) => [item.profile_id, item]));
+  const leaveRequests: HrLeaveRequestRow[] = (leaveRequestsData ?? []).map((request) => {
+    const employee = profileById.get(request.profile_id);
+    const employeeHr = hrByProfileId.get(request.profile_id);
+    return {
+      ...request,
+      employee_name: employee?.full_name?.trim() || employee?.email || "Unknown employee",
+      current_balance: employeeHr
+        ? Number(employeeHr.annual_leave_days) - Number(employeeHr.leave_taken_this_year)
+        : 0,
+    };
+  });
+
   const messageClassName =
     messageType === "error"
       ? "border-red-200 bg-red-50 text-red-900"
@@ -104,7 +134,17 @@ export default async function HrManagementPage({ searchParams }: HrPageProps) {
             </p>
           </div>
         ) : null}
-        <HrManagementTable profiles={profileList} hrData={hrData ?? []} />
+        <LeaveRequestsAdminTable
+          requests={leaveRequests}
+          canApprove={profile?.role === "system_owner"}
+          currentProfileId={user.id}
+          selectedRequestId={params.leaveRequest}
+        />
+        <HrManagementTable
+          profiles={profileList}
+          hrData={hrData ?? []}
+          leaveRequests={leaveRequestsData ?? []}
+        />
         <div className="mt-8">
           <HrWorkersTable workers={workersHrData ?? []} />
         </div>

@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import { requireSettingsManager } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -127,7 +128,6 @@ export async function upsertUserHrDetails(profileId: string, formData: FormData)
     profile_id: profileId,
     date_of_joining: optionalTextValue(formData, "date_of_joining"),
     annual_leave_days: intValue(formData, "annual_leave_days", 30),
-    leave_taken_this_year: intValue(formData, "leave_taken_this_year", 0),
     emirates_id_expiry: optionalTextValue(formData, "emirates_id_expiry"),
     passport_expiry: optionalTextValue(formData, "passport_expiry"),
     emergency_contact_name: optionalTextValue(formData, "emergency_contact_name"),
@@ -475,4 +475,77 @@ export async function editWorkerVacationEntry(workerId: string, entryId: string,
 
   revalidatePath("/hr");
   redirectToHr("Vacation entry updated.");
+}
+
+async function requireSystemOwnerForLeave() {
+  const authenticated = await requireSettingsManager();
+  if (authenticated.profile?.role !== "system_owner") {
+    redirectToHr("Only an active System Owner may manage vacation approvals.", "error");
+  }
+  return authenticated;
+}
+
+function revalidateLeaveWorkflow() {
+  revalidatePath("/hr");
+  revalidatePath("/settings/profile");
+  revalidatePath("/settings/profile/vacation-requests");
+  revalidatePath("/notifications");
+}
+
+export async function approveLeaveRequest(requestId: string, _formData: FormData) {
+  void _formData;
+  await requireSystemOwnerForLeave();
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("approve_leave_request", { p_request_id: requestId });
+  if (error) {
+    logServerActionError("LEAVE REQUEST APPROVE ERROR", error, { requestId });
+    redirectToHr(formatSafeActionError("Vacation request could not be approved", error), "error");
+  }
+  revalidateLeaveWorkflow();
+  redirectToHr("Vacation request approved.");
+}
+
+export async function rejectLeaveRequest(requestId: string, formData: FormData) {
+  await requireSystemOwnerForLeave();
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("reject_leave_request", {
+    p_request_id: requestId,
+    p_reason: textValue(formData, "reason"),
+  });
+  if (error) {
+    logServerActionError("LEAVE REQUEST REJECT ERROR", error, { requestId });
+    redirectToHr(formatSafeActionError("Vacation request could not be rejected", error), "error");
+  }
+  revalidateLeaveWorkflow();
+  redirectToHr("Vacation request rejected.");
+}
+
+export async function returnLeaveRequest(requestId: string, formData: FormData) {
+  await requireSystemOwnerForLeave();
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("return_leave_request", {
+    p_request_id: requestId,
+    p_reason: textValue(formData, "reason"),
+  });
+  if (error) {
+    logServerActionError("LEAVE REQUEST RETURN ERROR", error, { requestId });
+    redirectToHr(formatSafeActionError("Vacation request could not be returned", error), "error");
+  }
+  revalidateLeaveWorkflow();
+  redirectToHr("Vacation request returned for changes.");
+}
+
+export async function cancelApprovedLeaveRequest(requestId: string, formData: FormData) {
+  await requireSystemOwnerForLeave();
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("cancel_approved_leave_request", {
+    p_request_id: requestId,
+    p_reason: textValue(formData, "reason"),
+  });
+  if (error) {
+    logServerActionError("APPROVED LEAVE CANCEL ERROR", error, { requestId });
+    redirectToHr(formatSafeActionError("Approved vacation could not be cancelled", error), "error");
+  }
+  revalidateLeaveWorkflow();
+  redirectToHr("Approved vacation cancelled and balance restored.");
 }
