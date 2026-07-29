@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { createAuditLog } from "@/lib/audit-log";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import {
   recalculateWorkspace,
@@ -309,15 +310,6 @@ export async function POST(
 
     const orderedSections = sortByOrder(workspace.sections).filter((section) => section.is_active !== false);
     const orderedItems = sortItemsWithOptionalChildren(workspace.items.filter((item) => item.is_active !== false));
-    const addedItemCount = Math.max(orderedItems.length - (existingItems?.length ?? 0), 0);
-    const addedLocalItemIds = new Set(
-      addedItemCount > 0
-        ? workspace.items
-            .filter((item) => item.is_active !== false)
-            .slice(-addedItemCount)
-            .map((item) => item.id)
-        : [],
-    );
     const nextSectionIdByLocalId = new Map<string, string>();
 
     for (const section of orderedSections) {
@@ -490,23 +482,6 @@ export async function POST(
           insertItemsError.code,
         );
       }
-
-      for (const [index, item] of itemsToInsert.entries()) {
-        if (!addedLocalItemIds.has(orderedItems[index]?.id)) continue;
-
-        const itemName = textOrNull(item.item_name_snapshot);
-        await createAuditLog(supabase, {
-          entityType: "quotation_item",
-          entityId: item.id,
-          parentEntityType: "quotation",
-          parentEntityId: quotation.id,
-          action: "quotation_item_added",
-          title: "Item added",
-          description: [quotation.quotation_no, itemName].filter(Boolean).join(" - ") || null,
-          metadata: { itemName },
-          createdBy: user.id,
-        });
-      }
     }
 
     if (presentationSettings) {
@@ -585,6 +560,29 @@ export async function POST(
       }
     } else {
       responseMessage = "Quotation saved. Project/order details will be created after client approval.";
+    }
+
+    const adminResult = createAdminClient();
+    if (!adminResult.client) {
+      console.error("LOCAL WORKSPACE SAVE AUDIT CLIENT ERROR", adminResult.error);
+      return errorResponse("Quotation was saved, but its activity could not be recorded.");
+    }
+
+    const auditCreated = await createAuditLog(adminResult.client, {
+      entityType: "quotation",
+      entityId: quotation.id,
+      action: "quotation_software_snapshot_saved",
+      title: "Quotation saved to software",
+      description: quotation.quotation_no,
+      metadata: {
+        itemCount: itemsToInsert.length,
+        sectionCount: sectionsToInsert.length,
+      },
+      createdBy: user.id,
+    });
+
+    if (!auditCreated) {
+      return errorResponse("Quotation was saved, but its activity could not be recorded.");
     }
 
     revalidatePath(`/quotations/${quotation.id}`);
