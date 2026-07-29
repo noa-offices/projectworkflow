@@ -1,8 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { ProfileActivity } from "@/components/settings/profile-activity";
-import type { TeamMemberStat } from "@/lib/settings/profile-stats-loader";
+import type { ProfileCommissionRow, ProfileProjectRow, TeamMemberStat } from "@/lib/settings/profile-stats-loader";
 
 type ActivityEntry = {
   id: string;
@@ -11,6 +10,10 @@ type ActivityEntry = {
   description: string | null;
   entity_type: string;
   created_at: string;
+  actor_name?: string | null;
+  actor_role?: string | null;
+  quotation_id?: string | null;
+  quotation_no?: string | null;
 };
 
 type QuotationEntry = {
@@ -43,56 +46,78 @@ type AllQuotationEntry = {
 };
 
 type ProfileDashboardShellProps = {
-  initialPreset: string;
   totalQuotations: number;
+  quotationsPrepared: number;
+  revisionsPrepared: number;
+  optionsPrepared: number;
+  personalActivityCount: number;
   approvedQuotations: number;
   totalValue: number;
   currency: string;
   role: string | null;
   recentActivity: ActivityEntry[];
+  salesActivity: ActivityEntry[];
   recentQuotations: QuotationEntry[];
+  recentPreparedQuotations: QuotationEntry[];
   teamStats?: TeamMemberStat[] | null;
   monthlyData: MonthlyDataPoint[];
   allQuotations: AllQuotationEntry[];
   topClients: TopClient[];
+  projects: ProfileProjectRow[];
+  projectSummary: {
+    approvedValue: number;
+    averageApprovedValue: number;
+    averageQuotedValue: number;
+    pendingQuotedValue: number;
+    quotedValue: number;
+    uniqueClients: number;
+    uniqueProjects: number;
+  };
+  commissions: ProfileCommissionRow[];
 };
 
-const VALID_PRESETS = ["this_month", "last_3_months", "last_6_months", "this_year"] as const;
-type Preset = (typeof VALID_PRESETS)[number];
-
 export function ProfileDashboardShell({
-  initialPreset,
   totalQuotations,
+  quotationsPrepared,
+  revisionsPrepared,
+  optionsPrepared,
+  personalActivityCount,
   approvedQuotations,
   totalValue,
   currency,
   role,
   recentActivity,
+  salesActivity,
   recentQuotations,
+  recentPreparedQuotations,
   monthlyData,
   allQuotations,
   topClients,
+  projects,
+  projectSummary,
+  commissions,
 }: ProfileDashboardShellProps) {
-  const router = useRouter();
-
-  function handlePresetChange(preset: Preset) {
-    router.push(`/settings/profile?preset=${preset}`);
-  }
-
   return (
     <ProfileActivity
       totalQuotations={totalQuotations}
+      quotationsPrepared={quotationsPrepared}
+      revisionsPrepared={revisionsPrepared}
+      optionsPrepared={optionsPrepared}
+      personalActivityCount={personalActivityCount}
       approvedQuotations={approvedQuotations}
       totalValue={totalValue}
       currency={currency}
       role={role}
       recentActivity={recentActivity}
+      salesActivity={salesActivity}
       recentQuotations={recentQuotations}
+      recentPreparedQuotations={recentPreparedQuotations}
       monthlyData={monthlyData}
       allQuotations={allQuotations}
       topClients={topClients}
-      selectedPreset={initialPreset}
-      onPresetChange={handlePresetChange}
+      projects={projects}
+      projectSummary={projectSummary}
+      commissions={commissions}
     />
   );
 }

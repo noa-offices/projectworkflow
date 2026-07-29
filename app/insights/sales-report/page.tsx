@@ -14,6 +14,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { loadTeamStats, loadProfileStatsForUser } from "@/lib/settings/profile-stats-loader";
 import type { TeamMemberStat } from "@/lib/settings/profile-stats-loader";
 import type { AggMonthPoint, RepSeriesData } from "@/components/insights/sales-performance-charts";
+import { DATE_RANGE_OPTIONS, getRangeStart, resolveDateRange } from "@/lib/insights/date-ranges";
 
 export const dynamic = "force-dynamic";
 
@@ -43,39 +44,6 @@ type SalespersonProfileRow = {
 
 // ─── Date range helpers ───────────────────────────────────────────────────────
 
-const VALID_RANGES = ["7d", "30d", "3m", "6m", "ytd", "1y", "custom"] as const;
-type RangeKey = (typeof VALID_RANGES)[number];
-
-const RANGE_LABELS: Record<RangeKey, string> = {
-  "7d": "Last 7 Days",
-  "30d": "Last 30 Days",
-  "3m": "Last 3 Months",
-  "6m": "Last 6 Months",
-  "ytd": "Year to Date",
-  "1y": "Last 1 Year",
-  "custom": "Custom Range",
-};
-
-function getRangeStart(range: RangeKey, from: Date): Date {
-  const d = new Date(from);
-  switch (range) {
-    case "7d":  d.setDate(d.getDate() - 7); break;
-    case "30d": d.setDate(d.getDate() - 30); break;
-    case "3m":  d.setMonth(d.getMonth() - 3); break;
-    case "ytd": d.setMonth(0, 1); d.setHours(0, 0, 0, 0); break;
-    case "1y":  d.setFullYear(d.getFullYear() - 1); break;
-    default:    d.setMonth(d.getMonth() - 6); // 6m
-  }
-  return d;
-}
-
-function dateParam(value: string | undefined, endOfDay = false): Date | null {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const date = new Date(`${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`);
-  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value
-    ? null
-    : date;
-}
 
 function monthKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
@@ -449,32 +417,18 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
 
   // ── Range param ─────────────────────────────────────────────────────────────
   const resolved = await searchParams;
-  const rawRange = resolved?.range ?? "6m";
+  const rawRange = resolved?.range;
   const rawUser = resolved?.user;
   const rawDetailTab = resolved?.detailTab ?? "quotations";
   const detailTab: StaffDetailTab = (STAFF_DETAIL_TABS as readonly string[]).includes(rawDetailTab)
     ? (rawDetailTab as StaffDetailTab)
     : "quotations";
-  const requestedRange: RangeKey = (VALID_RANGES as readonly string[]).includes(rawRange)
-    ? (rawRange as RangeKey)
-    : "6m";
-  const customFrom = dateParam(resolved?.from);
-  const customTo = dateParam(resolved?.to, true);
-  const hasValidCustomRange =
-    requestedRange === "custom" &&
-    customFrom !== null &&
-    customTo !== null &&
-    customFrom <= customTo;
-  const range: RangeKey =
-    requestedRange === "custom" && !hasValidCustomRange ? "6m" : requestedRange;
-
   // ── Date boundaries ─────────────────────────────────────────────────────────
   const now = new Date();
-  const rangeStart = hasValidCustomRange && customFrom ? customFrom : getRangeStart(range, now);
-  const rangeEnd = hasValidCustomRange && customTo ? customTo : now;
+  const { range, from: rangeStart, to: rangeEnd, validCustom: hasValidCustomRange } = resolveDateRange(rawRange, resolved?.from, resolved?.to, now);
   const rangeLabel = hasValidCustomRange
     ? `${new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" }).format(rangeStart)} – ${new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" }).format(rangeEnd)}`
-    : RANGE_LABELS[range];
+    : DATE_RANGE_OPTIONS.find((option) => option.value === range)?.label ?? "Last 6 months";
   const baseReportParams = new URLSearchParams({ range });
   if (hasValidCustomRange && resolved?.from && resolved?.to) {
     baseReportParams.set("from", resolved.from);

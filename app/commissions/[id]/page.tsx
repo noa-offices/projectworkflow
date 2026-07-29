@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { saveCommissionDraft, transitionCommission } from "@/app/commissions/actions";
+import { recordCommissionUserEvent, saveCommissionDraft, transitionCommission } from "@/app/commissions/actions";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { requireCommissionViewer } from "@/lib/auth";
 import {
@@ -84,6 +84,18 @@ function WorkflowAction({
   );
 }
 
+function UserEventAction({
+  action,
+  commissionId,
+  label,
+}: {
+  action: string;
+  commissionId: string;
+  label: string;
+}) {
+  return <form action={recordCommissionUserEvent}><input type="hidden" name="commission_id" value={commissionId} /><input type="hidden" name="event_action" value={action} /><button className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50">{label}</button></form>;
+}
+
 export default async function CommissionDetailPage({ params, searchParams }: PageProps) {
   const { id } = await params;
   const messages = await searchParams;
@@ -144,6 +156,9 @@ export default async function CommissionDetailPage({ params, searchParams }: Pag
   const currentOwnerMadeRecord =
     commission.submitted_by === user.id || commission.overridden_by === user.id;
   const otherActiveOwnerCount = (ownerRows ?? []).filter((owner) => owner.id !== user.id).length;
+  const isOwnSalesManager = profile?.role === "sales_designer" && commission.salesperson_id === user.id;
+  const lastReminder = (auditRows ?? []).find((entry) => entry.action === "commission_approval_reminder_sent");
+  const lastPaymentRequest = (auditRows ?? []).find((entry) => entry.action === "commission_payment_update_requested");
 
   return (
     <ErpAppShell
@@ -164,6 +179,35 @@ export default async function CommissionDetailPage({ params, searchParams }: Pag
         {messages?.success ? <p className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{messages.success}</p> : null}
         {messages?.error ? <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{messages.error}</p> : null}
         {commission.review_reason ? <p className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{commission.review_reason}</p> : null}
+
+        {isOwnSalesManager ? (
+          <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+            <h2 className="font-semibold text-zinc-950">My commission actions</h2>
+            <dl className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Detail label="Current status" value={commissionStatusLabel(commission.status)} />
+              <Detail label="Final commission" value={formatMoney(commission.currency, Number(commission.final_commission_amount))} />
+              <Detail label="Submitted" value={dateTime(commission.submitted_at)} />
+              <Detail label="Last reminder" value={dateTime(lastReminder?.created_at ?? null)} />
+              <Detail label="Approved" value={dateTime(commission.approved_at)} />
+              <Detail label="Last payment request" value={dateTime(lastPaymentRequest?.created_at ?? null)} />
+              <Detail label="Paid" value={dateTime(commission.paid_at)} />
+            </dl>
+            <div className="mt-5 flex flex-wrap gap-3">
+              {commission.status === "draft" ? <WorkflowAction commissionId={commission.id} label="Submit for Approval" targetStatus="pending_approval" /> : null}
+              {commission.status === "pending_approval" ? <UserEventAction action="commission_approval_reminder_sent" commissionId={commission.id} label="Send Reminder" /> : null}
+              {commission.status === "approved" ? <UserEventAction action="commission_payment_update_requested" commissionId={commission.id} label="Request Payment Update" /> : null}
+            </div>
+            {commission.status === "requires_review" ? <p className="mt-4 text-sm text-amber-800">This commission requires management review before it can be submitted.</p> : null}
+            {!['cancelled', 'reversed'].includes(commission.status) ? (
+              <form action={recordCommissionUserEvent} className="mt-5 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                <input type="hidden" name="commission_id" value={commission.id} />
+                <input type="hidden" name="event_action" value="commission_sales_manager_note_added" />
+                <textarea name="note" required maxLength={2000} rows={2} placeholder="Add supporting information or a payment follow-up note" className="min-w-0 rounded-md border border-zinc-300 px-3 py-2 text-sm" />
+                <button className="self-end rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50">Add Note</button>
+              </form>
+            ) : null}
+          </section>
+        ) : null}
 
         <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
           <h2 className="font-semibold text-zinc-950">Commercial approval</h2>
@@ -235,7 +279,7 @@ export default async function CommissionDetailPage({ params, searchParams }: Pag
           <section className="rounded-lg border border-zinc-200 bg-white p-5"><h2 className="font-semibold">Management notes</h2><p className="mt-2 text-sm text-zinc-700">{commission.management_notes}</p></section>
         ) : null}
 
-        {isSystemOwner || (commission.status === "draft" && (profile?.role === "sales_designer" || profile?.role === "admin_manager")) ? (
+        {isSystemOwner || (commission.status === "draft" && profile?.role === "admin_manager") ? (
           <section className="grid gap-3 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
             <h2 className="font-semibold text-zinc-950">Workflow actions</h2>
             <div className="flex flex-wrap gap-3">

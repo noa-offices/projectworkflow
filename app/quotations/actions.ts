@@ -5571,7 +5571,7 @@ export async function createQuotationItem(formData: FormData) {
     parentEntityType: "quotation",
     parentEntityId: payload.quotation_id,
     action: "quotation_item_added",
-    title: "Product added to quotation",
+    title: "Item added",
     description: quotationItemAuditLabel(createdItem.item_name_snapshot),
     metadata: {
       itemName: createdItem.item_name_snapshot,
@@ -5695,7 +5695,7 @@ async function createBlankQuotationItemRecord({
     parentEntityType: "quotation",
     parentEntityId: quotationId,
     action: "quotation_item_added",
-    title: "Product added to quotation",
+    title: "Item added",
     description: quotationItemAuditLabel(createdItem.item_name_snapshot),
     metadata: {
       itemName: createdItem.item_name_snapshot,
@@ -5728,6 +5728,9 @@ export async function createBlankQuotationItemOptimistic(formData: FormData) {
   if (!result.ok) {
     return result;
   }
+
+  revalidatePath(`/quotations/${quotationId}`);
+  revalidatePath(`/quotations/${quotationId}/builder`);
 
   return {
     ok: true as const,
@@ -6663,7 +6666,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     parentEntityType: "quotation",
     parentEntityId: quotationId,
     action: "quotation_item_added",
-    title: "Product added to quotation",
+    title: "Item added",
     description: quotationItemAuditLabel(createdItem.item_name_snapshot),
     metadata: {
       itemName: createdItem.item_name_snapshot,
@@ -6737,6 +6740,19 @@ export async function updateQuotationItem(formData: FormData) {
     newValues: nextPriceValues,
     note: "Updated row price manually.",
     supabase,
+  });
+
+  await createAuditLog(supabase, {
+    entityType: "quotation_item",
+    entityId: id,
+    parentEntityType: "quotation",
+    parentEntityId: payload.quotation_id,
+    action: "quotation_item_updated",
+    title: "Quotation row updated",
+    description: quotationItemAuditLabel(payload.item_name_snapshot),
+    metadata: { itemName: payload.item_name_snapshot },
+    actorName: displayName,
+    createdBy: user.id,
   });
 
   await recalculateQuotationTotals(payload.quotation_id);
@@ -6986,6 +7002,22 @@ export async function updateQuotationItemInline(formData: FormData) {
     supabase,
   });
 
+  const updatedItemName = typeof payload.item_name_snapshot === "string"
+    ? payload.item_name_snapshot
+    : currentItem.item_name_snapshot;
+  await createAuditLog(supabase, {
+    entityType: "quotation_item",
+    entityId: id,
+    parentEntityType: "quotation",
+    parentEntityId: quotationId,
+    action: "quotation_item_updated",
+    title: "Quotation row updated",
+    description: quotationItemAuditLabel(updatedItemName),
+    metadata: { itemName: updatedItemName },
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
   await recalculateQuotationTotals(quotationId);
   revalidatePath(`/quotations/${quotationId}`);
   revalidatePath(splitRelativePath(redirectPath).pathname);
@@ -7125,7 +7157,7 @@ export async function useCurrentSourcePriceForQuotationItem(formData: FormData) 
 }
 
 export async function copyQuotationItem(formData: FormData) {
-  const { user } = await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const sourceQuotationId = textValue(formData, "quotation_id");
   const destinationQuotationId = textValue(formData, "destination_quotation_id");
@@ -7251,20 +7283,37 @@ export async function copyQuotationItem(formData: FormData) {
   void _manualSerial;
   void _sourceSortOrder;
 
-  const { error: insertError } = await supabase.from("quotation_items").insert({
-    ...copyPayload,
-    quotation_id: destinationQuotationId,
-    section_id: destinationSectionId,
-    manual_serial: null,
-    sort_order: sortOrder,
-    is_active: true,
-    created_by: user.id,
-  });
+  const { data: createdItem, error: insertError } = await supabase
+    .from("quotation_items")
+    .insert({
+      ...copyPayload,
+      quotation_id: destinationQuotationId,
+      section_id: destinationSectionId,
+      manual_serial: null,
+      sort_order: sortOrder,
+      is_active: true,
+      created_by: user.id,
+    })
+    .select("id,item_name_snapshot")
+    .single<{ id: string; item_name_snapshot: string | null }>();
 
-  if (insertError) {
-    console.error("QUOTATION ITEM COPY INSERT ERROR", insertError.message);
+  if (insertError || !createdItem) {
+    console.error("QUOTATION ITEM COPY INSERT ERROR", insertError?.message);
     redirectWithMessage(redirectPath, "Row could not be copied.");
   }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation_item",
+    entityId: createdItem.id,
+    parentEntityType: "quotation",
+    parentEntityId: destinationQuotationId,
+    action: "quotation_item_added",
+    title: "Item added",
+    description: quotationItemAuditLabel(createdItem.item_name_snapshot),
+    metadata: { itemName: createdItem.item_name_snapshot, source: "copy" },
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   await recalculateQuotationTotals(destinationQuotationId);
   revalidatePath(`/quotations/${destinationQuotationId}`);
@@ -7342,7 +7391,7 @@ async function nextSortOrder(quotationId: string, sectionId: string | null) {
 }
 
 export async function duplicateQuotationItemBelow(formData: FormData) {
-  const { user } = await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const id = textValue(formData, "id");
   const quotationId = textValue(formData, "quotation_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder#item-${id}`);
@@ -7419,20 +7468,37 @@ export async function duplicateQuotationItemBelow(formData: FormData) {
   const sortOrder = sourceIndex >= 0
     ? (sourceIndex + 2) * 10
     : await nextSortOrder(quotationId, sourceItem.section_id);
-  const { error: insertError } = await supabase.from("quotation_items").insert(
-    copiedItemPayload(
-      copySource,
-      user.id,
-      quotationId,
-      sourceItem.section_id,
-      sortOrder,
-    ),
-  );
+  const { data: createdItem, error: insertError } = await supabase
+    .from("quotation_items")
+    .insert(
+      copiedItemPayload(
+        copySource,
+        user.id,
+        quotationId,
+        sourceItem.section_id,
+        sortOrder,
+      ),
+    )
+    .select("id,item_name_snapshot")
+    .single<{ id: string; item_name_snapshot: string | null }>();
 
-  if (insertError) {
-    console.error("QUOTATION ITEM DUPLICATE INSERT ERROR", insertError.message);
+  if (insertError || !createdItem) {
+    console.error("QUOTATION ITEM DUPLICATE INSERT ERROR", insertError?.message);
     redirectWithMessage(redirectPath, "Row could not be duplicated.");
   }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation_item",
+    entityId: createdItem.id,
+    parentEntityType: "quotation",
+    parentEntityId: quotationId,
+    action: "quotation_item_added",
+    title: "Item added",
+    description: quotationItemAuditLabel(createdItem.item_name_snapshot),
+    metadata: { itemName: createdItem.item_name_snapshot, source: "duplicate" },
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   await recalculateQuotationTotals(quotationId);
   revalidatePath(`/quotations/${quotationId}`);
@@ -7519,7 +7585,7 @@ function sanitizeCopiedRowSnapshot(value: unknown) {
 }
 
 export async function pasteCopiedQuotationItem(formData: FormData) {
-  const { user } = await requireRecordsManager();
+  const { user, displayName } = await requireRecordsManager();
   const quotationId = textValue(formData, "quotation_id");
   const sectionId = textValue(formData, "section_id");
   const redirectPath = returnPath(formData, `/quotations/${quotationId}/builder`);
@@ -7542,20 +7608,37 @@ export async function pasteCopiedQuotationItem(formData: FormData) {
 
   const payload = sanitizeCopiedRowSnapshot(parsedSnapshot);
   const supabase = await createSupabaseClient();
-  const { error } = await supabase.from("quotation_items").insert({
-    ...payload,
-    quotation_id: quotationId,
-    section_id: sectionId,
-    manual_serial: null,
-    sort_order: await nextSortOrder(quotationId, sectionId),
-    is_active: true,
-    created_by: user.id,
-  });
+  const { data: createdItem, error } = await supabase
+    .from("quotation_items")
+    .insert({
+      ...payload,
+      quotation_id: quotationId,
+      section_id: sectionId,
+      manual_serial: null,
+      sort_order: await nextSortOrder(quotationId, sectionId),
+      is_active: true,
+      created_by: user.id,
+    })
+    .select("id,item_name_snapshot")
+    .single<{ id: string; item_name_snapshot: string | null }>();
 
-  if (error) {
-    console.error("QUOTATION ITEM PASTE ERROR", error.message);
+  if (error || !createdItem) {
+    console.error("QUOTATION ITEM PASTE ERROR", error?.message);
     redirectWithMessage(redirectPath, "Copied row could not be pasted.");
   }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation_item",
+    entityId: createdItem.id,
+    parentEntityType: "quotation",
+    parentEntityId: quotationId,
+    action: "quotation_item_added",
+    title: "Item added",
+    description: quotationItemAuditLabel(createdItem.item_name_snapshot),
+    metadata: { itemName: createdItem.item_name_snapshot, source: "paste" },
+    actorName: displayName,
+    createdBy: user.id,
+  });
 
   await recalculateQuotationTotals(quotationId);
   revalidatePath(`/quotations/${quotationId}`);

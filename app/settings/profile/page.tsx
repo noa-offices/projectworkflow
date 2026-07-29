@@ -3,13 +3,16 @@ import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { AvatarUpload } from "@/components/settings/avatar-upload";
 import { ProfileDashboardShell } from "@/components/settings/profile-dashboard-shell";
+import { DateRangeSelector } from "@/components/insights/date-range-selector";
 import { updateMyProfile } from "@/app/settings/actions";
 import { requireActiveUser } from "@/lib/auth";
 import {
   loadProfileStats,
   loadTeamStats,
-  getDateRangePreset,
 } from "@/lib/settings/profile-stats-loader";
+import { resolveDateRange } from "@/lib/insights/date-ranges";
+import { latestPrimaryQuotationsByFolder } from "@/lib/quotations/sales-attribution";
+import { hasQualifyingProjectFile } from "@/lib/quotations/approval-display";
 import {
   userRoleLabel,
   userStatusBadgeClass,
@@ -25,16 +28,11 @@ type ProfilePageProps = {
     message?: string;
     messageScope?: string;
     messageType?: string;
-    preset?: string;
+    range?: string;
+    from?: string;
+    to?: string;
   }>;
 };
-
-const VALID_PRESETS = ["this_month", "last_3_months", "last_6_months", "this_year"] as const;
-type Preset = (typeof VALID_PRESETS)[number];
-
-function isValidPreset(value: string | undefined): value is Preset {
-  return VALID_PRESETS.includes(value as Preset);
-}
 
 function isProfileMessage(message: string) {
   return message === "Profile updated."
@@ -58,7 +56,7 @@ function Field({
   type?: string;
 }) {
   return (
-    <label className="grid gap-1">
+    <label className="grid min-w-0 gap-1">
       <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
         {label}
       </span>
@@ -68,7 +66,7 @@ function Field({
         defaultValue={defaultValue ?? ""}
         placeholder={placeholder}
         readOnly={readOnly}
-        className={`h-10 rounded-md border px-3 text-sm outline-none transition ${
+        className={`h-10 min-w-0 w-full rounded-md border px-3 text-sm outline-none transition ${
           readOnly
             ? "border-zinc-200 bg-zinc-100 text-zinc-500"
             : "border-zinc-200 bg-white text-zinc-800 focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
@@ -121,20 +119,20 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
   const { user, profile, displayName } = await requireActiveUser();
   const params = (await searchParams) ?? {};
 
-  const preset: Preset = isValidPreset(params.preset) ? params.preset : "last_6_months";
-  const dateRange = getDateRangePreset(preset);
+  const resolvedRange = resolveDateRange(params.range, params.from, params.to);
+  const dateRange = { from: resolvedRange.from.toISOString(), to: resolvedRange.to.toISOString() };
 
   const isSystemOwner = profile?.role === "system_owner";
 
   const supabase = await createClient();
 
   const [stats, teamStats, allQuotationsResult] = await Promise.all([
-    loadProfileStats(user.id, dateRange),
+    loadProfileStats(user.id, dateRange, profile?.role ?? null),
     isSystemOwner ? loadTeamStats(dateRange) : Promise.resolve(null),
     supabase
       .from("quotations")
-      .select("id,status,client_id,grand_total,company_name:clients(company_name)")
-      .eq("created_by", user.id)
+      .select("id,quotation_no,option_no,revision_no,status,status_updated_at,created_at,layout_settings,client_id,grand_total,company_name:clients(company_name)")
+      .eq("salesperson_id", user.id)
       .eq("is_active", true)
       .gte("created_at", dateRange.from)
       .lte("created_at", dateRange.to)
@@ -143,15 +141,27 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
 
   type AllQuotationRow = {
     id: string;
+    quotation_no: string | null;
+    option_no: number | null;
+    revision_no: number | null;
     status: string;
+    status_updated_at: string | null;
+    created_at: string;
+    layout_settings: unknown;
     client_id: string | null;
     grand_total: number | null;
     company_name: { company_name: string | null } | null;
   };
 
-  const allRows = (allQuotationsResult.data as AllQuotationRow[] | null) ?? [];
+  const allRows = latestPrimaryQuotationsByFolder(
+    (allQuotationsResult.data as AllQuotationRow[] | null) ?? [],
+  );
 
-  const allQuotations = allRows.map((q) => ({ status: q.status }));
+  const allQuotations = allRows.map((quotation) => ({
+    status: quotation.status === "client_confirmed"
+      ? (hasQualifyingProjectFile(quotation.layout_settings) ? "client_approved" : "client_confirmed_pending")
+      : quotation.status,
+  }));
 
   // Compute top 5 clients by total value
   const clientTotals: Record<string, { clientName: string; total: number; count: number }> = {};
@@ -205,74 +215,12 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
             ) : null}
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_360px]">
-            <section className="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-lg font-semibold text-zinc-950">Profile Details</h2>
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">
-                    These details stay internal and help teammates recognize ownership across records and workflows.
-                  </p>
-                </div>
-                <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-600">
-                  Editable
-                </span>
-              </div>
-
-              <div className="mt-6 mb-4">
-                <AvatarUpload
-                  currentAvatarUrl={profile?.avatar_url ?? null}
-                  userId={user.id}
-                  displayName={displayName}
-                />
-              </div>
-              <form action={updateMyProfile} className="grid gap-4 md:grid-cols-2">
-                <Field
-                  name="full_name"
-                  label="Full name"
-                  defaultValue={profile?.full_name ?? ""}
-                  placeholder="Your full name"
-                />
-                <Field
-                  name="email"
-                  label="Email"
-                  defaultValue={profile?.email ?? user.email ?? ""}
-                  type="email"
-                  readOnly
-                />
-                <Field
-                  name="phone"
-                  label="Phone"
-                  defaultValue={profile?.phone ?? ""}
-                  placeholder="+971 ..."
-                />
-                <Field
-                  name="job_title"
-                  label="Job title"
-                  defaultValue={profile?.job_title ?? ""}
-                  placeholder="Sales Manager"
-                />
-                <div className="md:col-span-2">
-                  <Field
-                    name="department"
-                    label="Department"
-                    defaultValue={profile?.department ?? ""}
-                    placeholder="Sales"
-                  />
-                </div>
-                <div className="md:col-span-2 flex items-center justify-end">
-                  <PendingSubmitButton
-                    className="rounded-md bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                    pendingLabel="Saving profile..."
-                  >
-                    Save profile
-                  </PendingSubmitButton>
-                </div>
-              </form>
-            </section>
-
+          <div className="grid items-start gap-6 xl:grid-cols-[300px_minmax(0,1fr)]">
+          <aside className="space-y-4 xl:sticky xl:top-6">
+          <div className="space-y-4">
             <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-              <h2 className="text-base font-semibold text-zinc-950">Account Summary</h2>
+              <h2 className="text-base font-semibold text-zinc-950">{displayName}</h2>
+              <p className="mt-1 text-xs text-zinc-500">{profile?.job_title ?? "Account summary"}</p>
               <div className="mt-4 grid gap-4 text-sm">
                 <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
@@ -305,7 +253,9 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
           </div>
 
           {hrData ? (
-            <section className="mt-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
+            <details className="mt-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+              <summary className="cursor-pointer text-sm font-semibold text-zinc-950">HR summary</summary>
+              <div className="mt-4">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h2 className="text-lg font-semibold text-zinc-950">My HR Summary</h2>
@@ -339,27 +289,65 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
                   <HrSummaryField label="Emergency Phone" value={hrData.emergency_contact_phone} />
                 ) : null}
               </dl>
-            </section>
+              </div>
+            </details>
           ) : (
             <p className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-500">
               Your HR details have not been set up yet.
             </p>
           )}
 
+          </aside>
+          <main className="min-w-0">
+          <div className="mb-4 flex justify-end">
+            <DateRangeSelector current={resolvedRange.range} customFrom={resolvedRange.validCustom ? params.from : undefined} customTo={resolvedRange.validCustom ? params.to : undefined} />
+          </div>
+          <details className="mb-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+            <summary className="cursor-pointer text-base font-semibold text-zinc-950">Edit profile details</summary>
+            <div className="mt-5">
+              <div className="mb-5">
+                <AvatarUpload currentAvatarUrl={profile?.avatar_url ?? null} userId={user.id} displayName={displayName} />
+              </div>
+              <form action={updateMyProfile} className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Field name="full_name" label="Full name" defaultValue={profile?.full_name ?? ""} placeholder="Your full name" />
+                <Field name="email" label="Email" defaultValue={profile?.email ?? user.email ?? ""} type="email" readOnly />
+                <Field name="phone" label="Phone" defaultValue={profile?.phone ?? ""} placeholder="+971 ..." />
+                <Field name="job_title" label="Job title" defaultValue={profile?.job_title ?? ""} placeholder="Sales Manager" />
+                <div className="md:col-span-2">
+                  <Field name="department" label="Department" defaultValue={profile?.department ?? ""} placeholder="Sales" />
+                </div>
+                <div className="flex justify-end md:col-span-2">
+                  <PendingSubmitButton className="rounded-md bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800" pendingLabel="Saving profile...">
+                    Save profile
+                  </PendingSubmitButton>
+                </div>
+              </form>
+            </div>
+          </details>
           <ProfileDashboardShell
-            initialPreset={preset}
             totalQuotations={stats.totalQuotations}
+            quotationsPrepared={stats.quotationsPrepared}
+            revisionsPrepared={stats.revisionsPrepared}
+            optionsPrepared={stats.optionsPrepared}
+            personalActivityCount={stats.personalActivityCount}
             approvedQuotations={stats.approvedQuotations}
             totalValue={stats.totalValue}
             currency={stats.currency}
             role={profile?.role ?? null}
             recentActivity={stats.recentActivity}
+            salesActivity={stats.salesActivity}
             recentQuotations={stats.recentQuotations}
+            recentPreparedQuotations={stats.recentPreparedQuotations}
             teamStats={teamStats}
             monthlyData={stats.monthlyData}
             allQuotations={allQuotations}
             topClients={topClients}
+            projects={stats.projects}
+            projectSummary={stats.projectSummary}
+            commissions={stats.commissions}
           />
+          </main>
+          </div>
       </div>
     </ErpAppShell>
   );

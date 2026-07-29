@@ -2,16 +2,7 @@
 
 import { useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-
-const OPTIONS = [
-  { value: "7d", label: "Last 7 days" },
-  { value: "30d", label: "Last 30 days" },
-  { value: "3m", label: "Last 3 months" },
-  { value: "6m", label: "Last 6 months" },
-  { value: "ytd", label: "Year to date" },
-  { value: "1y", label: "Last 1 year" },
-  { value: "custom", label: "Custom range" },
-];
+import { DATE_RANGE_OPTIONS } from "@/lib/insights/date-ranges";
 
 export function DateRangeSelector({
   current,
@@ -53,7 +44,7 @@ export function DateRangeSelector({
         }}
         className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-800 shadow-sm focus:border-emerald-600 focus:outline-none"
       >
-        {OPTIONS.map((opt) => (
+        {DATE_RANGE_OPTIONS.map((opt) => (
           <option key={opt.value} value={opt.value}>
             {opt.label}
           </option>

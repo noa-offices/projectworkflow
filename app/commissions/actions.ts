@@ -302,5 +302,47 @@ export async function transitionCommission(formData: FormData) {
 
   revalidatePath(returnPath);
   revalidatePath("/commissions");
-  commissionRedirect(returnPath, "Commission status updated.");
+  commissionRedirect(
+    returnPath,
+    targetStatus === "pending_approval" ? "Commission submitted for approval." : "Commission status updated.",
+  );
+}
+
+export async function recordCommissionUserEvent(formData: FormData) {
+  const { user, profile } = await requireCommissionViewer();
+  const commissionId = textValue(formData, "commission_id");
+  const action = textValue(formData, "event_action");
+  const returnPath = commissionId ? `/commissions/${commissionId}` : "/commissions";
+
+  if (profile?.role !== "sales_designer" || !user.id || !commissionId) {
+    commissionRedirect(returnPath, "You do not have permission to perform this commission action.", "error");
+  }
+
+  if (![
+    "commission_approval_reminder_sent",
+    "commission_payment_update_requested",
+    "commission_sales_manager_note_added",
+  ].includes(action)) {
+    commissionRedirect(returnPath, "Commission action is invalid.", "error");
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("record_sales_commission_user_event", {
+    p_action: action,
+    p_commission_id: commissionId,
+    p_note: optionalText(formData, "note"),
+  });
+
+  if (error) {
+    commissionRedirect(returnPath, rpcErrorMessage(error, "Commission action could not be completed."), "error");
+  }
+
+  const successMessage = action === "commission_approval_reminder_sent"
+    ? "Approval reminder sent."
+    : action === "commission_payment_update_requested"
+      ? "Payment update requested."
+      : "Note added.";
+  revalidatePath(returnPath);
+  revalidatePath("/commissions");
+  commissionRedirect(returnPath, successMessage);
 }
