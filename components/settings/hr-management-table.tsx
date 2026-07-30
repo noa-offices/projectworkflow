@@ -99,11 +99,11 @@ function SummaryCard({
   value: number;
 }) {
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
+    <div className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm sm:p-4">
+      <p className="text-[10px] font-semibold uppercase leading-4 tracking-[0.12em] text-zinc-500 sm:text-xs sm:tracking-[0.16em]">
         {label}
       </p>
-      <p className={`mt-3 text-3xl font-semibold tracking-tight ${tone}`}>
+      <p className={`mt-2 text-2xl font-semibold tracking-tight sm:mt-3 sm:text-3xl ${tone}`}>
         {value}
       </p>
     </div>
@@ -213,8 +213,8 @@ function HrRow({
 
   if (isEditing) {
     return (
-      <tr className="bg-emerald-50/40">
-        <td colSpan={5} className="px-5 py-4">
+      <tr className="block rounded-lg border border-emerald-100 bg-emerald-50/40 lg:table-row lg:border-0">
+        <td colSpan={5} className="block px-4 py-4 lg:table-cell lg:px-5">
           <div className="space-y-4">
             {/* Identity header */}
             <div className="flex items-center gap-3">
@@ -386,9 +386,9 @@ function HrRow({
 
   return (
     <>
-    <tr className="hover:bg-zinc-50">
+    <tr className="grid grid-cols-[minmax(0,1fr)_auto] items-center rounded-lg border border-zinc-200 hover:bg-zinc-50 lg:table-row lg:border-0">
       {/* Staff Member */}
-      <td className="px-5 py-3">
+      <td className="min-w-0 px-3 py-3 lg:px-5">
         <div className="flex items-center gap-3">
           <ResolvedAvatar
             path={profile.avatar_url}
@@ -412,7 +412,8 @@ function HrRow({
       </td>
 
       {/* Leave Balance */}
-      <td className="px-5 py-3 text-sm">
+      <td className="px-3 py-3 text-right text-sm lg:px-5 lg:text-left">
+        <span className="block text-[10px] font-semibold uppercase text-zinc-400 lg:hidden">Balance</span>
         {balance === null ? (
           <span className="text-zinc-400">—</span>
         ) : (
@@ -423,17 +424,17 @@ function HrRow({
       </td>
 
       {/* Emirates ID Expiry */}
-      <td className={`whitespace-nowrap px-5 py-3 text-sm ${expiryColorClass(hr?.emirates_id_expiry ?? null)}`}>
+      <td className={`hidden whitespace-nowrap px-5 py-3 text-sm lg:table-cell ${expiryColorClass(hr?.emirates_id_expiry ?? null)}`}>
         {formatDateDisplay(hr?.emirates_id_expiry ?? null)}
       </td>
 
       {/* Passport Expiry */}
-      <td className={`whitespace-nowrap px-5 py-3 text-sm ${expiryColorClass(hr?.passport_expiry ?? null)}`}>
+      <td className={`hidden whitespace-nowrap px-5 py-3 text-sm lg:table-cell ${expiryColorClass(hr?.passport_expiry ?? null)}`}>
         {formatDateDisplay(hr?.passport_expiry ?? null)}
       </td>
 
       {/* Actions */}
-      <td className="px-5 py-3 text-right">
+      <td className="col-span-2 px-3 pb-3 text-left lg:table-cell lg:px-5 lg:py-3 lg:text-right">
         <div className="inline-flex items-center gap-2">
           <button
             type="button"
@@ -505,7 +506,7 @@ export function HrManagementTable({ hrData, leaveRequests, profiles }: HrManagem
   return (
     <div className="grid gap-5">
       {/* Summary cards */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <SummaryCard label="Total Staff" tone="text-zinc-950" value={profiles.length} />
         <SummaryCard
           label="Emirates ID Expiring"
@@ -526,11 +527,11 @@ export function HrManagementTable({ hrData, leaveRequests, profiles }: HrManagem
 
       {/* Table section */}
       <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
-        <div className="border-b border-zinc-200 px-5 py-4">
+        <div className="border-b border-zinc-200 px-4 py-3 sm:px-5 sm:py-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-zinc-950">Staff HR Records</h2>
-              <p className="mt-1 text-sm text-zinc-500">
+              <p className="mt-1 hidden text-sm text-zinc-500 lg:block">
                 Manage leave balances, document expiry dates, and emergency contacts.
               </p>
             </div>
@@ -548,9 +549,9 @@ export function HrManagementTable({ hrData, leaveRequests, profiles }: HrManagem
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] divide-y divide-zinc-200 text-left text-sm">
-            <thead className="bg-zinc-50 text-xs uppercase tracking-[0.16em] text-zinc-500">
+        <div className="lg:overflow-x-auto">
+          <table className="block w-full text-left text-sm lg:table lg:min-w-[760px]">
+            <thead className="hidden bg-zinc-50 text-xs uppercase tracking-[0.16em] text-zinc-500 lg:table-header-group">
               <tr>
                 <th className="px-5 py-3 font-semibold">Staff Member</th>
                 <th className="px-5 py-3 font-semibold">Leave Balance</th>
@@ -559,7 +560,7 @@ export function HrManagementTable({ hrData, leaveRequests, profiles }: HrManagem
                 <th className="px-5 py-3 font-semibold">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-100">
+            <tbody className="grid gap-3 p-3 lg:table-row-group lg:p-0">
               {filteredProfiles.map((profile) => (
                 <HrRow
                   key={profile.id}
@@ -569,8 +570,8 @@ export function HrManagementTable({ hrData, leaveRequests, profiles }: HrManagem
                 />
               ))}
               {!filteredProfiles.length ? (
-                <tr>
-                  <td colSpan={5} className="px-5 py-10 text-center text-zinc-500">
+                <tr className="block lg:table-row">
+                  <td colSpan={5} className="block px-5 py-10 text-center text-zinc-500 lg:table-cell">
                     No staff members match the current search.
                   </td>
                 </tr>

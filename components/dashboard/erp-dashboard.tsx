@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import {
   AlertTriangle,
   BadgeCheck,
@@ -84,6 +84,16 @@ export function ERPDashboard({
   const [expandedOrderNo, setExpandedOrderNo] = useState<string | null>(null);
   const [expandedActivity, setExpandedActivity] = useState<ActivityEntry[] | null>(null);
   const [activityLoading, setActivityLoading] = useState(false);
+
+  function handleAttentionNavigation(event: MouseEvent<HTMLAnchorElement>) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+    window.requestAnimationFrame(() => {
+      const target = document.getElementById("attention-required");
+      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+      target?.focus({ preventScroll: true });
+    });
+  }
 
   // ── KPI sparkline data ───────────────────────────────────────────────────
   const attentionCount = stats.pendingQuotations + (hrAlerts?.length ?? 0);
@@ -195,9 +205,14 @@ export function ERPDashboard({
     <div className="grid gap-5 px-4 py-5 sm:px-6 lg:px-8">
 
       {/* ── KPI Row ─────────────────────────────────────────────────────── */}
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
         {kpis.map((kpi) => (
-          <Link key={kpi.label} href={kpi.href} className="group">
+          <Link
+            key={kpi.label}
+            href={kpi.href}
+            className="group"
+            onClick={kpi.href === "#attention-required" ? handleAttentionNavigation : undefined}
+          >
             <KPIWidget
               label={kpi.label}
               value={kpi.value}
@@ -211,7 +226,11 @@ export function ERPDashboard({
         ))}
       </section>
 
-      <section id="attention-required" className="grid gap-4 lg:grid-cols-2">
+      <section
+        id="attention-required"
+        tabIndex={-1}
+        className="scroll-mt-5 grid gap-4 rounded-lg outline-none transition target:ring-2 target:ring-amber-400 target:ring-offset-2 2xl:grid-cols-2"
+      >
         <DashboardCard className="overflow-hidden">
           <div className="border-b border-zinc-100 px-4 py-3">
             <p className="text-sm font-semibold text-zinc-950">Attention Required</p>
@@ -223,7 +242,7 @@ export function ERPDashboard({
                 <Link
                   key={item.label}
                   href={item.href}
-                  className="flex items-center gap-3 px-4 py-3 transition hover:bg-zinc-50"
+                  className="flex items-center gap-3 px-4 py-3 transition hover:bg-zinc-50 focus-visible:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-600"
                 >
                   <span className={`rounded-md px-2 py-1 text-xs font-semibold ${item.tone}`}>
                     {item.count}
@@ -243,7 +262,7 @@ export function ERPDashboard({
             <p className="text-sm font-semibold text-zinc-950">Quotation Workflow</p>
             <p className="mt-0.5 text-xs text-zinc-500">Latest active quotation in each folder.</p>
           </div>
-          <div className="grid grid-cols-2 divide-x divide-y divide-zinc-100 sm:grid-cols-4 sm:divide-y-0">
+          <div className="grid grid-cols-1 divide-y divide-zinc-100 sm:grid-cols-4 sm:divide-x sm:divide-y-0">
             {workflowStages.map((stage) => (
               <Link
                 key={stage.status}
@@ -259,21 +278,21 @@ export function ERPDashboard({
       </section>
 
       {/* ── Main content + sidebar ────────────────────────────────────────── */}
-      <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_360px]">
 
         <div className="grid gap-5">
 
           {/* ── Module shortcuts ──────────────────────────────────────────── */}
           <section>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Quick Actions</p>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
               {quickActions.map((action) => {
                 const Icon = action.icon;
                 return (
                   <Link
                     key={action.label}
                     href={action.href}
-                    className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 shadow-sm transition hover:border-emerald-300 hover:text-emerald-800"
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 shadow-sm transition hover:border-emerald-300 hover:text-emerald-800 sm:justify-start"
                   >
                     <Icon className="h-4 w-4" aria-hidden="true" />
                     {action.label}
@@ -285,7 +304,7 @@ export function ERPDashboard({
 
           {/* ── Active Project Pipeline ──────────────────────────────────── */}
           <DashboardCard className="overflow-hidden">
-            <div className="flex items-center justify-between gap-4 border-b border-zinc-100 px-4 py-3">
+            <div className="flex flex-col items-stretch gap-3 border-b border-zinc-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
               <div>
                 <p className="text-sm font-semibold text-zinc-950">Recent Work</p>
                 <p className="mt-0.5 text-xs text-zinc-500">
@@ -298,17 +317,43 @@ export function ERPDashboard({
                 placeholder="Filter orders…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-8 w-40 rounded-md border border-zinc-200 bg-white px-3 text-xs text-zinc-900 placeholder-zinc-400 focus:border-emerald-600 focus:outline-none"
+                className="h-8 w-full rounded-md border border-zinc-200 bg-white px-3 text-xs text-zinc-900 placeholder-zinc-400 focus:border-emerald-600 focus:outline-none sm:w-40"
               />
             </div>
 
-            <div className="max-h-[320px] overflow-auto">
+            <div className="sm:max-h-[320px] sm:overflow-auto">
               {filteredProjects.length === 0 ? (
                 <p className="px-4 py-5 text-center text-sm text-zinc-400">
                   {searchQuery ? "No projects match the filter." : "No active projects."}
                 </p>
               ) : (
-                <table className="w-full min-w-[480px] table-fixed border-collapse text-left text-sm">
+                <>
+                  <div className="divide-y divide-zinc-100 sm:hidden">
+                    {filteredProjects.map((project) => {
+                      const isExpanded = expandedOrderNo === project.orderNo;
+                      return (
+                        <button
+                          key={project.orderNo}
+                          type="button"
+                          aria-expanded={isExpanded}
+                          onClick={() => handleRowClick(project.orderNo)}
+                          className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors ${
+                            isExpanded ? "bg-emerald-50" : "hover:bg-zinc-50"
+                          }`}
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-semibold text-zinc-950">{project.orderNo}</span>
+                            <span className="mt-0.5 block truncate text-xs text-zinc-500">{project.clientName}</span>
+                          </span>
+                          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            Active
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <table className="hidden w-full min-w-[480px] table-fixed border-collapse text-left text-sm sm:table">
                   <thead className="sticky top-0 bg-zinc-50 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
                     <tr>
                       <th className="w-[46%] border-b border-zinc-100 px-4 py-2.5">Project ID</th>
@@ -344,7 +389,8 @@ export function ERPDashboard({
                       );
                     })}
                   </tbody>
-                </table>
+                  </table>
+                </>
               )}
             </div>
           </DashboardCard>
@@ -390,7 +436,7 @@ export function ERPDashboard({
         </div>
 
         {/* ── Sidebar ──────────────────────────────────────────────────────── */}
-        <aside className="grid gap-4 xl:content-start">
+        <aside className="grid gap-4 2xl:content-start">
           {canAccessProcurement ? (
             <Link href="/procurement/orders">
               <DashboardCard className="p-4 transition hover:border-blue-200 hover:shadow-md">

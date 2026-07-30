@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useMemo, useState, useTransition } from "react";
+import { ChevronDown, ChevronRight, SlidersHorizontal } from "lucide-react";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
 import {
@@ -169,6 +170,7 @@ export function QuotationListLiveFilter({
   const [selectedClientId, setSelectedClientId] = useState(initialFilters?.client ?? "");
   const [selectedProjectId, setSelectedProjectId] = useState(initialFilters?.project ?? "");
   const [selectedYear, setSelectedYear] = useState(initialFilters?.year ?? "");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [archivingKey, setArchivingKey] = useState<string | null>(null);
   const [isRefreshing, startRefreshTransition] = useTransition();
@@ -438,7 +440,25 @@ export function QuotationListLiveFilter({
         </div>
       ) : null}
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+      <button
+        type="button"
+        aria-controls="quotation-list-filters"
+        aria-expanded={filtersOpen}
+        onClick={() => setFiltersOpen((current) => !current)}
+        className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 shadow-sm transition hover:border-emerald-900/25 hover:text-emerald-900 lg:hidden"
+      >
+        <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+        Filters
+        <ChevronDown
+          className={`h-4 w-4 transition ${filtersOpen ? "rotate-180" : ""}`}
+          aria-hidden="true"
+        />
+      </button>
+
+      <section
+        id="quotation-list-filters"
+        className={`${filtersOpen ? "mt-2 block" : "hidden"} rounded-lg border border-zinc-200 bg-white p-4 shadow-sm lg:mt-0 lg:block lg:p-5`}
+      >
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.4fr_1fr_1fr_1fr_1fr_auto]">
           <label className="block">
             <span className="text-xs font-semibold uppercase text-zinc-500">Search</span>
@@ -552,12 +572,12 @@ export function QuotationListLiveFilter({
       {children}
 
       <section className="mt-4 rounded-lg border border-zinc-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex items-center justify-between gap-2 px-4 py-3 sm:px-5 sm:py-4">
           <div>
             <h2 className="text-lg font-semibold text-zinc-950">
               {showArchived ? "Archived Folders" : "Quotation folders"}
             </h2>
-            <p className="mt-1 text-sm text-zinc-500">
+            <p className="mt-1 hidden text-sm text-zinc-500 lg:block">
               {showArchived
                 ? "Folders hidden from the default view. Unarchive to restore."
                 : "Folder-first view for originals, revisions, options, and builder access."}
@@ -579,7 +599,7 @@ export function QuotationListLiveFilter({
         ) : null}
 
         {/* ── Mobile cards ────────────────────────────────────────── */}
-        <div className="grid gap-3 px-5 pb-5 pt-1 lg:hidden">
+        <div className="divide-y divide-zinc-100 border-t border-zinc-100 lg:hidden">
           {filteredFolders.map((folder) => {
             const quotation = folder.latestQuotation;
 
@@ -587,89 +607,19 @@ export function QuotationListLiveFilter({
               <article
                 key={folder.key}
                 aria-label={`Open ${folder.folderNo ?? folder.projectName}`}
-                className="cursor-pointer rounded-lg border border-zinc-200 bg-zinc-50 p-4 transition hover:border-emerald-900/25 hover:bg-emerald-50/30"
+                className="flex cursor-pointer items-center gap-3 px-4 py-3 transition hover:bg-emerald-50/30 focus-visible:bg-emerald-50/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-700"
                 onClick={() => openFolder(quotation.id)}
                 onKeyDown={(event) => handleFolderRowKeyDown(event, quotation.id)}
                 role="link"
                 tabIndex={0}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold uppercase text-zinc-500">Folder No</p>
-                    <h3 className="mt-1 text-base font-semibold text-zinc-950">
-                      {folder.folderNo ?? "Legacy"}
-                    </h3>
-                    <p className="mt-2 text-sm text-zinc-600">{folder.clientName}</p>
-                    <p className="mt-1 line-clamp-2 text-sm text-zinc-500">{folder.projectName}</p>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <p className="text-xs font-semibold uppercase text-zinc-500">Total</p>
-                    <p className="mt-1 text-sm font-semibold text-zinc-950">
-                      {formatQuotationMoney(quotation.currency, quotation.grand_total)}
-                    </p>
-                  </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="truncate text-sm font-semibold text-zinc-950">
+                    {folder.folderNo ?? "Legacy"}
+                  </h3>
+                  <p className="mt-0.5 truncate text-sm text-zinc-500">{folder.projectName}</p>
                 </div>
-                <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
-                  <div>
-                    <p className="text-xs font-semibold uppercase text-zinc-500">Latest quotation</p>
-                    <p className="mt-1 font-medium text-zinc-950">{quotation.quotation_no ?? quotation.legacy_reference ?? "-"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase text-zinc-500">Status</p>
-                    <span className={`mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${quotationListStatusBadgeClassName(quotation)}`}>
-                      {quotationListStatusLabel(quotation)}
-                    </span>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase text-zinc-500">Quotes</p>
-                    <p className="mt-1 text-zinc-700">
-                      {folder.activeCount} active / {folder.archivedCount} archived
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase text-zinc-500">Last updated</p>
-                    <p className="mt-1 text-zinc-700">{formatListDate(quotation.quotation_date)}</p>
-                  </div>
-                </div>
-                {canDeleteFolders ? (
-                <details
-                  className="relative mt-4 inline-block"
-                  onClick={(event) => event.stopPropagation()}
-                  onKeyDown={(event) => event.stopPropagation()}
-                >
-                  <summary className="inline-flex h-9 cursor-pointer list-none items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
-                    Actions <span aria-hidden="true">&#9662;</span>
-                  </summary>
-                  <div className="absolute left-0 z-20 mt-2 grid min-w-44 gap-1 rounded-md border border-zinc-200 bg-white p-2 shadow-lg">
-                    <button
-                      type="button"
-                      disabled={archivingKey === folder.key}
-                      onClick={() => handleFolderArchive(folder.key, folder.archiveAnchorId, !folder.isFolderArchived)}
-                      className="rounded-md px-3 py-2 text-left text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-400"
-                    >
-                      {archivingKey === folder.key ? "..." : folder.isFolderArchived ? "Unarchive" : "Archive"}
-                    </button>
-                    {
-                      folder.isFolderDeletable ? (
-                        <button
-                          type="button"
-                          onClick={() => openDeleteModal(folder)}
-                          className="rounded-md px-3 py-2 text-left text-sm font-semibold text-red-600 transition hover:bg-red-50"
-                        >
-                          Delete
-                        </button>
-                      ) : (
-                        <span
-                          title={folder.deleteBlockReason ?? undefined}
-                          className="cursor-not-allowed rounded-md px-3 py-2 text-sm font-semibold text-zinc-400 select-none"
-                        >
-                          Delete
-                        </span>
-                      )
-                    }
-                  </div>
-                </details>
-                ) : null}
+                <ChevronRight className="h-4 w-4 shrink-0 text-zinc-400" aria-hidden="true" />
               </article>
             );
           })}

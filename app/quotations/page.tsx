@@ -235,9 +235,9 @@ export default async function QuotationsPage({ searchParams }: QuotationsPagePro
       userAvatarUrl={profile?.avatar_url ?? null}
       userRole={profile?.role ?? null}
     >
-      <div className="px-5 py-6 sm:px-8">
-        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-zinc-500">
+      <div className="px-4 py-4 sm:px-8 sm:py-6">
+        <div className="mb-3 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-center sm:justify-between">
+          <p className="hidden text-sm text-zinc-500 sm:block">
             Open a folder to review numbers, documents, revisions, options, and builder actions.
           </p>
           {message ? (

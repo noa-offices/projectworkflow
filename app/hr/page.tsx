@@ -120,7 +120,8 @@ export default async function HrManagementPage({ searchParams }: HrPageProps) {
       userAvatarUrl={profile?.avatar_url ?? null}
       userRole={profile?.role ?? null}
     >
-      <div className="px-5 py-6 sm:px-8">
+      <div className="px-4 py-4 sm:px-8 sm:py-6">
+        <p className="mb-3 text-sm text-zinc-500 lg:hidden">Manage staff leave and documents.</p>
         <Link
           href="/settings"
           className="mb-5 inline-flex text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"

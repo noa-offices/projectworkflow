@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import type { AppRole } from "@/lib/supabase/types";
 import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
@@ -22,6 +22,7 @@ import {
   HardHat,
   Layers,
   LayoutDashboard,
+  Menu,
   Package,
   Settings,
   ShieldCheck,
@@ -33,6 +34,7 @@ import {
   User,
   Users,
   Users2,
+  X,
 } from "lucide-react";
 
 type SidebarItem = {
@@ -348,6 +350,16 @@ export function ErpSidebar({
   );
   const activeSectionTitle = sections.find((section) => section.items.some((item) => item.active))?.title;
   const [expandedSections, setExpandedSections] = useState<Set<string>>(() => new Set(["Workspace"]));
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileOpen]);
 
   function isSectionExpanded(title: string) {
     return title === activeSectionTitle || expandedSections.has(title);
@@ -366,7 +378,58 @@ export function ErpSidebar({
   }
 
   return (
-    <aside className="flex flex-col border-b border-zinc-200 bg-white lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r">
+    <>
+      <header className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b border-zinc-200 bg-white px-3 lg:hidden">
+        <button
+          type="button"
+          aria-controls="erp-navigation"
+          aria-expanded={mobileOpen}
+          aria-label="Open navigation"
+          onClick={() => setMobileOpen(true)}
+          className="rounded-md border border-zinc-200 bg-white p-1.5 text-zinc-700"
+        >
+          <Menu className="h-5 w-5" aria-hidden="true" />
+        </button>
+        <Link href="/dashboard" className="flex min-w-0 items-center gap-2">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-900 text-xs font-bold text-white">
+            PW
+          </span>
+          <span className="hidden truncate text-sm font-semibold text-zinc-950 sm:block">
+            ProjectWorkflow
+          </span>
+        </Link>
+        <div className="ml-auto flex items-center gap-1.5">
+          <Link href="/settings/profile" aria-label="My profile" className="rounded-full">
+            <ResolvedAvatar
+              path={userAvatarUrl ?? null}
+              alt={userDisplayName ?? "Profile"}
+              className="h-8 w-8 rounded-full object-cover"
+              fallback={
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-100">
+                  <User className="h-4 w-4 text-zinc-500" aria-hidden="true" />
+                </span>
+              }
+            />
+          </Link>
+        </div>
+      </header>
+
+      {mobileOpen ? (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={() => setMobileOpen(false)}
+          className="fixed inset-0 z-40 bg-zinc-950/40 lg:hidden"
+        />
+      ) : null}
+
+      <aside
+        id="erp-navigation"
+        onClickCapture={(event) => {
+          if (event.target instanceof Element && event.target.closest("a")) setMobileOpen(false);
+        }}
+        className={`fixed inset-y-0 left-0 z-50 flex w-[min(20rem,calc(100vw-3rem))] flex-col border-r border-zinc-200 bg-white shadow-xl transition-transform duration-200 lg:sticky lg:top-0 lg:z-auto lg:h-screen lg:w-auto lg:translate-x-0 lg:border-b-0 lg:shadow-none ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
+      >
       <div className="flex items-center gap-3 border-b border-zinc-200 px-5 py-5">
         <span className="flex h-10 w-10 items-center justify-center rounded-md bg-emerald-900 text-sm font-bold text-white">
           PW
@@ -375,6 +438,14 @@ export function ErpSidebar({
           <p className="text-sm font-semibold text-zinc-950">ProjectWorkflow</p>
           <p className="text-xs text-zinc-500">ERP Command Center</p>
         </div>
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={() => setMobileOpen(false)}
+          className="ml-auto rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 lg:hidden"
+        >
+          <X className="h-5 w-5" aria-hidden="true" />
+        </button>
       </div>
       <div className="flex-1 overflow-y-auto grid content-start gap-6 px-3 py-5">
         {sections.map((section) => {
@@ -452,6 +523,7 @@ export function ErpSidebar({
           </div>
         </Link>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

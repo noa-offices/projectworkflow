@@ -34,7 +34,7 @@ export function DateRangeSelector({
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-end gap-2">
+    <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
       <select
         value={mode}
         onChange={(event) => {

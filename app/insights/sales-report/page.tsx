@@ -276,7 +276,7 @@ function SalesTeamPerformanceTable({
         <p className="p-6 text-center text-sm text-zinc-400">No sales activity in this period.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
+          <table className="w-full min-w-[760px] text-left text-sm">
             <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
               <tr>
                 <th className="px-4 py-2.5 font-medium">Sales person</th>
@@ -708,10 +708,10 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
       userAvatarUrl={profile?.avatar_url ?? null}
       userRole={profile?.role ?? null}
     >
-      <div className="px-5 py-5 sm:px-8">
+      <div className="px-4 py-5 sm:px-6 lg:px-8">
 
         {/* ── Filter bar ──────────────────────────────────────────────────── */}
-        <div className="mb-5 flex items-center justify-between gap-4">
+        <div className="mb-5 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <p className="text-xs text-zinc-500">
             Showing <span className="font-semibold text-zinc-700">{rangeLabel.toLowerCase()}</span>
             {" "}vs. prior equivalent period
@@ -724,13 +724,13 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
         </div>
 
         {/* ── Two-column grid ──────────────────────────────────────────────── */}
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_300px]">
 
           {/* ── LEFT COLUMN ──────────────────────────────────────────────── */}
           <div className="grid gap-5">
 
             {/* KPI strip — 4 individual tiles */}
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
 
               {/* Tile 1: Total Quotes */}
               <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
@@ -820,7 +820,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
           </div>
 
           {/* ── RIGHT COLUMN: Leaderboard (sticky on desktop) ─────────────── */}
-          <aside className="xl:sticky xl:top-4 xl:self-start">
+          <aside className="2xl:sticky 2xl:top-4 2xl:self-start">
             <SalesLeaderboard rows={leaderboardRows} rangeLabel={rangeLabel} />
           </aside>
         </div>
@@ -836,10 +836,10 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                   : "Role-aware contribution for all active users in the selected period."}
               </p>
             </div>
-            <div className="flex gap-1 border-b border-zinc-100 bg-zinc-50 px-5 py-2 text-xs font-semibold">
+            <div className="flex gap-1 overflow-x-auto border-b border-zinc-100 bg-zinc-50 px-5 py-2 text-xs font-semibold">
               <Link
                 href={reportHref({ teamView: "contribution" })}
-                className={`rounded-md px-3 py-1.5 ${
+                className={`shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 ${
                   teamView === "contribution"
                     ? "bg-white text-emerald-800 shadow-sm"
                     : "text-zinc-500 hover:text-zinc-800"
@@ -849,7 +849,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
               </Link>
               <Link
                 href={reportHref({ teamView: "commercial" })}
-                className={`rounded-md px-3 py-1.5 ${
+                className={`shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 ${
                   teamView === "commercial"
                     ? "bg-white text-emerald-800 shadow-sm"
                     : "text-zinc-500 hover:text-zinc-800"
@@ -859,7 +859,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
               </Link>
             </div>
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-zinc-200 text-sm">
+              <table className="w-full min-w-[980px] divide-y divide-zinc-200 text-sm">
                 <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
                   {teamView === "commercial" ? (
                     <tr>
@@ -972,7 +972,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
             {/* ── User detail panel ── */}
             {selectedUserStats && selectedUserInfo ? (
               <div className="border-t border-emerald-200 bg-emerald-50/30 p-5">
-                <div className="mb-4 flex items-center justify-between gap-4">
+                <div className="mb-4 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                   <div className="flex min-w-0 items-center gap-3">
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-900 text-sm font-semibold text-white">
                       {selectedUserInfo.displayName
@@ -994,14 +994,14 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                   </div>
                   <Link
                     href={reportHref()}
-                    className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
+                    className="self-start rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 sm:self-auto"
                   >
                     Close ×
                   </Link>
                 </div>
 
                 {/* Stat cards */}
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-4">
                   <div className="rounded-lg border border-zinc-200 bg-white p-3">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
                       {selectedUsesOperationalAttribution
@@ -1196,7 +1196,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                     </p>
                   ) : (
                     <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-zinc-100 text-sm">
+                      <table className="w-full min-w-[720px] divide-y divide-zinc-100 text-sm">
                         <thead>
                           <tr className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
                             <th className="px-4 py-2.5">No.</th>

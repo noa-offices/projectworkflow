@@ -130,7 +130,7 @@ export function NotificationBell() {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg">
+        <div className="absolute right-0 top-full z-50 mt-2 w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg">
           <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-2.5">
             <p className="text-sm font-semibold text-zinc-950">Notifications</p>
             {count > 0 && (

@@ -162,7 +162,7 @@ export function SalesPerformanceCharts({
   perRepData: RepSeriesData[];
 }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="grid gap-3 xl:grid-cols-2">
       <div className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
           Monthly Client Approved Value
