@@ -19,21 +19,25 @@ import {
   DollarSign,
   FileText,
   FolderKanban,
+  HardHat,
   Layers,
   LayoutDashboard,
   Package,
   Settings,
+  ShieldCheck,
   ShoppingCart,
   SlidersHorizontal,
   Tag,
   TrendingUp,
   Truck,
   User,
+  Users,
   Users2,
 } from "lucide-react";
 
 type SidebarItem = {
   active?: boolean;
+  children?: SidebarItem[];
   disabled?: boolean;
   hidden?: boolean;
   href?: string;
@@ -78,11 +82,15 @@ function isNotificationsActive(pathname: string) {
 }
 
 function isSettingsActive(pathname: string) {
-  return pathname === "/settings" || pathname.startsWith("/settings/");
+  return pathname === "/settings" || pathname.startsWith("/settings/") || isHrActive(pathname);
 }
 
 function isHrActive(pathname: string) {
   return pathname === "/hr" || pathname.startsWith("/hr/");
+}
+
+function isRouteActive(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 function isProcurementRfqActive(pathname: string) {
@@ -232,6 +240,8 @@ export function ErpSidebar({
         role === "system_owner" || role === "admin_manager" || role === "sales_designer";
       const canViewCommissionSettings =
         role === "system_owner" || role === "admin_manager";
+      const canManagePeople = role === "system_owner" || role === "admin_manager";
+      const isSystemOwner = role === "system_owner";
       return [
       {
         title: "Workspace",
@@ -313,20 +323,22 @@ export function ErpSidebar({
         title: "System",
         iconColors: { bg: "bg-zinc-100", icon: "text-zinc-500" },
         items: [
-          { label: "Settings", href: "/settings", icon: Settings, active: isSettingsActive(pathname), hidden: role === "viewer" },
           {
-            label: "Commission Settings",
-            href: "/settings/commissions",
-            icon: BadgeDollarSign,
-            active: pathname === "/settings/commissions",
-            hidden: !canViewCommissionSettings,
-          },
-          {
-            label: "HR Management",
-            href: "/hr",
-            icon: Users2,
-            active: isHrActive(pathname),
-            hidden: role !== "system_owner" && role !== "admin_manager",
+            label: "Settings",
+            href: "/settings",
+            icon: Settings,
+            active: isSettingsActive(pathname),
+            hidden: role === "viewer",
+            children: [
+              { label: "Company Profile", href: "/settings/company", icon: Building2, active: isRouteActive(pathname, "/settings/company") },
+              { label: "Document Defaults", href: "/settings/documents", icon: FileText, active: isRouteActive(pathname, "/settings/documents") },
+              { label: "My Profile", href: "/settings/profile", icon: User, active: isRouteActive(pathname, "/settings/profile") },
+              { label: "User Management", href: "/settings/users", icon: Users, active: isRouteActive(pathname, "/settings/users"), hidden: !isSystemOwner },
+              { label: "HR Management", href: "/hr", icon: Users2, active: isHrActive(pathname), hidden: !canManagePeople },
+              { label: "Worker Directory", href: "/settings/workers", icon: HardHat, active: isRouteActive(pathname, "/settings/workers"), hidden: !canManagePeople },
+              { label: "Role Guide", href: "/settings/roles", icon: ShieldCheck, active: isRouteActive(pathname, "/settings/roles"), hidden: !isSystemOwner },
+              { label: "Commission Settings", href: "/settings/commissions", icon: BadgeDollarSign, active: isRouteActive(pathname, "/settings/commissions"), hidden: !canViewCommissionSettings },
+            ],
           },
         ],
       },
@@ -388,12 +400,24 @@ export function ErpSidebar({
             {isSectionExpanded(section.title) ? (
               <div className="grid gap-1">
                 {section.items.map((item) => (
-                  <NavRow
-                    key={`${section.title}:${item.label}`}
-                    item={item}
-                    iconColors={section.iconColors}
-                    indent={section.title === "Products"}
-                  />
+                  <div key={`${section.title}:${item.label}`} className="grid gap-1">
+                    <NavRow
+                      item={item}
+                      iconColors={section.iconColors}
+                      indent={section.title === "Products"}
+                    />
+                    {!item.hidden && item.active && item.children ? (
+                      <div className="grid gap-0.5 border-l border-zinc-200 pl-1">
+                        {item.children.map((child) => (
+                          <NavRow
+                            key={`${item.label}:${child.label}`}
+                            item={child}
+                            indent
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 ))}
               </div>
             ) : null}

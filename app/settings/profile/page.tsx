@@ -206,6 +206,7 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
       eyebrow="SYSTEM"
       title="My Profile"
       description="Review your account details and keep your contact information up to date."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
       userAvatarUrl={profile?.avatar_url ?? null}

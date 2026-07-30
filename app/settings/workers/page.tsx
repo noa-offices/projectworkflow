@@ -46,6 +46,7 @@ export default async function WorkersPage({ searchParams }: WorkersPageProps) {
       eyebrow="SYSTEM"
       title="Workers Directory"
       description="Manage field staff records and document expiry."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
       userAvatarUrl={profile?.avatar_url ?? null}

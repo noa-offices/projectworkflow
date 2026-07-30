@@ -34,6 +34,7 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
       eyebrow="SYSTEM"
       title="User Management"
       description="Approve users, manage roles, and control account access."
+      role={profile?.role ?? null}
       userDisplayName={displayName}
       userEmail={user.email}
       userAvatarUrl={profile?.avatar_url ?? null}
