@@ -21,6 +21,21 @@ function redirectWithMessage(path: string, message: string): never {
   redirect(`${path}?message=${encodeURIComponent(message)}`);
 }
 
+type PasswordResetResult =
+  | "success"
+  | "invalid_email"
+  | "rate_limited"
+  | "provider_failure"
+  | "unexpected_failure";
+
+function redirectPasswordReset(result: PasswordResetResult): never {
+  redirect(`/forgot-password?result=${result}`);
+}
+
+function validEmail(value: string) {
+  return value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 export async function login(formData: FormData) {
   const email = formValue(formData, "email");
   const password = formValue(formData, "password");
@@ -118,18 +133,58 @@ export async function signOut() {
 export async function requestPasswordReset(formData: FormData) {
   const email = formValue(formData, "email");
 
-  if (!email) {
-    redirect("/forgot-password?message=Email+is+required&type=error");
+  if (!validEmail(email)) {
+    redirectPasswordReset("invalid_email");
   }
 
-  const supabase = await createClient();
-  await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: process.env.NEXT_PUBLIC_SITE_URL + "/auth/callback?next=/reset-password",
-  });
+  let result: PasswordResetResult = "success";
 
-  redirect(
-    "/forgot-password?message=If+that+email+exists+you+will+receive+a+reset+link&type=success",
-  );
+  try {
+    const supabase = await createClient();
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: process.env.NEXT_PUBLIC_SITE_URL + "/auth/callback?next=/reset-password",
+    });
+
+    if (error) {
+      console.error("PASSWORD RESET REQUEST ERROR", {
+        code: error.code,
+        message: error.message,
+        status: error.status,
+      });
+
+      if (
+        error.code === "user_not_found" ||
+        error.code === "email_not_confirmed" ||
+        error.code === "user_banned" ||
+        error.code === "identity_not_found"
+      ) {
+        result = "success";
+      } else if (
+        error.status === 429 ||
+        error.code === "over_request_rate_limit" ||
+        error.code === "over_email_send_rate_limit"
+      ) {
+        result = "rate_limited";
+      } else if (error.code === "email_address_invalid") {
+        result = "invalid_email";
+      } else if (
+        error.code === "email_provider_disabled" ||
+        error.code === "email_address_not_authorized" ||
+        /smtp|send(?:ing)? (?:the )?(?:recovery )?email|email provider/i.test(error.message)
+      ) {
+        result = "provider_failure";
+      } else {
+        result = "unexpected_failure";
+      }
+    }
+  } catch (error) {
+    console.error("PASSWORD RESET REQUEST UNEXPECTED ERROR", {
+      message: error instanceof Error ? error.message : "Unknown error",
+    });
+    result = "unexpected_failure";
+  }
+
+  redirectPasswordReset(result);
 }
 
 export async function updatePassword(formData: FormData) {

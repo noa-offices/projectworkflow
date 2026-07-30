@@ -401,6 +401,7 @@ type PageProps = {
     detailTab?: string;
     from?: string;
     range?: string;
+    teamView?: string;
     to?: string;
     user?: string;
   }>;
@@ -414,6 +415,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
   const resolved = await searchParams;
   const rawRange = resolved?.range;
   const rawUser = resolved?.user;
+  const teamView = resolved?.teamView === "commercial" ? "commercial" : "contribution";
   const rawDetailTab = resolved?.detailTab ?? "quotations";
   const detailTab: StaffDetailTab = (STAFF_DETAIL_TABS as readonly string[]).includes(rawDetailTab)
     ? (rawDetailTab as StaffDetailTab)
@@ -425,6 +427,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
     ? `${new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" }).format(rangeStart)} – ${new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" }).format(rangeEnd)}`
     : DATE_RANGE_OPTIONS.find((option) => option.value === range)?.label ?? "Last 6 months";
   const baseReportParams = new URLSearchParams({ range });
+  baseReportParams.set("teamView", teamView);
   if (hasValidCustomRange && resolved?.from && resolved?.to) {
     baseReportParams.set("from", resolved.from);
     baseReportParams.set("to", resolved.to);
@@ -483,9 +486,20 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
       : null;
 
   const selectedUserInfo = teamStats?.find((m) => m.userId === selectedUserId) ?? null;
+  const visibleTeamStats = teamView === "commercial"
+    ? (teamStats ?? [])
+      .filter((member) => member.role === "sales_designer")
+      .sort((left, right) => right.totalValue - left.totalValue)
+    : teamStats ?? [];
   const selectedUserStats = selectedUserId
-    ? await loadProfileStatsForUser(selectedUserId, teamDateRange)
+    ? await loadProfileStatsForUser(selectedUserId, teamDateRange, selectedUserInfo?.role ?? null)
     : null;
+  const selectedUsesPreparationAttribution = [
+    "sales_coordinator",
+    "designer",
+  ].includes(selectedUserInfo?.role ?? "");
+  const selectedUsesOperationalAttribution = selectedUserInfo?.role !== "sales_designer" &&
+    !selectedUsesPreparationAttribution;
   const selectedRecentActivity = selectedUserStats?.recentActivity ?? [];
   const selectedProductActivity = selectedRecentActivity.filter(
     (entry) =>
@@ -817,24 +831,61 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
             <div className="border-b border-zinc-100 px-5 py-4">
               <h2 className="text-sm font-semibold text-zinc-950">Team Overview</h2>
               <p className="mt-0.5 text-xs text-zinc-400">
-                All active users — quotations created in selected period · Click a row for details
+                {teamView === "commercial"
+                  ? "Commercial ownership for active Sales Managers in the selected period."
+                  : "Role-aware contribution for all active users in the selected period."}
               </p>
+            </div>
+            <div className="flex gap-1 border-b border-zinc-100 bg-zinc-50 px-5 py-2 text-xs font-semibold">
+              <Link
+                href={reportHref({ teamView: "contribution" })}
+                className={`rounded-md px-3 py-1.5 ${
+                  teamView === "contribution"
+                    ? "bg-white text-emerald-800 shadow-sm"
+                    : "text-zinc-500 hover:text-zinc-800"
+                }`}
+              >
+                Team Contribution
+              </Link>
+              <Link
+                href={reportHref({ teamView: "commercial" })}
+                className={`rounded-md px-3 py-1.5 ${
+                  teamView === "commercial"
+                    ? "bg-white text-emerald-800 shadow-sm"
+                    : "text-zinc-500 hover:text-zinc-800"
+                }`}
+              >
+                Commercial Sales Performance
+              </Link>
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-zinc-200 text-sm">
                 <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
-                  <tr>
-                    <th className="px-5 py-3 text-left font-semibold">Team Member</th>
-                    <th className="px-5 py-3 text-left font-semibold">Role</th>
-                    <th className="px-5 py-3 text-right font-semibold">Quotes Created</th>
-                    <th className="px-5 py-3 text-right font-semibold">Client Approved</th>
-                    <th className="px-5 py-3 text-right font-semibold">Win Rate</th>
-                    <th className="px-5 py-3 text-right font-semibold">Total Value</th>
-                    <th className="px-5 py-3 w-8" />
-                  </tr>
+                  {teamView === "commercial" ? (
+                    <tr>
+                      <th className="px-5 py-3 text-left font-semibold">Sales Manager</th>
+                      <th className="px-5 py-3 text-right font-semibold">Owned Quotations</th>
+                      <th className="px-5 py-3 text-right font-semibold">Client Approved</th>
+                      <th className="px-5 py-3 text-right font-semibold">Win Rate</th>
+                      <th className="px-5 py-3 text-right font-semibold">Owned Quoted Value</th>
+                      <th className="px-5 py-3 text-right font-semibold">Client Approved Value</th>
+                      <th className="px-5 py-3 w-8" />
+                    </tr>
+                  ) : (
+                    <tr>
+                      <th className="px-5 py-3 text-left font-semibold">Team Member</th>
+                      <th className="px-5 py-3 text-left font-semibold">Role</th>
+                      <th className="px-5 py-3 text-left font-semibold">Primary Contribution</th>
+                      <th className="px-5 py-3 text-right font-semibold">Records Worked On</th>
+                      <th className="px-5 py-3 text-right font-semibold">Approved / Completed</th>
+                      <th className="px-5 py-3 text-right font-semibold">Contribution Value</th>
+                      <th className="px-5 py-3 text-right font-semibold">Activity Count</th>
+                      <th className="px-5 py-3 w-8" />
+                    </tr>
+                  )}
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
-                  {(teamStats as TeamMemberStat[]).map((member, index) => {
+                  {(visibleTeamStats as TeamMemberStat[]).map((member, index) => {
                     const isSelected = member.userId === selectedUserId;
                     const rowHref = isSelected
                       ? reportHref()
@@ -845,7 +896,7 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                         className={`transition-colors ${
                           isSelected
                             ? "border-l-2 border-emerald-600 bg-emerald-50"
-                            : index === 0
+                            : teamView === "commercial" && index === 0
                             ? "bg-emerald-50/40 hover:bg-zinc-50"
                             : "hover:bg-zinc-50"
                         }`}
@@ -853,38 +904,53 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                         <td className="px-0">
                           <Link href={rowHref} className="block px-5 py-4 font-medium text-zinc-950">
                             {member.displayName}
-                            {index === 0 && (
+                            {teamView === "commercial" && index === 0 && (
                               <span className="ml-2 text-xs text-emerald-700">Top performer</span>
                             )}
                           </Link>
                         </td>
                         <td className="px-0">
-                          <Link href={rowHref} className="block px-5 py-4 text-zinc-500">
-                            {roleLabel(member.role)}
+                          <Link href={rowHref} className={`block px-5 py-4 ${teamView === "commercial" ? "text-right text-zinc-950" : "text-zinc-500"}`}>
+                            {teamView === "commercial" ? member.totalQuotations : roleLabel(member.role)}
+                          </Link>
+                        </td>
+                        <td className="px-0">
+                          <Link href={rowHref} className={`block px-5 py-4 ${teamView === "commercial" ? "text-right" : "text-left"} text-zinc-950`}>
+                            {teamView === "commercial" ? member.approvedQuotations : member.primaryContribution}
                           </Link>
                         </td>
                         <td className="px-0">
                           <Link href={rowHref} className="block px-5 py-4 text-right text-zinc-950">
-                            {member.totalQuotations}
+                            {teamView === "commercial"
+                              ? member.totalQuotations > 0
+                                ? Math.round((member.approvedQuotations / member.totalQuotations) * 100) + "%"
+                                : "—"
+                              : member.recordsWorkedOn}
                           </Link>
                         </td>
                         <td className="px-0">
                           <Link href={rowHref} className="block px-5 py-4 text-right text-zinc-950">
-                            {member.approvedQuotations}
-                          </Link>
-                        </td>
-                        <td className="px-0">
-                          <Link href={rowHref} className="block px-5 py-4 text-right text-zinc-950">
-                            {member.totalQuotations > 0
-                              ? Math.round((member.approvedQuotations / member.totalQuotations) * 100) + "%"
-                              : "—"}
+                            {teamView === "commercial"
+                              ? formatSalesReportAEDMillions(member.totalValue)
+                              : member.approvedCompleted}
                           </Link>
                         </td>
                         <td className="px-0">
                           <Link href={rowHref} className="block px-5 py-4 text-right font-medium text-zinc-950">
-                            {formatSalesReportAEDMillions(member.totalValue)}
+                            {teamView === "commercial"
+                              ? formatSalesReportAEDMillions(member.approvedValue)
+                              : member.contributionValue === null
+                                ? "—"
+                                : formatSalesReportAEDMillions(member.contributionValue)}
                           </Link>
                         </td>
+                        {teamView === "contribution" ? (
+                          <td className="px-0">
+                            <Link href={rowHref} className="block px-5 py-4 text-right text-zinc-950">
+                              {member.activityCount}
+                            </Link>
+                          </td>
+                        ) : null}
                         <td className="px-5 py-4 text-center">
                           {isSelected ? (
                             <Link
@@ -938,26 +1004,46 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                   <div className="rounded-lg border border-zinc-200 bg-white p-3">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                      Quotes Created
+                      {selectedUsesOperationalAttribution
+                        ? "Records Worked On"
+                        : selectedUsesPreparationAttribution
+                        ? "Quotations Prepared"
+                        : selectedUserInfo.role === "sales_designer"
+                          ? "Owned Quotations"
+                          : "Quotes Created"}
                     </p>
                     <p className="mt-1 text-xl font-bold text-zinc-950">
-                      {selectedUserStats.totalQuotations}
+                      {selectedUsesOperationalAttribution
+                        ? selectedUserInfo.recordsWorkedOn
+                        : selectedUserStats.totalQuotations}
                     </p>
                   </div>
                   <div className="rounded-lg border border-zinc-200 bg-white p-3">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                      Client Approved
+                      {selectedUsesOperationalAttribution
+                        ? "Approved / Completed"
+                        : selectedUsesPreparationAttribution
+                        ? "Client Approved Quotations Prepared"
+                        : "Client Approved"}
                     </p>
                     <p className="mt-1 text-xl font-bold text-zinc-950">
-                      {selectedUserStats.approvedQuotations}
+                      {selectedUsesOperationalAttribution
+                        ? selectedUserInfo.approvedCompleted
+                        : selectedUserStats.approvedQuotations}
                     </p>
                   </div>
                   <div className="rounded-lg border border-zinc-200 bg-white p-3">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                      Win Rate
+                      {selectedUsesOperationalAttribution
+                        ? "Activity Count"
+                        : selectedUsesPreparationAttribution
+                        ? "Preparation Success Rate"
+                        : "Win Rate"}
                     </p>
                     <p className="mt-1 text-xl font-bold text-zinc-950">
-                      {selectedUserStats.totalQuotations > 0
+                      {selectedUsesOperationalAttribution
+                        ? selectedUserInfo.activityCount
+                        : selectedUserStats.totalQuotations > 0
                         ? Math.round(
                             (selectedUserStats.approvedQuotations / selectedUserStats.totalQuotations) * 100,
                           ) + "%"
@@ -966,11 +1052,26 @@ export default async function SalesReportPage({ searchParams }: PageProps) {
                   </div>
                   <div className="rounded-lg border border-zinc-200 bg-white p-3">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                      Total Value
+                      {selectedUsesOperationalAttribution
+                        ? "Contribution Value"
+                        : selectedUsesPreparationAttribution
+                        ? "Prepared Quoted Value"
+                        : selectedUserInfo.role === "sales_designer"
+                          ? "Owned Quoted Value"
+                          : "Total Value"}
                     </p>
                     <p className="mt-1 text-xl font-bold text-zinc-950">
-                      {formatSalesReportAEDMillions(selectedUserStats.totalValue)}
+                      {selectedUsesOperationalAttribution
+                        ? selectedUserInfo.contributionValue === null
+                          ? "—"
+                          : formatSalesReportAEDMillions(selectedUserInfo.contributionValue)
+                        : formatSalesReportAEDMillions(selectedUserStats.totalValue)}
                     </p>
+                    {selectedUsesPreparationAttribution ? (
+                      <p className="mt-1 text-[10px] leading-4 text-zinc-400">
+                        Preparation contribution only. Commercial ownership remains with the assigned Sales Manager.
+                      </p>
+                    ) : null}
                   </div>
                 </div>
 

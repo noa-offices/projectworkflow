@@ -55,6 +55,11 @@ type ActivityRow = {
   quotation_no?: string | null;
 };
 
+type PreparationAuditRow = {
+  entity_id: string;
+  created_at: string;
+};
+
 export type ProfileProjectRow = {
   approvedValue: number;
   clientName: string;
@@ -123,8 +128,12 @@ function buildMonthlyBuckets(from: string, to: string): MonthlyData[] {
 }
 
 function isWithinDateRange(quotation: QuotationRow, dateRange: DateRange | null) {
+  return isTimestampWithinDateRange(quotation.created_at, dateRange);
+}
+
+function isTimestampWithinDateRange(value: string, dateRange: DateRange | null) {
   if (dateRange === null) return true;
-  const createdAt = new Date(quotation.created_at).getTime();
+  const createdAt = new Date(value).getTime();
   return (
     createdAt >= new Date(dateRange.from).getTime() &&
     createdAt <= new Date(inclusiveRangeEnd(dateRange)).getTime()
@@ -183,6 +192,78 @@ function commercialProfileStats(
   return {
     approvedQuotations: approved.length,
     currency: quoted[0]?.currency ?? "AED",
+    monthlyData,
+    recentQuotations: quoted.slice(0, 5),
+    totalQuotations: quoted.length,
+    totalValue: quoted.reduce((sum, quotation) => sum + (quotation.grand_total ?? 0), 0),
+  };
+}
+
+function preparationProfileStats(
+  rows: QuotationRow[],
+  preparationAuditRows: PreparationAuditRow[],
+  userId: string,
+  range: DateRange,
+  dateRange: DateRange | null,
+) {
+  const auditCreatedAtByQuotationId = new Map(
+    preparationAuditRows.map((activity) => [activity.entity_id, activity.created_at]),
+  );
+  const rowsByFolder = new Map<string, QuotationRow[]>();
+
+  for (const quotation of rows) {
+    const folderKey = quotationSalesFolderKey(quotation);
+    rowsByFolder.set(folderKey, [...(rowsByFolder.get(folderKey) ?? []), quotation]);
+  }
+
+  const preparedAtByFolder = new Map<string, string>();
+  for (const [folderKey, folderRows] of rowsByFolder) {
+    const initialQuotation = [...folderRows].sort(
+      (left, right) =>
+        new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
+    )[0];
+    const auditCreatedAt = auditCreatedAtByQuotationId.get(initialQuotation.id);
+    const preparedAt = initialQuotation.created_by === userId
+      ? initialQuotation.created_at
+      : initialQuotation.created_by === null
+        ? auditCreatedAt
+        : undefined;
+
+    if (preparedAt && isTimestampWithinDateRange(preparedAt, dateRange)) {
+      preparedAtByFolder.set(folderKey, preparedAt);
+    }
+  }
+
+  const quoted = latestPrimaryQuotationsByFolder(rows)
+    .filter((quotation) => preparedAtByFolder.has(quotationSalesFolderKey(quotation)))
+    .sort(
+      (left, right) =>
+        new Date(preparedAtByFolder.get(quotationSalesFolderKey(right)) ?? 0).getTime() -
+        new Date(preparedAtByFolder.get(quotationSalesFolderKey(left)) ?? 0).getTime(),
+    );
+  const preparedFolderKeys = new Set(quoted.map(quotationSalesFolderKey));
+  const approved = actualApprovedQuotationsByFolder(rows).filter((quotation) =>
+    preparedFolderKeys.has(quotationSalesFolderKey(quotation)),
+  );
+  const approvedFolderKeys = new Set(approved.map(quotationSalesFolderKey));
+  const monthlyData = buildMonthlyBuckets(range.from, range.to);
+
+  for (const quotation of quoted) {
+    const folderKey = quotationSalesFolderKey(quotation);
+    const preparedAt = new Date(preparedAtByFolder.get(folderKey) ?? quotation.created_at);
+    const key = `${preparedAt.getFullYear()}-${String(preparedAt.getMonth() + 1).padStart(2, "0")}`;
+    const bucket = monthlyData.find((month) => month.monthKey === key);
+    if (bucket) {
+      bucket.total++;
+      bucket.value += quotation.grand_total ?? 0;
+      if (approvedFolderKeys.has(folderKey)) bucket.approved++;
+    }
+  }
+
+  return {
+    approvedQuotations: approved.length,
+    currency: quoted[0]?.currency ?? "AED",
+    folderKeys: Array.from(preparedFolderKeys),
     monthlyData,
     recentQuotations: quoted.slice(0, 5),
     totalQuotations: quoted.length,
@@ -513,15 +594,91 @@ type TeamProfileRow = {
   account_status: string | null;
 };
 
+type TeamActivityRow = {
+  id: string;
+  action: string;
+  created_at: string;
+  created_by: string | null;
+  entity_id: string | null;
+  entity_type: string;
+  metadata: Record<string, unknown> | null;
+  parent_entity_id: string | null;
+};
+
 export type TeamMemberStat = {
   userId: string;
   displayName: string;
   role: string | null;
+  primaryContribution: string;
+  recordsWorkedOn: number;
+  approvedCompleted: number;
+  contributionValue: number | null;
+  activityCount: number;
   totalQuotations: number;
   approvedQuotations: number;
   totalValue: number;
+  approvedValue: number;
   currency: string;
 };
+
+function usesPreparationAttribution(role: string | null) {
+  return ["sales_coordinator", "designer", "system_owner", "admin_manager"].includes(role ?? "");
+}
+
+function primaryContributionForRole(role: string | null) {
+  switch (role) {
+    case "sales_designer": return "Sales ownership";
+    case "sales_coordinator": return "Quotation preparation";
+    case "designer": return "Design and quotation support";
+    case "procurement_manager": return "Procurement";
+    case "system_owner": return "System administration";
+    case "admin_manager": return "Administration";
+    case "viewer": return "Read-only";
+    default: return "Operational contribution";
+  }
+}
+
+function activitiesForRole(rows: TeamActivityRow[], role: string | null) {
+  if (role === "sales_designer" || role === "sales_coordinator") {
+    return rows.filter((row) => row.entity_type.startsWith("quotation"));
+  }
+  if (role === "designer") {
+    return rows.filter((row) =>
+      row.entity_type.startsWith("quotation") ||
+      row.entity_type.startsWith("product_template") ||
+      row.entity_type === "brand" ||
+      row.entity_type === "brand_price_list_update",
+    );
+  }
+  if (role === "procurement_manager") {
+    return rows.filter((row) => row.entity_type === "procurement_vendor");
+  }
+  return rows;
+}
+
+function activityMetadataText(row: TeamActivityRow, key: string) {
+  const value = row.metadata?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function activityRecordKey(
+  row: TeamActivityRow,
+  quotationById: Map<string, QuotationRow>,
+) {
+  const quotationId = row.entity_type === "quotation"
+    ? row.entity_id
+    : row.entity_type === "quotation_item" || row.entity_type === "quotation_section"
+      ? row.parent_entity_id
+      : null;
+  const quotation = quotationId ? quotationById.get(quotationId) : null;
+  if (quotation) return `quotation:${quotationSalesFolderKey(quotation)}`;
+
+  const orderNo = activityMetadataText(row, "orderNo");
+  const vendorKey = activityMetadataText(row, "vendorKey");
+  if (orderNo) return `${row.entity_type}:${orderNo}:${vendorKey ?? ""}`;
+  if (row.entity_id) return `${row.entity_type}:${row.entity_id}`;
+  return null;
+}
 
 export async function loadTeamStats(
   dateRange: DateRange | null = null,
@@ -532,12 +689,25 @@ export async function loadTeamStats(
 
   const teamQuotationsQuery = admin
     .from("quotations")
-    .select("id,quotation_no,option_no,revision_no,approved_salesperson_id,salesperson_id,title,status,grand_total,currency,created_at,status_updated_at,layout_settings")
+    .select("id,quotation_no,option_no,revision_no,approved_salesperson_id,salesperson_id,created_by,title,status,grand_total,currency,created_at,status_updated_at,layout_settings")
     .order("created_at", { ascending: false });
+
+  let teamActivityQuery = admin
+    .from("audit_activity_log")
+    .select("id,action,created_at,created_by,entity_id,entity_type,metadata,parent_entity_id")
+    .order("created_at", { ascending: false })
+    .limit(10000);
+
+  if (dateRange !== null) {
+    teamActivityQuery = teamActivityQuery
+      .gte("created_at", dateRange.from)
+      .lte("created_at", inclusiveRangeEnd(dateRange));
+  }
 
   const [
     { data: profileRows, error: profileError },
     { data: quotationRows, error: quotationError },
+    { data: activityRows, error: activityError },
   ] = await Promise.all([
     admin
       .from("profiles")
@@ -546,6 +716,7 @@ export async function loadTeamStats(
       .order("full_name", { ascending: true })
       .returns<TeamProfileRow[]>(),
     teamQuotationsQuery.returns<QuotationRow[]>(),
+    teamActivityQuery.returns<TeamActivityRow[]>(),
   ]);
 
   if (profileError) {
@@ -556,29 +727,96 @@ export async function loadTeamStats(
     console.warn("loadTeamStats: quotations query failed", quotationError.message);
     return null;
   }
+  if (activityError) {
+    console.warn("loadTeamStats: audit activity query failed", activityError.message);
+  }
 
   const quotations = quotationRows ?? [];
+  const quotationById = new Map(quotations.map((quotation) => [quotation.id, quotation]));
 
   const stats: TeamMemberStat[] = (profileRows ?? []).map((profile) => {
     const { approved, quoted } = commercialQuotationRows(quotations, profile.id, dateRange);
+    const profileActivities = ((activityRows ?? []) as TeamActivityRow[]).filter(
+      (activity) => activity.created_by === profile.id,
+    );
+    const relevantActivities = activitiesForRole(profileActivities, profile.role);
+    const preparationStats = preparationProfileStats(
+      quotations,
+      profileActivities
+        .filter((activity) => activity.entity_type === "quotation" && activity.action === "quotation_created")
+        .map((activity) => ({ entity_id: activity.entity_id ?? "", created_at: activity.created_at })),
+      profile.id,
+      dateRange ?? getDateRangePreset("last_6_months"),
+      dateRange,
+    );
     const totalQuotations = quoted.length;
     const approvedQuotations = approved.length;
     const totalValue = quoted.reduce((sum, quotation) => sum + (quotation.grand_total ?? 0), 0);
+    const approvedValue = approved.reduce((sum, quotation) => sum + (quotation.grand_total ?? 0), 0);
     const currency = quoted[0]?.currency ?? "AED";
     const displayName = profile.full_name?.trim() || profile.email?.trim() || "Unknown";
+    const activityRecordKeys = new Set(
+      relevantActivities
+        .map((activity) => activityRecordKey(activity, quotationById))
+        .filter((key): key is string => Boolean(key)),
+    );
+    const contributionRecordKeys = new Set([
+      ...activityRecordKeys,
+      ...preparationStats.folderKeys.map((folderKey) => `quotation:${folderKey}`),
+    ]);
+    const completedRecordKeys = new Set(
+      relevantActivities
+        .filter((activity) => {
+          const stepKey = activityMetadataText(activity, "stepKey");
+          return stepKey === "po_issued" || stepKey === "delivered_installed" ||
+            /approved|completed|confirmed|issued|delivered/i.test(activity.action);
+        })
+        .map((activity) => activityRecordKey(activity, quotationById))
+        .filter((key): key is string => Boolean(key)),
+    );
+    const isCommercial = profile.role === "sales_designer";
+    const isPreparationRole = usesPreparationAttribution(profile.role);
+    const recordsWorkedOn = isCommercial
+      ? totalQuotations
+      : profile.role === "sales_coordinator"
+        ? preparationStats.totalQuotations
+        : contributionRecordKeys.size;
+    const approvedCompleted = isCommercial
+      ? approvedQuotations
+      : profile.role === "sales_coordinator" || profile.role === "designer"
+        ? preparationStats.approvedQuotations
+        : completedRecordKeys.size;
+    const contributionValue = isCommercial
+      ? totalValue
+      : profile.role === "sales_coordinator"
+        ? preparationStats.totalValue
+        : isPreparationRole && preparationStats.totalQuotations > 0
+          ? preparationStats.totalValue
+          : null;
 
     return {
       userId: profile.id,
       displayName,
       role: profile.role,
+      primaryContribution: primaryContributionForRole(profile.role),
+      recordsWorkedOn,
+      approvedCompleted,
+      contributionValue,
+      activityCount: relevantActivities.length,
       totalQuotations,
       approvedQuotations,
       totalValue,
+      approvedValue,
       currency,
     };
   });
 
-  return stats.sort((a, b) => b.totalValue - a.totalValue);
+  return stats.sort(
+    (left, right) =>
+      right.recordsWorkedOn - left.recordsWorkedOn ||
+      right.activityCount - left.activityCount ||
+      left.displayName.localeCompare(right.displayName),
+  );
 }
 
 // ── loadProfileStatsForUser ───────────────────────────────────────────────────
@@ -588,6 +826,7 @@ export async function loadTeamStats(
 export async function loadProfileStatsForUser(
   userId: string,
   dateRange: DateRange | null = null,
+  role: string | null = null,
 ) {
   const adminResult = createAdminClient();
   if (!adminResult.client) return null;
@@ -597,23 +836,22 @@ export async function loadProfileStatsForUser(
 
   const quotationsQuery = admin
     .from("quotations")
-    .select("id,quotation_no,option_no,revision_no,approved_salesperson_id,salesperson_id,title,status,grand_total,currency,created_at,status_updated_at,layout_settings")
+    .select("id,quotation_no,option_no,revision_no,approved_salesperson_id,salesperson_id,created_by,title,status,grand_total,currency,created_at,status_updated_at,layout_settings")
     .order("created_at", { ascending: false });
+
+  let quotationPreparationQuery = admin
+    .from("audit_activity_log")
+    .select("entity_id,created_at")
+    .eq("created_by", userId)
+    .eq("entity_type", "quotation")
+    .eq("action", "quotation_created")
+    .order("created_at", { ascending: true })
+    .limit(1000);
 
   let activityQuery = admin
     .from("audit_activity_log")
     .select("id,action,title,description,entity_type,created_at")
     .eq("created_by", userId)
-    .in("entity_type", [
-      "quotation",
-      "quotation_item",
-      "quotation_section",
-      "product_template",
-      "product_template_price",
-      "product_template_detail_price",
-      "brand",
-      "brand_price_list_update",
-    ])
     .order("created_at", { ascending: false })
     .limit(30);
 
@@ -649,11 +887,15 @@ export async function loadProfileStatsForUser(
     activityQuery = activityQuery
       .gte("created_at", dateRange.from)
       .lte("created_at", inclusiveRangeEnd(dateRange));
+    quotationPreparationQuery = quotationPreparationQuery
+      .gte("created_at", dateRange.from)
+      .lte("created_at", inclusiveRangeEnd(dateRange));
   }
 
   const [
     { data: quotationRows, error: quotationError },
     { data: activityRows, error: activityError },
+    { data: quotationPreparationRows, error: quotationPreparationError },
     clientsCreatedResult,
     quotationItemsAddedResult,
     productTemplatesCreatedResult,
@@ -666,6 +908,7 @@ export async function loadProfileStatsForUser(
   ] = await Promise.all([
     quotationsQuery.returns<QuotationRow[]>(),
     activityQuery.returns<ActivityRow[]>(),
+    quotationPreparationQuery.returns<PreparationAuditRow[]>(),
     clientsCreatedQuery,
     auditCountQuery("quotation_item", ["quotation_item_added"]),
     auditCountQuery("product_template", [
@@ -691,12 +934,26 @@ export async function loadProfileStatsForUser(
   if (activityError) {
     console.warn("loadProfileStatsForUser: audit_activity_log query failed", activityError.message);
   }
+  if (quotationPreparationError) {
+    console.warn(
+      "loadProfileStatsForUser: quotation preparation audit query failed",
+      quotationPreparationError.message,
+    );
+  }
 
   function countOrNull(result: { count: number | null; error: { message: string } | null }) {
     return result.error ? null : result.count ?? 0;
   }
 
-  const stats = commercialProfileStats(quotationRows ?? [], userId, range, dateRange);
+  const stats = usesPreparationAttribution(role)
+    ? preparationProfileStats(
+      quotationRows ?? [],
+      quotationPreparationRows ?? [],
+      userId,
+      range,
+      dateRange,
+    )
+    : commercialProfileStats(quotationRows ?? [], userId, range, dateRange);
 
   return {
     ...stats,
