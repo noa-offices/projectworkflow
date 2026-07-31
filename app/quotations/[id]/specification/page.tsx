@@ -13,8 +13,19 @@ import {
   formatBrandOriginSupplier,
   specificationWithoutDuplicateCode,
 } from "@/lib/quotations/format-quotation-row";
-import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
+import {
+  documentSetupRecord,
+  resolveDocumentSetup,
+  type DocumentVisibilitySettings,
+  type SpecificationLayoutSettings,
+} from "@/lib/quotations/document-setup";
 import { QuotationImageFrame } from "@/components/quotations/quotation-image-frame";
+import {
+  SpecificationPreview,
+  type SpecificationImageItem,
+  type SpecificationItemImageOverride,
+  type SpecificationSettings,
+} from "@/components/quotations/specification-preview";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -125,6 +136,9 @@ type SpecDocumentPage =
       section: QuotationSection;
       serial: number;
       pageNumber: number;
+      description: string | null;
+      descriptionContinues: boolean;
+      showMaterials: boolean;
     }
   | {
       type: "text";
@@ -132,6 +146,16 @@ type SpecDocumentPage =
       mainSection: QuotationSection | null;
       section: QuotationSection;
       pageNumber: number;
+    }
+  | {
+      type: "description_continuation";
+      description: string;
+      descriptionContinues: boolean;
+      item: QuotationItem;
+      mainSection: QuotationSection | null;
+      pageNumber: number;
+      section: QuotationSection;
+      serial: number;
     }
   | {
       type: "materials_continuation";
@@ -409,13 +433,13 @@ function materialContent(
   return { charts, selectedFinishes };
 }
 
-function DetailLine({ label, value }: { label: string; value?: string | null }) {
+function DetailLine({ compact, label, value }: { compact?: boolean; label: string; value?: string | null }) {
   if (!value) return null;
 
   return (
     <div>
-      <dt className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">{label}</dt>
-      <dd className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-zinc-800">{value}</dd>
+      <dt className="text-[9px] font-bold uppercase tracking-wide text-zinc-500">{label}</dt>
+      <dd className={`spec-detail-value mt-[3px] whitespace-pre-wrap text-zinc-800 ${compact ? "text-[9.5px] leading-[13px]" : "text-[10.5px] leading-[15px]"}`}>{value}</dd>
     </div>
   );
 }
@@ -424,24 +448,45 @@ function SpecImage({
   imageSettings,
   src,
   label,
-  large,
+  fallbackFit,
+  mainImageSize,
+  specificationOverride,
 }: {
   imageSettings?: Partial<ImageDisplaySettings> | null;
   src: string | null;
   label: string;
-  large?: boolean;
+  fallbackFit: SpecificationLayoutSettings["productImageFit"];
+  mainImageSize?: SpecificationLayoutSettings["productImageSize"];
+  specificationOverride?: SpecificationItemImageOverride;
 }) {
-  const settings = normalizeImageDisplaySettings(imageSettings);
+  const settings = normalizeImageDisplaySettings({
+    ...imageSettings,
+    ...specificationOverride,
+    fit: specificationOverride?.fit ?? (
+      imageSettings?.fit === "contain" || imageSettings?.fit === "cover"
+        ? imageSettings.fit
+        : fallbackFit
+    ),
+  }, 0.5);
+  const resolvedMainImageSize = specificationOverride?.size ?? mainImageSize;
+  const heightClass = resolvedMainImageSize === "small"
+    ? "h-[260px]"
+    : resolvedMainImageSize === "medium"
+      ? "h-[310px]"
+      : resolvedMainImageSize === "current"
+        ? "h-[350px]"
+        : "h-28";
 
   return (
     <div>
       <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">{label}</p>
-      <div className={`flex items-center justify-center overflow-hidden bg-white ${large ? "h-[350px]" : "h-28"}`}>
+      <div data-spec-main-image={mainImageSize ? "" : undefined} className={`flex items-center justify-center overflow-hidden bg-white ${heightClass}`}>
         <QuotationImageFrame
           alt={label}
           className="h-full w-full overflow-hidden"
-          emptyContent={<span className="text-xs text-zinc-400">No image</span>}
+          emptyContent={<span data-spec-image-empty className="text-xs text-zinc-400">No image</span>}
           imageUrl={src}
+          minimumZoom={0.5}
           settings={settings}
         />
       </div>
@@ -452,32 +497,106 @@ function SpecImage({
 function PageFooter({
   companyName,
   pageNumber,
+  showCompanyName = true,
+  showPageNumber = true,
   totalPages,
 }: {
   companyName: string;
   pageNumber: number;
+  showCompanyName?: boolean;
+  showPageNumber?: boolean;
   totalPages: number;
 }) {
+  if (!showCompanyName && !showPageNumber) return null;
+
   return (
     <footer className="mt-auto flex items-center justify-between border-t border-zinc-200 pt-4 text-[10px] uppercase tracking-wide text-zinc-400">
-      <span>{companyName}</span>
-      <span>Page {pageNumber} of {totalPages}</span>
+      {showCompanyName ? <span>{companyName}</span> : <span />}
+      {showPageNumber ? <span>Page {pageNumber} of {totalPages}</span> : null}
     </footer>
   );
+}
+
+function specificationItemImageOverride(value: unknown): SpecificationItemImageOverride | null {
+  if (!isRecord(value)) return null;
+
+  const image = normalizeImageDisplaySettings(value, 0.5);
+  const size = value.size;
+  const replacementImageUrl = typeof value.replacementImageUrl === "string" && value.replacementImageUrl.startsWith("quote-images:quotation-specifications/")
+    ? value.replacementImageUrl
+    : undefined;
+  return {
+    fit: image.fit,
+    positionX: image.positionX,
+    positionY: image.positionY,
+    replacementImageUrl,
+    size: size === "small" || size === "medium" ? size : "current",
+    zoom: image.zoom,
+  };
+}
+
+function descriptionChunks(value: string, compact: boolean) {
+  // Conservative character budgets for the fixed Specification product and continuation layouts.
+  const firstPageBudget = compact ? 900 : 700;
+  const continuationBudget = compact ? 6000 : 4500;
+  const firstPageLines = compact ? 18 : 14;
+  const continuationLines = compact ? 52 : 45;
+  const chunks: string[] = [];
+  let remaining = value.replace(/\r\n?/g, "\n").trim();
+  let budget = firstPageBudget;
+  let lineBudget = firstPageLines;
+
+  while (remaining) {
+    if (remaining.length <= budget && remaining.split("\n").length <= lineBudget) {
+      chunks.push(remaining);
+      break;
+    }
+
+    let candidateEnd = Math.min(remaining.length, budget + 1);
+    let newlineCount = 0;
+    for (let index = 0; index < candidateEnd; index += 1) {
+      if (remaining[index] !== "\n") continue;
+      newlineCount += 1;
+      if (newlineCount === lineBudget) {
+        candidateEnd = index + 1;
+        break;
+      }
+    }
+    const candidate = remaining.slice(0, candidateEnd);
+    const paragraphBoundary = candidate.lastIndexOf("\n\n");
+    const wordBoundary = candidate.search(/\s+\S*$/);
+    const boundary = paragraphBoundary >= budget * 0.55
+      ? paragraphBoundary + 2
+      : wordBoundary > 0
+        ? wordBoundary
+        : remaining.search(/\s/);
+
+    if (boundary <= 0) {
+      chunks.push(remaining);
+      break;
+    }
+
+    chunks.push(remaining.slice(0, boundary).trimEnd());
+    remaining = remaining.slice(boundary).trimStart();
+    budget = continuationBudget;
+    lineBudget = continuationLines;
+  }
+
+  return chunks;
 }
 
 function ProductPageHeader({
   companyProfile,
   hasLogo,
   pageNumber,
-  project,
+  projectReferenceDisplay,
   quotation,
   totalPages,
 }: {
   companyProfile: Awaited<ReturnType<typeof getCompanyProfile>>;
   hasLogo: boolean;
   pageNumber: number;
-  project?: Project | null;
+  projectReferenceDisplay: string;
   quotation: Quotation;
   totalPages: number;
 }) {
@@ -492,10 +611,10 @@ function ProductPageHeader({
         )}
         <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-500">Specification Sheet</p>
       </div>
-      <dl className="grid min-w-[190px] grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-right">
+      <dl className="spec-client-reference grid min-w-[190px] grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-right">
         <MetaLine label="Ref No." value={quotation.quotation_no ?? "Draft"} />
         <MetaLine label="Date" value={quotation.quotation_date} />
-        <MetaLine label="Project" value={project?.project_name} />
+        <MetaLine label="Project" value={projectReferenceDisplay} />
         <MetaLine label="Page" value={`${pageNumber} / ${totalPages}`} />
       </dl>
     </header>
@@ -543,14 +662,14 @@ function TextBlockPage({
   companyProfile,
   hasLogo,
   page,
-  project,
+  projectReferenceDisplay,
   quotation,
   totalPages,
 }: {
   companyProfile: Awaited<ReturnType<typeof getCompanyProfile>>;
   hasLogo: boolean;
   page: Extract<SpecDocumentPage, { type: "text" }>;
-  project?: Project | null;
+  projectReferenceDisplay: string;
   quotation: Quotation;
   totalPages: number;
 }) {
@@ -558,7 +677,7 @@ function TextBlockPage({
 
   return (
     <section className="spec-page flex min-h-[277mm] flex-col bg-white p-10 shadow-sm ring-1 ring-zinc-200">
-      <ProductPageHeader companyProfile={companyProfile} hasLogo={hasLogo} pageNumber={page.pageNumber} project={project} quotation={quotation} totalPages={totalPages} />
+      <ProductPageHeader companyProfile={companyProfile} hasLogo={hasLogo} pageNumber={page.pageNumber} projectReferenceDisplay={projectReferenceDisplay} quotation={quotation} totalPages={totalPages} />
       <div className="mt-10">
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-400">
           {[page.mainSection?.section_title, page.section.section_title].filter(Boolean).join(" / ") || "Specification note"}
@@ -774,9 +893,9 @@ function MaterialsFinishesArea({
   const hasContent = visibleSelected.length || visibleCharts.length;
 
   return (
-    <section className="mt-5 border-t border-zinc-300 pt-4">
+    <section className="spec-material-details mt-4 border-t border-zinc-300 pt-3">
       <div className="flex items-end justify-between gap-3">
-        <h3 className="text-xs font-bold uppercase tracking-[0.22em] text-zinc-800">Materials & Finishes</h3>
+        <h3 className="text-[10px] font-bold uppercase tracking-[0.22em] text-zinc-800">Materials & Finishes</h3>
         {hasMoreSelected ? <p className="text-[10px] font-semibold text-zinc-500">Additional finishes continued on next page</p> : null}
       </div>
 
@@ -806,7 +925,7 @@ function MaterialsContinuationPage({
   hasLogo,
   materialGroupSortOrderByLinkId,
   page,
-  project,
+  projectReferenceDisplay,
   quotation,
   totalPages,
 }: {
@@ -815,7 +934,7 @@ function MaterialsContinuationPage({
   hasLogo: boolean;
   materialGroupSortOrderByLinkId: Map<string, number>;
   page: Extract<SpecDocumentPage, { type: "materials_continuation" }>;
-  project?: Project | null;
+  projectReferenceDisplay: string;
   quotation: Quotation;
   totalPages: number;
 }) {
@@ -828,7 +947,7 @@ function MaterialsContinuationPage({
 
   return (
     <section className="spec-page flex min-h-[277mm] flex-col bg-white p-10 shadow-sm ring-1 ring-zinc-200">
-      <ProductPageHeader companyProfile={companyProfile} hasLogo={hasLogo} pageNumber={page.pageNumber} project={project} quotation={quotation} totalPages={totalPages} />
+      <ProductPageHeader companyProfile={companyProfile} hasLogo={hasLogo} pageNumber={page.pageNumber} projectReferenceDisplay={projectReferenceDisplay} quotation={quotation} totalPages={totalPages} />
       <div className="mt-8 border-b border-zinc-200 pb-4">
         <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">
           {[page.mainSection?.section_title, page.section.section_title].filter(Boolean).join(" / ") || "Specification"}
@@ -858,42 +977,94 @@ function MaterialsContinuationPage({
   );
 }
 
-function ProductSpecPage({
+function DescriptionContinuationPage({
   companyProfile,
   hasLogo,
-  item,
-  finishImageUrlById,
-  mainSection,
-  materialGroupSortOrderByLinkId,
-  pageNumber,
-  project,
-  proposedImage,
+  layout,
+  page,
+  projectReferenceDisplay,
   quotation,
-  section,
-  specifiedImage,
-  serial,
   totalPages,
 }: {
   companyProfile: Awaited<ReturnType<typeof getCompanyProfile>>;
   hasLogo: boolean;
+  layout: SpecificationLayoutSettings;
+  page: Extract<SpecDocumentPage, { type: "description_continuation" }>;
+  projectReferenceDisplay: string;
+  quotation: Quotation;
+  totalPages: number;
+}) {
+  const title = page.item.item_name_snapshot || page.item.model_snapshot || page.item.item_code_snapshot || "Product";
+  const compact = layout.textDensity === "compact";
+
+  return (
+    <section className="spec-page flex min-h-[277mm] flex-col bg-white p-10 shadow-sm ring-1 ring-zinc-200">
+      <ProductPageHeader companyProfile={companyProfile} hasLogo={hasLogo} pageNumber={page.pageNumber} projectReferenceDisplay={projectReferenceDisplay} quotation={quotation} totalPages={totalPages} />
+      <div className="mt-8 border-b border-zinc-200 pb-4">
+        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">
+          {[page.mainSection?.section_title, page.section.section_title].filter(Boolean).join(" / ") || "Specification"}
+        </p>
+        <h2 className="mt-2 text-3xl font-bold leading-tight text-zinc-950">{title}</h2>
+        <div className="mt-1 flex items-center justify-between gap-4">
+          <p className="text-sm text-zinc-500">Description / Specification — continued</p>
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">Item No. {page.serial || "-"}</p>
+        </div>
+      </div>
+      <section className="mt-6">
+        <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">Description / Specification — continued</h3>
+        <p className={`mt-3 whitespace-pre-wrap [overflow-wrap:anywhere] text-zinc-700 ${compact ? "text-[9.5px] leading-[13px]" : "text-[10.5px] leading-[15px]"}`}>{page.description}</p>
+        {page.descriptionContinues ? <p className="mt-4 text-[10px] font-medium text-zinc-500">Description continues on the next page.</p> : null}
+      </section>
+      <PageFooter companyName={companyProfile.companyName} pageNumber={page.pageNumber} totalPages={totalPages} />
+    </section>
+  );
+}
+
+function ProductSpecPage({
+  companyProfile,
+  description,
+  descriptionContinues,
+  hasLogo,
+  item,
+  layout,
+  finishImageUrlById,
+  mainSection,
+  materialGroupSortOrderByLinkId,
+  pageNumber,
+  projectReferenceDisplay,
+  proposedImage,
+  quotation,
+  section,
+  showMaterials,
+  specificationImageOverride,
+  specifiedImage,
+  serial,
+  totalPages,
+  visibility,
+}: {
+  companyProfile: Awaited<ReturnType<typeof getCompanyProfile>>;
+  description: string | null;
+  descriptionContinues: boolean;
+  hasLogo: boolean;
   item: QuotationItem;
+  layout: SpecificationLayoutSettings;
   finishImageUrlById: Map<string, string | null>;
   mainSection: QuotationSection | null;
   materialGroupSortOrderByLinkId: Map<string, number>;
   pageNumber: number;
-  project?: Project | null;
+  projectReferenceDisplay: string;
   proposedImage: string | null;
   quotation: Quotation;
   section: QuotationSection;
+  showMaterials: boolean;
+  specificationImageOverride?: SpecificationItemImageOverride;
   specifiedImage: string | null;
   serial: number;
   totalPages: number;
+  visibility: DocumentVisibilitySettings["specification"];
 }) {
   const title = item.item_name_snapshot || item.model_snapshot || item.item_code_snapshot || `Item ${serial}`;
-  const cleanedSpecification = specificationWithoutDuplicateCode({
-    code: item.item_code_snapshot,
-    specification: item.specification_snapshot,
-  });
+  const compactText = layout.textDensity === "compact";
   const originSupplierDisplay = formatBrandOriginSupplier({
     brandName: item.brand_name_snapshot,
     origin: item.origin_snapshot,
@@ -904,10 +1075,14 @@ function ProductSpecPage({
     originSupplierDisplay.supplier ? `Supplier: ${originSupplierDisplay.supplier}` : null,
   ].filter(Boolean).join("\n");
   const { charts, selectedFinishes } = materialContent(item, finishImageUrlById, materialGroupSortOrderByLinkId);
+  const productEyebrow =
+    (visibility.showBrand ? item.brand_name_snapshot : null) ||
+    (visibility.showCategory ? item.category_name_snapshot : null) ||
+    "Product";
 
   return (
-    <section className="spec-page flex min-h-[277mm] flex-col bg-white p-10 shadow-sm ring-1 ring-zinc-200">
-      <ProductPageHeader companyProfile={companyProfile} hasLogo={hasLogo} pageNumber={pageNumber} project={project} quotation={quotation} totalPages={totalPages} />
+    <section data-spec-item-id={item.id} className="spec-page flex min-h-[277mm] flex-col bg-white p-10 shadow-sm ring-1 ring-zinc-200">
+      <ProductPageHeader companyProfile={companyProfile} hasLogo={hasLogo} pageNumber={pageNumber} projectReferenceDisplay={projectReferenceDisplay} quotation={quotation} totalPages={totalPages} />
 
       <div className="mt-6 flex items-center justify-between gap-6 border-b border-zinc-200 pb-4">
         <div>
@@ -922,13 +1097,14 @@ function ProductSpecPage({
         </div>
       </div>
 
-      <div className="mt-6 grid gap-7 md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-        <div className="space-y-4">
+      <div className={`spec-product-layout mt-5 grid gap-7 ${visibility.showItemImages ? "md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]" : "grid-cols-1"}`}>
+        {visibility.showItemImages ? <div className="spec-item-images space-y-4">
           <SpecImage
-            imageSettings={item.cell_layout?.images?.proposed_image_url_snapshot}
             src={proposedImage}
             label="Proposed image"
-            large
+            fallbackFit={layout.productImageFit}
+            mainImageSize={layout.productImageSize}
+            specificationOverride={specificationImageOverride}
           />
           {specifiedImage ? (
             <div className="max-w-[260px]">
@@ -936,49 +1112,55 @@ function ProductSpecPage({
                 imageSettings={item.cell_layout?.images?.specified_image_url_snapshot}
                 src={specifiedImage}
                 label="Specified / reference image"
+                fallbackFit={layout.productImageFit}
               />
             </div>
           ) : null}
-        </div>
+        </div> : null}
 
         <div className="min-w-0">
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-400">{item.brand_name_snapshot || item.category_name_snapshot || "Product"}</p>
-          <h2 className="mt-3 text-3xl font-bold leading-tight text-zinc-950">
+          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">{productEyebrow}</p>
+          <h2 className="mt-2 text-3xl font-bold leading-tight text-zinc-950">
             {title}
             {item.is_optional ? <span className="ml-2 border border-red-300 bg-red-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase text-red-700">OPTIONAL</span> : null}
             {item.is_rate_only ? <span className="ml-2 border border-sky-300 bg-sky-50 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase text-sky-700">RATE ONLY</span> : null}
           </h2>
-          <dl className="mt-6 grid gap-x-6 gap-y-4 md:grid-cols-2">
-            <DetailLine label="Brand" value={item.brand_name_snapshot} />
-            <DetailLine label="Model" value={item.model_snapshot} />
-            <DetailLine label="Code" value={item.item_code_snapshot} />
-            <DetailLine label="Category" value={item.category_name_snapshot} />
-            <DetailLine label="Dimensions" value={item.size_snapshot} />
-            <DetailLine label="Origin / Supplier" value={originSupplier} />
-            <DetailLine label="Warranty" value={item.warranty_snapshot} />
+          <dl className="mt-4 grid gap-x-6 gap-y-3 md:grid-cols-2">
+            {visibility.showBrand ? <DetailLine compact={compactText} label="Brand" value={item.brand_name_snapshot} /> : null}
+            {visibility.showModel ? <DetailLine compact={compactText} label="Model" value={item.model_snapshot} /> : null}
+            {visibility.showCode ? <DetailLine compact={compactText} label="Code" value={item.item_code_snapshot} /> : null}
+            {visibility.showCategory ? <DetailLine compact={compactText} label="Category" value={item.category_name_snapshot} /> : null}
+            {visibility.showDimensions ? <div className="spec-dimensions">
+              <DetailLine compact={compactText} label="Dimensions" value={item.size_snapshot} />
+            </div> : null}
+            {visibility.showOriginSupplier ? <DetailLine compact={compactText} label="Origin / Supplier" value={originSupplier} /> : null}
+            <DetailLine compact={compactText} label="Warranty" value={item.warranty_snapshot} />
           </dl>
 
-          {cleanedSpecification ? (
-            <div className="mt-5 border-t border-zinc-200 pt-4">
-              <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Description / Specification</h3>
-              <p className="mt-3 max-h-44 overflow-hidden whitespace-pre-wrap text-sm leading-7 text-zinc-700">{cleanedSpecification}</p>
+          {visibility.showDescriptionSpecification && description ? (
+            <div className="mt-4 border-t border-zinc-200 pt-3">
+              <h3 className="text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-500">Description / Specification</h3>
+              <p className={`spec-description-body mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] text-zinc-700 ${compactText ? "text-[9.5px] leading-[13px]" : "text-[10.5px] leading-[15px]"}`}>{description}</p>
+              {descriptionContinues ? <p className="mt-2 text-[10px] font-medium text-zinc-500">Description continues on the next page.</p> : null}
             </div>
           ) : null}
 
         </div>
       </div>
-      <MaterialsFinishesArea
-        allowContinuation={item.allow_material_continuation_page}
-        charts={charts}
-        selectedFinishes={selectedFinishes}
-      />
+      {visibility.showMaterialDetails && showMaterials ? (
+        <MaterialsFinishesArea
+          allowContinuation={item.allow_material_continuation_page}
+          charts={charts}
+          selectedFinishes={selectedFinishes}
+        />
+      ) : null}
       <PageFooter companyName={companyProfile.companyName} pageNumber={pageNumber} totalPages={totalPages} />
     </section>
   );
 }
 
 export default async function SpecificationPage({ params }: SpecificationPageProps) {
-  await requireActiveUser();
+  const { profile } = await requireActiveUser();
   const { id } = await params;
   const supabase = await createSupabaseClient();
 
@@ -1041,12 +1223,47 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
     project: project ?? null,
     quotation,
   });
+  const projectReferenceDisplay = resolvedDocumentSetup.header.reference.trim() || "-";
+  const specificationVisibility = resolvedDocumentSetup.visibility.specification;
+  const specificationLayout = resolvedDocumentSetup.specificationLayout;
 
   if (materialGroupOrdersError) {
     console.error("SPECIFICATION MATERIAL GROUP ORDER ERROR", materialGroupOrdersError.message);
   }
 
   const activeItems = (items ?? []).filter((item) => item.is_active);
+  const savedDocumentSetup = documentSetupRecord(quotation.layout_settings);
+  const savedVisibility = isRecord(savedDocumentSetup.visibility) ? savedDocumentSetup.visibility : {};
+  const savedSpecification = isRecord(savedVisibility.specification) ? savedVisibility.specification : {};
+  const savedItemImageOverrides = savedSpecification.itemImageOverrides;
+  const hasSavedItemImageOverrides = isRecord(savedItemImageOverrides);
+  const itemImageOverrides: Record<string, SpecificationItemImageOverride> = {};
+
+  for (const item of activeItems) {
+    const savedOverride = hasSavedItemImageOverrides
+      ? specificationItemImageOverride(savedItemImageOverrides[item.id])
+      : null;
+    if (savedOverride?.replacementImageUrl && !savedOverride.replacementImageUrl.startsWith(`quote-images:quotation-specifications/${quotation.id}/${item.id}/`)) {
+      delete savedOverride.replacementImageUrl;
+    }
+    const legacySettings = item.cell_layout?.images?.proposed_image_url_snapshot;
+    const legacyOverride = !hasSavedItemImageOverrides && legacySettings && Object.keys(legacySettings).length
+      ? specificationItemImageOverride({ ...legacySettings, size: specificationLayout.productImageSize })
+      : null;
+    const override = savedOverride ?? legacyOverride;
+    if (override) itemImageOverrides[item.id] = override;
+  }
+  const replacementImageEntries = await Promise.all(
+    Object.entries(itemImageOverrides).map(async ([itemId, override]) => [
+      itemId,
+      override.replacementImageUrl
+        ? await signedImageUrl(override.replacementImageUrl, supabase)
+        : null,
+    ] as const),
+  );
+  for (const [itemId, replacementPreviewUrl] of replacementImageEntries) {
+    if (replacementPreviewUrl) itemImageOverrides[itemId].replacementPreviewUrl = replacementPreviewUrl;
+  }
   const proposedImageEntries = await Promise.all(
     activeItems.map(async (item) => [
       item.id,
@@ -1146,7 +1363,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
 
   const sectionById = new Map(activeSections.map((section) => [section.id, section]));
   const documentPages: SpecDocumentPage[] = [];
-  let nextPageNumber = 2;
+  let nextPageNumber = specificationVisibility.showFrontPage ? 2 : 1;
   let productSerial = 0;
 
   for (const section of printableSections) {
@@ -1175,20 +1392,47 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
       }
 
       const rowSerial = isSerialCountedLine(item) ? ++productSerial : 0;
+      const cleanedDescription = specificationVisibility.showDescriptionSpecification
+        ? specificationWithoutDuplicateCode({
+            code: item.item_code_snapshot,
+            specification: item.specification_snapshot,
+          })
+        : null;
+      const chunks = cleanedDescription
+        ? descriptionChunks(cleanedDescription, specificationLayout.textDensity === "compact")
+        : [];
+      const descriptionContinues = chunks.length > 1;
       documentPages.push({
         type: "product",
+        description: chunks[0] ?? null,
+        descriptionContinues,
         item,
         mainSection,
         pageNumber: nextPageNumber,
         section,
         serial: rowSerial,
+        showMaterials: !descriptionContinues,
       });
       nextPageNumber += 1;
 
-      if (item.allow_material_continuation_page) {
+      for (const [chunkIndex, description] of chunks.slice(1).entries()) {
+        documentPages.push({
+          type: "description_continuation",
+          description,
+          descriptionContinues: chunkIndex < chunks.length - 2,
+          item,
+          mainSection,
+          pageNumber: nextPageNumber,
+          section,
+          serial: rowSerial,
+        });
+        nextPageNumber += 1;
+      }
+
+      if (specificationVisibility.showMaterialDetails && (descriptionContinues || item.allow_material_continuation_page)) {
         const selectedCount = selectedFinishEntries(item).length;
         for (
-          let selectedStart = selectedFinishesPerProductPage;
+          let selectedStart = descriptionContinues ? 0 : selectedFinishesPerProductPage;
           selectedStart < selectedCount;
           selectedStart += selectedFinishesPerProductPage
         ) {
@@ -1211,7 +1455,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
           const swatchCount = swatchRecords(chart).length;
 
           for (
-            let chartStart = chartSwatchesPerProductPage;
+            let chartStart = descriptionContinues ? 0 : chartSwatchesPerProductPage;
             chartStart < swatchCount;
             chartStart += chartSwatchesPerProductPage
           ) {
@@ -1232,19 +1476,90 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
     }
   }
 
-  const totalPages = Math.max(nextPageNumber - 1, 1);
+  const totalPages = Math.max(nextPageNumber - 1, specificationVisibility.showFrontPage ? 1 : 0);
   const COMPANY_PROFILE = await getCompanyProfile();
   const hasLogo = hasUsableCompanyLogo(COMPANY_PROFILE.logoPath);
+  const canManageRecords =
+    profile?.role === "system_owner" ||
+    profile?.role === "admin_manager" ||
+    profile?.role === "procurement_manager" ||
+    profile?.role === "sales_designer" ||
+    profile?.role === "sales_coordinator" ||
+    profile?.role === "designer";
+  const specificationSettings: SpecificationSettings = {
+    itemImageOverrides,
+    productImageFit: specificationLayout.productImageFit,
+    productImageSize: specificationLayout.productImageSize,
+    showBrand: specificationVisibility.showBrand,
+    showCategory: specificationVisibility.showCategory,
+    showClientReferenceHeader: specificationVisibility.showClientReferenceHeader,
+    showCode: specificationVisibility.showCode,
+    showDescriptionSpecification: specificationVisibility.showDescriptionSpecification,
+    showDimensions: specificationVisibility.showDimensions,
+    showFrontPage: specificationVisibility.showFrontPage,
+    showFrontPageAttentionContact: specificationVisibility.showFrontPageAttentionContact,
+    showFrontPageClient: specificationVisibility.showFrontPageClient,
+    showFrontPageCompanyFooter: specificationVisibility.showFrontPageCompanyFooter,
+    showFrontPageLocation: specificationVisibility.showFrontPageLocation,
+    showFrontPagePageNumber: specificationVisibility.showFrontPagePageNumber,
+    showFrontPagePoBox: specificationVisibility.showFrontPagePoBox,
+    showFrontPageProjectAddress: specificationVisibility.showFrontPageProjectAddress,
+    showFrontPageProjectReference: specificationVisibility.showFrontPageProjectReference,
+    showFrontPageProjectTitle: specificationVisibility.showFrontPageProjectTitle,
+    showFrontPageTelephone: specificationVisibility.showFrontPageTelephone,
+    showItemImages: specificationVisibility.showItemImages,
+    showMaterialDetails: specificationVisibility.showMaterialDetails,
+    showModel: specificationVisibility.showModel,
+    showOriginSupplier: specificationVisibility.showOriginSupplier,
+    textDensity: specificationLayout.textDensity,
+  };
+  const specificationImageItems: SpecificationImageItem[] = documentPages
+    .filter((page): page is Extract<SpecDocumentPage, { type: "product" }> => page.type === "product")
+    .map((page) => ({
+      brand: page.item.brand_name_snapshot,
+      id: page.item.id,
+      itemNumber: page.serial,
+      name: page.item.item_name_snapshot || page.item.model_snapshot || page.item.item_code_snapshot || `Item ${page.serial}`,
+      thumbnailUrl: proposedImageUrlByItemId.get(page.item.id) ?? null,
+    }));
+  const showFrontPageLeftColumn =
+    specificationVisibility.showFrontPageClient ||
+    specificationVisibility.showFrontPageLocation ||
+    specificationVisibility.showFrontPageAttentionContact;
+  const showFrontPageRightColumn =
+    specificationVisibility.showFrontPageProjectReference ||
+    specificationVisibility.showFrontPageTelephone ||
+    specificationVisibility.showFrontPagePoBox ||
+    specificationVisibility.showFrontPageProjectAddress;
 
   return (
-    <main className="min-h-screen bg-zinc-100 px-4 py-5 font-sans text-zinc-950 print:bg-white print:p-0">
+    <main className="min-h-screen overflow-x-hidden bg-zinc-100 px-4 py-5 font-sans text-zinc-950 xl:overflow-x-visible print:bg-white print:p-0">
       <style>{`
         @page { size: A4 portrait; margin: 0; }
         .spec-page + .spec-page { margin-top: 24px; }
+        @media screen and (max-width: 767px) {
+          .spec-sheet .md\\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .spec-sheet .md\\:grid-cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+          .spec-sheet .md\\:grid-cols-7 { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+          .spec-sheet .spec-product-layout { grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); }
+        }
+        .spec-hide-client-reference .spec-client-reference { display: none !important; }
+        .spec-hide-item-images .spec-item-images { display: none !important; }
+        .spec-hide-item-images .spec-product-layout { grid-template-columns: minmax(0, 1fr) !important; }
+        .spec-hide-dimensions .spec-dimensions { display: none !important; }
+        .spec-hide-material-details .spec-material-details { display: none !important; }
+        .spec-draft-density-standard .spec-detail-value,
+        .spec-draft-density-standard .spec-description-body { font-size: 10.5px !important; line-height: 15px !important; }
+        .spec-draft-density-compact .spec-detail-value,
+        .spec-draft-density-compact .spec-description-body { font-size: 9.5px !important; line-height: 13px !important; }
         @media print {
           html, body { margin: 0 !important; padding: 0 !important; width: 210mm !important; background: #fff !important; print-color-adjust: exact !important; -webkit-print-color-adjust: exact !important; }
           img { break-inside: avoid; page-break-inside: avoid; }
           .no-print { display: none !important; }
+          .spec-workspace { display: block !important; }
+          .spec-preview-viewport { overflow: visible !important; }
+          .spec-preview-reservation { position: static !important; width: auto !important; height: auto !important; margin: 0 !important; }
+          .spec-preview-scale { position: static !important; width: auto !important; transform: none !important; }
           .spec-sheet { box-shadow: none !important; display: block !important; width: 210mm !important; max-width: 210mm !important; margin: 0 !important; }
           .spec-page { box-shadow: none !important; box-sizing: border-box !important; width: 210mm !important; height: 297mm !important; min-height: 297mm !important; overflow: hidden !important; break-after: page; break-inside: avoid; page-break-after: always; page-break-inside: avoid; margin: 0 !important; print-color-adjust: exact !important; -webkit-print-color-adjust: exact !important; }
           .spec-page + .spec-page { margin-top: 0 !important; }
@@ -1254,14 +1569,25 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
         }
       `}</style>
 
-      <div className="no-print mx-auto mb-4 flex w-[210mm] max-w-full items-center justify-between gap-3">
+      <div className="no-print mx-auto mb-4 hidden w-[210mm] max-w-full items-center justify-between gap-3 xl:flex">
         <Link href={`/quotations/${quotation.id}`} className="text-sm font-semibold text-emerald-900">
           Back to quotation
         </Link>
       </div>
 
-      <div className="spec-sheet mx-auto box-border w-[210mm] max-w-full">
-        <section className="spec-page flex min-h-[277mm] flex-col bg-white px-12 py-11 shadow-sm ring-1 ring-zinc-200">
+      <SpecificationPreview
+        backHref={`/quotations/${quotation.id}`}
+        canManage={canManageRecords}
+        downloadHref={`/quotations/${quotation.id}/download-specification`}
+        initialSettings={specificationSettings}
+        imageItems={specificationImageItems}
+        pageCount={totalPages}
+        quotationId={quotation.id}
+        quotationNo={quotation.quotation_no ?? "Draft"}
+      >
+        <div className="spec-sheet mx-auto box-border w-[210mm] max-w-full">
+        {specificationVisibility.showFrontPage ? (
+          <section className="spec-page flex min-h-[277mm] flex-col bg-white px-12 py-11 shadow-sm ring-1 ring-zinc-200">
           <header className="spec-page-header border-b border-zinc-300 pb-6">
             <div className="grid w-full grid-cols-[240px_minmax(0,1fr)_220px] items-start gap-6">
               <div className="min-w-0">
@@ -1286,7 +1612,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
                 <p className="mt-2 text-[24px] font-bold leading-none tracking-[0.08em] text-zinc-950">SPECIFICATION SHEET</p>
               </div>
               <div className="flex justify-end pt-1 text-right">
-                <dl className="grid w-full max-w-[230px] grid-cols-[70px_minmax(0,1fr)] gap-x-4 gap-y-2 border-l border-zinc-200 pl-5">
+                <dl className="spec-client-reference grid w-full max-w-[230px] grid-cols-[70px_minmax(0,1fr)] gap-x-4 gap-y-2 border-l border-zinc-200 pl-5">
                   <MetaLine label="Ref No." value={quotation.quotation_no ?? "Draft"} />
                   <MetaLine label="Date" value={quotation.quotation_date} />
                 </dl>
@@ -1297,28 +1623,43 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
           <section className="flex flex-1 items-center justify-center py-10">
             <div className="w-full max-w-[680px]">
               <p className="text-xs font-bold uppercase tracking-[0.26em] text-zinc-400">Project Summary</p>
-              <h1 className="mt-4 text-[46px] font-bold leading-[1.05] tracking-tight text-zinc-950">
-                {resolvedDocumentSetup.header.reference}
-              </h1>
+              {specificationVisibility.showFrontPageProjectTitle ? (
+                <h1 className="mt-4 text-[46px] font-bold leading-[1.05] tracking-tight text-zinc-950">
+                  {projectReferenceDisplay}
+                </h1>
+              ) : null}
               <div className="mt-8 h-px w-28 bg-zinc-300" />
-              <div className="mt-10 grid gap-x-14 gap-y-8 md:grid-cols-2">
-                <dl className="grid content-start gap-7">
-                  <InfoLine label="Client" value={resolvedDocumentSetup.header.clientDisplayName || client?.company_name || "Client"} />
-                  <InfoLine label="Location" value={resolvedDocumentSetup.header.location || project?.location} />
-                  <InfoLine label="Attention / Contact" value={resolvedDocumentSetup.header.contactName || projectContactLine(project)} />
-                </dl>
-                <dl className="grid content-start gap-7">
-                  <InfoLine label="Project / Reference" value={resolvedDocumentSetup.header.reference} />
-                  <InfoLine label="Telephone" value={resolvedDocumentSetup.header.telephone || project?.attention_landline} />
-                  <InfoLine label="PO Box" value={resolvedDocumentSetup.header.poBox || project?.po_box} />
-                  <InfoLine label="Project Address" value={resolvedDocumentSetup.header.projectAddress || project?.project_address} />
-                </dl>
-              </div>
+              {showFrontPageLeftColumn || showFrontPageRightColumn ? (
+                <div className={`mt-10 grid gap-x-14 gap-y-8 ${showFrontPageLeftColumn && showFrontPageRightColumn ? "md:grid-cols-2" : "grid-cols-1"}`}>
+                  {showFrontPageLeftColumn ? (
+                    <dl className="grid content-start gap-7">
+                      {specificationVisibility.showFrontPageClient ? <InfoLine label="Client" value={resolvedDocumentSetup.header.clientDisplayName || client?.company_name || "Client"} /> : null}
+                      {specificationVisibility.showFrontPageLocation ? <InfoLine label="Location" value={resolvedDocumentSetup.header.location || project?.location} /> : null}
+                      {specificationVisibility.showFrontPageAttentionContact ? <InfoLine label="Attention / Contact" value={resolvedDocumentSetup.header.contactName || projectContactLine(project)} /> : null}
+                    </dl>
+                  ) : null}
+                  {showFrontPageRightColumn ? (
+                    <dl className="grid content-start gap-7">
+                      {specificationVisibility.showFrontPageProjectReference ? <InfoLine label="Project / Reference" value={projectReferenceDisplay} /> : null}
+                      {specificationVisibility.showFrontPageTelephone ? <InfoLine label="Telephone" value={resolvedDocumentSetup.header.telephone || project?.attention_landline} /> : null}
+                      {specificationVisibility.showFrontPagePoBox ? <InfoLine label="PO Box" value={resolvedDocumentSetup.header.poBox || project?.po_box} /> : null}
+                      {specificationVisibility.showFrontPageProjectAddress ? <InfoLine label="Project Address" value={resolvedDocumentSetup.header.projectAddress || project?.project_address} /> : null}
+                    </dl>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </section>
 
-          <PageFooter companyName={COMPANY_PROFILE.companyName} pageNumber={1} totalPages={totalPages} />
-        </section>
+          <PageFooter
+            companyName={COMPANY_PROFILE.companyName}
+            pageNumber={1}
+            showCompanyName={specificationVisibility.showFrontPageCompanyFooter}
+            showPageNumber={specificationVisibility.showFrontPagePageNumber}
+            totalPages={totalPages}
+          />
+          </section>
+        ) : null}
 
         {documentPages.map((page) => {
           if (page.type === "divider") {
@@ -1342,7 +1683,7 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
                 key={`text-${page.item.id}-${page.pageNumber}`}
                 hasLogo={hasLogo}
                 page={page}
-                project={project}
+                projectReferenceDisplay={projectReferenceDisplay}
                 quotation={quotation}
                 totalPages={totalPages}
               />
@@ -1370,7 +1711,22 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
                 hasLogo={hasLogo}
                 materialGroupSortOrderByLinkId={materialGroupSortOrderByLinkId}
                 page={page}
-                project={project}
+                projectReferenceDisplay={projectReferenceDisplay}
+                quotation={quotation}
+                totalPages={totalPages}
+              />
+            );
+          }
+
+          if (page.type === "description_continuation") {
+            return (
+              <DescriptionContinuationPage
+                companyProfile={COMPANY_PROFILE}
+                hasLogo={hasLogo}
+                key={`description-${page.item.id}-${page.pageNumber}`}
+                layout={specificationLayout}
+                page={page}
+                projectReferenceDisplay={projectReferenceDisplay}
                 quotation={quotation}
                 totalPages={totalPages}
               />
@@ -1380,6 +1736,8 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
           return (
             <ProductSpecPage
               companyProfile={COMPANY_PROFILE}
+              description={page.description}
+              descriptionContinues={page.descriptionContinues}
               key={`product-${page.item.id}`}
               finishImageUrlById={new Map(
                 materialEntries(page.item).flatMap((finish, index) => {
@@ -1396,20 +1754,25 @@ export default async function SpecificationPage({ params }: SpecificationPagePro
               )}
               hasLogo={hasLogo}
               item={page.item}
+              layout={specificationLayout}
               mainSection={page.mainSection}
               materialGroupSortOrderByLinkId={materialGroupSortOrderByLinkId}
               pageNumber={page.pageNumber}
-              project={project}
-              proposedImage={proposedImageUrlByItemId.get(page.item.id) ?? null}
+              projectReferenceDisplay={projectReferenceDisplay}
+              proposedImage={itemImageOverrides[page.item.id]?.replacementPreviewUrl ?? proposedImageUrlByItemId.get(page.item.id) ?? null}
               quotation={quotation}
               section={page.section}
               serial={page.serial}
+              showMaterials={page.showMaterials}
+              specificationImageOverride={itemImageOverrides[page.item.id]}
               specifiedImage={specifiedImageUrlByItemId.get(page.item.id) ?? null}
               totalPages={totalPages}
+              visibility={specificationVisibility}
             />
           );
         })}
-      </div>
+        </div>
+      </SpecificationPreview>
     </main>
   );
 }

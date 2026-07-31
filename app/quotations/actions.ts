@@ -118,6 +118,8 @@ const imageFields = new Set([
   "proposed_image_url_snapshot",
 ]);
 const imageFits = new Set(["contain", "cover"]);
+const specificationImageSizes = new Set(["small", "medium", "current"]);
+const specificationTextDensities = new Set(["compact", "standard"]);
 const layoutColumnKeys = [
   "s_no",
   "code",
@@ -4818,6 +4820,141 @@ function documentSetupBooleanGroup(formData: FormData, prefix: string, defaults:
   return Object.fromEntries(
     Object.keys(defaults).map((key) => [key, formData.get(`${prefix}.${key}`) === "on"]),
   );
+}
+
+function specificationItemImageOverridesValue(formData: FormData, quotationId: string) {
+  const rawValue = formData.get("item_image_overrides");
+  if (typeof rawValue !== "string") return {};
+
+  try {
+    const parsed = recordValue(JSON.parse(rawValue));
+    if (!parsed) return {};
+
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([itemId, rawSettings]) => {
+        if (!validUuidOrNull(itemId)) return [];
+
+        const settings = recordValue(rawSettings);
+        if (!settings) return [];
+
+        const size = settings.size === "small" || settings.size === "medium" ? settings.size : "current";
+        const fit = settings.fit === "cover" ? "cover" : "contain";
+        const zoom = Math.min(Math.max(Number(settings.zoom) || 1, 0.5), 3);
+        const positionX = Math.min(Math.max(Number(settings.positionX) || 50, 0), 100);
+        const positionY = Math.min(Math.max(Number(settings.positionY) || 50, 0), 100);
+        const replacementImageUrl = typeof settings.replacementImageUrl === "string" && settings.replacementImageUrl.startsWith(`quote-images:quotation-specifications/${quotationId}/${itemId}/`)
+          ? settings.replacementImageUrl
+          : null;
+
+        return [[itemId, {
+          fit,
+          positionX,
+          positionY,
+          ...(replacementImageUrl ? { replacementImageUrl } : {}),
+          size,
+          zoom,
+        }]];
+      }),
+    );
+  } catch {
+    return {};
+  }
+}
+
+export async function updateSpecificationSettings(formData: FormData) {
+  const { user, displayName } = await requireRecordsManager();
+  const quotationId = textValue(formData, "quotation_id");
+  const redirectPath = returnPath(
+    formData,
+    quotationId ? `/quotations/${quotationId}/specification` : "/quotations",
+  );
+
+  if (!quotationId) {
+    redirectWithMessage(redirectPath, "Specification settings could not be saved.");
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data: quotation, error: quotationError } = await supabase
+    .from("quotations")
+    .select("id,title,quotation_no,layout_settings")
+    .eq("id", quotationId)
+    .maybeSingle<{
+      id: string;
+      title: string;
+      quotation_no: string | null;
+      layout_settings: Record<string, unknown> | null;
+    }>();
+
+  if (quotationError || !quotation) {
+    console.error("SPECIFICATION SETTINGS READ ERROR", quotationError?.message);
+    redirectWithMessage(redirectPath, "Specification settings could not be saved.");
+  }
+
+  const existingSetup = documentSetupRecord(quotation.layout_settings);
+  const existingVisibility = recordValue(existingSetup.visibility) ?? {};
+  const existingSpecification = recordValue(existingVisibility.specification) ?? {};
+  const nextDocumentSetup = {
+    ...existingSetup,
+    visibility: {
+      ...existingVisibility,
+      specification: {
+        ...defaultDocumentVisibility.specification,
+        ...existingSpecification,
+        itemImageOverrides: specificationItemImageOverridesValue(formData, quotationId),
+        productImageFit: allowedText(formData, "product_image_fit", imageFits, "contain"),
+        productImageSize: allowedText(formData, "product_image_size", specificationImageSizes, "current"),
+        showBrand: formData.get("show_brand") === "on",
+        showCategory: formData.get("show_category") === "on",
+        showClientReferenceHeader: formData.get("show_client_reference_header") === "on",
+        showCode: formData.get("show_code") === "on",
+        showDescriptionSpecification: formData.get("show_description_specification") === "on",
+        showDimensions: formData.get("show_dimensions") === "on",
+        showFrontPage: formData.get("show_front_page") === "on",
+        showFrontPageAttentionContact: formData.get("show_front_page_attention_contact") === "on",
+        showFrontPageClient: formData.get("show_front_page_client") === "on",
+        showFrontPageCompanyFooter: formData.get("show_front_page_company_footer") === "on",
+        showFrontPageLocation: formData.get("show_front_page_location") === "on",
+        showFrontPagePageNumber: formData.get("show_front_page_page_number") === "on",
+        showFrontPagePoBox: formData.get("show_front_page_po_box") === "on",
+        showFrontPageProjectAddress: formData.get("show_front_page_project_address") === "on",
+        showFrontPageProjectReference: formData.get("show_front_page_project_reference") === "on",
+        showFrontPageProjectTitle: formData.get("show_front_page_project_title") === "on",
+        showFrontPageTelephone: formData.get("show_front_page_telephone") === "on",
+        showItemImages: formData.get("show_item_images") === "on",
+        showMaterialDetails: formData.get("show_material_details") === "on",
+        showModel: formData.get("show_model") === "on",
+        showOriginSupplier: formData.get("show_origin_supplier") === "on",
+        textDensity: allowedText(formData, "text_density", specificationTextDensities, "standard"),
+      },
+    },
+  };
+  const { error: updateError } = await supabase
+    .from("quotations")
+    .update({
+      layout_settings: mergeDocumentSetupIntoLayoutSettings(
+        quotation.layout_settings,
+        nextDocumentSetup,
+      ),
+    })
+    .eq("id", quotationId);
+
+  if (updateError) {
+    console.error("SPECIFICATION SETTINGS UPDATE ERROR", updateError.message);
+    redirectWithMessage(redirectPath, "Specification settings could not be saved.");
+  }
+
+  await createAuditLog(supabase, {
+    entityType: "quotation",
+    entityId: quotation.id,
+    action: "specification_settings_updated",
+    title: "Specification settings updated",
+    description: quotationLabel(quotation.title, quotation.quotation_no),
+    actorName: displayName,
+    createdBy: user.id,
+  });
+
+  revalidatePath(`/quotations/${quotationId}/specification`);
+  redirectWithMessage(redirectPath, "Specification settings saved.");
 }
 
 export async function updateQuotationDocumentSetup(formData: FormData) {

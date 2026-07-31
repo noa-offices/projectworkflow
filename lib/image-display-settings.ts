@@ -25,10 +25,11 @@ export function imageDisplayStyle(settings: ImageDisplaySettings): CSSProperties
 
 export function normalizeImageDisplaySettings(
   settings?: Partial<ImageDisplaySettings> | null,
+  minimumZoom = 1,
 ): ImageDisplaySettings {
   return {
     fit: settings?.fit === "cover" ? "cover" : "contain",
-    zoom: Math.min(Math.max(Number(settings?.zoom) || 1, 1), 3),
+    zoom: Math.min(Math.max(Number(settings?.zoom) || 1, minimumZoom), 3),
     positionX: Math.min(Math.max(Number(settings?.positionX) || 50, 0), 100),
     positionY: Math.min(Math.max(Number(settings?.positionY) || 50, 0), 100),
   };

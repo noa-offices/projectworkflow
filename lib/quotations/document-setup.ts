@@ -24,11 +24,28 @@ export type DocumentVisibilitySettings = {
     showNotes: boolean;
   };
   specification: {
+    showBrand: boolean;
+    showCategory: boolean;
     showClientReferenceHeader: boolean;
+    showCode: boolean;
+    showDescriptionSpecification: boolean;
     showItemImages: boolean;
     showDimensions: boolean;
     showMaterialDetails: boolean;
+    showModel: boolean;
+    showOriginSupplier: boolean;
     showPrices: boolean;
+    showFrontPage: boolean;
+    showFrontPageAttentionContact: boolean;
+    showFrontPageClient: boolean;
+    showFrontPageCompanyFooter: boolean;
+    showFrontPageLocation: boolean;
+    showFrontPagePageNumber: boolean;
+    showFrontPagePoBox: boolean;
+    showFrontPageProjectAddress: boolean;
+    showFrontPageProjectReference: boolean;
+    showFrontPageProjectTitle: boolean;
+    showFrontPageTelephone: boolean;
   };
   presentation: {
     showCoverReference: boolean;
@@ -38,6 +55,12 @@ export type DocumentVisibilitySettings = {
     showPricing: boolean;
     showClosingNotes: boolean;
   };
+};
+
+export type SpecificationLayoutSettings = {
+  productImageFit: "contain" | "cover";
+  productImageSize: "small" | "medium" | "current";
+  textDensity: "compact" | "standard";
 };
 
 export type DocumentSetupInput = {
@@ -124,7 +147,14 @@ export type ResolvedDocumentSetup = {
     supersedesText: string;
     type: "Original" | "Revision" | "Option";
   };
+  specificationLayout: SpecificationLayoutSettings;
   visibility: DocumentVisibilitySettings;
+};
+
+export const defaultSpecificationLayout: SpecificationLayoutSettings = {
+  productImageFit: "contain",
+  productImageSize: "current",
+  textDensity: "standard",
 };
 
 export const defaultDocumentVisibility: DocumentVisibilitySettings = {
@@ -146,11 +176,28 @@ export const defaultDocumentVisibility: DocumentVisibilitySettings = {
     showNotes: true,
   },
   specification: {
+    showBrand: true,
+    showCategory: true,
     showClientReferenceHeader: true,
+    showCode: true,
+    showDescriptionSpecification: true,
     showItemImages: true,
     showDimensions: true,
     showMaterialDetails: true,
+    showModel: true,
+    showOriginSupplier: true,
     showPrices: false,
+    showFrontPage: true,
+    showFrontPageAttentionContact: true,
+    showFrontPageClient: true,
+    showFrontPageCompanyFooter: true,
+    showFrontPageLocation: true,
+    showFrontPagePageNumber: true,
+    showFrontPagePoBox: true,
+    showFrontPageProjectAddress: true,
+    showFrontPageProjectReference: true,
+    showFrontPageProjectTitle: true,
+    showFrontPageTelephone: true,
   },
   presentation: {
     showCoverReference: true,
@@ -181,7 +228,9 @@ export function resolveDocumentSetup(input: DocumentSetupInput): ResolvedDocumen
   const commercial = recordValue(setup.commercial);
   const notes = recordValue(setup.notes);
   const revisionOption = recordValue(setup.revisionOption);
-  const visibility = visibilityValue(recordValue(setup.visibility));
+  const visibilityRecord = recordValue(setup.visibility);
+  const visibility = visibilityValue(visibilityRecord);
+  const specificationLayout = specificationLayoutValue(recordValue(visibilityRecord.specification));
   const quotationNo = text(input.quotation.quotation_no);
   const optionMatch = quotationNo?.match(/-OPT(\d+)$/i);
   const revisionNo = numberValue(input.quotation.revision_no, 0);
@@ -251,7 +300,22 @@ export function resolveDocumentSetup(input: DocumentSetupInput): ResolvedDocumen
           : "Original quotation",
       type,
     },
+    specificationLayout,
     visibility,
+  };
+}
+
+function specificationLayoutValue(value: RecordLike): SpecificationLayoutSettings {
+  const productImageFit = value.productImageFit;
+  const productImageSize = value.productImageSize;
+  const textDensity = value.textDensity;
+
+  return {
+    productImageFit: productImageFit === "cover" ? "cover" : defaultSpecificationLayout.productImageFit,
+    productImageSize: productImageSize === "small" || productImageSize === "medium"
+      ? productImageSize
+      : defaultSpecificationLayout.productImageSize,
+    textDensity: textDensity === "compact" ? "compact" : defaultSpecificationLayout.textDensity,
   };
 }
 

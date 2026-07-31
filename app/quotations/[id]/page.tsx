@@ -1689,6 +1689,11 @@ export default async function QuotationDetailPage({
                     No active quotations in this folder.
                   </p>
                 ) : null}
+                {activeFolderQuotationCount === 1 ? (
+                  <p className="mt-3 text-xs text-zinc-500 sm:hidden">
+                    Keep at least one active quotation in this folder.
+                  </p>
+                ) : null}
                 <div className="mt-4 grid gap-3">
                   {activeFolderQuotations.map((folderQuotation) => {
                     const isCurrentFolderQuotation = folderQuotation.id === quotation.id;
@@ -1706,12 +1711,75 @@ export default async function QuotationDetailPage({
                     return (
                       <article
                         key={folderQuotation.id}
-                        className={`rounded-lg border px-4 py-4 shadow-sm ${
+                        className={`rounded-lg border px-3 py-3 shadow-sm sm:px-4 sm:py-4 ${
                           isCurrentFolderQuotation
                             ? "border-emerald-300 bg-emerald-50/50"
                             : "border-zinc-200 bg-white"
                         }`}
                       >
+                        <div className="sm:hidden">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="inline-flex rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-700">
+                              {folderTypeLabel}
+                            </span>
+                            {isCurrentFolderQuotation ? (
+                              <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-900">
+                                Current
+                              </span>
+                            ) : null}
+                            <StatusBadge quotation={folderQuotation} />
+                          </div>
+                          <h3 className="mt-2 truncate text-base font-semibold text-zinc-950">
+                            {folderQuotation.quotation_no ?? "Older quotation"}
+                          </h3>
+                          <p className="mt-0.5 text-sm text-zinc-500">{formatFolderDate(folderQuotation.quotation_date)}</p>
+                          <p className="mt-2 break-words text-lg font-semibold text-zinc-950">
+                            {money(folderQuotation.currency, folderQuotation.grand_total)}
+                          </p>
+                          <div className="mt-3 flex items-center justify-between gap-3">
+                            <Link href={`/quotations/${folderQuotation.id}`} className="inline-flex h-10 items-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800">
+                              Open
+                            </Link>
+                            <HeaderActionMenu label="More">
+                              <Link href={`/quotations/${folderQuotation.id}/local-builder`} className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">
+                                Open Builder
+                              </Link>
+                              <SecondaryActionLink href={`/quotations/${folderQuotation.id}/pdf`} label="Preview Quotation" />
+                              <SecondaryPendingActionLink href={`/quotations/${folderQuotation.id}/download-pdf`} label="Download PDF" pendingLabel="Preparing PDF..." />
+                              {canUseQuotationActions ? (
+                                <>
+                                  <FolderMutationForm
+                                    action={createQuotationRevision}
+                                    className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                                    confirmMessage={"Create Revision\n\nThis will copy this selected folder card into a new revision. The selected parent quotation will remain unchanged."}
+                                    label="Create Revision"
+                                    pendingLabel="Creating revision..."
+                                    quotationId={folderQuotation.id}
+                                    returnTo={cardReturnTo}
+                                  />
+                                  <FolderMutationForm
+                                    action={createQuotationOption}
+                                    className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                                    confirmMessage={"Create Option\n\nThis will copy this selected folder card into a new option quotation. Use options for alternate brands, materials, or scope. The selected parent quotation will remain unchanged."}
+                                    label="Create Option"
+                                    pendingLabel="Creating option..."
+                                    quotationId={folderQuotation.id}
+                                    returnTo={cardReturnTo}
+                                  />
+                                  <CopyQuotationDestinationForm
+                                    destinationFolders={copyDestinationFolders}
+                                    quotationId={folderQuotation.id}
+                                    returnTo={cardReturnTo}
+                                  />
+                                </>
+                              ) : null}
+                              {canManageRecords && !archiveDisabledReason ? (
+                                <ArchiveFolderQuotationForm quotationId={folderQuotation.id} returnTo={cardReturnTo} />
+                              ) : null}
+                            </HeaderActionMenu>
+                          </div>
+                        </div>
+                        <div className="hidden sm:block">
                         <Link
                           href={`/quotations/${folderQuotation.id}`}
                           className={`block rounded-md px-1 py-1 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-800/20 ${
@@ -1796,6 +1864,7 @@ export default async function QuotationDetailPage({
                         {archiveDisabledReason ? (
                           <p className="mt-2 text-xs text-zinc-500">{archiveDisabledReason}</p>
                         ) : null}
+                        </div>
                       </article>
                     );
                   })}
@@ -1831,10 +1900,49 @@ export default async function QuotationDetailPage({
                         return (
                           <article
                             key={folderQuotation.id}
-                            className={`rounded-lg border border-zinc-200 bg-zinc-50/80 px-4 py-4 shadow-sm ${
+                            className={`rounded-lg border border-zinc-200 bg-zinc-50/80 px-3 py-3 shadow-sm sm:px-4 sm:py-4 ${
                               isCurrentFolderQuotation ? "ring-2 ring-emerald-200" : ""
                             }`}
                           >
+                            <div className="sm:hidden">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="inline-flex rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-700">
+                                  {folderTypeLabel}
+                                </span>
+                                <span className="inline-flex rounded-full border border-zinc-200 bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-600">
+                                  Archived
+                                </span>
+                                {isCurrentFolderQuotation ? (
+                                  <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-900">
+                                    Current
+                                  </span>
+                                ) : null}
+                                <StatusBadge quotation={folderQuotation} />
+                              </div>
+                              <h3 className="mt-2 truncate text-base font-semibold text-zinc-700">
+                                {folderQuotation.quotation_no ?? "Older quotation"}
+                              </h3>
+                              <p className="mt-0.5 text-sm text-zinc-500">{formatFolderDate(folderQuotation.quotation_date)}</p>
+                              <p className="mt-2 break-words text-lg font-semibold text-zinc-800">
+                                {money(folderQuotation.currency, folderQuotation.grand_total)}
+                              </p>
+                              <div className="mt-3 flex items-center justify-between gap-3">
+                                <Link href={`/quotations/${folderQuotation.id}`} className="inline-flex h-10 items-center rounded-md bg-zinc-800 px-4 text-sm font-semibold text-white transition hover:bg-zinc-700">
+                                  Open
+                                </Link>
+                                <HeaderActionMenu label="More">
+                                  <SecondaryActionLink href={`/quotations/${folderQuotation.id}/pdf`} label="Preview" />
+                                  <SecondaryPendingActionLink href={`/quotations/${folderQuotation.id}/download-pdf`} label="Download PDF" pendingLabel="Preparing PDF..." />
+                                  {canManageRecords ? (
+                                    <>
+                                      <RestoreFolderQuotationForm quotationId={folderQuotation.id} returnTo={cardReturnTo} />
+                                      <PermanentlyDeleteQuotationForm quotationId={folderQuotation.id} returnTo={deleteReturnTo} />
+                                    </>
+                                  ) : null}
+                                </HeaderActionMenu>
+                              </div>
+                            </div>
+                            <div className="hidden sm:block">
                             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                               <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-2">
@@ -1883,6 +1991,7 @@ export default async function QuotationDetailPage({
                                 <PermanentlyDeleteQuotationForm quotationId={folderQuotation.id} returnTo={deleteReturnTo} />
                               </div>
                             ) : null}
+                            </div>
                           </article>
                         );
                       })}

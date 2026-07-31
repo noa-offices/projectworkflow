@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState, useTransition, type ClipboardEvent, type ReactNode } from "react";
 import { QuotationImageFrame } from "@/components/quotations/quotation-image-frame";
 import { PresentationPptxExportButton } from "@/components/quotations/presentation-pptx-export-button";
@@ -21,6 +22,7 @@ import {
   type PresentationContentVisibility,
   type PresentationCoverOverrides,
   type PresentationFlowOrder,
+  type PresentationImageFrameSize,
   type PresentationImageFit,
   type PresentationItemOverride,
   type PresentationLayoutMode,
@@ -120,13 +122,16 @@ type VisibilityField = keyof PresentationContentVisibility;
 type PageVisibilityField = keyof PresentationPageVisibility;
 type CoverOverrideField = keyof PresentationCoverOverrides;
 type ClosingOverrideField = keyof PresentationClosingOverrides;
-type SettingsSectionKey = "flow" | "items" | "layout" | "content" | "pages" | "mainLayouts" | "sections" | "cover" | "closing" | "presets";
+type SettingsSectionKey = "flow" | "items" | "layout" | "content" | "pages" | "areasSections" | "mainLayouts" | "sections" | "cover" | "closing" | "presets";
 type PresentationPresetKey = "detailed" | "image_first" | "compact" | "client_review";
 type ProductPageData = {
   item: PresentationItem;
   heading: string;
   imageUrl: string | null;
   imageSettings: Partial<ImageDisplaySettings> | undefined;
+  imageFrameSize: PresentationImageFrameSize;
+  imagePositionX: number;
+  imagePositionY: number;
   imageScale: number;
   summary: string | null;
   meta: Array<{ label: string; value: string | null }>;
@@ -244,8 +249,7 @@ const settingsSections: Array<{ key: SettingsSectionKey; label: string }> = [
   { key: "layout", label: "Layout" },
   { key: "content", label: "Slide Content" },
   { key: "pages", label: "Pages" },
-  { key: "mainLayouts", label: "Main Area Layout" },
-  { key: "sections", label: "Section Settings" },
+  { key: "areasSections", label: "Areas & Sections" },
   { key: "cover", label: "Cover" },
   { key: "closing", label: "Closing" },
   { key: "presets", label: "Presets" },
@@ -694,7 +698,10 @@ function settingsSignature(value: QuotationPresentationSettings) {
         .map(([key, override]) => [key, {
           imageUrl: override.imageUrl,
           imageFit: override.imageFit,
+          imageFrameSize: override.imageFrameSize,
           imagePosition: override.imagePosition,
+          imagePositionX: override.imagePositionX,
+          imagePositionY: override.imagePositionY,
           imageScale: override.imageScale,
         }]),
     ),
@@ -759,7 +766,10 @@ function normalizedPresentationItemOverride(value: PresentationItemOverride | un
   return {
     imageUrl: value?.imageUrl?.trim() ?? "",
     imageFit: value?.imageFit === "cover" ? "cover" : "contain",
+    imageFrameSize: value?.imageFrameSize === "small" || value?.imageFrameSize === "medium" ? value.imageFrameSize : "current",
     imagePosition: "center" as const,
+    imagePositionX: Math.min(Math.max(Number.isFinite(Number(value?.imagePositionX)) ? Number(value?.imagePositionX) : 50, 0), 100),
+    imagePositionY: Math.min(Math.max(Number.isFinite(Number(value?.imagePositionY)) ? Number(value?.imagePositionY) : 50, 0), 100),
     imageScale: Math.min(Math.max(Number(value?.imageScale) || 1, 0.6), 1.2),
   };
 }
@@ -769,7 +779,10 @@ function itemOverrideHasCustomValue(value: PresentationItemOverride | undefined)
   return Boolean(
     normalized.imageUrl ||
     normalized.imageFit !== DEFAULT_PRESENTATION_ITEM_OVERRIDE.imageFit ||
+    normalized.imageFrameSize !== DEFAULT_PRESENTATION_ITEM_OVERRIDE.imageFrameSize ||
     normalized.imagePosition !== DEFAULT_PRESENTATION_ITEM_OVERRIDE.imagePosition ||
+    normalized.imagePositionX !== DEFAULT_PRESENTATION_ITEM_OVERRIDE.imagePositionX ||
+    normalized.imagePositionY !== DEFAULT_PRESENTATION_ITEM_OVERRIDE.imagePositionY ||
     normalized.imageScale !== DEFAULT_PRESENTATION_ITEM_OVERRIDE.imageScale
   );
 }
@@ -782,8 +795,8 @@ function presentationImageSettings(value: PresentationItemOverride | undefined):
   return {
     fit: normalized.imageFit,
     zoom: 1,
-    positionX: 50,
-    positionY: 50,
+    positionX: normalized.imagePositionX,
+    positionY: normalized.imagePositionY,
   };
 }
 
@@ -1092,6 +1105,8 @@ function PresentationImageStage({
   emptyContent,
   fit,
   imageUrl,
+  positionX,
+  positionY,
   scale,
 }: {
   alt: string;
@@ -1099,6 +1114,8 @@ function PresentationImageStage({
   emptyContent: ReactNode;
   fit: PresentationImageFit;
   imageUrl: string | null;
+  positionX: number;
+  positionY: number;
   scale: number;
 }) {
   return (
@@ -1106,7 +1123,10 @@ function PresentationImageStage({
       <div className={`relative overflow-hidden ${boundsClassName}`}>
         <div
           className="pointer-events-none absolute inset-0 flex items-center justify-center"
-          style={{ transform: `scale(${scale})`, transformOrigin: "center center" }}
+          style={{
+            transform: `scale(${scale})`,
+            transformOrigin: `${positionX}% ${positionY}%`,
+          }}
         >
           <QuotationImageFrame
             alt={alt}
@@ -1117,14 +1137,26 @@ function PresentationImageStage({
             settings={{
               fit,
               zoom: 1,
-              positionX: 50,
-              positionY: 50,
+              positionX: positionX === 0 ? Number.EPSILON : positionX,
+              positionY: positionY === 0 ? Number.EPSILON : positionY,
             }}
           />
         </div>
       </div>
     </div>
   );
+}
+
+function presentationImageBoundsClass(frameSize: PresentationImageFrameSize, compact: boolean) {
+  if (compact) {
+    if (frameSize === "small") return "h-[70%] w-[75%]";
+    if (frameSize === "medium") return "h-[80%] w-[85%]";
+    return "h-[90%] w-[95%]";
+  }
+
+  if (frameSize === "small") return "h-[52%] w-[62%]";
+  if (frameSize === "medium") return "h-[62%] w-[72%]";
+  return "h-[72%] w-[82%]";
 }
 
 function SettingsSectionButton({
@@ -1140,7 +1172,7 @@ function SettingsSectionButton({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+      className={`inline-flex w-full items-center justify-center whitespace-nowrap rounded-full border px-3 py-2 text-sm font-semibold transition ${
         active
           ? "border-zinc-950 bg-zinc-950 text-white"
           : "border-zinc-300 bg-white text-zinc-700 hover:border-zinc-400 hover:text-zinc-950"
@@ -1190,7 +1222,7 @@ function FlowMoveButtons({
   onMoveDown: () => void;
   onMoveUp: () => void;
 }) {
-  const buttonClassName = "inline-flex h-7 items-center rounded-full border border-zinc-300 px-2.5 text-[11px] font-semibold text-zinc-600 transition hover:border-zinc-400 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-40";
+  const buttonClassName = "inline-flex h-9 items-center rounded-full border border-zinc-300 px-3 text-[11px] font-semibold text-zinc-600 transition hover:border-zinc-400 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-40";
 
   return (
     <div className="flex items-center gap-1">
@@ -1246,6 +1278,9 @@ function buildProductPageData({
         ? item.cell_layout?.images?.proposed_image_url_snapshot
         : item.cell_layout?.images?.specified_image_url_snapshot,
     ),
+    imageFrameSize: normalizedPresentationItemOverride(itemOverride).imageFrameSize,
+    imagePositionX: normalizedPresentationItemOverride(itemOverride).imagePositionX,
+    imagePositionY: normalizedPresentationItemOverride(itemOverride).imagePositionY,
     imageScale: normalizedPresentationItemOverride(itemOverride).imageScale,
     summary: productSummary(item, project, contentVisibility),
     meta: detailRows(item, contentVisibility),
@@ -1287,7 +1322,7 @@ function TwoPerPageCard({
         <div className="flex min-h-0 flex-[1_1_70%] items-center justify-center overflow-hidden bg-white">
           <PresentationImageStage
             alt={data.heading}
-            boundsClassName="h-[90%] w-[95%]"
+            boundsClassName={presentationImageBoundsClass(data.imageFrameSize, true)}
             emptyContent={(
               <div className="flex h-full w-full items-center justify-center bg-white px-6 text-center text-xs text-zinc-400">
                 Visual pending
@@ -1295,6 +1330,8 @@ function TwoPerPageCard({
             )}
             fit={data.imageSettings?.fit === "cover" ? "cover" : "contain"}
             imageUrl={data.imageUrl}
+            positionX={data.imagePositionX}
+            positionY={data.imagePositionY}
             scale={data.imageScale}
           />
         </div>
@@ -1346,12 +1383,14 @@ function ControlToggle({
 }
 
 function TextField({
+  compact = false,
   description,
   label,
   onChange,
   placeholder,
   value,
 }: {
+  compact?: boolean;
   description: string;
   label: string;
   onChange: (value: string) => void;
@@ -1359,7 +1398,7 @@ function TextField({
   value: string;
 }) {
   return (
-    <label className="block rounded-2xl border border-zinc-200 bg-white px-4 py-3">
+    <label className={`block rounded-2xl border border-zinc-200 bg-white ${compact ? "px-3 py-2.5" : "px-4 py-3"}`}>
       <span className="block text-sm font-semibold text-zinc-900">{label}</span>
       <span className="mt-1 block text-xs leading-5 text-zinc-500">{description}</span>
       <input
@@ -1374,12 +1413,14 @@ function TextField({
 }
 
 function TextAreaField({
+  compact = false,
   description,
   label,
   onChange,
   placeholder,
   value,
 }: {
+  compact?: boolean;
   description: string;
   label: string;
   onChange: (value: string) => void;
@@ -1387,7 +1428,7 @@ function TextAreaField({
   value: string;
 }) {
   return (
-    <label className="block rounded-2xl border border-zinc-200 bg-white px-4 py-3">
+    <label className={`block rounded-2xl border border-zinc-200 bg-white ${compact ? "px-3 py-2.5" : "px-4 py-3"}`}>
       <span className="block text-sm font-semibold text-zinc-900">{label}</span>
       <span className="mt-1 block text-xs leading-5 text-zinc-500">{description}</span>
       <textarea
@@ -1526,25 +1567,39 @@ function PresentationImageInput({
 
 function PresentationItemImageControl({
   fit,
+  frameSize,
   hasOverrideImage,
   imageScale,
+  positionX,
+  positionY,
   itemId,
   onFileSelected,
   onFitChange,
+  onFrameSizeChange,
+  onPositionXChange,
+  onPositionYChange,
   onScaleChange,
   onResetImage,
+  onUseOriginalImage,
   previewUrl,
   status,
   uploadDisabled = false,
 }: {
   fit: PresentationImageFit;
+  frameSize: PresentationImageFrameSize;
   hasOverrideImage: boolean;
   imageScale: number;
+  positionX: number;
+  positionY: number;
   itemId: string;
   onFileSelected: (file: File) => Promise<void>;
   onFitChange: (fit: PresentationImageFit) => void;
+  onFrameSizeChange: (frameSize: PresentationImageFrameSize) => void;
+  onPositionXChange: (position: number) => void;
+  onPositionYChange: (position: number) => void;
   onScaleChange: (scale: number) => void;
   onResetImage: () => void;
+  onUseOriginalImage: () => void;
   previewUrl: string | null;
   status: { status: "idle" | "uploading" | "failed"; error: string | null };
   uploadDisabled?: boolean;
@@ -1566,7 +1621,13 @@ function PresentationItemImageControl({
               className="h-full w-full overflow-hidden"
               imageClassName="block h-full w-full"
               imageUrl={previewUrl}
-              settings={{ fit, zoom: imageScale, positionX: 50, positionY: 50 }}
+              minimumZoom={0.6}
+              settings={{
+                fit,
+                zoom: imageScale,
+                positionX: positionX === 0 ? Number.EPSILON : positionX,
+                positionY: positionY === 0 ? Number.EPSILON : positionY,
+              }}
             />
           ) : (
             <span className="px-1 text-center text-[9px] font-semibold uppercase tracking-[0.18em] text-zinc-400">No Image</span>
@@ -1590,10 +1651,10 @@ function PresentationItemImageControl({
         }}
       />
 
-      <div className="mt-3 flex flex-wrap items-center gap-3">
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <label
           htmlFor={uploadDisabled ? undefined : inputId}
-          className={`cursor-pointer text-[10px] font-semibold uppercase tracking-[0.18em] ${
+          className={`inline-flex h-10 items-center justify-center rounded-full border border-zinc-300 bg-white px-3 text-center text-[10px] font-semibold uppercase tracking-[0.18em] ${
             uploadDisabled
               ? "cursor-not-allowed text-zinc-400"
               : status.status === "uploading"
@@ -1601,17 +1662,36 @@ function PresentationItemImageControl({
                 : "text-zinc-700 hover:text-zinc-950"
           }`}
         >
-          {uploadDisabled ? "Upload disabled" : status.status === "uploading" ? "Uploading..." : "Change image"}
+          {uploadDisabled ? "Upload disabled" : status.status === "uploading" ? "Uploading..." : "Replace image"}
         </label>
-        {hasOverrideImage ? (
-          <button
-            type="button"
-            onClick={onResetImage}
-            className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 transition hover:text-red-700"
-          >
-            Reset image
-          </button>
-        ) : null}
+        <button
+          type="button"
+          disabled={!hasOverrideImage}
+          onClick={onUseOriginalImage}
+          className="inline-flex h-10 items-center justify-center rounded-full border border-zinc-300 bg-white px-3 text-center text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 transition hover:border-zinc-400 hover:text-zinc-950 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
+        >
+          Use original image
+        </button>
+      </div>
+
+      <div className="mt-3">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Image frame size</span>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          {(["small", "medium", "current"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => onFrameSizeChange(option)}
+              className={`inline-flex h-10 min-w-0 items-center justify-center rounded-full border px-2 text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
+                frameSize === option
+                  ? "border-zinc-950 bg-zinc-950 text-white"
+                  : "border-zinc-300 bg-white text-zinc-600 hover:border-zinc-400 hover:text-zinc-950"
+              }`}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1634,7 +1714,7 @@ function PresentationItemImageControl({
 
       <div className="mt-3">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Image Size</span>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Image scale</span>
           <span className="text-[10px] font-semibold text-zinc-500">{Math.round(imageScale * 100)}%</span>
         </div>
         <input
@@ -1647,6 +1727,48 @@ function PresentationItemImageControl({
           className="mt-2 w-full accent-zinc-900"
         />
       </div>
+
+      <div className="mt-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Horizontal position</span>
+          <span className="text-[10px] font-semibold text-zinc-500">{Math.round(positionX)}%</span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={positionX}
+          onChange={(event) => onPositionXChange(Number(event.target.value))}
+          className="mt-2 w-full accent-zinc-900"
+        />
+      </div>
+
+      <div className="mt-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Vertical position</span>
+          <span className="text-[10px] font-semibold text-zinc-500">{Math.round(positionY)}%</span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={positionY}
+          onChange={(event) => onPositionYChange(Number(event.target.value))}
+          className="mt-2 w-full accent-zinc-900"
+        />
+      </div>
+
+      <p className="mt-3 text-xs leading-5 text-zinc-500">Frame size changes the available image area. Image scale changes the product size inside the frame. Position controls move it within the frame.</p>
+
+      <button
+        type="button"
+        onClick={onResetImage}
+        className="mt-3 inline-flex h-10 w-full items-center justify-center rounded-full border border-zinc-300 bg-white px-4 text-xs font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+      >
+        Reset this item to presentation defaults
+      </button>
 
       {status.error ? <p className="mt-2 text-xs text-red-700">{status.error}</p> : null}
     </div>
@@ -1691,8 +1813,7 @@ export function QuotationPresentation({
   const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionKey>("items");
   const [expandedFlowGroupIds, setExpandedFlowGroupIds] = useState<string[] | null>(null);
   const [expandedFlowSectionIds, setExpandedFlowSectionIds] = useState<string[] | null>(null);
-  const [expandedSectionKeys, setExpandedSectionKeys] = useState<string[] | null>(null);
-  const [activeItemImageSettingsId, setActiveItemImageSettingsId] = useState<string | null>(null);
+  const [selectedPresentationItemId, setSelectedPresentationItemId] = useState<string | null>(null);
   const [expandedMainSectionLayoutIds, setExpandedMainSectionLayoutIds] = useState<string[] | null>(null);
   const [expandedSectionSettingsKeys, setExpandedSectionSettingsKeys] = useState<string[] | null>(null);
   const [overridePreviewUrlByItemId, setOverridePreviewUrlByItemId] = useState<ImageUrlRecord>(presentationOverrideImageUrlByItemId);
@@ -1705,6 +1826,14 @@ export function QuotationPresentation({
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isSlideNavigatorOpen, setIsSlideNavigatorOpen] = useState(false);
+  const [isMobileSettingsOpen, setIsMobileSettingsOpen] = useState(false);
+  const [isMobilePreview, setIsMobilePreview] = useState(false);
+  const [previewZoomMode, setPreviewZoomMode] = useState<"fit-width" | "manual">("fit-width");
+  const [fitPreviewScale, setFitPreviewScale] = useState(1);
+  const [manualPreviewScale, setManualPreviewScale] = useState(1);
+  const [previewStackSize, setPreviewStackSize] = useState({ height: 0, width: 0 });
+  const previewViewportRef = useRef<HTMLDivElement>(null);
+  const previewStackRef = useRef<HTMLDivElement>(null);
   const [isPending, startTransition] = useTransition();
   const persistenceDisabled = previewMode?.disablePersistence === true;
   const uploadsDisabled = previewMode?.disableUploads === true;
@@ -1805,7 +1934,6 @@ export function QuotationPresentation({
   ));
   const settingsItemNumberById = displayNumberByItemId(orderedPresentationItemsForSettings);
   const visibleSlideItemNumberById = displayNumberByItemId(orderedVisiblePresentationItems);
-  const defaultExpandedSectionId = controlSections[0]?.section.id ?? null;
   const titledSectionsById = new Map(
     activeSections.map((section) => [section.id, sectionPresentationTitle(section, settings)] as const),
   );
@@ -1844,6 +1972,12 @@ export function QuotationPresentation({
       effectivePresentationImageUrlByItemId[itemId] = overridePreviewUrl;
     }
   });
+  const selectedPresentationItem = orderedPresentationItemsForSettings.find((item) => item.id === selectedPresentationItemId)
+    ?? orderedPresentationItemsForSettings[0]
+    ?? null;
+  const selectedPresentationSection = selectedPresentationItem
+    ? controlSections.find(({ items: sectionItems }) => sectionItems.some((item) => item.id === selectedPresentationItem.id))?.section ?? null
+    : null;
 
   const dividerSections = displaySections.filter(sectionHasContent);
   const productPagesBySection = new Map(
@@ -1865,6 +1999,45 @@ export function QuotationPresentation({
     settings,
   });
   const visibleSlideCount = presentationSlides.length;
+  const previewScale = previewZoomMode === "fit-width" ? fitPreviewScale : manualPreviewScale;
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 1279px)");
+    const updateMobileState = () => setIsMobilePreview(mediaQuery.matches);
+
+    updateMobileState();
+    mediaQuery.addEventListener("change", updateMobileState);
+    return () => mediaQuery.removeEventListener("change", updateMobileState);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobilePreview) return;
+
+    const viewport = previewViewportRef.current;
+    const stack = previewStackRef.current;
+    if (!viewport || !stack) return;
+
+    const updatePreviewSize = () => {
+      const width = stack.scrollWidth;
+      const height = stack.scrollHeight;
+      setPreviewStackSize({ height, width });
+
+      if (previewZoomMode === "fit-width" && width > 0) {
+        setFitPreviewScale(Math.min(Math.max((viewport.clientWidth - 8) / width, 0.2), 1));
+      }
+    };
+
+    updatePreviewSize();
+    const resizeObserver = new ResizeObserver(updatePreviewSize);
+    resizeObserver.observe(viewport);
+    resizeObserver.observe(stack);
+    return () => resizeObserver.disconnect();
+  }, [isMobilePreview, previewZoomMode, visibleSlideCount]);
+
+  function adjustPreviewZoom(change: number) {
+    setManualPreviewScale(Math.min(Math.max(previewScale + change, 0.2), 1.5));
+    setPreviewZoomMode("manual");
+  }
   const sectionsWithoutVisibleItemsCount = displaySections.filter((section) => {
     const totalItems = allPresentableItemsBySection.get(section.id) ?? [];
     const visibleItems = presentableItemsBySection.get(section.id) ?? [];
@@ -1887,15 +2060,6 @@ export function QuotationPresentation({
     updateSettings({
       ...settings,
       hiddenItemIds: nextHiddenItemIds,
-    });
-  }
-
-  function toggleSectionExpanded(sectionId: string) {
-    setExpandedSectionKeys((current) => {
-      const base = current ?? (defaultExpandedSectionId ? [defaultExpandedSectionId] : []);
-      return base.includes(sectionId)
-        ? base.filter((entry) => entry !== sectionId)
-        : [...base, sectionId];
     });
   }
 
@@ -2255,6 +2419,15 @@ export function QuotationPresentation({
     setItemOverrideStatus(itemId, "idle");
   }
 
+  function restoreOriginalPresentationItemImage(itemId: string) {
+    setOverridePreviewUrlByItemId((current) => ({
+      ...current,
+      [itemId]: null,
+    }));
+    updateItemOverride(itemId, { imageUrl: "" });
+    setItemOverrideStatus(itemId, "idle");
+  }
+
   async function handleSectionOverrideImageUpload(sectionId: string, field: SectionImageField, file: File) {
     const statusKey = `${sectionId}:${field}`;
     setSectionOverrideStatus(statusKey, "uploading");
@@ -2369,7 +2542,7 @@ export function QuotationPresentation({
   }
 
   return (
-    <main className="min-h-screen bg-[#edf0f3] px-4 py-6 print:bg-white print:px-0 print:py-0">
+    <main className="min-h-screen min-w-0 overflow-x-hidden bg-[#edf0f3] px-3 py-3 print:bg-white print:px-0 print:py-0 xl:overflow-x-visible xl:px-4 xl:py-6">
       <style>{`
         @page { size: A4 landscape; margin: 0; }
         html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -2378,10 +2551,43 @@ export function QuotationPresentation({
           .presentation-page { width: 297mm !important; height: 210mm !important; break-after: page; page-break-after: always; overflow: hidden !important; }
           .presentation-page:last-child { break-after: auto !important; page-break-after: auto !important; }
           .presentation-stack { gap: 0 !important; }
+          .presentation-preview-reservation { width: auto !important; height: auto !important; }
+          .presentation-preview-content { width: auto !important; transform: none !important; }
+          .presentation-workspace { display: block !important; max-width: none !important; }
         }
       `}</style>
 
-      <div className={`mx-auto mb-5 w-[297mm] max-w-full items-center justify-between gap-4 print:hidden ${printMode ? "hidden" : "flex"}`}>
+      <div className={`mx-auto mb-4 grid max-w-full gap-3 print:hidden xl:hidden ${printMode ? "hidden" : ""}`}>
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-zinc-950">Presentation</p>
+            <p className="mt-1 text-xs text-zinc-500">{visibleSlideCount} visible {visibleSlideCount === 1 ? "slide" : "slides"}</p>
+          </div>
+          <Link href={`/quotations/${quotation.id}`} className="inline-flex h-10 shrink-0 items-center rounded-full border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700">
+            Back
+          </Link>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <PrintActions>
+            <PresentationPptxExportButton />
+          </PrintActions>
+        </div>
+        <div className="flex min-w-0 items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white p-3">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Presentation Settings</p>
+            <p className="mt-1 text-xs text-zinc-600">{visibleCount} visible / {totalCount} total items</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsMobileSettingsOpen(true)}
+            className="inline-flex h-10 shrink-0 items-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-800"
+          >
+            Open settings
+          </button>
+        </div>
+      </div>
+
+      <div className={`mx-auto mb-5 hidden w-full max-w-[1530px] items-center justify-between gap-4 print:hidden xl:flex ${printMode ? "xl:hidden" : ""}`}>
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Quotation Presentation</p>
           <p className="mt-1 text-sm text-zinc-600">{visibleSlideCount} visible {visibleSlideCount === 1 ? "slide" : "slides"}.</p>
@@ -2395,28 +2601,36 @@ export function QuotationPresentation({
         </PrintActions>
       </div>
 
-      <section className={`mx-auto mb-6 w-[297mm] max-w-full print:hidden ${printMode ? "hidden" : "block"}`}>
-        <div className="rounded-[28px] border border-zinc-200 bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
+      <div className="presentation-workspace mx-auto w-full max-w-[1570px] min-w-0 print:block xl:grid xl:grid-cols-[minmax(0,1fr)_440px] xl:items-start xl:gap-6">
+      <section className={`${isMobileSettingsOpen ? "fixed inset-3 z-50 block max-h-[calc(100dvh-1.5rem)] overflow-y-auto" : "hidden"} mx-auto w-auto max-w-full print:hidden xl:sticky xl:top-6 xl:col-start-2 xl:row-start-1 xl:block xl:max-h-[calc(100vh-3rem)] xl:w-auto xl:self-start xl:overflow-y-auto xl:overscroll-contain ${printMode ? "hidden xl:hidden" : ""}`}>
+        <div className="rounded-[20px] border border-zinc-200 bg-white p-3 shadow-[0_18px_50px_rgba(15,23,42,0.08)] xl:rounded-[28px] xl:p-5">
+          <div className="flex min-w-0 flex-col gap-3">
+            <div className="min-w-0">
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Presentation Settings</p>
               <p className="mt-2 text-lg font-semibold text-zinc-950">{visibleCount} visible / {totalCount} total items</p>
               <p className="mt-1 text-sm text-zinc-500">Manage presentation-only item visibility, layout, pages, and cover/closing text.</p>
               <p className="mt-1 text-sm text-zinc-500">{visibleSlideCount} visible {visibleSlideCount === 1 ? "slide" : "slides"} generated.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="grid w-full grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setIsMobileSettingsOpen(false)}
+                className="col-span-2 inline-flex h-10 items-center justify-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 xl:hidden"
+              >
+                Close
+              </button>
               <button
                 type="button"
                 disabled={persistenceDisabled || isPending || !isDirty}
                 onClick={saveSettings}
-                className="inline-flex h-10 items-center rounded-full bg-zinc-950 px-5 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                className="inline-flex h-10 items-center justify-center rounded-full bg-zinc-950 px-5 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
               >
                 {persistenceDisabled ? "Preview only" : isPending ? "Saving..." : "Save"}
               </button>
               <button
                 type="button"
                 onClick={resetPresentationSettings}
-                className="inline-flex h-10 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                className="inline-flex h-10 items-center justify-center whitespace-nowrap rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
               >
                 Reset presentation
               </button>
@@ -2435,11 +2649,13 @@ export function QuotationPresentation({
             )}
           </div>
 
-          <div className="mt-5 flex flex-wrap gap-2">
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
             {settingsSections.map((section) => (
               <SettingsSectionButton
                 key={section.key}
-                active={activeSettingsSection === section.key}
+                active={section.key === "areasSections"
+                  ? activeSettingsSection === "areasSections" || activeSettingsSection === "mainLayouts" || activeSettingsSection === "sections"
+                  : activeSettingsSection === section.key}
                 label={section.label}
                 onClick={() => setActiveSettingsSection(section.key)}
               />
@@ -2449,30 +2665,30 @@ export function QuotationPresentation({
           <div className="mt-5 rounded-[24px] border border-zinc-200 bg-zinc-50/70 p-4">
             {activeSettingsSection === "flow" ? (
               <>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
+                <div className="flex min-w-0 flex-col items-stretch gap-3">
+                  <div className="min-w-0">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Presentation Flow</p>
                     <p className="mt-1 text-sm text-zinc-500">Review the real presentation hierarchy, control visibility, and adjust presentation-only order.</p>
                   </div>
-                  <div className="flex flex-wrap items-center justify-end gap-2">
+                  <div className="grid w-full gap-2 xl:grid-cols-2">
                     <button
                       type="button"
                       onClick={resetFlowOrder}
-                      className="inline-flex h-9 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                      className="inline-flex h-10 w-full items-center justify-center whitespace-nowrap rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950 xl:h-9"
                     >
                       Reset flow order
                     </button>
                     <button
                       type="button"
                       onClick={resetHiddenItems}
-                      className="inline-flex h-9 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                      className="inline-flex h-10 w-full items-center justify-center whitespace-nowrap rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950 xl:h-9"
                     >
                       Show all items
                     </button>
                   </div>
                 </div>
 
-                <div className="mt-4 grid max-h-[520px] gap-4 overflow-y-auto pr-1">
+                <div className="mt-4 grid min-w-0 gap-4">
                   {flowGroups.map((group, groupIndex) => {
                     const groupSectionIds = [
                       ...(group.mainSection ? [group.mainSection.id] : []),
@@ -2497,36 +2713,36 @@ export function QuotationPresentation({
 
                     return (
                       <div key={group.id} className="rounded-2xl border border-zinc-200 bg-white">
-                        <div className="flex items-center gap-3 px-3 py-3">
+                        <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2 px-3 py-3">
                           <SectionVisibilityCheckbox
                             checked={groupAllVisible}
                             indeterminate={groupSomeVisible}
                             onChange={(checked) => toggleMainAreaItems(groupSectionIds, checked)}
                           />
-                          {group.mainSection ? (
-                            <FlowMoveButtons
-                              disableUp={mainSectionIndex <= 0}
-                              disableDown={mainSectionIndex >= mainSections.length - 1}
-                              onMoveUp={() => moveMainSection(group.mainSection!.id, "up")}
-                              onMoveDown={() => moveMainSection(group.mainSection!.id, "down")}
-                            />
-                          ) : null}
                           <button
                             type="button"
                             onClick={() => toggleFlowGroupExpanded(group.id)}
-                            className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+                            className="min-w-0 text-left"
                           >
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-zinc-400">{groupExpanded ? "v" : ">"}</span>
-                                <p className="truncate text-sm font-semibold text-zinc-900">{groupTitle}</p>
-                              </div>
-                              <p className="mt-1 pl-5 text-xs uppercase tracking-[0.18em] text-zinc-400">{groupTypeLabel}</p>
+                            <div className="flex min-w-0 items-start gap-2">
+                              <span className="mt-0.5 shrink-0 text-xs text-zinc-400">{groupExpanded ? "v" : ">"}</span>
+                              <p className="min-w-0 break-words text-sm font-semibold text-zinc-900">{groupTitle}</p>
                             </div>
-                            <p className="shrink-0 text-xs text-zinc-500">
+                            <p className="mt-1 pl-5 text-xs uppercase tracking-[0.16em] text-zinc-400">{groupTypeLabel}</p>
+                            <p className="mt-1 pl-5 text-xs leading-5 text-zinc-500">
                               {group.sections.length} sections • {groupVisibleCount} visible / {groupTotalCount} total
                             </p>
                           </button>
+                          {group.mainSection ? (
+                            <div className="col-start-2">
+                              <FlowMoveButtons
+                                disableUp={mainSectionIndex <= 0}
+                                disableDown={mainSectionIndex >= mainSections.length - 1}
+                                onMoveUp={() => moveMainSection(group.mainSection!.id, "up")}
+                                onMoveDown={() => moveMainSection(group.mainSection!.id, "down")}
+                              />
+                            </div>
+                          ) : null}
                         </div>
 
                         {groupExpanded ? (
@@ -2546,34 +2762,34 @@ export function QuotationPresentation({
 
                               return (
                                 <div key={section.id} className="rounded-2xl border border-zinc-200 bg-zinc-50/60">
-                                  <div className="flex items-center gap-3 px-3 py-3">
+                                  <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2 px-3 py-3">
                                     <SectionVisibilityCheckbox
                                       checked={sectionAllVisible}
                                       indeterminate={sectionSomeVisible}
                                       onChange={(checked) => toggleSectionItems(sectionItems.map((item) => item.id), checked)}
                                     />
-                                    {group.mainSection && section.id !== group.mainSection.id ? (
-                                      <FlowMoveButtons
-                                        disableUp={sectionOrderIndex <= 0}
-                                        disableDown={sectionOrderIndex >= groupedChildSections.length - 1}
-                                        onMoveUp={() => moveSectionWithinMain(group.mainSection!.id, section.id, "up")}
-                                        onMoveDown={() => moveSectionWithinMain(group.mainSection!.id, section.id, "down")}
-                                      />
-                                    ) : null}
                                     <button
                                       type="button"
                                       onClick={() => toggleFlowSectionExpanded(section.id)}
-                                      className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+                                      className="min-w-0 text-left"
                                     >
-                                      <div className="min-w-0">
-                                        <div className="flex items-center gap-2">
-                                          <span className="text-xs text-zinc-400">{sectionExpanded ? "v" : ">"}</span>
-                                          <p className="truncate text-sm font-semibold text-zinc-900">{section.section_title}</p>
-                                        </div>
-                                        <p className="mt-1 pl-5 text-xs uppercase tracking-[0.18em] text-zinc-400">Section / Area</p>
+                                      <div className="flex min-w-0 items-start gap-2">
+                                        <span className="mt-0.5 shrink-0 text-xs text-zinc-400">{sectionExpanded ? "v" : ">"}</span>
+                                        <p className="min-w-0 break-words text-sm font-semibold text-zinc-900">{section.section_title}</p>
                                       </div>
-                                      <p className="shrink-0 text-xs text-zinc-500">{visibleSectionItemCount} visible / {totalSectionItemCount} total</p>
+                                      <p className="mt-1 pl-5 text-xs uppercase tracking-[0.16em] text-zinc-400">Section / Area</p>
+                                      <p className="mt-1 pl-5 text-xs leading-5 text-zinc-500">{visibleSectionItemCount} visible / {totalSectionItemCount} total</p>
                                     </button>
+                                    {group.mainSection && section.id !== group.mainSection.id ? (
+                                      <div className="col-start-2">
+                                        <FlowMoveButtons
+                                          disableUp={sectionOrderIndex <= 0}
+                                          disableDown={sectionOrderIndex >= groupedChildSections.length - 1}
+                                          onMoveUp={() => moveSectionWithinMain(group.mainSection!.id, section.id, "up")}
+                                          onMoveDown={() => moveSectionWithinMain(group.mainSection!.id, section.id, "down")}
+                                        />
+                                      </div>
+                                    ) : null}
                                   </div>
 
                                   {sectionExpanded ? (
@@ -2598,20 +2814,14 @@ export function QuotationPresentation({
                                                 : "border-zinc-200 bg-zinc-50 text-zinc-500"
                                             }`}
                                           >
-                                            <div className="flex items-center gap-3">
+                                            <div className="grid min-w-0 grid-cols-[auto_48px_minmax(0,1fr)] items-start gap-x-3 gap-y-2">
                                               <input
                                                 checked={included}
                                                 className="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-400"
                                                 onChange={(event) => toggleHiddenItem(item.id, event.target.checked)}
                                                 type="checkbox"
                                               />
-                                              <FlowMoveButtons
-                                                disableUp={itemIndex <= 0}
-                                                disableDown={itemIndex >= sectionItems.length - 1}
-                                                onMoveUp={() => moveItemWithinSection(section.id, item.id, "up")}
-                                                onMoveDown={() => moveItemWithinSection(section.id, item.id, "down")}
-                                              />
-                                              <div className="ml-5 flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+                                              <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
                                                 {thumbnailUrl ? (
                                                   // eslint-disable-next-line @next/next/no-img-element
                                                   <img src={thumbnailUrl} alt={title} className="h-full w-full object-contain" />
@@ -2625,6 +2835,14 @@ export function QuotationPresentation({
                                                 {subline ? (
                                                   <p className="mt-1 text-xs leading-5 text-zinc-500" style={clampStyle(2)}>{subline}</p>
                                                 ) : null}
+                                              </div>
+                                              <div className="col-start-3">
+                                                <FlowMoveButtons
+                                                  disableUp={itemIndex <= 0}
+                                                  disableDown={itemIndex >= sectionItems.length - 1}
+                                                  onMoveUp={() => moveItemWithinSection(section.id, item.id, "up")}
+                                                  onMoveDown={() => moveItemWithinSection(section.id, item.id, "down")}
+                                                />
                                               </div>
                                             </div>
                                           </div>
@@ -2646,137 +2864,104 @@ export function QuotationPresentation({
 
             {activeSettingsSection === "items" ? (
               <>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Items</p>
-                    <p className="mt-1 text-sm text-zinc-500">Include or hide individual product slides grouped by quotation section.</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={resetHiddenItems}
-                    className="inline-flex h-9 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Items</p>
+                  <p className="mt-1 text-sm text-zinc-500">Select one product to adjust its presentation visibility and image.</p>
+                </div>
+
+                <label className="mt-4 block min-w-0">
+                  <span className="text-xs font-semibold text-zinc-700">Adjust item</span>
+                  <select
+                    value={selectedPresentationItem?.id ?? ""}
+                    onChange={(event) => setSelectedPresentationItemId(event.target.value)}
+                    disabled={!selectedPresentationItem}
+                    className="mt-2 h-11 w-full min-w-0 rounded-xl border border-zinc-300 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 disabled:bg-zinc-100 disabled:text-zinc-400"
                   >
-                    Show all items
-                  </button>
-                </div>
+                    {orderedPresentationItemsForSettings.map((item) => {
+                      const itemNumber = settingsItemNumberById.get(item.id) ?? 0;
+                      return <option key={item.id} value={item.id}>{`Item ${itemNumber} — ${productTitle(item)}`}</option>;
+                    })}
+                  </select>
+                </label>
 
-                <div className="mt-4 grid max-h-[520px] gap-4 overflow-y-auto pr-1">
-                  {controlSections.map(({ section, items: sectionItems }, sectionIndex) => {
-                    const visibleSectionItemCount = sectionItems.filter((item) => !hiddenItemIds.has(item.id)).length;
-                    const totalSectionItemCount = sectionItems.length;
-                    const allVisible = visibleSectionItemCount === totalSectionItemCount;
-                    const someVisible = visibleSectionItemCount > 0 && visibleSectionItemCount < totalSectionItemCount;
-                    const isExpanded = expandedSectionKeys
-                      ? expandedSectionKeys.includes(section.id)
-                      : sectionIndex === 0;
+                {selectedPresentationItem ? (() => {
+                  const item = selectedPresentationItem;
+                  const included = !hiddenItemIds.has(item.id);
+                  const thumbnailUrl = effectivePresentationImageUrlByItemId[item.id] ?? null;
+                  const title = productTitle(item);
+                  const itemNumber = settingsItemNumberById.get(item.id) ?? 0;
+                  const itemOverride = normalizedPresentationItemOverride(settings.itemOverrides[item.id]);
+                  const hasCustomItemAdjustment = itemOverrideHasCustomValue(settings.itemOverrides[item.id]);
+                  const hasOverrideImage = Boolean(itemOverride.imageUrl);
+                  const itemStatus = itemOverrideStatusByItemId[item.id] ?? { status: "idle" as const, error: null };
 
-                    return (
-                      <div key={section.id} className="rounded-2xl border border-zinc-200 bg-white">
-                        <div className="flex items-center gap-3 px-3 py-3">
-                          <SectionVisibilityCheckbox
-                            checked={allVisible}
-                            indeterminate={someVisible}
-                            onChange={(checked) => toggleSectionItems(sectionItems.map((item) => item.id), checked)}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => toggleSectionExpanded(section.id)}
-                            className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
-                          >
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-zinc-400">{isExpanded ? "▾" : "▸"}</span>
-                                <p className="truncate text-sm font-semibold text-zinc-900">{section.section_title}</p>
-                              </div>
-                              <p className="mt-1 pl-5 text-xs uppercase tracking-[0.18em] text-zinc-400">
-                                {section.section_kind === "main" ? "Main Area" : "Area"}
-                              </p>
-                            </div>
-                            <p className="shrink-0 text-xs text-zinc-500">{visibleSectionItemCount} visible / {totalSectionItemCount} total</p>
-                          </button>
-                        </div>
-
-                        {isExpanded ? (
-                          <div className="grid gap-2 border-t border-zinc-100 px-3 py-3">
-                            {sectionItems.map((item) => {
-                              const included = !hiddenItemIds.has(item.id);
-                              const thumbnailUrl = effectivePresentationImageUrlByItemId[item.id] ?? null;
-                              const title = productTitle(item);
-                              const itemNumber = String(settingsItemNumberById.get(item.id) ?? 0).padStart(2, "0");
-                              const subline = detailValue([
-                                item.item_code_snapshot,
-                                item.model_snapshot,
-                                item.brand_name_snapshot,
-                              ]);
-                              const itemOverride = normalizedPresentationItemOverride(settings.itemOverrides[item.id]);
-                              const hasOverrideImage = Boolean(itemOverride.imageUrl);
-                              const itemStatus = itemOverrideStatusByItemId[item.id] ?? { status: "idle" as const, error: null };
-                              const isImageSettingsOpen = activeItemImageSettingsId === item.id;
-
-                              return (
-                                <div
-                                  key={item.id}
-                                  className={`rounded-2xl border px-3 py-2.5 transition ${
-                                    included
-                                      ? "border-zinc-200 bg-white"
-                                      : "border-zinc-200 bg-zinc-50 text-zinc-500"
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-3">
-                                    <input
-                                      checked={included}
-                                      className="h-4 w-4 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-400"
-                                      onChange={(event) => toggleHiddenItem(item.id, event.target.checked)}
-                                      type="checkbox"
-                                    />
-                                    <div className="ml-5 flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
-                                      {thumbnailUrl ? (
-                                        // eslint-disable-next-line @next/next/no-img-element
-                                        <img src={thumbnailUrl} alt={title} className="h-full w-full object-contain" />
-                                      ) : (
-                                        <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-zinc-400">No Image</span>
-                                      )}
-                                    </div>
-                                    <div className="min-w-0 flex-1">
-                                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-400">Item {itemNumber}</p>
-                                      <p className="mt-1 text-sm font-semibold text-zinc-900" style={clampStyle(2)}>{title}</p>
-                                      {subline ? (
-                                        <p className="mt-1 text-xs leading-5 text-zinc-500" style={clampStyle(2)}>{subline}</p>
-                                      ) : null}
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => setActiveItemImageSettingsId(isImageSettingsOpen ? null : item.id)}
-                                      className="shrink-0 rounded-full border border-zinc-300 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600 transition hover:border-zinc-400 hover:text-zinc-950"
-                                    >
-                                      {isImageSettingsOpen ? "Hide Image" : "Image Settings"}
-                                    </button>
-                                  </div>
-
-                                  {isImageSettingsOpen ? (
-                                    <PresentationItemImageControl
-                                      fit={itemOverride.imageFit}
-                                      hasOverrideImage={hasOverrideImage}
-                                      imageScale={itemOverride.imageScale}
-                                      itemId={item.id}
-                                      onFileSelected={(file) => handlePresentationItemImageUpload(item.id, file)}
-                                      onFitChange={(fit) => updateItemOverride(item.id, { imageFit: fit })}
-                                      onScaleChange={(scale) => updateItemOverride(item.id, { imageScale: scale })}
-                                      onResetImage={() => resetPresentationItemImage(item.id)}
-                                      previewUrl={effectivePresentationImageUrlByItemId[item.id] ?? null}
-                                      status={itemStatus}
-                                      uploadDisabled={uploadsDisabled}
-                                    />
-                                  ) : null}
-                                </div>
-                              );
-                            })}
+                  return (
+                    <div className="mt-4 min-w-0">
+                      <div className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-400">Current presentation item</p>
+                        <div className="mt-3 flex min-w-0 items-start gap-3">
+                          <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+                            {thumbnailUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={thumbnailUrl} alt={title} className="h-full w-full object-contain" />
+                            ) : (
+                              <span className="px-1 text-center text-[9px] font-semibold uppercase tracking-[0.18em] text-zinc-400">No Image</span>
+                            )}
                           </div>
-                        ) : null}
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Item {itemNumber}</p>
+                            <p className="mt-1 break-words text-sm font-semibold text-zinc-900">{title}</p>
+                            {item.model_snapshot && item.model_snapshot !== title ? <p className="mt-1 break-words text-xs text-zinc-500">{item.model_snapshot}</p> : null}
+                            {item.brand_name_snapshot ? <p className="mt-1 break-words text-xs text-zinc-500">{item.brand_name_snapshot}</p> : null}
+                            {selectedPresentationSection ? <p className="mt-1 break-words text-xs text-zinc-500">{selectedPresentationSection.section_title}</p> : null}
+                            <p className="mt-2 text-xs leading-5 text-zinc-500">
+                              {hasOverrideImage ? "Using presentation replacement image" : "Using original quotation image"}
+                            </p>
+                            <p className={`mt-1 text-xs font-semibold ${included ? "text-emerald-700" : "text-zinc-500"}`}>
+                              {included ? "Visible in presentation" : "Hidden from presentation"}
+                            </p>
+                            <p className={`mt-1 text-xs font-semibold ${hasCustomItemAdjustment ? "text-amber-700" : "text-zinc-500"}`}>
+                              {hasCustomItemAdjustment ? "Custom item adjustment" : "Using presentation defaults"}
+                            </p>
+                          </div>
+                        </div>
                       </div>
-                    );
-                  })}
-                </div>
+
+                      <label className="mt-3 flex min-h-11 min-w-0 items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-3 py-2.5 text-sm font-semibold text-zinc-800">
+                        <input
+                          checked={included}
+                          className="h-4 w-4 shrink-0 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-400"
+                          onChange={(event) => toggleHiddenItem(item.id, event.target.checked)}
+                          type="checkbox"
+                        />
+                        <span className="min-w-0">Show this item in presentation</span>
+                      </label>
+
+                      <PresentationItemImageControl
+                        fit={itemOverride.imageFit}
+                        frameSize={itemOverride.imageFrameSize}
+                        hasOverrideImage={hasOverrideImage}
+                        imageScale={itemOverride.imageScale}
+                        positionX={itemOverride.imagePositionX}
+                        positionY={itemOverride.imagePositionY}
+                        itemId={item.id}
+                        onFileSelected={(file) => handlePresentationItemImageUpload(item.id, file)}
+                        onFitChange={(fit) => updateItemOverride(item.id, { imageFit: fit })}
+                        onFrameSizeChange={(frameSize) => updateItemOverride(item.id, { imageFrameSize: frameSize })}
+                        onPositionXChange={(position) => updateItemOverride(item.id, { imagePositionX: position })}
+                        onPositionYChange={(position) => updateItemOverride(item.id, { imagePositionY: position })}
+                        onScaleChange={(scale) => updateItemOverride(item.id, { imageScale: scale })}
+                        onResetImage={() => resetPresentationItemImage(item.id)}
+                        onUseOriginalImage={() => restoreOriginalPresentationItemImage(item.id)}
+                        previewUrl={thumbnailUrl}
+                        status={itemStatus}
+                        uploadDisabled={uploadsDisabled}
+                      />
+                    </div>
+                  );
+                })() : (
+                  <p className="mt-4 rounded-2xl border border-zinc-200 bg-white p-4 text-sm text-zinc-500">No presentation items are available.</p>
+                )}
               </>
             ) : null}
 
@@ -2851,7 +3036,7 @@ export function QuotationPresentation({
                   </button>
                 </div>
 
-                <div className="mt-4 grid max-w-4xl gap-3 md:grid-cols-2">
+                <div className="mt-4 grid max-w-4xl gap-3">
                   {pageVisibilityOptions.map((option) => (
                     <ControlToggle
                       key={option.key}
@@ -2865,23 +3050,46 @@ export function QuotationPresentation({
               </>
             ) : null}
 
-            {activeSettingsSection === "sections" ? (
-              <>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Section Settings</p>
-                    <p className="mt-1 text-sm text-zinc-500">Set presentation-only titles, notes, and visuals for each quotation section.</p>
+            {activeSettingsSection === "areasSections" || activeSettingsSection === "mainLayouts" || activeSettingsSection === "sections" ? (
+              <div className="min-w-0">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Areas &amp; Sections</p>
+                  <p className="mt-1 text-sm text-zinc-500">Configure presentation-only titles, notes, images, and layouts for quotation areas and sections.</p>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => document.getElementById("presentation-main-areas-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                      className="inline-flex h-10 items-center justify-center whitespace-nowrap rounded-full border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                    >
+                      Main Areas
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => document.getElementById("presentation-sections-settings")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                      className="inline-flex h-10 items-center justify-center whitespace-nowrap rounded-full border border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                    >
+                      Sections
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-5 flex min-w-0 flex-col">
+                <section id="presentation-sections-settings" className="order-2 mt-7 min-w-0 scroll-mt-6 border-t border-zinc-200 pt-5">
+                <div className="grid min-w-0 gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Sections</p>
+                    <p className="mt-1 text-sm text-zinc-500">Configure presentation-only titles, notes, images, and layouts for quotation sections.</p>
                   </div>
                   <button
                     type="button"
                     onClick={resetSectionOverrides}
-                    className="inline-flex h-9 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                    className="inline-flex h-10 w-full items-center justify-center whitespace-nowrap rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
                   >
                     Reset section settings
                   </button>
                 </div>
 
-                <div className="mt-4 grid max-h-[520px] gap-4 overflow-y-auto pr-1">
+                <div className="mt-4 grid min-w-0 gap-4">
                   {controlSections.map(({ section, items: sectionItems }) => {
                     const sectionOverride = normalizedPresentationSectionOverride(settings.sectionOverrides[section.id]);
                     const isExpanded = expandedSectionSettingsKeys ? expandedSectionSettingsKeys.includes(section.id) : false;
@@ -2893,18 +3101,18 @@ export function QuotationPresentation({
                         <button
                           type="button"
                           onClick={() => toggleSectionSettingsExpanded(section.id)}
-                          className="flex w-full items-center justify-between gap-3 border-b border-zinc-100 pb-3 text-left"
+                          className="grid w-full min-w-0 gap-1 border-b border-zinc-100 pb-3 text-left"
                         >
-                          <div>
+                          <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="text-xs text-zinc-400">{isExpanded ? "▾" : "▸"}</span>
-                              <p className="text-sm font-semibold text-zinc-900">{section.section_title}</p>
+                              <p className="min-w-0 break-words text-sm font-semibold text-zinc-900">{section.section_title}</p>
                             </div>
                             <p className="mt-1 pl-5 text-xs uppercase tracking-[0.18em] text-zinc-400">
                               {section.section_kind === "main" ? "Main Area" : "Area"}
                             </p>
                           </div>
-                          <p className="text-xs text-zinc-500">{sectionItems.length} items</p>
+                          <p className="pl-5 text-xs text-zinc-500">{sectionItems.length} items</p>
                         </button>
 
                         {isExpanded ? (
@@ -2930,7 +3138,7 @@ export function QuotationPresentation({
                               />
                             </label>
 
-                            <div className="grid gap-3 lg:grid-cols-2">
+                            <div className="grid gap-3">
                               <PresentationImageInput
                                 description="Upload or paste a rendered view, mood image, or reference visual for this area."
                                 fieldLabel="Area Image"
@@ -2958,26 +3166,24 @@ export function QuotationPresentation({
                     );
                   })}
                 </div>
-              </>
-            ) : null}
+                </section>
 
-            {activeSettingsSection === "mainLayouts" ? (
-              <>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Main Area Layouts</p>
-                    <p className="mt-1 text-sm text-zinc-500">Configure layout pages for the quotation&apos;s real top-level sections only.</p>
+                <section id="presentation-main-areas-settings" className="order-1 min-w-0 scroll-mt-6">
+                <div className="grid min-w-0 gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Main Areas</p>
+                    <p className="mt-1 text-sm text-zinc-500">Configure titles, notes, and layout pages for quotation top-level areas.</p>
                   </div>
                   <button
                     type="button"
                     onClick={resetPresentationVisuals}
-                    className="inline-flex h-9 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                    className="inline-flex h-10 w-full items-center justify-center whitespace-nowrap rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
                   >
                     Reset main area layouts
                   </button>
                 </div>
 
-                <div className="mt-4 grid max-h-[520px] gap-4 overflow-y-auto pr-1">
+                <div className="mt-4 grid min-w-0 gap-4">
                   {mainSections.length ? mainSections.map((section, index) => {
                     const override = normalizedPresentationMainSectionOverride(settings.mainSectionOverrides[section.id]);
                     const isExpanded = expandedMainSectionLayoutIds ? expandedMainSectionLayoutIds.includes(section.id) : index === 0;
@@ -2987,23 +3193,23 @@ export function QuotationPresentation({
 
                     return (
                       <div key={section.id} className="rounded-2xl border border-zinc-200 bg-white p-4">
-                        <div className="flex items-center justify-between gap-3 border-b border-zinc-100 pb-3">
+                        <div className="flex min-w-0 flex-col items-start gap-1 border-b border-zinc-100 pb-3">
                           <button
                             type="button"
                             onClick={() => toggleMainSectionLayoutExpanded(section.id)}
-                            className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                            className="flex min-w-0 items-center gap-3 text-left"
                           >
-                            <div>
+                            <div className="min-w-0">
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-zinc-400">{isExpanded ? "v" : ">"}</span>
-                                <p className="text-sm font-semibold text-zinc-900">{displayTitle}</p>
+                                <p className="min-w-0 break-words text-sm font-semibold text-zinc-900">{displayTitle}</p>
                               </div>
                               <p className="mt-1 pl-5 text-xs uppercase tracking-[0.18em] text-zinc-400">
                                 Main Area {String(index + 1).padStart(2, "0")}
                               </p>
                             </div>
                           </button>
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-400">From quotation</p>
+                          <p className="pl-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-400">From quotation</p>
                         </div>
 
                         {isExpanded ? (
@@ -3045,27 +3251,30 @@ export function QuotationPresentation({
                     </div>
                   )}
                 </div>
-              </>
+                </section>
+                </div>
+              </div>
             ) : null}
 
             {activeSettingsSection === "cover" ? (
               <>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
+                <div className="grid min-w-0 gap-3">
+                  <div className="min-w-0">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Cover Details</p>
                     <p className="mt-1 text-sm text-zinc-500">Customize the cover page text for this presentation only.</p>
                   </div>
                   <button
                     type="button"
                     onClick={resetCoverOverrides}
-                    className="inline-flex h-9 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                    className="inline-flex h-10 w-full items-center justify-center whitespace-nowrap rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
                   >
                     Reset cover details
                   </button>
                 </div>
 
-                <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                <div className="mt-3 grid gap-2">
                   <TextField
+                    compact
                     label="Presentation title"
                     description="Main title shown on the cover page."
                     value={settings.coverOverrides.title}
@@ -3073,6 +3282,7 @@ export function QuotationPresentation({
                     onChange={(value) => updateCoverOverride("title", value)}
                   />
                   <TextField
+                    compact
                     label="Prepared by display name"
                     description="Shown on the cover page without changing company profile data."
                     value={settings.coverOverrides.preparedBy}
@@ -3080,6 +3290,7 @@ export function QuotationPresentation({
                     onChange={(value) => updateCoverOverride("preparedBy", value)}
                   />
                   <TextField
+                    compact
                     label="Project display name"
                     description="Presentation-only project name shown on the cover."
                     value={settings.coverOverrides.projectDisplayName}
@@ -3087,6 +3298,7 @@ export function QuotationPresentation({
                     onChange={(value) => updateCoverOverride("projectDisplayName", value)}
                   />
                   <TextField
+                    compact
                     label="Client display name"
                     description="Presentation-only client name shown on the cover."
                     value={settings.coverOverrides.clientDisplayName}
@@ -3094,6 +3306,7 @@ export function QuotationPresentation({
                     onChange={(value) => updateCoverOverride("clientDisplayName", value)}
                   />
                   <TextField
+                    compact
                     label="Website"
                     description="Displayed on the dark cover panel."
                     value={settings.coverOverrides.website}
@@ -3101,6 +3314,7 @@ export function QuotationPresentation({
                     onChange={(value) => updateCoverOverride("website", value)}
                   />
                   <TextAreaField
+                    compact
                     label="Cover subtitle"
                     description="Supporting introduction shown below the main title."
                     value={settings.coverOverrides.subtitle}
@@ -3113,22 +3327,23 @@ export function QuotationPresentation({
 
             {activeSettingsSection === "closing" ? (
               <>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
+                <div className="grid min-w-0 gap-3">
+                  <div className="min-w-0">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Closing Details</p>
                     <p className="mt-1 text-sm text-zinc-500">Customize the thank-you page text and contact details for this presentation only.</p>
                   </div>
                   <button
                     type="button"
                     onClick={resetClosingOverrides}
-                    className="inline-flex h-9 items-center rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
+                    className="inline-flex h-10 w-full items-center justify-center whitespace-nowrap rounded-full border border-zinc-300 px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:text-zinc-950"
                   >
                     Reset closing details
                   </button>
                 </div>
 
-                <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                <div className="mt-3 grid gap-2">
                   <TextField
+                    compact
                     label="Closing title"
                     description="Main title shown on the thank-you page."
                     value={settings.closingOverrides.title}
@@ -3136,6 +3351,7 @@ export function QuotationPresentation({
                     onChange={(value) => updateClosingOverride("title", value)}
                   />
                   <TextField
+                    compact
                     label="Website"
                     description="Displayed once in the closing contact block."
                     value={settings.closingOverrides.website}
@@ -3143,6 +3359,7 @@ export function QuotationPresentation({
                     onChange={(value) => updateClosingOverride("website", value)}
                   />
                   <TextField
+                    compact
                     label="Email"
                     description="Presentation-only closing contact email."
                     value={settings.closingOverrides.email}
@@ -3150,6 +3367,7 @@ export function QuotationPresentation({
                     onChange={(value) => updateClosingOverride("email", value)}
                   />
                   <TextField
+                    compact
                     label="Phone"
                     description="Presentation-only closing contact phone."
                     value={settings.closingOverrides.phone}
@@ -3157,6 +3375,7 @@ export function QuotationPresentation({
                     onChange={(value) => updateClosingOverride("phone", value)}
                   />
                   <TextField
+                    compact
                     label="Office details"
                     description="Short office/location line for the closing page."
                     value={settings.closingOverrides.officeDetails}
@@ -3164,6 +3383,7 @@ export function QuotationPresentation({
                     onChange={(value) => updateClosingOverride("officeDetails", value)}
                   />
                   <TextAreaField
+                    compact
                     label="Closing message"
                     description="Supporting message shown below the closing title."
                     value={settings.closingOverrides.message}
@@ -3183,7 +3403,7 @@ export function QuotationPresentation({
                   </div>
                 </div>
 
-                <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                <div className="mt-4 grid gap-3">
                   {presentationPresets.map((preset) => (
                     <div key={preset.key} className="rounded-2xl border border-zinc-200 bg-white p-4">
                       <div className="flex items-start justify-between gap-3">
@@ -3219,8 +3439,9 @@ export function QuotationPresentation({
         ) : null}
       </section>
 
+      <div className="min-w-0 print:block xl:col-start-1 xl:row-start-1">
       <section className={`mx-auto mb-6 w-[297mm] max-w-full print:hidden ${printMode ? "hidden" : "block"}`}>
-        <div className="rounded-[28px] border border-zinc-200 bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+        <div className="rounded-[20px] border border-zinc-200 bg-white p-3 shadow-[0_18px_50px_rgba(15,23,42,0.08)] xl:rounded-[28px] xl:p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Slide Navigator</p>
@@ -3271,11 +3492,11 @@ export function QuotationPresentation({
                     key={slide.key}
                     type="button"
                     onClick={() => jumpToSlide(index)}
-                    className="grid grid-cols-[56px_120px_minmax(0,1fr)] items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-left transition hover:border-zinc-300 hover:bg-zinc-50"
+                    className="grid min-w-0 grid-cols-[40px_minmax(0,1fr)] items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-3 text-left transition hover:border-zinc-300 hover:bg-zinc-50 xl:grid-cols-[56px_120px_minmax(0,1fr)] xl:gap-3 xl:px-4"
                   >
                     <span className="text-sm font-semibold text-zinc-900">{String(index + 1).padStart(2, "0")}</span>
                     <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">{slideTypeLabel(slide.type)}</span>
-                    <span className="truncate text-sm text-zinc-800">
+                    <span className="col-span-2 truncate text-sm text-zinc-800 xl:col-span-1">
                       {slide.type === "product"
                         ? `Item ${String(visibleSlideItemNumberById.get(slide.itemIds[0] ?? "") ?? 0).padStart(2, "0")} - ${slide.title}`
                         : slide.title}
@@ -3288,6 +3509,55 @@ export function QuotationPresentation({
         </div>
       </section>
 
+      <div className={`mb-3 items-center justify-center gap-2 print:hidden xl:hidden ${printMode ? "hidden" : "flex"}`}>
+        <button
+          type="button"
+          onClick={() => adjustPreviewZoom(-0.1)}
+          disabled={previewScale <= 0.2}
+          aria-label="Zoom out"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-zinc-300 bg-white text-lg font-semibold disabled:text-zinc-300"
+        >
+          −
+        </button>
+        <button
+          type="button"
+          onClick={() => setPreviewZoomMode("fit-width")}
+          aria-label="Fit presentation preview to width"
+          className={`inline-flex h-10 items-center justify-center rounded-md border px-3 text-xs font-semibold ${previewZoomMode === "fit-width" ? "border-emerald-800 bg-emerald-50 text-emerald-900" : "border-zinc-300 bg-white text-zinc-700"}`}
+        >
+          Fit width
+        </button>
+        <span className="inline-flex h-10 min-w-14 items-center justify-center rounded-md border border-zinc-300 bg-white px-2 text-xs font-semibold text-zinc-700">
+          {Math.round(previewScale * 100)}%
+        </span>
+        <button
+          type="button"
+          onClick={() => adjustPreviewZoom(0.1)}
+          disabled={previewScale >= 1.5}
+          aria-label="Zoom in"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-zinc-300 bg-white text-lg font-semibold disabled:text-zinc-300"
+        >
+          +
+        </button>
+      </div>
+
+      <div ref={previewViewportRef} className="min-w-0 overflow-x-auto overscroll-x-contain print:overflow-visible">
+        <div
+          className="presentation-preview-reservation mx-auto"
+          style={isMobilePreview ? {
+            height: previewStackSize.height * previewScale,
+            width: previewStackSize.width * previewScale,
+          } : undefined}
+        >
+        <div
+          ref={previewStackRef}
+          className="presentation-preview-content"
+          style={isMobilePreview ? {
+            transform: `scale(${previewScale})`,
+            transformOrigin: "top left",
+            width: "297mm",
+          } : undefined}
+        >
       <div className="presentation-stack mx-auto flex w-fit max-w-full flex-col gap-5">
         {presentationSlides.map((slide, slideIndex) => {
           const pageId = slideDomId(slideIndex);
@@ -3407,7 +3677,7 @@ export function QuotationPresentation({
                 <div className="relative flex h-full flex-col justify-between px-14 py-12 pl-36">
                   <div>
                     <div className="flex items-center gap-4">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">MAIN AREA</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.32em] text-zinc-500">SPACE OVERVIEW</span>
                       <span className="h-px w-16 bg-zinc-300" />
                     </div>
                     <h2 className="mt-7 max-w-5xl text-6xl font-light leading-[1.02] tracking-[-0.045em] text-zinc-950">
@@ -3433,7 +3703,7 @@ export function QuotationPresentation({
                   <div className="flex items-end justify-between gap-6 border-t border-zinc-200 pt-8">
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
-                        Main Area {String(mainSections.findIndex((entry) => entry.id === section.id) + 1).padStart(2, "0")}
+                        Space {String(mainSections.findIndex((entry) => entry.id === section.id) + 1).padStart(2, "0")}
                       </p>
                       <p className="mt-2 text-sm text-zinc-500">
                         {mainSectionPreviewUrl ? "Floor layout overview" : "Main area overview"}
@@ -3607,7 +3877,7 @@ export function QuotationPresentation({
                     <div className="mt-5 flex min-h-0 items-center justify-center overflow-hidden bg-white">
                       <PresentationImageStage
                         alt={data.heading}
-                        boundsClassName="h-[72%] w-[82%]"
+                        boundsClassName={presentationImageBoundsClass(data.imageFrameSize, false)}
                         emptyContent={(
                           <div className="flex h-full min-h-[120mm] w-full flex-col items-center justify-center gap-5 bg-white px-10 text-center">
                             <div className="border border-dashed border-zinc-300 px-4 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
@@ -3620,6 +3890,8 @@ export function QuotationPresentation({
                         )}
                         fit={data.imageSettings?.fit === "cover" ? "cover" : "contain"}
                         imageUrl={data.imageUrl}
+                        positionX={data.imagePositionX}
+                        positionY={data.imagePositionY}
                         scale={data.imageScale}
                       />
                     </div>
@@ -3776,6 +4048,11 @@ export function QuotationPresentation({
             </PresentationPage>
           );
         })}
+      </div>
+        </div>
+        </div>
+      </div>
+      </div>
       </div>
     </main>
   );

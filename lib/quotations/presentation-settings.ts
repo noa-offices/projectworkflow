@@ -62,6 +62,7 @@ export type PresentationClosingOverrides = {
 
 export type PresentationImageFit = "contain" | "cover";
 export type PresentationImagePosition = "center";
+export type PresentationImageFrameSize = "small" | "medium" | "current";
 
 export type PresentationFlowOrder = {
   mainSectionKeys: string[];
@@ -72,7 +73,10 @@ export type PresentationFlowOrder = {
 export type PresentationItemOverride = {
   imageUrl: string;
   imageFit: PresentationImageFit;
+  imageFrameSize: PresentationImageFrameSize;
   imagePosition: PresentationImagePosition;
+  imagePositionX: number;
+  imagePositionY: number;
   imageScale: number;
 };
 
@@ -130,7 +134,10 @@ export const DEFAULT_PRESENTATION_CLOSING_OVERRIDES: PresentationClosingOverride
 export const DEFAULT_PRESENTATION_ITEM_OVERRIDE: PresentationItemOverride = {
   imageUrl: "",
   imageFit: "contain",
+  imageFrameSize: "current",
   imagePosition: "center",
+  imagePositionX: 50,
+  imagePositionY: 50,
   imageScale: 1,
 };
 
@@ -214,6 +221,14 @@ function normalizedItemImageScale(source: Record<string, unknown> | undefined) {
   const rawValue = Number(source?.imageScale);
   if (!Number.isFinite(rawValue)) return 1;
   return Math.min(Math.max(rawValue, 0.6), 1.2);
+}
+
+function normalizedItemImagePosition(source: Record<string, unknown> | undefined, key: "imagePositionX" | "imagePositionY") {
+  const value = source?.[key];
+  if ((typeof value !== "number" && typeof value !== "string") || (typeof value === "string" && !value.trim())) return 50;
+  const rawValue = Number(value);
+  if (!Number.isFinite(rawValue)) return 50;
+  return Math.min(Math.max(rawValue, 0), 100);
 }
 
 function normalizedStringArray(value: unknown) {
@@ -364,11 +379,16 @@ export function normalizePresentationSettings(
         if (!isRecord(overrideValue)) return null;
         const imageUrl = normalizedString(overrideValue, "imageUrl");
         const imageFit = overrideValue.imageFit === "cover" ? "cover" : "contain";
+        const imageFrameSize = overrideValue.imageFrameSize === "small" || overrideValue.imageFrameSize === "medium"
+          ? overrideValue.imageFrameSize
+          : "current";
         const imagePosition = "center" as const;
+        const imagePositionX = normalizedItemImagePosition(overrideValue, "imagePositionX");
+        const imagePositionY = normalizedItemImagePosition(overrideValue, "imagePositionY");
         const imageScale = normalizedItemImageScale(overrideValue);
-        const hasValue = imageUrl || imageFit !== "contain" || imagePosition !== "center" || imageScale !== 1;
+        const hasValue = imageUrl || imageFit !== "contain" || imageFrameSize !== "current" || imagePosition !== "center" || imagePositionX !== 50 || imagePositionY !== 50 || imageScale !== 1;
         return hasValue
-          ? [key, { imageUrl, imageFit, imagePosition, imageScale }]
+          ? [key, { imageUrl, imageFit, imageFrameSize, imagePosition, imagePositionX, imagePositionY, imageScale }]
           : null;
       })
       .filter((entry): entry is [string, PresentationItemOverride] => Boolean(entry)),

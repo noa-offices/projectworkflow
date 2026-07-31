@@ -52,6 +52,10 @@ import {
 } from "@/components/quotations/quotation-row-clipboard";
 import { LocalDraftLink } from "@/components/quotations/local-draft-link";
 import { ManualCurrencyConversionPanel } from "@/components/quotations/manual-currency-conversion-panel";
+import {
+  MobileBuilderHeader,
+  MobileBuilderMoreMenu,
+} from "@/components/quotations/mobile-builder-controls";
 import { SaveRowToProductLibraryPanel as SaveRowToProductLibraryPanelClient } from "@/components/quotations/save-row-to-product-library-panel";
 import { RowHeightTextarea } from "@/components/quotations/row-height-textarea";
 import {
@@ -3568,10 +3572,152 @@ export default async function QuotationBuilderPage({
   let runningSerialNumber = 0;
 
   return (
-    <div className="min-h-screen bg-zinc-100 text-zinc-950">
+    <div className="min-h-screen min-w-0 overflow-x-hidden bg-zinc-100 text-zinc-950 xl:overflow-x-visible">
       {canManageRecords ? <CellFormattingToolbar /> : null}
       <header className="sticky top-0 z-20 border-b border-zinc-300 bg-white">
-        <div className="flex flex-col gap-3 px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
+        <MobileBuilderHeader
+          finalTotal={money(quotation.currency, quotation.grand_total)}
+          quotationNo={builderDisplayQuotationNo ?? quotation.quotation_no ?? "Draft quotation"}
+        >
+        <div className="grid min-w-0 gap-2 px-3 py-2.5">
+          <div className="flex min-w-0 items-start gap-3">
+            <ContextBackLink
+              fallbackHref={`/clients/projects/${quotation.project_id}`}
+              className="shrink-0 border border-zinc-300 px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+            >
+              Back
+            </ContextBackLink>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-zinc-950">
+                {builderDisplayQuotationNo ?? quotation.quotation_no ?? "Draft quotation"} - {quotation.title}
+              </p>
+              <p className="line-clamp-2 text-xs leading-5 text-zinc-500">
+                {client?.company_name ?? "Unknown client"} / {project?.project_name ?? "Unknown project"}
+              </p>
+            </div>
+          </div>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <StatusBadge status={quotation.status} />
+            <span className="min-w-0 text-xs text-zinc-500">All changes saved automatically</span>
+          </div>
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <div className="flex min-w-0 border border-zinc-300 text-xs font-semibold">
+              <Link
+                href={`/quotations/${quotation.id}/builder?view=client`}
+                className={`flex h-10 min-w-0 items-center justify-center px-3 ${view === "client" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"}`}
+              >
+                Client View
+              </Link>
+              <Link
+                href={`/quotations/${quotation.id}/builder?view=internal`}
+                className={`flex h-10 min-w-0 items-center justify-center border-l border-zinc-300 px-3 ${view === "internal" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"}`}
+              >
+                Internal View
+              </Link>
+            </div>
+            <MobileBuilderMoreMenu>
+              <summary className="flex h-10 cursor-pointer list-none items-center bg-emerald-900 px-4 text-xs font-semibold text-white transition hover:bg-emerald-800">
+                More
+              </summary>
+              <div className="absolute right-0 z-30 mt-2 grid max-h-[70vh] w-[min(20rem,calc(100vw-1.5rem))] gap-2 overflow-y-auto border border-zinc-300 bg-white p-3 shadow-lg [&>*]:min-w-0">
+                {canManageRecords ? (
+                  <details data-state-key={`quotation-builder-mobile-add-section-${quotation.id}`}>
+                    <summary className="flex h-10 cursor-pointer list-none items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700">
+                      Add Section
+                    </summary>
+                    <div className="mt-2 grid gap-3 border border-zinc-300 bg-zinc-50 p-3">
+                      <QuickSectionForm
+                        quotationId={quotation.id}
+                        returnTo={builderPath}
+                        label="Add Main Section"
+                        sectionKind="main"
+                        placeholder="GROUND FLOOR"
+                      />
+                      <QuickSectionForm
+                        quotationId={quotation.id}
+                        returnTo={builderPath}
+                        label="Add Section"
+                        sectionKind="sub"
+                        placeholder="Section name (optional)"
+                      />
+                    </div>
+                  </details>
+                ) : null}
+                <details data-state-key={`quotation-builder-mobile-columns-${quotation.id}`}>
+                  <summary className="flex h-10 cursor-pointer list-none items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700">
+                    Column settings
+                  </summary>
+                  <div className="mt-2 border border-zinc-300 bg-zinc-50 p-3">
+                    <ColumnSettingsForm
+                      quotation={quotation}
+                      returnTo={builderPath}
+                      columns={defaultColumns}
+                      canManageRecords={canManageRecords}
+                    />
+                  </div>
+                </details>
+                <div data-mobile-more-close>
+                  <GlobalRefreshButton />
+                </div>
+                <div data-mobile-more-close>
+                  <LocalDraftLink quotationId={quotation.id} />
+                </div>
+                <div data-mobile-more-close>
+                  <Link
+                    href={`/quotations/${quotation.id}/pdf`}
+                    target="_blank"
+                    className="flex h-10 items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700"
+                  >
+                    Preview PDF
+                  </Link>
+                </div>
+                <div data-mobile-more-close>
+                  <PendingLinkButton
+                    href={`/quotations/${quotation.id}/download-pdf`}
+                    pendingLabel="Preparing PDF..."
+                    className="flex h-10 items-center bg-emerald-900 px-3 text-xs font-semibold text-white"
+                  >
+                    Download PDF
+                  </PendingLinkButton>
+                </div>
+                <div data-mobile-more-close>
+                  <ExportExcelButton
+                    quotationId={quotation.id}
+                    className="flex h-10 items-center gap-1.5 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700"
+                  />
+                </div>
+                <div data-mobile-more-close>
+                  <Link
+                    href={`/quotations/${id}/specification`}
+                    target="_blank"
+                    className="flex h-10 items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700"
+                  >
+                    Specification Sheet
+                  </Link>
+                </div>
+                <div data-mobile-more-close>
+                  <PendingLinkButton
+                    href={`/quotations/${quotation.id}/download-specification`}
+                    pendingLabel="Preparing Specification..."
+                    className="flex h-10 items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700"
+                  >
+                    Download Specification
+                  </PendingLinkButton>
+                </div>
+                <div data-mobile-more-close>
+                  <a
+                    href="#quotation-summary"
+                    className="flex h-10 items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700"
+                  >
+                    Summary
+                  </a>
+                </div>
+              </div>
+            </MobileBuilderMoreMenu>
+          </div>
+        </div>
+        </MobileBuilderHeader>
+        <div className="hidden flex-col gap-3 px-4 py-3 xl:flex xl:flex-row xl:items-center xl:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-3">
             <ContextBackLink
               fallbackHref={`/clients/projects/${quotation.project_id}`}
@@ -3691,7 +3837,7 @@ export default async function QuotationBuilderPage({
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1900px] px-4 py-5">
+      <main className="mx-auto min-w-0 max-w-[1900px] px-3 py-4 xl:px-4 xl:py-5">
         <OptimisticQuotationBuilderProvider>
         {query?.message ? (
           <div className="mb-4 flex flex-col gap-2 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950 sm:flex-row sm:items-center sm:justify-between">
@@ -3792,7 +3938,7 @@ export default async function QuotationBuilderPage({
           </section>
         ) : null}
 
-        <section className="border border-zinc-300 bg-white">
+        <section className="min-w-0 border border-zinc-300 bg-white">
           <div className="grid border-b border-zinc-300 lg:grid-cols-2">
             <div className="border-b border-zinc-300 lg:border-b-0 lg:border-r">
               <div className="border-b border-zinc-300 px-3 py-2 text-center text-sm font-bold uppercase tracking-wide">
@@ -3827,7 +3973,10 @@ export default async function QuotationBuilderPage({
             </div>
           </div>
 
-          <div className="w-full">
+          <p className="border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-xs leading-5 text-zinc-500 xl:hidden">
+            Swipe horizontally to view and edit all quotation columns. Desktop is recommended for large quotation edits.
+          </p>
+          <div className="min-w-0 w-full">
             <QuotationSheetTable
               quotationId={quotation.id}
               columns={sheetColumns}
@@ -4522,8 +4671,19 @@ export default async function QuotationBuilderPage({
           </div>
         </section>
 
-        <section className="mt-4 flex justify-end">
-          <div className="w-full max-w-md border border-zinc-300 bg-white text-sm">
+        <section id="quotation-summary" className="mt-4 flex min-w-0 justify-end">
+          <details className="group w-full max-w-md border border-zinc-300 bg-white text-sm">
+            <summary className="cursor-pointer list-none px-3 py-3 xl:hidden">
+              <span className="block text-xs font-semibold uppercase text-zinc-500">Final Total</span>
+              <span className="mt-1 flex min-w-0 items-end justify-between gap-3">
+                <span className="min-w-0 break-words text-lg font-bold text-emerald-950">
+                  {money(quotation.currency, quotation.grand_total)}
+                </span>
+                <span className="shrink-0 text-xs font-semibold text-emerald-900 group-open:hidden">View summary</span>
+                <span className="hidden shrink-0 text-xs font-semibold text-emerald-900 group-open:inline">Hide summary</span>
+              </span>
+            </summary>
+            <div className="hidden group-open:block xl:block">
             {hasMixedCurrencies ? (
               <p className="border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
                 Currency conversion is not enabled yet. Mixed-currency totals should be reviewed manually.
@@ -4531,11 +4691,11 @@ export default async function QuotationBuilderPage({
             ) : null}
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">Total Price</span>
-              <span>{money(quotation.currency, quotation.subtotal)}</span>
+              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, quotation.subtotal)}</span>
             </div>
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">Total Discount</span>
-              <span>{money(quotation.currency, quotation.discount_total + overallDiscountAmount(quotation))}</span>
+              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, quotation.discount_total + overallDiscountAmount(quotation))}</span>
             </div>
             {canManageRecords ? (
               <div className="border-b border-zinc-300 bg-zinc-50 px-3 py-3">
@@ -4544,13 +4704,14 @@ export default async function QuotationBuilderPage({
             ) : null}
             <div className="flex justify-between border-b border-zinc-300 px-3 py-2">
               <span className="font-semibold text-zinc-600">VAT {quotation.vat_percent}%</span>
-              <span>{money(quotation.currency, quotation.vat_amount)}</span>
+              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, quotation.vat_amount)}</span>
             </div>
             <div className="flex justify-between bg-emerald-950 px-3 py-3 text-base font-bold text-white">
               <span>Final Total</span>
-              <span>{money(quotation.currency, quotation.grand_total)}</span>
+              <span className="ml-3 min-w-0 break-words text-right xl:ml-0 xl:break-normal">{money(quotation.currency, quotation.grand_total)}</span>
             </div>
-          </div>
+            </div>
+          </details>
         </section>
         </OptimisticQuotationBuilderProvider>
       </main>

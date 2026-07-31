@@ -11,6 +11,7 @@ export function QuotationImageFrame({
   emptyContent,
   imageClassName = "block h-full w-full",
   imageUrl,
+  minimumZoom = 1,
   onImageError,
   settings,
   style,
@@ -20,11 +21,12 @@ export function QuotationImageFrame({
   emptyContent?: ReactNode;
   imageClassName?: string;
   imageUrl: string | null;
+  minimumZoom?: number;
   onImageError?: () => void;
   settings?: Partial<ImageDisplaySettings> | null;
   style?: CSSProperties;
 }) {
-  const normalizedSettings = normalizeImageDisplaySettings(settings);
+  const normalizedSettings = normalizeImageDisplaySettings(settings, minimumZoom);
 
   return (
     <div className={className} style={style}>

@@ -80,6 +80,27 @@ export async function uploadQuotationFinishImage({
   return uploadImage("quote-images", path, file);
 }
 
+export async function uploadQuotationSpecificationImage({
+  file,
+  itemId,
+  quotationId,
+}: {
+  file: File;
+  itemId: string;
+  quotationId: string;
+}) {
+  const path = `quotation-specifications/${quotationId}/${itemId}/${Date.now()}-${safeFilename(file.name)}`;
+  const upload = await uploadImage("quote-images", path, file);
+  const supabase = createClient();
+  const { data, error } = await supabase.storage.from("quote-images").createSignedUrl(upload.path, 60 * 60);
+
+  if (error) {
+    throw new Error(error.message || "Image preview could not be created.");
+  }
+
+  return { ...upload, previewUrl: data.signedUrl };
+}
+
 export async function uploadQuotationPresentationSectionImage({
   file,
   quotationId,
