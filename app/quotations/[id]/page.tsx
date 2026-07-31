@@ -306,9 +306,9 @@ function OptionBadge({
 
 function InfoValue({ label, value }: { label: string; value?: string | number | null }) {
   return (
-    <div>
+    <div className="min-w-0">
       <p className="text-xs font-semibold uppercase text-zinc-500">{label}</p>
-      <p className="mt-1 text-sm text-zinc-800">{value || "-"}</p>
+      <p className="mt-1 break-words text-sm text-zinc-800">{value || "-"}</p>
     </div>
   );
 }
@@ -424,14 +424,22 @@ function DisabledWorkflowButton({ label }: { label: string }) {
   );
 }
 
-function HeaderActionMenu({ children, label }: { children: ReactNode; label: string }) {
+function HeaderActionMenu({
+  children,
+  label,
+  mobileAlign = "right",
+}: {
+  children: ReactNode;
+  label: string;
+  mobileAlign?: "left" | "right";
+}) {
   return (
     <details className="relative">
-      <summary className="inline-flex h-11 cursor-pointer list-none items-center gap-2 rounded-md border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
+      <summary className="inline-flex h-10 w-full cursor-pointer list-none items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 sm:h-11 sm:w-auto sm:px-4">
         <span>{label}</span>
         <span aria-hidden="true">&#9662;</span>
       </summary>
-      <div className="absolute right-0 z-20 mt-2 grid min-w-60 gap-2 rounded-md border border-zinc-200 bg-white p-2 shadow-lg">
+      <div className={`absolute z-20 mt-2 grid w-[min(15rem,calc(100vw-2rem))] gap-2 rounded-md border border-zinc-200 bg-white p-2 shadow-lg sm:right-0 sm:w-auto sm:min-w-60 ${mobileAlign === "left" ? "left-0 sm:left-auto" : "right-0"}`}>
         {children}
       </div>
     </details>
@@ -883,8 +891,8 @@ function ReassignSalespersonForm({
 
   return (
     <form action={handleReassign} className="mt-3">
-      <div className="flex items-end gap-2">
-        <label className="block flex-1">
+      <div className="grid gap-2 sm:flex sm:items-end">
+        <label className="block min-w-0 flex-1">
           <span className="text-xs font-semibold uppercase text-zinc-500">Reassign Sales Manager</span>
           <select
             name="salesperson_id"
@@ -901,7 +909,7 @@ function ReassignSalespersonForm({
           </select>
         </label>
         <PendingSubmitButton
-          className="h-9 shrink-0 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
+          className="h-9 w-full shrink-0 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 sm:w-auto"
           pendingLabel="Saving…"
         >
           Save
@@ -992,7 +1000,7 @@ export default async function QuotationDetailPage({
       ? requestedTab
       : "overview";
   const tabClassName = (tab: QuotationFolderTab) =>
-    `px-1 pb-3 transition ${
+    `min-w-0 px-1 pb-2 text-center text-xs transition sm:pb-3 sm:text-sm ${
       activeTab === tab
         ? "border-b-2 border-emerald-800 text-emerald-900"
         : "hover:text-emerald-900"
@@ -1332,7 +1340,7 @@ export default async function QuotationDetailPage({
       userRole={profile?.role ?? null}
     >
         <OpportunityQuotationLinkSync />
-        <div className="px-5 py-6 sm:px-8 xl:grid xl:grid-cols-[minmax(0,1fr)_340px] xl:gap-x-5">
+        <div className="px-4 py-4 sm:px-8 sm:py-6 xl:grid xl:grid-cols-[minmax(0,1fr)_340px] xl:gap-x-5">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between xl:col-span-2">
             <ContextBackLink
               fallbackHref="/sales/quotations"
@@ -1348,13 +1356,13 @@ export default async function QuotationDetailPage({
           </div>
 
           <section className="grid gap-5 xl:contents">
-            <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm xl:col-start-1 xl:row-start-2">
+            <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-5 xl:col-start-1 xl:row-start-2">
               <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-zinc-500">
                     {quotationFolderNo ?? "Not prepared for client workflow"}
                   </p>
-                  <h1 className="mt-1 text-2xl font-semibold text-zinc-950">
+                  <h1 className="mt-1 text-xl font-semibold leading-tight text-zinc-950 sm:text-2xl">
                     {folderTitle}
                   </h1>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1362,23 +1370,29 @@ export default async function QuotationDetailPage({
                     <StatusBadge quotation={quotation} />
                     <LocalDraftLink quotationId={quotation.id} showLink={false} />
                   </div>
+                  <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-emerald-50 px-3 py-2 sm:hidden">
+                    <span className="text-xs font-semibold uppercase text-zinc-500">Current total</span>
+                    <span className="min-w-0 break-words text-right text-lg font-semibold text-zinc-950">
+                      {money(quotation.currency, quotation.grand_total)}
+                    </span>
+                  </div>
                 </div>
                 <div className="flex flex-col gap-3 xl:items-end">
-                  <div className="flex flex-wrap gap-2">
+                  <div className="grid grid-cols-2 gap-2 [&>*]:w-full sm:flex sm:flex-wrap sm:[&>*]:w-auto">
                     {currentQuotationArchived ? (
-                      <span className="inline-flex h-11 cursor-not-allowed items-center rounded-md border border-zinc-200 bg-zinc-100 px-5 text-sm font-semibold text-zinc-400" title="Restore this quote before editing.">
+                      <span className="inline-flex h-10 cursor-not-allowed items-center justify-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm font-semibold text-zinc-400 sm:h-11 sm:px-5" title="Restore this quote before editing.">
                         Open Builder
                       </span>
                     ) : (
                       <Link
                         href={`/quotations/${quotation.id}/local-builder`}
-                        className="inline-flex h-11 items-center rounded-md bg-emerald-900 px-5 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                        className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-900 px-3 text-sm font-semibold text-white transition hover:bg-emerald-800 sm:h-11 sm:px-5"
                       >
                         Open Builder
                       </Link>
                     )}
                     <SecondaryActionLink href={`/quotations/${quotation.id}/pdf`} label="Preview Quotation" />
-                    <HeaderActionMenu label="Documents">
+                    <HeaderActionMenu label="Documents" mobileAlign="left">
                       <SecondaryPendingActionLink
                         href={`/quotations/${quotation.id}/download-pdf`}
                         label="Download Quotation PDF"
@@ -1459,52 +1473,68 @@ export default async function QuotationDetailPage({
                 </div>
               </div>
 
-              <div className="mt-5 grid overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50/40 sm:grid-cols-2 xl:grid-cols-3">
-                <div className="border-b border-zinc-200 p-4 sm:border-r">
+              <div className="mt-4 grid grid-cols-2 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50/40 sm:mt-5 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="border-r border-zinc-200 p-3 sm:border-b sm:p-4">
                   <InfoValue label="Client" value={resolvedDocumentSetup.header.clientDisplayName} />
                 </div>
-                <div className="border-b border-zinc-200 p-4 xl:border-r">
+                <div className="p-3 sm:border-b sm:p-4 xl:border-r">
                   <p className="text-xs font-semibold uppercase text-zinc-500">Sales Person</p>
-                  <p className="mt-1 text-sm font-medium text-zinc-800">{salespersonName ?? "Unassigned"}</p>
+                  <p className="mt-1 truncate text-sm font-medium text-zinc-800">{salespersonName ?? "Unassigned"}</p>
                   {canReassignSalesperson ? (
-                    <ReassignSalespersonForm
-                      quotationId={quotation.id}
-                      currentSalespersonId={quotation.salesperson_id}
-                      profiles={salespersonProfiles}
-                    />
+                    <>
+                      <div className="mt-2 sm:hidden">
+                        <QuotationFolderActionDialog label="Reassign" title="Reassign Sales Manager">
+                          <ReassignSalespersonForm
+                            quotationId={quotation.id}
+                            currentSalespersonId={quotation.salesperson_id}
+                            profiles={salespersonProfiles}
+                          />
+                        </QuotationFolderActionDialog>
+                      </div>
+                      <div className="hidden sm:block">
+                        <ReassignSalespersonForm
+                          quotationId={quotation.id}
+                          currentSalespersonId={quotation.salesperson_id}
+                          profiles={salespersonProfiles}
+                        />
+                      </div>
+                    </>
                   ) : null}
                 </div>
-                <div className="border-b border-zinc-200 p-4 sm:border-r xl:border-r">
+                <div className="hidden border-b border-zinc-200 p-4 sm:block sm:border-r xl:border-r">
                   <InfoValue label="Opportunity no" value={derivedOpportunityNo ?? "Not linked"} />
                 </div>
-                <div className="border-b border-zinc-200 p-4 xl:border-b-0 xl:border-r">
+                <div className="hidden border-b border-zinc-200 p-4 sm:block xl:border-b-0 xl:border-r">
                   <InfoValue label="Quotation folder" value={folderDisplayNo} />
                 </div>
-                <div className="border-b border-zinc-200 p-4 sm:border-b-0 sm:border-r">
+                <div className="hidden border-b border-zinc-200 p-4 sm:block sm:border-b-0 sm:border-r">
                   <InfoValue label="Date" value={formatFolderDate(quotation.quotation_date)} />
                 </div>
-                <div className="p-4">
+                <div className="hidden p-4 sm:block">
                   <InfoValue label="Current quotation" value={displayQuotationNo ?? quotation.quotation_no ?? "Draft quotation"} />
                 </div>
               </div>
 
-              <nav className="mt-5 flex gap-6 overflow-x-auto border-b border-zinc-200 text-sm font-semibold text-zinc-500" aria-label="Quotation folder sections">
+              <nav className="mt-4 grid grid-cols-4 gap-1 border-b border-zinc-200 font-semibold text-zinc-500 sm:mt-5 sm:flex sm:gap-6 sm:overflow-x-auto" aria-label="Quotation folder sections">
                 <Link href={`/quotations/${quotation.id}?tab=overview`} className={tabClassName("overview")}>Overview</Link>
-                <Link href={`/quotations/${quotation.id}?tab=quotations`} className={tabClassName("quotations")}>Quotations in Folder</Link>
+                <Link href={`/quotations/${quotation.id}?tab=quotations`} className={tabClassName("quotations")}>
+                  <span className="sm:hidden">Quotes</span>
+                  <span className="hidden sm:inline">Quotations in Folder</span>
+                </Link>
                 <Link href={`/quotations/${quotation.id}?tab=documents`} className={tabClassName("documents")}>Documents</Link>
                 <Link href={`/quotations/${quotation.id}?tab=activity`} className={tabClassName("activity")}>Activity</Link>
               </nav>
 
               {activeTab === "overview" ? (
-              <details className="mt-5 rounded-lg border border-zinc-200 bg-zinc-50/60 p-4">
+              <details className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 sm:mt-5 sm:p-4">
                 <summary className="cursor-pointer list-none">
                   <span className="block text-sm font-semibold text-zinc-950">Workflow progress</span>
-                  <span className="mt-3 flex items-center gap-2 overflow-x-auto pb-1">
+                  <span className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:items-center sm:overflow-x-auto sm:pb-1">
                     {workflowStages.map((stage, index) => (
-                      <span key={stage} className="flex shrink-0 items-center gap-2">
+                      <span key={stage} className="flex min-w-0 items-center gap-2 sm:shrink-0">
                         <span
                           aria-current={index === workflowStageIndex ? "step" : undefined}
-                          className={`inline-flex h-8 items-center rounded-full border px-3 text-xs font-semibold ${
+                          className={`inline-flex h-8 min-w-0 flex-1 items-center justify-center rounded-full border px-2 text-center text-xs font-semibold sm:flex-none sm:px-3 ${
                             index === workflowStageIndex
                               ? "border-emerald-800 bg-emerald-900 text-white"
                               : index < workflowStageIndex
@@ -1514,7 +1544,7 @@ export default async function QuotationDetailPage({
                         >
                           {stage}
                         </span>
-                        {index < workflowStages.length - 1 ? <span className="text-zinc-300" aria-hidden="true">&rarr;</span> : null}
+                        {index < workflowStages.length - 1 ? <span className="hidden text-zinc-300 sm:inline" aria-hidden="true">&rarr;</span> : null}
                       </span>
                     ))}
                   </span>
@@ -1598,14 +1628,14 @@ export default async function QuotationDetailPage({
               ) : null}
               {activeTab === "overview" ? (
                 <div className="mt-4 grid gap-4">
-                  <section className="grid overflow-hidden rounded-lg border border-zinc-200 bg-white sm:grid-cols-3">
-                    <div className="border-b border-zinc-200 p-4 sm:border-b-0 sm:border-r">
+                  <section className="grid grid-cols-3 overflow-hidden rounded-lg border border-zinc-200 bg-white">
+                    <div className="min-w-0 border-r border-zinc-200 p-3 sm:p-4">
                       <InfoValue label="Quotations" value={folderQuotationList.length} />
                     </div>
-                    <div className="border-b border-zinc-200 p-4 sm:border-b-0 sm:border-r">
+                    <div className="min-w-0 border-r border-zinc-200 p-3 sm:p-4">
                       <InfoValue label="Active items" value={activeItemCount} />
                     </div>
-                    <div className="p-4">
+                    <div className="min-w-0 p-3 sm:p-4">
                       <InfoValue label="Final total" value={money(quotation.currency, quotation.grand_total)} />
                     </div>
                   </section>
@@ -1933,7 +1963,7 @@ export default async function QuotationDetailPage({
 
             </div>
 
-            <aside className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm xl:sticky xl:top-6 xl:col-start-2 xl:row-span-6 xl:row-start-2 xl:self-start">
+            <aside className="hidden rounded-xl border border-zinc-200 bg-white p-5 shadow-sm sm:block xl:sticky xl:top-6 xl:col-start-2 xl:row-span-6 xl:row-start-2 xl:self-start">
               <h2 className="text-base font-semibold text-zinc-950">Summary</h2>
               {hasMixedCurrencies ? (
                 <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
