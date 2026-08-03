@@ -55,6 +55,7 @@ export function ClientsManager({
   const [mergeSearch, setMergeSearch] = useState("");
   const [mergeTargetId, setMergeTargetId] = useState("");
   const [showInactive, setShowInactive] = useState(false);
+  const [mobileActionsClientId, setMobileActionsClientId] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
@@ -211,7 +212,31 @@ export function ClientsManager({
   return (
     <div>
       {/* Toolbar */}
-      <div className="mb-4 flex items-center justify-between gap-3">
+      <div className="mb-4 grid gap-2 md:hidden">
+        <input
+          type="text"
+          placeholder="Search by name or code..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="h-10 w-full min-w-0 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder-zinc-400 focus:border-emerald-600 focus:outline-none"
+        />
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <label className="flex min-w-0 cursor-pointer items-center gap-2 text-sm text-zinc-500">
+            <input
+              type="checkbox"
+              checked={showInactive}
+              onChange={(e) => setShowInactive(e.target.checked)}
+              className="h-4 w-4 shrink-0 rounded border-zinc-300 accent-emerald-700"
+            />
+            <span className="truncate">Show inactive</span>
+          </label>
+          <p className="shrink-0 text-sm text-zinc-400">
+            {filtered.length} client{filtered.length !== 1 ? "s" : ""}
+          </p>
+        </div>
+      </div>
+
+      <div className="mb-4 hidden items-center justify-between gap-3 md:flex">
         <input
           type="text"
           placeholder="Search by name or code…"
@@ -235,8 +260,108 @@ export function ClientsManager({
         </div>
       </div>
 
+      {/* Compact mobile list */}
+      <div className="min-w-0 overflow-visible rounded-lg border border-zinc-200 bg-white shadow-sm md:hidden">
+        {filtered.length === 0 ? (
+          <p className="px-4 py-6 text-center text-sm text-zinc-400">
+            {search ? "No clients match your search." : "No clients found."}
+          </p>
+        ) : (
+          filtered.map((c) => {
+            const rowContent = (
+              <>
+                <span className="truncate text-xs font-semibold text-zinc-500" title={c.client_number ?? c.client_code ?? undefined}>
+                  {c.client_number ?? c.client_code ?? "-"}
+                </span>
+                <span className="min-w-0">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-900" title={c.company_name}>
+                      {c.company_name}
+                    </span>
+                    {!c.is_active ? (
+                      <span className="shrink-0 rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500">
+                        Inactive
+                      </span>
+                    ) : null}
+                  </span>
+                  {c.contact_person ? (
+                    <span className="mt-0.5 block truncate text-xs text-zinc-500" title={c.contact_person}>
+                      {c.contact_person}
+                    </span>
+                  ) : null}
+                </span>
+                {canManage ? <span aria-hidden="true" className="text-xl leading-none text-zinc-400">&gt;</span> : null}
+              </>
+            );
+
+            return (
+              <div key={c.id} className={`relative grid min-w-0 grid-cols-[minmax(0,1fr)_auto] border-b border-zinc-100 last:border-0 ${c.is_active ? "bg-white" : "bg-zinc-50"}`}>
+                {canManage ? (
+                  <button
+                    type="button"
+                    onClick={() => openEdit(c)}
+                    className="grid min-h-14 min-w-0 grid-cols-[72px_minmax(0,1fr)_16px] items-center gap-2 px-3 py-2 text-left transition hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-700"
+                    aria-label={`Edit ${c.company_name}`}
+                  >
+                    {rowContent}
+                  </button>
+                ) : (
+                  <div className="grid min-h-14 min-w-0 grid-cols-[72px_minmax(0,1fr)] items-center gap-2 px-3 py-2">
+                    {rowContent}
+                  </div>
+                )}
+
+                {canManage ? (
+                  <div className="flex items-center pr-2">
+                    <button
+                      type="button"
+                      onClick={() => setMobileActionsClientId((current) => current === c.id ? null : c.id)}
+                      aria-expanded={mobileActionsClientId === c.id}
+                      aria-label={`Actions for ${c.company_name}`}
+                      className="flex h-10 w-10 items-center justify-center rounded-md text-lg font-bold tracking-widest text-zinc-500 hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
+                    >
+                      ...
+                    </button>
+                  </div>
+                ) : null}
+
+                {canManage && mobileActionsClientId === c.id ? (
+                  <div className="absolute right-2 top-12 z-20 grid w-56 max-w-[calc(100vw-3.5rem)] gap-1 rounded-md border border-zinc-200 bg-white p-2 shadow-lg">
+                    <button type="button" onClick={() => { openEdit(c); setMobileActionsClientId(null); }} className="h-10 px-3 text-left text-sm font-medium text-zinc-700 hover:bg-zinc-50">Edit</button>
+                    {c.is_active ? (
+                      <button type="button" onClick={() => { openMerge(c); setMobileActionsClientId(null); }} className="h-10 px-3 text-left text-sm font-medium text-violet-700 hover:bg-violet-50">Merge</button>
+                    ) : null}
+                    {c.is_active ? (
+                      <button
+                        type="button"
+                        onClick={() => { setMobileActionsClientId(null); void handleDelete(c); }}
+                        disabled={c.quotationCount > 0 || pending}
+                        title={c.quotationCount > 0 ? "Has quotations - cannot delete" : "Deactivate client"}
+                        className={`h-10 px-3 text-left text-sm font-medium ${c.quotationCount > 0 ? "cursor-not-allowed text-zinc-300" : "text-red-600 hover:bg-red-50"}`}
+                      >
+                        Delete
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setMobileActionsClientId(null); void handlePermanentDelete(c); }}
+                        disabled={c.quotationCount > 0 || c.projectCount > 0 || pending}
+                        title={c.quotationCount > 0 ? `Has ${c.quotationCount} quotation(s) - cannot delete` : c.projectCount > 0 ? `Has ${c.projectCount} linked project(s) - cannot delete` : "Permanently remove this client record"}
+                        className={`min-h-10 px-3 py-2 text-left text-sm font-semibold ${c.quotationCount > 0 || c.projectCount > 0 ? "cursor-not-allowed text-zinc-300" : "text-red-700 hover:bg-red-50"}`}
+                      >
+                        Delete Permanently
+                      </button>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })
+        )}
+      </div>
+
       {/* Table */}
-      <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white shadow-sm">
+      <div className="hidden overflow-x-auto rounded-lg border border-zinc-200 bg-white shadow-sm md:block">
         <table className="w-full min-w-[860px] border-collapse text-left text-sm">
           <thead className="bg-zinc-50 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
             <tr>

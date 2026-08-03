@@ -69,9 +69,12 @@ export default async function ProcurementOrdersPage() {
     >
       <div className="px-5 py-6 sm:px-8">
         {orders.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-6 py-16 text-center">
+          <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center xl:px-6 xl:py-16">
             <p className="text-sm text-zinc-500">
-              No confirmed project files yet. Procurement folders are created from approved quotations.
+              <span className="xl:hidden">No procurement folders found.</span>
+              <span className="hidden xl:inline">
+                No confirmed project files yet. Procurement folders are created from approved quotations.
+              </span>
             </p>
           </div>
         ) : (

@@ -57,9 +57,10 @@ export default async function ActiveProjectsPage() {
     >
       <div className="px-5 py-6 sm:px-8">
         {projectFilesWithClient.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-6 py-16 text-center">
+          <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center xl:px-6 xl:py-16">
             <p className="text-sm text-zinc-500">
-              No project files yet. Create one from an approved quotation.
+              <span className="xl:hidden">No active project files found.</span>
+              <span className="hidden xl:inline">No project files yet. Create one from an approved quotation.</span>
             </p>
           </div>
         ) : (

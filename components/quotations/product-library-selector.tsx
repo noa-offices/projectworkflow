@@ -913,6 +913,8 @@ export function ProductLibrarySelector({
   templateMaterialGroupItems,
   templateMaterialGroups,
   templates,
+  triggerClassName,
+  triggerLabel = "Add from Product Library",
 }: {
   brands: ProductLibraryBrand[];
   canManageProductLibrary?: boolean;
@@ -928,6 +930,8 @@ export function ProductLibrarySelector({
   templateMaterialGroupItems: ProductTemplateMaterialGroupItemLink[];
   templateMaterialGroups: ProductTemplateMaterialGroupLink[];
   templates: ProductLibraryTemplate[];
+  triggerClassName?: string;
+  triggerLabel?: string;
 }) {
   const isLocalMode = Boolean(onAddLocalItem);
   const [isTemplateActionPending, startTemplateActionTransition] = useTransition();
@@ -1112,14 +1116,14 @@ export function ProductLibrarySelector({
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="border border-zinc-300 bg-white px-3 py-2 text-xs font-bold text-emerald-900 transition hover:bg-emerald-50"
+        className={triggerClassName ?? "border border-zinc-300 bg-white px-3 py-2 text-xs font-bold text-emerald-900 transition hover:bg-emerald-50"}
       >
-        Add from Product Library
+        {triggerLabel}
       </button>
 
       {isOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/30 px-4 py-6">
-          <div className="flex h-[90vh] w-[min(1200px,96vw)] flex-col border border-zinc-300 bg-white shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/30 p-0 sm:px-4 sm:py-6">
+          <div className="flex h-[100dvh] w-full min-w-0 flex-col overflow-hidden bg-white shadow-xl sm:h-[90vh] sm:w-[min(1200px,96vw)] sm:border sm:border-zinc-300">
             <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
               <div>
                 <h2 className="text-sm font-semibold text-zinc-950">
@@ -1132,7 +1136,7 @@ export function ProductLibrarySelector({
               <button
                 type="button"
                 onClick={() => setIsOpen(false)}
-                className="text-xs font-semibold text-zinc-500 transition hover:text-zinc-950"
+                className="h-10 shrink-0 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-600 transition hover:text-zinc-950 sm:h-auto sm:border-0 sm:bg-transparent sm:px-0 sm:text-zinc-500"
               >
                 Close
               </button>
@@ -1140,7 +1144,7 @@ export function ProductLibrarySelector({
 
             {!selectedTemplate ? (
               <>
-                <div className="grid shrink-0 gap-2 border-b border-zinc-200 bg-zinc-50 p-3 md:grid-cols-[minmax(220px,1fr)_170px_170px_170px_80px]">
+                <div className="grid shrink-0 gap-2 border-b border-zinc-200 bg-zinc-50 p-3 [&_button]:min-h-10 [&_input]:min-h-10 [&_select]:min-h-10 xl:grid-cols-[minmax(220px,1fr)_170px_170px_170px_80px] xl:[&_button]:min-h-9 xl:[&_input]:min-h-9 xl:[&_select]:min-h-9">
                   <input
                     type="search"
                     value={search}
@@ -1354,7 +1358,7 @@ export function ProductLibrarySelector({
                         key={template.id}
                         type="button"
                         onClick={() => setSelectedTemplateId(template.id)}
-                        className={`flex w-full gap-3 border p-2 text-left transition hover:border-emerald-700 hover:bg-emerald-50 ${
+                        className={`flex min-h-20 w-full min-w-0 gap-3 border p-2 text-left transition hover:border-emerald-700 hover:bg-emerald-50 ${
                           selected ? "border-emerald-900 bg-emerald-50" : "border-zinc-200 bg-white"
                         }`}
                       >

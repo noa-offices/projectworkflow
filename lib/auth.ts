@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import type { AccountStatus, AppRole } from "@/lib/supabase/types";
+import { isClientPaymentAttachmentManager } from "@/lib/projects/client-payment-attachment-permissions";
 
 export type UserProfile = {
   id: string;
@@ -95,6 +96,26 @@ export function canManageCommissions(role: AppRole | null | undefined): boolean 
 
 export function canEditCommissions(role: AppRole | null | undefined): boolean {
   return role === "system_owner" || role === "admin_manager";
+}
+
+export function canViewClientPayments(role: AppRole | null | undefined): boolean {
+  return role === "system_owner" || role === "admin_manager";
+}
+
+export function canManageClientPaymentInstallments(role: AppRole | null | undefined): boolean {
+  return canViewClientPayments(role);
+}
+
+export function canRecordClientPaymentReceipts(role: AppRole | null | undefined): boolean {
+  return canViewClientPayments(role);
+}
+
+export function canManageClientPaymentReceiptAttachments(role: AppRole | null | undefined): boolean {
+  return isClientPaymentAttachmentManager(role);
+}
+
+export function canVoidClientPaymentReceipts(role: AppRole | null | undefined): boolean {
+  return role === "system_owner";
 }
 
 export async function requireCommissionViewer(): Promise<AuthenticatedUser> {

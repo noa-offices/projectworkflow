@@ -1663,6 +1663,12 @@ export function LocalQuotationBuilder({
   const [newPrintableColumnShowInInternal, setNewPrintableColumnShowInInternal] = useState(true);
   const [roundingStepInput, setRoundingStepInput] = useState("5");
   const [openToolbarDropdown, setOpenToolbarDropdown] = useState<"downloads" | "columns" | "more" | null>(null);
+  const [mobileToolbarExpanded, setMobileToolbarExpanded] = useState(true);
+  const [mobileBuilderTab, setMobileBuilderTab] = useState<"details" | "items" | "summary">("items");
+  const [mobileDetailsExpanded, setMobileDetailsExpanded] = useState(false);
+  const [mobileImageItemId, setMobileImageItemId] = useState<string | null>(null);
+  const [mobileMoreItemId, setMobileMoreItemId] = useState<string | null>(null);
+  const [mobileSectionMoreId, setMobileSectionMoreId] = useState<string | null>(null);
   const [copiedRowClipboard, setCopiedRowClipboard] = useState<LocalRowClipboardPayload | null>(null);
   const [copiedRowId, setCopiedRowId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -1882,6 +1888,7 @@ export function LocalQuotationBuilder({
     ).slice(0, 100);
   }, [productTemplates, saveLibraryTemplateSearch]);
   let runningSerialNumber = 0;
+  let mobileRunningSerialNumber = 0;
 
   function updateColumnSetting(key: string, patch: { visible?: boolean; width?: number }) {
     commit((current) => {
@@ -3126,10 +3133,62 @@ export function LocalQuotationBuilder({
   return (
     <div className="min-h-screen bg-zinc-100 text-zinc-950">
       <header className="sticky top-0 z-20 border-b border-zinc-300 bg-white">
-        <div className="flex flex-col gap-3 px-4 py-3">
+        {!mobileToolbarExpanded ? (
+          <div className="flex min-w-0 items-center justify-between gap-3 px-4 py-2.5 xl:hidden">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-zinc-950">{currentDocumentNumber ?? "Draft quotation"}</p>
+              <p className="break-words text-xs font-semibold text-emerald-950">
+                {formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total)}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMobileToolbarExpanded(true)}
+              aria-controls="local-builder-toolbar-controls"
+              aria-expanded={false}
+              className="inline-flex h-10 shrink-0 items-center gap-1.5 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700"
+            >
+              Show controls
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 20 20"
+                className="h-3.5 w-3.5 fill-none stroke-current"
+                strokeWidth="2"
+              >
+                <path d="m5 7.5 5 5 5-5" />
+              </svg>
+            </button>
+          </div>
+        ) : null}
+        <div
+          id="local-builder-toolbar-controls"
+          className={`${mobileToolbarExpanded ? "flex" : "hidden"} flex-col gap-3 px-4 py-3 xl:flex`}
+        >
           <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
             <div className="flex min-w-0 flex-wrap items-center gap-3">
-              <Link href={workspace.project_id ? `/clients/projects/${workspace.project_id}` : `/quotations/${workspace.server_quotation_id}`} className="inline-flex h-9 items-center border border-zinc-300 px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Back</Link>
+              <div className="flex w-full items-center justify-between gap-3 xl:contents">
+                <Link href={workspace.project_id ? `/clients/projects/${workspace.project_id}` : `/quotations/${workspace.server_quotation_id}`} className="inline-flex h-9 items-center border border-zinc-300 px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900">Back</Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpenToolbarDropdown(null);
+                    setMobileToolbarExpanded(false);
+                  }}
+                  aria-controls="local-builder-toolbar-controls"
+                  aria-expanded
+                  className="inline-flex h-10 items-center gap-1.5 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 xl:hidden"
+                >
+                  Hide controls
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 20 20"
+                    className="h-3.5 w-3.5 fill-none stroke-current"
+                    strokeWidth="2"
+                  >
+                    <path d="m5 12.5 5-5 5 5" />
+                  </svg>
+                </button>
+              </div>
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-zinc-950">{currentDocumentNumber ?? "Draft quotation"} - {workspace.title}</p>
                 <p className="truncate text-xs text-zinc-500">
@@ -3682,9 +3741,9 @@ export function LocalQuotationBuilder({
       </header>
 
       {detailsModalItem ? (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-zinc-950/55 px-4 py-6">
-          <div className="flex max-h-[calc(100vh-3rem)] w-full max-w-6xl flex-col overflow-hidden border border-zinc-300 bg-zinc-100 shadow-2xl">
-            <div className="flex items-start justify-between gap-4 border-b border-zinc-300 bg-white px-5 py-4">
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-zinc-950/55 sm:px-4 sm:py-6">
+          <div className="flex max-h-[100dvh] w-full max-w-6xl flex-col overflow-hidden bg-zinc-100 shadow-2xl sm:max-h-[calc(100vh-3rem)] sm:border sm:border-zinc-300">
+            <div className="flex flex-col gap-3 border-b border-zinc-300 bg-white px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 sm:px-5 sm:py-4">
               <div className="min-w-0">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Row Details</p>
                 <p className="truncate text-sm font-semibold text-zinc-950">{detailsModalItem.item_name_snapshot || "Unnamed item"}</p>
@@ -3696,7 +3755,7 @@ export function LocalQuotationBuilder({
                 <button
                   type="button"
                   onClick={() => void saveLocalDraftNow(detailsModalItem.id)}
-                  className="h-9 border border-emerald-900 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800"
+                  className="h-10 flex-1 border border-emerald-900 bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 sm:h-9 sm:flex-none"
                 >
                   Save Row
                 </button>
@@ -3706,13 +3765,13 @@ export function LocalQuotationBuilder({
                     setDetailsModalRowId(null);
                     setSaveLibraryChoiceRowId(null);
                   }}
-                  className="h-9 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900"
+                  className="h-10 flex-1 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-900 hover:text-emerald-900 sm:h-9 sm:flex-none"
                 >
                   Done
                 </button>
               </div>
             </div>
-            <div className="overflow-y-auto px-5 py-4">
+            <div className="overflow-y-auto px-3 py-3 [&_input]:min-h-10 [&_input]:text-base [&_select]:min-h-10 [&_select]:text-base [&_textarea]:text-base sm:px-5 sm:py-4 sm:[&_input]:min-h-8 sm:[&_input]:text-xs sm:[&_select]:min-h-8 sm:[&_select]:text-xs sm:[&_textarea]:text-xs">
               {renderRowDetailsModalContent(detailsModalItem)}
             </div>
           </div>
@@ -4127,7 +4186,21 @@ export function LocalQuotationBuilder({
           <div className="mb-4 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">{saveMessage}</div>
         ) : null}
 
-        <section className="border border-zinc-300 bg-white">
+        <nav aria-label="Local builder views" className="mb-3 grid grid-cols-3 border border-zinc-300 bg-white text-xs font-semibold xl:hidden">
+          {(["details", "items", "summary"] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setMobileBuilderTab(tab)}
+              aria-pressed={mobileBuilderTab === tab}
+              className={`h-11 capitalize ${tab === "items" ? "border-x border-zinc-300" : ""} ${mobileBuilderTab === tab ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"}`}
+            >
+              {tab}
+            </button>
+          ))}
+        </nav>
+
+        <section className={`${mobileBuilderTab === "details" ? "block" : "hidden"} border border-zinc-300 bg-white xl:block`}>
           <div className="flex items-center justify-between gap-3 border-b border-zinc-300 bg-zinc-50 px-3 py-2">
             <div>
               <p className="text-sm font-semibold text-zinc-950">Document Setup</p>
@@ -4143,7 +4216,35 @@ export function LocalQuotationBuilder({
               </button>
             )}
           </div>
-          <div className="grid border-b border-zinc-300 lg:grid-cols-2">
+          <div className="border-b border-zinc-300 [&>div>span:last-child]:min-w-0 [&>div>span:last-child]:break-words xl:hidden">
+            <SheetInfo label="Client" value={currentClientName} />
+            <SheetInfo label="Project" value={currentProjectDisplay} />
+            <SheetInfo label="Attention" value={stringValue(projectSnapshot, "attention_to")} />
+            <SheetInfo label="Quote Folder" value={currentQuotationFolderNumber} />
+            <SheetInfo label="Date" value={workspace.quotation_date} />
+            <SheetInfo label="Status" value={statusLabel(workspace.status)} />
+            <SheetInfo label="Layout" value={layoutLabels.get(workspace.layout_mode) ?? workspace.layout_mode} />
+            <SheetInfo label="Location" value={stringValue(projectSnapshot, "location")} />
+            {mobileDetailsExpanded ? (
+              <>
+                <SheetInfo label="PO Box" value={stringValue(projectSnapshot, "po_box")} />
+                <SheetInfo label="Mobile" value={stringValue(projectSnapshot, "attention_mobile")} />
+                <SheetInfo label="Telephone" value={stringValue(projectSnapshot, "attention_landline")} />
+                <SheetInfo label="Email" value={stringValue(projectSnapshot, "attention_email")} />
+                <SheetInfo label="Address" value={stringValue(projectSnapshot, "project_address")} />
+                <SheetInfo label="View" value={view === "internal" ? "Internal" : "Client"} />
+              </>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setMobileDetailsExpanded((expanded) => !expanded)}
+              aria-expanded={mobileDetailsExpanded}
+              className="flex h-11 w-full items-center justify-center border-t border-zinc-300 bg-white px-3 text-xs font-semibold text-emerald-900"
+            >
+              {mobileDetailsExpanded ? "Hide full details" : "View full details"}
+            </button>
+          </div>
+          <div className="hidden border-b border-zinc-300 xl:grid xl:grid-cols-2">
             <div className="border-b border-zinc-300 lg:border-b-0 lg:border-r">
               <div className="border-b border-zinc-300 px-3 py-2 text-center text-sm font-bold uppercase tracking-wide">Quotation</div>
               <SheetInfo label="Client" value={currentClientName} />
@@ -4178,7 +4279,7 @@ export function LocalQuotationBuilder({
             </div>
           </div>
 
-          <div className="w-full">
+          <div className="hidden w-full xl:block">
             <QuotationSheetTable
               columns={sheetColumns}
               key={sheetColumnSignature}
@@ -4592,8 +4693,370 @@ export function LocalQuotationBuilder({
           </div>
         </section>
 
-        <section className="mt-4 flex justify-end">
+        <section className={`${mobileBuilderTab === "items" ? "grid" : "hidden"} min-w-0 gap-3 xl:hidden`}>
+          {displaySections.map((section) => {
+            if (section.renderAsMainOnly) {
+              return (
+                <div key={section.id} className="min-w-0 bg-zinc-900 px-3 py-3 text-sm font-bold uppercase tracking-wide text-white">
+                  <div className="flex min-w-0 items-center justify-between gap-3">
+                    <span className="min-w-0 break-words">{section.section_title || "Main Section"}</span>
+                    <button
+                      type="button"
+                      onClick={() => setMobileSectionMoreId((current) => current === section.id ? null : section.id)}
+                      aria-expanded={mobileSectionMoreId === section.id}
+                      className="h-10 shrink-0 border border-white/30 px-3 text-xs font-semibold normal-case tracking-normal"
+                    >
+                      More
+                    </button>
+                  </div>
+                  {mobileSectionMoreId === section.id ? (
+                    <div className="mt-3 grid min-w-0 gap-2 border border-white/20 bg-white/10 p-3 normal-case tracking-normal">
+                      <label className="grid min-w-0 gap-1 text-[10px] font-semibold uppercase text-zinc-300">
+                        Section name
+                        <input
+                          value={section.section_title}
+                          onChange={(event) => updateSection(section.id, { section_title: event.target.value })}
+                          className="h-10 min-w-0 border border-zinc-300 bg-white px-3 text-sm font-medium normal-case text-zinc-900 outline-none"
+                        />
+                      </label>
+                      <button type="button" onClick={() => { addSection("sub", section.id); setMobileSectionMoreId(null); }} className="h-10 border border-white/30 px-3 text-left text-xs font-semibold">Add subsection</button>
+                      <button type="button" onClick={() => { moveSection(section.id, -1); setMobileSectionMoreId(null); }} className="h-10 border border-white/30 px-3 text-left text-xs font-semibold">Move up</button>
+                      <button type="button" onClick={() => { moveSection(section.id, 1); setMobileSectionMoreId(null); }} className="h-10 border border-white/30 px-3 text-left text-xs font-semibold">Move down</button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm("Remove this quotation section?")) {
+                            removeSection(section.id);
+                            setMobileSectionMoreId(null);
+                          }
+                        }}
+                        className="h-10 border border-red-300 bg-white px-3 text-left text-xs font-semibold text-red-700"
+                      >
+                        Remove section
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            }
+
+            const { childrenByParent: optionalChildrenByParent, topLevel: topLevelSectionItems } = orderedItemsWithOptionalChildren(workspace.items, section.id);
+            const mobileSectionItems = topLevelSectionItems.flatMap((item) => [
+              { item, isOptionalChild: false },
+              ...(collapsedOptionalParentIds.has(item.id)
+                ? []
+                : (optionalChildrenByParent.get(item.id) ?? []).map((child) => ({ item: child, isOptionalChild: true }))),
+            ]);
+
+            return (
+              <div key={section.id} className="min-w-0 border border-zinc-300 bg-white">
+                <div className="flex min-w-0 items-center justify-between gap-3 border-b border-zinc-300 bg-zinc-100 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="break-words text-xs font-bold uppercase tracking-wide text-zinc-800">{section.section_title || "Section"}</p>
+                    {section.parent_section_id ? (
+                      <p className="mt-0.5 truncate text-[11px] text-zinc-500">
+                        {sectionsById.get(section.parent_section_id)?.section_title || "Main Section"}
+                      </p>
+                    ) : null}
+                  </div>
+                  <span className="shrink-0 text-xs font-semibold text-zinc-500">
+                    {mobileSectionItems.length} {mobileSectionItems.length === 1 ? "item" : "items"}
+                  </span>
+                </div>
+                <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 border-b border-zinc-200 bg-zinc-50 p-2">
+                  <ProductLibrarySelector
+                    brands={productBrands}
+                    canManageProductLibrary={canManageProductLibrary}
+                    categories={productCategories}
+                    components={productComponents}
+                    linkedFamilies={productLinkedFamilies}
+                    materialGroups={materialGroups}
+                    materials={materials}
+                    onAddLocalItem={(item) => addProductItem(section.id, item)}
+                    quotationId={workspace.server_quotation_id}
+                    returnTo={`/quotations/${workspace.server_quotation_id}/local-builder`}
+                    sectionId={section.id}
+                    templateMaterialGroupItems={templateMaterialGroupItems}
+                    templateMaterialGroups={templateMaterialGroups}
+                    templates={productTemplates}
+                    triggerClassName="h-10 min-w-0 border border-emerald-900 bg-emerald-900 px-2 text-xs font-semibold text-white"
+                    triggerLabel="Add from Library"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => addItem(section.id, "custom")}
+                    className="h-10 min-w-0 border border-zinc-300 bg-white px-2 text-xs font-semibold text-zinc-700"
+                  >
+                    Add Product
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMobileSectionMoreId((current) => current === section.id ? null : section.id)}
+                    aria-expanded={mobileSectionMoreId === section.id}
+                    className="h-10 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700"
+                  >
+                    More
+                  </button>
+                </div>
+                {mobileSectionMoreId === section.id ? (
+                  <div className="grid min-w-0 gap-2 border-b border-zinc-300 bg-zinc-50 p-3">
+                    <label className="grid min-w-0 gap-1 text-[10px] font-semibold uppercase text-zinc-500">
+                      Section name
+                      <input
+                        value={section.section_title}
+                        onChange={(event) => updateSection(section.id, { section_title: event.target.value })}
+                        className="h-10 min-w-0 border border-zinc-300 bg-white px-3 text-sm font-medium normal-case text-zinc-900 outline-none"
+                      />
+                    </label>
+                    {copiedRowClipboard ? (
+                      <>
+                        <button type="button" onClick={() => { pasteCopiedRow(section.id); setMobileSectionMoreId(null); }} className="h-10 border border-emerald-200 bg-emerald-50 px-3 text-left text-xs font-semibold text-emerald-900">Paste copied row</button>
+                        <button type="button" onClick={() => { clearCopiedRow(); setMobileSectionMoreId(null); }} className="h-10 border border-zinc-300 bg-white px-3 text-left text-xs font-semibold text-zinc-700">Clear copied row</button>
+                      </>
+                    ) : null}
+                    <button type="button" onClick={() => { addItem(section.id, "note"); setMobileSectionMoreId(null); }} className="h-10 border border-zinc-300 bg-white px-3 text-left text-xs font-semibold text-zinc-700">Add note row</button>
+                    <button type="button" onClick={() => { addItem(section.id, "blank"); setMobileSectionMoreId(null); }} className="h-10 border border-zinc-300 bg-white px-3 text-left text-xs font-semibold text-zinc-700">Add blank row</button>
+                    <button type="button" onClick={() => { moveSection(section.id, -1); setMobileSectionMoreId(null); }} className="h-10 border border-zinc-300 bg-white px-3 text-left text-xs font-semibold text-zinc-700">Move up</button>
+                    <button type="button" onClick={() => { moveSection(section.id, 1); setMobileSectionMoreId(null); }} className="h-10 border border-zinc-300 bg-white px-3 text-left text-xs font-semibold text-zinc-700">Move down</button>
+                    <button type="button" onClick={() => { addSection("sub", section.parent_section_id ?? null); setMobileSectionMoreId(null); }} className="h-10 border border-zinc-300 bg-white px-3 text-left text-xs font-semibold text-zinc-700">Add section</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm("Remove this quotation section?")) {
+                          removeSection(section.id);
+                          setMobileSectionMoreId(null);
+                        }
+                      }}
+                      className="h-10 border border-red-200 bg-white px-3 text-left text-xs font-semibold text-red-700"
+                    >
+                      Remove section
+                    </button>
+                  </div>
+                ) : null}
+                {section.section_notes ? (
+                  <p className="border-b border-zinc-200 px-3 py-2 text-xs leading-5 text-zinc-600">{section.section_notes}</p>
+                ) : null}
+                <div className="grid min-w-0 gap-2 p-2">
+                  {mobileSectionItems.length ? mobileSectionItems.map(({ item, isOptionalChild }) => {
+                    const itemType = itemTypeDisplay(item);
+                    const rowSerial = isSerialCountedLine(item) ? ++mobileRunningSerialNumber : 0;
+                    const imageUrl = item.proposed_image_url_snapshot || item.specified_image_url_snapshot || null;
+                    const title = item.item_name_snapshot || item.model_snapshot || item.item_code_snapshot || (itemType === "note" ? "Note" : itemType === "blank" ? "Blank row" : "Unnamed item");
+                    const lineTotal = itemCountsInLocalTotals(item)
+                      ? formatWorkspaceMoney(workspace.currency, item.net_total)
+                      : netTotalPlaceholder(item);
+
+                    return (
+                      <article key={item.id} className={`min-w-0 border p-3 ${isOptionalChild ? "ml-3 border-red-200 bg-red-50/30" : "border-zinc-300 bg-white"}`}>
+                        <div className="flex min-w-0 items-start gap-3">
+                          {itemType !== "blank" && itemType !== "note" ? (
+                            imageUrl ? (
+                              <FinishImagePreview alt={title} className="h-20 w-20 shrink-0 overflow-hidden border border-zinc-200 bg-zinc-50 [&_img]:object-contain" value={imageUrl} />
+                            ) : (
+                              <div className="flex h-20 w-20 shrink-0 items-center justify-center border border-dashed border-zinc-300 bg-zinc-50 px-2 text-center text-[10px] font-semibold uppercase text-zinc-400">
+                                No image
+                              </div>
+                            )
+                          ) : null}
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                              {rowSerial ? `Item ${rowSerial}` : itemType === "note" ? "Note" : "Blank row"}
+                              {isOptionalChild ? " · Optional" : ""}
+                            </p>
+                            <p className="mt-1 break-words text-sm font-semibold text-zinc-950">{title}</p>
+                            {item.specification_snapshot ? (
+                              <p className="mt-1 line-clamp-3 break-words text-xs leading-5 text-zinc-600">{item.specification_snapshot}</p>
+                            ) : null}
+                            {itemType !== "blank" && itemType !== "note" ? (
+                              <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase text-zinc-500">Qty</p>
+                                  <p className="font-semibold text-zinc-800">{formatTableNumber(item.qty)}</p>
+                                </div>
+                                <div className="min-w-0 text-right">
+                                  <p className="text-[10px] font-semibold uppercase text-zinc-500">Net Total</p>
+                                  <p className="break-words font-semibold text-emerald-950">{lineTotal}</p>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className={`mt-3 grid gap-2 ${itemType === "blank" ? "grid-cols-1" : itemType === "note" ? "grid-cols-2" : "grid-cols-3"}`}>
+                          {itemType !== "blank" ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMobileImageItemId(null);
+                                setMobileMoreItemId(null);
+                                setDetailsModalRowId(item.id);
+                              }}
+                              className="h-10 min-w-0 border border-emerald-900 bg-emerald-900 px-2 text-xs font-semibold text-white"
+                            >
+                              Edit item
+                            </button>
+                          ) : null}
+                          {itemType !== "blank" && itemType !== "note" ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMobileMoreItemId(null);
+                                setMobileImageItemId((current) => current === item.id ? null : item.id);
+                              }}
+                              aria-expanded={mobileImageItemId === item.id}
+                              className="h-10 min-w-0 border border-zinc-300 bg-white px-2 text-xs font-semibold text-zinc-700"
+                            >
+                              Image
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMobileImageItemId(null);
+                              setMobileMoreItemId((current) => current === item.id ? null : item.id);
+                            }}
+                            aria-expanded={mobileMoreItemId === item.id}
+                            className="h-10 min-w-0 border border-zinc-300 bg-white px-2 text-xs font-semibold text-zinc-700"
+                          >
+                            More
+                          </button>
+                        </div>
+                        {copiedRowId === item.id ? (
+                          <p className="mt-2 text-xs font-semibold text-emerald-800">Copied</p>
+                        ) : null}
+                        {mobileImageItemId === item.id && itemType !== "blank" && itemType !== "note" ? (
+                          <div className="mt-3 grid min-w-0 gap-3 border border-zinc-300 bg-zinc-50 p-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">Item image</p>
+                              <button
+                                type="button"
+                                onClick={() => setMobileImageItemId(null)}
+                                className="h-10 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700"
+                              >
+                                Close
+                              </button>
+                            </div>
+                            <div className="min-w-0 [&_button]:h-10 [&_button]:border [&_button]:border-zinc-300 [&_button]:bg-white [&_button]:px-3 [&_button]:text-xs">
+                              <LocalQuotationImageCell
+                                item={item}
+                                quotationId={workspace.server_quotation_id}
+                                rowHeight={170}
+                                updateItem={(patch) => updateItem(item.id, patch)}
+                              />
+                            </div>
+                          </div>
+                        ) : null}
+                        {mobileMoreItemId === item.id ? (
+                          <div className="mt-3 grid min-w-0 gap-2 border border-zinc-300 bg-zinc-50 p-3">
+                            {itemType !== "blank" ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    moveItem(section.id, item.id, -1);
+                                    setMobileMoreItemId(null);
+                                  }}
+                                  className="h-10 border border-zinc-300 bg-white px-3 text-left text-xs font-semibold text-zinc-700"
+                                >
+                                  Move up
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    moveItem(section.id, item.id, 1);
+                                    setMobileMoreItemId(null);
+                                  }}
+                                  className="h-10 border border-zinc-300 bg-white px-3 text-left text-xs font-semibold text-zinc-700"
+                                >
+                                  Move down
+                                </button>
+                              </>
+                            ) : null}
+                            {copiedRowClipboard ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    pasteCopiedRowRelative(item.id, "above");
+                                    setMobileMoreItemId(null);
+                                  }}
+                                  className="h-10 border border-emerald-200 bg-emerald-50 px-3 text-left text-xs font-semibold text-emerald-900"
+                                >
+                                  Paste copied row above
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    pasteCopiedRowRelative(item.id, "below");
+                                    setMobileMoreItemId(null);
+                                  }}
+                                  className="h-10 border border-emerald-200 bg-emerald-50 px-3 text-left text-xs font-semibold text-emerald-900"
+                                >
+                                  Paste copied row below
+                                </button>
+                              </>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                copyItem(item.id);
+                                setMobileMoreItemId(null);
+                              }}
+                              className="h-10 border border-emerald-200 bg-emerald-50 px-3 text-left text-xs font-semibold text-emerald-900"
+                            >
+                              Copy row
+                            </button>
+                            {itemType !== "blank" ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  duplicateItem(item.id);
+                                  setMobileMoreItemId(null);
+                                }}
+                                className="h-10 border border-zinc-300 bg-white px-3 text-left text-xs font-semibold text-zinc-700"
+                              >
+                                Duplicate below
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm("Remove this quotation row?")) {
+                                  removeItem(item.id);
+                                  setMobileMoreItemId(null);
+                                }
+                              }}
+                              className="h-10 border border-red-200 bg-white px-3 text-left text-xs font-semibold text-red-700"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ) : null}
+                      </article>
+                    );
+                  }) : (
+                    <p className="px-3 py-5 text-center text-sm text-zinc-500">No products in this area.</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {!displaySections.length ? (
+            <div className="border border-dashed border-zinc-300 bg-white px-4 py-8 text-center text-sm text-zinc-500">
+              No quotation sections yet.
+            </div>
+          ) : null}
+          <div className="grid min-w-0 grid-cols-2 gap-2 border border-zinc-300 bg-zinc-50 p-2">
+            <button type="button" onClick={() => addSection("main")} className="h-11 min-w-0 border border-zinc-900 bg-zinc-900 px-2 text-xs font-semibold text-white">Add Main Section</button>
+            <button type="button" onClick={() => addSection("sub")} className="h-11 min-w-0 border border-zinc-300 bg-white px-2 text-xs font-semibold text-zinc-700">Add Section</button>
+          </div>
+        </section>
+
+        <section className={`${mobileBuilderTab === "summary" ? "flex" : "hidden"} mt-4 justify-end xl:flex`}>
           <div className="w-full max-w-md border border-zinc-300 bg-white text-sm">
+            <div className="flex min-w-0 items-center justify-between gap-3 bg-emerald-950 px-3 py-3 text-base font-bold text-white xl:hidden">
+              <span>Final Total</span>
+              <span className="min-w-0 break-words text-right">{formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total)}</span>
+            </div>
             <p className="border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
               Existing PDF/spec routes still use the saved software snapshot. Save to Software before preview/download.
             </p>
@@ -4666,7 +5129,7 @@ export function LocalQuotationBuilder({
               <span className="font-semibold text-zinc-600">VAT {workspace.vat_percent}%</span>
               <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.vat_amount)}</span>
             </div>
-            <div className="flex justify-between bg-emerald-950 px-3 py-3 text-base font-bold text-white">
+            <div className="hidden justify-between bg-emerald-950 px-3 py-3 text-base font-bold text-white xl:flex">
               <span>Final Total</span>
               <span>{formatWorkspaceMoney(workspace.currency, workspace.totals.grand_total)}</span>
             </div>

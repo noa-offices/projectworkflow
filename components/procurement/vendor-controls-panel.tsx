@@ -230,15 +230,16 @@ export function VendorControlsPanel({
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex min-w-0 flex-col gap-4">
 
       {/* Step Progress Tracker — driven by milestone dropdown */}
       <div>
         <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
           Procurement Progress
         </p>
-        <div className="flex items-center gap-0">
-          {VENDOR_STEPS.map((step, index) => {
+        <div className="overflow-x-auto pb-1 xl:overflow-visible xl:pb-0">
+          <div className="flex min-w-[680px] items-center gap-0 xl:min-w-0">
+            {VENDOR_STEPS.map((step, index) => {
             const isCompleted = index < activeStep;
             const isActive = index === activeStep;
             const isLast = index === VENDOR_STEPS.length - 1;
@@ -266,7 +267,8 @@ export function VendorControlsPanel({
                 )}
               </div>
             );
-          })}
+            })}
+          </div>
         </div>
       </div>
 
@@ -279,14 +281,14 @@ export function VendorControlsPanel({
           value={selectedMilestoneValue}
           onChange={(e) => setSelectedMilestoneValue(e.target.value)}
           disabled={isApplying}
-          className="h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10"
+          className="h-10 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10 xl:h-8"
         >
           <option value="" disabled>Select milestone...</option>
           {MILESTONE_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </select>
-        <div className="mt-2 flex gap-2">
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
           <input
             type="text"
             value={milestoneNote}
@@ -294,13 +296,13 @@ export function VendorControlsPanel({
             onKeyDown={(e) => { if (e.key === "Enter") handleApply(); }}
             placeholder="Optional note..."
             disabled={isApplying}
-            className="h-8 flex-1 rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-800 outline-none transition placeholder:text-zinc-400 focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10"
+            className="h-10 min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-800 outline-none transition placeholder:text-zinc-400 focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10 xl:h-8"
           />
           <button
             type="button"
             onClick={handleApply}
             disabled={!selectedMilestoneValue || isApplying}
-            className="h-8 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+            className="h-10 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300 xl:h-8"
           >
             {isApplying ? "Applying…" : "Apply"}
           </button>
@@ -316,7 +318,7 @@ export function VendorControlsPanel({
 
       {/* ETD / ETA Date Inputs */}
       <div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="block">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">ETD</span>
@@ -324,7 +326,7 @@ export function VendorControlsPanel({
                 type="date"
                 value={etd}
                 onChange={(e) => setEtd(e.target.value)}
-                className="mt-1 h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10"
+                className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10 xl:h-8"
               />
             </label>
             <p className="mt-0.5 text-[10px] text-zinc-400">Est. Departure</p>
@@ -336,7 +338,7 @@ export function VendorControlsPanel({
                 type="date"
                 value={eta}
                 onChange={(e) => setEta(e.target.value)}
-                className="mt-1 h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10"
+                className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10 xl:h-8"
               />
             </label>
             <p className="mt-0.5 text-[10px] text-zinc-400">Est. Arrival</p>
@@ -347,7 +349,7 @@ export function VendorControlsPanel({
             type="button"
             disabled={isSavingProgress}
             onClick={handleSaveDates}
-            className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-800 hover:text-emerald-900 disabled:opacity-50"
+            className="h-10 rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-800 hover:text-emerald-900 disabled:opacity-50 xl:h-auto"
           >
             {isSavingProgress ? "Saving…" : "Save dates"}
           </button>
@@ -380,10 +382,12 @@ export function VendorControlsPanel({
             return (
               <div
                 key={slot.key}
-                className="flex items-start gap-2 rounded-md border border-zinc-100 bg-zinc-50 px-2.5 py-1.5 transition hover:border-zinc-200 hover:bg-white"
+                className="flex min-w-0 items-start gap-2 rounded-md border border-zinc-100 bg-zinc-50 px-2.5 py-1.5 transition hover:border-zinc-200 hover:bg-white"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium text-zinc-700">{slot.label}</p>
+                  <p className="text-xs font-medium text-zinc-700">
+                    {slot.label} <span className="text-[10px] font-normal text-zinc-400">({slotFiles.length} files)</span>
+                  </p>
                   {slotFiles.length === 0 ? (
                     <p className="text-[10px] text-zinc-300">No files</p>
                   ) : (
@@ -427,7 +431,7 @@ export function VendorControlsPanel({
                   type="button"
                   disabled={isStoragePending}
                   onClick={() => inputRefs.current[slot.key]?.click()}
-                  className="mt-0.5 shrink-0 rounded border border-zinc-200 bg-white px-2 py-1 text-[10px] font-semibold text-zinc-600 transition hover:border-emerald-800 hover:text-emerald-900 disabled:opacity-50"
+                  className="mt-0.5 min-h-10 shrink-0 rounded border border-zinc-200 bg-white px-2 py-1 text-[10px] font-semibold text-zinc-600 transition hover:border-emerald-800 hover:text-emerald-900 disabled:opacity-50 xl:min-h-0"
                 >
                   {isStoragePending ? "…" : "Upload"}
                 </button>

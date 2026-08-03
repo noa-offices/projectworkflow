@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { createContext, useContext, useRef, useState, type ReactNode } from "react";
 import type React from "react";
 import {
   FileText,
@@ -34,6 +34,20 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   "sticky-note": StickyNote,
   "folder-open": FolderOpen,
 };
+
+const ProjectDocumentDirectoryContext = createContext<{
+  expandedKey: string | null;
+  setExpandedKey: (key: string | null) => void;
+} | null>(null);
+
+export function ProjectDocumentsDirectory({ children }: { children: ReactNode }) {
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  return (
+    <ProjectDocumentDirectoryContext.Provider value={{ expandedKey, setExpandedKey }}>
+      {children}
+    </ProjectDocumentDirectoryContext.Provider>
+  );
+}
 
 type AttachedFile = {
   id: string;
@@ -76,6 +90,7 @@ export function DocumentRow({
 }: DocumentRowProps) {
   const Icon = ICON_MAP[iconKey] ?? FileText;
   const inputRef = useRef<HTMLInputElement>(null);
+  const directory = useContext(ProjectDocumentDirectoryContext);
 
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>(() =>
     (initialDoc ?? []).map((doc) => ({
@@ -85,8 +100,18 @@ export function DocumentRow({
       publicUrl: doc.public_url,
     })),
   );
+  const [mobileExpanded, setMobileExpanded] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const expanded = directory ? directory.expandedKey === label : mobileExpanded;
+
+  function toggleExpanded() {
+    if (directory) {
+      directory.setExpandedKey(expanded ? null : label);
+      return;
+    }
+    setMobileExpanded((current) => !current);
+  }
 
   function showError(msg: string) {
     setErrorMsg(msg);
@@ -161,7 +186,27 @@ export function DocumentRow({
   }
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-3 transition hover:shadow-sm">
+    <div className="min-w-0">
+      <button
+        type="button"
+        onClick={toggleExpanded}
+        aria-expanded={expanded}
+        className="flex min-h-14 w-full min-w-0 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-left"
+      >
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-zinc-100 bg-zinc-50">
+          <Icon className="h-4 w-4 text-zinc-400" aria-hidden="true" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-xs font-semibold text-zinc-800" title={label}>{label}</span>
+          <span className="mt-0.5 flex min-w-0 items-center gap-2 text-[10px] text-zinc-500">
+            <span>{attachedFiles.length + (vendorDocs?.length ?? 0)} files</span>
+            {procurementLinked ? <span className="truncate font-semibold text-violet-700">Procurement linked</span> : null}
+          </span>
+        </span>
+        <span aria-hidden="true" className="shrink-0 text-base text-zinc-400">&gt;</span>
+      </button>
+
+      <div className={`${expanded ? "mt-2 block" : "hidden"} rounded-lg border border-zinc-200 bg-white p-3 transition hover:shadow-sm`}>
 
       {/* Top row: icon + label + add button */}
       <div className="flex items-start justify-between gap-2">
@@ -247,9 +292,7 @@ export function DocumentRow({
             </div>
           ))}
         </div>
-      ) : (
-        <p className="mt-2 text-[10px] text-zinc-300">No files yet</p>
-      )}
+      ) : null}
 
       {/* Error */}
       {errorMsg ? (
@@ -264,6 +307,7 @@ export function DocumentRow({
         onChange={handleFileChange}
         aria-label={`Upload file for ${label}`}
       />
+      </div>
     </div>
   );
 }

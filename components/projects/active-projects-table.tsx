@@ -37,6 +37,7 @@ export function ActiveProjectsTable({
   const [query, setQuery] = useState("");
   const [selectedClientName, setSelectedClientName] = useState("");
   const [selectedYear, setSelectedYear] = useState("");
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
   const clientNames = useMemo(
     () =>
@@ -66,6 +67,7 @@ export function ActiveProjectsTable({
       }),
     [projectFiles, query, selectedClientName, selectedYear],
   );
+  const activeFilterCount = Number(Boolean(selectedClientName)) + Number(Boolean(selectedYear));
 
   function resetFilters() {
     setQuery("");
@@ -75,7 +77,61 @@ export function ActiveProjectsTable({
 
   return (
     <>
-      <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm xl:hidden">
+        <label className="block">
+          <span className="text-xs font-semibold uppercase text-zinc-500">Search</span>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search project file no, client, reference..."
+            className="mt-1 h-10 w-full min-w-0 rounded-md border border-zinc-200 px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+          />
+        </label>
+        <div className="mt-3 flex min-w-0 items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => setMobileFiltersOpen((current) => !current)}
+            aria-expanded={mobileFiltersOpen}
+            className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700"
+          >
+            Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}
+          </button>
+          <p className="shrink-0 text-xs font-semibold text-zinc-500">
+            {filtered.length} {filtered.length === 1 ? "project file" : "project files"}
+          </p>
+        </div>
+        {mobileFiltersOpen ? (
+          <div className="mt-3 grid min-w-0 gap-3 border-t border-zinc-100 pt-3">
+            <label className="block min-w-0">
+              <span className="text-xs font-semibold uppercase text-zinc-500">Client</span>
+              <select
+                value={selectedClientName}
+                onChange={(e) => setSelectedClientName(e.target.value)}
+                className="mt-1 h-10 w-full min-w-0 rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+              >
+                <option value="">All clients</option>
+                {clientNames.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </label>
+            <label className="block min-w-0">
+              <span className="text-xs font-semibold uppercase text-zinc-500">Year</span>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(e.target.value)}
+                className="mt-1 h-10 w-full min-w-0 rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
+              >
+                <option value="">All years</option>
+                {years.map((year) => <option key={year} value={year}>{year}</option>)}
+              </select>
+            </label>
+            <button type="button" onClick={resetFilters} className="h-10 w-full rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-600">
+              Reset filters
+            </button>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="hidden rounded-lg border border-zinc-200 bg-white p-5 shadow-sm xl:block">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.4fr_1fr_1fr_auto]">
           <label className="block">
             <span className="text-xs font-semibold uppercase text-zinc-500">Search</span>
@@ -128,7 +184,31 @@ export function ActiveProjectsTable({
         </div>
       </section>
 
-      <section className="mt-6 rounded-lg border border-zinc-200 bg-white shadow-sm">
+      <section className="mt-4 min-w-0 overflow-visible rounded-lg border border-zinc-200 bg-white shadow-sm xl:hidden">
+        {filtered.length === 0 ? (
+          <p className="px-4 py-6 text-center text-sm text-zinc-500">
+            {query.trim() || activeFilterCount ? "No project files match the current filters." : "No active project files found."}
+          </p>
+        ) : (
+          filtered.map((order) => (
+            <Link
+              key={order.orderNo}
+              href={`/projects/orders/${encodeURIComponent(order.orderNo)}`}
+              className="grid min-h-16 min-w-0 grid-cols-[104px_minmax(0,1fr)_16px] items-center gap-2 border-b border-zinc-100 px-3 py-2 transition last:border-0 hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-700"
+              aria-label={`Open project file ${order.orderNo}`}
+            >
+              <span className="truncate text-xs font-bold text-zinc-950" title={order.orderNo}>{order.orderNo}</span>
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium text-zinc-800" title={order.resolvedClientName}>{order.resolvedClientName}</span>
+                <span className="mt-0.5 block truncate text-xs text-zinc-500" title={order.reference || "No reference"}>{order.reference || "No reference"}</span>
+              </span>
+              <span aria-hidden="true" className="text-lg text-zinc-400">&gt;</span>
+            </Link>
+          ))
+        )}
+      </section>
+
+      <section className="mt-6 hidden rounded-lg border border-zinc-200 bg-white shadow-sm xl:block">
         <div className="flex items-center justify-between px-5 py-4">
           <h2 className="text-lg font-semibold text-zinc-950">Active Project Files</h2>
           <p className="text-xs font-semibold uppercase text-zinc-500">

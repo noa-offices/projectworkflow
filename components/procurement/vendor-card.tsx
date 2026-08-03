@@ -84,7 +84,7 @@ export function VendorCard({
     <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
 
       {/* ── Header ─────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 px-5 py-4">
+      <div className="flex flex-col items-stretch justify-between gap-3 border-b border-zinc-100 px-3 py-3 xl:flex-row xl:flex-wrap xl:items-center xl:px-5 xl:py-4">
 
         {/* Avatar + name + badges */}
         <div className="flex min-w-0 items-center gap-3">
@@ -103,8 +103,8 @@ export function VendorCard({
         </div>
 
         {/* Total value pill + action buttons + toggle */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-900">
+        <div className="grid min-w-0 grid-cols-2 items-center gap-2 xl:flex xl:flex-wrap">
+          <span className="col-span-2 inline-flex min-w-0 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-900 xl:col-span-1">
             {formattedTotal}
           </span>
 
@@ -112,20 +112,20 @@ export function VendorCard({
             <>
               <Link
                 href={`/quotations/${quotationId}/procurement-rfq`}
-                className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-800 hover:text-emerald-900"
+                className="inline-flex h-10 min-w-0 items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-800 hover:text-emerald-900 xl:h-8 xl:px-3"
               >
                 RFQ →
               </Link>
               <Link
                 href={`/quotations/${quotationId}/delivery-note`}
-                className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-emerald-800 hover:text-emerald-900"
+                className="inline-flex h-10 min-w-0 items-center justify-center rounded-md border border-zinc-200 px-2 text-xs font-semibold text-zinc-700 transition hover:border-emerald-800 hover:text-emerald-900 xl:h-8 xl:px-3"
               >
                 Delivery Note →
               </Link>
               {poNumber ? (
                 <Link
                   href={`/quotations/${quotationId}/purchase-order`}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-900 transition hover:bg-emerald-100"
+                  className="inline-flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2 text-xs font-semibold text-emerald-900 transition hover:bg-emerald-100 xl:h-8 xl:rounded-full xl:px-3"
                 >
                   📄 {poNumber}
                 </Link>
@@ -134,7 +134,7 @@ export function VendorCard({
                   type="button"
                   disabled={isGenerating}
                   onClick={handleGeneratePo}
-                  className="inline-flex h-8 items-center rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                  className="inline-flex h-10 min-w-0 items-center justify-center rounded-md bg-emerald-900 px-2 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300 xl:h-8 xl:px-3"
                 >
                   {isGenerating ? "Generating…" : "Generate PO →"}
                 </button>
@@ -145,7 +145,7 @@ export function VendorCard({
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+            className="col-span-2 inline-flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 xl:col-span-1 xl:h-8"
           >
             {expanded ? (
               <>Hide Items <ChevronUp className="h-3.5 w-3.5" /></>
@@ -169,8 +169,21 @@ export function VendorCard({
         <div className="grid xl:grid-cols-[1fr_280px]">
 
           {/* Table — left col on xl, full-width on mobile */}
-          <div className="overflow-x-auto xl:border-r xl:border-zinc-100">
-            <table className="w-full text-sm">
+          <div className="min-w-0 xl:border-r xl:border-zinc-100">
+            <div className="min-w-0 xl:hidden">
+              {items.map((row, index) => (
+                <div key={row.id} className="grid min-h-14 min-w-0 grid-cols-[28px_minmax(0,1fr)_auto] gap-2 border-b border-zinc-100 px-3 py-2 last:border-0">
+                  <span className="pt-0.5 text-xs font-semibold text-zinc-400">{String(index + 1).padStart(2, "0")}</span>
+                  <span className="min-w-0">
+                    <span className="line-clamp-2 block text-sm font-medium text-zinc-800">{row.item_name_snapshot ?? row.brand_name_snapshot ?? "Item"}</span>
+                    <span className="mt-0.5 block truncate text-xs text-zinc-500" title={row.item_code_snapshot ?? undefined}>{row.item_code_snapshot ?? "No code"}</span>
+                  </span>
+                  <span className="whitespace-nowrap text-right text-xs font-semibold text-zinc-700">Qty {row.qty}</span>
+                </div>
+              ))}
+            </div>
+            <div className="hidden overflow-x-auto xl:block">
+              <table className="w-full text-sm">
               <thead className="sticky top-0 bg-zinc-50 text-xs font-semibold uppercase tracking-wide text-zinc-500">
                 <tr>
                   <th className="px-4 py-2 text-left">#</th>
@@ -214,11 +227,12 @@ export function VendorCard({
                   </td>
                 </tr>
               </tfoot>
-            </table>
+              </table>
+            </div>
           </div>
 
           {/* Controls — right col on xl, stacked below table on mobile */}
-          <div className="border-t border-zinc-100 p-4 xl:border-t-0">
+          <div className="border-t border-zinc-100 p-3 xl:border-t-0 xl:p-4">
             <VendorControlsPanel
               vendorKey={vendorKey}
               orderNo={orderNo}
@@ -234,7 +248,7 @@ export function VendorCard({
         </div>
       ) : (
         /* COLLAPSED: controls in compact full-width strip — no grid, no ghost columns */
-        <div className="px-4 py-4">
+        <div className="px-3 py-3 xl:px-4 xl:py-4">
           <VendorControlsPanel
               vendorKey={vendorKey}
               orderNo={orderNo}

@@ -13,43 +13,64 @@ export function MobileBuilderHeader({
 }) {
   const [isExpanded, setIsExpanded] = useState(true);
 
-  if (!isExpanded) {
-    return (
-      <div className="flex min-w-0 items-center justify-between gap-3 px-3 py-2.5 xl:hidden">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-zinc-950">{quotationNo}</p>
-          <p className="truncate text-xs font-semibold text-emerald-950">{finalTotal}</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setIsExpanded(true)}
-          aria-controls="mobile-builder-expanded-controls"
-          aria-expanded={false}
-          className="flex h-10 shrink-0 items-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700"
-        >
-          Show controls ▼
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div className="xl:hidden">
-      <div id="mobile-builder-expanded-controls">{children}</div>
-      <div className="grid gap-2 px-3 pb-2.5">
-        <div className="min-w-0 border border-emerald-900 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-950">
-          <span className="mr-1">Final Total:</span>
-          <span className="break-words">{finalTotal}</span>
+      {!isExpanded ? (
+        <div className="flex min-w-0 items-center justify-between gap-3 px-3 py-2.5 xl:hidden">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-zinc-950">{quotationNo}</p>
+            <p className="truncate text-xs font-semibold text-emerald-950">{finalTotal}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsExpanded(true)}
+            aria-controls="mobile-builder-expanded-controls"
+            aria-expanded={false}
+            className="flex h-10 shrink-0 items-center gap-1.5 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700"
+          >
+            Show controls
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 20 20"
+              className="h-3.5 w-3.5 fill-none stroke-current"
+              strokeWidth="2"
+            >
+              <path d="m5 7.5 5 5 5-5" />
+            </svg>
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => setIsExpanded(false)}
-          aria-controls="mobile-builder-expanded-controls"
-          aria-expanded
-          className="flex h-10 w-full items-center justify-center border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700"
-        >
-          Hide controls ▲
-        </button>
+      ) : null}
+      <div
+        id="mobile-builder-expanded-controls"
+        aria-hidden={!isExpanded}
+        className={isExpanded ? undefined : "hidden"}
+      >
+        <div className="flex justify-end px-3 pt-2.5">
+          <button
+            type="button"
+            onClick={() => setIsExpanded(false)}
+            aria-controls="mobile-builder-expanded-controls"
+            aria-expanded
+            className="flex h-10 items-center gap-1.5 border border-zinc-300 bg-white px-3 text-xs font-semibold text-zinc-700"
+          >
+            Hide controls
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 20 20"
+              className="h-3.5 w-3.5 fill-none stroke-current"
+              strokeWidth="2"
+            >
+              <path d="m5 12.5 5-5 5 5" />
+            </svg>
+          </button>
+        </div>
+        {children}
+        <div className="px-3 pb-2.5">
+          <div className="min-w-0 border border-emerald-900 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-950">
+            <span className="mr-1">Final Total:</span>
+            <span className="break-words">{finalTotal}</span>
+          </div>
+        </div>
       </div>
     </div>
   );
