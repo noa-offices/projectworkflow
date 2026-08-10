@@ -52,7 +52,6 @@ function textValue(formData: FormData, name: string) {
   const value = formData.get(name);
   return typeof value === "string" ? value.trim() : "";
 }
-
 function optionalTextValue(formData: FormData, name: string) {
   const value = textValue(formData, name);
   return value || null;
@@ -74,31 +73,6 @@ function getAdminClient() {
   const result = createAdminClient();
   if (!result.client) throw new Error(result.error ?? "Admin client unavailable");
   return result.client;
-}
-
-function buildVacationEntry(formData: FormData): VacationEntry | null {
-  const startDate = textValue(formData, "start_date");
-  const endDate = textValue(formData, "end_date");
-  if (!startDate || !endDate) return null;
-
-  return {
-    id: crypto.randomUUID(),
-    start_date: startDate,
-    end_date: endDate,
-    note: optionalTextValue(formData, "note") ?? undefined,
-  };
-}
-
-function vacationEntryEdits(formData: FormData): Omit<VacationEntry, "id"> | null {
-  const startDate = textValue(formData, "start_date");
-  const endDate = textValue(formData, "end_date");
-  if (!startDate || !endDate) return null;
-
-  return {
-    start_date: startDate,
-    end_date: endDate,
-    note: optionalTextValue(formData, "note") ?? undefined,
-  };
 }
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
@@ -164,7 +138,6 @@ export async function upsertWorkerHrDetails(workerId: string, formData: FormData
   const payload = {
     date_of_joining: optionalTextValue(formData, "date_of_joining"),
     annual_leave_days: intValue(formData, "annual_leave_days", 30),
-    leave_taken_this_year: intValue(formData, "leave_taken_this_year", 0),
     emirates_id_expiry: optionalTextValue(formData, "emirates_id_expiry"),
     passport_expiry: optionalTextValue(formData, "passport_expiry"),
     emergency_contact_name: optionalTextValue(formData, "emergency_contact_name"),
@@ -195,296 +168,6 @@ export async function upsertWorkerHrDetails(workerId: string, formData: FormData
   redirectToHr("Worker HR details saved.");
 }
 
-export async function addStaffVacationEntry(profileId: string, formData: FormData) {
-  const { user } = await requireSettingsManager();
-  const adminClient = getAdminClient();
-
-  const entry = buildVacationEntry(formData);
-  if (!entry) {
-    redirectToHr("Start and end dates are required.", "error");
-  }
-
-  const { data: existing, error: readError } = await adminClient
-    .from("profiles_hr")
-    .select("vacation_dates")
-    .eq("profile_id", profileId)
-    .maybeSingle<{ vacation_dates: VacationEntry[] | null }>();
-
-  if (readError) {
-    logServerActionError("STAFF VACATION READ ERROR", readError, {
-      action: "addStaffVacationEntry",
-      recordId: profileId,
-      table: "profiles_hr",
-    });
-    redirectToHr(formatSafeActionError("Vacation entry could not be saved", readError), "error");
-  }
-
-  const vacationDates = [...(existing?.vacation_dates ?? []), entry];
-
-  const { error } = await adminClient
-    .from("profiles_hr")
-    .upsert(
-      {
-        profile_id: profileId,
-        vacation_dates: vacationDates,
-        updated_by: user.id,
-        updated_at: new Date().toISOString(),
-      } as never,
-      { onConflict: "profile_id" },
-    );
-
-  if (error) {
-    logServerActionError("STAFF VACATION ADD ERROR", error, {
-      action: "addStaffVacationEntry",
-      recordId: profileId,
-      table: "profiles_hr",
-    });
-    redirectToHr(formatSafeActionError("Vacation entry could not be saved", error), "error");
-  }
-
-  revalidatePath("/hr");
-  redirectToHr("Vacation entry added.");
-}
-
-export async function removeStaffVacationEntry(profileId: string, entryId: string, _formData: FormData) {
-  const { user } = await requireSettingsManager();
-  const adminClient = getAdminClient();
-
-  const { data: existing, error: readError } = await adminClient
-    .from("profiles_hr")
-    .select("vacation_dates")
-    .eq("profile_id", profileId)
-    .maybeSingle<{ vacation_dates: VacationEntry[] | null }>();
-
-  if (readError) {
-    logServerActionError("STAFF VACATION READ ERROR", readError, {
-      action: "removeStaffVacationEntry",
-      recordId: profileId,
-      table: "profiles_hr",
-    });
-    redirectToHr(formatSafeActionError("Vacation entry could not be removed", readError), "error");
-  }
-
-  const vacationDates = (existing?.vacation_dates ?? []).filter((entry) => entry.id !== entryId);
-
-  const { error } = await adminClient
-    .from("profiles_hr")
-    .update({
-      vacation_dates: vacationDates,
-      updated_by: user.id,
-      updated_at: new Date().toISOString(),
-    } as never)
-    .eq("profile_id", profileId);
-
-  if (error) {
-    logServerActionError("STAFF VACATION REMOVE ERROR", error, {
-      action: "removeStaffVacationEntry",
-      recordId: profileId,
-      table: "profiles_hr",
-    });
-    redirectToHr(formatSafeActionError("Vacation entry could not be removed", error), "error");
-  }
-
-  revalidatePath("/hr");
-  redirectToHr("Vacation entry removed.");
-}
-
-export async function editStaffVacationEntry(profileId: string, entryId: string, formData: FormData) {
-  const { user } = await requireSettingsManager();
-  const adminClient = getAdminClient();
-
-  const edits = vacationEntryEdits(formData);
-  if (!edits) {
-    redirectToHr("Start and end dates are required.", "error");
-  }
-
-  const { data: existing, error: readError } = await adminClient
-    .from("profiles_hr")
-    .select("vacation_dates")
-    .eq("profile_id", profileId)
-    .maybeSingle<{ vacation_dates: VacationEntry[] | null }>();
-
-  if (readError) {
-    logServerActionError("STAFF VACATION READ ERROR", readError, {
-      action: "editStaffVacationEntry",
-      recordId: profileId,
-      table: "profiles_hr",
-    });
-    redirectToHr(formatSafeActionError("Vacation entry could not be updated", readError), "error");
-  }
-
-  const vacationDates = (existing?.vacation_dates ?? []).map((entry) =>
-    entry.id === entryId ? { ...entry, ...edits } : entry,
-  );
-
-  const { error } = await adminClient
-    .from("profiles_hr")
-    .update({
-      vacation_dates: vacationDates,
-      updated_by: user.id,
-      updated_at: new Date().toISOString(),
-    } as never)
-    .eq("profile_id", profileId);
-
-  if (error) {
-    logServerActionError("STAFF VACATION EDIT ERROR", error, {
-      action: "editStaffVacationEntry",
-      recordId: profileId,
-      table: "profiles_hr",
-    });
-    redirectToHr(formatSafeActionError("Vacation entry could not be updated", error), "error");
-  }
-
-  revalidatePath("/hr");
-  redirectToHr("Vacation entry updated.");
-}
-
-export async function addWorkerVacationEntry(workerId: string, formData: FormData) {
-  const { user } = await requireSettingsManager();
-  const adminClient = getAdminClient();
-
-  const entry = buildVacationEntry(formData);
-  if (!entry) {
-    redirectToHr("Start and end dates are required.", "error");
-  }
-
-  const { data: existing, error: readError } = await adminClient
-    .from("workers")
-    .select("vacation_dates")
-    .eq("id", workerId)
-    .maybeSingle<{ vacation_dates: VacationEntry[] | null }>();
-
-  if (readError) {
-    logServerActionError("WORKER VACATION READ ERROR", readError, {
-      action: "addWorkerVacationEntry",
-      recordId: workerId,
-      table: "workers",
-    });
-    redirectToHr(formatSafeActionError("Vacation entry could not be saved", readError), "error");
-  }
-
-  const vacationDates = [...(existing?.vacation_dates ?? []), entry];
-
-  const { error } = await adminClient
-    .from("workers")
-    .update({
-      vacation_dates: vacationDates,
-      updated_by: user.id,
-    } as never)
-    .eq("id", workerId);
-
-  if (error) {
-    logServerActionError("WORKER VACATION ADD ERROR", error, {
-      action: "addWorkerVacationEntry",
-      recordId: workerId,
-      table: "workers",
-    });
-    redirectToHr(formatSafeActionError("Vacation entry could not be saved", error), "error");
-  }
-
-  revalidatePath("/hr");
-  redirectToHr("Vacation entry added.");
-}
-
-export async function removeWorkerVacationEntry(workerId: string, entryId: string, _formData: FormData) {
-  const { user } = await requireSettingsManager();
-  const adminClient = getAdminClient();
-
-  const { data: existing, error: readError } = await adminClient
-    .from("workers")
-    .select("vacation_dates")
-    .eq("id", workerId)
-    .maybeSingle<{ vacation_dates: VacationEntry[] | null }>();
-
-  if (readError) {
-    logServerActionError("WORKER VACATION READ ERROR", readError, {
-      action: "removeWorkerVacationEntry",
-      recordId: workerId,
-      table: "workers",
-    });
-    redirectToHr(formatSafeActionError("Vacation entry could not be removed", readError), "error");
-  }
-
-  const vacationDates = (existing?.vacation_dates ?? []).filter((entry) => entry.id !== entryId);
-
-  const { error } = await adminClient
-    .from("workers")
-    .update({
-      vacation_dates: vacationDates,
-      updated_by: user.id,
-    } as never)
-    .eq("id", workerId);
-
-  if (error) {
-    logServerActionError("WORKER VACATION REMOVE ERROR", error, {
-      action: "removeWorkerVacationEntry",
-      recordId: workerId,
-      table: "workers",
-    });
-    redirectToHr(formatSafeActionError("Vacation entry could not be removed", error), "error");
-  }
-
-  revalidatePath("/hr");
-  redirectToHr("Vacation entry removed.");
-}
-
-export async function editWorkerVacationEntry(workerId: string, entryId: string, formData: FormData) {
-  const { user } = await requireSettingsManager();
-  const adminClient = getAdminClient();
-
-  const edits = vacationEntryEdits(formData);
-  if (!edits) {
-    redirectToHr("Start and end dates are required.", "error");
-  }
-
-  const { data: existing, error: readError } = await adminClient
-    .from("workers")
-    .select("vacation_dates")
-    .eq("id", workerId)
-    .maybeSingle<{ vacation_dates: VacationEntry[] | null }>();
-
-  if (readError) {
-    logServerActionError("WORKER VACATION READ ERROR", readError, {
-      action: "editWorkerVacationEntry",
-      recordId: workerId,
-      table: "workers",
-    });
-    redirectToHr(formatSafeActionError("Vacation entry could not be updated", readError), "error");
-  }
-
-  const vacationDates = (existing?.vacation_dates ?? []).map((entry) =>
-    entry.id === entryId ? { ...entry, ...edits } : entry,
-  );
-
-  const { error } = await adminClient
-    .from("workers")
-    .update({
-      vacation_dates: vacationDates,
-      updated_by: user.id,
-    } as never)
-    .eq("id", workerId);
-
-  if (error) {
-    logServerActionError("WORKER VACATION EDIT ERROR", error, {
-      action: "editWorkerVacationEntry",
-      recordId: workerId,
-      table: "workers",
-    });
-    redirectToHr(formatSafeActionError("Vacation entry could not be updated", error), "error");
-  }
-
-  revalidatePath("/hr");
-  redirectToHr("Vacation entry updated.");
-}
-
-async function requireSystemOwnerForLeave() {
-  const authenticated = await requireSettingsManager();
-  if (authenticated.profile?.role !== "system_owner") {
-    redirectToHr("Only an active System Owner may manage vacation approvals.", "error");
-  }
-  return authenticated;
-}
-
 function revalidateLeaveWorkflow() {
   revalidatePath("/hr");
   revalidatePath("/settings/profile");
@@ -494,7 +177,7 @@ function revalidateLeaveWorkflow() {
 
 export async function approveLeaveRequest(requestId: string, _formData: FormData) {
   void _formData;
-  await requireSystemOwnerForLeave();
+  await requireSettingsManager();
   const supabase = await createClient();
   const { error } = await supabase.rpc("approve_leave_request", { p_request_id: requestId });
   if (error) {
@@ -506,7 +189,7 @@ export async function approveLeaveRequest(requestId: string, _formData: FormData
 }
 
 export async function rejectLeaveRequest(requestId: string, formData: FormData) {
-  await requireSystemOwnerForLeave();
+  await requireSettingsManager();
   const supabase = await createClient();
   const { error } = await supabase.rpc("reject_leave_request", {
     p_request_id: requestId,
@@ -521,7 +204,7 @@ export async function rejectLeaveRequest(requestId: string, formData: FormData) 
 }
 
 export async function returnLeaveRequest(requestId: string, formData: FormData) {
-  await requireSystemOwnerForLeave();
+  await requireSettingsManager();
   const supabase = await createClient();
   const { error } = await supabase.rpc("return_leave_request", {
     p_request_id: requestId,
@@ -536,7 +219,7 @@ export async function returnLeaveRequest(requestId: string, formData: FormData) 
 }
 
 export async function cancelApprovedLeaveRequest(requestId: string, formData: FormData) {
-  await requireSystemOwnerForLeave();
+  await requireSettingsManager();
   const supabase = await createClient();
   const { error } = await supabase.rpc("cancel_approved_leave_request", {
     p_request_id: requestId,
@@ -547,5 +230,96 @@ export async function cancelApprovedLeaveRequest(requestId: string, formData: Fo
     redirectToHr(formatSafeActionError("Approved vacation could not be cancelled", error), "error");
   }
   revalidateLeaveWorkflow();
-  redirectToHr("Approved vacation cancelled and balance restored.");
+  redirectToHr("Approved vacation cancelled.");
+}
+
+export async function createWorkerLeave(workerId: string, formData: FormData) {
+  await requireSettingsManager();
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("create_worker_leave", {
+    p_worker_id: workerId,
+    p_leave_type: textValue(formData, "leave_type") || "annual_leave",
+    p_start_date: textValue(formData, "start_date"),
+    p_end_date: textValue(formData, "end_date"),
+    p_duration_type: textValue(formData, "duration_type") || "full_day",
+    p_reason: optionalTextValue(formData, "reason"),
+    p_administrative_note: optionalTextValue(formData, "administrative_note"),
+  });
+  if (error) {
+    logServerActionError("WORKER LEAVE CREATE ERROR", error, { workerId });
+    redirectToHr(formatSafeActionError("Worker vacation could not be created", error), "error");
+  }
+  revalidateLeaveWorkflow();
+  redirectToHr("Worker vacation created.");
+}
+
+export async function editManagedLeaveRequest(requestId: string, formData: FormData) {
+  await requireSettingsManager();
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("edit_managed_leave_request", {
+    p_request_id: requestId,
+    p_start_date: textValue(formData, "start_date"),
+    p_end_date: textValue(formData, "end_date"),
+    p_duration_type: textValue(formData, "duration_type") || "full_day",
+    p_reason: textValue(formData, "reason"),
+    p_administrative_note: optionalTextValue(formData, "administrative_note"),
+  });
+  if (error) {
+    logServerActionError("LEAVE ADMIN EDIT ERROR", error, { requestId });
+    redirectToHr(formatSafeActionError("Vacation dates could not be updated", error), "error");
+  }
+  revalidateLeaveWorkflow();
+  redirectToHr("Vacation dates updated.");
+}
+
+export async function recordLeaveEarlyReturn(requestId: string, formData: FormData) {
+  await requireSettingsManager();
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("record_leave_early_return", {
+    p_request_id: requestId,
+    p_actual_end_date: textValue(formData, "actual_end_date"),
+    p_return_to_work_date: textValue(formData, "return_to_work_date"),
+    p_reason: textValue(formData, "reason"),
+  });
+  if (error) {
+    logServerActionError("LEAVE EARLY RETURN ERROR", error, { requestId });
+    redirectToHr(formatSafeActionError("Early return could not be recorded", error), "error");
+  }
+  revalidateLeaveWorkflow();
+  redirectToHr("Early return recorded.");
+}
+
+export async function cancelActiveLeave(requestId: string, formData: FormData) {
+  await requireSettingsManager();
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("cancel_active_leave_request", {
+    p_request_id: requestId,
+    p_actual_end_date: textValue(formData, "actual_end_date"),
+    p_return_to_work_date: textValue(formData, "return_to_work_date"),
+    p_reason: textValue(formData, "reason"),
+  });
+  if (error) {
+    logServerActionError("ACTIVE LEAVE CANCEL ERROR", error, { requestId });
+    redirectToHr(formatSafeActionError("Active vacation could not be cancelled", error), "error");
+  }
+  revalidateLeaveWorkflow();
+  redirectToHr("Active vacation cancelled with actual dates recorded.");
+}
+
+export async function correctLeaveActualDates(requestId: string, formData: FormData) {
+  await requireSettingsManager();
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("correct_leave_actual_dates", {
+    p_request_id: requestId,
+    p_actual_start_date: textValue(formData, "actual_start_date"),
+    p_actual_end_date: textValue(formData, "actual_end_date"),
+    p_return_to_work_date: optionalTextValue(formData, "return_to_work_date"),
+    p_reason: textValue(formData, "reason"),
+  });
+  if (error) {
+    logServerActionError("LEAVE ACTUAL DATE CORRECTION ERROR", error, { requestId });
+    redirectToHr(formatSafeActionError("Actual vacation dates could not be corrected", error), "error");
+  }
+  revalidateLeaveWorkflow();
+  redirectToHr("Actual vacation dates corrected.");
 }

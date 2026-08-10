@@ -8,14 +8,25 @@ import {
 } from "@/components/settings/leave-requests-admin-table";
 import { requireSettingsManager } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import type { HrRow, WorkerHrRow } from "@/app/hr/actions";
-import type { LeaveRequestRow } from "@/lib/hr/leave-requests";
+import {
+  leaveRequestDateBoundaries,
+  normalizeLeaveBalance,
+  type LeaveBalanceSummary,
+  type LeaveRequestRow,
+} from "@/lib/hr/leave-requests";
 
 export const dynamic = "force-dynamic";
 
 type HrPageProps = {
   searchParams?: Promise<{
     leaveRequest?: string;
+    leaveEmployee?: string;
+    leavePreviousPage?: string;
+    leaveShowPrevious?: string;
+    leaveStatus?: string;
+    leaveYear?: string;
     message?: string;
     messageType?: string;
   }>;
@@ -30,6 +41,11 @@ type ProfileRow = {
   account_status: string | null;
 };
 
+type LeaveBalanceRow = LeaveBalanceSummary & {
+  profile_id: string | null;
+  worker_id: string | null;
+};
+
 export default async function HrManagementPage({ searchParams }: HrPageProps) {
   const { user, profile, displayName } = await requireSettingsManager();
   const params = (await searchParams) ?? {};
@@ -41,6 +57,7 @@ export default async function HrManagementPage({ searchParams }: HrPageProps) {
     throw new Error(adminResult.error ?? "Admin client unavailable");
   }
   const adminClient = adminResult.client;
+  const supabase = await createClient();
 
   const { data: profiles, error: profilesError } = await adminClient
     .from("profiles")
@@ -80,27 +97,85 @@ export default async function HrManagementPage({ searchParams }: HrPageProps) {
     console.error("HR PAGE WORKERS DATA ERROR", workersHrError.message);
   }
 
-  const { data: leaveRequestsData, error: leaveRequestsError } = await adminClient
+  const { data: approvedLeaveRequestsData, error: leaveRequestsError } = await adminClient
     .from("leave_requests")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .returns<LeaveRequestRow[]>();
+    .select("profile_id,status,approved_vacation_entry_id,balance_deducted")
+    .eq("status", "approved");
 
   if (leaveRequestsError) {
     console.error("HR PAGE LEAVE REQUESTS ERROR", leaveRequestsError.message);
   }
 
+  const boundaries = leaveRequestDateBoundaries();
+  const recentCutoffTimestamp = `${boundaries.recentCutoff}T00:00:00.000Z`;
+  const relevantFilter = [
+    "status.in.(draft,pending_approval,returned)",
+    `and(status.eq.approved,end_date.gte.${boundaries.recentCutoff})`,
+    `and(status.in.(rejected,cancelled,returned_early),updated_at.gte.${recentCutoffTimestamp})`,
+  ].join(",");
+  const previousFilter = [
+    `and(status.eq.approved,end_date.lt.${boundaries.recentCutoff})`,
+    `and(status.in.(rejected,cancelled,returned_early),updated_at.lt.${recentCutoffTimestamp})`,
+  ].join(",");
+  const leaveStatus = params.leaveStatus && ["draft", "pending_approval", "approved", "rejected", "returned", "cancelled", "returned_early"].includes(params.leaveStatus) ? params.leaveStatus : "";
+  const leaveYear = /^\d{4}$/.test(params.leaveYear ?? "") ? params.leaveYear! : "";
+  const workerIds = (workersHrData ?? []).map((worker) => worker.id);
+  const requestedSubject = params.leaveEmployee ?? "";
+  const leaveEmployee = requestedSubject.startsWith("worker:") && workerIds.includes(requestedSubject.slice(7))
+    ? requestedSubject
+    : requestedSubject.startsWith("profile:") && profileIds.includes(requestedSubject.slice(8))
+      ? requestedSubject
+      : profileIds.includes(requestedSubject) ? `profile:${requestedSubject}` : "";
+  const leaveShowPrevious = params.leaveShowPrevious === "1" || Boolean(params.leaveRequest);
+  const leavePreviousPage = Math.max(1, Number.parseInt(params.leavePreviousPage ?? "1", 10) || 1);
+  const leavePageSize = 10;
+  let relevantLeaveQuery = adminClient.from("leave_requests").select("*").or(relevantFilter);
+  let previousLeaveCountQuery = adminClient.from("leave_requests").select("id", { count: "exact", head: true }).or(previousFilter);
+  let previousLeaveQuery = adminClient.from("leave_requests").select("*").or(previousFilter);
+  if (leaveStatus) {
+    relevantLeaveQuery = relevantLeaveQuery.eq("status", leaveStatus);
+    previousLeaveCountQuery = previousLeaveCountQuery.eq("status", leaveStatus);
+    previousLeaveQuery = previousLeaveQuery.eq("status", leaveStatus);
+  }
+  if (leaveYear) {
+    const yearStart = `${leaveYear}-01-01`;
+    const yearEnd = `${leaveYear}-12-31`;
+    relevantLeaveQuery = relevantLeaveQuery.gte("start_date", yearStart).lte("start_date", yearEnd);
+    previousLeaveCountQuery = previousLeaveCountQuery.gte("start_date", yearStart).lte("start_date", yearEnd);
+    previousLeaveQuery = previousLeaveQuery.gte("start_date", yearStart).lte("start_date", yearEnd);
+  }
+  if (leaveEmployee) {
+    const isWorker = leaveEmployee.startsWith("worker:");
+    const subjectId = leaveEmployee.slice(isWorker ? 7 : 8);
+    const subjectColumn = isWorker ? "worker_id" : "profile_id";
+    relevantLeaveQuery = relevantLeaveQuery.eq(subjectColumn, subjectId);
+    previousLeaveCountQuery = previousLeaveCountQuery.eq(subjectColumn, subjectId);
+    previousLeaveQuery = previousLeaveQuery.eq(subjectColumn, subjectId);
+  }
+  const [{ data: relevantLeaveData }, { count: previousLeaveCount }, previousLeaveResult, { data: leaveBalanceData }] = await Promise.all([
+    relevantLeaveQuery.order("created_at", { ascending: false }).returns<LeaveRequestRow[]>(),
+    previousLeaveCountQuery,
+    leaveShowPrevious
+      ? previousLeaveQuery.order("created_at", { ascending: false }).range((leavePreviousPage - 1) * leavePageSize, leavePreviousPage * leavePageSize - 1).returns<LeaveRequestRow[]>()
+      : Promise.resolve({ data: [] as LeaveRequestRow[] }),
+    supabase.rpc("list_leave_balances", { p_year: Number(boundaries.today.slice(0, 4)) }),
+  ]);
+
   const profileById = new Map(profileList.map((item) => [item.id, item]));
-  const hrByProfileId = new Map((hrData ?? []).map((item) => [item.profile_id, item]));
-  const leaveRequests: HrLeaveRequestRow[] = (leaveRequestsData ?? []).map((request) => {
-    const employee = profileById.get(request.profile_id);
-    const employeeHr = hrByProfileId.get(request.profile_id);
+  const workerById = new Map((workersHrData ?? []).map((item) => [item.id, item]));
+  const balanceRows = (leaveBalanceData ?? []) as LeaveBalanceRow[];
+  const profileBalances = Object.fromEntries(balanceRows.filter((row) => row.profile_id).map((row) => [row.profile_id!, normalizeLeaveBalance(row)]));
+  const workerBalances = Object.fromEntries(balanceRows.filter((row) => row.worker_id).map((row) => [row.worker_id!, normalizeLeaveBalance(row)]));
+  const leaveRequests: HrLeaveRequestRow[] = [...(relevantLeaveData ?? []), ...(previousLeaveResult.data ?? [])].map((request) => {
+    const employee = request.profile_id ? profileById.get(request.profile_id) : null;
+    const worker = request.worker_id ? workerById.get(request.worker_id) : null;
     return {
       ...request,
-      employee_name: employee?.full_name?.trim() || employee?.email || "Unknown employee",
-      current_balance: employeeHr
-        ? Number(employeeHr.annual_leave_days) - Number(employeeHr.leave_taken_this_year)
-        : 0,
+      employee_name: worker?.full_name || employee?.full_name?.trim() || employee?.email || "Unknown employee",
+      subject_kind: request.worker_id ? "worker" as const : "profile" as const,
+      available_to_plan: request.worker_id
+        ? workerBalances[request.worker_id]?.available_to_plan ?? 0
+        : request.profile_id ? profileBalances[request.profile_id]?.available_to_plan ?? 0 : 0,
     };
   });
 
@@ -137,17 +212,26 @@ export default async function HrManagementPage({ searchParams }: HrPageProps) {
         ) : null}
         <LeaveRequestsAdminTable
           requests={leaveRequests}
-          canApprove={profile?.role === "system_owner"}
+          canApprove={profile?.role === "system_owner" || profile?.role === "admin_manager"}
           currentProfileId={user.id}
+          employees={[
+            ...profileList.map((employee) => ({ id: `profile:${employee.id}`, name: employee.full_name?.trim() || employee.email || "Unknown employee" })),
+            ...(workersHrData ?? []).map((worker) => ({ id: `worker:${worker.id}`, name: `${worker.full_name} (Worker)` })),
+          ]}
+          filters={{ employee: leaveEmployee, showPrevious: leaveShowPrevious, status: leaveStatus, year: leaveYear }}
+          previousCount={previousLeaveCount ?? 0}
+          previousPage={leavePreviousPage}
+          previousPageSize={leavePageSize}
           selectedRequestId={params.leaveRequest}
         />
         <HrManagementTable
           profiles={profileList}
           hrData={hrData ?? []}
-          leaveRequests={leaveRequestsData ?? []}
+          leaveRequests={approvedLeaveRequestsData ?? []}
+          leaveBalances={profileBalances}
         />
         <div className="mt-8">
-          <HrWorkersTable workers={workersHrData ?? []} />
+          <HrWorkersTable workers={workersHrData ?? []} leaveBalances={workerBalances} leaveRequests={leaveRequests.filter((request) => request.worker_id)} />
         </div>
       </div>
     </ErpAppShell>

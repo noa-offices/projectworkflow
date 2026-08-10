@@ -2,16 +2,15 @@
 
 import { useDeferredValue, useMemo, useState } from "react";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
-import { VacationDatesEditor } from "@/components/settings/vacation-dates-editor";
+import { LeaveBalanceSummaryDisplay } from "@/components/settings/leave-balance-summary";
 import { VacationHistoryModal } from "@/components/settings/vacation-history-modal";
 import { AddWorkerForm } from "@/components/settings/workers-table";
 import {
-  addWorkerVacationEntry,
-  editWorkerVacationEntry,
-  removeWorkerVacationEntry,
+  createWorkerLeave,
   upsertWorkerHrDetails,
   type WorkerHrRow,
 } from "@/app/hr/actions";
+import type { LeaveBalanceSummary, LeaveRequestRow } from "@/lib/hr/leave-requests";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -47,12 +46,6 @@ function expiryColorClass(dateStr: string | null): string {
   if (days <= 30) return "font-semibold text-amber-700";
   if (days <= 60) return "text-yellow-700";
   return "text-zinc-600";
-}
-
-function leaveBalanceColorClass(balance: number): string {
-  if (balance <= 5) return "font-semibold text-red-700";
-  if (balance <= 10) return "text-amber-700";
-  return "text-emerald-700";
 }
 
 // ─── Summary Card ─────────────────────────────────────────────────────────────
@@ -112,13 +105,31 @@ function Field({
 
 // ─── WorkerHrItem row component ────────────────────────────────────────────────
 
-function WorkerHrItem({ worker }: { worker: WorkerHrRow }) {
+function WorkerHrItem({
+  leaveBalanceSummary,
+  leaveRequests,
+  worker,
+}: {
+  leaveBalanceSummary?: LeaveBalanceSummary;
+  leaveRequests: LeaveRequestRow[];
+  worker: WorkerHrRow;
+}) {
   const [isEditing, setIsEditing] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [showVacationModal, setShowVacationModal] = useState(false);
   const [annualLeaveDays, setAnnualLeaveDays] = useState(worker.annual_leave_days);
-  const [leaveTaken, setLeaveTaken] = useState(worker.leave_taken_this_year);
-  const leaveBalance = annualLeaveDays - leaveTaken;
+  const leaveTaken = worker.leave_taken_this_year;
+  const leaveBalance = leaveBalanceSummary?.available_to_plan ?? annualLeaveDays - leaveTaken;
+  const displayBalance: LeaveBalanceSummary = leaveBalanceSummary ?? {
+    entitlement: annualLeaveDays,
+    requested: 0,
+    planned: 0,
+    active: 0,
+    taken: leaveTaken,
+    remaining_entitlement: annualLeaveDays - leaveTaken,
+    available_to_plan: leaveBalance,
+    approval_risk: false,
+  };
   const initials = workerInitials(worker.full_name);
 
   function markDirty() {
@@ -129,7 +140,6 @@ function WorkerHrItem({ worker }: { worker: WorkerHrRow }) {
     setIsEditing(false);
     setIsDirty(false);
     setAnnualLeaveDays(worker.annual_leave_days);
-    setLeaveTaken(worker.leave_taken_this_year);
   }
 
   if (isEditing) {
@@ -178,32 +188,18 @@ function WorkerHrItem({ worker }: { worker: WorkerHrRow }) {
                 </label>
 
                 {/* Row 2 */}
-                <label className="grid gap-1">
-                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
-                    Leave taken this year
-                  </span>
-                  <input
-                    name="leave_taken_this_year"
-                    type="number"
-                    step="1"
-                    min={0}
-                    value={leaveTaken}
-                    onChange={(e) => {
-                      setLeaveTaken(Math.max(0, Number.parseInt(e.target.value, 10) || 0));
-                      markDirty();
-                    }}
-                    className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-                  />
-                </label>
                 <div className="grid gap-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
-                    Leave balance
+                    Legacy leave counter
                   </span>
-                  <div
-                    className={`flex h-10 items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm ${leaveBalanceColorClass(leaveBalance)}`}
-                  >
-                    {leaveBalance} days remaining
-                  </div>
+                  <div className="flex h-10 items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm text-zinc-700">{leaveTaken} days</div>
+                  <p className="text-xs text-zinc-500">Read-only compatibility value. Structured vacation dates determine the authoritative summary.</p>
+                </div>
+                <div className="grid gap-1">
+                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
+                    Leave availability
+                  </span>
+                  <LeaveBalanceSummaryDisplay balance={displayBalance} className="min-h-10 rounded-md border border-zinc-200 bg-zinc-100 px-3 py-2 text-sm" />
                 </div>
 
                 {/* Row 3 */}
@@ -270,14 +266,19 @@ function WorkerHrItem({ worker }: { worker: WorkerHrRow }) {
               </div>
             </form>
 
-            {/* Vacation dates */}
+            {/* Structured vacation */}
             <div className="border-t border-zinc-200 pt-3">
-              <VacationDatesEditor
-                vacationDates={worker.vacation_dates ?? []}
-                addVacationAction={addWorkerVacationEntry.bind(null, worker.id)}
-                editVacationAction={editWorkerVacationEntry.bind(null, worker.id)}
-                removeVacationAction={removeWorkerVacationEntry.bind(null, worker.id)}
-              />
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Add approved vacation</p>
+              <form action={createWorkerLeave.bind(null, worker.id)} className="grid gap-2 md:grid-cols-3">
+                <input type="hidden" name="leave_type" value="annual_leave" />
+                <input type="hidden" name="duration_type" value="full_day" />
+                <input required name="start_date" type="date" aria-label="Vacation start date" className="h-9 rounded-md border border-zinc-200 px-2 text-sm" />
+                <input required name="end_date" type="date" aria-label="Vacation end date" className="h-9 rounded-md border border-zinc-200 px-2 text-sm" />
+                <input name="administrative_note" placeholder="Administrative note" className="h-9 rounded-md border border-zinc-200 px-2 text-sm" />
+                <input name="reason" placeholder="Reason (optional)" className="h-9 rounded-md border border-zinc-200 px-2 text-sm md:col-span-2" />
+                <PendingSubmitButton className="h-9 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white" pendingLabel="Saving...">Add Vacation</PendingSubmitButton>
+              </form>
+              <p className="mt-2 text-xs text-zinc-500">Legacy JSON vacation dates remain preserved and read-only.</p>
             </div>
           </div>
         </td>
@@ -302,10 +303,8 @@ function WorkerHrItem({ worker }: { worker: WorkerHrRow }) {
 
       {/* Leave Balance */}
       <td className="px-3 py-3 text-right text-sm lg:px-5 lg:text-left">
-        <span className="block text-[10px] font-semibold uppercase text-zinc-400 lg:hidden">Balance</span>
-        <span className={leaveBalanceColorClass(leaveBalance)}>
-          {leaveBalance} days
-        </span>
+        <span className="block text-[10px] font-semibold uppercase text-zinc-400 lg:hidden">Availability</span>
+        <LeaveBalanceSummaryDisplay balance={displayBalance} className="max-w-56 lg:max-w-72" />
       </td>
 
       {/* Emirates ID Expiry */}
@@ -340,8 +339,10 @@ function WorkerHrItem({ worker }: { worker: WorkerHrRow }) {
     </tr>
     {showVacationModal ? (
       <VacationHistoryModal
+        balance={leaveBalanceSummary}
+        leaveRequests={leaveRequests}
         personName={worker.full_name}
-        vacationDates={worker.vacation_dates ?? []}
+        vacationDates={worker.vacation_dates}
         onClose={() => setShowVacationModal(false)}
       />
     ) : null}
@@ -351,7 +352,15 @@ function WorkerHrItem({ worker }: { worker: WorkerHrRow }) {
 
 // ─── HrWorkersTable ─────────────────────────────────────────────────────────────
 
-export function HrWorkersTable({ workers }: { workers: WorkerHrRow[] }) {
+export function HrWorkersTable({
+  leaveBalances,
+  leaveRequests,
+  workers,
+}: {
+  leaveBalances: Record<string, LeaveBalanceSummary>;
+  leaveRequests: LeaveRequestRow[];
+  workers: WorkerHrRow[];
+}) {
   const [search, setSearch] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
   const deferredSearch = useDeferredValue(search);
@@ -365,12 +374,10 @@ export function HrWorkersTable({ workers }: { workers: WorkerHrRow[] }) {
       const days = daysUntilExpiry(w.passport_expiry);
       return days !== null && days <= 60;
     }).length;
-    const lowLeave = workers.filter(
-      (w) => w.annual_leave_days - w.leave_taken_this_year <= 5,
-    ).length;
+    const lowLeave = workers.filter((worker) => (leaveBalances[worker.id]?.available_to_plan ?? worker.annual_leave_days - worker.leave_taken_this_year) <= 5).length;
 
     return { emiratesExpiring, passportExpiring, lowLeave };
-  }, [workers]);
+  }, [leaveBalances, workers]);
 
   const filteredWorkers = useMemo(() => {
     const normalized = deferredSearch.trim().toLowerCase();
@@ -446,7 +453,7 @@ export function HrWorkersTable({ workers }: { workers: WorkerHrRow[] }) {
             <thead className="hidden bg-zinc-50 text-xs uppercase tracking-[0.16em] text-zinc-500 lg:table-header-group">
               <tr>
                 <th className="px-5 py-3 font-semibold">Worker</th>
-                <th className="px-5 py-3 font-semibold">Leave Balance</th>
+                <th className="px-5 py-3 font-semibold">Leave Availability</th>
                 <th className="px-5 py-3 font-semibold">Emirates ID</th>
                 <th className="px-5 py-3 font-semibold">Passport</th>
                 <th className="px-5 py-3 font-semibold">Actions</th>
@@ -454,7 +461,7 @@ export function HrWorkersTable({ workers }: { workers: WorkerHrRow[] }) {
             </thead>
             <tbody className="grid gap-3 p-3 lg:table-row-group lg:p-0">
               {filteredWorkers.map((worker) => (
-                <WorkerHrItem key={worker.id} worker={worker} />
+                <WorkerHrItem key={worker.id} worker={worker} leaveBalanceSummary={leaveBalances[worker.id]} leaveRequests={leaveRequests.filter((request) => request.worker_id === worker.id)} />
               ))}
               {!filteredWorkers.length ? (
                 <tr className="block lg:table-row">

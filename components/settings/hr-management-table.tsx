@@ -2,20 +2,15 @@
 
 import { useDeferredValue, useMemo, useState } from "react";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
-import {
-  VacationDatesEditor,
-  type VacationEntrySource,
-} from "@/components/settings/vacation-dates-editor";
+import { LeaveBalanceSummaryDisplay } from "@/components/settings/leave-balance-summary";
+import type { VacationEntrySource } from "@/components/settings/vacation-dates-editor";
 import { VacationHistoryModal } from "@/components/settings/vacation-history-modal";
 import { ResolvedAvatar } from "@/components/ui/resolved-avatar";
 import {
-  addStaffVacationEntry,
-  editStaffVacationEntry,
-  removeStaffVacationEntry,
   upsertUserHrDetails,
   type HrRow,
 } from "@/app/hr/actions";
-import type { LeaveRequestRow } from "@/lib/hr/leave-requests";
+import type { LeaveBalanceSummary, LeaveRequestRow } from "@/lib/hr/leave-requests";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -31,6 +26,7 @@ type HrProfile = {
 type HrManagementTableProps = {
   profiles: HrProfile[];
   hrData: HrRow[];
+  leaveBalances: Record<string, LeaveBalanceSummary>;
   leaveRequests: Array<
     Pick<
       LeaveRequestRow,
@@ -79,12 +75,6 @@ function expiryColorClass(dateStr: string | null): string {
   if (days <= 30) return "font-semibold text-amber-700";
   if (days <= 60) return "text-yellow-700";
   return "text-zinc-600";
-}
-
-function leaveBalanceColorClass(balance: number): string {
-  if (balance <= 5) return "font-semibold text-red-700";
-  if (balance <= 10) return "text-amber-700";
-  return "text-emerald-700";
 }
 
 // ─── Summary Card ─────────────────────────────────────────────────────────────
@@ -153,10 +143,12 @@ function Field({
 
 function HrRow({
   hr,
+  leaveBalanceSummary,
   leaveRequests,
   profile,
 }: {
   hr: HrRow | undefined;
+  leaveBalanceSummary?: LeaveBalanceSummary;
   leaveRequests: HrManagementTableProps["leaveRequests"];
   profile: HrProfile;
 }) {
@@ -165,7 +157,17 @@ function HrRow({
   const [showVacationModal, setShowVacationModal] = useState(false);
   const [annualLeaveDays, setAnnualLeaveDays] = useState(hr?.annual_leave_days ?? 30);
   const leaveTaken = hr?.leave_taken_this_year ?? 0;
-  const leaveBalance = annualLeaveDays - leaveTaken;
+  const leaveBalance = leaveBalanceSummary?.available_to_plan ?? annualLeaveDays - leaveTaken;
+  const displayBalance: LeaveBalanceSummary = leaveBalanceSummary ?? {
+    entitlement: annualLeaveDays,
+    requested: 0,
+    planned: 0,
+    active: 0,
+    taken: leaveTaken,
+    remaining_entitlement: annualLeaveDays - leaveTaken,
+    available_to_plan: leaveBalance,
+    approval_risk: false,
+  };
   const initials = userInitials(profile.full_name, profile.email);
   const displayName = profile.full_name?.trim() || "Unnamed user";
   const approvedRequests = useMemo(
@@ -273,14 +275,14 @@ function HrRow({
                 {/* Row 2 */}
                 <div className="grid gap-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
-                    Leave taken this year
+                    Legacy leave counter
                   </span>
                   <div className="flex h-10 items-center justify-between rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm text-zinc-700">
                     <span>{leaveTaken} days</span>
-                    <span className="text-xs font-medium text-zinc-500">Automatic</span>
+                    <span className="text-xs font-medium text-zinc-500">Read-only</span>
                   </div>
                   <p className="text-xs text-zinc-500">
-                    Includes historical manager-entered usage and approved annual-leave requests.
+                    Preserved for compatibility. Structured vacation dates determine the authoritative summary.
                   </p>
                   {historicalBaseline >= 0 ? (
                     <div className="text-xs text-zinc-500">
@@ -291,13 +293,9 @@ function HrRow({
                 </div>
                 <div className="grid gap-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
-                    Leave balance
+                    Leave availability
                   </span>
-                  <div
-                    className={`flex h-10 items-center rounded-md border border-zinc-200 bg-zinc-100 px-3 text-sm ${leaveBalanceColorClass(leaveBalance)}`}
-                  >
-                    {leaveBalance} days remaining
-                  </div>
+                  <LeaveBalanceSummaryDisplay balance={displayBalance} className="min-h-10 rounded-md border border-zinc-200 bg-zinc-100 px-3 py-2 text-sm" />
                 </div>
 
                 {/* Row 3 */}
@@ -364,15 +362,9 @@ function HrRow({
               </div>
             </form>
 
-            {/* Vacation dates */}
+            {/* Legacy vacation dates */}
             <div className="border-t border-zinc-200 pt-3">
-              <VacationDatesEditor
-                vacationDates={hr?.vacation_dates ?? []}
-                entrySources={vacationEntrySources}
-                addVacationAction={addStaffVacationEntry.bind(null, profile.id)}
-                editVacationAction={editStaffVacationEntry.bind(null, profile.id)}
-                removeVacationAction={removeStaffVacationEntry.bind(null, profile.id)}
-              />
+              <p className="text-sm text-zinc-500">Legacy vacation dates are read-only. Manage structured requests in Vacation Requests.</p>
             </div>
           </div>
         </td>
@@ -382,7 +374,7 @@ function HrRow({
 
   // ── Default compact row ────────────────────────────────────────────────────
 
-  const balance = hr ? leaveBalance : null;
+  const balance = hr ? displayBalance : null;
 
   return (
     <>
@@ -413,13 +405,11 @@ function HrRow({
 
       {/* Leave Balance */}
       <td className="px-3 py-3 text-right text-sm lg:px-5 lg:text-left">
-        <span className="block text-[10px] font-semibold uppercase text-zinc-400 lg:hidden">Balance</span>
+        <span className="block text-[10px] font-semibold uppercase text-zinc-400 lg:hidden">Availability</span>
         {balance === null ? (
           <span className="text-zinc-400">—</span>
         ) : (
-          <span className={leaveBalanceColorClass(balance)}>
-            {balance} days
-          </span>
+          <LeaveBalanceSummaryDisplay balance={balance} className="max-w-56 lg:max-w-72" />
         )}
       </td>
 
@@ -455,6 +445,7 @@ function HrRow({
     </tr>
     {showVacationModal ? (
       <VacationHistoryModal
+        balance={leaveBalanceSummary}
         personName={displayName}
         vacationDates={hr?.vacation_dates ?? []}
         entrySources={vacationEntrySources}
@@ -467,7 +458,7 @@ function HrRow({
 
 // ─── HrManagementTable ────────────────────────────────────────────────────────
 
-export function HrManagementTable({ hrData, leaveRequests, profiles }: HrManagementTableProps) {
+export function HrManagementTable({ hrData, leaveBalances, leaveRequests, profiles }: HrManagementTableProps) {
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
 
@@ -485,12 +476,10 @@ export function HrManagementTable({ hrData, leaveRequests, profiles }: HrManagem
       const days = daysUntilExpiry(row.passport_expiry);
       return days !== null && days <= 60;
     }).length;
-    const lowLeave = hrData.filter(
-      (row) => row.annual_leave_days - row.leave_taken_this_year <= 5,
-    ).length;
+    const lowLeave = hrData.filter((row) => (leaveBalances[row.profile_id]?.available_to_plan ?? row.annual_leave_days - row.leave_taken_this_year) <= 5).length;
 
     return { emiratesExpiring, passportExpiring, lowLeave };
-  }, [hrData]);
+  }, [hrData, leaveBalances]);
 
   const filteredProfiles = useMemo(() => {
     const normalized = deferredSearch.trim().toLowerCase();
@@ -554,7 +543,7 @@ export function HrManagementTable({ hrData, leaveRequests, profiles }: HrManagem
             <thead className="hidden bg-zinc-50 text-xs uppercase tracking-[0.16em] text-zinc-500 lg:table-header-group">
               <tr>
                 <th className="px-5 py-3 font-semibold">Staff Member</th>
-                <th className="px-5 py-3 font-semibold">Leave Balance</th>
+                <th className="px-5 py-3 font-semibold">Leave Availability</th>
                 <th className="px-5 py-3 font-semibold">Emirates ID</th>
                 <th className="px-5 py-3 font-semibold">Passport</th>
                 <th className="px-5 py-3 font-semibold">Actions</th>
@@ -566,6 +555,7 @@ export function HrManagementTable({ hrData, leaveRequests, profiles }: HrManagem
                   key={profile.id}
                   profile={profile}
                   hr={hrByProfileId.get(profile.id)}
+                  leaveBalanceSummary={leaveBalances[profile.id]}
                   leaveRequests={leaveRequests}
                 />
               ))}
