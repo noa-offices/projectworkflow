@@ -19,7 +19,6 @@ import { TemplateFormShell } from "@/components/products/template-form-shell";
 import { CopyAiExtractionPrompt } from "@/components/products/copy-ai-extraction-prompt";
 import { SmartProductJsonImport } from "@/components/products/smart-product-json-import";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
-import { countStandardCategoryPricingRows } from "@/lib/products/category-pricing-groups";
 import { flattenBaseModelPricingRows } from "@/lib/products/base-model-pricing-groups";
 import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
 import { getDraftPricingSectionPresence, getSmartSetupOverwriteConflicts, type SmartSetupSectionPresence } from "@/lib/products/smart-product-apply-state";
@@ -290,6 +289,7 @@ function cancelTemplateImportHref({
 
 function FormSection({
   children,
+  className,
   description,
   isOpen = true,
   onToggle,
@@ -297,6 +297,7 @@ function FormSection({
   title,
 }: {
   children: ReactNode;
+  className?: string;
   description?: string;
   isOpen?: boolean;
   onToggle?: () => void;
@@ -304,7 +305,7 @@ function FormSection({
   title: string;
 }) {
   return (
-    <section className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
+    <section className={`overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm ${className ?? ""}`}>
       <button
         type="button"
         onClick={onToggle}
@@ -441,9 +442,9 @@ export function ProductTemplateForm({
   const submitMode = mode ?? (template ? "update" : "create");
   const [expandedSections, setExpandedSections] = useState({
     details: !compactAccordionMode,
+    advanced: false,
     gallery: !compactAccordionMode,
     pricing: !compactAccordionMode,
-    summaryPricing: !compactAccordionMode,
   });
   const [currentPricingData, setCurrentPricingData] = useState<SmartSetupSectionPresence>({ workstation: false, baseModel: false, category: false, modular: false, accessory: false });
   const [approvedSmartDraft, setApprovedSmartDraft] = useState<ProductTemplateDraft | null>(null);
@@ -487,12 +488,6 @@ export function ProductTemplateForm({
   }
   function updatePricingData(section: string, hasData: boolean) { setCurrentPricingData((current) => ({ ...current, [section]: hasData })); }
   const imageCount = proposedImageSlots.filter((slot) => Boolean(templateImageValue(template, slot.field))).length;
-  const pricingRowCount =
-    flattenWorkstationPricingRows(template?.desking_size_pricing ?? []).length +
-    flattenBaseModelPricingRows(template?.variant_pricing ?? []).length +
-    (template?.accessory_pricing?.length ?? 0) +
-    countStandardCategoryPricingRows(template?.category_pricing);
-
   useEffect(() => {
     if (focusSection !== "pricing") {
       return;
@@ -508,9 +503,9 @@ export function ProductTemplateForm({
   function setAllSectionsOpen(nextValue: boolean) {
     setExpandedSections({
       details: nextValue,
+      advanced: nextValue,
       gallery: nextValue,
       pricing: nextValue,
-      summaryPricing: nextValue,
     });
   }
 
@@ -520,16 +515,22 @@ export function ProductTemplateForm({
       "main_category_id",
       "sub_category_id",
       "template_name",
-      "internal_selection_name",
-      "template_code",
       "item_code",
       "default_specification",
+    ].includes(fieldName)) {
+      setExpandedSections((current) => ({ ...current, details: true }));
+      return;
+    }
+
+    if ([
+      "internal_selection_name",
+      "template_code",
       "origin",
       "supplier_name",
       "description",
       "price_notes",
     ].includes(fieldName)) {
-      setExpandedSections((current) => ({ ...current, details: true }));
+      setExpandedSections((current) => ({ ...current, advanced: true }));
       return;
     }
 
@@ -542,7 +543,7 @@ export function ProductTemplateForm({
     }
 
     if (["unit_label", "currency", "default_unit_price"].includes(fieldName)) {
-      setExpandedSections((current) => ({ ...current, summaryPricing: true }));
+      setExpandedSections((current) => ({ ...current, pricing: true }));
       return;
     }
 
@@ -570,7 +571,29 @@ export function ProductTemplateForm({
       <input type="hidden" name="id" value={templateId} />
       <input type="hidden" name="return_to" value={returnTo} />
       {extraHiddenFields}
-      <div className="flex flex-wrap justify-end gap-2"><CopyAiExtractionPrompt /><SmartProductJsonImport onRequestApply={requestSmartDraftApply} /></div>
+      <FormSection
+        title="Smart Product Setup"
+        description="Extract manufacturer product details, specifications, pricing, and options, then review before applying."
+        className="border-emerald-200 bg-emerald-50/40"
+      >
+        <div className="flex flex-wrap gap-2 md:col-span-2 xl:col-span-3">
+          <CopyAiExtractionPrompt />
+          <SmartProductJsonImport onRequestApply={requestSmartDraftApply} />
+        </div>
+        <div className="grid gap-3 text-xs leading-5 text-emerald-950 md:col-span-2 md:grid-cols-3 xl:col-span-3">
+          {[
+            ["1", "Copy Prompt", "Copy the extraction instructions."],
+            ["2", "Generate JSON", "Use ChatGPT or Gemini with manufacturer price lists, technical pages, or both."],
+            ["3", "Import & Review", "Paste the JSON here, review or edit it, then apply it to this template."],
+          ].map(([step, title, text]) => (
+            <div key={step} className="flex gap-2">
+              <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-emerald-700 text-[10px] font-bold text-white">{step}</span>
+              <p><span className="font-semibold">{title}.</span> {text}</p>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-emerald-900 md:col-span-2 xl:col-span-3">Nothing is saved until you apply the reviewed data and save the Product Template.</p>
+      </FormSection>
       {smartSetupNotice && approvedSmartDraft ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950">{smartSetupNotice}</div> : null}
       {!template && importDraft && importMode === "new" ? (
         <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950 shadow-sm">
@@ -609,8 +632,8 @@ export function ProductTemplateForm({
         />
       ) : null}
       <FormSection
-        title="Template Details"
-        description="Set the core product identity, category placement, quotation defaults, and internal notes for this template."
+        title="Product Details"
+        description="Set the core product identity and category placement."
         isOpen={expandedSections.details}
         onToggle={compactAccordionMode ? () => setExpandedSections((current) => ({ ...current, details: !current.details })) : undefined}
         summary={compactAccordionMode
@@ -643,28 +666,45 @@ export function ProductTemplateForm({
           required
         />
         <Field
-          name="internal_selection_name"
-          label="Internal Selection Name"
-          defaultValue={template?.internal_selection_name}
-          placeholder="Vintage Executive / Vintage Conference / Vintage Visitor"
-          hint="Used only inside the software to help users identify similar templates. Client documents still use Item Name / Template Name."
-        />
-        <Field
-          name="template_code"
-          label="Template Code"
-          defaultValue={template?.template_code ?? (allowImportPrefill ? importDraft?.item_code_snapshot : null)}
-        />
-        <Field
           name="item_code"
           label="Item Code"
           defaultValue={template?.item_code ?? (allowImportPrefill ? importDraft?.item_code_snapshot : null)}
         />
         <TextArea
           name="default_specification"
-          label="Specifications"
+          label="Technical Specification"
           defaultValue={template?.default_specification ?? (allowImportPrefill
             ? appendedImportSpecification(importDraft?.specification_snapshot, importDraft?.size_snapshot)
             : null)}
+        />
+        <div className="rounded-md border border-dashed border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-500 md:col-span-2 xl:col-span-1">
+          Dimension is calculated from workstation size pricing when available.
+          Finish and accessory choices still come from Template Options.
+        </div>
+      </FormSection>
+
+      <FormSection
+        title="Advanced Details"
+        description="Additional internal, supplier, origin, description, and pricing-note fields."
+        isOpen={expandedSections.advanced}
+        onToggle={() => setExpandedSections((current) => ({ ...current, advanced: !current.advanced }))}
+      >
+        <Field
+          name="template_code"
+          label="Template Code"
+          defaultValue={template?.template_code ?? (allowImportPrefill ? importDraft?.item_code_snapshot : null)}
+        />
+        <Field
+          name="internal_selection_name"
+          label="Internal Selection Name"
+          defaultValue={template?.internal_selection_name}
+          placeholder="Vintage Executive / Vintage Conference / Vintage Visitor"
+          hint="Used only inside the software to help users identify similar templates. Client documents still use Item Name / Template Name."
+        />
+        <TextArea
+          name="description"
+          label="Product Description"
+          defaultValue={template?.description ?? (allowImportPrefill ? quotationRowImportDescription(importDraft ?? null) : null)}
         />
         <Field
           name="origin"
@@ -676,15 +716,6 @@ export function ProductTemplateForm({
           label="Supplier override"
           defaultValue={template?.supplier_name ?? (allowImportPrefill ? importDraft?.supplier_name_snapshot : null)}
         />
-        <div className="rounded-md border border-dashed border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-500 md:col-span-2 xl:col-span-1">
-          Dimension is calculated from workstation size pricing when available.
-          Finish and accessory choices still come from Template Options.
-        </div>
-        <TextArea
-          name="description"
-          label="Description"
-          defaultValue={template?.description ?? (allowImportPrefill ? quotationRowImportDescription(importDraft ?? null) : null)}
-        />
         <TextArea
           name="price_notes"
           label="Pricing / Formula Notes"
@@ -692,15 +723,13 @@ export function ProductTemplateForm({
         />
       </FormSection>
 
-      <div ref={pricingRef} className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+      <div ref={pricingRef}>
         <FormSection
-          title="Pricing"
-          description="Define the base commercial values used before optional rows, materials, and linked product families are applied."
-          isOpen={expandedSections.summaryPricing}
-          onToggle={compactAccordionMode ? () => setExpandedSections((current) => ({ ...current, summaryPricing: !current.summaryPricing })) : undefined}
-          summary={compactAccordionMode
-            ? `${templateCurrency} ${Number(template?.default_unit_price ?? 0).toFixed(2)} default unit price`
-            : undefined}
+          title="Pricing & Configuration"
+          description="Set the fallback commercial values and configure detailed product pricing."
+          isOpen={expandedSections.pricing}
+          onToggle={compactAccordionMode ? () => setExpandedSections((current) => ({ ...current, pricing: !current.pricing })) : undefined}
+          summary={compactAccordionMode ? `${templateCurrency} ${Number(template?.default_unit_price ?? 0).toFixed(2)} default unit price` : undefined}
         >
           <Field
             name="unit_label"
@@ -710,14 +739,45 @@ export function ProductTemplateForm({
           <CurrencySelect defaultValue={templateCurrency} />
           <Field
             name="default_unit_price"
-            label="Default U.Price"
+            label="Default / Fallback Unit Price"
             type="number"
             defaultValue={template?.default_unit_price ?? (allowImportPrefill ? importDraft?.unit_price : null) ?? 0}
           />
           <div className="flex items-end">
             <p className="text-xs leading-5 text-zinc-500">
-              New templates are created as active. Use Archive or Discontinue from the Product Library when the lifecycle changes.
+              Fallback values are used when no applicable detailed pricing configuration is selected.
             </p>
+          </div>
+          <div className="md:col-span-2 xl:col-span-3">
+            <div className="mb-4 border-t border-zinc-200 pt-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Detailed Pricing Setup</p>
+            </div>
+            <TemplatePricingSections
+              key={[
+                template?.id ?? "new",
+                flattenWorkstationPricingRows(template?.desking_size_pricing ?? []).length,
+                flattenBaseModelPricingRows(template?.variant_pricing ?? []).length,
+                template?.accessory_pricing?.length ?? 0,
+                template?.category_pricing?.length ?? 0,
+                (template?.category_pricing ?? []).map((row) => Object.keys(row.prices ?? {}).join(",")).join("|"),
+              ].join(":")}
+              accessoryPricingRows={template?.accessory_pricing}
+              brandDefaultCurrency={brandDefaultCurrency}
+              categoryPricingRows={template?.category_pricing}
+              compactAccordionMode={compactAccordionMode}
+              deskingSizePricingRows={template?.desking_size_pricing}
+              importDraft={existingImportDraft}
+              templateCurrency={template?.currency}
+              templateId={templateId}
+              templateIsPersisted={Boolean(template)}
+              variantPricingRows={template?.variant_pricing}
+              onSectionDataChange={updatePricingData}
+              workstationReplacement={workstationReplacement}
+              baseModelReplacement={baseModelReplacement}
+              categoryReplacement={categoryReplacement}
+              modularReplacement={modularReplacement}
+              accessoryReplacement={accessoryReplacement}
+            />
           </div>
         </FormSection>
 
@@ -784,44 +844,6 @@ export function ProductTemplateForm({
         </div>
       ) : null}
 
-      <FormSection
-        title="Detailed Pricing"
-        description="Maintain workstation pricing, base variants, accessories, and finish-category pricing in one dedicated pricing area."
-        isOpen={expandedSections.pricing}
-        onToggle={compactAccordionMode ? () => setExpandedSections((current) => ({ ...current, pricing: !current.pricing })) : undefined}
-        summary={compactAccordionMode
-          ? `${pricingRowCount} pricing rows across base, sizes, accessories, and finish pricing`
-          : undefined}
-      >
-        <TemplatePricingSections
-          key={[
-            template?.id ?? "new",
-            flattenWorkstationPricingRows(template?.desking_size_pricing ?? []).length,
-            flattenBaseModelPricingRows(template?.variant_pricing ?? []).length,
-            template?.accessory_pricing?.length ?? 0,
-            template?.category_pricing?.length ?? 0,
-            (template?.category_pricing ?? [])
-              .map((row) => Object.keys(row.prices ?? {}).join(","))
-              .join("|"),
-          ].join(":")}
-          accessoryPricingRows={template?.accessory_pricing}
-          brandDefaultCurrency={brandDefaultCurrency}
-          categoryPricingRows={template?.category_pricing}
-          compactAccordionMode={compactAccordionMode}
-          deskingSizePricingRows={template?.desking_size_pricing}
-          importDraft={existingImportDraft}
-          templateCurrency={template?.currency}
-          templateId={templateId}
-          templateIsPersisted={Boolean(template)}
-          variantPricingRows={template?.variant_pricing}
-          onSectionDataChange={updatePricingData}
-          workstationReplacement={workstationReplacement}
-          baseModelReplacement={baseModelReplacement}
-          categoryReplacement={categoryReplacement}
-          modularReplacement={modularReplacement}
-          accessoryReplacement={accessoryReplacement}
-        />
-      </FormSection>
     </TemplateFormShell>
   );
 }
