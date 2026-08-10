@@ -30,6 +30,8 @@ import {
   modularItemPricingRows,
   modularPricingDefaultsFromRows,
 } from "@/lib/products/modular-pricing";
+import { flattenBaseModelPricingRows } from "@/lib/products/base-model-pricing-groups";
+import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 import {
   buildCompanyStyleProductSpecification,
@@ -94,8 +96,8 @@ export type ProductLibraryTemplate = {
   proposed_image_url_19: string | null;
   proposed_image_url_20: string | null;
   image_settings?: Record<string, Partial<ImageDisplaySettings> | undefined> | null;
-  desking_size_pricing: DeskingSizePricingRow[] | null;
-  variant_pricing: VariantPricingRow[] | null;
+  desking_size_pricing: unknown;
+  variant_pricing: unknown;
   category_pricing: CategoryPricingRow[] | null;
   accessory_pricing: AccessoryPricingRow[] | null;
   unit_label?: string | null;
@@ -417,8 +419,8 @@ function PriceCheckBadge({
   );
 }
 
-function activeSizePricingRows(rows?: DeskingSizePricingRow[] | null) {
-  return (Array.isArray(rows) ? rows : [])
+function activeSizePricingRows(rows: unknown) {
+  return flattenWorkstationPricingRows<DeskingSizePricingRow>(Array.isArray(rows) ? rows : [], { activeGroupsOnly: true })
     .map((row, index) => normalizedSizePricingRow(row, index))
     .filter((row) => row.is_active !== false)
     .filter((row) =>
@@ -431,8 +433,8 @@ function activeSizePricingRows(rows?: DeskingSizePricingRow[] | null) {
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
 }
 
-function activeVariantRows(rows?: VariantPricingRow[] | null) {
-  return (Array.isArray(rows) ? rows : [])
+function activeVariantRows(rows: unknown) {
+  return flattenBaseModelPricingRows<VariantPricingRow>(Array.isArray(rows) ? rows : [], { activeGroupsOnly: true })
     .filter((row) => row.is_active !== false)
     .filter((row) => row.variant_name || row.display_name || row.dimension || numberValue(row.price) > 0)
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
@@ -575,11 +577,11 @@ function matchesTemplateSearch({
     brandNameById.get(template.brand_id),
     template.main_category_id ? categoryNameById.get(template.main_category_id) : null,
     template.sub_category_id ? categoryNameById.get(template.sub_category_id) : null,
-    ...(template.desking_size_pricing ?? []).flatMap((row) => [
+    ...flattenWorkstationPricingRows<DeskingSizePricingRow>(template.desking_size_pricing ?? []).flatMap((row) => [
       row.label,
       row.supplier_price_list_code,
     ]),
-    ...(template.variant_pricing ?? []).flatMap((row) => [
+    ...flattenBaseModelPricingRows<VariantPricingRow>(template.variant_pricing ?? []).flatMap((row) => [
       row.variant_name,
       row.display_name,
       row.supplier_price_list_code,

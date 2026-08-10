@@ -11,6 +11,14 @@ import {
   normalizeCategoryPriceLabel,
 } from "@/lib/products/category-pricing-groups";
 import { materialDisplayCategoryLabel } from "@/lib/products/material-classification";
+import { parseNullablePricingNumber } from "@/lib/products/nullable-pricing";
+import { parseWorkstationPricingJson } from "@/lib/products/workstation-pricing-parser";
+import { parseBaseModelPricingJson } from "@/lib/products/base-model-pricing-parser";
+import {
+  persistedProductTemplatePricingGroupScopeKeys,
+  reconcileStaleProductTemplateGroupReferences,
+  type ProductTemplateGroupReferenceRow,
+} from "@/lib/products/product-template-group-references";
 import {
   MODULAR_GROUP_PRICING_TYPE,
   MODULAR_ITEM_PRICING_TYPE,
@@ -51,6 +59,7 @@ const imageFields = [
   "proposed_image_url_20",
 ] as const;
 const imageFieldSet = new Set(imageFields);
+const productImagesBucket = "product-images";
 const deskingRoles = new Set([
   "none",
   "base_size",
@@ -67,6 +76,80 @@ const detailPriceFieldsBySource = {
 } as const;
 
 type DetailPriceSourceTable = keyof typeof detailPriceFieldsBySource;
+
+async function reconcileSavedProductTemplateGroupReferences({
+  accessoryPricing,
+  categoryPricing,
+  deskingSizePricing,
+  supabase,
+  templateId,
+  variantPricing,
+}: {
+  accessoryPricing: unknown;
+  categoryPricing: unknown;
+  deskingSizePricing: unknown;
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  templateId: string;
+  variantPricing: unknown;
+}) {
+  let persistedScopeKeys: Set<string>;
+  try {
+    persistedScopeKeys = persistedProductTemplatePricingGroupScopeKeys({
+      accessoryPricing,
+      categoryPricing,
+      deskingSizePricing,
+      variantPricing,
+    });
+  } catch (error) {
+    logServerActionError("PRODUCT TEMPLATE REFERENCE RECONCILIATION GROUPS ERROR", error, {
+      recordId: templateId,
+      table: "product_templates",
+    });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("product_template_group_references")
+    .select("id,template_id,pricing_type,group_id,storage_path,display_order,caption,created_at,updated_at")
+    .eq("template_id", templateId)
+    .returns<ProductTemplateGroupReferenceRow[]>();
+  if (error) {
+    logServerActionError("PRODUCT TEMPLATE REFERENCE RECONCILIATION LOAD ERROR", error, {
+      recordId: templateId,
+      table: "product_template_group_references",
+    });
+    return;
+  }
+
+  await reconcileStaleProductTemplateGroupReferences({
+    references: data ?? [],
+    persistedScopeKeys,
+    deleteReference: async (reference) => {
+      const { error: deleteError } = await supabase
+        .from("product_template_group_references")
+        .delete()
+        .eq("id", reference.id)
+        .eq("template_id", templateId);
+      if (deleteError) throw deleteError;
+    },
+    deleteStorageObject: async (reference) => {
+      const { error: storageError } = await supabase.storage
+        .from(productImagesBucket)
+        .remove([reference.storage_path]);
+      if (storageError) throw storageError;
+    },
+    onReferenceDeleteError: (reference, deleteError) => logServerActionError(
+      "PRODUCT TEMPLATE REFERENCE RECONCILIATION DELETE ERROR",
+      deleteError,
+      { recordId: reference.id, storagePath: reference.storage_path, templateId },
+    ),
+    onStorageDeleteError: (reference, storageError) => logServerActionError(
+      "PRODUCT TEMPLATE REFERENCE RECONCILIATION STORAGE ERROR",
+      storageError,
+      { recordId: reference.id, storagePath: reference.storage_path, templateId },
+    ),
+  });
+}
 
 type JsonPriceRow = Record<string, unknown> & {
   id?: string;
@@ -301,11 +384,25 @@ function updateJsonPriceRows({
     return nextRow;
   };
 
-  if (sourceTable === "product_templates.accessory_pricing" || sourceTable === "product_templates.category_pricing") {
-    const nestedRows = rows.map((group) => ({
-      ...group,
-      items: jsonArrayValue(group.items).map(updateRow),
-    }));
+  if (
+    sourceTable === "product_templates.accessory_pricing" ||
+    sourceTable === "product_templates.category_pricing" ||
+    sourceTable === "product_templates.desking_size_pricing" ||
+    sourceTable === "product_templates.variant_pricing"
+  ) {
+    const nestedRows = rows.map((group) => {
+      if (
+        (sourceTable === "product_templates.desking_size_pricing" || sourceTable === "product_templates.variant_pricing") &&
+        !Array.isArray(group.items)
+      ) {
+        return updateRow(group);
+      }
+
+      return {
+        ...group,
+        items: jsonArrayValue(group.items).map(updateRow),
+      };
+    });
 
     const nextRows = sourceTable === "product_templates.category_pricing"
       ? nestedRows.map(updateRow)
@@ -820,114 +917,11 @@ function templateImageMetadataValue(formData: FormData) {
 }
 
 function deskingSizePricingValue(formData: FormData) {
-  const rawValue = textValue(formData, "desking_size_pricing");
-  if (!rawValue) return [];
-
-  try {
-    const parsed = JSON.parse(rawValue) as Array<Record<string, unknown>>;
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed
-      .map((row, index) => {
-        const label = typeof row.label === "string" ? row.label.trim() : "";
-        const parsedDimensions = label
-          .split(/\s*x\s*/i)
-          .map((part) => Number(part.trim()))
-          .filter((value) => Number.isFinite(value));
-        const length = parsedDimensions[0] ?? Number(row.length);
-        const depth = parsedDimensions[1] ?? Number(row.depth);
-        const height = parsedDimensions[2] ?? Number(row.height);
-        const defaultPrice = Number(row.default_price);
-        const additionalPrice = Number(row.additional_price);
-        const baseSupplierPriceListCode =
-          typeof row.base_supplier_price_list_code === "string" && row.base_supplier_price_list_code.trim()
-            ? row.base_supplier_price_list_code.trim()
-            : typeof row.supplier_price_list_code === "string"
-              ? row.supplier_price_list_code.trim()
-              : "";
-        const additionalSupplierPriceListCode =
-          typeof row.additional_supplier_price_list_code === "string"
-            ? row.additional_supplier_price_list_code.trim()
-            : "";
-
-        return {
-          id: typeof row.id === "string" && row.id ? row.id : `size-${index}`,
-          label: label
-              ? label
-              : Number.isFinite(length) && Number.isFinite(depth) && Number.isFinite(height)
-                ? `${length} x ${depth} x ${height}`
-                : "",
-          supplier_price_list_code: baseSupplierPriceListCode,
-          base_supplier_price_list_code: baseSupplierPriceListCode,
-          length: Number.isFinite(length) ? length : 0,
-          depth: Number.isFinite(depth) ? depth : 0,
-          height: Number.isFinite(height) ? height : 0,
-          dimension_unit:
-            typeof row.dimension_unit === "string" && row.dimension_unit.trim()
-              ? row.dimension_unit.trim()
-              : "cm",
-          layout_type:
-            row.layout_type === "Cluster" || row.layout_type === "Both"
-              ? row.layout_type
-              : "Linear",
-          default_price: Number.isFinite(defaultPrice) ? defaultPrice : 0,
-          additional_price: Number.isFinite(additionalPrice) ? additionalPrice : 0,
-          additional_supplier_price_list_code: additionalSupplierPriceListCode,
-          currency: normalizeCurrency(
-            typeof row.currency === "string" ? row.currency : defaultCurrency,
-          ),
-          specification: typeof row.specification === "string" ? row.specification.trim() : "",
-          default_dimension:
-            typeof row.default_dimension === "string" ? row.default_dimension.trim() : "",
-          sort_order: Number.isFinite(Number(row.sort_order))
-            ? Number(row.sort_order)
-            : index,
-          is_active: row.is_active !== false,
-        };
-      })
-      .filter(
-        (row) =>
-          row.label ||
-          row.length > 0 ||
-          row.depth > 0 ||
-          row.height > 0 ||
-          row.default_price > 0 ||
-          row.additional_price > 0 ||
-          row.supplier_price_list_code ||
-          row.additional_supplier_price_list_code ||
-          row.specification ||
-          row.default_dimension,
-      );
-  } catch {
-    return [];
-  }
+  return parseWorkstationPricingJson(textValue(formData, "desking_size_pricing"));
 }
 
 function variantPricingValue(formData: FormData) {
-  const rawValue = textValue(formData, "variant_pricing");
-  if (!rawValue) return [];
-
-  try {
-    const parsed = JSON.parse(rawValue) as Array<Record<string, unknown>>;
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed
-      .map((row, index) => ({
-        id: typeof row.id === "string" && row.id ? row.id : `variant-${index}`,
-        variant_name: typeof row.variant_name === "string" ? row.variant_name.trim() : "",
-        display_name: typeof row.display_name === "string" ? row.display_name.trim() : "",
-        supplier_price_list_code: typeof row.supplier_price_list_code === "string" ? row.supplier_price_list_code.trim() : "",
-        dimension: typeof row.dimension === "string" ? row.dimension.trim() : "",
-        price: Number.isFinite(Number(row.price)) ? Number(row.price) : 0,
-        currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
-        specification: typeof row.specification === "string" ? row.specification.trim() : "",
-        sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
-        is_active: row.is_active !== false,
-      }))
-      .filter((row) => row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || row.price > 0 || row.specification);
-  } catch {
-    return [];
-  }
+  return parseBaseModelPricingJson(textValue(formData, "variant_pricing"));
 }
 
 function categoryPricingValue(formData: FormData) {
@@ -951,11 +945,11 @@ function categoryPricingValue(formData: FormData) {
       const prices = typeof row.prices === "object" && row.prices !== null
         ? row.prices as Record<string, unknown>
         : {};
-      const normalizedPrices = new Map<string, number>([
-        ["Cat A", 0],
-        ["Cat B", 0],
-        ["Cat C", 0],
-        ["Cat D", 0],
+      const normalizedPrices = new Map<string, number | null>([
+        ["Cat A", null],
+        ["Cat B", null],
+        ["Cat C", null],
+        ["Cat D", null],
       ]);
 
       Object.entries(prices).forEach(([key, value]) => {
@@ -964,7 +958,7 @@ function categoryPricingValue(formData: FormData) {
           return;
         }
 
-        normalizedPrices.set(label, Number.isFinite(Number(value)) ? Number(value) : 0);
+        normalizedPrices.set(label, parseNullablePricingNumber(value));
       });
 
       return {
@@ -1014,7 +1008,7 @@ function categoryPricingValue(formData: FormData) {
       items: (group.items ?? [])
         .map((item, itemIndex) => normalizeCategoryRow(item as Record<string, unknown>, itemIndex))
         .filter((row) =>
-          row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price > 0) || row.specification,
+          row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price !== null) || row.specification,
         ),
     })).filter((group) => group.items.length || group.group_name);
 
@@ -1032,7 +1026,7 @@ function categoryPricingValue(formData: FormData) {
           .map((item, itemIndex) => normalizeCategoryRow(item as Record<string, unknown>, itemIndex))
           .map((item) => ({ ...item, pricing_type: MODULAR_ITEM_PRICING_TYPE }))
           .filter((row) =>
-            row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price > 0) || row.specification,
+            row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price !== null) || row.specification,
           ),
       }))
       .filter((group) => (group.items?.length ?? 0) > 0 || group.group_name);
@@ -1044,8 +1038,8 @@ function categoryPricingValue(formData: FormData) {
       .filter((row) => row.pricing_type === MODULAR_ITEM_PRICING_TYPE || row.pricing_type === MODULAR_META_PRICING_TYPE)
       .filter((row) =>
         row.pricing_type === MODULAR_ITEM_PRICING_TYPE
-          ? row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price > 0) || row.specification
-          : row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price > 0) || row.specification,
+          ? row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price !== null) || row.specification
+          : row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price !== null) || row.specification,
       );
 
     const modularDefaultSpecification =
@@ -1068,7 +1062,7 @@ function categoryPricingValue(formData: FormData) {
         supplier_price_list_code: "",
         dimension: "",
         currency: defaultCurrency,
-        prices: Object.fromEntries([["Cat A", 0], ["Cat B", 0], ["Cat C", 0], ["Cat D", 0]]),
+        prices: Object.fromEntries([["Cat A", null], ["Cat B", null], ["Cat C", null], ["Cat D", null]]),
         specification: "",
         modular_default_dimension: modularDefaultDimension,
         modular_default_specification: modularDefaultSpecification,
@@ -1095,7 +1089,7 @@ function accessoryPricingValue(formData: FormData) {
       id: typeof row.id === "string" && row.id ? row.id : `add-on-${index}`,
       item_name: typeof row.item_name === "string" ? row.item_name.trim() : "",
       supplier_price_list_code: typeof row.supplier_price_list_code === "string" ? row.supplier_price_list_code.trim() : "",
-      price: Number.isFinite(Number(row.price)) ? Number(row.price) : 0,
+      price: parseNullablePricingNumber(row.price),
       currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
       specification: typeof row.specification === "string" ? row.specification.trim() : "",
       sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
@@ -1110,7 +1104,7 @@ function accessoryPricingValue(formData: FormData) {
           ? row.items
               .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
               .map(normalizeItem)
-              .filter((item) => item.item_name || item.supplier_price_list_code || item.price > 0 || item.specification)
+              .filter((item) => item.item_name || item.supplier_price_list_code || item.price !== null || item.specification)
           : [];
 
         return {
@@ -1135,7 +1129,7 @@ function accessoryPricingValue(formData: FormData) {
         is_active: true,
         items: flatRows
           .map(normalizeItem)
-          .filter((item) => item.item_name || item.supplier_price_list_code || item.price > 0 || item.specification),
+          .filter((item) => item.item_name || item.supplier_price_list_code || item.price !== null || item.specification),
       });
     }
 
@@ -1443,6 +1437,15 @@ export async function updateProductTemplate(formData: FormData) {
     redirectWithMessageToPath(redirectPath, actionErrorMessage("Product template could not be updated", error));
   }
 
+  await reconcileSavedProductTemplateGroupReferences({
+    accessoryPricing: payload.accessory_pricing,
+    categoryPricing: payload.category_pricing,
+    deskingSizePricing: payload.desking_size_pricing,
+    supabase,
+    templateId: id,
+    variantPricing: payload.variant_pricing,
+  });
+
   await createAuditLog(supabase, {
     entityType: "product_template",
     entityId: currentTemplate.id,
@@ -1532,6 +1535,15 @@ export async function updateProductTemplateForQuotationModal(formData: FormData)
         message: actionErrorMessage("Product template could not be updated", error),
       };
     }
+
+    await reconcileSavedProductTemplateGroupReferences({
+      accessoryPricing: payload.accessory_pricing,
+      categoryPricing: payload.category_pricing,
+      deskingSizePricing: payload.desking_size_pricing,
+      supabase,
+      templateId: id,
+      variantPricing: payload.variant_pricing,
+    });
 
     await createAuditLog(supabase, {
       entityType: "product_template",

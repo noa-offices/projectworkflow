@@ -18,9 +18,16 @@ import {
   standardCategoryPriceColumns as groupedCategoryPriceColumns,
 } from "@/lib/products/category-pricing-groups";
 import {
+  baseModelPricingGroups,
+  flattenBaseModelPricingRows,
+  normalizeBaseModelPricing,
+  serializeBaseModelPricingGroups,
+} from "@/lib/products/base-model-pricing-groups";
+import {
   modularItemPricingRows,
   modularPricingDefaultsFromRows,
 } from "@/lib/products/modular-pricing";
+import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
 import {
   quotationOptionNoFromQuotationNo,
   quotationRootBaseNo,
@@ -666,8 +673,8 @@ function normalizedDeskingSizeRow(row: DeskingSizePricingRow, index: number): De
   };
 }
 
-function activeDeskingSizeRows(rows?: DeskingSizePricingRow[] | null) {
-  return (Array.isArray(rows) ? rows : [])
+function activeDeskingSizeRows(rows: unknown) {
+  return flattenWorkstationPricingRows<DeskingSizePricingRow>(Array.isArray(rows) ? rows : [], { activeGroupsOnly: true })
     .map((row, index) => normalizedDeskingSizeRow(row, index))
     .filter((row) => row.is_active !== false)
     .filter(
@@ -682,15 +689,15 @@ function activeDeskingSizeRows(rows?: DeskingSizePricingRow[] | null) {
     .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
 }
 
-function selectedDeskingSize(formData: FormData, rows?: DeskingSizePricingRow[] | null) {
+function selectedDeskingSize(formData: FormData, rows: unknown) {
   const selectedId = textValue(formData, "desking_size_id");
   const activeRows = activeDeskingSizeRows(rows);
 
   return activeRows.find((row) => row.id === selectedId) ?? activeRows[0] ?? null;
 }
 
-function activeVariantRows(rows?: VariantPricingRow[] | null) {
-  return (Array.isArray(rows) ? rows : [])
+function activeVariantRows(rows: unknown) {
+  return flattenBaseModelPricingRows<VariantPricingRow>(Array.isArray(rows) ? rows : [], { activeGroupsOnly: true })
     .filter((row) => row.is_active !== false)
     .filter((row) => row.variant_name || row.dimension || calculationNumber(row.price) > 0)
     .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
@@ -755,7 +762,7 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
 
 function selectedVariantPricing(
   formData: FormData,
-  rows?: VariantPricingRow[] | null,
+  rows: unknown,
   fieldName = "variant_pricing_row_id",
 ) {
   const selectedId = textValue(formData, fieldName);
@@ -1282,8 +1289,8 @@ type ProductTemplateSnapshotSource = {
   proposed_image_url_19: string | null;
   proposed_image_url_20: string | null;
   image_settings: Record<string, ImageDisplaySettings> | null;
-  desking_size_pricing: DeskingSizePricingRow[] | null;
-  variant_pricing: VariantPricingRow[] | null;
+  desking_size_pricing: unknown;
+  variant_pricing: unknown;
   category_pricing: CategoryPricingRow[] | null;
   accessory_pricing: AccessoryPricingRow[] | null;
   unit_label: string;
@@ -1413,8 +1420,8 @@ type ProductComponentSnapshotSource = {
 
 type SourcePriceTemplate = {
   id: string;
-  desking_size_pricing: DeskingSizePricingRow[] | null;
-  variant_pricing: VariantPricingRow[] | null;
+  desking_size_pricing: unknown;
+  variant_pricing: unknown;
   category_pricing: CategoryPricingRow[] | null;
   accessory_pricing: AccessoryPricingRow[] | null;
   currency: string;
@@ -1532,7 +1539,7 @@ function currentSourcePriceFromSnapshot({
   const variantData = recordValue(data?.variant_pricing);
   const variantId = stringRecordValue(variantData?.id);
   if (variantId) {
-    const currentVariant = findRecordById(template.variant_pricing, variantId);
+    const currentVariant = findRecordById(flattenBaseModelPricingRows(template.variant_pricing ?? []), variantId);
     if (!currentVariant) return null;
 
     sourcePrice = quotationMoneyValue(calculationNumber(currentVariant.price));
@@ -1557,7 +1564,7 @@ function currentSourcePriceFromSnapshot({
   if (deskingLabel) {
     if (calculationNumber(deskingData?.accessory_price) > 0) return null;
 
-    const matches = arrayValue(template.desking_size_pricing)
+    const matches = flattenWorkstationPricingRows(template.desking_size_pricing ?? [])
       .map(recordValue)
       .filter(isRecord)
       .filter((row) => row.label === deskingLabel);
@@ -2503,7 +2510,7 @@ export async function saveQuotationItemToProductLibrary(formData: FormData) {
       .maybeSingle<{
         id: string;
         template_name: string;
-        variant_pricing: VariantPricingRow[] | null;
+        variant_pricing: unknown;
         is_active: boolean;
       }>();
 
@@ -2513,9 +2520,11 @@ export async function saveQuotationItemToProductLibrary(formData: FormData) {
     }
 
     const dimension = optionalTextValue(formData, "dimension");
-    const variantRows = Array.isArray(existingTemplate.variant_pricing)
-      ? existingTemplate.variant_pricing
-      : [];
+    const normalizedVariantPricing = normalizeBaseModelPricing<VariantPricingRow>(existingTemplate.variant_pricing ?? []);
+    if (normalizedVariantPricing.issues.length) {
+      redirectWithMessage(redirectPath, "Selected product family has invalid Base / Model pricing data.");
+    }
+    const variantRows = flattenBaseModelPricingRows<VariantPricingRow>(existingTemplate.variant_pricing ?? []);
     const duplicateVariant = variantRows.find((row) => {
       const sameName =
         (row.variant_name ?? "").trim().toLowerCase() === variantName.trim().toLowerCase();
@@ -2540,12 +2549,10 @@ export async function saveQuotationItemToProductLibrary(formData: FormData) {
       .filter(Boolean)
       .join("\n");
     const manualSourcePricing = manualSourcePricingFromSourceData(quotationItem.source_component_data);
-    const nextVariantRows = [
-      ...variantRows,
-      {
+    const nextVariantRow = {
         id: `variant-${Date.now()}`,
         variant_name: variantName,
-        dimension,
+        dimension: dimension ?? undefined,
         price: numberValue(formData, "variant_price", manualSourcePricing?.price ?? quotationItem.unit_price),
         currency: normalizeCurrency(
           textValue(formData, "variant_currency") || manualSourcePricing?.currency || quotationItem.currency || defaultCurrency,
@@ -2553,12 +2560,21 @@ export async function saveQuotationItemToProductLibrary(formData: FormData) {
         specification: variantSpecification || undefined,
         sort_order: variantRows.length,
         is_active: true,
-      },
-    ];
+      };
+    let nextVariantPricing: unknown = [...variantRows, nextVariantRow];
+    if (normalizedVariantPricing.sourceKind === "grouped") {
+      const groups = baseModelPricingGroups<VariantPricingRow>(existingTemplate.variant_pricing ?? []);
+      if (groups.length !== 1) {
+        redirectWithMessage(redirectPath, "Select a Base / Model group in the Product Template before adding this variant.");
+      }
+      nextVariantPricing = serializeBaseModelPricingGroups([{ ...groups[0], items: [...groups[0].items, nextVariantRow] }]);
+    } else if (normalizedVariantPricing.sourceKind === "mixed") {
+      redirectWithMessage(redirectPath, "Save and organize the Product Template Base / Model groups before adding this variant.");
+    }
 
     const { error: updateTemplateError } = await supabase
       .from("product_templates")
-      .update({ variant_pricing: nextVariantRows })
+      .update({ variant_pricing: nextVariantPricing })
       .eq("id", existingTemplate.id);
 
     if (updateTemplateError) {

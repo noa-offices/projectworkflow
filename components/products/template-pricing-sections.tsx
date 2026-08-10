@@ -15,7 +15,9 @@ import {
   VariantPricingTable,
 } from "@/components/products/variant-pricing-tables";
 import { countStandardCategoryPricingRows } from "@/lib/products/category-pricing-groups";
+import { flattenBaseModelPricingRows } from "@/lib/products/base-model-pricing-groups";
 import { modularItemPricingRows } from "@/lib/products/modular-pricing";
+import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
 import {
   TemplateImportActionButton,
   type QuotationRowImportDraft,
@@ -26,11 +28,18 @@ type TemplatePricingSectionsProps = {
   brandDefaultCurrency?: string | null;
   categoryPricingRows?: CategoryPricingRow[] | null;
   compactAccordionMode?: boolean;
-  deskingSizePricingRows?: DeskingSizePricingRow[] | null;
+  deskingSizePricingRows?: unknown;
   importDraft?: QuotationRowImportDraft | null;
   templateId: string;
+  templateIsPersisted: boolean;
   templateCurrency?: string | null;
-  variantPricingRows?: VariantPricingRow[] | null;
+  variantPricingRows?: unknown;
+  onSectionDataChange?: (section: string, hasData: boolean) => void;
+  workstationReplacement?: { rows: DeskingSizePricingRow[]; version: number } | null;
+  baseModelReplacement?: { rows: VariantPricingRow[]; version: number } | null;
+  categoryReplacement?: { groups: CategoryPricingRow[]; version: number } | null;
+  modularReplacement?: { groups: CategoryPricingRow[]; version: number } | null;
+  accessoryReplacement?: { groups: AccessoryPricingRow[]; version: number } | null;
 };
 
 function hasRows<T>(rows?: T[] | null) {
@@ -125,11 +134,20 @@ export function TemplatePricingSections({
   deskingSizePricingRows,
   importDraft,
   templateId,
+  templateIsPersisted,
   templateCurrency,
   variantPricingRows,
+  onSectionDataChange,
+  workstationReplacement,
+  baseModelReplacement,
+  categoryReplacement,
+  modularReplacement,
+  accessoryReplacement,
 }: TemplatePricingSectionsProps) {
-  const hasWorkstationPricing = hasRows(deskingSizePricingRows);
-  const hasBasePricing = hasRows(variantPricingRows);
+  const workstationPricingRowCount = flattenWorkstationPricingRows(deskingSizePricingRows ?? []).length;
+  const hasWorkstationPricing = workstationPricingRowCount > 0;
+  const baseModelPricingRowCount = flattenBaseModelPricingRows(variantPricingRows ?? []).length;
+  const hasBasePricing = baseModelPricingRowCount > 0;
   const hasAccessoriesPricing = hasRows(accessoryPricingRows);
   const hasFinishPricing = countStandardCategoryPricingRows(categoryPricingRows) > 0;
   const hasModularPricing = hasRows(modularItemPricingRows(categoryPricingRows));
@@ -145,12 +163,18 @@ export function TemplatePricingSections({
   const [openFinishPricing, setOpenFinishPricing] = useState(!compactAccordionMode && (hasFinishPricing || Boolean(importDraft)));
   const [openModularPricing, setOpenModularPricing] = useState(!compactAccordionMode && hasModularPricing);
 
+  const shouldShowWorkstationPricing = showWorkstationPricing || workstationReplacement?.version !== undefined;
+  const shouldShowBasePricing = showBasePricing || baseModelReplacement?.version !== undefined;
+  const shouldShowAccessoriesPricing = showAccessoriesPricing || accessoryReplacement?.version !== undefined;
+  const shouldShowFinishPricing = showFinishPricing || categoryReplacement?.version !== undefined;
+  const shouldShowModularPricing = showModularPricing || modularReplacement?.version !== undefined;
+
   const hiddenSectionCount = [
-    showWorkstationPricing,
-    showBasePricing,
-    showAccessoriesPricing,
-    showFinishPricing,
-    showModularPricing,
+    shouldShowWorkstationPricing,
+    shouldShowBasePricing,
+    shouldShowAccessoriesPricing,
+    shouldShowFinishPricing,
+    shouldShowModularPricing,
   ].filter((isVisible) => !isVisible).length;
 
   const accessoryItemCount = (accessoryPricingRows ?? []).reduce((count, row) => {
@@ -178,6 +202,10 @@ export function TemplatePricingSections({
         rows={deskingSizePricingRows}
         templateCurrency={templateCurrency}
         templateId={templateId}
+        templateIsPersisted={templateIsPersisted}
+        replacementRows={workstationReplacement?.rows}
+        replacementVersion={workstationReplacement?.version}
+        onHasDataChange={(hasData) => onSectionDataChange?.("workstation", hasData)}
       />
     </>
   );
@@ -199,6 +227,10 @@ export function TemplatePricingSections({
         rows={variantPricingRows}
         templateCurrency={templateCurrency}
         templateId={templateId}
+        templateIsPersisted={templateIsPersisted}
+        replacementVersion={baseModelReplacement?.version}
+        replacementRows={baseModelReplacement?.rows}
+        onHasDataChange={(hasData) => onSectionDataChange?.("baseModel", hasData)}
       />
     </>
   );
@@ -219,7 +251,11 @@ export function TemplatePricingSections({
         brandDefaultCurrency={brandDefaultCurrency}
         rows={accessoryPricingRows}
         templateCurrency={templateCurrency}
+        replacementGroups={accessoryReplacement?.groups}
+        replacementVersion={accessoryReplacement?.version}
+        onHasDataChange={(hasData) => onSectionDataChange?.("accessory", hasData)}
         templateId={templateId}
+        templateIsPersisted={templateIsPersisted}
       />
     </>
   );
@@ -240,7 +276,11 @@ export function TemplatePricingSections({
         brandDefaultCurrency={brandDefaultCurrency}
         rows={categoryPricingRows}
         templateCurrency={templateCurrency}
+        replacementGroups={categoryReplacement?.groups}
+        replacementVersion={categoryReplacement?.version}
+        onHasDataChange={(hasData) => onSectionDataChange?.("category", hasData)}
         templateId={templateId}
+        templateIsPersisted={templateIsPersisted}
       />
     </>
   );
@@ -250,6 +290,11 @@ export function TemplatePricingSections({
       brandDefaultCurrency={brandDefaultCurrency}
       rows={categoryPricingRows}
       templateCurrency={templateCurrency}
+      replacementGroups={modularReplacement?.groups}
+      replacementVersion={modularReplacement?.version}
+      onHasDataChange={(hasData) => onSectionDataChange?.("modular", hasData)}
+      templateId={templateId}
+      templateIsPersisted={templateIsPersisted}
     />
   );
 
@@ -263,35 +308,35 @@ export function TemplatePricingSections({
           </p>
           {hiddenSectionCount ? (
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              {!showWorkstationPricing ? (
+              {!shouldShowWorkstationPricing ? (
                 <PricingSetupButton
                   label="+ Use workstation size pricing"
                   description="Reveal workstation size rows with base and additional pricing."
                   onClick={() => setShowWorkstationPricing(true)}
                 />
               ) : null}
-              {!showBasePricing ? (
+              {!shouldShowBasePricing ? (
                 <PricingSetupButton
                   label="+ Use base/model pricing"
                   description="Reveal size or model pricing for desks, chairs, sofas, and similar products."
                   onClick={() => setShowBasePricing(true)}
                 />
               ) : null}
-              {!showAccessoriesPricing ? (
+              {!shouldShowAccessoriesPricing ? (
                 <PricingSetupButton
                   label="+ Use accessories pricing"
                   description="Reveal accessory groups and optional item pricing."
                   onClick={() => setShowAccessoriesPricing(true)}
                 />
               ) : null}
-              {!showFinishPricing ? (
+              {!shouldShowFinishPricing ? (
                 <PricingSetupButton
                   label="+ Use fabric/leather pricing"
                   description="Reveal finish-category pricing rows and any additional price category columns."
                   onClick={() => setShowFinishPricing(true)}
                 />
               ) : null}
-              {!showModularPricing ? (
+              {!shouldShowModularPricing ? (
                 <PricingSetupButton
                   label="+ Use modular item pricing"
                   description="Reveal modular components with fabric/category pricing for configurable sofas, lounge sets, and sectional items."
@@ -307,12 +352,12 @@ export function TemplatePricingSections({
         </div>
       </div>
 
-      {showWorkstationPricing ? (
+      {shouldShowWorkstationPricing ? (
         compactAccordionMode ? (
           <PricingAccordionSection
             isOpen={openWorkstationPricing}
             onToggle={() => setOpenWorkstationPricing((current) => !current)}
-            summary={`${deskingSizePricingRows?.length ?? 0} size rows`}
+            summary={`${workstationPricingRowCount} size rows`}
             title="Workstation Size / Base Price"
           >
             {renderWorkstationPricing}
@@ -327,12 +372,12 @@ export function TemplatePricingSections({
         )
       ) : null}
 
-      {showBasePricing ? (
+      {shouldShowBasePricing ? (
         compactAccordionMode ? (
           <PricingAccordionSection
             isOpen={openBasePricing}
             onToggle={() => setOpenBasePricing((current) => !current)}
-            summary={`${variantPricingRows?.length ?? 0} base/model rows`}
+            summary={`${baseModelPricingRowCount} base/model rows`}
             title="Base Size / Main Price"
           >
             {renderBasePricing}
@@ -347,7 +392,7 @@ export function TemplatePricingSections({
         )
       ) : null}
 
-      {showAccessoriesPricing ? (
+      {shouldShowAccessoriesPricing ? (
         compactAccordionMode ? (
           <PricingAccordionSection
             isOpen={openAccessoriesPricing}
@@ -367,7 +412,7 @@ export function TemplatePricingSections({
         )
       ) : null}
 
-      {showFinishPricing ? (
+      {shouldShowFinishPricing ? (
         compactAccordionMode ? (
           <PricingAccordionSection
             isOpen={openFinishPricing}
@@ -384,7 +429,7 @@ export function TemplatePricingSections({
         )
       ) : null}
 
-      {showModularPricing ? (
+      {shouldShowModularPricing ? (
         compactAccordionMode ? (
           <PricingAccordionSection
             isOpen={openModularPricing}

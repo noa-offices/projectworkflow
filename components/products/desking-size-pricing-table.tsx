@@ -3,6 +3,29 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { resolveDefaultPricingCurrency } from "@/components/products/pricing-default-currency";
+import { parseNullablePricingNumber } from "@/lib/products/nullable-pricing";
+import { hasMeaningfulWorkstationPricing } from "@/lib/products/workstation-pricing-state";
+import { PricingGroupReferenceImages } from "@/components/products/finish-category-group-reference-images";
+import {
+  persistedWorkstationPricingGroupIds,
+  workstationPricingGroupReferenceAvailability,
+} from "@/lib/products/finish-category-reference-ui";
+import {
+  flattenWorkstationPricingRows,
+  serializeWorkstationPricingGroups,
+  workstationPricingGroups,
+  type WorkstationPricingGroup,
+} from "@/lib/products/workstation-pricing-groups";
+import {
+  addWorkstationPricingRow,
+  createWorkstationPricingGroup,
+  removeWorkstationPricingGroup,
+  removeWorkstationPricingRow,
+  replaceWholeTemplateWorkstationRows,
+  shouldApplyWorkstationReplacement,
+  updateWorkstationPricingGroup,
+  updateWorkstationPricingRow,
+} from "@/lib/products/workstation-pricing-ui-state";
 import {
   TEMPLATE_IMPORT_APPLY_EVENT,
   TEMPLATE_IMPORT_RESET_EVENT,
@@ -20,8 +43,8 @@ export type DeskingSizePricingRow = {
   height?: number;
   dimension_unit?: string;
   layout_type?: string;
-  default_price?: number;
-  additional_price?: number;
+  default_price?: number | null;
+  additional_price?: number | null;
   additional_supplier_price_list_code?: string;
   currency?: string;
   specification?: string;
@@ -34,7 +57,7 @@ function newRow(sortOrder: number, currency: string): DeskingSizePricingRow {
   const id =
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
-      : `${Date.now()}-${sortOrder}`;
+      : `${Date.now()}-${sortOrder}-${Math.random().toString(36).slice(2)}`;
 
   return {
     id,
@@ -95,8 +118,8 @@ function normalizedRow(row: DeskingSizePricingRow, index: number): DeskingSizePr
     height,
     dimension_unit: row.dimension_unit?.trim() || "cm",
     layout_type: normalizedLayoutType(row.layout_type),
-    default_price: numericValue(row.default_price),
-    additional_price: numericValue(row.additional_price),
+    default_price: parseNullablePricingNumber(row.default_price),
+    additional_price: parseNullablePricingNumber(row.additional_price),
     additional_supplier_price_list_code: row.additional_supplier_price_list_code?.trim() || "",
     currency: normalizeCurrency(row.currency ?? defaultCurrency),
     specification: row.specification?.trim() || "",
@@ -106,55 +129,81 @@ function normalizedRow(row: DeskingSizePricingRow, index: number): DeskingSizePr
   };
 }
 
-function rowHasMeaningfulValues(row: DeskingSizePricingRow) {
-  return Boolean(
-    row.label?.trim() ||
-    row.base_supplier_price_list_code?.trim() ||
-    row.additional_supplier_price_list_code?.trim() ||
-    numericValue(row.length) !== 0 ||
-    numericValue(row.depth) !== 0 ||
-    numericValue(row.height) !== 0 ||
-    row.specification?.trim() ||
-    row.default_dimension?.trim() ||
-    numericValue(row.default_price) !== 0 ||
-    numericValue(row.additional_price) !== 0,
-  );
-}
-
 export function DeskingSizePricingTable({
   brandDefaultCurrency,
+  onHasDataChange,
+  replacementRows,
+  replacementVersion,
   templateCurrency,
   templateId,
+  templateIsPersisted,
   rows,
 }: {
   brandDefaultCurrency?: string | null;
+  onHasDataChange?: (hasWorkstationData: boolean) => void;
+  replacementRows?: DeskingSizePricingRow[] | null;
+  replacementVersion?: number;
   templateCurrency?: string | null;
   templateId: string;
-  rows?: DeskingSizePricingRow[] | null;
+  templateIsPersisted: boolean;
+  rows?: unknown;
 }) {
-  const initialRows = useMemo(() => rows?.length ? rows.map(normalizedRow) : [], [rows]);
+  const initialGroups = useMemo(() => workstationPricingGroups<DeskingSizePricingRow>(Array.isArray(rows) ? rows : [])
+    .map((group) => ({
+      id: group.id,
+      pricing_type: group.pricing_type,
+      group_name: group.group_name,
+      is_active: group.is_active,
+      sort_order: group.sort_order,
+      items: group.items.map(normalizedRow),
+    })) as WorkstationPricingGroup<DeskingSizePricingRow>[], [rows]);
   const importedIdsRef = useRef<Set<string>>(new Set());
-  const [tableRows, setTableRows] = useState<DeskingSizePricingRow[]>(() => initialRows);
+  const [groups, setGroups] = useState<WorkstationPricingGroup<DeskingSizePricingRow>[]>(() => initialGroups);
   const [draftRows, setDraftRows] = useState<Record<string, DeskingSizePricingRow>>({});
   const [editingRows, setEditingRows] = useState<Record<string, boolean>>({});
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [groupActionNotices, setGroupActionNotices] = useState<Record<string, string>>({});
+  const [referenceTargetGroupId, setReferenceTargetGroupId] = useState<string | null>(null);
+  const persistedGroupIds = useMemo(() => persistedWorkstationPricingGroupIds(rows ?? []), [rows]);
+  const appliedReplacementVersion = useRef<number | undefined>(undefined);
   const userEditedCurrencyRowIds = useRef<Set<string>>(new Set());
   const previousDefaultCurrencyRef = useRef(
     resolveDefaultPricingCurrency({
       brandDefaultCurrency,
-      existingRows: initialRows,
+      existingRows: flattenWorkstationPricingRows<DeskingSizePricingRow>(initialGroups),
       savedTemplateCurrency: templateCurrency,
     }),
   );
+  const effectiveGroups = useMemo(() => groups.map((group) => ({
+    ...group,
+    items: group.items.map((row, index) => {
+      const key = `${group.id}:${row.id ?? `size-${index}`}`;
+      return normalizedRow({ ...row, ...(draftRows[key] ?? {}) }, index);
+    }),
+  })), [draftRows, groups]);
   const serializedRows = useMemo(
-    () =>
-      JSON.stringify(
-        tableRows.map((row, index) => {
-          const key = row.id ?? `size-${index}`;
-          return normalizedRow({ ...row, ...(draftRows[key] ?? {}) }, index);
-        }),
-      ),
-    [draftRows, tableRows],
+    () => JSON.stringify(serializeWorkstationPricingGroups(effectiveGroups)),
+    [effectiveGroups],
   );
+
+  function stableId(prefix: string) {
+    return typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  useEffect(() => {
+    if (!shouldApplyWorkstationReplacement(replacementVersion, appliedReplacementVersion.current)) return;
+    appliedReplacementVersion.current = replacementVersion;
+    const nextRows = (replacementRows ?? []).map(normalizedRow);
+    setGroups((current) => replaceWholeTemplateWorkstationRows(current, nextRows, stableId("workstation-group")));
+    setDraftRows({});
+    setEditingRows({});
+  }, [replacementRows, replacementVersion]);
+
+  useEffect(() => {
+    onHasDataChange?.(hasMeaningfulWorkstationPricing(flattenWorkstationPricingRows(effectiveGroups)));
+  }, [effectiveGroups, onHasDataChange]);
 
   useEffect(() => {
     const handleApply = (event: Event) => {
@@ -185,11 +234,15 @@ export function DeskingSizePricingTable({
         specification: detail.draft.specification_snapshot || "",
         default_dimension: detail.draft.size_snapshot || "",
         is_active: true,
-        sort_order: tableRows.length,
-      }, tableRows.length);
+        sort_order: flattenWorkstationPricingRows(groups).length,
+      }, flattenWorkstationPricingRows(groups).length);
 
       importedIdsRef.current.add(row.id ?? "");
-      setTableRows((current) => [...current, row]);
+      setGroups((current) => {
+        if (current.length) return addWorkstationPricingRow(current, current[0].id, row);
+        const group = createWorkstationPricingGroup<DeskingSizePricingRow>(stableId("workstation-group"), 0);
+        return [{ ...group, items: [row] }];
+      });
       window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
         detail: {
           action: "workstation",
@@ -206,9 +259,10 @@ export function DeskingSizePricingTable({
       }
 
       if (importedIdsRef.current.size) {
-        setTableRows((current) =>
-          current.filter((row) => !importedIdsRef.current.has(row.id ?? "")),
-        );
+        setGroups((current) => current.map((group) => ({
+          ...group,
+          items: group.items.filter((row) => !importedIdsRef.current.has(row.id ?? "")),
+        })));
       }
       importedIdsRef.current = new Set();
       window.dispatchEvent(new CustomEvent(TEMPLATE_IMPORT_STATUS_EVENT, {
@@ -226,25 +280,25 @@ export function DeskingSizePricingTable({
       window.removeEventListener(TEMPLATE_IMPORT_APPLY_EVENT, handleApply);
       window.removeEventListener(TEMPLATE_IMPORT_RESET_EVENT, handleReset);
     };
-  }, [brandDefaultCurrency, tableRows.length, templateCurrency, templateId]);
+  }, [brandDefaultCurrency, groups, templateCurrency, templateId]);
 
   useEffect(() => {
     const nextDefaultCurrency = resolveDefaultPricingCurrency({
       brandDefaultCurrency,
-      existingRows: tableRows,
+      existingRows: flattenWorkstationPricingRows(groups),
       savedTemplateCurrency: templateCurrency,
     });
 
-    setTableRows((current) => {
+    setGroups((current) => {
       let didChange = false;
-      const nextRows = current.map((row, index) => {
-        const key = row.id ?? `size-${index}`;
+      const nextGroups = current.map((group) => ({ ...group, items: group.items.map((row, index) => {
+        const key = `${group.id}:${row.id ?? `size-${index}`}`;
         if (userEditedCurrencyRowIds.current.has(key)) {
           return row;
         }
 
         const draft = draftRows[key] ?? row;
-        if (rowHasMeaningfulValues(draft)) {
+        if (hasMeaningfulWorkstationPricing([draft])) {
           return row;
         }
 
@@ -267,9 +321,9 @@ export function DeskingSizePricingTable({
           ...row,
           currency: nextDefaultCurrency,
         };
-      });
+      }) }));
 
-      return didChange ? nextRows : current;
+      return didChange ? nextGroups : current;
     });
 
     setDraftRows((current) => {
@@ -277,7 +331,7 @@ export function DeskingSizePricingTable({
       const nextDrafts = { ...current };
 
       Object.entries(current).forEach(([key, draft]) => {
-        if (userEditedCurrencyRowIds.current.has(key) || rowHasMeaningfulValues(draft)) {
+        if (userEditedCurrencyRowIds.current.has(key) || hasMeaningfulWorkstationPricing([draft])) {
           return;
         }
 
@@ -303,14 +357,14 @@ export function DeskingSizePricingTable({
     });
 
     previousDefaultCurrencyRef.current = nextDefaultCurrency;
-  }, [brandDefaultCurrency, draftRows, tableRows, templateCurrency]);
+  }, [brandDefaultCurrency, draftRows, groups, templateCurrency]);
 
-  function rowKey(row: DeskingSizePricingRow, index: number) {
-    return row.id ?? `size-${index}`;
+  function rowKey(groupId: string, row: DeskingSizePricingRow, index: number) {
+    return `${groupId}:${row.id ?? `size-${index}`}`;
   }
 
-  function startEdit(row: DeskingSizePricingRow, index: number) {
-    const key = rowKey(row, index);
+  function startEdit(groupId: string, row: DeskingSizePricingRow, index: number) {
+    const key = rowKey(groupId, row, index);
     setDraftRows((current) => ({ ...current, [key]: row }));
     setEditingRows((current) => ({ ...current, [key]: true }));
   }
@@ -326,29 +380,112 @@ export function DeskingSizePricingTable({
     }));
   }
 
-  function saveDraft(row: DeskingSizePricingRow, index: number) {
-    const key = rowKey(row, index);
+  function saveDraft(groupId: string, row: DeskingSizePricingRow, index: number) {
+    const key = rowKey(groupId, row, index);
     const nextRow = normalizedRow({ ...row, ...(draftRows[key] ?? {}) }, index);
 
-    setTableRows((current) =>
-      current.map((currentRow, rowIndex) => (rowIndex === index ? nextRow : currentRow)),
-    );
+    setGroups((current) => updateWorkstationPricingRow(current, groupId, index, nextRow));
     setEditingRows((current) => ({ ...current, [key]: false }));
   }
 
-  function cancelEdit(row: DeskingSizePricingRow, index: number) {
-    const key = rowKey(row, index);
+  function cancelEdit(groupId: string, row: DeskingSizePricingRow, index: number) {
+    const key = rowKey(groupId, row, index);
+    setDraftRows((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
     setEditingRows((current) => ({ ...current, [key]: false }));
   }
 
-  function removeRow(index: number) {
-    setTableRows((current) => current.filter((_, rowIndex) => rowIndex !== index));
+  function removeRow(groupId: string, index: number) {
+    setGroups((current) => removeWorkstationPricingRow(current, groupId, index));
   }
+
+  function openReferenceImages(groupId: string) {
+    const availability = workstationPricingGroupReferenceAvailability({
+      groupId,
+      persistedGroupIds,
+      templateIsPersisted,
+    });
+    if (!availability.available) {
+      setGroupActionNotices((current) => ({ ...current, [groupId]: availability.message ?? "Reference images are unavailable." }));
+      return;
+    }
+    setGroupActionNotices((current) => ({ ...current, [groupId]: "" }));
+    setReferenceTargetGroupId(groupId);
+  }
+
+  const referenceTargetGroup = groups.find((group) => group.id === referenceTargetGroupId) ?? null;
 
   return (
     <div className="md:col-span-2 xl:col-span-3">
       <input type="hidden" name="desking_size_pricing" value={serializedRows} />
-      <div className="overflow-x-auto rounded-md border border-zinc-200 bg-white">
+      <div className="space-y-4">
+      {groups.map((group) => (
+      <section key={group.id} className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+        <header className="border-b border-zinc-200 bg-zinc-50 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              aria-expanded={!collapsedGroups[group.id]}
+              aria-label={collapsedGroups[group.id] ? "Expand pricing group" : "Collapse pricing group"}
+              onClick={() => setCollapsedGroups((current) => ({ ...current, [group.id]: !current[group.id] }))}
+              className="h-8 w-8 rounded-md border border-zinc-200 bg-white text-sm font-semibold text-zinc-700"
+            >
+              {collapsedGroups[group.id] ? ">" : "v"}
+            </button>
+            <input
+              aria-label="Workstation group title"
+              value={group.group_name}
+              onChange={(event) => setGroups((current) => updateWorkstationPricingGroup(current, group.id, { group_name: event.target.value }))}
+              className="h-8 min-w-64 flex-1 border border-zinc-200 bg-white px-2 text-sm font-semibold outline-none focus:border-emerald-800"
+            />
+            <label className="flex items-center gap-2 text-xs font-medium text-zinc-600">
+              <input
+                type="checkbox"
+                checked={group.is_active}
+                onChange={(event) => setGroups((current) => updateWorkstationPricingGroup(current, group.id, { is_active: event.target.checked }))}
+              />
+              Active
+            </label>
+            <button
+              type="button"
+              onClick={() => setGroups((current) => removeWorkstationPricingGroup(current, group.id))}
+              className="rounded-md px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
+            >
+              Remove group
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={(event) => {
+              const nextRowSortOrder = Math.max(-1, ...group.items.map((item) => Number(item.sort_order) || 0)) + 1;
+              const row = newRow(nextRowSortOrder, resolveDefaultPricingCurrency({
+                brandDefaultCurrency,
+                existingRows: flattenWorkstationPricingRows(groups),
+                savedTemplateCurrency: templateCurrency,
+                trigger: event.currentTarget,
+              }));
+              const key = rowKey(group.id, row, group.items.length);
+              setGroups((current) => addWorkstationPricingRow(current, group.id, row));
+              setEditingRows((current) => ({ ...current, [key]: true }));
+              setDraftRows((current) => ({ ...current, [key]: row }));
+            }}
+            className="mt-3 rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-600 hover:text-emerald-900"
+          >
+            + Add row
+          </button>
+          <button
+            type="button"
+            onClick={() => openReferenceImages(group.id)}
+            className="ml-2 rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-600 hover:text-emerald-900"
+          >
+            Reference images
+          </button>
+          {groupActionNotices[group.id] ? <p role="status" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">{groupActionNotices[group.id]}</p> : null}
+        </header>
+      <div hidden={collapsedGroups[group.id]} className="overflow-x-auto">
         <table className="min-w-[1560px] w-full text-left text-xs">
           <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
             <tr>
@@ -366,8 +503,8 @@ export function DeskingSizePricingTable({
             </tr>
           </thead>
           <tbody>
-            {tableRows.map((row, index) => {
-              const key = rowKey(row, index);
+            {group.items.map((row, index) => {
+              const key = rowKey(group.id, row, index);
               const isEditing = editingRows[key] ?? !row.label;
               const draft = draftRows[key] ?? row;
 
@@ -406,7 +543,7 @@ export function DeskingSizePricingTable({
                         type="number"
                         step="0.01"
                         value={draft.default_price ?? ""}
-                        onChange={(event) => updateDraft(key, { default_price: Number(event.target.value) })}
+                        onChange={(event) => updateDraft(key, { default_price: parseNullablePricingNumber(event.target.value) })}
                         className="h-8 w-28 border border-zinc-200 px-2 outline-none focus:border-emerald-800"
                       />
                     ) : (
@@ -433,7 +570,7 @@ export function DeskingSizePricingTable({
                         type="number"
                         step="0.01"
                         value={draft.additional_price ?? ""}
-                        onChange={(event) => updateDraft(key, { additional_price: Number(event.target.value) })}
+                        onChange={(event) => updateDraft(key, { additional_price: parseNullablePricingNumber(event.target.value) })}
                         className="h-8 w-28 border border-zinc-200 px-2 outline-none focus:border-emerald-800"
                       />
                     ) : (
@@ -510,14 +647,14 @@ export function DeskingSizePricingTable({
                         <>
                           <button
                             type="button"
-                            onClick={() => saveDraft(row, index)}
+                            onClick={() => saveDraft(group.id, row, index)}
                             className="text-xs font-semibold text-emerald-900 transition hover:text-emerald-700"
                           >
                             Save
                           </button>
                           <button
                             type="button"
-                            onClick={() => cancelEdit(row, index)}
+                            onClick={() => cancelEdit(group.id, row, index)}
                             className="text-xs font-semibold text-zinc-600 transition hover:text-zinc-950"
                           >
                             Cancel
@@ -526,7 +663,7 @@ export function DeskingSizePricingTable({
                       ) : (
                         <button
                           type="button"
-                          onClick={() => startEdit(row, index)}
+                          onClick={() => startEdit(group.id, row, index)}
                           className="text-xs font-semibold text-emerald-900 transition hover:text-emerald-700"
                         >
                           Edit
@@ -534,7 +671,7 @@ export function DeskingSizePricingTable({
                       )}
                       <button
                         type="button"
-                        onClick={() => removeRow(index)}
+                        onClick={() => removeRow(group.id, index)}
                         className="text-xs font-semibold text-red-700 transition hover:text-red-800"
                       >
                         Remove
@@ -544,7 +681,7 @@ export function DeskingSizePricingTable({
                 </tr>
               );
             })}
-            {!tableRows.length ? (
+            {!group.items.length ? (
               <tr>
                 <td colSpan={11} className="px-3 py-5 text-center text-zinc-500">
                   No workstation sizes yet.
@@ -554,25 +691,26 @@ export function DeskingSizePricingTable({
           </tbody>
         </table>
       </div>
+      </section>
+      ))}
+      {!groups.length ? (
+        <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 p-6 text-center text-sm text-zinc-500">
+          No workstation groups yet.
+        </div>
+      ) : null}
+      </div>
       <button
         type="button"
-        onClick={(event) => {
-          const row = newRow(
-            tableRows.length,
-            resolveDefaultPricingCurrency({
-              brandDefaultCurrency,
-              existingRows: tableRows,
-              savedTemplateCurrency: templateCurrency,
-              trigger: event.currentTarget,
-            }),
-          );
-          setTableRows((current) => [...current, row]);
-          setEditingRows((current) => ({ ...current, [row.id ?? ""]: true }));
-          setDraftRows((current) => ({ ...current, [row.id ?? ""]: row }));
-        }}
+        onClick={() => setGroups((current) => {
+          const nextSortOrder = Math.max(-1, ...current.map((group) => Number(group.sort_order) || 0)) + 1;
+          return [
+            ...current,
+            createWorkstationPricingGroup<DeskingSizePricingRow>(stableId("workstation-group"), nextSortOrder, current.length ? "New Workstation Group" : "Workstation Pricing"),
+          ];
+        })}
         className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700"
       >
-        + Add Size
+        + Add Workstation Group
       </button>
       <button
         type="submit"
@@ -580,6 +718,15 @@ export function DeskingSizePricingTable({
       >
         Save Pricing
       </button>
+      {referenceTargetGroup && referenceTargetGroupId ? (
+        <PricingGroupReferenceImages
+          templateId={templateId}
+          pricingType="workstation"
+          groupId={referenceTargetGroupId}
+          groupLabel={referenceTargetGroup.group_name || "Workstation Pricing"}
+          onClose={() => setReferenceTargetGroupId(null)}
+        />
+      ) : null}
     </div>
   );
 }

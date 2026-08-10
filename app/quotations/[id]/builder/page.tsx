@@ -33,6 +33,8 @@ import {
   latestBrandPriceListUpdate,
   productTemplatePriceCheckState,
 } from "@/lib/product-price-check";
+import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
+import { flattenBaseModelPricingRows } from "@/lib/products/base-model-pricing-groups";
 import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
 import {
   FinishImagePreview,
@@ -713,7 +715,7 @@ function currentSourcePriceForItem({
   const variantData = recordValue(sourceData?.variant_pricing);
   const variantId = stringValue(variantData?.id);
   if (variantId) {
-    const currentVariant = findById(template.variant_pricing, variantId);
+    const currentVariant = findById(flattenBaseModelPricingRows(template.variant_pricing ?? []), variantId);
     if (!currentVariant) return null;
 
     sourcePrice = quotationMoneyValue(numericValue(currentVariant.price));
@@ -740,7 +742,7 @@ function currentSourcePriceForItem({
   if (deskingLabel) {
     if (numericValue(deskingData?.accessory_price) > 0) return null;
 
-    const matches = arrayValue(template.desking_size_pricing)
+    const matches = flattenWorkstationPricingRows(template.desking_size_pricing ?? [])
       .map(recordValue)
       .filter(isRecord)
       .filter((row) => row?.label === deskingLabel);

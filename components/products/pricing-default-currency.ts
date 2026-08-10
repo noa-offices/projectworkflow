@@ -1,6 +1,7 @@
 "use client";
 
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
+import { resolveInheritedPricingCurrency } from "@/lib/products/nullable-pricing";
 
 type CurrencyLikeRow = {
   currency?: string | null;
@@ -27,25 +28,9 @@ function formCurrencyFromTrigger(trigger?: HTMLElement | null) {
   return null;
 }
 
-function existingRowsCurrency(rows: CurrencyLikeRow[]) {
-  const counts = new Map<string, number>();
-
-  rows.forEach((row) => {
-    const currency = row.currency?.trim();
-    if (!currency) {
-      return;
-    }
-
-    const normalized = normalizeCurrency(currency);
-    counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
-  });
-
-  return Array.from(counts.entries()).sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
-}
-
 export function resolveDefaultPricingCurrency({
   brandDefaultCurrency,
-  existingRows = [],
+  existingRows: _existingRows,
   savedTemplateCurrency,
   trigger,
 }: {
@@ -54,11 +39,26 @@ export function resolveDefaultPricingCurrency({
   savedTemplateCurrency?: string | null;
   trigger?: HTMLElement | null;
 }) {
-  return (
-    (brandDefaultCurrency?.trim() ? normalizeCurrency(brandDefaultCurrency) : null) ||
-    (savedTemplateCurrency?.trim() ? normalizeCurrency(savedTemplateCurrency) : null) ||
-    formCurrencyFromTrigger(trigger) ||
-    existingRowsCurrency(existingRows) ||
-    defaultCurrency
-  );
+  void _existingRows;
+  return resolveInheritedPricingCurrency({
+    brandCurrency: brandDefaultCurrency,
+    fallbackCurrency: defaultCurrency,
+    normalizeCurrency,
+    templateCurrency: savedTemplateCurrency?.trim() ? savedTemplateCurrency : formCurrencyFromTrigger(trigger),
+  });
+}
+
+export function resolvePricingRowCurrency({
+  rowCurrency,
+  ...defaults
+}: Parameters<typeof resolveDefaultPricingCurrency>[0] & { rowCurrency?: string | null }) {
+  return resolveInheritedPricingCurrency({
+    brandCurrency: defaults.brandDefaultCurrency,
+    fallbackCurrency: defaultCurrency,
+    normalizeCurrency,
+    rowCurrency,
+    templateCurrency: defaults.savedTemplateCurrency?.trim()
+      ? defaults.savedTemplateCurrency
+      : formCurrencyFromTrigger(defaults.trigger),
+  });
 }

@@ -16,8 +16,19 @@ import {
   TemplateCategoryFields,
 } from "@/components/products/template-category-fields";
 import { TemplateFormShell } from "@/components/products/template-form-shell";
+import { CopyAiExtractionPrompt } from "@/components/products/copy-ai-extraction-prompt";
+import { SmartProductJsonImport } from "@/components/products/smart-product-json-import";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { countStandardCategoryPricingRows } from "@/lib/products/category-pricing-groups";
+import { flattenBaseModelPricingRows } from "@/lib/products/base-model-pricing-groups";
+import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
+import { getDraftPricingSectionPresence, getSmartSetupOverwriteConflicts, type SmartSetupSectionPresence } from "@/lib/products/smart-product-apply-state";
+import type { ProductTemplateDraft } from "@/lib/products/product-template-draft";
+import { mapDraftWorkstationRows } from "@/lib/products/product-template-draft-workstation-adapter";
+import { mapDraftBaseModelRows } from "@/lib/products/product-template-draft-base-model-adapter";
+import { mapDraftPriceMatricesToCategoryGroups } from "@/lib/products/product-template-draft-category-adapter";
+import { mapDraftModularPricing } from "@/lib/products/product-template-draft-modular-adapter";
+import { mapDraftOptionGroupsToAccessories } from "@/lib/products/product-template-draft-accessory-adapter";
 
 type ProductTemplateImageField =
   | "proposed_image_url_1"
@@ -77,8 +88,8 @@ type DeskingSizePricingRow = {
   height?: number;
   dimension_unit?: string;
   layout_type?: string;
-  default_price?: number;
-  additional_price?: number;
+  default_price?: number | null;
+  additional_price?: number | null;
   additional_supplier_price_list_code?: string;
   currency?: string;
   specification?: string;
@@ -93,7 +104,7 @@ type VariantPricingRow = {
   display_name?: string;
   supplier_price_list_code?: string;
   dimension?: string;
-  price?: number;
+  price?: number | null;
   currency?: string;
   specification?: string;
   is_active?: boolean;
@@ -114,7 +125,7 @@ type CategoryPricingRow = {
   supplier_price_list_code?: string;
   dimension?: string;
   currency?: string;
-  prices?: Record<string, number>;
+  prices?: Record<string, number | null>;
   specification?: string;
   modular_default_dimension?: string | null;
   modular_default_specification?: string | null;
@@ -127,7 +138,7 @@ type AccessoryPricingRow = {
   group_name?: string;
   item_name?: string;
   supplier_price_list_code?: string;
-  price?: number;
+  price?: number | null;
   currency?: string;
   specification?: string;
   is_active?: boolean;
@@ -170,8 +181,8 @@ type ProductTemplate = {
   proposed_image_url_18: string | null;
   proposed_image_url_19: string | null;
   proposed_image_url_20: string | null;
-  desking_size_pricing: DeskingSizePricingRow[] | null;
-  variant_pricing: VariantPricingRow[] | null;
+  desking_size_pricing: unknown;
+  variant_pricing: unknown;
   category_pricing: CategoryPricingRow[] | null;
   accessory_pricing: AccessoryPricingRow[] | null;
   image_settings?: ProductTemplateImageSettings | null;
@@ -434,10 +445,51 @@ export function ProductTemplateForm({
     pricing: !compactAccordionMode,
     summaryPricing: !compactAccordionMode,
   });
+  const [currentPricingData, setCurrentPricingData] = useState<SmartSetupSectionPresence>({ workstation: false, baseModel: false, category: false, modular: false, accessory: false });
+  const [approvedSmartDraft, setApprovedSmartDraft] = useState<ProductTemplateDraft | null>(null);
+  const [smartSetupNotice, setSmartSetupNotice] = useState("");
+  const [workstationReplacement, setWorkstationReplacement] = useState<{ rows: DeskingSizePricingRow[]; version: number } | null>(null);
+  const [baseModelReplacement, setBaseModelReplacement] = useState<{ rows: VariantPricingRow[]; version: number } | null>(null);
+  const [categoryReplacement, setCategoryReplacement] = useState<{ groups: CategoryPricingRow[]; version: number } | null>(null);
+  const [modularReplacement, setModularReplacement] = useState<{ groups: CategoryPricingRow[]; version: number } | null>(null);
+  const [accessoryReplacement, setAccessoryReplacement] = useState<{ groups: AccessoryPricingRow[]; version: number } | null>(null);
+  function requestSmartDraftApply(draft: ProductTemplateDraft, confirmed = false) {
+    const workstation = mapDraftWorkstationRows(draft);
+    const baseModel = mapDraftBaseModelRows(draft);
+    const category = mapDraftPriceMatricesToCategoryGroups(draft);
+    const modular = mapDraftModularPricing(draft);
+    const accessories = mapDraftOptionGroupsToAccessories(draft);
+    const draftPresence = getDraftPricingSectionPresence(draft);
+    draftPresence.workstation = workstation.rows.length > 0;
+    draftPresence.baseModel = baseModel.rows.length > 0;
+    draftPresence.category = category.groups.length > 0;
+    if (!modular.compatible) draftPresence.modular = false;
+    if (!accessories.groups.length) draftPresence.accessory = false;
+    const conflicts = getSmartSetupOverwriteConflicts(draftPresence, currentPricingData);
+    if (conflicts.length && !confirmed) return conflicts;
+    if (workstation.rows.length) setWorkstationReplacement((current) => ({ rows: workstation.rows, version: (current?.version ?? 0) + 1 }));
+    if (baseModel.rows.length) setBaseModelReplacement((current) => ({ rows: baseModel.rows, version: (current?.version ?? 0) + 1 }));
+    if (category.groups.length) setCategoryReplacement((current) => ({ groups: category.groups, version: (current?.version ?? 0) + 1 }));
+    if (draft.pricing.modularGroups.length && modular.compatible) setModularReplacement((current) => ({ groups: modular.groups, version: (current?.version ?? 0) + 1 }));
+    if (accessories.groups.length) setAccessoryReplacement((current) => ({ groups: accessories.groups, version: (current?.version ?? 0) + 1 }));
+    const modularMessage = draft.pricing.modularGroups.length && !modular.compatible
+      ? ` Modular Pricing was not applied because the detected modular groups use incompatible price-category columns. ${modular.errors.join(" ")}`
+      : "";
+    const modularWarnings = modular.warnings.length ? ` ${modular.warnings.join(" ")}` : "";
+    const accessoryMessage = [...accessories.errors, ...accessories.warnings].length ? ` ${[...accessories.errors, ...accessories.warnings].join(" ")}` : "";
+    const mappingWarnings = [...workstation.warnings, ...baseModel.warnings, ...category.warnings].length
+      ? ` ${[...workstation.warnings, ...baseModel.warnings, ...category.warnings].join(" ")}`
+      : "";
+    const manualSuggestions = `${draft.materialSuggestions.length ? " Material suggestions were detected but were not linked automatically. Review Materials manually." : ""}${draft.linkedFamilySuggestions.length ? " Linked product family suggestions require manual review/linking." : ""}`;
+    const appliedAny = workstation.rows.length || baseModel.rows.length || category.groups.length || modular.compatible && modular.groups.length || accessories.groups.length;
+    setExpandedSections((current) => ({ ...current, pricing: true }));
+    setApprovedSmartDraft(draft); setSmartSetupNotice(`${appliedAny ? "AI draft applied to supported Product Template pricing. Review all values before saving." : "No pricing data was applied."}${modularMessage}${modularWarnings}${accessoryMessage}${mappingWarnings}${manualSuggestions}`); return true;
+  }
+  function updatePricingData(section: string, hasData: boolean) { setCurrentPricingData((current) => ({ ...current, [section]: hasData })); }
   const imageCount = proposedImageSlots.filter((slot) => Boolean(templateImageValue(template, slot.field))).length;
   const pricingRowCount =
-    (template?.desking_size_pricing?.length ?? 0) +
-    (template?.variant_pricing?.length ?? 0) +
+    flattenWorkstationPricingRows(template?.desking_size_pricing ?? []).length +
+    flattenBaseModelPricingRows(template?.variant_pricing ?? []).length +
     (template?.accessory_pricing?.length ?? 0) +
     countStandardCategoryPricingRows(template?.category_pricing);
 
@@ -518,6 +570,8 @@ export function ProductTemplateForm({
       <input type="hidden" name="id" value={templateId} />
       <input type="hidden" name="return_to" value={returnTo} />
       {extraHiddenFields}
+      <div className="flex flex-wrap justify-end gap-2"><CopyAiExtractionPrompt /><SmartProductJsonImport onRequestApply={requestSmartDraftApply} /></div>
+      {smartSetupNotice && approvedSmartDraft ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950">{smartSetupNotice}</div> : null}
       {!template && importDraft && importMode === "new" ? (
         <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950 shadow-sm">
           <p className="font-semibold">Quotation row imported into the existing Add Template form.</p>
@@ -742,8 +796,8 @@ export function ProductTemplateForm({
         <TemplatePricingSections
           key={[
             template?.id ?? "new",
-            template?.desking_size_pricing?.length ?? 0,
-            template?.variant_pricing?.length ?? 0,
+            flattenWorkstationPricingRows(template?.desking_size_pricing ?? []).length,
+            flattenBaseModelPricingRows(template?.variant_pricing ?? []).length,
             template?.accessory_pricing?.length ?? 0,
             template?.category_pricing?.length ?? 0,
             (template?.category_pricing ?? [])
@@ -758,7 +812,14 @@ export function ProductTemplateForm({
           importDraft={existingImportDraft}
           templateCurrency={template?.currency}
           templateId={templateId}
+          templateIsPersisted={Boolean(template)}
           variantPricingRows={template?.variant_pricing}
+          onSectionDataChange={updatePricingData}
+          workstationReplacement={workstationReplacement}
+          baseModelReplacement={baseModelReplacement}
+          categoryReplacement={categoryReplacement}
+          modularReplacement={modularReplacement}
+          accessoryReplacement={accessoryReplacement}
         />
       </FormSection>
     </TemplateFormShell>

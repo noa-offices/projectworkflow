@@ -44,6 +44,8 @@ import {
 } from "@/lib/product-price-check";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import { materialDisplayCategoryLabel } from "@/lib/products/material-classification";
+import { flattenBaseModelPricingRows } from "@/lib/products/base-model-pricing-groups";
+import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
 import { createClient } from "@/lib/supabase/server";
 import { profileDisplayName } from "@/lib/user-display";
 import {
@@ -289,8 +291,8 @@ type ProductTemplate = {
   proposed_image_url_18: string | null;
   proposed_image_url_19: string | null;
   proposed_image_url_20: string | null;
-  desking_size_pricing: DeskingSizePricingRow[] | null;
-  variant_pricing: VariantPricingRow[] | null;
+  desking_size_pricing: unknown;
+  variant_pricing: unknown;
   category_pricing: CategoryPricingRow[] | null;
   accessory_pricing: AccessoryPricingRow[] | null;
   image_settings: ProductTemplateImageSettings | null;
@@ -602,11 +604,11 @@ function templateSearchText(
     template.sub_category_id ? categoryMap.get(template.sub_category_id) : null,
   ];
 
-  for (const row of template.desking_size_pricing ?? []) {
+  for (const row of flattenWorkstationPricingRows<DeskingSizePricingRow>(template.desking_size_pricing ?? [])) {
     tokens.push(row.label, row.supplier_price_list_code, row.dimension_unit);
   }
 
-  for (const row of template.variant_pricing ?? []) {
+  for (const row of flattenBaseModelPricingRows<VariantPricingRow>(template.variant_pricing ?? [])) {
     tokens.push(
       row.variant_name,
       row.display_name,
@@ -2991,7 +2993,8 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
               const priceListUpdateById = new Map(templateBrandPriceListUpdates.map((update) => [update.id, update]));
               const groups = new Map<string, ProductComponent[]>();
               const hasWorkstationSizePricing = Boolean(
-                template.desking_size_pricing?.some((row) => row.is_active !== false),
+                flattenWorkstationPricingRows<DeskingSizePricingRow>(template.desking_size_pricing ?? [], { activeGroupsOnly: true })
+                  .some((row) => row.is_active !== false),
               );
               const activeTemplateComponents = templateComponents.filter(
                 (component) =>
@@ -3240,8 +3243,8 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                   </div>
 
                   {(activeTemplateComponents.length ||
-                    template.desking_size_pricing?.length ||
-                    template.variant_pricing?.length ||
+                    flattenWorkstationPricingRows(template.desking_size_pricing ?? []).length ||
+                    flattenBaseModelPricingRows(template.variant_pricing ?? []).length ||
                     template.category_pricing?.length ||
                     template.accessory_pricing?.length ||
                     templateDetailPriceHistoryRows.length) ? (
@@ -3297,11 +3300,12 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                             </section>
                           ) : null}
 
-                          {template.desking_size_pricing?.length ? (
+                          {flattenWorkstationPricingRows(template.desking_size_pricing ?? []).length ? (
                             <section>
                               <h4 className="text-xs font-bold uppercase text-zinc-500">Workstation Size / Base Price</h4>
                               <div className="mt-2 grid gap-3">
-                                {template.desking_size_pricing.filter((row) => row.is_active !== false).map((row, index) => (
+                                {flattenWorkstationPricingRows<DeskingSizePricingRow>(template.desking_size_pricing ?? [])
+                                  .filter((row) => row.is_active !== false).map((row, index) => (
                                   <DetailPriceRow
                                     key={row.id ?? `desking-${index}`}
                                     form={
@@ -3341,11 +3345,12 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                             </section>
                           ) : null}
 
-                          {template.variant_pricing?.length ? (
+                          {flattenBaseModelPricingRows(template.variant_pricing ?? []).length ? (
                             <section>
                               <h4 className="text-xs font-bold uppercase text-zinc-500">Base Size / Main Price</h4>
                               <div className="mt-2 grid gap-3">
-                                {template.variant_pricing.filter((row) => row.is_active !== false).map((row, index) => (
+                                {flattenBaseModelPricingRows<VariantPricingRow>(template.variant_pricing ?? [])
+                                  .filter((row) => row.is_active !== false).map((row, index) => (
                                   <DetailPriceRow
                                     key={row.id ?? `variant-${index}`}
                                     form={

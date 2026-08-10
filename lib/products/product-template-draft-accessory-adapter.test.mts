@@ -1,0 +1,34 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { PRODUCT_TEMPLATE_DRAFT_VERSION, type ProductTemplateDraft, type ProductTemplateDraftSelectionMode } from "./product-template-draft.js";
+import { mapDraftOptionGroupsToAccessories } from "./product-template-draft-accessory-adapter.js";
+
+function draft(mode: ProductTemplateDraftSelectionMode, minSelections: number, maxSelections: number | null, defaultItemIds: string[] = []): ProductTemplateDraft {
+  return {
+    version: PRODUCT_TEMPLATE_DRAFT_VERSION,
+    template: { templateName: null, templateCode: null, itemCode: null, internalSelectionName: null, description: null, specification: null, origin: null, supplierName: null, dimensions: null, supplierCodes: [], referenceCodes: [] },
+    defaultCurrency: null,
+    pricing: { workstationRows: [], baseModelRows: [], priceMatrices: [], modularGroups: [] },
+    optionGroups: [{ id: "feet", label: "Feet", selection: { mode, minSelections, maxSelections, defaultItemIds }, items: [
+      { id: "standard", label: "Standard", displayName: null, dimensions: null, currency: "EUR", price: 0, specification: null, supplierCodes: ["STD"], referenceCodes: [] },
+      { id: "chrome", label: "Chrome", displayName: null, dimensions: null, currency: null, price: 75, specification: "Chrome", supplierCodes: ["CHR", "EXTRA"], referenceCodes: [] },
+    ] }],
+    materialSuggestions: [], linkedFamilySuggestions: [], extractionWarnings: [], confidence: null, sources: [],
+  };
+}
+
+test("safe accessory groups preserve prices, order, required state, and code warnings", () => {
+  const optional = mapDraftOptionGroupsToAccessories(draft("optional", 0, null));
+  assert.equal(optional.groups[0].items[0].price, 0);
+  assert.equal(optional.groups[0].items[1].price, 75);
+  assert.equal(optional.groups[0].items[0].supplier_price_list_code, "STD");
+  assert.match(optional.warnings[0], /only the primary code/);
+  const required = mapDraftOptionGroupsToAccessories(draft("required_choose_at_least_one", 1, null));
+  assert.equal(required.groups[0].group_is_required, true);
+});
+
+test("unsafe exact-choice and default semantics produce no replacement groups", () => {
+  const result = mapDraftOptionGroupsToAccessories(draft("required_choose_one", 1, 1, ["standard"]));
+  assert.deepEqual(result.groups, []);
+  assert.match(result.errors[0], /cannot be represented safely/);
+});
