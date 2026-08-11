@@ -1,12 +1,42 @@
-import type { ProductTemplateDraft } from "./product-template-draft";
+import { BASE_MODEL_GROUP_PRICING_TYPE } from "./base-model-pricing-groups";
+import type { ProductTemplateDraft, ProductTemplateDraftMatrixRow, ProductTemplateDraftPricedRow } from "./product-template-draft";
+import { directMatrixRowPrice, routeDraftPriceMatrices, type DraftPriceMatrixRoute } from "./product-template-draft-pricing-routing";
+
+function dimensionText(dimension: ProductTemplateDraftPricedRow["dimensions"]) {
+  return dimension?.rawText ?? [dimension?.diameter !== null && dimension?.diameter !== undefined ? `Ø${dimension.diameter}` : null, dimension?.width, dimension?.depth, dimension?.height].filter((value) => value !== null && value !== undefined).join(" × ") + (dimension?.unit ? ` ${dimension.unit}` : "");
+}
+
+function mapRow(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMatrixRow, price: number | null, index: number) {
+  const codes = [...row.supplierCodes, ...row.referenceCodes];
+  return { id: row.id, variant_name: row.label ?? row.id, display_name: row.displayName ?? row.label ?? "", supplier_price_list_code: codes[0] ?? "", dimension: dimensionText(row.dimensions), price, currency: row.currency ?? undefined, specification: row.specification ?? "", is_active: true, sort_order: index };
+}
+
 export function mapDraftBaseModelRows(draft: ProductTemplateDraft) {
   const warnings: string[] = [];
   const rows = draft.pricing.baseModelRows.map((row, index) => {
     const codes = [...row.supplierCodes, ...row.referenceCodes];
     if (codes.length > 1) warnings.push(`Base/Model row '${row.label ?? row.displayName ?? row.id}' contains ${codes.length} supplier codes; only the primary code was applied.`);
-    const dimension = row.dimensions;
-    const text = dimension?.rawText ?? [dimension?.diameter !== null && dimension?.diameter !== undefined ? `Ø${dimension.diameter}` : null, dimension?.width, dimension?.depth, dimension?.height].filter((value) => value !== null && value !== undefined).join(" × ") + (dimension?.unit ? ` ${dimension.unit}` : "");
-    return { id: row.id, variant_name: row.label ?? row.id, display_name: row.displayName ?? row.label ?? "", supplier_price_list_code: codes[0] ?? "", dimension: text, price: row.price, currency: row.currency ?? undefined, specification: row.specification ?? "", is_active: true, sort_order: index };
+    return mapRow(row, row.price, index);
   });
   return { rows, warnings };
+}
+
+export function mapDraftBaseModelPricing(draft: ProductTemplateDraft, matrixRouting: Record<string, DraftPriceMatrixRoute["kind"]> = {}) {
+  const flat = mapDraftBaseModelRows(draft);
+  const warnings = [...flat.warnings];
+  const rowIds = new Set(flat.rows.map((row) => row.id));
+  const groups = routeDraftPriceMatrices(draft, matrixRouting).routes.flatMap((route, matrixIndex) => {
+    if (route.kind !== "base_model") return [];
+    const column = route.matrix.columns[0];
+    const items = route.matrix.rows.flatMap((row, rowIndex) => {
+      if (rowIds.has(row.id)) {
+        warnings.push(`Base/Model row '${row.label ?? row.displayName ?? row.id}' was not duplicated from matrix '${route.matrix.label ?? route.matrix.id}' because its stable row ID already exists in baseModelRows.`);
+        return [];
+      }
+      rowIds.add(row.id);
+      return [mapRow(row, directMatrixRowPrice(row, column) ?? null, rowIndex)];
+    });
+    return items.length ? [{ id: route.matrix.id, pricing_type: BASE_MODEL_GROUP_PRICING_TYPE, group_name: route.matrix.label ?? route.matrix.id, is_active: true, sort_order: matrixIndex + (flat.rows.length ? 1 : 0), items }] : [];
+  });
+  return { groups, rows: flat.rows, warnings };
 }

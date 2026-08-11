@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useCallback, useState } from "react";
 import {
   DeskingSizePricingTable,
   type DeskingSizePricingRow,
@@ -15,13 +15,19 @@ import {
   VariantPricingTable,
 } from "@/components/products/variant-pricing-tables";
 import { countStandardCategoryPricingRows } from "@/lib/products/category-pricing-groups";
-import { flattenBaseModelPricingRows } from "@/lib/products/base-model-pricing-groups";
+import {
+  baseModelPricingGroups,
+  flattenBaseModelPricingRows,
+  type BaseModelPricingGroup,
+  type BaseModelPricingSubgroup,
+} from "@/lib/products/base-model-pricing-groups";
 import { modularItemPricingRows } from "@/lib/products/modular-pricing";
 import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
 import {
   TemplateImportActionButton,
   type QuotationRowImportDraft,
 } from "@/components/products/template-import-controls";
+import type { SmartSetupPricingSection } from "@/lib/products/smart-product-apply-state";
 
 type TemplatePricingSectionsProps = {
   accessoryPricingRows?: AccessoryPricingRow[] | null;
@@ -34,9 +40,9 @@ type TemplatePricingSectionsProps = {
   templateIsPersisted: boolean;
   templateCurrency?: string | null;
   variantPricingRows?: unknown;
-  onSectionDataChange?: (section: string, hasData: boolean) => void;
+  onSectionDataChange?: (section: SmartSetupPricingSection, hasData: boolean) => void;
   workstationReplacement?: { rows: DeskingSizePricingRow[]; version: number } | null;
-  baseModelReplacement?: { rows: VariantPricingRow[]; version: number } | null;
+  baseModelReplacement?: { groups: BaseModelPricingGroup<VariantPricingRow>[]; rows: VariantPricingRow[]; flatSubgroups?: BaseModelPricingSubgroup[]; version: number } | null;
   categoryReplacement?: { groups: CategoryPricingRow[]; version: number } | null;
   modularReplacement?: { groups: CategoryPricingRow[]; version: number } | null;
   accessoryReplacement?: { groups: AccessoryPricingRow[]; version: number } | null;
@@ -144,6 +150,7 @@ export function TemplatePricingSections({
   modularReplacement,
   accessoryReplacement,
 }: TemplatePricingSectionsProps) {
+  void compactAccordionMode;
   const workstationPricingRowCount = flattenWorkstationPricingRows(deskingSizePricingRows ?? []).length;
   const hasWorkstationPricing = workstationPricingRowCount > 0;
   const baseModelPricingRowCount = flattenBaseModelPricingRows(variantPricingRows ?? []).length;
@@ -157,11 +164,22 @@ export function TemplatePricingSections({
   const [showAccessoriesPricing, setShowAccessoriesPricing] = useState(hasAccessoriesPricing || Boolean(importDraft));
   const [showFinishPricing, setShowFinishPricing] = useState(hasFinishPricing || Boolean(importDraft));
   const [showModularPricing, setShowModularPricing] = useState(hasModularPricing);
-  const [openWorkstationPricing, setOpenWorkstationPricing] = useState(!compactAccordionMode && (hasWorkstationPricing || Boolean(importDraft)));
-  const [openBasePricing, setOpenBasePricing] = useState(!compactAccordionMode && (hasBasePricing || Boolean(importDraft)));
-  const [openAccessoriesPricing, setOpenAccessoriesPricing] = useState(!compactAccordionMode && (hasAccessoriesPricing || Boolean(importDraft)));
-  const [openFinishPricing, setOpenFinishPricing] = useState(!compactAccordionMode && (hasFinishPricing || Boolean(importDraft)));
-  const [openModularPricing, setOpenModularPricing] = useState(!compactAccordionMode && hasModularPricing);
+  const [openWorkstationPricing, setOpenWorkstationPricing] = useState(false);
+  const [openBasePricing, setOpenBasePricing] = useState(false);
+  const [openAccessoriesPricing, setOpenAccessoriesPricing] = useState(false);
+  const [openFinishPricing, setOpenFinishPricing] = useState(false);
+  const [openModularPricing, setOpenModularPricing] = useState(false);
+  const [currentBaseModelGroups, setCurrentBaseModelGroups] = useState<BaseModelPricingGroup<VariantPricingRow>[]>(() =>
+    baseModelPricingGroups<VariantPricingRow>(Array.isArray(variantPricingRows) ? variantPricingRows : []),
+  );
+  const handleBaseModelGroupsChange = useCallback((groups: BaseModelPricingGroup<VariantPricingRow>[]) => {
+    setCurrentBaseModelGroups(groups);
+  }, []);
+  const reportWorkstationData = useCallback((hasData: boolean) => onSectionDataChange?.("workstation", hasData), [onSectionDataChange]);
+  const reportBaseModelData = useCallback((hasData: boolean) => onSectionDataChange?.("baseModel", hasData), [onSectionDataChange]);
+  const reportAccessoryData = useCallback((hasData: boolean) => onSectionDataChange?.("accessory", hasData), [onSectionDataChange]);
+  const reportCategoryData = useCallback((hasData: boolean) => onSectionDataChange?.("category", hasData), [onSectionDataChange]);
+  const reportModularData = useCallback((hasData: boolean) => onSectionDataChange?.("modular", hasData), [onSectionDataChange]);
 
   const shouldShowWorkstationPricing = showWorkstationPricing || workstationReplacement?.version !== undefined;
   const shouldShowBasePricing = showBasePricing || baseModelReplacement?.version !== undefined;
@@ -184,6 +202,14 @@ export function TemplatePricingSections({
 
     return row.item_name || row.specification || row.price ? count + 1 : count;
   }, 0);
+  const replacementBaseModelCount = (baseModelReplacement?.groups ?? []).reduce((count, group) => count + (group.items?.length ?? 0), baseModelReplacement?.rows.length ?? 0);
+  const replacementAccessoryItemCount = (accessoryReplacement?.groups ?? []).reduce((count, group) => count + (group.items?.length ?? 0), 0);
+  const replacementCategoryCount = categoryReplacement?.groups.reduce((count, group) => count + (group.items?.length ?? 0), 0) ?? 0;
+  const replacementModularCount = modularReplacement?.groups.reduce((count, group) => count + (group.items?.length ?? 0), 0) ?? 0;
+  const activeBaseModelCount = baseModelReplacement?.version !== undefined ? replacementBaseModelCount : baseModelPricingRowCount;
+  const activeAccessoryItemCount = accessoryReplacement?.version !== undefined ? replacementAccessoryItemCount : accessoryItemCount;
+  const activeCategoryCount = categoryReplacement?.version !== undefined ? replacementCategoryCount : countStandardCategoryPricingRows(categoryPricingRows);
+  const activeModularCount = modularReplacement?.version !== undefined ? replacementModularCount : modularItemPricingRows(categoryPricingRows).length;
 
   const renderWorkstationPricing = (
     <>
@@ -205,7 +231,7 @@ export function TemplatePricingSections({
         templateIsPersisted={templateIsPersisted}
         replacementRows={workstationReplacement?.rows}
         replacementVersion={workstationReplacement?.version}
-        onHasDataChange={(hasData) => onSectionDataChange?.("workstation", hasData)}
+        onHasDataChange={reportWorkstationData}
       />
     </>
   );
@@ -230,7 +256,10 @@ export function TemplatePricingSections({
         templateIsPersisted={templateIsPersisted}
         replacementVersion={baseModelReplacement?.version}
         replacementRows={baseModelReplacement?.rows}
-        onHasDataChange={(hasData) => onSectionDataChange?.("baseModel", hasData)}
+        replacementGroups={baseModelReplacement?.groups}
+        replacementFlatSubgroups={baseModelReplacement?.flatSubgroups}
+        onGroupsChange={handleBaseModelGroupsChange}
+        onHasDataChange={reportBaseModelData}
       />
     </>
   );
@@ -248,12 +277,13 @@ export function TemplatePricingSections({
         </div>
       ) : null}
       <AccessoryPricingTable
+        baseModelGroups={currentBaseModelGroups}
         brandDefaultCurrency={brandDefaultCurrency}
         rows={accessoryPricingRows}
         templateCurrency={templateCurrency}
         replacementGroups={accessoryReplacement?.groups}
         replacementVersion={accessoryReplacement?.version}
-        onHasDataChange={(hasData) => onSectionDataChange?.("accessory", hasData)}
+        onHasDataChange={reportAccessoryData}
         templateId={templateId}
         templateIsPersisted={templateIsPersisted}
       />
@@ -278,7 +308,7 @@ export function TemplatePricingSections({
         templateCurrency={templateCurrency}
         replacementGroups={categoryReplacement?.groups}
         replacementVersion={categoryReplacement?.version}
-        onHasDataChange={(hasData) => onSectionDataChange?.("category", hasData)}
+        onHasDataChange={reportCategoryData}
         templateId={templateId}
         templateIsPersisted={templateIsPersisted}
       />
@@ -292,7 +322,7 @@ export function TemplatePricingSections({
       templateCurrency={templateCurrency}
       replacementGroups={modularReplacement?.groups}
       replacementVersion={modularReplacement?.version}
-      onHasDataChange={(hasData) => onSectionDataChange?.("modular", hasData)}
+      onHasDataChange={reportModularData}
       templateId={templateId}
       templateIsPersisted={templateIsPersisted}
     />
@@ -302,63 +332,63 @@ export function TemplatePricingSections({
     <>
       <div className="md:col-span-2 xl:col-span-3">
         <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
-          <h4 className="text-sm font-semibold text-zinc-950">Pricing setup</h4>
+          <h4 className="text-sm font-semibold text-zinc-950">Pricing &amp; Configuration</h4>
           <p className="mt-1 text-sm leading-6 text-zinc-500">
-            Choose the pricing areas used by this template.
+            Manage only the detailed pricing and configuration this template uses.
           </p>
           {hiddenSectionCount ? (
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               {!shouldShowWorkstationPricing ? (
                 <PricingSetupButton
-                  label="+ Use workstation size pricing"
-                  description="Reveal workstation size rows with base and additional pricing."
+                  label="Workstation Pricing · Not used · Add"
+                  description="Size, layout, base and additional pricing."
                   onClick={() => setShowWorkstationPricing(true)}
                 />
               ) : null}
               {!shouldShowBasePricing ? (
                 <PricingSetupButton
-                  label="+ Use base/model pricing"
-                  description="Reveal size or model pricing for desks, chairs, sofas, and similar products."
+                  label="Base / Model Pricing · Not used · Add"
+                  description="Models, variants, dimensions and direct pricing."
                   onClick={() => setShowBasePricing(true)}
                 />
               ) : null}
               {!shouldShowAccessoriesPricing ? (
                 <PricingSetupButton
-                  label="+ Use accessories pricing"
-                  description="Reveal accessory groups and optional item pricing."
+                  label="Accessories / Configuration · Not used · Add"
+                  description="Accessories, options, companions and configuration."
                   onClick={() => setShowAccessoriesPricing(true)}
                 />
               ) : null}
               {!shouldShowFinishPricing ? (
                 <PricingSetupButton
-                  label="+ Use fabric/leather pricing"
-                  description="Reveal finish-category pricing rows and any additional price category columns."
+                  label="Category / Matrix Pricing · Not used · Add"
+                  description="Source-defined finish, fabric or price-category matrices."
                   onClick={() => setShowFinishPricing(true)}
                 />
               ) : null}
               {!shouldShowModularPricing ? (
                 <PricingSetupButton
-                  label="+ Use modular item pricing"
-                  description="Reveal modular components with fabric/category pricing for configurable sofas, lounge sets, and sectional items."
+                  label="Modular Pricing · Not used · Add"
+                  description="Modular families, modules and shared price categories."
                   onClick={() => setShowModularPricing(true)}
                 />
               ) : null}
             </div>
           ) : (
             <p className="mt-3 text-xs leading-5 text-zinc-500">
-              All pricing areas currently used by this template are visible below.
+              All five pricing areas are in use. Choose Manage to edit one.
             </p>
           )}
         </div>
       </div>
 
       {shouldShowWorkstationPricing ? (
-        compactAccordionMode ? (
+        true ? (
           <PricingAccordionSection
             isOpen={openWorkstationPricing}
             onToggle={() => setOpenWorkstationPricing((current) => !current)}
-            summary={`${workstationPricingRowCount} size rows`}
-            title="Workstation Size / Base Price"
+            summary={workstationPricingRowCount ? `${workstationPricingRowCount} rows` : "Not used"}
+            title="Workstation Pricing"
           >
             {renderWorkstationPricing}
           </PricingAccordionSection>
@@ -373,12 +403,12 @@ export function TemplatePricingSections({
       ) : null}
 
       {shouldShowBasePricing ? (
-        compactAccordionMode ? (
+        true ? (
           <PricingAccordionSection
             isOpen={openBasePricing}
             onToggle={() => setOpenBasePricing((current) => !current)}
-            summary={`${baseModelPricingRowCount} base/model rows`}
-            title="Base Size / Main Price"
+            summary={activeBaseModelCount ? `${baseModelReplacement?.groups.length ?? currentBaseModelGroups.length} groups · ${activeBaseModelCount} models` : "Not used"}
+            title="Base / Model Pricing"
           >
             {renderBasePricing}
           </PricingAccordionSection>
@@ -393,12 +423,12 @@ export function TemplatePricingSections({
       ) : null}
 
       {shouldShowAccessoriesPricing ? (
-        compactAccordionMode ? (
+        true ? (
           <PricingAccordionSection
             isOpen={openAccessoriesPricing}
             onToggle={() => setOpenAccessoriesPricing((current) => !current)}
-            summary={`${accessoryItemCount} accessory items`}
-            title="Accessories / Optional Items"
+            summary={activeAccessoryItemCount ? `${accessoryReplacement?.groups.length ?? (accessoryPricingRows?.length ?? 0)} groups · ${activeAccessoryItemCount} items` : "Not used"}
+            title="Accessories / Configuration"
           >
             {renderAccessoriesPricing}
           </PricingAccordionSection>
@@ -413,29 +443,29 @@ export function TemplatePricingSections({
       ) : null}
 
       {shouldShowFinishPricing ? (
-        compactAccordionMode ? (
+        true ? (
           <PricingAccordionSection
             isOpen={openFinishPricing}
             onToggle={() => setOpenFinishPricing((current) => !current)}
-            summary={`${countStandardCategoryPricingRows(categoryPricingRows)} finish pricing rows`}
-            title="Fabric / Leather / Finish Category Pricing"
+            summary={activeCategoryCount ? `${activeCategoryCount} matrix rows` : "Not used"}
+            title="Category / Matrix Pricing"
           >
             {renderFinishPricing}
           </PricingAccordionSection>
         ) : (
-          <PricingSectionCard title="Fabric / Leather / Finish Category Pricing">
+          <PricingSectionCard title="Category / Matrix Pricing">
             {renderFinishPricing}
           </PricingSectionCard>
         )
       ) : null}
 
       {shouldShowModularPricing ? (
-        compactAccordionMode ? (
+        true ? (
           <PricingAccordionSection
             isOpen={openModularPricing}
             onToggle={() => setOpenModularPricing((current) => !current)}
-            summary={`${modularItemPricingRows(categoryPricingRows).length} modular item rows`}
-            title="Modular Items Pricing"
+            summary={activeModularCount ? `${activeModularCount} module rows` : "Not used"}
+            title="Modular Pricing"
           >
             {renderModularPricing}
           </PricingAccordionSection>

@@ -1,7 +1,9 @@
 import type { ProductTemplateDraft } from "./product-template-draft";
-export function mapDraftPriceMatricesToCategoryGroups(draft: ProductTemplateDraft) {
-  const warnings: string[] = [];
-  const groups = draft.pricing.priceMatrices.filter((matrix) => {
+import { routeDraftPriceMatrices, type DraftPriceMatrixRoute } from "./product-template-draft-pricing-routing";
+export function mapDraftPriceMatricesToCategoryGroups(draft: ProductTemplateDraft, matrixRouting: Record<string, DraftPriceMatrixRoute["kind"]> = {}) {
+  const routing = routeDraftPriceMatrices(draft, matrixRouting);
+  const warnings: string[] = [...routing.warnings];
+  const groups = routing.routes.filter((route) => route.kind === "category_matrix").map((route) => route.matrix).filter((matrix) => {
     const modular = /modular/i.test(matrix.label ?? ""); if (modular) warnings.push(`Price matrix '${matrix.label ?? matrix.id}' was not applied to Finish / Category Pricing because it appears to belong to Modular Pricing.`); return !modular;
   }).map((matrix, groupIndex) => {
     const columns = matrix.columns.map((column) => column.label ?? column.id);

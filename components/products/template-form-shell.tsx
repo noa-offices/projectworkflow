@@ -131,7 +131,7 @@ export function TemplateFormShell({
   return (
     <form
       action={action}
-      className="space-y-4"
+      className="space-y-4 pb-28"
       onInput={() => {
         if (validationNotice) {
           setValidationNotice(null);
@@ -162,9 +162,7 @@ export function TemplateFormShell({
       <div className="sticky bottom-4 z-10 rounded-xl border border-zinc-200 bg-white/95 p-4 shadow-lg backdrop-blur sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-              Primary Action
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Save Template</p>
             <p className="mt-1 text-sm text-zinc-500">
               Save the template after reviewing each section.
             </p>

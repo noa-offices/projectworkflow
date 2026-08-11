@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getProductTemplateAiExtractionPrompt } from "./product-template-ai-extraction-prompt.js";
+import { extractionPromptFocuses, getProductTemplateAiExtractionPrompt } from "./product-template-ai-extraction-prompt.js";
 
 test("AI extraction prompt preserves the approved ProductTemplateDraft v1 extraction rules", () => {
   const prompt = getProductTemplateAiExtractionPrompt();
@@ -23,6 +23,10 @@ test("AI extraction prompt preserves the approved ProductTemplateDraft v1 extrac
     "Never invent prices",
     "workstationRows",
     "baseModelRows",
+    "simple single product family",
+    "one clearly labelled direct Price column",
+    "separate Base / Model Pricing groups",
+    "required companions",
     "priceMatrices",
     "Modular Group -> Module Rows -> Matrix Columns -> Price Cells",
     "optionGroups",
@@ -76,4 +80,19 @@ test("AI extraction prompt preserves the approved ProductTemplateDraft v1 extrac
     "DIMENSION RAW TEXT QUALITY",
     "W 78 x D 76 x H 123 cm; seat height 46 cm",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected prompt to contain: ${expected}`));
+});
+
+test("focused prompts retain the v1 contract, price safety, source fidelity, and relevant target", () => {
+  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "category_matrix", "modular", "accessories", "product_details", "materials"]);
+  const targets = { full: "Full Product / Complete Extraction", base_model: "pricing.baseModelRows", workstation: "pricing.workstationRows", category_matrix: "pricing.priceMatrices", modular: "pricing.modularGroups", accessories: "optionGroups", product_details: "Product Details / Specifications", materials: "materialSuggestions" } as const;
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(prompt.includes("ProductTemplateDraft v1"));
+    assert.ok(prompt.includes("A blank cell or no supplied price -> null"));
+    assert.ok(prompt.includes("explicit printed 0 or clearly stated zero-cost/included option -> JSON number 0"));
+    assert.ok(prompt.includes("request for attention, not permission to distort the manufacturer source"));
+    assert.ok(prompt.includes(targets[focus]));
+  });
+  ["full", "base_model", "workstation", "category_matrix", "modular"].forEach((focus) => assert.ok(getProductTemplateAiExtractionPrompt(focus as typeof extractionPromptFocuses[number]).includes("Also extract any clearly related accessories")));
+  assert.ok(getProductTemplateAiExtractionPrompt("accessories").includes("Do not invent conditional rules"));
 });

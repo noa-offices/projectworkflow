@@ -1,0 +1,41 @@
+"use client";
+
+/* Signed private previews intentionally use a native image element. */
+/* eslint-disable @next/next/no-img-element */
+
+import { useCallback, useEffect, useRef, useState, type ClipboardEvent } from "react";
+import { listProductTemplateRowReferences, removeProductTemplateRowReference, saveProductTemplateRowReference } from "@/app/products/templates/row-reference-actions";
+import { usePendingRowReference } from "@/components/products/pending-row-reference-context";
+import type { ProductTemplateGroupReferenceType } from "@/lib/products/product-template-group-references";
+import { clipboardImageFile, compressedClipboardImage } from "@/lib/products/product-template-row-image-client";
+import { productTemplateRowReferenceKey, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
+
+export function PricingRowReferenceImage({ groupId, pricingType, rowId, templateId, templateIsPersisted }: { groupId: string; pricingType: ProductTemplateGroupReferenceType; rowId: string; templateId: string; templateIsPersisted: boolean }) {
+  const pending = usePendingRowReference(pricingType, rowId);
+  const targetRef = useRef<HTMLDivElement>(null);
+  const [reference, setReference] = useState<ProductTemplateRowReferencePreview | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    if (!templateIsPersisted) return;
+    try { const rows = await listProductTemplateRowReferences(templateId, { pricingType, groupId, rowId }); setReference(rows.find((row) => productTemplateRowReferenceKey(row.pricingType, row.groupId, row.rowId) === productTemplateRowReferenceKey(pricingType, groupId, rowId)) ?? null); } catch { setMessage("Reference image could not be loaded."); }
+  }, [groupId, pricingType, rowId, templateId, templateIsPersisted]);
+  useEffect(() => {
+    const target = targetRef.current; if (!target || !templateIsPersisted) return;
+    const observer = new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting)) { void load(); observer.disconnect(); } });
+    observer.observe(target); return () => observer.disconnect();
+  }, [load, templateIsPersisted]);
+  const paste = async (event: ClipboardEvent<HTMLDivElement>) => {
+    const clipboardFile = clipboardImageFile(event.clipboardData.files);
+    if (!clipboardFile) { setMessage("Clipboard does not contain an image."); return; }
+    event.preventDefault();
+    if (!templateIsPersisted && !pending?.image) { setMessage("Save the Product Template before adding row images."); return; }
+    setBusy(true); setMessage(null);
+    try { const file = await compressedClipboardImage(clipboardFile); if (pending?.image) pending.replace(file, URL.createObjectURL(file)); else setReference(await saveProductTemplateRowReference({ templateId, pricingType, groupId, rowId, file })); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "Reference image could not be saved."); }
+    finally { setBusy(false); }
+  };
+  const remove = async () => { if (!reference) return; setBusy(true); try { await removeProductTemplateRowReference(reference.id); setReference(null); } catch { setMessage("Reference image could not be removed."); } finally { setBusy(false); } };
+  const visiblePreview = pending?.image?.previewUrl ?? reference?.previewUrl;
+  return <div className="w-[76px]" ref={targetRef}><div tabIndex={0} onPaste={paste} title="Focus and press Ctrl+V to paste an image" className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-md border border-dashed border-zinc-300 bg-zinc-50 text-center text-[10px] leading-3 text-zinc-500 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100">{visiblePreview ? <img src={visiblePreview} alt="Row reference" className="h-full w-full object-contain" loading="lazy" /> : busy ? "Saving…" : "Paste image"}</div>{pending?.image ? <><p className="mt-1 text-[9px] leading-3 text-amber-700">Pending save</p><button type="button" onClick={pending.remove} className="text-[10px] font-semibold text-red-700">Remove</button></> : reference ? <><p className="mt-1 text-[9px] leading-3 text-zinc-500">Paste to replace</p><button type="button" disabled={busy} onClick={remove} className="text-[10px] font-semibold text-red-700">Remove</button></> : null}{message ? <p className="mt-1 text-[10px] leading-3 text-amber-800">{message}</p> : null}</div>;
+}

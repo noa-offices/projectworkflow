@@ -1,42 +1,108 @@
-import type { ProductTemplateDraft, ProductTemplateDraftOptionGroup } from "./product-template-draft";
+import type { ProductTemplateDraft, ProductTemplateDraftMatrixRow, ProductTemplateDraftOptionGroup, ProductTemplateDraftPricedRow } from "./product-template-draft";
+import { directMatrixRowPrice, routeDraftPriceMatrices } from "./product-template-draft-pricing-routing";
+import { smartReviewMatrixOverrides, smartReviewSelectionContract, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
+
+type AccessoryGroup = {
+  id: string;
+  group_name: string;
+  group_is_required: boolean;
+  is_active: boolean;
+  sort_order: number;
+  items: Array<{ id: string; item_name: string; supplier_price_list_code: string; price: number | null; currency?: string; specification: string; is_active: boolean; sort_order: number }>;
+  conditional_configuration?: { role: "accessory" | "conditional_option" | "companion"; selection: "unrestricted" | "exactly_one" | "at_least_one" | "choose_multiple"; applicability: Array<{ base_model_group_id: string; base_model_row_id: string; required: boolean; visible: boolean; allowed_item_ids?: string[]; fixed_quantity?: number }> };
+};
+
+function primaryCode(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMatrixRow, warnings: string[], itemKind: string) {
+  const codes = [...row.supplierCodes, ...row.referenceCodes];
+  if (codes.length > 1) warnings.push(`${itemKind} '${row.label ?? row.displayName ?? row.id}' contains additional supplier/reference codes; only the primary code was applied.`);
+  return codes[0] ?? "";
+}
+
+function mapItem(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMatrixRow, price: number | null, index: number, warnings: string[], itemKind: string) {
+  return { id: row.id, item_name: row.label ?? row.displayName ?? row.id, supplier_price_list_code: primaryCode(row, warnings, itemKind), price, currency: row.currency ?? undefined, specification: row.specification ?? "", is_active: true, sort_order: index };
+}
+
+function topAccessContext(value: string) {
+  return /\btop[- ]?access\b/i.test(value);
+}
+
+function explicitRequirement(specification: string | null, kind: "top" | "service") {
+  if (!specification) return false;
+  if (!/\balways complete with\b/i.test(specification)) return false;
+  return kind === "top"
+    ? /\b1\s+top[- ]?access\b/i.test(specification)
+    : /\b1\s+(?:support\s+)?service unit\b/i.test(specification);
+}
+
+function selectionConfiguration(group: ProductTemplateDraftOptionGroup) {
+  const optionalExactlyOne = group.selection.mode === "optional" && group.selection.minSelections === 0 && group.selection.maxSelections === 1;
+  if (!optionalExactlyOne) return undefined;
+  return { role: topAccessContext(group.label ?? "") ? "conditional_option" as const : "accessory" as const, selection: "exactly_one" as const, applicability: [] };
+}
 
 function selectionIsSafe(group: ProductTemplateDraftOptionGroup) {
   const { defaultItemIds, maxSelections, minSelections, mode } = group.selection;
-  if (defaultItemIds.length || maxSelections !== null) return false;
-  return (mode === "optional" && minSelections === 0) ||
-    (mode === "choose_multiple" && minSelections === 0) ||
-    (mode === "required_choose_at_least_one" && minSelections === 1);
+  if (defaultItemIds.length) return false;
+  if (mode === "optional" && minSelections === 0 && (maxSelections === null || maxSelections === 1)) return true;
+  return (mode === "choose_multiple" && minSelections === 0 && maxSelections === null) ||
+    (mode === "required_choose_at_least_one" && minSelections === 1 && maxSelections === null);
 }
 
-export function mapDraftOptionGroupsToAccessories(draft: ProductTemplateDraft) {
+export function mapDraftOptionGroupsToAccessories(draft: ProductTemplateDraft, reviewedPlan?: SmartSetupReviewRoutingPlan) {
   const warnings: string[] = [];
   const errors: string[] = [];
-  const groups = draft.optionGroups.flatMap((group, groupIndex) => {
+  const optionGroups: AccessoryGroup[] = draft.optionGroups.flatMap((group, groupIndex) => {
+    const reviewedRoute = reviewedPlan?.routes.find((route) => route.key === `option:${group.id}`);
+    if (reviewedPlan && reviewedRoute?.destination !== "accessory") return [];
     if (!selectionIsSafe(group)) {
       errors.push(`Option group '${group.label ?? group.id}' was not applied because its selection rule cannot be represented safely by Accessory Pricing.`);
       return [];
     }
+    const reviewedContract = reviewedRoute?.accessory ? smartReviewSelectionContract(reviewedRoute.accessory.selection) : null;
+    const configuration = reviewedRoute?.accessory ? {
+      role: reviewedRoute.accessory.role,
+      selection: reviewedContract?.selection ?? "unrestricted",
+      applicability: reviewedRoute.accessory.rules.map((rule) => ({ base_model_group_id: rule.baseModelGroupId, base_model_row_id: rule.baseModelRowId, required: rule.required, visible: true, ...(rule.allowedItemIds ? { allowed_item_ids: rule.allowedItemIds } : {}), ...(rule.fixedQuantity !== undefined ? { fixed_quantity: rule.fixedQuantity } : {}) })),
+    } : selectionConfiguration(group);
     return [{
       id: group.id,
-      group_name: group.label ?? group.id,
-      group_is_required: group.selection.mode === "required_choose_at_least_one",
+      group_name: reviewedRoute?.groupName ?? group.label ?? group.id,
+      group_is_required: reviewedContract?.required ?? group.selection.mode === "required_choose_at_least_one",
       is_active: true,
       sort_order: groupIndex,
-      items: group.items.map((item, itemIndex) => {
-        const codes = [...item.supplierCodes, ...item.referenceCodes];
-        if (codes.length > 1) warnings.push(`Accessory item '${item.label ?? item.displayName ?? item.id}' contains additional supplier/reference codes; only the primary code was applied.`);
-        return {
-          id: item.id,
-          item_name: item.label ?? item.displayName ?? item.id,
-          supplier_price_list_code: codes[0] ?? "",
-          price: item.price,
-          currency: item.currency ?? undefined,
-          specification: item.specification ?? "",
-          is_active: true,
-          sort_order: itemIndex,
-        };
-      }),
+      ...(configuration ? { conditional_configuration: configuration } : {}),
+      items: group.items.map((item, itemIndex) => mapItem(item, item.price, itemIndex, warnings, "Accessory item")),
     }];
   });
+  const matrixOverrides = reviewedPlan ? smartReviewMatrixOverrides(reviewedPlan) : {};
+  const routing = routeDraftPriceMatrices(draft, matrixOverrides);
+  const companionGroups: AccessoryGroup[] = routing.routes.flatMap((route, routeIndex) => {
+    if (route.kind !== "companion") return [];
+    const reviewedRoute = reviewedPlan?.routes.find((item) => item.key === `matrix:${route.matrix.id}`);
+    const column = route.matrix.columns[0];
+    if (!column) return [];
+    return [{
+      id: route.matrix.id,
+      group_name: reviewedRoute?.groupName ?? route.matrix.label ?? route.matrix.id,
+      group_is_required: reviewedRoute?.accessory ? smartReviewSelectionContract(reviewedRoute.accessory.selection).required : false,
+      is_active: true,
+      sort_order: optionGroups.length + routeIndex,
+      conditional_configuration: reviewedRoute?.accessory ? { role: reviewedRoute.accessory.role, selection: smartReviewSelectionContract(reviewedRoute.accessory.selection).selection, applicability: reviewedRoute.accessory.rules.map((rule) => ({ base_model_group_id: rule.baseModelGroupId, base_model_row_id: rule.baseModelRowId, required: rule.required, visible: true, ...(rule.allowedItemIds ? { allowed_item_ids: rule.allowedItemIds } : {}), ...(rule.fixedQuantity !== undefined ? { fixed_quantity: rule.fixedQuantity } : {}) })) } : { role: "companion", selection: "exactly_one", applicability: [] },
+      items: route.matrix.rows.map((item, itemIndex) => mapItem(item, directMatrixRowPrice(item, column) ?? null, itemIndex, warnings, "Companion item")),
+    }];
+  });
+  const groups = [...optionGroups, ...companionGroups];
+  if (reviewedPlan) return { groups, warnings, errors };
+  const topGroup = groups.find((group) => group.conditional_configuration?.role === "conditional_option" && topAccessContext(group.group_name));
+  const companionGroup = groups.find((group) => group.conditional_configuration?.role === "companion");
+  const requirements = routing.routes.flatMap((route) => route.kind === "base_model" ? route.matrix.rows.map((row) => ({ groupId: route.matrix.id, rowId: row.id, specification: row.specification })) : []);
+  const applyRules = (group: AccessoryGroup | undefined, kind: "top" | "service") => {
+    if (!group?.conditional_configuration) return;
+    const applicability = requirements.filter((item) => explicitRequirement(item.specification, kind)).map((item) => ({ base_model_group_id: item.groupId, base_model_row_id: item.rowId, required: true, visible: true }));
+    if (applicability.length) group.conditional_configuration.applicability = applicability;
+    else warnings.push(`${group.group_name} was imported without automatic model rules because no explicit matching requirement language was found. Use Conditional Rules to configure it manually.`);
+  };
+  applyRules(topGroup, "top");
+  applyRules(companionGroup, "service");
   return { groups, warnings, errors };
 }

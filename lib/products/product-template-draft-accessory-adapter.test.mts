@@ -32,3 +32,9 @@ test("unsafe exact-choice and default semantics produce no replacement groups", 
   assert.deepEqual(result.groups, []);
   assert.match(result.errors[0], /cannot be represented safely/);
 });
+
+test("optional maximum-one groups map to exactly-one configuration without an obsolete warning", () => {
+  const result = mapDraftOptionGroupsToAccessories(draft("optional", 0, 1));
+  assert.equal(result.errors.length, 0);
+  assert.deepEqual(result.groups[0].conditional_configuration, { role: "accessory", selection: "exactly_one", applicability: [] });
+});

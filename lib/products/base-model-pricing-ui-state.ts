@@ -29,13 +29,24 @@ export function updateBaseModelPricingRow<TRow extends BaseModelPricingRow>(grou
 
 export function removeBaseModelPricingRow<TRow extends BaseModelPricingRow>(groups: BaseModelPricingGroup<TRow>[], groupId: string, rowIndex: number) {
   return groups.map((group) => group.id === groupId
-    ? { ...group, items: group.items.filter((_, index) => index !== rowIndex) }
+    ? (() => { const items = group.items.filter((_, index) => index !== rowIndex); const rowIds = new Set(items.flatMap((row) => typeof row.id === "string" ? [row.id] : [])); return { ...group, items, subgroups: group.subgroups?.map((subgroup) => ({ ...subgroup, row_ids: subgroup.row_ids.filter((id) => rowIds.has(id)) })) }; })()
     : group);
 }
 
 export function replaceWholeTemplateBaseModelRows<TRow extends BaseModelPricingRow>(groups: BaseModelPricingGroup<TRow>[], rows: TRow[], replacementGroupId: string) {
-  if (groups.length === 1) return [{ ...groups[0], items: rows }];
+  if (groups.length === 1) { const rowIds = new Set(rows.flatMap((row) => typeof row.id === "string" ? [row.id] : [])); return [{ ...groups[0], items: rows, subgroups: groups[0].subgroups?.map((subgroup) => ({ ...subgroup, row_ids: subgroup.row_ids.filter((id) => rowIds.has(id)) })) }]; }
   return [{ ...createBaseModelPricingGroup<TRow>(replacementGroupId, 0), items: rows }];
+}
+
+export function replaceWholeTemplateBaseModelPricing<TRow extends BaseModelPricingRow>(
+  groups: BaseModelPricingGroup<TRow>[],
+  rows: TRow[],
+  additionalGroups: BaseModelPricingGroup<TRow>[],
+  replacementGroupId: string,
+) {
+  if (!additionalGroups.length) return replaceWholeTemplateBaseModelRows(groups, rows, replacementGroupId);
+  const flatGroups = rows.length ? replaceWholeTemplateBaseModelRows(groups, rows, replacementGroupId) : [];
+  return [...flatGroups, ...additionalGroups];
 }
 
 export function shouldApplyBaseModelReplacement(replacementVersion: number | undefined, appliedVersion: number | undefined) {

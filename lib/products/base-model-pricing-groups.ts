@@ -17,6 +17,14 @@ export type BaseModelPricingRow = Record<string, unknown> & {
   sort_order?: number;
 };
 
+export type BaseModelPricingSubgroup = {
+  id: string;
+  subgroup_name: string;
+  sort_order: number;
+  is_active: boolean;
+  row_ids: string[];
+};
+
 export type BaseModelPricingGroup<TRow extends BaseModelPricingRow = BaseModelPricingRow> = {
   id: string;
   pricing_type: typeof BASE_MODEL_GROUP_PRICING_TYPE;
@@ -24,6 +32,7 @@ export type BaseModelPricingGroup<TRow extends BaseModelPricingRow = BaseModelPr
   is_active: boolean;
   sort_order: number;
   items: TRow[];
+  subgroups?: BaseModelPricingSubgroup[];
 };
 
 export type NormalizedBaseModelPricingGroup<TRow extends BaseModelPricingRow = BaseModelPricingRow> =
@@ -36,6 +45,10 @@ export type BaseModelPricingContractIssue = {
     | "invalid_group_items"
     | "invalid_group_metadata"
     | "invalid_group_row"
+    | "invalid_subgroup"
+    | "duplicate_subgroup_id"
+    | "duplicate_subgroup_membership"
+    | "unknown_subgroup_row"
     | "invalid_row_value"
     | "invalid_root"
     | "invalid_root_record"
@@ -82,6 +95,29 @@ function rowValueIssue(row: Record<string, unknown>) {
   if (row.is_active !== undefined && typeof row.is_active !== "boolean") return true;
   if (row.sort_order !== undefined && (typeof row.sort_order !== "number" || !Number.isFinite(row.sort_order))) return true;
   return false;
+}
+
+function normalizedSubgroups(value: unknown, rowIds: ReadonlySet<string>, path: string, issues: BaseModelPricingContractIssue[]) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) { issues.push({ code: "invalid_subgroup", message: "Base / Model pricing subgroups must use an array.", path }); return []; }
+  const subgroupIds = new Set<string>(); const assignedRows = new Set<string>();
+  return value.flatMap((entry, index): BaseModelPricingSubgroup[] => {
+    const subgroupPath = `${path}[${index}]`;
+    if (!isRecord(entry)) { issues.push({ code: "invalid_subgroup", message: "Base / Model pricing contains an invalid subgroup.", path: subgroupPath }); return []; }
+    const id = typeof entry.id === "string" ? entry.id.trim() : "";
+    if (!id || typeof entry.subgroup_name !== "string" || typeof entry.sort_order !== "number" || !Number.isFinite(entry.sort_order) || typeof entry.is_active !== "boolean" || !Array.isArray(entry.row_ids) || entry.row_ids.some((rowId) => typeof rowId !== "string" || !rowId)) {
+      issues.push({ code: "invalid_subgroup", message: "Base / Model pricing contains malformed subgroup metadata.", path: subgroupPath }); return [];
+    }
+    if (subgroupIds.has(id)) { issues.push({ code: "duplicate_subgroup_id", message: `Base / Model subgroup id '${id}' is duplicated.`, path: `${subgroupPath}.id` }); return []; }
+    subgroupIds.add(id);
+    const rowIdsForSubgroup: string[] = [];
+    for (const rowId of entry.row_ids as string[]) {
+      if (!rowIds.has(rowId)) { issues.push({ code: "unknown_subgroup_row", message: `Base / Model subgroup '${entry.subgroup_name}' references a row that does not exist in its parent group.`, path: `${subgroupPath}.row_ids` }); continue; }
+      if (assignedRows.has(rowId)) { issues.push({ code: "duplicate_subgroup_membership", message: `Base / Model row '${rowId}' belongs to more than one subgroup.`, path: `${subgroupPath}.row_ids` }); continue; }
+      assignedRows.add(rowId); rowIdsForSubgroup.push(rowId);
+    }
+    return [{ id, subgroup_name: entry.subgroup_name, sort_order: entry.sort_order, is_active: entry.is_active, row_ids: rowIdsForSubgroup }];
+  });
 }
 
 export function isBaseModelPricingGroupRecord(
@@ -153,6 +189,8 @@ export function normalizeBaseModelPricing<TRow extends BaseModelPricingRow = Bas
 
     const items: TRow[] = [];
     if (Array.isArray(entry.items)) entry.items.forEach((item, itemIndex) => addRow(item, `${path}.items[${itemIndex}]`, items));
+    const rowIds = new Set(items.flatMap((item) => typeof item.id === "string" && item.id ? [item.id] : []));
+    const subgroups = normalizedSubgroups(entry.subgroups, rowIds, `${path}.subgroups`, issues);
     explicitGroups.push({
       id: groupId,
       pricing_type: BASE_MODEL_GROUP_PRICING_TYPE,
@@ -160,6 +198,7 @@ export function normalizeBaseModelPricing<TRow extends BaseModelPricingRow = Bas
       is_active: entry.is_active !== false,
       sort_order: typeof entry.sort_order === "number" && Number.isFinite(entry.sort_order) ? entry.sort_order : entryIndex,
       items,
+      ...(subgroups.length ? { subgroups } : {}),
       isSyntheticLegacyGroup: false,
     });
   });
@@ -221,6 +260,7 @@ export function serializeBaseModelPricingGroups<TRow extends BaseModelPricingRow
     is_active: group.is_active,
     sort_order: group.sort_order,
     items: group.items.map(cloneRow),
+    ...(group.subgroups?.length ? { subgroups: group.subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] })) } : {}),
   }));
 }
 

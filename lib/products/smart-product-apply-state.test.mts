@@ -19,7 +19,7 @@ test("all five conflicts and labels retain the expected section order", () => {
   assert.deepEqual(getSmartSetupConflictLabels(conflicts), [
     "Workstation Pricing",
     "Base / Model Pricing",
-    "Finish / Category Pricing",
+    "Category / Matrix Pricing",
     "Modular Item Pricing",
     "Accessory Pricing",
   ]);

@@ -14,11 +14,18 @@ import { materialDisplayCategoryLabel } from "@/lib/products/material-classifica
 import { parseNullablePricingNumber } from "@/lib/products/nullable-pricing";
 import { parseWorkstationPricingJson } from "@/lib/products/workstation-pricing-parser";
 import { parseBaseModelPricingJson } from "@/lib/products/base-model-pricing-parser";
+import { AccessoryPricingContractError, parseAccessoryPricingJson } from "@/lib/products/accessory-pricing-parser";
 import {
   persistedProductTemplatePricingGroupScopeKeys,
   reconcileStaleProductTemplateGroupReferences,
+  requireProductTemplateGroupReferenceType,
   type ProductTemplateGroupReferenceRow,
 } from "@/lib/products/product-template-group-references";
+import { persistedProductTemplatePricingRowKeys, resolveProductTemplatePricingRowIdentity, staleProductTemplateRowReferences, type ProductTemplateRowReferenceRow } from "@/lib/products/product-template-row-references";
+import { uploadPendingRowImagesAfterSave } from "@/lib/products/smart-product-row-images";
+import { saveProductTemplateRowReference } from "@/app/products/templates/row-reference-actions";
+import { saveProductTemplateSubgroupReference } from "@/app/products/templates/subgroup-reference-actions";
+import { persistedProductTemplateSubgroupKeys, reconcileStaleProductTemplateSubgroupReferences, resolveProductTemplateSubgroupIdentity, type ProductTemplateSubgroupReferenceRow } from "@/lib/products/product-template-subgroup-references";
 import {
   MODULAR_GROUP_PRICING_TYPE,
   MODULAR_ITEM_PRICING_TYPE,
@@ -35,6 +42,54 @@ const allowedOptionTypes = new Set([
   "linked_addon",
   "other",
 ]);
+
+type PendingRowReferenceUpload = { field: string; pricingType: string; rowId: string; file: File };
+type PendingSubgroupReferenceUpload = { field: string; pricingType: string; subgroupId: string; file: File };
+type SavedTemplatePricing = { accessory_pricing: unknown; category_pricing: unknown; desking_size_pricing: unknown; variant_pricing: unknown };
+
+function pendingRowReferenceUploads(formData: FormData): PendingRowReferenceUpload[] {
+  const raw = formData.get("pending_row_references");
+  if (typeof raw !== "string" || !raw) return [];
+  try {
+    const entries = JSON.parse(raw) as unknown;
+    if (!Array.isArray(entries)) return [];
+    return entries.flatMap((entry) => {
+      if (!entry || typeof entry !== "object" || !("field" in entry) || !("pricingType" in entry) || !("rowId" in entry) || typeof entry.field !== "string" || typeof entry.pricingType !== "string" || typeof entry.rowId !== "string") return [];
+      const file = formData.get(entry.field);
+      return file instanceof File && file.size > 0 ? [{ field: entry.field, pricingType: entry.pricingType, rowId: entry.rowId, file }] : [];
+    });
+  } catch { return []; }
+}
+
+async function persistPendingRowReferenceUploads(formData: FormData, templateId: string, pricing: SavedTemplatePricing) {
+  const entries = pendingRowReferenceUploads(formData);
+  return uploadPendingRowImagesAfterSave({
+    entries,
+    templateSaved: true,
+    resolveIdentity: (entry) => {
+      let pricingType;
+      try { pricingType = requireProductTemplateGroupReferenceType(entry.pricingType); } catch { return null; }
+      const identity = resolveProductTemplatePricingRowIdentity({ accessoryPricing: pricing.accessory_pricing, categoryPricing: pricing.category_pricing, deskingSizePricing: pricing.desking_size_pricing, variantPricing: pricing.variant_pricing }, pricingType, entry.rowId);
+      return identity ? { ...identity, pricingType } : null;
+    },
+    upload: async (entry, identity) => {
+      try { await saveProductTemplateRowReference({ templateId, pricingType: identity.pricingType, groupId: identity.groupId, rowId: identity.rowId, file: entry.file }); }
+      catch (error) { logServerActionError("PRODUCT TEMPLATE PENDING ROW REFERENCE UPLOAD ERROR", error, { recordId: templateId, pricingType: identity.pricingType }); throw error; }
+    },
+  });
+}
+
+function pendingSubgroupReferenceUploads(formData: FormData): PendingSubgroupReferenceUpload[] {
+  const raw = formData.get("pending_subgroup_references"); if (typeof raw !== "string" || !raw) return [];
+  try { const entries = JSON.parse(raw) as unknown; if (!Array.isArray(entries)) return []; return entries.flatMap((entry) => { if (!entry || typeof entry !== "object" || !("field" in entry) || !("pricingType" in entry) || !("subgroupId" in entry) || typeof entry.field !== "string" || typeof entry.pricingType !== "string" || typeof entry.subgroupId !== "string") return []; const file = formData.get(entry.field); return file instanceof File && file.size > 0 ? [{ field: entry.field, pricingType: entry.pricingType, subgroupId: entry.subgroupId, file }] : []; }); } catch { return []; }
+}
+
+async function persistPendingSubgroupReferenceUploads(formData: FormData, templateId: string, pricing: SavedTemplatePricing) {
+  const entries = pendingSubgroupReferenceUploads(formData);
+  return uploadPendingRowImagesAfterSave({ entries, templateSaved: true, resolveIdentity: (entry) => { let pricingType; try { pricingType = requireProductTemplateGroupReferenceType(entry.pricingType); } catch { return null; } const identity = resolveProductTemplateSubgroupIdentity(pricing.variant_pricing, pricingType, entry.subgroupId); return identity ? { ...identity, pricingType } : null; }, upload: async (entry, identity) => { try { await saveProductTemplateSubgroupReference({ templateId, pricingType: identity.pricingType, groupId: identity.groupId, subgroupId: identity.subgroupId, file: entry.file }); } catch (error) { logServerActionError("PRODUCT TEMPLATE PENDING SUBGROUP REFERENCE UPLOAD ERROR", error, { recordId: templateId, pricingType: identity.pricingType }); throw error; } } });
+}
+
+function templateSavedMessage(message: string, failedImages: number) { return failedImages ? `${message} Product Template saved, but ${failedImages} reference image${failedImages === 1 ? "" : "s"} could not be uploaded.` : message; }
 const imageFits = new Set(["contain", "cover"]);
 const imageFields = [
   "proposed_image_url_1",
@@ -148,6 +203,33 @@ async function reconcileSavedProductTemplateGroupReferences({
       storageError,
       { recordId: reference.id, storagePath: reference.storage_path, templateId },
     ),
+  });
+
+  const { data: rowReferences, error: rowReferenceError } = await supabase
+    .from("product_template_row_references")
+    .select("id,template_id,pricing_type,group_id,row_id,storage_path,caption,created_at,updated_at")
+    .eq("template_id", templateId)
+    .returns<ProductTemplateRowReferenceRow[]>();
+  if (rowReferenceError) {
+    logServerActionError("PRODUCT TEMPLATE ROW REFERENCE RECONCILIATION LOAD ERROR", rowReferenceError, { recordId: templateId, table: "product_template_row_references" });
+    return;
+  }
+  const persistedRowKeys = persistedProductTemplatePricingRowKeys({ accessoryPricing, categoryPricing, deskingSizePricing, variantPricing });
+  for (const reference of staleProductTemplateRowReferences(rowReferences ?? [], persistedRowKeys)) {
+    const { error: deleteError } = await supabase.from("product_template_row_references").delete().eq("id", reference.id).eq("template_id", templateId);
+    if (deleteError) { logServerActionError("PRODUCT TEMPLATE ROW REFERENCE DELETE ERROR", deleteError, { recordId: reference.id }); continue; }
+    const { error: storageError } = await supabase.storage.from(productImagesBucket).remove([reference.storage_path]);
+    if (storageError) logServerActionError("PRODUCT TEMPLATE ROW REFERENCE STORAGE ERROR", storageError, { recordId: reference.id, storagePath: reference.storage_path });
+  }
+  const { data: subgroupReferences, error: subgroupReferenceError } = await supabase.from("product_template_subgroup_references").select("id,template_id,pricing_type,group_id,subgroup_id,storage_path,caption,created_at,updated_at").eq("template_id", templateId).returns<ProductTemplateSubgroupReferenceRow[]>();
+  if (subgroupReferenceError) { logServerActionError("PRODUCT TEMPLATE SUBGROUP REFERENCE RECONCILIATION LOAD ERROR", subgroupReferenceError, { recordId: templateId, table: "product_template_subgroup_references" }); return; }
+  await reconcileStaleProductTemplateSubgroupReferences({
+    references: subgroupReferences ?? [],
+    persistedKeys: persistedProductTemplateSubgroupKeys(variantPricing),
+    deleteReference: async (reference) => { const { error } = await supabase.from("product_template_subgroup_references").delete().eq("id", reference.id).eq("template_id", templateId); if (error) throw error; },
+    deleteStorageObject: async (reference) => { const { error } = await supabase.storage.from(productImagesBucket).remove([reference.storage_path]); if (error) throw error; },
+    onReferenceDeleteError: (reference, error) => logServerActionError("PRODUCT TEMPLATE SUBGROUP REFERENCE DELETE ERROR", error, { recordId: reference.id }),
+    onStorageDeleteError: (reference, error) => logServerActionError("PRODUCT TEMPLATE SUBGROUP REFERENCE STORAGE ERROR", error, { recordId: reference.id, storagePath: reference.storage_path }),
   });
 }
 
@@ -1077,66 +1159,8 @@ function categoryPricingValue(formData: FormData) {
   }
 }
 
-function accessoryPricingValue(formData: FormData) {
-  const rawValue = textValue(formData, "accessory_pricing");
-  if (!rawValue) return [];
-
-  try {
-    const parsed = JSON.parse(rawValue) as Array<Record<string, unknown>>;
-    if (!Array.isArray(parsed)) return [];
-
-    const normalizeItem = (row: Record<string, unknown>, index: number) => ({
-      id: typeof row.id === "string" && row.id ? row.id : `add-on-${index}`,
-      item_name: typeof row.item_name === "string" ? row.item_name.trim() : "",
-      supplier_price_list_code: typeof row.supplier_price_list_code === "string" ? row.supplier_price_list_code.trim() : "",
-      price: parseNullablePricingNumber(row.price),
-      currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
-      specification: typeof row.specification === "string" ? row.specification.trim() : "",
-      sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
-      is_active: row.is_active !== false,
-    });
-
-    const groupedRows = parsed.filter((row) => row.group_name || row.items);
-    const flatRows = parsed.filter((row) => !row.group_name && !row.items);
-    const groups = groupedRows
-      .map((row, index) => {
-        const items = Array.isArray(row.items)
-          ? row.items
-              .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
-              .map(normalizeItem)
-              .filter((item) => item.item_name || item.supplier_price_list_code || item.price !== null || item.specification)
-          : [];
-
-        return {
-          id: typeof row.id === "string" && row.id ? row.id : `add-on-group-${index}`,
-          group_name: typeof row.group_name === "string" && row.group_name.trim()
-            ? row.group_name.trim()
-            : "Accessories",
-          group_is_required: row.group_is_required === true,
-          sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
-          is_active: row.is_active !== false,
-          items,
-        };
-      })
-      .filter((group) => group.group_name || group.items.length);
-
-    if (flatRows.length) {
-      groups.push({
-        id: "accessories",
-        group_name: "Accessories",
-        group_is_required: false,
-        sort_order: groups.length,
-        is_active: true,
-        items: flatRows
-          .map(normalizeItem)
-          .filter((item) => item.item_name || item.supplier_price_list_code || item.price !== null || item.specification),
-      });
-    }
-
-    return groups.filter((group) => group.items.length);
-  } catch {
-    return [];
-  }
+function accessoryPricingValue(formData: FormData, baseModelPricing: unknown) {
+  return parseAccessoryPricingJson(textValue(formData, "accessory_pricing"), baseModelPricing);
 }
 
 async function normalizeTemplateImagePayload<
@@ -1198,6 +1222,7 @@ function templatePayload(formData: FormData, userId?: string) {
     imageFields.map((field) => [field, optionalTextValue(formData, field)]),
   ) as Record<(typeof imageFields)[number], string | null>;
 
+  const variantPricing = variantPricingValue(formData);
   const payload = {
     brand_id: textValue(formData, "brand_id"),
     main_category_id: optionalTextValue(formData, "main_category_id"),
@@ -1214,9 +1239,9 @@ function templatePayload(formData: FormData, userId?: string) {
     ...proposedImageValues,
     reference_image_url: optionalTextValue(formData, "reference_image_url"),
     desking_size_pricing: deskingSizePricingValue(formData),
-    variant_pricing: variantPricingValue(formData),
+    variant_pricing: variantPricing,
     category_pricing: categoryPricingValue(formData),
-    accessory_pricing: accessoryPricingValue(formData),
+    accessory_pricing: accessoryPricingValue(formData, variantPricing),
     unit_label: textValue(formData, "unit_label") || "Pc",
     currency: normalizeCurrency(textValue(formData, "currency") || defaultCurrency),
     default_unit_price: numberValue(formData, "default_unit_price", 0),
@@ -1306,9 +1331,15 @@ function componentPayload(formData: FormData, userId?: string) {
 
 export async function createProductTemplate(formData: FormData) {
   const { user, displayName } = await requireProductLibraryManager();
-  const initialPayload = createTemplatePayload(formData, user.id);
   const templateId = textValue(formData, "id");
   const redirectPath = returnPath(formData, "/products/templates?addTemplate=1");
+  let initialPayload: ReturnType<typeof createTemplatePayload>;
+  try {
+    initialPayload = createTemplatePayload(formData, user.id);
+  } catch (error) {
+    if (error instanceof AccessoryPricingContractError) redirectWithMessageToPath(redirectPath, error.message);
+    throw error;
+  }
 
   if (!initialPayload.brand_id || !initialPayload.template_name) {
     redirectWithMessageToPath(
@@ -1344,6 +1375,9 @@ export async function createProductTemplate(formData: FormData) {
     );
   }
 
+  const pendingRowReferences = await persistPendingRowReferenceUploads(formData, template.id, payload);
+  const pendingSubgroupReferences = await persistPendingSubgroupReferenceUploads(formData, template.id, payload);
+
   await createAuditLog(supabase, {
     entityType: "product_template",
     entityId: template.id,
@@ -1361,16 +1395,22 @@ export async function createProductTemplate(formData: FormData) {
   revalidatePath("/products/templates");
   redirectWithMessageToPath(
     `/products/templates?manage=1&panelBrand=${template.brand_id}&template=${template.id}&editTemplate=${template.id}#template-${template.id}-materials`,
-    "Product template created. Add material groups below.",
+    templateSavedMessage("Product template created. Add material groups below.", pendingRowReferences.failed + pendingSubgroupReferences.failed),
   );
 }
 
 export async function updateProductTemplate(formData: FormData) {
   const { user, displayName } = await requireProductLibraryManager();
   const id = textValue(formData, "id");
-  const initialPayload = templatePayload(formData);
   const submittedImageSettings = templateImageMetadataValue(formData);
   const redirectPath = returnPath(formData);
+  let initialPayload: ReturnType<typeof templatePayload>;
+  try {
+    initialPayload = templatePayload(formData);
+  } catch (error) {
+    if (error instanceof AccessoryPricingContractError) redirectWithMessageToPath(redirectPath, error.message);
+    throw error;
+  }
 
   if (!id || !initialPayload.brand_id || !initialPayload.template_name) {
     redirectWithMessageToPath(redirectPath, "Template id, brand, and template name are required.");
@@ -1446,6 +1486,9 @@ export async function updateProductTemplate(formData: FormData) {
     variantPricing: payload.variant_pricing,
   });
 
+  const pendingRowReferences = await persistPendingRowReferenceUploads(formData, id, payload);
+  const pendingSubgroupReferences = await persistPendingSubgroupReferenceUploads(formData, id, payload);
+
   await createAuditLog(supabase, {
     entityType: "product_template",
     entityId: currentTemplate.id,
@@ -1461,7 +1504,7 @@ export async function updateProductTemplate(formData: FormData) {
   });
 
   revalidatePath("/products/templates");
-  redirectWithMessageToPath(redirectPath, "Product template updated.");
+  redirectWithMessageToPath(redirectPath, templateSavedMessage("Product template updated.", pendingRowReferences.failed + pendingSubgroupReferences.failed));
 }
 
 export async function updateProductTemplateForQuotationModal(formData: FormData): Promise<ProductTemplateModalActionResult> {
@@ -1544,6 +1587,8 @@ export async function updateProductTemplateForQuotationModal(formData: FormData)
       templateId: id,
       variantPricing: payload.variant_pricing,
     });
+    const pendingRowReferences = await persistPendingRowReferenceUploads(formData, id, payload);
+    const pendingSubgroupReferences = await persistPendingSubgroupReferenceUploads(formData, id, payload);
 
     await createAuditLog(supabase, {
       entityType: "product_template",
@@ -1584,9 +1629,9 @@ export async function updateProductTemplateForQuotationModal(formData: FormData)
     revalidatePath("/products/templates");
     return {
       ok: true,
-      message: shouldMarkPriceCheckedAfterSave
+      message: templateSavedMessage(shouldMarkPriceCheckedAfterSave
         ? "Product template updated and price checked."
-        : "Product template updated.",
+        : "Product template updated.", pendingRowReferences.failed + pendingSubgroupReferences.failed),
       template: await fetchProductLibraryTemplateForClient(supabase, id),
     };
   } catch (error) {
@@ -1636,6 +1681,9 @@ export async function createProductTemplateForQuotationModal(formData: FormData)
       };
     }
 
+    const pendingRowReferences = await persistPendingRowReferenceUploads(formData, template.id, payload);
+    const pendingSubgroupReferences = await persistPendingSubgroupReferenceUploads(formData, template.id, payload);
+
     await createAuditLog(supabase, {
       entityType: "product_template",
       entityId: template.id,
@@ -1653,7 +1701,7 @@ export async function createProductTemplateForQuotationModal(formData: FormData)
     revalidatePath("/products/templates");
     return {
       ok: true,
-      message: "Product template created.",
+      message: templateSavedMessage("Product template created.", pendingRowReferences.failed + pendingSubgroupReferences.failed),
       template: await fetchProductLibraryTemplateForClient(supabase, template.id),
     };
   } catch (error) {

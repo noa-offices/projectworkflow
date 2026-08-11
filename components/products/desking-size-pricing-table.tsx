@@ -6,6 +6,7 @@ import { resolveDefaultPricingCurrency } from "@/components/products/pricing-def
 import { parseNullablePricingNumber } from "@/lib/products/nullable-pricing";
 import { hasMeaningfulWorkstationPricing } from "@/lib/products/workstation-pricing-state";
 import { PricingGroupReferenceImages } from "@/components/products/finish-category-group-reference-images";
+import { PricingRowReferenceImage } from "@/components/products/pricing-row-reference-image";
 import {
   persistedWorkstationPricingGroupIds,
   workstationPricingGroupReferenceAvailability,
@@ -489,6 +490,7 @@ export function DeskingSizePricingTable({
         <table className="min-w-[1560px] w-full text-left text-xs">
           <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
             <tr>
+              <th className="w-20 px-2 py-2">Image</th>
               <th className="px-2 py-2">Size / Display Name</th>
               <th className="px-2 py-2">Layout Type</th>
               <th className="px-2 py-2">Default Price</th>
@@ -510,6 +512,7 @@ export function DeskingSizePricingTable({
 
               return (
                 <tr key={key} className="border-t border-zinc-100">
+                  <td className="px-2 py-2 align-top">{row.id ? <PricingRowReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} pricingType="workstation" groupId={group.id} rowId={row.id} /> : <span className="text-[10px] text-zinc-400">Save row first</span>}</td>
                   <td className="px-2 py-2">
                     {isEditing ? (
                       <input

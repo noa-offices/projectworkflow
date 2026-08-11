@@ -6,7 +6,7 @@ export type SmartSetupSectionPresence = Record<SmartSetupPricingSection, boolean
 const sectionLabels: Record<SmartSetupPricingSection, string> = {
   workstation: "Workstation Pricing",
   baseModel: "Base / Model Pricing",
-  category: "Finish / Category Pricing",
+  category: "Category / Matrix Pricing",
   modular: "Modular Item Pricing",
   accessory: "Accessory Pricing",
 };

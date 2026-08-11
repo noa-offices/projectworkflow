@@ -23,6 +23,8 @@ import {
   normalizeBaseModelPricing,
   serializeBaseModelPricingGroups,
 } from "@/lib/products/base-model-pricing-groups";
+import type { AccessoryConditionalConfiguration } from "@/lib/products/accessory-conditional-configuration";
+import { evaluateProductAccessorySelection, parseSubmittedAccessoryQuantities } from "@/lib/quotations/product-accessory-configuration";
 import {
   modularItemPricingRows,
   modularPricingDefaultsFromRows,
@@ -476,23 +478,6 @@ function accessoryQuantities(formData: FormData) {
   return quantities;
 }
 
-function accessoryPricingQuantities(formData: FormData) {
-  const quantities = new Map<string, number>();
-
-  for (const value of formData.getAll("accessory_pricing_qty")) {
-    if (typeof value !== "string") continue;
-
-    const [id, rawQty] = value.split(":");
-    const qty = Math.max(0, Math.trunc(Number(rawQty) || 0));
-
-    if (id && qty > 0) {
-      quantities.set(id, qty);
-    }
-  }
-
-  return quantities;
-}
-
 function modularItemQuantities(formData: FormData) {
   const quantities = new Map<string, number>();
 
@@ -731,11 +716,13 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
     .map((group, groupIndex) => ({
       id: group.id ?? `add-on-group-${groupIndex}`,
       group_name: group.group_name?.trim() || "Accessories",
+      group_is_required: group.group_is_required === true,
+      conditional_configuration: group.conditional_configuration,
       is_active: group.is_active !== false,
       sort_order: calculationNumber(group.sort_order, groupIndex),
       items: (group.items ?? [])
         .filter((item) => item.is_active !== false)
-        .filter((item) => item.item_name || calculationNumber(item.price) > 0)
+        .filter((item) => item.item_name || item.supplier_price_list_code || item.price !== null && item.price !== undefined || item.specification)
         .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order)),
     }))
     .filter((group) => group.is_active && group.items.length)
@@ -743,7 +730,7 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
   const flatRows = sourceRows
     .filter((row) => !row.group_name && !row.items)
     .filter((row) => row.is_active !== false)
-    .filter((row) => row.item_name || calculationNumber(row.price) > 0)
+    .filter((row) => row.item_name || row.supplier_price_list_code || row.price !== null && row.price !== undefined || row.specification)
     .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
 
   return flatRows.length
@@ -752,6 +739,8 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
         {
           id: "accessories",
           group_name: "Accessories",
+          group_is_required: false,
+          conditional_configuration: undefined,
           is_active: true,
           sort_order: groups.length,
           items: flatRows,
@@ -1370,21 +1359,23 @@ type CategoryPricingRow = {
 type AccessoryPricingRow = {
   id?: string;
   group_name?: string;
+  group_is_required?: boolean;
   items?: AccessoryPricingItem[];
   item_name?: string;
   supplier_price_list_code?: string;
-  price?: number;
+  price?: number | null;
   currency?: string;
   specification?: string;
   is_active?: boolean;
   sort_order?: number;
+  conditional_configuration?: AccessoryConditionalConfiguration;
 };
 
 type AccessoryPricingItem = {
   id?: string;
   item_name?: string;
   supplier_price_list_code?: string;
-  price?: number;
+  price?: number | null;
   currency?: string;
   specification?: string;
   is_active?: boolean;
@@ -5899,7 +5890,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const templateId = textValue(formData, "template_id");
   const selectedTemplateImagePath = optionalTextValue(formData, "selected_template_image_path");
   const accessoryQtyById = accessoryQuantities(formData);
-  const accessoryPricingQtyById = accessoryPricingQuantities(formData);
+  const accessoryPricingSelection = parseSubmittedAccessoryQuantities(formData.getAll("accessory_pricing_qty"));
+  const submittedAccessoryPricingQtyById = new Map(Object.entries(accessoryPricingSelection.quantities));
   const modularQtyById = modularItemQuantities(formData);
   const linkedProductSelectionInputs = linkedProductSelections(formData);
   const linkedProductAccessorySelectionInputs = linkedProductAccessorySelections(formData);
@@ -5916,6 +5908,9 @@ export async function addProductTemplateToQuotation(formData: FormData) {
 
   if (!quotationId || !sectionId || !templateId) {
     redirectWithMessage(redirectPath, "Quotation, section, and product are required.");
+  }
+  if (accessoryPricingSelection.errors.length) {
+    redirectWithMessage(redirectPath, accessoryPricingSelection.errors[0]);
   }
 
   const supabase = await createSupabaseClient();
@@ -6023,6 +6018,41 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const originSnapshot = resolveProductOriginSnapshot(template.origin, brand?.origin ?? null);
   const supplierNameSnapshot = template.supplier_name ?? brand?.name ?? null;
   const selectedVariantPricingRow = selectedVariantPricing(formData, template.variant_pricing);
+  const activeBaseModelGroups = baseModelPricingGroups<VariantPricingRow>(template.variant_pricing)
+    .filter((group) => group.is_active)
+    .map((group) => ({ ...group, items: group.items.filter((row) => row.is_active !== false) }));
+  const submittedVariantGroupId = textValue(formData, "variant_pricing_group_id");
+  const matchingVariantGroups = selectedVariantPricingRow
+    ? activeBaseModelGroups.filter((group) => group.items.some((row) => row.id === selectedVariantPricingRow.id))
+    : [];
+  const selectedVariantGroup = submittedVariantGroupId
+    ? matchingVariantGroups.find((group) => group.id === submittedVariantGroupId) ?? null
+    : matchingVariantGroups.length === 1 ? matchingVariantGroups[0] : null;
+  const authoritativeAccessoryGroups = activeAccessoryRows(template.accessory_pricing);
+  const hasConditionalAccessoryConfiguration = authoritativeAccessoryGroups.some((group) => Boolean(group.conditional_configuration));
+  if (selectedVariantPricingRow && submittedVariantGroupId && !selectedVariantGroup) {
+    redirectWithMessage(redirectPath, "The selected Base/Model group and model do not match.");
+  }
+  if (hasConditionalAccessoryConfiguration && (!selectedVariantPricingRow || !selectedVariantGroup)) {
+    redirectWithMessage(redirectPath, "Select a valid Base/Model before configuring required components or options.");
+  }
+  const accessoryConfiguration = evaluateProductAccessorySelection({
+    accessoryGroups: authoritativeAccessoryGroups,
+    baseModelGroupId: selectedVariantGroup?.id ?? null,
+    baseModelRowId: selectedVariantPricingRow?.id ?? null,
+    selectedQuantities: Object.fromEntries(submittedAccessoryPricingQtyById),
+  });
+  if (!accessoryConfiguration.valid) {
+    const invalidGroup = accessoryConfiguration.groups.find((group) => !group.valid);
+    const groupName = authoritativeAccessoryGroups.find((group) => group.id === invalidGroup?.groupId)?.group_name;
+    redirectWithMessage(
+      redirectPath,
+      groupName
+        ? `Review ${groupName}: ${invalidGroup?.validationMessage ?? "the selection is invalid."}`
+        : "Review accessory selections: an item is missing, invalid, or not applicable to the selected model.",
+    );
+  }
+  const accessoryPricingQtyById = new Map(Object.entries(accessoryConfiguration.activeQuantities));
   const selectedCategoryPricingRow = selectedVariantPricingRow
     ? null
     : selectedCategoryPricing(formData, template.category_pricing);

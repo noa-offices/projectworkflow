@@ -6,6 +6,7 @@ import {
   removeBaseModelPricingGroup,
   removeBaseModelPricingRow,
   replaceWholeTemplateBaseModelRows,
+  replaceWholeTemplateBaseModelPricing,
   shouldApplyBaseModelReplacement,
   updateBaseModelPricingGroup,
 } from "./base-model-pricing-ui-state.js";
@@ -49,4 +50,12 @@ test("replacement versions apply once so manual edits remain authoritative", () 
   assert.equal(shouldApplyBaseModelReplacement(1, 1), false);
   assert.equal(shouldApplyBaseModelReplacement(2, 1), true);
   assert.equal(shouldApplyBaseModelReplacement(undefined, 1), false);
+});
+
+test("grouped Smart Setup replacements preserve flat-row behavior and append source families", () => {
+  const existing = [createBaseModelPricingGroup<Row>("existing", 0, "Existing")];
+  const converted = [{ ...createBaseModelPricingGroup<Row>("matrix", 1, "Executive Desks"), items: [{ id: "matrix-row" }] }];
+  assert.deepEqual(replaceWholeTemplateBaseModelPricing(existing, [{ id: "flat" }], [], "replacement"), replaceWholeTemplateBaseModelRows(existing, [{ id: "flat" }], "replacement"));
+  assert.deepEqual(replaceWholeTemplateBaseModelPricing(existing, [{ id: "flat" }], converted, "replacement").map((group) => group.group_name), ["Existing", "Executive Desks"]);
+  assert.deepEqual(replaceWholeTemplateBaseModelPricing(existing, [], converted, "replacement"), converted);
 });

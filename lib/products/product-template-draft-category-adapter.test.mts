@@ -18,3 +18,19 @@ test("category draft mapping preserves source-driven columns, order, null, and z
   assert.equal(result.groups[0].items[0].prices?.T, 0);
   assert.equal(result.groups[0].items[0].prices?.M, 125);
 });
+
+test("direct-price matrices are excluded while ambiguous one-column matrices remain with warnings", () => {
+  const base = {
+    version: 1 as const,
+    template: { templateName: null, templateCode: null, itemCode: null, internalSelectionName: null, description: null, specification: null, origin: null, supplierName: null, dimensions: null, supplierCodes: [], referenceCodes: [] },
+    defaultCurrency: null,
+    pricing: { workstationRows: [], baseModelRows: [], modularGroups: [], priceMatrices: [
+      { id: "desks", label: "Executive Desks", columns: [{ id: "price", label: "Price" }], rows: [{ id: "desk", label: "Desk", displayName: null, dimensions: null, currency: "EUR" as const, specification: null, supplierCodes: ["1AF003"], referenceCodes: [], prices: { price: 100 } }] },
+      { id: "ambiguous", label: "Ambiguous", columns: [{ id: "a", label: "A" }], rows: [{ id: "a-row", label: "A", displayName: null, dimensions: null, currency: "EUR" as const, specification: null, supplierCodes: ["A"], referenceCodes: [], prices: { a: 50 } }] },
+    ] },
+    optionGroups: [], materialSuggestions: [], linkedFamilySuggestions: [], extractionWarnings: [], confidence: null, sources: [],
+  };
+  const result = mapDraftPriceMatricesToCategoryGroups(base);
+  assert.deepEqual(result.groups.map((group) => group.group_name), ["Ambiguous"]);
+  assert.equal(result.warnings.some((warning) => warning.includes("could not be confirmed")), true);
+});

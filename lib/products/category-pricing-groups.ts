@@ -3,8 +3,6 @@ import {
   isModularMetaPricingRow,
 } from "@/lib/products/modular-pricing";
 
-const defaultCategoryColumns = ["Cat A", "Cat B", "Cat C", "Cat D"];
-
 export type CategoryPricingGroupLike<TItem> = {
   id?: string;
   group_name?: string;
@@ -78,7 +76,6 @@ export function groupedStandardCategoryPricingRows<TItem extends StandardCategor
         }));
 
       const priceCategories = Array.from(new Set([
-        ...defaultCategoryColumns,
         ...((group.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean)),
         ...items.flatMap((item) => Object.keys(item.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean)),
       ]));
@@ -109,10 +106,7 @@ export function groupedStandardCategoryPricingRows<TItem extends StandardCategor
       group_name: "Finish Category Pricing",
       is_active: true,
       sort_order: groups.length,
-      price_categories: Array.from(new Set([
-        ...defaultCategoryColumns,
-        ...flatRows.flatMap((item) => Object.keys(item.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean)),
-      ])),
+      price_categories: Array.from(new Set(flatRows.flatMap((item) => Object.keys(item.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean)))),
       items: flatRows,
     });
   }
@@ -131,7 +125,7 @@ export function flattenStandardCategoryPricingRows<TItem extends StandardCategor
 export function standardCategoryPriceColumns<TItem extends StandardCategoryPricingLike>(
   rows?: Array<TItem | CategoryPricingGroupLike<TItem>> | null,
 ) {
-  const columns = [...defaultCategoryColumns];
+  const columns: string[] = [];
 
   groupedStandardCategoryPricingRows(rows).forEach((group) => {
     (group.price_categories ?? []).forEach((category) => {

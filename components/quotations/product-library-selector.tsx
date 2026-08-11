@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
+import { listProductTemplateRowReferences } from "@/app/products/templates/row-reference-actions";
+import { listProductTemplateSubgroupReferences } from "@/app/products/templates/subgroup-reference-actions";
 import {
   createProductTemplateForQuotationModal,
   markTemplatePriceCheckedForQuotationModal,
@@ -30,8 +32,16 @@ import {
   modularItemPricingRows,
   modularPricingDefaultsFromRows,
 } from "@/lib/products/modular-pricing";
-import { flattenBaseModelPricingRows } from "@/lib/products/base-model-pricing-groups";
+import { baseModelPricingGroups, flattenBaseModelPricingRows, type BaseModelPricingGroup } from "@/lib/products/base-model-pricing-groups";
+import { baseModelPricingSubgroupForRow, baseModelSubgroupReferenceKey } from "@/lib/products/base-model-pricing-subgroups";
+import type { ProductTemplateSubgroupReferencePreview } from "@/lib/products/product-template-subgroup-references";
+import {
+  type AccessoryConditionalConfiguration,
+  type AccessoryGroupEvaluation,
+} from "@/lib/products/accessory-conditional-configuration";
+import { evaluateProductAccessorySelection } from "@/lib/quotations/product-accessory-configuration";
 import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
+import { productTemplateRowReferenceKey, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 import {
   buildCompanyStyleProductSpecification,
@@ -180,18 +190,19 @@ type AccessoryPricingRow = {
   items?: AccessoryPricingItem[];
   item_name?: string;
   supplier_price_list_code?: string;
-  price?: number;
+  price?: number | null;
   currency?: string;
   specification?: string;
   is_active?: boolean;
   sort_order?: number;
+  conditional_configuration?: AccessoryConditionalConfiguration;
 };
 
 type AccessoryPricingItem = {
   id?: string;
   item_name?: string;
   supplier_price_list_code?: string;
-  price?: number;
+  price?: number | null;
   currency?: string;
   specification?: string;
   is_active?: boolean;
@@ -440,6 +451,14 @@ function activeVariantRows(rows: unknown) {
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
 }
 
+/* Private signed thumbnails intentionally use native image elements. */
+/* eslint-disable @next/next/no-img-element */
+function BaseModelHierarchySelector({ currency, groups, onSelect, rowReferences, selectedRowId, subgroupReferences }: { currency: string; groups: BaseModelPricingGroup<VariantPricingRow>[]; onSelect: (rowId: string) => void; rowReferences: Readonly<Record<string, ProductTemplateRowReferencePreview>>; selectedRowId: string | null; subgroupReferences: Readonly<Record<string, ProductTemplateSubgroupReferencePreview>> }) {
+  const rowButton = (group: BaseModelPricingGroup<VariantPricingRow>, row: VariantPricingRow) => { const rowId = row.id; if (!rowId) return null; const reference = rowReferences[productTemplateRowReferenceKey("base_model", group.id, rowId)]; return <button key={rowId} type="button" onClick={() => onSelect(rowId)} className={`flex w-full items-center gap-2 rounded-md border p-2 text-left text-xs ${selectedRowId === rowId ? "border-emerald-700 bg-emerald-50" : "border-zinc-200 bg-white"}`}>{reference?.previewUrl ? <img src={reference.previewUrl} alt="Model reference" className="h-10 w-10 shrink-0 rounded border border-zinc-200 object-contain" loading="lazy" /> : null}<span className="min-w-0"><span className="block font-semibold text-zinc-900">{pricingDisplayName(row) || row.variant_name}</span><span className="block text-zinc-500">{[row.dimension, formatMoney(row.currency ?? currency, numberValue(row.price))].filter(Boolean).join(" · ")}</span></span></button>; };
+  return <div className="mt-2 space-y-3">{groups.map((group) => { const subgroups = [...(group.subgroups ?? [])].filter((subgroup) => subgroup.is_active).sort((a, b) => a.sort_order - b.sort_order); const ungrouped = group.items.filter((row) => row.id && !baseModelPricingSubgroupForRow(group, row.id)); return <section key={group.id} className="rounded-lg border border-zinc-200 bg-zinc-50 p-2"><p className="text-[10px] font-bold uppercase tracking-wide text-zinc-600">{group.group_name}</p><div className="mt-2 space-y-3">{subgroups.map((subgroup) => { const reference = subgroupReferences[baseModelSubgroupReferenceKey("base_model", group.id, subgroup.id)]; const rows = group.items.filter((row) => row.id && subgroup.row_ids.includes(row.id)); return <div key={subgroup.id} className="rounded-md border border-zinc-200 bg-white p-2"><div className="flex items-center gap-2">{reference?.previewUrl ? <img src={reference.previewUrl} alt={`${subgroup.subgroup_name} reference`} className="h-14 w-14 shrink-0 rounded border border-zinc-200 object-contain" loading="lazy" /> : null}<div><p className="text-xs font-semibold text-zinc-900">{subgroup.subgroup_name}</p><p className="text-[10px] text-zinc-500">{rows.length} models</p></div></div><div className="mt-2 grid gap-1 sm:grid-cols-2">{rows.map((row) => rowButton(group, row))}</div></div>; })}{ungrouped.length ? <div><p className="text-[10px] font-semibold uppercase text-zinc-500">{subgroups.length ? "Other Models" : "Models"}</p><div className="mt-1 grid gap-1 sm:grid-cols-2">{ungrouped.map((row) => rowButton(group, row))}</div></div> : null}</div></section>; })}</div>;
+}
+/* eslint-enable @next/next/no-img-element */
+
 function activeModularRows(rows?: CategoryPricingRow[] | null) {
   return modularItemPricingRows(rows)
     .filter((row) => row.is_active !== false)
@@ -509,6 +528,93 @@ function InternalMetaLine({
   );
 }
 
+function AccessoryConfigurationFields({
+  evaluations,
+  groups,
+  onQuantityChange,
+  quantities,
+  rowCurrency,
+}: {
+  evaluations: AccessoryGroupEvaluation[];
+  groups: ReturnType<typeof activeAccessoryRows>;
+  onQuantityChange: (groupItemIds: string[], itemId: string, quantity: number, replaceGroup: boolean) => void;
+  quantities: Record<string, number>;
+  rowCurrency: string;
+}) {
+  const sections = [
+    { role: "companion", title: "Required Components" },
+    { role: "conditional_option", title: "Conditional Options" },
+    { role: "accessory", title: "Optional Items" },
+  ] as const;
+
+  return sections.map((section) => {
+    const sectionGroups = evaluations.flatMap((evaluation) => {
+      if (!evaluation.visible || evaluation.role !== section.role) return [];
+      const group = groups.find((candidate) => candidate.id === evaluation.groupId);
+      if (!group) return [];
+      const allowed = new Set(evaluation.allowedItemIds);
+      return [{ evaluation, group, items: group.items.filter((item) => allowed.has(item.id ?? "")) }];
+    });
+    if (!sectionGroups.length) return null;
+
+    return (
+      <div key={section.role} className="mt-4 space-y-2">
+        <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">{section.title}</p>
+        {sectionGroups.map(({ evaluation, group, items }) => {
+          const exactlyOne = evaluation.maxSelections === 1;
+          const groupItemIds = group.items.map((item) => item.id ?? "").filter(Boolean);
+          const selectedId = evaluation.selectedItemIds[0] ?? "";
+          const validationMessage = evaluation.validationCode
+            ? exactlyOne && evaluation.required
+              ? `Select one ${group.group_name}.`
+              : evaluation.validationMessage
+            : null;
+
+          return (
+            <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
+              <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
+                {group.group_name}
+                {evaluation.required ? <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">Required</span> : null}
+              </legend>
+              {exactlyOne ? (
+                <select
+                  value={selectedId}
+                  onChange={(event) => onQuantityChange(groupItemIds, event.target.value, event.target.value ? 1 : 0, true)}
+                  className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                >
+                  <option value="">{evaluation.required ? `Select ${group.group_name}` : `No ${group.group_name}`}</option>
+                  {items.map((item) => (
+                    <option key={item.id} value={item.id}>{item.item_name} - {formatMoney(item.currency ?? rowCurrency, numberValue(item.price))}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="mt-1 space-y-2">
+                  {items.map((item) => {
+                    const itemId = item.id ?? "";
+                    const quantity = quantities[itemId] ?? 0;
+                    return (
+                      <label key={itemId} className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
+                        <span className="min-w-0">
+                          <input type="checkbox" checked={quantity > 0} onChange={(event) => onQuantityChange(groupItemIds, itemId, event.target.checked ? evaluation.fixedQuantity ?? Math.max(1, quantity || 1) : 0, false)} className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle" />
+                          <span className="font-medium text-zinc-900">{item.item_name}</span>
+                          {item.supplier_price_list_code ? <span className="mt-1 block text-[11px] text-zinc-500"><span className="font-semibold text-zinc-700">Supplier Code:</span> {item.supplier_price_list_code}</span> : null}
+                        </span>
+                        <span className="font-semibold">{formatMoney(item.currency ?? rowCurrency, numberValue(item.price))}</span>
+                        <input type="number" min={1} step={1} value={quantity || evaluation.fixedQuantity || 1} disabled={quantity <= 0 || evaluation.fixedQuantity !== null} onChange={(event) => onQuantityChange(groupItemIds, itemId, Math.max(1, Math.trunc(Number(event.target.value) || 1)), false)} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100" />
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {validationMessage ? <p className="mt-1 text-[10px] text-amber-700">{validationMessage}</p> : null}
+            </fieldset>
+          );
+        })}
+      </div>
+    );
+  });
+}
+
 function categoryPriceColumns(rows?: CategoryPricingRow[] | null) {
   return Array.from(new Set([
     ...groupedCategoryPriceColumns(rows),
@@ -524,11 +630,12 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
       id: group.id ?? `add-on-group-${groupIndex}`,
       group_name: group.group_name?.trim() || "Accessories",
       group_is_required: group.group_is_required === true,
+      conditional_configuration: group.conditional_configuration,
       is_active: group.is_active !== false,
       sort_order: numberValue(group.sort_order, groupIndex),
       items: (group.items ?? [])
         .filter((item) => item.is_active !== false)
-        .filter((item) => item.item_name || item.supplier_price_list_code || numberValue(item.price) > 0)
+        .filter((item) => item.item_name || item.supplier_price_list_code || item.price !== null && item.price !== undefined || item.specification)
         .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order)),
     }))
     .filter((group) => group.is_active && group.items.length)
@@ -536,7 +643,7 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
   const flatRows = sourceRows
     .filter((row) => !row.group_name && !row.items)
     .filter((row) => row.is_active !== false)
-    .filter((row) => row.item_name || numberValue(row.price) > 0)
+    .filter((row) => row.item_name || row.supplier_price_list_code || row.price !== null && row.price !== undefined || row.specification)
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
 
   return flatRows.length
@@ -546,6 +653,7 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
           id: "accessories",
           group_name: "Accessories",
           group_is_required: false,
+          conditional_configuration: undefined,
           is_active: true,
           sort_order: groups.length,
           items: flatRows,
@@ -951,6 +1059,8 @@ export function ProductLibrarySelector({
   const [accessoryQuantities, setAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [selectedDeskingSizes, setSelectedDeskingSizes] = useState<Record<string, string>>({});
   const [selectedVariantRows, setSelectedVariantRows] = useState<Record<string, string>>({});
+  const [loadedRowReferences, setLoadedRowReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateRowReferencePreview> }>({ templateId: "", images: {} });
+  const [loadedSubgroupReferences, setLoadedSubgroupReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateSubgroupReferencePreview> }>({ templateId: "", images: {} });
   const [selectedCategoryGroups, setSelectedCategoryGroups] = useState<Record<string, string>>({});
   const [selectedCategoryRows, setSelectedCategoryRows] = useState<Record<string, string>>({});
   const [selectedFabricCategories, setSelectedFabricCategories] = useState<Record<string, string>>({});
@@ -1059,6 +1169,16 @@ export function ProductLibrarySelector({
   const selectedTemplate = selectedTemplateId
     ? templateById.get(selectedTemplateId) ?? null
     : null;
+  const rowReferenceImages = loadedRowReferences.templateId === selectedTemplateId ? loadedRowReferences.images : {};
+  const subgroupReferenceImages = loadedSubgroupReferences.templateId === selectedTemplateId ? loadedSubgroupReferences.images : {};
+  useEffect(() => {
+    if (!selectedTemplateId) return;
+    let active = true;
+    void Promise.all([listProductTemplateRowReferences(selectedTemplateId), listProductTemplateSubgroupReferences(selectedTemplateId)]).then(([rowReferences, subgroupReferences]) => {
+      if (active) { setLoadedRowReferences({ templateId: selectedTemplateId, images: Object.fromEntries(rowReferences.map((reference) => [productTemplateRowReferenceKey(reference.pricingType, reference.groupId, reference.rowId), reference])) }); setLoadedSubgroupReferences({ templateId: selectedTemplateId, images: Object.fromEntries(subgroupReferences.map((reference) => [baseModelSubgroupReferenceKey(reference.pricingType, reference.groupId, reference.subgroupId), reference])) }); }
+    }).catch(() => { if (active) { setLoadedRowReferences({ templateId: selectedTemplateId, images: {} }); setLoadedSubgroupReferences({ templateId: selectedTemplateId, images: {} }); } });
+    return () => { active = false; };
+  }, [selectedTemplateId]);
   const finishBrands: FinishMaterialBrand[] = brands;
   const productCountByBrand = useMemo(() => {
     const map = new Map<string, number>();
@@ -1418,6 +1538,9 @@ export function ProductLibrarySelector({
                     new Set(sizePricingRows.map((row) => normalizeCurrency(row.currency ?? template.currency))),
                   );
                   const variantRows = activeVariantRows(template.variant_pricing);
+                  const variantGroups = baseModelPricingGroups<VariantPricingRow>(template.variant_pricing)
+                    .filter((group) => group.is_active)
+                    .map((group) => ({ ...group, items: group.items.filter((row) => row.is_active !== false) }));
                   const categoryGroups = groupedStandardCategoryPricingRows(template.category_pricing);
                   const selectedCategoryGroup =
                     categoryGroups.find((group) => group.id === selectedCategoryGroups[template.id]) ??
@@ -1427,7 +1550,8 @@ export function ProductLibrarySelector({
                   const modularGroups = activeModularGroups(template.category_pricing);
                   const modularRows = modularGroups.flatMap((group) => group.items);
                   const modularDefaults = modularPricingDefaultsFromRows(template.category_pricing);
-                  const accessoryGroups = activeAccessoryRows(template.accessory_pricing);
+                  const allAccessoryGroups = activeAccessoryRows(template.accessory_pricing);
+                  const accessoryGroups = allAccessoryGroups.filter((group) => !group.conditional_configuration);
                   const templateLinkedFamilies = linkedFamiliesByParent.get(template.id) ?? [];
                   const usesWorkstationFlow = sizePricingRows.length > 0;
                   const usesVariantPricing = !usesWorkstationFlow && variantRows.length > 0;
@@ -1445,6 +1569,12 @@ export function ProductLibrarySelector({
                     usesWorkstationFlow
                       ? variantRows.find((row) => row.id === selectedVariantRows[template.id]) ?? null
                       : null;
+                  const selectedVariantGroup = selectedVariantRow
+                    ? variantGroups.find((group) => group.items.some((row) => row.id === selectedVariantRow.id)) ?? null
+                    : null;
+                  const selectedVariantReference = selectedVariantRow?.id && selectedVariantGroup?.id
+                    ? rowReferenceImages[productTemplateRowReferenceKey("base_model", selectedVariantGroup.id, selectedVariantRow.id)] ?? null
+                    : null;
                   const selectedCategoryRow =
                     usesCategoryPricing
                       ? categoryRows.find((row) => row.id === selectedCategoryRows[template.id]) ??
@@ -1454,8 +1584,10 @@ export function ProductLibrarySelector({
                   const availableCategoryColumns = usesModularPricing
                     ? categoryPriceColumns(modularRows)
                     : (selectedCategoryGroup?.price_categories ?? categoryPriceColumns(template.category_pricing));
-                  const selectedFabricCategory =
-                    selectedFabricCategories[template.id] ?? availableCategoryColumns[0] ?? "Cat A";
+                  const savedFabricCategory = selectedFabricCategories[template.id];
+                  const selectedFabricCategory = savedFabricCategory && availableCategoryColumns.includes(savedFabricCategory)
+                    ? savedFabricCategory
+                    : availableCategoryColumns[0] ?? "";
                   const selectedCategoryPrice = selectedCategoryRow
                     ? numberValue(selectedCategoryRow.prices?.[selectedFabricCategory])
                     : 0;
@@ -1516,13 +1648,14 @@ export function ProductLibrarySelector({
                   const hasMixedWorkstationCurrencies = usesWorkstationFlow && workstationCurrencies.length > 1;
                   const missingRequiredWorkstationSelection = usesWorkstationFlow && !selectedSizeRow;
                   const missingRequiredModularSelection = usesModularPricing && selectedModularItems.length === 0;
-                  const missingRequiredAccessorySelection = accessoryGroups.some(
-                    (group) =>
-                      group.group_is_required === true &&
-                      group.items.every(
-                        (item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) === 0,
-                      ),
-                  );
+                  const accessoryConfiguration = evaluateProductAccessorySelection({
+                    accessoryGroups: allAccessoryGroups,
+                    baseModelGroupId: usesVariantPricing ? selectedVariantGroup?.id : null,
+                    baseModelRowId: usesVariantPricing ? selectedVariantRow?.id : null,
+                    selectedQuantities: templatePricingAccessoryQuantities,
+                  });
+                  const missingConditionalModelSelection = accessoryConfiguration.hasConditionalConfiguration && (!selectedVariantRow || !selectedVariantGroup);
+                  const missingRequiredAccessorySelection = !accessoryConfiguration.valid || missingConditionalModelSelection;
                   const derivedDesking = isDesking && selectedSizeRow
                     ? deskingSizePricingCalculation({
                         accessoryQuantities: templateAccessoryQuantities,
@@ -1542,7 +1675,7 @@ export function ProductLibrarySelector({
                   const selectedWorkstationVariantPrice = selectedWorkstationVariantRow
                     ? numberValue(selectedWorkstationVariantRow.price)
                     : 0;
-                  const selectedPricingAccessories = accessoryGroups
+                  const selectedPricingAccessories = allAccessoryGroups
                     .flatMap((group) =>
                       group.items.map((accessory) => {
                         const id = accessory.id ?? accessory.item_name ?? "";
@@ -1550,7 +1683,7 @@ export function ProductLibrarySelector({
                         return {
                           accessory,
                           groupName: group.group_name,
-                          qty: Math.max(0, Math.trunc(numberValue(templatePricingAccessoryQuantities[id]))),
+                          qty: Math.max(0, Math.trunc(numberValue(accessoryConfiguration.activeQuantities[id]))),
                         };
                       }),
                     )
@@ -1597,7 +1730,10 @@ export function ProductLibrarySelector({
                               null
                             : null;
                         const childCategoryColumns = selectedChildCategoryGroup?.price_categories ?? categoryPriceColumns(childTemplate.category_pricing);
-                        const childCategory = selectedLinkedFabricCategories[instanceKey] ?? childCategoryColumns[0] ?? "Cat A";
+                        const savedChildCategory = selectedLinkedFabricCategories[instanceKey];
+                        const childCategory = savedChildCategory && childCategoryColumns.includes(savedChildCategory)
+                          ? savedChildCategory
+                          : childCategoryColumns[0] ?? "";
                         const unitPrice = childCategoryRow
                           ? numberValue(childCategoryRow.prices?.[childCategory])
                           : childVariantRow
@@ -2177,7 +2313,7 @@ export function ProductLibrarySelector({
                       ...(accessorySnapshots.length
                         ? {
                             add_ons: {
-                              groups: accessoryGroups
+                              groups: allAccessoryGroups
                                 .map((group) => ({
                                   group_name: group.group_name,
                                   items: accessorySnapshots.filter((snapshot) => snapshot.group_name === group.group_name),
@@ -2827,11 +2963,25 @@ export function ProductLibrarySelector({
                             <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
                               Base Size / Main Price
                             </p>
+                            <BaseModelHierarchySelector currency={template.currency} groups={variantGroups} rowReferences={rowReferenceImages} subgroupReferences={subgroupReferenceImages} selectedRowId={selectedVariantRow?.id ?? null} onSelect={(nextRowId) => { const nextGroupId = variantGroups.find((group) => group.items.some((row) => row.id === nextRowId))?.id ?? null; setSelectedVariantRows((current) => ({ ...current, [template.id]: nextRowId })); setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, baseModelGroupId: nextGroupId, baseModelRowId: nextRowId, selectedQuantities: current[template.id] ?? {} }).activeQuantities })); }} />
                             <label className="block">
                               <span className="text-[10px] font-bold uppercase text-zinc-500">Select size / model</span>
                               <select
                                 value={selectedVariantRow?.id ?? ""}
-                                onChange={(event) => setSelectedVariantRows((current) => ({ ...current, [template.id]: event.target.value }))}
+                                onChange={(event) => {
+                                  const nextRowId = event.target.value;
+                                  const nextGroupId = variantGroups.find((group) => group.items.some((row) => row.id === nextRowId))?.id ?? null;
+                                  setSelectedVariantRows((current) => ({ ...current, [template.id]: nextRowId }));
+                                  setPricingAccessoryQuantities((current) => ({
+                                    ...current,
+                                    [template.id]: evaluateProductAccessorySelection({
+                                      accessoryGroups: allAccessoryGroups,
+                                      baseModelGroupId: nextGroupId,
+                                      baseModelRowId: nextRowId,
+                                      selectedQuantities: current[template.id] ?? {},
+                                    }).activeQuantities,
+                                  }));
+                                }}
                                 className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                               >
                                   {variantRows.map((row, index) => (
@@ -2846,7 +2996,10 @@ export function ProductLibrarySelector({
                                   ))}
                                 </select>
                               {selectedVariantRow ? (
-                                <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                                <div className="mt-2 flex gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                                  {/* eslint-disable-next-line @next/next/no-img-element -- private signed thumbnail */}
+                                  {selectedVariantReference?.previewUrl ? <img src={selectedVariantReference.previewUrl} alt="Model reference" className="h-16 w-16 shrink-0 rounded-md border border-zinc-200 bg-white object-contain" loading="lazy" /> : null}
+                                  <div className="min-w-0">
                                   <p className="text-xs font-semibold text-zinc-900">
                                     {pricingDisplayName(selectedVariantRow) || selectedVariantRow.variant_name}
                                   </p>
@@ -2861,11 +3014,31 @@ export function ProductLibrarySelector({
                                   />
                                   <InternalMetaLine label="Supplier Code" value={selectedVariantRow.supplier_price_list_code} />
                                   <InternalMetaLine label="Specification" value={selectedVariantRow.specification} />
+                                  </div>
                                 </div>
                               ) : null}
                             </label>
                           </div>
                         ) : null}
+                        <AccessoryConfigurationFields
+                          evaluations={accessoryConfiguration.groups.filter((evaluation) =>
+                            allAccessoryGroups.some((group) => group.id === evaluation.groupId && Boolean(group.conditional_configuration)),
+                          )}
+                          groups={allAccessoryGroups}
+                          quantities={templatePricingAccessoryQuantities}
+                          rowCurrency={rowCurrency}
+                          onQuantityChange={(groupItemIds, itemId, quantity, replaceGroup) =>
+                            setPricingAccessoryQuantities((current) => {
+                              const next = { ...(current[template.id] ?? {}) };
+                              if (replaceGroup) groupItemIds.forEach((id) => { delete next[id]; });
+                              if (itemId) {
+                                if (quantity > 0) next[itemId] = quantity;
+                                else delete next[itemId];
+                              }
+                              return { ...current, [template.id]: next };
+                            })
+                          }
+                        />
                         {usesWorkstationFlow && (variantRows.length || accessoryGroups.length) ? (
                           <div className="mt-4 space-y-2">
                             <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
@@ -3929,6 +4102,11 @@ export function ProductLibrarySelector({
                             Select at least one modular item to add this product.
                           </p>
                         ) : null}
+                        {missingConditionalModelSelection ? (
+                          <p className="text-xs leading-5 text-amber-700">
+                            Select a valid Base/Model to configure required components and options.
+                          </p>
+                        ) : null}
                         {hasMixedOptionCurrencies ? (
                           <p className="text-xs leading-5 text-amber-700">
                             Mixed-currency advanced options should be reviewed manually.
@@ -4238,7 +4416,10 @@ export function ProductLibrarySelector({
                             </>
                           ) : null}
                           {usesVariantPricing && selectedVariantRow ? (
-                            <input type="hidden" name="variant_pricing_row_id" value={selectedVariantRow.id ?? ""} />
+                            <>
+                              <input type="hidden" name="variant_pricing_group_id" value={selectedVariantGroup?.id ?? ""} />
+                              <input type="hidden" name="variant_pricing_row_id" value={selectedVariantRow.id ?? ""} />
+                            </>
                           ) : null}
                           {usesWorkstationFlow && selectedWorkstationVariantRow ? (
                             <input

@@ -15,6 +15,8 @@ import {
 } from "@/lib/products/modular-pricing";
 import { resolveDefaultPricingCurrency } from "@/components/products/pricing-default-currency";
 import { PricingGroupShell } from "@/components/products/pricing-group-shell";
+import { PricingRowReferenceImage } from "@/components/products/pricing-row-reference-image";
+import { PricingSubgroupReferenceImage } from "@/components/products/pricing-subgroup-reference-image";
 import { FinishCategoryGroupJsonImport } from "@/components/products/finish-category-group-json-import";
 import {
   FinishCategoryGroupReferenceImages,
@@ -36,13 +38,15 @@ import {
   flattenBaseModelPricingRows,
   serializeBaseModelPricingGroups,
   type BaseModelPricingGroup,
+  type BaseModelPricingSubgroup,
 } from "@/lib/products/base-model-pricing-groups";
+import { assignBaseModelRowToSubgroup, baseModelPricingSubgroupForRow, createBaseModelPricingSubgroup, removeBaseModelPricingSubgroup, updateBaseModelPricingSubgroup } from "@/lib/products/base-model-pricing-subgroups";
 import {
   addBaseModelPricingRow,
   createBaseModelPricingGroup,
   removeBaseModelPricingGroup,
   removeBaseModelPricingRow,
-  replaceWholeTemplateBaseModelRows,
+  replaceWholeTemplateBaseModelPricing,
   shouldApplyBaseModelReplacement,
   updateBaseModelPricingGroup,
   updateBaseModelPricingRow,
@@ -50,6 +54,24 @@ import {
 import { hasMeaningfulCategoryPricing } from "@/lib/products/category-pricing-state";
 import { hasMeaningfulModularPricing } from "@/lib/products/modular-pricing-state";
 import { hasMeaningfulAccessoryPricing } from "@/lib/products/accessory-pricing-state";
+import {
+  parseAccessoryConfigurationGroups,
+  serializeAccessoryConfigurationGroups,
+  type AccessoryConditionalConfiguration,
+  type AccessoryConfigurationGroup,
+  type AccessoryConfigurationRole,
+  type AccessorySelectionMode,
+} from "@/lib/products/accessory-conditional-configuration";
+import {
+  addAccessoryApplicabilityRule,
+  removeAccessoryApplicabilityRule,
+  setAccessoryConditionalEnabled,
+  setAccessoryConfigurationRole,
+  setAccessoryRuleAllowedItems,
+  setAccessorySelectionMode,
+  staleAccessoryRuleItemIds,
+  updateAccessoryApplicabilityRule,
+} from "@/lib/products/accessory-conditional-configuration-ui-state";
 import {
   TEMPLATE_IMPORT_APPLY_EVENT,
   TEMPLATE_IMPORT_RESET_EVENT,
@@ -104,6 +126,7 @@ export type AccessoryPricingRow = {
   specification?: string;
   is_active?: boolean;
   sort_order?: number;
+  conditional_configuration?: AccessoryConditionalConfiguration;
 };
 
 export type AccessoryPricingItem = {
@@ -241,11 +264,12 @@ function normalizeAccessoryGroup(row: AccessoryPricingRow, index: number): Acces
     is_active: row.is_active !== false,
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
     items: (row.items?.length ? row.items : flatItem).map(normalizeAccessoryItem),
+    ...(row.conditional_configuration ? { conditional_configuration: row.conditional_configuration } : {}),
   };
 }
 
 function normalizeAccessoryGroups(rows?: AccessoryPricingRow[] | null) {
-  const sourceRows = Array.isArray(rows) ? rows : [];
+  const sourceRows = parseAccessoryConfigurationGroups(Array.isArray(rows) ? rows : []).groups as AccessoryPricingRow[];
   const groupedRows = sourceRows.filter((row) => row.group_name || row.items);
   const flatRows = sourceRows.filter((row) => !row.group_name && !row.items);
   const normalizedGroups = groupedRows.map(normalizeAccessoryGroup);
@@ -437,7 +461,10 @@ function accessoryItemHasMeaningfulValues(row: AccessoryPricingItem) {
 
 export function VariantPricingTable({
   brandDefaultCurrency,
+  onGroupsChange,
   onHasDataChange,
+  replacementGroups,
+  replacementFlatSubgroups,
   replacementRows,
   replacementVersion,
   rows,
@@ -446,7 +473,10 @@ export function VariantPricingTable({
   templateCurrency,
 }: {
   brandDefaultCurrency?: string | null;
+  onGroupsChange?: (groups: BaseModelPricingGroup<VariantPricingRow>[]) => void;
   onHasDataChange?: (hasBaseModelData: boolean) => void;
+  replacementGroups?: BaseModelPricingGroup<VariantPricingRow>[] | null;
+  replacementFlatSubgroups?: BaseModelPricingSubgroup[] | null;
   replacementRows?: VariantPricingRow[] | null;
   replacementVersion?: number;
   rows?: unknown;
@@ -461,10 +491,12 @@ export function VariantPricingTable({
     is_active: group.is_active,
     sort_order: group.sort_order,
     items: group.items.map(normalizeVariant),
+    ...(group.subgroups?.length ? { subgroups: group.subgroups } : {}),
   })) as BaseModelPricingGroup<VariantPricingRow>[], [rows]);
   const importedIdsRef = useRef<Set<string>>(new Set());
   const [groups, setGroups] = useState<BaseModelPricingGroup<VariantPricingRow>[]>(() => initialGroups);
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => Object.fromEntries(initialGroups.map((group) => [group.id, true])));
+  const [collapsedSubgroups, setCollapsedSubgroups] = useState<Record<string, boolean>>({});
   const [groupActionNotices, setGroupActionNotices] = useState<Record<string, string>>({});
   const [referenceTargetGroupId, setReferenceTargetGroupId] = useState<string | null>(null);
   const persistedGroupIds = useMemo(() => persistedBaseModelPricingGroupIds(rows), [rows]);
@@ -485,12 +517,20 @@ export function VariantPricingTable({
   useEffect(() => {
     if (!shouldApplyBaseModelReplacement(replacementVersion, appliedReplacementVersion.current)) return;
     appliedReplacementVersion.current = replacementVersion;
-    setGroups((current) => replaceWholeTemplateBaseModelRows(current, (replacementRows ?? []).map(normalizeVariant), idFor("base-model-group", 0)));
-  }, [replacementRows, replacementVersion]);
+    setGroups((current) => {
+      const convertedGroups = (replacementGroups ?? []).map((group) => ({ ...group, items: group.items.map(normalizeVariant) }));
+      const rows = (replacementRows ?? []).map(normalizeVariant);
+      const next = replaceWholeTemplateBaseModelPricing(current, rows, convertedGroups, idFor("base-model-group", 0));
+      const flatRowIds = new Set(rows.flatMap((row) => row.id ? [row.id] : []));
+      return next.map((group) => replacementFlatSubgroups?.length && group.items.some((row) => row.id && flatRowIds.has(row.id)) ? { ...group, subgroups: replacementFlatSubgroups } : group);
+    });
+    setCollapsedGroups((current) => ({ ...current, ...(replacementGroups ?? []).reduce<Record<string, boolean>>((next, group) => ({ ...next, [group.id]: true }), {}) }));
+  }, [replacementFlatSubgroups, replacementGroups, replacementRows, replacementVersion]);
 
   useEffect(() => {
     onHasDataChange?.(hasMeaningfulBaseModelPricing(flattenBaseModelPricingRows(groups)));
-  }, [groups, onHasDataChange]);
+    onGroupsChange?.(groups);
+  }, [groups, onGroupsChange, onHasDataChange]);
 
   useEffect(() => {
     const handleApply = (event: Event) => {
@@ -640,20 +680,25 @@ export function VariantPricingTable({
               {collapsedGroups[group.id] ? ">" : "v"}
             </button>
             <input aria-label="Base / Model group title" value={group.group_name} onChange={(event) => setGroups((current) => updateBaseModelPricingGroup(current, group.id, { group_name: event.target.value }))} className="h-8 min-w-64 flex-1 border border-zinc-200 bg-white px-2 text-sm font-semibold outline-none focus:border-emerald-800" />
+            <p className="text-xs text-zinc-500">{group.items.length} models · {group.is_active ? "Active" : "Inactive"}</p>
             <button type="button" onClick={() => openReferenceImages(group.id)} className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-600 hover:text-emerald-900">Reference images</button>
             <label className="flex items-center gap-2 text-xs font-medium text-zinc-600"><input type="checkbox" checked={group.is_active} onChange={(event) => setGroups((current) => updateBaseModelPricingGroup(current, group.id, { is_active: event.target.checked }))} />Active</label>
             <button type="button" onClick={() => setGroups((current) => removeBaseModelPricingGroup(current, group.id))} className="rounded-md px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50">Remove group</button>
           </div>
-          <button type="button" onClick={(event) => {
+          {!collapsedGroups[group.id] ? <button type="button" onClick={(event) => {
             const nextSortOrder = Math.max(-1, ...group.items.map((row) => Number(row.sort_order) || 0)) + 1;
             setGroups((current) => addBaseModelPricingRow(current, group.id, { id: idFor("variant", nextSortOrder), currency: resolveDefaultPricingCurrency({ brandDefaultCurrency, existingRows: flattenBaseModelPricingRows(current), savedTemplateCurrency: templateCurrency, trigger: event.currentTarget }), is_active: true, sort_order: nextSortOrder }));
-          }} className="mt-3 rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-600 hover:text-emerald-900">+ Add row</button>
+          }} className="mt-3 rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-600 hover:text-emerald-900">+ Add row</button> : null}
+          {!collapsedGroups[group.id] ? <button type="button" onClick={() => setGroups((current) => current.map((entry) => entry.id === group.id ? { ...entry, subgroups: [...(entry.subgroups ?? []), createBaseModelPricingSubgroup(idFor("base-model-subgroup", entry.subgroups?.length ?? 0), "New Subgroup", entry.subgroups?.length ?? 0)] } : entry))} className="ml-2 mt-3 rounded-md border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-900">+ Add Subgroup</button> : null}
           {groupActionNotices[group.id] ? <p className="mt-2 text-xs font-medium text-amber-800">{groupActionNotices[group.id]}</p> : null}
+          {!collapsedGroups[group.id] && group.subgroups?.length ? <div className="mt-3 space-y-2">{[...group.subgroups].sort((a, b) => a.sort_order - b.sort_order).map((subgroup) => <div key={subgroup.id} className="rounded-md border border-zinc-200 bg-white p-2"><div className="flex flex-wrap items-start gap-2"><button type="button" onClick={() => setCollapsedSubgroups((current) => ({ ...current, [subgroup.id]: !current[subgroup.id] }))} className="h-8 w-8 rounded border border-zinc-200 text-xs">{collapsedSubgroups[subgroup.id] ? ">" : "v"}</button><PricingSubgroupReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} groupId={group.id} subgroupId={subgroup.id} /><div className="min-w-52 flex-1"><input value={subgroup.subgroup_name} onChange={(event) => setGroups((current) => current.map((entry) => entry.id === group.id ? updateBaseModelPricingSubgroup(entry, subgroup.id, { subgroup_name: event.target.value }) : entry))} className="h-8 w-full border border-zinc-200 px-2 text-sm font-semibold outline-none focus:border-emerald-800" /><p className="mt-1 text-xs text-zinc-500">{subgroup.row_ids.length} models</p></div><label className="flex items-center gap-1 text-xs text-zinc-600"><input type="checkbox" checked={subgroup.is_active} onChange={(event) => setGroups((current) => current.map((entry) => entry.id === group.id ? updateBaseModelPricingSubgroup(entry, subgroup.id, { is_active: event.target.checked }) : entry))} />Active</label><button type="button" onClick={() => setGroups((current) => current.map((entry) => entry.id === group.id ? removeBaseModelPricingSubgroup(entry, subgroup.id) : entry))} className="text-xs font-semibold text-red-700">Remove subgroup</button></div>{!collapsedSubgroups[subgroup.id] ? <p className="mt-2 border-t border-zinc-100 pt-2 text-xs text-zinc-500">Rows assigned below are visible while this subgroup is expanded.</p> : null}</div>)}</div> : null}
         </header>
       <div hidden={collapsedGroups[group.id]} className="overflow-x-auto">
         <table className="min-w-[1760px] w-full text-left text-xs">
           <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
             <tr>
+              <th className="w-20 px-2 py-2">Image</th>
+              <th className="px-2 py-2">Subgroup</th>
               <th className="px-2 py-2">Variant Code / Short Name</th>
               <th className="px-2 py-2">Display Name</th>
               <th className="px-2 py-2">Supplier / Price List Code</th>
@@ -666,8 +711,11 @@ export function VariantPricingTable({
             </tr>
           </thead>
           <tbody>
-            {group.items.map((row, index) => (
-              <tr key={row.id ?? index} className="border-t border-zinc-100 align-top">
+            {group.items.map((row, index) => {
+              const subgroup = row.id ? baseModelPricingSubgroupForRow(group, row.id) : null;
+              return <tr key={row.id ?? index} hidden={Boolean(subgroup && collapsedSubgroups[subgroup.id])} className="border-t border-zinc-100 align-top">
+                <td className="px-2 py-2 align-top">{row.id ? <PricingRowReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} pricingType="base_model" groupId={group.id} rowId={row.id} /> : <span className="text-[10px] text-zinc-400">Save row first</span>}</td>
+                <td className="px-2 py-2 align-top">{row.id ? <select value={subgroup?.id ?? ""} onChange={(event) => setGroups((current) => current.map((entry) => entry.id === group.id ? assignBaseModelRowToSubgroup(entry, row.id!, event.target.value || null) : entry))} className="h-10 min-w-[170px] border border-zinc-200 bg-white px-2"><option value="">Ungrouped</option>{(group.subgroups ?? []).map((entry) => <option key={entry.id} value={entry.id}>{entry.subgroup_name}</option>)}</select> : null}</td>
                 <td className="px-2 py-2 align-top"><input value={row.variant_name ?? ""} onChange={(e) => update(group.id, index, { variant_name: e.target.value })} className="h-10 min-w-[160px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                 <td className="px-2 py-2 align-top"><AutoGrowTextarea value={row.display_name ?? ""} onChange={(value) => update(group.id, index, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
                 <td className="px-2 py-2 align-top"><input value={row.supplier_price_list_code ?? ""} onChange={(e) => update(group.id, index, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
@@ -677,9 +725,9 @@ export function VariantPricingTable({
                 <td className="px-2 py-2 align-top"><AutoGrowTextarea value={row.specification ?? ""} onChange={(value) => update(group.id, index, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /></td>
                 <td className="px-2 py-2 align-top"><input type="checkbox" checked={row.is_active !== false} onChange={(e) => update(group.id, index, { is_active: e.target.checked })} /></td>
                 <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => setGroups((current) => removeBaseModelPricingRow(current, group.id, index))} className="text-xs font-semibold text-red-700">Remove</button></div></td>
-              </tr>
-            ))}
-            {!group.items.length ? <tr><td colSpan={9} className="px-3 py-5 text-center text-zinc-500">No size/model variants yet.</td></tr> : null}
+              </tr>;
+            })}
+            {!group.items.length ? <tr><td colSpan={11} className="px-3 py-5 text-center text-zinc-500">No size/model variants yet.</td></tr> : null}
           </tbody>
         </table>
       </div>
@@ -1061,6 +1109,7 @@ export function CategoryPricingTable({
                 <table className="min-w-[1960px] w-full text-left text-xs">
                   <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
                     <tr>
+                      <th className="w-20 px-2 py-2">Image</th>
                       <th className="px-2 py-2">Variant Code / Short Name</th>
                       <th className="px-2 py-2">Display Name</th>
                       <th className="px-2 py-2">Supplier / Price List Code</th>
@@ -1077,6 +1126,7 @@ export function CategoryPricingTable({
                       const normalizedRow = categoryPricingRowWithColumns(row, groupPriceCategories);
                       return (
                         <tr key={row.id ?? itemIndex} className="border-t border-zinc-100 align-top">
+                          <td className="px-2 py-2 align-top">{group.id && row.id ? <PricingRowReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} pricingType="finish_category" groupId={group.id} rowId={row.id} /> : <span className="text-[10px] text-zinc-400">Save row first</span>}</td>
                           <td className="px-2 py-2 align-top"><input value={normalizedRow.variant_name ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { variant_name: e.target.value })} className="h-10 min-w-[160px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                           <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.display_name ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
                           <td className="px-2 py-2 align-top"><input value={normalizedRow.supplier_price_list_code ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
@@ -1089,7 +1139,7 @@ export function CategoryPricingTable({
                         </tr>
                       );
                     })}
-                    {!(group.items ?? []).length ? <tr><td colSpan={groupPriceCategories.length + 5} className="px-3 py-5 text-center text-zinc-500">No finish pricing rows in this group yet.</td></tr> : null}
+                    {!(group.items ?? []).length ? <tr><td colSpan={groupPriceCategories.length + 10} className="px-3 py-5 text-center text-zinc-500">No finish pricing rows in this group yet.</td></tr> : null}
                   </tbody>
                 </table>
               </div>
@@ -1441,6 +1491,7 @@ export function ModularItemPricingTable({
                     <table className="min-w-[1960px] w-full text-left text-xs">
                       <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
                         <tr>
+                          <th className="w-20 px-2 py-2">Image</th>
                           <th className="px-2 py-2">Module name</th>
                           <th className="px-2 py-2">Display name</th>
                           <th className="px-2 py-2">Supplier / Price List Code</th>
@@ -1457,6 +1508,7 @@ export function ModularItemPricingTable({
                           const normalizedRow = categoryPricingRowWithColumns(row, priceCategories);
                           return (
                             <tr key={row.id ?? rowIndex} className="border-t border-zinc-100 align-top">
+                              <td className="px-2 py-2 align-top">{group.id && row.id ? <PricingRowReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} pricingType="modular" groupId={group.id} rowId={row.id} /> : <span className="text-[10px] text-zinc-400">Save row first</span>}</td>
                               <td className="px-2 py-2 align-top"><input value={normalizedRow.variant_name ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { variant_name: e.target.value })} className="h-10 min-w-[160px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                               <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.display_name ?? ""} onChange={(value) => updateRow(groupIndex, rowIndex, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
                               <td className="px-2 py-2 align-top"><input value={normalizedRow.supplier_price_list_code ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
@@ -1501,7 +1553,190 @@ export function ModularItemPricingTable({
   );
 }
 
+function AccessoryConditionalRuleEditor({
+  baseModelGroups,
+  group,
+  onChange,
+}: {
+  baseModelGroups: BaseModelPricingGroup<VariantPricingRow>[];
+  group: AccessoryPricingRow;
+  onChange: (group: AccessoryPricingRow) => void;
+}) {
+  const [selectedModelKey, setSelectedModelKey] = useState("");
+  const configuration = group.conditional_configuration;
+  const modelChoices = baseModelGroups.flatMap((baseGroup) => baseGroup.is_active === false ? [] : baseGroup.items.flatMap((row) => {
+    if (row.is_active === false || !baseGroup.id || !row.id) return [];
+    const details = [row.display_name || row.variant_name || "Unnamed model", row.supplier_price_list_code, row.dimension].filter(Boolean);
+    return [{
+      baseModelGroupId: baseGroup.id,
+      baseModelRowId: row.id,
+      key: `${baseGroup.id}\u0000${row.id}`,
+      label: `${baseGroup.group_name} / ${details.join(" — ")}`,
+    }];
+  }));
+  const availableChoices = modelChoices.filter((choice) => !configuration?.applicability.some((rule) =>
+    rule.base_model_group_id === choice.baseModelGroupId && rule.base_model_row_id === choice.baseModelRowId));
+  const staleItemIds = staleAccessoryRuleItemIds(group as AccessoryConfigurationGroup);
+
+  function update(transform: (current: AccessoryConfigurationGroup) => AccessoryConfigurationGroup) {
+    onChange(transform(group as AccessoryConfigurationGroup) as AccessoryPricingRow);
+  }
+
+  return (
+    <details className="mt-3 border-t border-zinc-100 pt-3">
+      <summary className="cursor-pointer text-xs font-semibold text-emerald-900">Advanced Configuration / Conditional Rules</summary>
+      <div className="mt-3 space-y-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+        {!modelChoices.length ? (
+          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            Conditional configuration rules require Base / Model Pricing.
+          </p>
+        ) : null}
+        <label className="flex items-center gap-2 text-xs font-semibold text-zinc-700">
+          <input
+            type="checkbox"
+            checked={Boolean(configuration)}
+            disabled={!modelChoices.length && !configuration}
+            onChange={(event) => update((current) => setAccessoryConditionalEnabled(current, event.target.checked))}
+          />
+          Use model-based configuration rules
+        </label>
+        {configuration ? (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-xs text-zinc-600">
+                <span className="font-semibold text-zinc-700">Configuration Type</span>
+                <select
+                  value={configuration.role}
+                  onChange={(event) => update((current) => setAccessoryConfigurationRole(current, event.target.value as AccessoryConfigurationRole))}
+                  className="mt-1 h-9 w-full border border-zinc-300 bg-white px-2 outline-none focus:border-emerald-800"
+                >
+                  <option value="accessory">Normal Accessory</option>
+                  <option value="conditional_option">Conditional Option</option>
+                  <option value="companion">Required Companion</option>
+                </select>
+              </label>
+              <label className="block text-xs text-zinc-600">
+                <span className="font-semibold text-zinc-700">Selection Rule</span>
+                <select
+                  value={configuration.selection}
+                  onChange={(event) => update((current) => setAccessorySelectionMode(current, event.target.value as AccessorySelectionMode))}
+                  className="mt-1 h-9 w-full border border-zinc-300 bg-white px-2 outline-none focus:border-emerald-800"
+                >
+                  <option value="unrestricted">Unrestricted</option>
+                  <option value="exactly_one">Exactly One</option>
+                  <option value="at_least_one">At Least One</option>
+                  <option value="choose_multiple">Multiple</option>
+                </select>
+              </label>
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-zinc-700">Applicable Models</p>
+              <p className="mt-1 text-[11px] text-zinc-500">Models without a rule are not shown for this group.</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <select value={selectedModelKey} onChange={(event) => setSelectedModelKey(event.target.value)} disabled={!availableChoices.length} className="h-9 min-w-0 flex-1 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800">
+                  <option value="">{availableChoices.length ? "Select Base / Model" : "All available models already added"}</option>
+                  {availableChoices.map((choice) => <option key={choice.key} value={choice.key}>{choice.label}</option>)}
+                </select>
+                <button
+                  type="button"
+                  disabled={!selectedModelKey}
+                  onClick={() => {
+                    const choice = modelChoices.find((candidate) => candidate.key === selectedModelKey);
+                    if (!choice) return;
+                    update((current) => addAccessoryApplicabilityRule(current, choice.baseModelGroupId, choice.baseModelRowId));
+                    setSelectedModelKey("");
+                  }}
+                  className="h-9 rounded-md border border-emerald-200 bg-white px-3 text-xs font-semibold text-emerald-900 disabled:cursor-not-allowed disabled:text-zinc-400"
+                >
+                  + Add Model Rule
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {configuration.applicability.map((rule, ruleIndex) => {
+                const model = modelChoices.find((choice) => choice.baseModelGroupId === rule.base_model_group_id && choice.baseModelRowId === rule.base_model_row_id);
+                const usesSpecificItems = rule.allowed_item_ids !== undefined;
+                return (
+                  <div key={`${rule.base_model_group_id}:${rule.base_model_row_id}`} className="rounded-md border border-zinc-200 bg-white p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-semibold text-zinc-900">{model?.label ?? "Unavailable Base / Model row"}</p>
+                        {!model ? <p className="mt-1 text-[11px] text-red-700">This rule references a removed model and must be corrected before saving.</p> : null}
+                      </div>
+                      <button type="button" onClick={() => update((current) => removeAccessoryApplicabilityRule(current, ruleIndex))} className="text-xs font-semibold text-red-700">Remove Rule</button>
+                    </div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                      <label className="flex items-center gap-2 text-xs text-zinc-700">
+                        <input type="checkbox" checked={rule.required} onChange={(event) => update((current) => updateAccessoryApplicabilityRule(current, ruleIndex, { required: event.target.checked }))} />
+                        Required
+                      </label>
+                      <label className="block text-xs text-zinc-600">
+                        <span className="font-semibold text-zinc-700">Allowed Items</span>
+                        <select
+                          value={usesSpecificItems ? "specific" : "all"}
+                          onChange={(event) => update((current) => setAccessoryRuleAllowedItems(current, ruleIndex, event.target.value === "all" ? null : []))}
+                          className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 outline-none focus:border-emerald-800"
+                        >
+                          <option value="all">All Items</option>
+                          <option value="specific">Specific Items</option>
+                        </select>
+                      </label>
+                      <label className="block text-xs text-zinc-600">
+                        <span className="font-semibold text-zinc-700">Fixed Quantity (optional)</span>
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={rule.fixed_quantity ?? ""}
+                          onChange={(event) => update((current) => updateAccessoryApplicabilityRule(current, ruleIndex, { fixed_quantity: event.target.value ? Math.max(1, Math.trunc(Number(event.target.value) || 1)) : undefined }))}
+                          className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 outline-none focus:border-emerald-800"
+                        />
+                      </label>
+                    </div>
+                    {configuration.selection === "exactly_one" && rule.fixed_quantity !== undefined && rule.fixed_quantity !== 1 ? <p className="mt-2 text-[11px] text-red-700">Exactly One requires a fixed quantity of 1.</p> : null}
+                    {usesSpecificItems ? (
+                      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
+                        {(group.items ?? []).map((item) => {
+                          const itemId = item.id ?? "";
+                          const checked = rule.allowed_item_ids?.includes(itemId) ?? false;
+                          return (
+                            <label key={itemId} className="flex items-center gap-2 text-xs text-zinc-700">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(event) => update((current) => setAccessoryRuleAllowedItems(current, ruleIndex, event.target.checked ? [...(rule.allowed_item_ids ?? []), itemId] : (rule.allowed_item_ids ?? []).filter((id) => id !== itemId)))}
+                              />
+                              {item.item_name || "Unnamed accessory"}
+                            </label>
+                          );
+                        })}
+                        {!(group.items ?? []).length ? <p className="text-[11px] text-amber-700">Add accessory items before restricting this rule.</p> : null}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+              {!configuration.applicability.length ? <p className="rounded-md border border-dashed border-zinc-200 px-3 py-2 text-xs text-zinc-500">No applicable models configured.</p> : null}
+            </div>
+            {staleItemIds.length ? <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">One or more allowed items were removed. Update the affected rule before saving.</p> : null}
+          </>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function accessoryGroupSummary(group: AccessoryPricingRow) {
+  const itemCount = group.items?.length ?? 0;
+  const configuration = group.conditional_configuration;
+  if (!configuration) return `Normal Accessory · ${group.group_is_required ? "Required" : "Optional"} · ${itemCount} items`;
+  const role = configuration.role === "conditional_option" ? "Conditional Option" : configuration.role === "companion" ? "Required Companion" : "Normal Accessory";
+  const selection = configuration.selection === "exactly_one" ? "Exactly One" : configuration.selection === "at_least_one" ? "At Least One" : configuration.selection === "choose_multiple" ? "Multiple" : "Optional";
+  return `${role} · ${selection} · ${itemCount} items`;
+}
+
 export function AccessoryPricingTable({
+  baseModelGroups = [],
   brandDefaultCurrency,
   onHasDataChange,
   replacementGroups,
@@ -1511,6 +1746,7 @@ export function AccessoryPricingTable({
   templateIsPersisted,
   templateCurrency,
 }: {
+  baseModelGroups?: BaseModelPricingGroup<VariantPricingRow>[];
   brandDefaultCurrency?: string | null;
   onHasDataChange?: (hasAccessoryPricingData: boolean) => void;
   replacementGroups?: AccessoryPricingRow[] | null;
@@ -1523,6 +1759,7 @@ export function AccessoryPricingTable({
   const initialGroups = useMemo(() => normalizeAccessoryGroups(rows), [rows]);
   const importedIdsRef = useRef<Set<string>>(new Set());
   const [groups, setGroups] = useState<AccessoryPricingRow[]>(() => initialGroups);
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => Object.fromEntries(initialGroups.map((group, index) => [group.id ?? `add-on-group-${index}`, true])));
   const [groupActionNotices, setGroupActionNotices] = useState<Record<string, string>>({});
   const [referenceTargetGroupId, setReferenceTargetGroupId] = useState<string | null>(null);
   const persistedGroupIds = useMemo(() => persistedPricingGroupIds(rows, "accessory"), [rows]);
@@ -1535,12 +1772,17 @@ export function AccessoryPricingTable({
       savedTemplateCurrency: templateCurrency,
     }),
   );
-  const serialized = useMemo(() => JSON.stringify(groups.map(normalizeAccessoryGroup)), [groups]);
+  const serialized = useMemo(() => {
+    const normalized = groups.map(normalizeAccessoryGroup);
+    const parsed = parseAccessoryConfigurationGroups(normalized);
+    return JSON.stringify(parsed.valid ? serializeAccessoryConfigurationGroups(parsed.groups) : normalized);
+  }, [groups]);
 
   useEffect(() => {
     if (replacementVersion === undefined || replacementVersion === appliedReplacementVersion.current) return;
     appliedReplacementVersion.current = replacementVersion;
     setGroups(normalizeAccessoryGroups(replacementGroups));
+    setCollapsedGroups(Object.fromEntries(normalizeAccessoryGroups(replacementGroups).map((group, index) => [group.id ?? `add-on-group-${index}`, true])));
     setGroupActionNotices({});
     setReferenceTargetGroupId(null);
     importedIdsRef.current = new Set();
@@ -1722,23 +1964,28 @@ export function AccessoryPricingTable({
           return (
           <div key={group.id ?? groupIndex} className="rounded-md border border-zinc-200 bg-white p-3">
             <div className="flex flex-wrap items-center gap-2">
+              <button type="button" aria-expanded={!collapsedGroups[groupId]} aria-label={collapsedGroups[groupId] ? "Expand accessory group" : "Collapse accessory group"} onClick={() => setCollapsedGroups((current) => ({ ...current, [groupId]: !current[groupId] }))} className="h-8 w-8 rounded-md border border-zinc-200 bg-white text-sm font-semibold text-zinc-700">{collapsedGroups[groupId] ? ">" : "v"}</button>
               <input value={group.group_name ?? ""} onChange={(e) => updateGroup(groupIndex, { group_name: e.target.value })} placeholder="Accessories / Optional Items" className="h-8 w-56 border border-zinc-200 px-2 text-sm font-semibold outline-none focus:border-emerald-800" />
+              <p className="text-xs text-zinc-500">{accessoryGroupSummary(group)}</p>
               <label className="flex items-center gap-2 text-xs text-zinc-600">
                 <input type="checkbox" checked={group.is_active !== false} onChange={(e) => updateGroup(groupIndex, { is_active: e.target.checked })} />
                 Active
               </label>
-              <label className="flex items-center gap-2 text-xs text-zinc-600" title="When on, user must select at least one item from this group before adding the product to a quotation">
+              {!group.conditional_configuration ? <label className="flex items-center gap-2 text-xs text-zinc-600" title="When on, user must select at least one item from this group before adding the product to a quotation">
                 <input type="checkbox" checked={group.group_is_required === true} onChange={(e) => updateGroup(groupIndex, { group_is_required: e.target.checked })} />
                 Required selection
-              </label>
+              </label> : null}
               <button type="button" onClick={() => openReferenceImages(groupId)} className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-emerald-600 hover:text-emerald-900">Reference images</button>
               <button type="button" onClick={() => setGroups((current) => current.filter((_, index) => index !== groupIndex))} className="ml-auto text-xs font-semibold text-red-700">Remove group</button>
             </div>
+            {!collapsedGroups[groupId] ? <>
             {groupActionNotices[groupId] ? <p role="status" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">{groupActionNotices[groupId]}</p> : null}
+            <AccessoryConditionalRuleEditor baseModelGroups={baseModelGroups} group={group} onChange={(nextGroup) => setGroups((current) => current.map((entry, index) => index === groupIndex ? nextGroup : entry))} />
             <div className="mt-3 overflow-x-auto">
               <table className="min-w-[1460px] w-full text-left text-xs">
                 <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
                   <tr>
+                    <th className="w-20 px-2 py-2">Image</th>
                     <th className="px-2 py-2">Accessory name</th>
                     <th className="px-2 py-2">Supplier / Price List Code</th>
                     <th className="px-2 py-2">Price</th>
@@ -1751,6 +1998,7 @@ export function AccessoryPricingTable({
                 <tbody>
                   {(group.items ?? []).map((item, itemIndex) => (
                     <tr key={item.id ?? itemIndex} className="border-t border-zinc-100 align-top">
+                      <td className="px-2 py-2 align-top">{group.id && item.id ? <PricingRowReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} pricingType="accessory" groupId={group.id} rowId={item.id} /> : <span className="text-[10px] text-zinc-400">Save row first</span>}</td>
                       <td className="px-2 py-2 align-top"><AutoGrowTextarea value={item.item_name ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { item_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[260px]" /></td>
                       <td className="px-2 py-2 align-top"><input value={item.supplier_price_list_code ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                       <td className="px-2 py-2 align-top"><input type="number" value={item.price ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { price: parseNullablePricingNumber(e.target.value) })} className="h-10 min-w-[120px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
@@ -1760,11 +2008,12 @@ export function AccessoryPricingTable({
                       <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => updateGroup(groupIndex, { items: (group.items ?? []).filter((_, index) => index !== itemIndex) })} className="text-xs font-semibold text-red-700">Remove item</button></div></td>
                     </tr>
                   ))}
-                  {!(group.items ?? []).length ? <tr><td colSpan={7} className="px-3 py-5 text-center text-zinc-500">No items in this group yet.</td></tr> : null}
+                  {!(group.items ?? []).length ? <tr><td colSpan={8} className="px-3 py-5 text-center text-zinc-500">No items in this group yet.</td></tr> : null}
                 </tbody>
               </table>
             </div>
             <button type="button" onClick={(event) => updateGroup(groupIndex, { items: [...(group.items ?? []), { id: idFor("add-on", group.items?.length ?? 0), currency: resolveDefaultPricingCurrency({ brandDefaultCurrency, existingRows: group.items ?? groups.flatMap((entry) => entry.items ?? []), savedTemplateCurrency: templateCurrency, trigger: event.currentTarget }), is_active: true, sort_order: group.items?.length ?? 0 }] })} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">+ Add Accessory</button>
+            </> : null}
           </div>
           );
         })}

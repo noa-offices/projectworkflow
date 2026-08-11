@@ -1,9 +1,29 @@
-export function getProductTemplateAiExtractionPrompt() {
+export const extractionPromptFocuses = ["full", "base_model", "workstation", "category_matrix", "modular", "accessories", "product_details", "materials"] as const;
+export type ExtractionPromptFocus = typeof extractionPromptFocuses[number];
+
+const relatedAccessoriesRule = "Also extract any clearly related accessories, options, companion components, required add-ons, optional add-ons, selection constraints, and applicability information found in the supplied source into optionGroups. Do not ignore them merely because the selected extraction focus is pricing.";
+
+const focusInstructions: Record<ExtractionPromptFocus, string> = {
+  full: `EXTRACTION FOCUS: Full Product / Complete Extraction\nExtract all clearly supported product details, pricing, options, materials, finishes, and technical information. ${relatedAccessoriesRule}`,
+  base_model: `EXTRACTION FOCUS: Base / Model Pricing\nFocus on directly priced models, variants, configurations, dimensions, supplier/reference codes, specifications, direct prices, and currency. Prefer pricing.baseModelRows, but preserve meaningful direct-price families as one-column pricing.priceMatrices. Do not force true category matrices, modular hierarchies, or workstation data into Base / Model Pricing; preserve another compatible structure when safe or warn. ${relatedAccessoriesRule}`,
+  workstation: `EXTRACTION FOCUS: Workstation Pricing\nFocus on supported workstation size/layout rows, dimensions, layout type, base/additional prices, codes, specifications, and relevant configuration in pricing.workstationRows. Do not force unrelated furniture into workstationRows. Preserve null and explicit zero prices. ${relatedAccessoriesRule}`,
+  category_matrix: `EXTRACTION FOCUS: Category / Matrix Pricing\nFocus on genuine row-by-category pricing in pricing.priceMatrices. Preserve exact matrix names, source column labels and order, row order, prices, and codes. Never invent generic Cat A/Cat B/Cat C/Cat D labels unless printed in the source. ${relatedAccessoriesRule}`,
+  modular: `EXTRACTION FOCUS: Modular Pricing\nFocus on pricing.modularGroups: preserve manufacturer family, subgroup, module, shared price-category hierarchy, dimensions, codes, specifications, and related configuration. Never flatten modular hierarchy. ${relatedAccessoriesRule}`,
+  accessories: `EXTRACTION FOCUS: Accessories / Configuration Only\nFocus only on optionGroups for accessories, options, companion/service components, add-ons, prices, codes, dimensions, specifications, explicit selection semantics, defaults, quantities, and applicability clues. Preserve explicit applicability in specification or warnings when v1 cannot encode it. Do not invent conditional rules or require main-product pricing extraction.`,
+  product_details: `EXTRACTION FOCUS: Product Details / Specifications\nFocus on template identity, description, master and model specifications, dimensions, supplier/reference codes, origin, and manufacturer. Do not invent pricing; only preserve clearly visible, structurally safe prices.`,
+  materials: `EXTRACTION FOCUS: Materials / Finishes\nFocus on materialSuggestions: finish/material names, codes, colours, combinations, top/base relationships, source-heading isolation, notes, and applicability. Do not merge neighbouring material sections or create Material Library records.`,
+};
+
+export function getProductTemplateAiExtractionPrompt(focus: ExtractionPromptFocus = "full") {
   return `You are extracting structured furniture product data from manufacturer source material.
 
 Analyze only the manufacturer screenshot, PDF, image, or other source material supplied in this conversation. Use existing ProjectWorkflow context only as supporting context; never let ProjectWorkflow context override the manufacturer source.
 
-Your task is to extract every clearly supported product/template configuration detail and return exactly one valid ProductTemplateDraft v1 JSON object.
+Your task is to return exactly one valid ProductTemplateDraft v1 JSON object.
+
+${focusInstructions[focus]}
+
+The selected extraction focus is a request for attention, not permission to distort the manufacturer source. If supplied data does not match the selected focus, do not force it into that pricing structure; preserve it in another compatible ProductTemplateDraft section when safe, otherwise add extractionWarnings.
 
 IMPORTANT SOURCE INTERPRETATION RULE
 
@@ -132,6 +152,12 @@ For workstationRows, extract each supported size/layout row with id, label/displ
 BASE / MODEL ROWS
 
 For baseModelRows, extract model/display name, all known supplier codes, all known reference codes, paired codes, left/right codes when explicitly supplied, dimensions, price, currency, and specification. Keep separate codes as separate array entries. Do not concatenate or discard codes.
+
+Use baseModelRows for a simple single product family when each row is a distinct model/configuration with one direct price and there is no finish, fabric, leather, material, or other category-dependent price dimension.
+
+ProductTemplateDraft v1 baseModelRows is flat. If the source contains multiple meaningful direct-price model families, do not flatten away those family boundaries. Preserve each family as a separate priceMatrix with its source family label and one clearly labelled direct Price column; ProjectWorkflow can safely route those matrices into separate Base / Model Pricing groups during Apply.
+
+Do not place service units, support units, required companions, or add-on components into baseModelRows or direct-price main-model matrices merely because they have one price. Preserve them in the safest existing v1 structure and add an extractionWarning when companion semantics cannot be represented without ambiguity.
 
 If a model's base, shell, mechanism, or other configuration is part of the model identity, describe it in the row label/displayName/specification rather than duplicating it as an accessory unless independently selectable.
 
