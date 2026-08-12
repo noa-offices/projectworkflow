@@ -63,6 +63,10 @@ test("AI extraction prompt preserves the approved ProductTemplateDraft v1 extrac
     "Prefer \"Extra Charges\"",
     "Technical diagrams alone must NOT create numeric prices",
     "SPECIFICATION DEPTH",
+    "QUOTATION-READY SPECIFICATIONS",
+    "client-facing furniture descriptions suitable for direct commercial quotations",
+    "VISIBLE MODEL AND ACCESSORY NAMES",
+    "label: \"Service Unit W123.6 - Right\"",
     "template.specification should contain the meaningful FAMILY-WIDE technical specification",
     "row.specification should normally NOT be null",
     "ROW SPECIFICATION MUST BE MODEL-SPECIFIC",
@@ -91,6 +95,8 @@ test("focused prompts retain the v1 contract, price safety, source fidelity, and
     assert.ok(prompt.includes("A blank cell or no supplied price -> null"));
     assert.ok(prompt.includes("explicit printed 0 or clearly stated zero-cost/included option -> JSON number 0"));
     assert.ok(prompt.includes("request for attention, not permission to distort the manufacturer source"));
+    assert.ok(prompt.includes("QUOTATION-READY SPECIFICATIONS"));
+    assert.ok(prompt.includes("VISIBLE MODEL AND ACCESSORY NAMES"));
     assert.ok(prompt.includes(targets[focus]));
   });
   ["full", "base_model", "workstation", "category_matrix", "modular"].forEach((focus) => assert.ok(getProductTemplateAiExtractionPrompt(focus as typeof extractionPromptFocuses[number]).includes("Also extract any clearly related accessories")));

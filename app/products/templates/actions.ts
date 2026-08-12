@@ -11,6 +11,7 @@ import {
   normalizeCategoryPriceLabel,
 } from "@/lib/products/category-pricing-groups";
 import { materialDisplayCategoryLabel } from "@/lib/products/material-classification";
+import { manufacturerFinishGuidanceFromForm } from "@/lib/products/manufacturer-finish-guidance";
 import { parseNullablePricingNumber } from "@/lib/products/nullable-pricing";
 import { parseWorkstationPricingJson } from "@/lib/products/workstation-pricing-parser";
 import { parseBaseModelPricingJson } from "@/lib/products/base-model-pricing-parser";
@@ -589,7 +590,7 @@ function safeBrandLabel(brandName: string | null | undefined) {
 }
 
 const productLibraryTemplateSelect =
-  "id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,image_settings,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,unit_label,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at,price_notes";
+  "id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,material_suggestions,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,image_settings,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,unit_label,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at,price_notes";
 
 type ProductTemplateModalActionResult = {
   message: string;
@@ -1233,6 +1234,7 @@ function templatePayload(formData: FormData, userId?: string) {
     item_code: optionalTextValue(formData, "item_code"),
     description: optionalTextValue(formData, "description"),
     default_specification: optionalTextValue(formData, "default_specification"),
+    material_suggestions: manufacturerFinishGuidanceFromForm(formData.get("material_suggestions")),
     origin: optionalTextValue(formData, "origin"),
     supplier_name: optionalTextValue(formData, "supplier_name"),
     default_image_url: proposedImageValues.proposed_image_url_1,

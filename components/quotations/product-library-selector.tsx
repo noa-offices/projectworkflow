@@ -11,6 +11,8 @@ import {
 } from "@/app/products/templates/actions";
 import type { ImageDisplaySettings } from "@/components/images/image-adjustment-dialog";
 import { ProductTemplateForm } from "@/components/products/product-template-form";
+import { ManufacturerFinishGuidancePanel } from "@/components/products/manufacturer-finish-guidance";
+import { normalizeManufacturerFinishGuidance } from "@/lib/products/manufacturer-finish-guidance";
 import {
   FinishSelectionsEditor,
   type FinishSelectionEditorRow,
@@ -34,6 +36,7 @@ import {
 } from "@/lib/products/modular-pricing";
 import { baseModelPricingGroups, flattenBaseModelPricingRows, type BaseModelPricingGroup } from "@/lib/products/base-model-pricing-groups";
 import { baseModelPricingSubgroupForRow, baseModelSubgroupReferenceKey } from "@/lib/products/base-model-pricing-subgroups";
+import { guidedBaseModelSelection } from "@/lib/quotations/guided-base-model-selection";
 import type { ProductTemplateSubgroupReferencePreview } from "@/lib/products/product-template-subgroup-references";
 import {
   type AccessoryConditionalConfiguration,
@@ -81,6 +84,7 @@ export type ProductLibraryTemplate = {
   item_code: string | null;
   description: string | null;
   default_specification: string | null;
+  material_suggestions?: unknown;
   origin: string | null;
   supplier_name: string | null;
   default_image_url: string | null;
@@ -454,11 +458,18 @@ function activeVariantRows(rows: unknown) {
 
 /* Private signed thumbnails intentionally use native image elements. */
 /* eslint-disable @next/next/no-img-element */
-function BaseModelHierarchySelector({ currency, groups, onSelect, rowReferences, selectedRowId, subgroupReferences }: { currency: string; groups: BaseModelPricingGroup<VariantPricingRow>[]; onSelect: (rowId: string) => void; rowReferences: Readonly<Record<string, ProductTemplateRowReferencePreview>>; selectedRowId: string | null; subgroupReferences: Readonly<Record<string, ProductTemplateSubgroupReferencePreview>> }) {
+function BaseModelBrowseAll({ currency, groups, onSelect, rowReferences, selectedRowId, subgroupReferences }: { currency: string; groups: BaseModelPricingGroup<VariantPricingRow>[]; onSelect: (rowId: string) => void; rowReferences: Readonly<Record<string, ProductTemplateRowReferencePreview>>; selectedRowId: string | null; subgroupReferences: Readonly<Record<string, ProductTemplateSubgroupReferencePreview>> }) {
   const rowButton = (group: BaseModelPricingGroup<VariantPricingRow>, row: VariantPricingRow) => { const rowId = row.id; if (!rowId) return null; const reference = rowReferences[productTemplateRowReferenceKey("base_model", group.id, rowId)]; return <button key={rowId} type="button" onClick={() => onSelect(rowId)} className={`flex w-full items-center gap-2 rounded-md border p-2 text-left text-xs ${selectedRowId === rowId ? "border-emerald-700 bg-emerald-50" : "border-zinc-200 bg-white"}`}>{reference?.previewUrl ? <img src={reference.previewUrl} alt="Model reference" className="h-10 w-10 shrink-0 rounded border border-zinc-200 object-contain" loading="lazy" /> : null}<span className="min-w-0"><span className="block font-semibold text-zinc-900">{pricingDisplayName(row) || row.variant_name}</span><span className="block text-zinc-500">{[row.dimension, formatMoney(row.currency ?? currency, numberValue(row.price))].filter(Boolean).join(" · ")}</span></span></button>; };
   return <div className="mt-2 space-y-3">{groups.map((group) => { const subgroups = [...(group.subgroups ?? [])].filter((subgroup) => subgroup.is_active).sort((a, b) => a.sort_order - b.sort_order); const ungrouped = group.items.filter((row) => row.id && !baseModelPricingSubgroupForRow(group, row.id)); return <section key={group.id} className="rounded-lg border border-zinc-200 bg-zinc-50 p-2"><p className="text-[10px] font-bold uppercase tracking-wide text-zinc-600">{group.group_name}</p><div className="mt-2 space-y-3">{subgroups.map((subgroup) => { const reference = subgroupReferences[baseModelSubgroupReferenceKey("base_model", group.id, subgroup.id)]; const rows = group.items.filter((row) => row.id && subgroup.row_ids.includes(row.id)); return <div key={subgroup.id} className="rounded-md border border-zinc-200 bg-white p-2"><div className="flex items-center gap-2">{reference?.previewUrl ? <img src={reference.previewUrl} alt={`${subgroup.subgroup_name} reference`} className="h-14 w-14 shrink-0 rounded border border-zinc-200 object-contain" loading="lazy" /> : null}<div><p className="text-xs font-semibold text-zinc-900">{subgroup.subgroup_name}</p><p className="text-[10px] text-zinc-500">{rows.length} models</p></div></div><div className="mt-2 grid gap-1 sm:grid-cols-2">{rows.map((row) => rowButton(group, row))}</div></div>; })}{ungrouped.length ? <div><p className="text-[10px] font-semibold uppercase text-zinc-500">{subgroups.length ? "Other Models" : "Models"}</p><div className="mt-1 grid gap-1 sm:grid-cols-2">{ungrouped.map((row) => rowButton(group, row))}</div></div> : null}</div></section>; })}</div>;
 }
 /* eslint-enable @next/next/no-img-element */
+
+function BaseModelHierarchySelector({ currency, groups, onSelect, rowReferences, selectedRowId, subgroupReferences }: { currency: string; groups: BaseModelPricingGroup<VariantPricingRow>[]; onSelect: (rowId: string) => void; rowReferences: Readonly<Record<string, ProductTemplateRowReferencePreview>>; selectedRowId: string | null; subgroupReferences: Readonly<Record<string, ProductTemplateSubgroupReferencePreview>> }) {
+  const [groupId, setGroupId] = useState(groups[0]?.id ?? "");
+  const [subgroupId, setSubgroupId] = useState("");
+  const { group, rows, subgroups, ungrouped, resolvedSubgroupId: fixedSubgroup } = guidedBaseModelSelection(groups, groupId, subgroupId);
+  return <div className="mt-2 grid gap-3"><div className="grid gap-3 sm:grid-cols-2">{groups.length > 1 ? <label><span className="text-[10px] font-bold uppercase text-zinc-500">Choose Product Family</span><select value={group?.id ?? ""} onChange={(event) => { setGroupId(event.target.value); setSubgroupId(""); onSelect(""); }} className="mt-1 h-9 w-full border border-zinc-300 bg-white px-2 text-xs">{groups.map((item) => <option key={item.id} value={item.id}>{item.group_name}</option>)}</select></label> : null}{subgroups.length ? <label><span className="text-[10px] font-bold uppercase text-zinc-500">Choose Configuration</span>{subgroups.length === 1 && !ungrouped.length ? <p className="mt-1 h-9 rounded border border-zinc-200 bg-zinc-50 px-2 py-2 text-xs">{subgroups[0].subgroup_name}</p> : <select value={fixedSubgroup} onChange={(event) => { setSubgroupId(event.target.value); onSelect(""); }} className="mt-1 h-9 w-full border border-zinc-300 bg-white px-2 text-xs"><option value="">Choose configuration</option>{subgroups.map((item) => <option key={item.id} value={item.id}>{item.subgroup_name}</option>)}{ungrouped.length ? <option value="__ungrouped__">Other Models</option> : null}</select>}</label> : null}</div><label><span className="text-[10px] font-bold uppercase text-zinc-500">Choose Model / Size</span><select value={selectedRowId ?? ""} disabled={!rows.length} onChange={(event) => onSelect(event.target.value)} className="mt-1 h-9 w-full border border-zinc-300 bg-white px-2 text-xs"><option value="">{rows.length ? "Choose model" : subgroups.length ? "Choose configuration first" : "No models available"}</option>{rows.map((row) => <option key={row.id} value={row.id}>{pricingOptionLabel({ currency: row.currency ?? currency, dimension: row.dimension, displayName: pricingDisplayName(row), price: numberValue(row.price) })}</option>)}</select></label><details><summary className="cursor-pointer text-xs font-semibold text-emerald-900">Browse all models</summary><BaseModelBrowseAll currency={currency} groups={groups} onSelect={onSelect} rowReferences={rowReferences} selectedRowId={selectedRowId} subgroupReferences={subgroupReferences} /></details></div>;
+}
 
 function activeModularRows(rows?: CategoryPricingRow[] | null) {
   return modularItemPricingRows(rows)
@@ -1568,9 +1579,7 @@ export function ProductLibrarySelector({
                   const templateModularQuantities = selectedModularQuantities[template.id] ?? {};
                   const selectedVariantRow =
                     usesVariantPricing
-                      ? variantRows.find((row) => row.id === selectedVariantRows[template.id]) ??
-                        variantRows[0] ??
-                        null
+                      ? variantRows.find((row) => row.id === selectedVariantRows[template.id]) ?? null
                       : null;
                   const selectedWorkstationVariantRow =
                     usesWorkstationFlow
@@ -1579,8 +1588,9 @@ export function ProductLibrarySelector({
                   const selectedVariantGroup = selectedVariantRow
                     ? variantGroups.find((group) => group.items.some((row) => row.id === selectedVariantRow.id)) ?? null
                     : null;
+                  const selectedVariantSubgroup = selectedVariantRow?.id && selectedVariantGroup ? baseModelPricingSubgroupForRow(selectedVariantGroup, selectedVariantRow.id) : null;
                   const selectedVariantReference = selectedVariantRow?.id && selectedVariantGroup?.id
-                    ? rowReferenceImages[productTemplateRowReferenceKey("base_model", selectedVariantGroup.id, selectedVariantRow.id)] ?? null
+                    ? rowReferenceImages[productTemplateRowReferenceKey("base_model", selectedVariantGroup.id, selectedVariantRow.id)] ?? (selectedVariantSubgroup ? subgroupReferenceImages[baseModelSubgroupReferenceKey("base_model", selectedVariantGroup.id, selectedVariantSubgroup.id)] : null)
                     : null;
                   const selectedCategoryRow =
                     usesCategoryPricing
@@ -2971,37 +2981,7 @@ export function ProductLibrarySelector({
                               Base Size / Main Price
                             </p>
                             <BaseModelHierarchySelector currency={template.currency} groups={variantGroups} rowReferences={rowReferenceImages} subgroupReferences={subgroupReferenceImages} selectedRowId={selectedVariantRow?.id ?? null} onSelect={(nextRowId) => { const nextGroupId = variantGroups.find((group) => group.items.some((row) => row.id === nextRowId))?.id ?? null; setSelectedVariantRows((current) => ({ ...current, [template.id]: nextRowId })); setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, baseModelGroupId: nextGroupId, baseModelRowId: nextRowId, selectedQuantities: current[template.id] ?? {} }).activeQuantities })); }} />
-                            <label className="block">
-                              <span className="text-[10px] font-bold uppercase text-zinc-500">Select size / model</span>
-                              <select
-                                value={selectedVariantRow?.id ?? ""}
-                                onChange={(event) => {
-                                  const nextRowId = event.target.value;
-                                  const nextGroupId = variantGroups.find((group) => group.items.some((row) => row.id === nextRowId))?.id ?? null;
-                                  setSelectedVariantRows((current) => ({ ...current, [template.id]: nextRowId }));
-                                  setPricingAccessoryQuantities((current) => ({
-                                    ...current,
-                                    [template.id]: evaluateProductAccessorySelection({
-                                      accessoryGroups: allAccessoryGroups,
-                                      baseModelGroupId: nextGroupId,
-                                      baseModelRowId: nextRowId,
-                                      selectedQuantities: current[template.id] ?? {},
-                                    }).activeQuantities,
-                                  }));
-                                }}
-                                className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
-                              >
-                                  {variantRows.map((row, index) => (
-                                    <option key={row.id ?? index} value={row.id ?? `variant-${index}`}>
-                                      {pricingOptionLabel({
-                                        currency: row.currency ?? template.currency,
-                                        dimension: row.dimension,
-                                        displayName: pricingDisplayName(row),
-                                        price: numberValue(row.price),
-                                      })}
-                                    </option>
-                                  ))}
-                                </select>
+                            <div>
                               {selectedVariantRow ? (
                                 <div className="mt-2 flex gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
                                   {/* eslint-disable-next-line @next/next/no-img-element -- private signed thumbnail */}
@@ -3024,7 +3004,7 @@ export function ProductLibrarySelector({
                                   </div>
                                 </div>
                               ) : null}
-                            </label>
+                            </div>
                           </div>
                         ) : null}
                         <AccessoryConfigurationFields
@@ -4512,6 +4492,7 @@ export function ProductLibrarySelector({
                             ) : null,
                           )}
                           <div className="max-h-[32rem] overflow-y-auto pr-1 text-left">
+                            <ManufacturerFinishGuidancePanel guidance={normalizeManufacturerFinishGuidance(template.material_suggestions)} />
                             <FinishSelectionsEditor
                               brands={finishBrands}
                               initialBrandId={template.brand_id}

@@ -27,6 +27,21 @@ test("safe accessory groups preserve prices, order, required state, and code war
   assert.equal(required.groups[0].group_is_required, true);
 });
 
+test("human-readable display names take precedence over code-like labels without changing code or configuration mapping", () => {
+  const source = draft("optional", 0, 1);
+  source.optionGroups[0].items[0] = { ...source.optionGroups[0].items[0], id: "service-right", label: "1AF 090", displayName: "Service Unit W123.6 - Right", supplierCodes: ["1AF 090"], referenceCodes: [] };
+  source.optionGroups[0].items[1] = { ...source.optionGroups[0].items[1], id: "label-only", label: "Chrome frame", displayName: null, supplierCodes: [], referenceCodes: ["REF-1"] };
+  source.optionGroups[0].items.push({ ...source.optionGroups[0].items[1], id: "id-only", label: null, displayName: null, supplierCodes: [], referenceCodes: [] });
+  const result = mapDraftOptionGroupsToAccessories(source);
+  assert.equal(result.groups[0].items[0].item_name, "Service Unit W123.6 - Right");
+  assert.equal(result.groups[0].items[0].supplier_price_list_code, "1AF 090");
+  assert.equal(result.groups[0].items[1].item_name, "Chrome frame");
+  assert.equal(result.groups[0].items[1].supplier_price_list_code, "REF-1");
+  assert.equal(result.groups[0].items[2].item_name, "id-only");
+  assert.equal(result.groups[0].items[0].price, 0);
+  assert.deepEqual(result.groups[0].conditional_configuration, { role: "accessory", selection: "exactly_one", applicability: [] });
+});
+
 test("unsafe exact-choice and default semantics produce no replacement groups", () => {
   const result = mapDraftOptionGroupsToAccessories(draft("required_choose_one", 1, 1, ["standard"]));
   assert.deepEqual(result.groups, []);

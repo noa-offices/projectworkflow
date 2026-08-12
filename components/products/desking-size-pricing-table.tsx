@@ -134,6 +134,7 @@ function normalizedRow(row: DeskingSizePricingRow, index: number): DeskingSizePr
 export function DeskingSizePricingTable({
   brandDefaultCurrency,
   onHasDataChange,
+  replacementPricing,
   replacementRows,
   replacementSubgroups,
   replacementVersion,
@@ -144,6 +145,7 @@ export function DeskingSizePricingTable({
 }: {
   brandDefaultCurrency?: string | null;
   onHasDataChange?: (hasWorkstationData: boolean) => void;
+  replacementPricing?: unknown;
   replacementRows?: DeskingSizePricingRow[] | null;
   replacementSubgroups?: WorkstationPricingGroup["subgroups"];
   replacementVersion?: number;
@@ -201,10 +203,12 @@ export function DeskingSizePricingTable({
     if (!shouldApplyWorkstationReplacement(replacementVersion, appliedReplacementVersion.current)) return;
     appliedReplacementVersion.current = replacementVersion;
     const nextRows = (replacementRows ?? []).map(normalizedRow);
-    setGroups((current) => replaceWholeTemplateWorkstationRows(current, nextRows, LEGACY_WORKSTATION_GROUP_ID).map((group) => ({ ...group, ...(replacementSubgroups ? { subgroups: replacementSubgroups } : {}) })));
+    setGroups((current) => Array.isArray(replacementPricing)
+      ? workstationPricingGroups<DeskingSizePricingRow>(replacementPricing).map((group) => ({ ...group, items: group.items.map(normalizedRow), ...(group.subgroups ? { subgroups: group.subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] })) } : {}) }))
+      : replaceWholeTemplateWorkstationRows(current, nextRows, LEGACY_WORKSTATION_GROUP_ID).map((group) => ({ ...group, ...(replacementSubgroups ? { subgroups: replacementSubgroups } : {}) })));
     setDraftRows({});
     setEditingRows({});
-  }, [replacementRows, replacementSubgroups, replacementVersion]);
+  }, [replacementPricing, replacementRows, replacementSubgroups, replacementVersion]);
 
   useEffect(() => {
     onHasDataChange?.(hasMeaningfulWorkstationPricing(flattenWorkstationPricingRows(effectiveGroups)));

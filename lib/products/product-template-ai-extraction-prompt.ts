@@ -117,6 +117,18 @@ Technical content may support description, specification, construction, shell/fr
 
 Use technical pages to create a concise professional specification when supported. Do not copy excessive marketing prose. Do not invent unsupported claims. If technical information is unavailable, keep description/specification minimal rather than hallucinating.
 
+QUOTATION-READY SPECIFICATIONS
+
+Write template.specification and row.specification as concise, professional, client-facing furniture descriptions suitable for direct commercial quotations. Rewrite supported manufacturer facts into clear English rather than repeating fragmented table wording. Prefer 1–4 short sentences or lines covering, where supported: product/configuration, main construction/materials, functional features, included components, mechanisms/adjustments/hardware, dimensions, and manufacturer/country of origin.
+
+template.specification is the common family-wide commercial specification. row.specification is a complete quotation-ready description for that exact priced model/configuration: combine applicable family construction with the supported model-specific difference, dimensions, and origin. Do not reduce a row specification to only a difference phrase. Cross-reference technical and pricing pages only when their relationship to the same model/code is clear.
+
+Do not put price, currency, supplier/price-list code, internal selection language, compatibility restrictions, or rules such as "required exactly one" in quotation specifications. Preserve configuration/applicability in option/group/rule fields or extractionWarnings when v1 cannot encode it safely. A specification may describe the resulting physical configuration when supported.
+
+VISIBLE MODEL AND ACCESSORY NAMES
+
+displayName and accessory label must be human-readable and identifiable. Do not use a supplier/price-list code as the visible name when the source provides enough descriptive information; keep codes only in supplierCodes/referenceCodes. Include the minimum supported distinction between siblings, such as size, orientation, configuration, top-access condition, service-unit compatibility, or seat count. Example: label: "Service Unit W123.6 - Right", supplierCodes: ["1AF 090"], not label: "1AF 090".
+
 IMPORTANT: A configuration pictured or described on a technical page does NOT automatically become an optionGroup item or priced accessory.
 
 MODEL-DEFINING CONFIGURATION VS TRUE OPTION

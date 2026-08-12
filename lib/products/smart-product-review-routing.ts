@@ -24,6 +24,14 @@ export type SmartReviewRoute = {
 };
 export type SmartSetupReviewRoutingPlan = { routes: SmartReviewRoute[] };
 
+export function reorderSmartSetupReviewRoutes(plan: SmartSetupReviewRoutingPlan, key: string, direction: "up" | "down") {
+  const index = plan.routes.findIndex((route) => route.key === key);
+  const target = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || target < 0 || target >= plan.routes.length) return plan;
+  const routes = [...plan.routes]; [routes[index], routes[target]] = [routes[target], routes[index]];
+  return { ...plan, routes };
+}
+
 function explicitRequirement(specification: string | null, kind: "top" | "service") {
   if (!specification || !/\balways complete with\b/i.test(specification)) return false;
   return kind === "top" ? /\b1\s+top[- ]?access\b/i.test(specification) : /\b1\s+(?:support\s+)?service unit\b/i.test(specification);
@@ -112,15 +120,16 @@ export function smartReviewMatrixOverrides(plan: SmartSetupReviewRoutingPlan) {
 
 export function draftForSmartSetupReviewApply(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan): ProductTemplateDraft {
   const route = (key: string) => plan.routes.find((item) => item.key === key);
+  const ordered = <T extends { id: string }>(items: T[], sourceKind: SmartReviewRoute["sourceKind"]) => plan.routes.filter((item) => item.sourceKind === sourceKind).flatMap((item) => items.find((entry) => entry.id === item.sourceId) ?? []);
   return {
     ...draft,
     pricing: {
       ...draft.pricing,
       workstationRows: route("workstation:rows")?.destination === "workstation" ? draft.pricing.workstationRows : [],
       baseModelRows: route("base_model:rows")?.destination === "base_model" ? draft.pricing.baseModelRows : [],
-      priceMatrices: draft.pricing.priceMatrices.map((matrix) => ({ ...matrix, label: route(`matrix:${matrix.id}`)?.groupName ?? matrix.label })),
-      modularGroups: draft.pricing.modularGroups.filter((group) => route(`modular:${group.id}`)?.destination === "modular").map((group) => ({ ...group, label: route(`modular:${group.id}`)?.groupName ?? group.label })),
+      priceMatrices: ordered(draft.pricing.priceMatrices, "matrix").map((matrix) => ({ ...matrix, label: route(`matrix:${matrix.id}`)?.groupName ?? matrix.label })),
+      modularGroups: ordered(draft.pricing.modularGroups, "modular").filter((group) => route(`modular:${group.id}`)?.destination === "modular").map((group) => ({ ...group, label: route(`modular:${group.id}`)?.groupName ?? group.label })),
     },
-    optionGroups: draft.optionGroups.filter((group) => route(`option:${group.id}`)?.destination === "accessory").map((group) => ({ ...group, label: route(`option:${group.id}`)?.groupName ?? group.label })),
+    optionGroups: ordered(draft.optionGroups, "option").filter((group) => route(`option:${group.id}`)?.destination === "accessory").map((group) => ({ ...group, label: route(`option:${group.id}`)?.groupName ?? group.label })),
   };
 }

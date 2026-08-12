@@ -21,9 +21,9 @@ import { SmartProductJsonImport } from "@/components/products/smart-product-json
 import { PendingRowReferenceProvider } from "@/components/products/pending-row-reference-context";
 import { PendingSubgroupReferenceProvider } from "@/components/products/pending-subgroup-reference-context";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
-import { flattenBaseModelPricingRows, type BaseModelPricingGroup, type BaseModelPricingSubgroup } from "@/lib/products/base-model-pricing-groups";
+import { baseModelPricingGroups, flattenBaseModelPricingRows, type BaseModelPricingGroup, type BaseModelPricingSubgroup } from "@/lib/products/base-model-pricing-groups";
 import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
-import { getDraftPricingSectionPresence, getSmartSetupOverwriteConflicts, type SmartSetupSectionPresence } from "@/lib/products/smart-product-apply-state";
+import { getDraftPricingSectionPresence, getSmartSetupOverwriteConflicts, type SmartSetupPricingSection, type SmartSetupSectionPresence } from "@/lib/products/smart-product-apply-state";
 import type { ProductTemplateDraft } from "@/lib/products/product-template-draft";
 import { mapDraftWorkstationRows } from "@/lib/products/product-template-draft-workstation-adapter";
 import { mapDraftBaseModelPricing } from "@/lib/products/product-template-draft-base-model-adapter";
@@ -34,6 +34,13 @@ import { draftForSmartSetupReviewApply, smartReviewMatrixOverrides, type SmartSe
 import type { AccessoryConditionalConfiguration } from "@/lib/products/accessory-conditional-configuration";
 import type { ProductTemplateGroupReferenceType } from "@/lib/products/product-template-group-references";
 import { pendingRowImageKey, pendingSubgroupImageKey, type PendingProductTemplateRowImage, type PendingProductTemplateSubgroupImage, type SmartAppliedPricingSubgroups } from "@/lib/products/smart-product-row-images";
+import { productTemplateFormSmartWorkspace } from "@/lib/products/product-template-form-smart-workspace";
+import type { ManufacturerPriceDifference } from "@/lib/products/manufacturer-update-diff";
+import { applyManufacturerPricePatches, manufacturerPricingFormStateFromSnapshot } from "@/lib/products/manufacturer-price-patches";
+import { applyManufacturerFieldPatches, type ManufacturerFieldPatch, type ManufacturerFieldPatchState } from "@/lib/products/manufacturer-field-patches";
+import { applyManufacturerUpdateActions, type ManufacturerItemAction } from "@/lib/products/manufacturer-item-actions";
+import { ManufacturerFinishGuidancePanel } from "@/components/products/manufacturer-finish-guidance";
+import { mergeManufacturerFinishGuidance, normalizeManufacturerFinishGuidance, type ManufacturerFinishGuidance } from "@/lib/products/manufacturer-finish-guidance";
 
 type ProductTemplateImageField =
   | "proposed_image_url_1"
@@ -163,6 +170,7 @@ type ProductTemplate = {
   item_code: string | null;
   description: string | null;
   default_specification: string | null;
+  material_suggestions?: unknown;
   origin: string | null;
   supplier_name: string | null;
   default_image_url: string | null;
@@ -455,8 +463,9 @@ export function ProductTemplateForm({
   });
   const [currentPricingData, setCurrentPricingData] = useState<SmartSetupSectionPresence>({ workstation: false, baseModel: false, category: false, modular: false, accessory: false });
   const [approvedSmartDraft, setApprovedSmartDraft] = useState<ProductTemplateDraft | null>(null);
+  const [materialSuggestions, setMaterialSuggestions] = useState<ManufacturerFinishGuidance[]>(() => normalizeManufacturerFinishGuidance(template?.material_suggestions));
   const [smartSetupNotice, setSmartSetupNotice] = useState("");
-  const [workstationReplacement, setWorkstationReplacement] = useState<{ rows: DeskingSizePricingRow[]; subgroups?: BaseModelPricingSubgroup[]; version: number } | null>(null);
+  const [workstationReplacement, setWorkstationReplacement] = useState<{ pricing?: unknown; rows: DeskingSizePricingRow[]; subgroups?: BaseModelPricingSubgroup[]; version: number } | null>(null);
   const [baseModelReplacement, setBaseModelReplacement] = useState<{ groups: BaseModelPricingGroup<VariantPricingRow>[]; rows: VariantPricingRow[]; flatSubgroups?: BaseModelPricingSubgroup[]; version: number } | null>(null);
   const [categoryReplacement, setCategoryReplacement] = useState<{ groups: CategoryPricingRow[]; version: number } | null>(null);
   const [modularReplacement, setModularReplacement] = useState<{ groups: CategoryPricingRow[]; version: number } | null>(null);
@@ -470,6 +479,11 @@ export function ProductTemplateForm({
     Object.entries(current).forEach(([key, image]) => { if (next[key]?.previewUrl !== image.previewUrl) URL.revokeObjectURL(image.previewUrl); });
     pendingRowImagesRef.current = next; return next;
   });
+  const mergePendingImages = (images: PendingProductTemplateRowImage[]) => setPendingRowImages((current) => {
+    const next = { ...current, ...Object.fromEntries(images.map((image) => [pendingRowImageKey(image.pricingType, image.rowId), image])) };
+    images.forEach((image) => { const previous = current[pendingRowImageKey(image.pricingType, image.rowId)]; if (previous && previous.previewUrl !== image.previewUrl) URL.revokeObjectURL(previous.previewUrl); });
+    pendingRowImagesRef.current = next; return next;
+  });
   const replacePendingImage = (pricingType: ProductTemplateGroupReferenceType, rowId: string, file: File, previewUrl: string) => setPendingRowImages((current) => {
     const key = pendingRowImageKey(pricingType, rowId); const previous = current[key]; if (previous && previous.previewUrl !== previewUrl) URL.revokeObjectURL(previous.previewUrl);
     const next = { ...current, [key]: { file, previewUrl, pricingType, rowId } }; pendingRowImagesRef.current = next; return next;
@@ -480,10 +494,11 @@ export function ProductTemplateForm({
   });
   useEffect(() => () => Object.values(pendingRowImagesRef.current).forEach((image) => URL.revokeObjectURL(image.previewUrl)), []);
   const replacePendingSubgroupImages = (images: PendingProductTemplateSubgroupImage[]) => setPendingSubgroupImages((current) => { const next = Object.fromEntries(images.map((image) => [pendingSubgroupImageKey(image.pricingType, image.groupId, image.subgroupId), image])); Object.entries(current).forEach(([key, image]) => { if (next[key]?.previewUrl !== image.previewUrl) URL.revokeObjectURL(image.previewUrl); }); pendingSubgroupImagesRef.current = next; return next; });
+  const mergePendingSubgroupImages = (images: PendingProductTemplateSubgroupImage[]) => setPendingSubgroupImages((current) => { const next = { ...current, ...Object.fromEntries(images.map((image) => [pendingSubgroupImageKey(image.pricingType, image.groupId, image.subgroupId), image])) }; images.forEach((image) => { const previous = current[pendingSubgroupImageKey(image.pricingType, image.groupId, image.subgroupId)]; if (previous && previous.previewUrl !== image.previewUrl) URL.revokeObjectURL(previous.previewUrl); }); pendingSubgroupImagesRef.current = next; return next; });
   const replacePendingSubgroupImage = (pricingType: ProductTemplateGroupReferenceType, groupId: string, subgroupId: string, file: File, previewUrl: string) => setPendingSubgroupImages((current) => { const key = pendingSubgroupImageKey(pricingType, groupId, subgroupId); const previous = current[key]; if (previous && previous.previewUrl !== previewUrl) URL.revokeObjectURL(previous.previewUrl); const next = { ...current, [key]: { file, previewUrl, pricingType, groupId, subgroupId } }; pendingSubgroupImagesRef.current = next; return next; });
   const removePendingSubgroupImage = (pricingType: ProductTemplateGroupReferenceType, groupId: string, subgroupId: string) => setPendingSubgroupImages((current) => { const key = pendingSubgroupImageKey(pricingType, groupId, subgroupId); const previous = current[key]; if (previous) URL.revokeObjectURL(previous.previewUrl); const next = { ...current }; delete next[key]; pendingSubgroupImagesRef.current = next; return next; });
   useEffect(() => () => Object.values(pendingSubgroupImagesRef.current).forEach((image) => URL.revokeObjectURL(image.previewUrl)), []);
-  function requestSmartDraftApply(draft: ProductTemplateDraft, routingPlan?: SmartSetupReviewRoutingPlan, confirmed = false, images: PendingProductTemplateRowImage[] = [], subgroupAssignments: SmartAppliedPricingSubgroups[] = [], subgroupImages: PendingProductTemplateSubgroupImage[] = []) {
+  function requestSmartDraftApply(draft: ProductTemplateDraft, routingPlan?: SmartSetupReviewRoutingPlan, confirmed = false, images: PendingProductTemplateRowImage[] = [], subgroupAssignments: SmartAppliedPricingSubgroups[] = [], subgroupImages: PendingProductTemplateSubgroupImage[] = [], incremental = false, incrementalSections: SmartSetupPricingSection[] = []) {
     const applyDraft = routingPlan ? draftForSmartSetupReviewApply(draft, routingPlan) : draft;
     const matrixRouting = routingPlan ? smartReviewMatrixOverrides(routingPlan) : undefined;
     const workstation = mapDraftWorkstationRows(applyDraft);
@@ -505,13 +520,18 @@ export function ProductTemplateForm({
     if (!accessories.groups.length) draftPresence.accessory = false;
     const conflicts = getSmartSetupOverwriteConflicts(draftPresence, currentPricingData);
     if (conflicts.length && !confirmed) return conflicts;
-    replacePendingImages(images);
-    replacePendingSubgroupImages(subgroupImages);
-    if (workstation.rows.length) setWorkstationReplacement((current) => ({ rows: workstation.rows, subgroups: subgroupAssignments.find((entry) => entry.pricingType === "workstation")?.subgroups, version: (current?.version ?? 0) + 1 }));
-    if (baseModel.rows.length || baseModel.groups.length) setBaseModelReplacement((current) => ({ groups: baseModelGroups, rows: baseModel.rows, flatSubgroups, version: (current?.version ?? 0) + 1 }));
-    if (category.groups.length) setCategoryReplacement((current) => ({ groups: category.groups, version: (current?.version ?? 0) + 1 }));
-    if (applyDraft.pricing.modularGroups.length && modular.compatible) setModularReplacement((current) => ({ groups: modular.groups, version: (current?.version ?? 0) + 1 }));
-    if (accessories.groups.length) setAccessoryReplacement((current) => ({ groups: accessories.groups, version: (current?.version ?? 0) + 1 }));
+    if (incremental) {
+      mergePendingImages(images);
+      mergePendingSubgroupImages(subgroupImages);
+    } else {
+      replacePendingImages(images);
+      replacePendingSubgroupImages(subgroupImages);
+    }
+    if ((!incremental || incrementalSections.includes("workstation")) && workstation.rows.length) setWorkstationReplacement((current) => ({ rows: workstation.rows, subgroups: subgroupAssignments.find((entry) => entry.pricingType === "workstation")?.subgroups, version: (current?.version ?? 0) + 1 }));
+    if ((!incremental || incrementalSections.includes("baseModel")) && (baseModel.rows.length || baseModel.groups.length)) setBaseModelReplacement((current) => ({ groups: baseModelGroups, rows: baseModel.rows, flatSubgroups, version: (current?.version ?? 0) + 1 }));
+    if ((!incremental || incrementalSections.includes("category")) && category.groups.length) setCategoryReplacement((current) => ({ groups: category.groups, version: (current?.version ?? 0) + 1 }));
+    if ((!incremental || incrementalSections.includes("modular")) && applyDraft.pricing.modularGroups.length && modular.compatible) setModularReplacement((current) => ({ groups: modular.groups, version: (current?.version ?? 0) + 1 }));
+    if ((!incremental || incrementalSections.includes("accessory")) && accessories.groups.length) setAccessoryReplacement((current) => ({ groups: accessories.groups, version: (current?.version ?? 0) + 1 }));
     const modularMessage = applyDraft.pricing.modularGroups.length && !modular.compatible
       ? ` Modular Pricing was not applied because the detected modular groups use incompatible price-category columns. ${modular.errors.join(" ")}`
       : "";
@@ -520,11 +540,69 @@ export function ProductTemplateForm({
     const mappingWarnings = [...workstation.warnings, ...baseModel.warnings, ...category.warnings].length
       ? ` ${[...workstation.warnings, ...baseModel.warnings, ...category.warnings].join(" ")}`
       : "";
-    const manualSuggestions = `${applyDraft.materialSuggestions.length ? " Material suggestions were detected but were not linked automatically. Review Materials manually." : ""}${applyDraft.linkedFamilySuggestions.length ? " Linked product family suggestions require manual review/linking." : ""}`;
+    if (applyDraft.materialSuggestions.length) setMaterialSuggestions((current) => mergeManufacturerFinishGuidance(current, applyDraft.materialSuggestions));
+    const manualSuggestions = `${applyDraft.materialSuggestions.length ? " Manufacturer finish guidance was added. It does not create Material Library records." : ""}${applyDraft.linkedFamilySuggestions.length ? " Linked product family suggestions require manual review/linking." : ""}`;
     const appliedAny = workstation.rows.length || baseModel.rows.length || baseModel.groups.length || category.groups.length || modular.compatible && modular.groups.length || accessories.groups.length;
     setExpandedSections((current) => ({ ...current, pricing: true }));
     setApprovedSmartDraft(applyDraft); setSmartSetupNotice(`${appliedAny ? "AI draft applied to supported Product Template pricing. Review all values before saving." : "No pricing data was applied."}${modularMessage}${modularWarnings}${accessoryMessage}${mappingWarnings}${manualSuggestions}`); return true;
   }
+  function currentFormSnapshot() {
+    const form = pricingRef.current?.closest("form");
+    if (!form) return null;
+    const data = new FormData(form);
+    const fields = ["template_name", "template_code", "item_code", "internal_selection_name", "description", "default_specification", "origin", "supplier_name", "currency", "desking_size_pricing", "variant_pricing", "category_pricing", "modular_item_pricing", "modular_item_pricing_defaults", "accessory_pricing"];
+    return Object.fromEntries(fields.map((field) => [field, typeof data.get(field) === "string" ? String(data.get(field)) : ""]));
+  }
+  function currentSmartWorkspace() { const snapshot = currentFormSnapshot(); return snapshot ? productTemplateFormSmartWorkspace(snapshot) : null; }
+  function applyManufacturerPricingState(state: Pick<ManufacturerFieldPatchState, "deskingSizePricing" | "variantPricing" | "categoryPricing" | "modularPricing" | "accessoryPricing">, affected: Set<string>) {
+    if (affected.has("workstation")) setWorkstationReplacement((current) => ({ pricing: state.deskingSizePricing, rows: [], version: (current?.version ?? 0) + 1 }));
+    if (affected.has("base_model")) {
+      const normalized = baseModelPricingGroups<VariantPricingRow>(state.variantPricing);
+      const legacy = normalized.find((group) => group.isSyntheticLegacyGroup);
+      setBaseModelReplacement((current) => ({ groups: normalized.filter((group) => !group.isSyntheticLegacyGroup), rows: legacy?.items ?? [], flatSubgroups: legacy?.subgroups, version: (current?.version ?? 0) + 1 }));
+    }
+    if (affected.has("category_matrix")) setCategoryReplacement((current) => ({ groups: state.categoryPricing as CategoryPricingRow[], version: (current?.version ?? 0) + 1 }));
+    if (affected.has("modular")) setModularReplacement((current) => ({ groups: state.modularPricing as CategoryPricingRow[], version: (current?.version ?? 0) + 1 }));
+    if (affected.has("accessory")) setAccessoryReplacement((current) => ({ groups: state.accessoryPricing as AccessoryPricingRow[], version: (current?.version ?? 0) + 1 }));
+  }
+  function applyManufacturerPrices(patches: ManufacturerPriceDifference[]) {
+    const snapshot = currentFormSnapshot();
+    if (!snapshot) return { ok: false as const, message: "Current Product Template form state is unavailable." };
+    const result = applyManufacturerPricePatches(manufacturerPricingFormStateFromSnapshot(snapshot), patches);
+    if (!result.ok) return { ok: false as const, message: result.errors.join(" ") };
+    applyManufacturerPricingState(result.state, new Set(patches.map((patch) => patch.pricingType)));
+    setExpandedSections((current) => ({ ...current, pricing: true }));
+    setSmartSetupNotice(`${patches.length} manufacturer price field${patches.length === 1 ? "" : "s"} applied locally. Save the Product Template to persist.`);
+    return { ok: true as const };
+  }
+  function applyManufacturerFields(patches: ManufacturerFieldPatch[], actions: ManufacturerItemAction[]) {
+    const snapshot = currentFormSnapshot(); const form = pricingRef.current?.closest("form");
+    if (!snapshot || !form) return { ok: false as const, message: "Current Product Template form state is unavailable." };
+    const result = actions.length ? applyManufacturerUpdateActions(snapshot, patches, actions) : applyManufacturerFieldPatches(snapshot, patches);
+    if (!result.ok) return { ok: false as const, message: result.errors.join(" ") };
+    applyManufacturerPricingState(result.state, new Set([...patches.filter((patch) => patch.scope === "row").map((patch) => patch.section), ...actions.map((action) => action.kind === "add" ? action.destination : action.item.existing.pricingType)]));
+    Object.entries(result.state.templateValues).forEach(([name, value]) => {
+      const field = form.elements.namedItem(name);
+      if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) { field.value = value; field.dispatchEvent(new Event("input", { bubbles: true })); }
+    });
+    setExpandedSections((current) => ({ ...current, details: patches.some((patch) => patch.scope === "template") || current.details, pricing: patches.some((patch) => patch.scope === "row") || current.pricing }));
+    const count = patches.length + actions.length; setSmartSetupNotice(`${count} manufacturer change${count === 1 ? "" : "s"} applied locally. Save the Product Template to persist.`);
+    return { ok: true as const };
+  }
+  const requestIncrementalSmartDraftApply = (draft: ProductTemplateDraft, routingPlan?: SmartSetupReviewRoutingPlan, confirmed = false, images: PendingProductTemplateRowImage[] = [], subgroupAssignments: SmartAppliedPricingSubgroups[] = [], subgroupImages: PendingProductTemplateSubgroupImage[] = []) => {
+    void confirmed;
+    const current = currentSmartWorkspace();
+    const currentDraft = current ? draftForSmartSetupReviewApply(current.draft, current.plan) : null;
+    const nextDraft = routingPlan ? draftForSmartSetupReviewApply(draft, routingPlan) : draft;
+    const changed: SmartSetupPricingSection[] = currentDraft ? [
+      JSON.stringify(mapDraftWorkstationRows(currentDraft).rows) !== JSON.stringify(mapDraftWorkstationRows(nextDraft).rows) ? "workstation" : null,
+      JSON.stringify(mapDraftBaseModelPricing(currentDraft, smartReviewMatrixOverrides(current!.plan))) !== JSON.stringify(mapDraftBaseModelPricing(nextDraft, routingPlan ? smartReviewMatrixOverrides(routingPlan) : undefined)) ? "baseModel" : null,
+      JSON.stringify(mapDraftPriceMatricesToCategoryGroups(currentDraft, smartReviewMatrixOverrides(current!.plan))) !== JSON.stringify(mapDraftPriceMatricesToCategoryGroups(nextDraft, routingPlan ? smartReviewMatrixOverrides(routingPlan) : undefined)) ? "category" : null,
+      JSON.stringify(mapDraftModularPricing(currentDraft)) !== JSON.stringify(mapDraftModularPricing(nextDraft)) ? "modular" : null,
+      JSON.stringify(mapDraftOptionGroupsToAccessories(currentDraft, current!.plan)) !== JSON.stringify(mapDraftOptionGroupsToAccessories(nextDraft, routingPlan)) ? "accessory" : null,
+    ].filter((section): section is SmartSetupPricingSection => section !== null) : ["workstation", "baseModel", "category", "modular", "accessory"];
+    return requestSmartDraftApply(draft, routingPlan, true, images, subgroupAssignments, subgroupImages, true, changed);
+  };
   const updatePricingData = useCallback((section: keyof SmartSetupSectionPresence, hasData: boolean) => {
     setCurrentPricingData((current) => current[section] === hasData ? current : { ...current, [section]: hasData });
   }, []);
@@ -633,6 +711,7 @@ export function ProductTemplateForm({
         <div className="flex flex-wrap gap-2 md:col-span-2 xl:col-span-3">
           <CopyAiExtractionPrompt />
           <SmartProductJsonImport onRequestApply={requestSmartDraftApply} />
+          {template || approvedSmartDraft ? <SmartProductJsonImport buttonLabel="✦ Add / Update from AI JSON" loadInitialWorkspace={currentSmartWorkspace} onApplyManufacturerFields={applyManufacturerFields} onApplyManufacturerPrices={applyManufacturerPrices} onRequestApply={requestIncrementalSmartDraftApply} /> : null}
         </div>
         <div className="grid gap-3 text-xs leading-5 text-emerald-950 md:col-span-2 md:grid-cols-3 xl:col-span-3">
           {[
@@ -648,7 +727,7 @@ export function ProductTemplateForm({
         </div>
         <p className="text-xs text-emerald-900 md:col-span-2 xl:col-span-3">Nothing is saved until you apply the reviewed data and save the Product Template.</p>
       </FormSection>
-      {smartSetupNotice && approvedSmartDraft ? <details className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950"><summary className="cursor-pointer font-semibold">AI draft applied. {smartSetupNotice.includes("No pricing data") ? "Review the result." : "Show notes."}</summary><p className="mt-2 text-xs leading-5">{smartSetupNotice}</p></details> : null}
+      {smartSetupNotice ? <details className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950"><summary className="cursor-pointer font-semibold">AI data applied. {smartSetupNotice.includes("No pricing data") ? "Review the result." : "Show notes."}</summary><p className="mt-2 text-xs leading-5">{smartSetupNotice}</p></details> : null}
       {!template && importDraft && importMode === "new" ? (
         <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950 shadow-sm">
           <p className="font-semibold">Quotation row imported into the existing Add Template form.</p>
@@ -776,6 +855,9 @@ export function ProductTemplateForm({
           defaultValue={template?.price_notes}
         />
       </FormSection>
+
+      <input type="hidden" name="material_suggestions" value={JSON.stringify(materialSuggestions)} />
+      <div className="px-5 pb-5"><ManufacturerFinishGuidancePanel guidance={materialSuggestions} onChange={setMaterialSuggestions} />{!materialSuggestions.length ? <details className="rounded-lg border border-zinc-200 bg-white p-3"><summary className="cursor-pointer text-sm font-semibold">Manufacturer Finish Guidance <span className="ml-1 text-xs font-normal text-zinc-500">No guidance groups</span></summary><div className="mt-3"><p className="text-xs text-zinc-500">Manufacturer guidance only. Actual selectable finishes are controlled by the Materials &amp; Finishes setup below.</p><button type="button" onClick={() => setMaterialSuggestions([{ id: crypto.randomUUID(), label: "New finish guidance", notes: null, supplierCodes: [], referenceCodes: [] }])} className="mt-2 text-xs font-semibold text-emerald-900">+ Add guidance group</button></div></details> : null}</div>
 
       <div ref={pricingRef}>
         <FormSection

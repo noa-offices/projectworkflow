@@ -4,7 +4,7 @@ import type { ProductTemplateDraft, ProductTemplateDraftPriceMatrix } from "./pr
 import { mapDraftBaseModelPricing } from "./product-template-draft-base-model-adapter.js";
 import { mapDraftPriceMatricesToCategoryGroups } from "./product-template-draft-category-adapter.js";
 import { mapDraftOptionGroupsToAccessories } from "./product-template-draft-accessory-adapter.js";
-import { createSmartSetupReviewRouting, draftForSmartSetupReviewApply, smartReviewMatrixOverrides, validateSmartSetupReviewRouting } from "./smart-product-review-routing.js";
+import { createSmartSetupReviewRouting, draftForSmartSetupReviewApply, reorderSmartSetupReviewRoutes, smartReviewMatrixOverrides, validateSmartSetupReviewRouting } from "./smart-product-review-routing.js";
 
 const row = (id: string, prices: Record<string, number | null>) => ({ id, label: id, displayName: id, dimensions: null, currency: "EUR" as const, specification: null, supplierCodes: [`code-${id}`], referenceCodes: [], prices });
 const matrix = (id: string, columns = [{ id: "price", label: "Price" }], prices: Record<string, number | null> = { price: 0 }): ProductTemplateDraftPriceMatrix => ({ id, label: id, columns, rows: [row(`${id}-row`, prices)] });
@@ -28,6 +28,17 @@ test("recommendations are editable and reviewed destinations are authoritative",
   assert.deepEqual(mapDraftPriceMatricesToCategoryGroups(applied, overrides).groups.map((group) => group.group_name), ["Executive Desks", "ARCA"]);
   assert.equal(mapDraftPriceMatricesToCategoryGroups(applied, overrides).groups[0].items[0].prices?.Price, null);
   assert.equal(mapDraftPriceMatricesToCategoryGroups(applied, overrides).groups[1].items[0].prices?.["COM/S"], 0);
+});
+
+test("review route reordering preserves route data and applies relative destination order", () => {
+  const plan = createSmartSetupReviewRouting(draft);
+  const moved = reorderSmartSetupReviewRoutes(plan, "matrix:Ceramic Executive Desks", "up");
+  assert.deepEqual(moved.routes.map((route) => route.sourceId), ["Ceramic Executive Desks", "Executive Desks", "ARCA", "top"]);
+  assert.equal(moved.routes[0].groupName, "Ceramic Executive Desks");
+  assert.equal(reorderSmartSetupReviewRoutes(moved, "matrix:Ceramic Executive Desks", "up"), moved);
+  const applied = draftForSmartSetupReviewApply(draft, moved);
+  assert.deepEqual(applied.pricing.priceMatrices.map((item) => item.id), ["Ceramic Executive Desks", "Executive Desks", "ARCA"]);
+  assert.deepEqual(applied.optionGroups.map((item) => item.id), ["top"]);
 });
 
 test("reviewed accessory contract preserves role, selection, stable IDs, allowed items, and fixed quantity", () => {

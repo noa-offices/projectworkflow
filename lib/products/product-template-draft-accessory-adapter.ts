@@ -19,7 +19,7 @@ function primaryCode(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMa
 }
 
 function mapItem(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMatrixRow, price: number | null, index: number, warnings: string[], itemKind: string) {
-  return { id: row.id, item_name: row.label ?? row.displayName ?? row.id, supplier_price_list_code: primaryCode(row, warnings, itemKind), price, currency: row.currency ?? undefined, specification: row.specification ?? "", is_active: true, sort_order: index };
+  return { id: row.id, item_name: row.displayName ?? row.label ?? row.id, supplier_price_list_code: primaryCode(row, warnings, itemKind), price, currency: row.currency ?? undefined, specification: row.specification ?? "", is_active: true, sort_order: index };
 }
 
 function topAccessContext(value: string) {
