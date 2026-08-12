@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
 import { listProductTemplateRowReferences } from "@/app/products/templates/row-reference-actions";
 import { listProductTemplateSubgroupReferences } from "@/app/products/templates/subgroup-reference-actions";
@@ -196,6 +196,7 @@ type AccessoryPricingRow = {
   is_active?: boolean;
   sort_order?: number;
   conditional_configuration?: AccessoryConditionalConfiguration;
+  subgroups?: Array<{ id: string; subgroup_name: string; sort_order: number; is_active: boolean; row_ids: string[] }>;
 };
 
 type AccessoryPricingItem = {
@@ -626,18 +627,23 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
   const sourceRows = Array.isArray(rows) ? rows : [];
   const groups = sourceRows
     .filter((row) => row.group_name || row.items)
-    .map((group, groupIndex) => ({
+    .map((group, groupIndex) => {
+      const activeItems = (group.items ?? [])
+        .filter((item) => item.is_active !== false)
+        .filter((item) => item.item_name || item.supplier_price_list_code || item.price !== null && item.price !== undefined || item.specification)
+        .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
+      const subgroups = [...(group.subgroups ?? [])].filter((subgroup) => subgroup.is_active).sort((left, right) => left.sort_order - right.sort_order);
+      const groupedIds = new Set(subgroups.flatMap((subgroup) => subgroup.row_ids));
+      return ({
       id: group.id ?? `add-on-group-${groupIndex}`,
       group_name: group.group_name?.trim() || "Accessories",
       group_is_required: group.group_is_required === true,
       conditional_configuration: group.conditional_configuration,
       is_active: group.is_active !== false,
       sort_order: numberValue(group.sort_order, groupIndex),
-      items: (group.items ?? [])
-        .filter((item) => item.is_active !== false)
-        .filter((item) => item.item_name || item.supplier_price_list_code || item.price !== null && item.price !== undefined || item.specification)
-        .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order)),
-    }))
+      subgroups,
+      items: [...subgroups.flatMap((subgroup) => subgroup.row_ids.flatMap((id) => activeItems.find((item) => item.id === id) ?? [])), ...activeItems.filter((item) => !item.id || !groupedIds.has(item.id))],
+    }); })
     .filter((group) => group.is_active && group.items.length)
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
   const flatRows = sourceRows
@@ -656,6 +662,7 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
           conditional_configuration: undefined,
           is_active: true,
           sort_order: groups.length,
+          subgroups: [],
           items: flatRows,
         },
       ]
@@ -3109,11 +3116,15 @@ export function ProductLibrarySelector({
                                       ) : null}
                                     </legend>
                                     <div className="mt-1 space-y-2">
-                                      {group.items.map((accessory) => {
+                                      {group.items.map((accessory, accessoryIndex) => {
                                         const id = accessory.id ?? accessory.item_name ?? "";
                                         const qty = templatePricingAccessoryQuantities[id] ?? 0;
+                                        const subgroup = group.subgroups.find((entry) => accessory.id && entry.row_ids.includes(accessory.id));
+                                        const showSubgroupHeader = subgroup && group.items.findIndex((item) => item.id && subgroup.row_ids.includes(item.id)) === accessoryIndex;
 
                                         return (
+                                          <Fragment key={id}>
+                                          {showSubgroupHeader ? <div className="rounded-md border border-zinc-200 bg-white p-2"><div className="flex items-center gap-2">{subgroupReferenceImages[baseModelSubgroupReferenceKey("accessory", group.id, subgroup.id)]?.previewUrl ? <img src={subgroupReferenceImages[baseModelSubgroupReferenceKey("accessory", group.id, subgroup.id)]!.previewUrl!} alt={`${subgroup.subgroup_name} reference`} className="h-14 w-14 shrink-0 rounded border border-zinc-200 object-contain" loading="lazy" /> : null}<p className="text-xs font-semibold text-zinc-900">{subgroup.subgroup_name}</p></div></div> : null}
                                           <label key={id} className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
                                             <span className="min-w-0">
                                               <input
@@ -3157,7 +3168,7 @@ export function ProductLibrarySelector({
                                               }
                                               className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100"
                                             />
-                                          </label>
+                                          </label></Fragment>
                                         );
                                       })}
                                     </div>
@@ -3191,11 +3202,15 @@ export function ProductLibrarySelector({
                                   ) : null}
                                 </legend>
                                 <div className="mt-1 space-y-2">
-                                  {group.items.map((accessory) => {
+                                  {group.items.map((accessory, accessoryIndex) => {
                                     const id = accessory.id ?? accessory.item_name ?? "";
                                     const qty = templatePricingAccessoryQuantities[id] ?? 0;
+                                    const subgroup = group.subgroups.find((entry) => accessory.id && entry.row_ids.includes(accessory.id));
+                                    const showSubgroupHeader = subgroup && group.items.findIndex((item) => item.id && subgroup.row_ids.includes(item.id)) === accessoryIndex;
 
                                     return (
+                                      <Fragment key={id}>
+                                      {showSubgroupHeader ? <div className="rounded-md border border-zinc-200 bg-white p-2"><div className="flex items-center gap-2">{subgroupReferenceImages[baseModelSubgroupReferenceKey("accessory", group.id, subgroup.id)]?.previewUrl ? <img src={subgroupReferenceImages[baseModelSubgroupReferenceKey("accessory", group.id, subgroup.id)]!.previewUrl!} alt={`${subgroup.subgroup_name} reference`} className="h-14 w-14 shrink-0 rounded border border-zinc-200 object-contain" loading="lazy" /> : null}<p className="text-xs font-semibold text-zinc-900">{subgroup.subgroup_name}</p></div></div> : null}
                                       <label key={id} className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
                                         <span className="min-w-0">
                                           <input
@@ -3239,7 +3254,7 @@ export function ProductLibrarySelector({
                                           }
                                           className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100"
                                         />
-                                      </label>
+                                      </label></Fragment>
                                     );
                                   })}
                                 </div>

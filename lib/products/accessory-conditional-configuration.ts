@@ -37,6 +37,7 @@ export type AccessoryConfigurationGroup = Record<string, unknown> & {
   is_active?: boolean;
   sort_order?: number;
   items?: AccessoryConfigurationItem[];
+  subgroups?: Array<{ id: string; subgroup_name: string; sort_order: number; is_active: boolean; row_ids: string[] }>;
   conditional_configuration?: AccessoryConditionalConfiguration;
 };
 
@@ -112,7 +113,23 @@ export function parseAccessoryConfigurationGroups(value: unknown): ParsedAccesso
       addIssue(issues, "invalid_items", `${path}.items`, "Accessory group items must be an array.");
     }
 
-    const group = { ...rawGroup, ...(rawItems !== undefined ? { items } : {}) } as AccessoryConfigurationGroup;
+    const itemIdsForSubgroups = new Set(items.flatMap((item) => typeof item.id === "string" && item.id.trim() ? [item.id] : []));
+    const assignedItemIds = new Set<string>();
+    const subgroups = Array.isArray(rawGroup.subgroups) ? rawGroup.subgroups.flatMap((rawSubgroup, subgroupIndex) => {
+      const subgroupPath = `${path}.subgroups[${subgroupIndex}]`;
+      if (!isRecord(rawSubgroup) || typeof rawSubgroup.id !== "string" || !rawSubgroup.id.trim() || typeof rawSubgroup.subgroup_name !== "string" || !Array.isArray(rawSubgroup.row_ids)) {
+        addIssue(issues, "invalid_subgroup", subgroupPath, "Subgroup requires an ID, name, and member IDs.");
+        return [];
+      }
+      const rowIds = rawSubgroup.row_ids.flatMap((value, memberIndex) => {
+        if (typeof value !== "string" || !itemIdsForSubgroups.has(value)) { addIssue(issues, "unknown_subgroup_member", `${subgroupPath}.row_ids[${memberIndex}]`, "Subgroup member must identify an item in its parent group."); return []; }
+        if (assignedItemIds.has(value)) { addIssue(issues, "duplicate_subgroup_member", `${subgroupPath}.row_ids[${memberIndex}]`, "An item may belong to at most one subgroup."); return []; }
+        assignedItemIds.add(value); return [value];
+      });
+      return [{ id: rawSubgroup.id, subgroup_name: rawSubgroup.subgroup_name, sort_order: Number.isFinite(Number(rawSubgroup.sort_order)) ? Number(rawSubgroup.sort_order) : subgroupIndex, is_active: rawSubgroup.is_active !== false, row_ids: rowIds }];
+    }) : [];
+    if (rawGroup.subgroups !== undefined && !Array.isArray(rawGroup.subgroups)) addIssue(issues, "invalid_subgroups", `${path}.subgroups`, "Subgroups must be an array.");
+    const group = { ...rawGroup, ...(rawItems !== undefined ? { items } : {}), ...(rawGroup.subgroups !== undefined ? { subgroups } : {}) } as AccessoryConfigurationGroup;
     const rawConfiguration = rawGroup.conditional_configuration;
     if (rawConfiguration === undefined) return [group];
     if (!isRecord(rawConfiguration)) {
@@ -202,6 +219,7 @@ export function serializeAccessoryConfigurationGroups(groups: AccessoryConfigura
   return groups.map((group) => ({
     ...group,
     ...(group.items ? { items: group.items.map((item) => ({ ...item })) } : {}),
+    ...(group.subgroups ? { subgroups: group.subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] })) } : {}),
     ...(group.conditional_configuration
       ? {
           conditional_configuration: {

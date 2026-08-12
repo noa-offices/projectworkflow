@@ -41,7 +41,7 @@ type TemplatePricingSectionsProps = {
   templateCurrency?: string | null;
   variantPricingRows?: unknown;
   onSectionDataChange?: (section: SmartSetupPricingSection, hasData: boolean) => void;
-  workstationReplacement?: { rows: DeskingSizePricingRow[]; version: number } | null;
+  workstationReplacement?: { rows: DeskingSizePricingRow[]; subgroups?: BaseModelPricingSubgroup[]; version: number } | null;
   baseModelReplacement?: { groups: BaseModelPricingGroup<VariantPricingRow>[]; rows: VariantPricingRow[]; flatSubgroups?: BaseModelPricingSubgroup[]; version: number } | null;
   categoryReplacement?: { groups: CategoryPricingRow[]; version: number } | null;
   modularReplacement?: { groups: CategoryPricingRow[]; version: number } | null;
@@ -230,6 +230,7 @@ export function TemplatePricingSections({
         templateId={templateId}
         templateIsPersisted={templateIsPersisted}
         replacementRows={workstationReplacement?.rows}
+        replacementSubgroups={workstationReplacement?.subgroups}
         replacementVersion={workstationReplacement?.version}
         onHasDataChange={reportWorkstationData}
       />

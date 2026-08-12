@@ -44,7 +44,7 @@ const allowedOptionTypes = new Set([
 ]);
 
 type PendingRowReferenceUpload = { field: string; pricingType: string; rowId: string; file: File };
-type PendingSubgroupReferenceUpload = { field: string; pricingType: string; subgroupId: string; file: File };
+type PendingSubgroupReferenceUpload = { field: string; pricingType: string; groupId: string; subgroupId: string; file: File };
 type SavedTemplatePricing = { accessory_pricing: unknown; category_pricing: unknown; desking_size_pricing: unknown; variant_pricing: unknown };
 
 function pendingRowReferenceUploads(formData: FormData): PendingRowReferenceUpload[] {
@@ -81,12 +81,12 @@ async function persistPendingRowReferenceUploads(formData: FormData, templateId:
 
 function pendingSubgroupReferenceUploads(formData: FormData): PendingSubgroupReferenceUpload[] {
   const raw = formData.get("pending_subgroup_references"); if (typeof raw !== "string" || !raw) return [];
-  try { const entries = JSON.parse(raw) as unknown; if (!Array.isArray(entries)) return []; return entries.flatMap((entry) => { if (!entry || typeof entry !== "object" || !("field" in entry) || !("pricingType" in entry) || !("subgroupId" in entry) || typeof entry.field !== "string" || typeof entry.pricingType !== "string" || typeof entry.subgroupId !== "string") return []; const file = formData.get(entry.field); return file instanceof File && file.size > 0 ? [{ field: entry.field, pricingType: entry.pricingType, subgroupId: entry.subgroupId, file }] : []; }); } catch { return []; }
+  try { const entries = JSON.parse(raw) as unknown; if (!Array.isArray(entries)) return []; return entries.flatMap((entry) => { if (!entry || typeof entry !== "object" || !("field" in entry) || !("pricingType" in entry) || !("groupId" in entry) || !("subgroupId" in entry) || typeof entry.field !== "string" || typeof entry.pricingType !== "string" || typeof entry.groupId !== "string" || typeof entry.subgroupId !== "string") return []; const file = formData.get(entry.field); return file instanceof File && file.size > 0 ? [{ field: entry.field, pricingType: entry.pricingType, groupId: entry.groupId, subgroupId: entry.subgroupId, file }] : []; }); } catch { return []; }
 }
 
 async function persistPendingSubgroupReferenceUploads(formData: FormData, templateId: string, pricing: SavedTemplatePricing) {
   const entries = pendingSubgroupReferenceUploads(formData);
-  return uploadPendingRowImagesAfterSave({ entries, templateSaved: true, resolveIdentity: (entry) => { let pricingType; try { pricingType = requireProductTemplateGroupReferenceType(entry.pricingType); } catch { return null; } const identity = resolveProductTemplateSubgroupIdentity(pricing.variant_pricing, pricingType, entry.subgroupId); return identity ? { ...identity, pricingType } : null; }, upload: async (entry, identity) => { try { await saveProductTemplateSubgroupReference({ templateId, pricingType: identity.pricingType, groupId: identity.groupId, subgroupId: identity.subgroupId, file: entry.file }); } catch (error) { logServerActionError("PRODUCT TEMPLATE PENDING SUBGROUP REFERENCE UPLOAD ERROR", error, { recordId: templateId, pricingType: identity.pricingType }); throw error; } } });
+  return uploadPendingRowImagesAfterSave({ entries, templateSaved: true, resolveIdentity: (entry) => { let pricingType; try { pricingType = requireProductTemplateGroupReferenceType(entry.pricingType); } catch { return null; } const identity = resolveProductTemplateSubgroupIdentity({ accessoryPricing: pricing.accessory_pricing, categoryPricing: pricing.category_pricing, deskingSizePricing: pricing.desking_size_pricing, variantPricing: pricing.variant_pricing }, pricingType, entry.subgroupId, entry.groupId); return identity ? { ...identity, pricingType } : null; }, upload: async (entry, identity) => { try { await saveProductTemplateSubgroupReference({ templateId, pricingType: identity.pricingType, groupId: identity.groupId, subgroupId: identity.subgroupId, file: entry.file }); } catch (error) { logServerActionError("PRODUCT TEMPLATE PENDING SUBGROUP REFERENCE UPLOAD ERROR", error, { recordId: templateId, pricingType: identity.pricingType }); throw error; } } });
 }
 
 function templateSavedMessage(message: string, failedImages: number) { return failedImages ? `${message} Product Template saved, but ${failedImages} reference image${failedImages === 1 ? "" : "s"} could not be uploaded.` : message; }
@@ -225,7 +225,7 @@ async function reconcileSavedProductTemplateGroupReferences({
   if (subgroupReferenceError) { logServerActionError("PRODUCT TEMPLATE SUBGROUP REFERENCE RECONCILIATION LOAD ERROR", subgroupReferenceError, { recordId: templateId, table: "product_template_subgroup_references" }); return; }
   await reconcileStaleProductTemplateSubgroupReferences({
     references: subgroupReferences ?? [],
-    persistedKeys: persistedProductTemplateSubgroupKeys(variantPricing),
+    persistedKeys: persistedProductTemplateSubgroupKeys({ accessoryPricing, categoryPricing, deskingSizePricing, variantPricing }),
     deleteReference: async (reference) => { const { error } = await supabase.from("product_template_subgroup_references").delete().eq("id", reference.id).eq("template_id", templateId); if (error) throw error; },
     deleteStorageObject: async (reference) => { const { error } = await supabase.storage.from(productImagesBucket).remove([reference.storage_path]); if (error) throw error; },
     onReferenceDeleteError: (reference, error) => logServerActionError("PRODUCT TEMPLATE SUBGROUP REFERENCE DELETE ERROR", error, { recordId: reference.id }),

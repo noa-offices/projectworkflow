@@ -112,6 +112,7 @@ export type CategoryPricingRow = {
   modular_default_specification?: string | null;
   is_active?: boolean;
   sort_order?: number;
+  subgroups?: BaseModelPricingSubgroup[];
 };
 
 export type AccessoryPricingRow = {
@@ -127,6 +128,7 @@ export type AccessoryPricingRow = {
   is_active?: boolean;
   sort_order?: number;
   conditional_configuration?: AccessoryConditionalConfiguration;
+  subgroups?: BaseModelPricingSubgroup[];
 };
 
 export type AccessoryPricingItem = {
@@ -265,6 +267,7 @@ function normalizeAccessoryGroup(row: AccessoryPricingRow, index: number): Acces
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
     items: (row.items?.length ? row.items : flatItem).map(normalizeAccessoryItem),
     ...(row.conditional_configuration ? { conditional_configuration: row.conditional_configuration } : {}),
+    ...(row.subgroups ? { subgroups: row.subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] })) } : {}),
   };
 }
 
@@ -408,6 +411,7 @@ function normalizeCategoryGroup(
     is_active: row.is_active !== false,
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
     items,
+    ...(row.subgroups ? { subgroups: row.subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] })) } : {}),
   };
 }
 
@@ -1208,6 +1212,7 @@ export function ModularItemPricingTable({
           sort_order: Number.isFinite(Number((group as CategoryPricingRow).sort_order))
             ? Number((group as CategoryPricingRow).sort_order)
             : groupIndex,
+          ...(group.subgroups ? { subgroups: group.subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] })) } : {}),
           items: (group.items ?? []).map((row, index) =>
             normalizeCategory({
               ...categoryPricingRowWithColumns(row, priceCategories),
@@ -1760,6 +1765,7 @@ export function AccessoryPricingTable({
   const importedIdsRef = useRef<Set<string>>(new Set());
   const [groups, setGroups] = useState<AccessoryPricingRow[]>(() => initialGroups);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => Object.fromEntries(initialGroups.map((group, index) => [group.id ?? `add-on-group-${index}`, true])));
+  const [collapsedAccessorySubgroups, setCollapsedAccessorySubgroups] = useState<Record<string, boolean>>(() => Object.fromEntries(initialGroups.flatMap((group) => (group.subgroups ?? []).map((subgroup) => [subgroup.id, true]))));
   const [groupActionNotices, setGroupActionNotices] = useState<Record<string, string>>({});
   const [referenceTargetGroupId, setReferenceTargetGroupId] = useState<string | null>(null);
   const persistedGroupIds = useMemo(() => persistedPricingGroupIds(rows, "accessory"), [rows]);
@@ -1783,6 +1789,7 @@ export function AccessoryPricingTable({
     appliedReplacementVersion.current = replacementVersion;
     setGroups(normalizeAccessoryGroups(replacementGroups));
     setCollapsedGroups(Object.fromEntries(normalizeAccessoryGroups(replacementGroups).map((group, index) => [group.id ?? `add-on-group-${index}`, true])));
+    setCollapsedAccessorySubgroups(Object.fromEntries(normalizeAccessoryGroups(replacementGroups).flatMap((group) => (group.subgroups ?? []).map((subgroup) => [subgroup.id, true]))));
     setGroupActionNotices({});
     setReferenceTargetGroupId(null);
     importedIdsRef.current = new Set();
@@ -1981,6 +1988,10 @@ export function AccessoryPricingTable({
             {!collapsedGroups[groupId] ? <>
             {groupActionNotices[groupId] ? <p role="status" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">{groupActionNotices[groupId]}</p> : null}
             <AccessoryConditionalRuleEditor baseModelGroups={baseModelGroups} group={group} onChange={(nextGroup) => setGroups((current) => current.map((entry, index) => index === groupIndex ? nextGroup : entry))} />
+            <div className="mt-3 rounded-md border border-emerald-100 bg-emerald-50/40 p-3">
+              <div className="flex items-center justify-between gap-2"><div><p className="text-xs font-semibold text-emerald-950">Visual subgroups</p><p className="text-[10px] text-emerald-800">Organizational only; accessory rules and prices are unchanged.</p></div><button type="button" onClick={() => { const id = idFor("accessory-subgroup", group.subgroups?.length ?? 0); updateGroup(groupIndex, { subgroups: [...(group.subgroups ?? []), createBaseModelPricingSubgroup(id, "New Subgroup", group.subgroups?.length ?? 0)] }); setCollapsedAccessorySubgroups((current) => ({ ...current, [id]: false })); }} className="rounded-md border border-emerald-200 bg-white px-2 py-1 text-xs font-semibold text-emerald-900">+ Add Subgroup</button></div>
+              {(group.subgroups ?? []).length ? <div className="mt-3 space-y-2">{[...(group.subgroups ?? [])].sort((a, b) => a.sort_order - b.sort_order).map((subgroup) => <div key={subgroup.id} className="rounded-md border border-zinc-200 bg-white p-2"><div className="flex flex-wrap items-start gap-2"><button type="button" onClick={() => setCollapsedAccessorySubgroups((current) => ({ ...current, [subgroup.id]: !current[subgroup.id] }))} className="h-8 w-8 rounded border border-zinc-200 text-xs">{collapsedAccessorySubgroups[subgroup.id] ? ">" : "v"}</button><PricingSubgroupReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} pricingType="accessory" groupId={groupId} subgroupId={subgroup.id} /><div className="min-w-52 flex-1"><input value={subgroup.subgroup_name} onChange={(event) => updateGroup(groupIndex, { subgroups: (group.subgroups ?? []).map((entry) => entry.id === subgroup.id ? { ...entry, subgroup_name: event.target.value } : entry) })} className="h-8 w-full border border-zinc-200 px-2 text-sm font-semibold outline-none focus:border-emerald-800" /><p className="mt-1 text-xs text-zinc-500">{subgroup.row_ids.length} items</p></div><label className="flex items-center gap-1 text-xs text-zinc-600"><input type="checkbox" checked={subgroup.is_active} onChange={(event) => updateGroup(groupIndex, { subgroups: (group.subgroups ?? []).map((entry) => entry.id === subgroup.id ? { ...entry, is_active: event.target.checked } : entry) })} />Active</label><button type="button" onClick={() => updateGroup(groupIndex, { subgroups: (group.subgroups ?? []).filter((entry) => entry.id !== subgroup.id) })} className="text-xs font-semibold text-red-700">Remove subgroup</button></div>{!collapsedAccessorySubgroups[subgroup.id] ? <div className="mt-2 space-y-1 border-t border-zinc-100 pt-2">{(group.items ?? []).filter((item) => item.id && subgroup.row_ids.includes(item.id)).map((item) => <p key={item.id} className="text-xs text-zinc-700">{item.supplier_price_list_code ? `${item.supplier_price_list_code} — ` : ""}{item.item_name}</p>)}</div> : null}</div>)}</div> : null}
+            </div>
             <div className="mt-3 overflow-x-auto">
               <table className="min-w-[1460px] w-full text-left text-xs">
                 <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
@@ -1992,11 +2003,12 @@ export function AccessoryPricingTable({
                     <th className="px-2 py-2">Currency</th>
                     <th className="px-2 py-2">Specification / Notes</th>
                     <th className="px-2 py-2">Active</th>
+                    <th className="px-2 py-2">Subgroup</th>
                     <th className="px-2 py-2">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(group.items ?? []).map((item, itemIndex) => (
+                  {(group.items ?? []).map((item, itemIndex) => ({ item, itemIndex })).filter(({ item }) => { const subgroup = (group.subgroups ?? []).find((entry) => item.id && entry.row_ids.includes(item.id)); return !subgroup || collapsedAccessorySubgroups[subgroup.id] === false; }).map(({ item, itemIndex }) => (
                     <tr key={item.id ?? itemIndex} className="border-t border-zinc-100 align-top">
                       <td className="px-2 py-2 align-top">{group.id && item.id ? <PricingRowReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} pricingType="accessory" groupId={group.id} rowId={item.id} /> : <span className="text-[10px] text-zinc-400">Save row first</span>}</td>
                       <td className="px-2 py-2 align-top"><AutoGrowTextarea value={item.item_name ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { item_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[260px]" /></td>
@@ -2005,10 +2017,11 @@ export function AccessoryPricingTable({
                       <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={item.currency} onChange={(currency) => updateItem(groupIndex, itemIndex, { currency })} /></div></td>
                       <td className="px-2 py-2 align-top"><AutoGrowTextarea value={item.specification ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /></td>
                       <td className="px-2 py-2 align-top"><input type="checkbox" checked={item.is_active !== false} onChange={(e) => updateItem(groupIndex, itemIndex, { is_active: e.target.checked })} /></td>
-                      <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => updateGroup(groupIndex, { items: (group.items ?? []).filter((_, index) => index !== itemIndex) })} className="text-xs font-semibold text-red-700">Remove item</button></div></td>
+                      <td className="px-2 py-2 align-top"><select value={(group.subgroups ?? []).find((subgroup) => item.id && subgroup.row_ids.includes(item.id))?.id ?? ""} onChange={(event) => { const subgroupId = event.target.value || null; if (!item.id) return; updateGroup(groupIndex, { subgroups: (group.subgroups ?? []).map((subgroup) => ({ ...subgroup, row_ids: subgroup.id === subgroupId ? [...subgroup.row_ids.filter((id) => id !== item.id), item.id!] : subgroup.row_ids.filter((id) => id !== item.id) })) }); }} className="h-10 min-w-[180px] border border-zinc-200 bg-white px-2"><option value="">Ungrouped</option>{(group.subgroups ?? []).map((subgroup) => <option key={subgroup.id} value={subgroup.id}>{subgroup.subgroup_name}</option>)}</select></td>
+                      <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => updateGroup(groupIndex, { items: (group.items ?? []).filter((_, index) => index !== itemIndex), subgroups: (group.subgroups ?? []).map((subgroup) => ({ ...subgroup, row_ids: subgroup.row_ids.filter((id) => id !== item.id) })) })} className="text-xs font-semibold text-red-700">Remove item</button></div></td>
                     </tr>
                   ))}
-                  {!(group.items ?? []).length ? <tr><td colSpan={8} className="px-3 py-5 text-center text-zinc-500">No items in this group yet.</td></tr> : null}
+                  {!(group.items ?? []).length ? <tr><td colSpan={9} className="px-3 py-5 text-center text-zinc-500">No items in this group yet.</td></tr> : null}
                 </tbody>
               </table>
             </div>

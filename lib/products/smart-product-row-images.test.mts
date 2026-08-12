@@ -3,7 +3,7 @@ import test from "node:test";
 import type { ProductTemplateDraft, ProductTemplateDraftPriceMatrix } from "./product-template-draft.js";
 import { clipboardImageFile } from "./product-template-row-image-client.js";
 import { createSmartSetupReviewRouting } from "./smart-product-review-routing.js";
-import { baseModelSubgroupsForSmartSetupApply, disposeStagedReviewedRowImages, pendingRowImagesForSmartSetupApply, pendingSubgroupImagesForSmartSetupApply, reviewedRowImageKey, reviewedSubgroupImageKey, updateStagedReviewedRowImage, uploadPendingRowImagesAfterSave, type SmartReviewedPricingSubgroups, type StagedReviewedRowImage } from "./smart-product-row-images.js";
+import { baseModelSubgroupsForSmartSetupApply, canonicalSubgroupsForSmartSetupApply, disposeStagedReviewedRowImages, pendingRowImagesForSmartSetupApply, pendingSubgroupImagesForSmartSetupApply, reviewedRowImageKey, reviewedSubgroupImageKey, updateStagedReviewedRowImage, uploadPendingRowImagesAfterSave, type SmartReviewedPricingSubgroups, type StagedReviewedRowImage } from "./smart-product-row-images.js";
 
 const pricedRow = (id: string) => ({ id, label: id, displayName: id, dimensions: null, currency: "EUR" as const, price: 10, specification: null, supplierCodes: [id], referenceCodes: [] });
 const matrix = (id: string, columns = [{ id: "price", label: "Price" }]): ProductTemplateDraftPriceMatrix => ({ id, label: id, columns, rows: [{ ...pricedRow(`${id}-row`), prices: Object.fromEntries(columns.map((column) => [column.id, 10])) }] });
@@ -51,7 +51,7 @@ test("staged images survive edits and follow stable rows through supported routi
   assert.equal(JSON.stringify(draft).includes("blob:"), false);
 });
 
-test("reviewed subgroups and their staged diagram follow Base/Model routing only", () => {
+test("reviewed subgroups and their staged diagram follow canonical routing", () => {
   const plan = createSmartSetupReviewRouting(draft);
   const route = plan.routes.find((item) => item.sourceKind === "base_model")!;
   const reviewed: SmartReviewedPricingSubgroups = {
@@ -63,6 +63,18 @@ test("reviewed subgroups and their staged diagram follow Base/Model routing only
   route.destination = "skip";
   assert.deepEqual(baseModelSubgroupsForSmartSetupApply(draft, plan, reviewed), []);
   assert.deepEqual(pendingSubgroupImagesForSmartSetupApply(draft, plan, reviewed, staged), []);
+});
+
+test("accessory subgroup IDs membership order and staged image survive Apply", () => {
+  const plan = createSmartSetupReviewRouting(draft);
+  const route = plan.routes.find((item) => item.sourceKind === "option")!;
+  const reviewed = { [route.key]: [{ id: "sizes", subgroup_name: "L 123.6", sort_order: 7, is_active: true, row_ids: ["option-row"] }] };
+  const applied = canonicalSubgroupsForSmartSetupApply(draft, plan, reviewed)[0];
+  assert.equal(applied.pricingType, "accessory");
+  assert.equal(applied.groupId, route.sourceId);
+  assert.deepEqual(applied.subgroups[0], reviewed[route.key][0]);
+  const staged = { [reviewedSubgroupImageKey(route.key, "sizes")]: image(`subgroup:${route.key}`, "sizes", "blob:accessory-subgroup") };
+  assert.deepEqual(pendingSubgroupImagesForSmartSetupApply(draft, plan, reviewed, staged).map(({ pricingType, groupId, subgroupId, previewUrl }) => ({ pricingType, groupId, subgroupId, previewUrl })), [{ pricingType: "accessory", groupId: route.sourceId, subgroupId: "sizes", previewUrl: "blob:accessory-subgroup" }]);
 });
 
 test("final upload waits for template success and isolates partial failures", async () => {

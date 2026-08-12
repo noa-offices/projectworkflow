@@ -17,6 +17,7 @@ export type WorkstationPricingGroup<TRow extends WorkstationPricingRow = Worksta
   is_active: boolean;
   sort_order: number;
   items: TRow[];
+  subgroups?: Array<{ id: string; subgroup_name: string; sort_order: number; is_active: boolean; row_ids: string[] }>;
 };
 
 export type NormalizedWorkstationPricingGroup<TRow extends WorkstationPricingRow = WorkstationPricingRow> =
@@ -168,6 +169,7 @@ export function normalizeWorkstationPricing<TRow extends WorkstationPricingRow =
       is_active: entry.is_active !== false,
       sort_order: finiteNumber(entry.sort_order, entryIndex),
       items,
+      ...(Array.isArray(entry.subgroups) ? { subgroups: entry.subgroups.flatMap((subgroup) => isRecord(subgroup) && typeof subgroup.id === "string" && typeof subgroup.subgroup_name === "string" && Array.isArray(subgroup.row_ids) ? [{ id: subgroup.id, subgroup_name: subgroup.subgroup_name, sort_order: finiteNumber(subgroup.sort_order, 0), is_active: subgroup.is_active !== false, row_ids: subgroup.row_ids.filter((id): id is string => typeof id === "string") }] : []) } : {}),
       isSyntheticLegacyGroup: false,
     });
   });
@@ -234,6 +236,7 @@ export function serializeWorkstationPricingGroups<TRow extends WorkstationPricin
     is_active: group.is_active,
     sort_order: group.sort_order,
     items: group.items.map(cloneRow),
+    ...(group.subgroups ? { subgroups: group.subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] })) } : {}),
   }));
 }
 

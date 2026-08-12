@@ -19,9 +19,9 @@ export async function listProductTemplateSubgroupReferences(templateId: string, 
 export async function saveProductTemplateSubgroupReference(input: { templateId: string; pricingType: string; groupId: string; subgroupId: string; file: File }) {
   const { user } = await requireProductLibraryManager(); const supabase = await createClient(); const templateId = required(input.templateId); const groupId = required(input.groupId); const subgroupId = required(input.subgroupId); const pricingType = requireProductTemplateGroupReferenceType(input.pricingType);
   validateProductTemplateGroupReferenceFile(input.file);
-  const { data: template, error: templateError } = await supabase.from("product_templates").select("variant_pricing").eq("id", templateId).maybeSingle<{ variant_pricing: unknown }>();
+  const { data: template, error: templateError } = await supabase.from("product_templates").select("variant_pricing,desking_size_pricing,category_pricing,accessory_pricing").eq("id", templateId).maybeSingle<{ variant_pricing: unknown; desking_size_pricing: unknown; category_pricing: unknown; accessory_pricing: unknown }>();
   if (templateError || !template) throw new Error("Save the Product Template before adding subgroup images.");
-  assertProductTemplateSubgroupExists(template.variant_pricing, pricingType, groupId, subgroupId);
+  assertProductTemplateSubgroupExists({ variantPricing: template.variant_pricing, deskingSizePricing: template.desking_size_pricing, categoryPricing: template.category_pricing, accessoryPricing: template.accessory_pricing }, pricingType, groupId, subgroupId);
   const { data: existing } = await supabase.from("product_template_subgroup_references").select(columns).eq("template_id", templateId).eq("pricing_type", pricingType).eq("group_id", groupId).eq("subgroup_id", subgroupId).maybeSingle<ProductTemplateSubgroupReferenceRow>();
   const referenceId = crypto.randomUUID(); const storagePath = productTemplateSubgroupReferencePath(templateId, pricingType, groupId, subgroupId, referenceId, input.file.type);
   const upload = async () => { const { error } = await supabase.storage.from(bucket).upload(storagePath, input.file, { contentType: input.file.type, cacheControl: "3600", upsert: false }); if (error) throw new Error("Reference image could not be saved."); };

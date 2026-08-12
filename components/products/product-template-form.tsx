@@ -33,7 +33,7 @@ import { mapDraftOptionGroupsToAccessories } from "@/lib/products/product-templa
 import { draftForSmartSetupReviewApply, smartReviewMatrixOverrides, type SmartSetupReviewRoutingPlan } from "@/lib/products/smart-product-review-routing";
 import type { AccessoryConditionalConfiguration } from "@/lib/products/accessory-conditional-configuration";
 import type { ProductTemplateGroupReferenceType } from "@/lib/products/product-template-group-references";
-import { pendingRowImageKey, pendingSubgroupImageKey, type PendingProductTemplateRowImage, type PendingProductTemplateSubgroupImage } from "@/lib/products/smart-product-row-images";
+import { pendingRowImageKey, pendingSubgroupImageKey, type PendingProductTemplateRowImage, type PendingProductTemplateSubgroupImage, type SmartAppliedPricingSubgroups } from "@/lib/products/smart-product-row-images";
 
 type ProductTemplateImageField =
   | "proposed_image_url_1"
@@ -456,7 +456,7 @@ export function ProductTemplateForm({
   const [currentPricingData, setCurrentPricingData] = useState<SmartSetupSectionPresence>({ workstation: false, baseModel: false, category: false, modular: false, accessory: false });
   const [approvedSmartDraft, setApprovedSmartDraft] = useState<ProductTemplateDraft | null>(null);
   const [smartSetupNotice, setSmartSetupNotice] = useState("");
-  const [workstationReplacement, setWorkstationReplacement] = useState<{ rows: DeskingSizePricingRow[]; version: number } | null>(null);
+  const [workstationReplacement, setWorkstationReplacement] = useState<{ rows: DeskingSizePricingRow[]; subgroups?: BaseModelPricingSubgroup[]; version: number } | null>(null);
   const [baseModelReplacement, setBaseModelReplacement] = useState<{ groups: BaseModelPricingGroup<VariantPricingRow>[]; rows: VariantPricingRow[]; flatSubgroups?: BaseModelPricingSubgroup[]; version: number } | null>(null);
   const [categoryReplacement, setCategoryReplacement] = useState<{ groups: CategoryPricingRow[]; version: number } | null>(null);
   const [modularReplacement, setModularReplacement] = useState<{ groups: CategoryPricingRow[]; version: number } | null>(null);
@@ -479,20 +479,24 @@ export function ProductTemplateForm({
     const next = { ...current }; delete next[key]; pendingRowImagesRef.current = next; return next;
   });
   useEffect(() => () => Object.values(pendingRowImagesRef.current).forEach((image) => URL.revokeObjectURL(image.previewUrl)), []);
-  const replacePendingSubgroupImages = (images: PendingProductTemplateSubgroupImage[]) => setPendingSubgroupImages((current) => { const next = Object.fromEntries(images.map((image) => [pendingSubgroupImageKey(image.pricingType, image.subgroupId), image])); Object.entries(current).forEach(([key, image]) => { if (next[key]?.previewUrl !== image.previewUrl) URL.revokeObjectURL(image.previewUrl); }); pendingSubgroupImagesRef.current = next; return next; });
-  const replacePendingSubgroupImage = (subgroupId: string, file: File, previewUrl: string) => setPendingSubgroupImages((current) => { const key = pendingSubgroupImageKey("base_model", subgroupId); const previous = current[key]; if (previous && previous.previewUrl !== previewUrl) URL.revokeObjectURL(previous.previewUrl); const next = { ...current, [key]: { file, previewUrl, pricingType: "base_model" as const, subgroupId } }; pendingSubgroupImagesRef.current = next; return next; });
-  const removePendingSubgroupImage = (subgroupId: string) => setPendingSubgroupImages((current) => { const key = pendingSubgroupImageKey("base_model", subgroupId); const previous = current[key]; if (previous) URL.revokeObjectURL(previous.previewUrl); const next = { ...current }; delete next[key]; pendingSubgroupImagesRef.current = next; return next; });
+  const replacePendingSubgroupImages = (images: PendingProductTemplateSubgroupImage[]) => setPendingSubgroupImages((current) => { const next = Object.fromEntries(images.map((image) => [pendingSubgroupImageKey(image.pricingType, image.groupId, image.subgroupId), image])); Object.entries(current).forEach(([key, image]) => { if (next[key]?.previewUrl !== image.previewUrl) URL.revokeObjectURL(image.previewUrl); }); pendingSubgroupImagesRef.current = next; return next; });
+  const replacePendingSubgroupImage = (pricingType: ProductTemplateGroupReferenceType, groupId: string, subgroupId: string, file: File, previewUrl: string) => setPendingSubgroupImages((current) => { const key = pendingSubgroupImageKey(pricingType, groupId, subgroupId); const previous = current[key]; if (previous && previous.previewUrl !== previewUrl) URL.revokeObjectURL(previous.previewUrl); const next = { ...current, [key]: { file, previewUrl, pricingType, groupId, subgroupId } }; pendingSubgroupImagesRef.current = next; return next; });
+  const removePendingSubgroupImage = (pricingType: ProductTemplateGroupReferenceType, groupId: string, subgroupId: string) => setPendingSubgroupImages((current) => { const key = pendingSubgroupImageKey(pricingType, groupId, subgroupId); const previous = current[key]; if (previous) URL.revokeObjectURL(previous.previewUrl); const next = { ...current }; delete next[key]; pendingSubgroupImagesRef.current = next; return next; });
   useEffect(() => () => Object.values(pendingSubgroupImagesRef.current).forEach((image) => URL.revokeObjectURL(image.previewUrl)), []);
-  function requestSmartDraftApply(draft: ProductTemplateDraft, routingPlan?: SmartSetupReviewRoutingPlan, confirmed = false, images: PendingProductTemplateRowImage[] = [], subgroupAssignments: Array<{ sourceKey: string; sourceId: string; subgroups: BaseModelPricingSubgroup[] }> = [], subgroupImages: PendingProductTemplateSubgroupImage[] = []) {
+  function requestSmartDraftApply(draft: ProductTemplateDraft, routingPlan?: SmartSetupReviewRoutingPlan, confirmed = false, images: PendingProductTemplateRowImage[] = [], subgroupAssignments: SmartAppliedPricingSubgroups[] = [], subgroupImages: PendingProductTemplateSubgroupImage[] = []) {
     const applyDraft = routingPlan ? draftForSmartSetupReviewApply(draft, routingPlan) : draft;
     const matrixRouting = routingPlan ? smartReviewMatrixOverrides(routingPlan) : undefined;
     const workstation = mapDraftWorkstationRows(applyDraft);
     const baseModel = mapDraftBaseModelPricing(applyDraft, matrixRouting);
-    const flatSubgroups = subgroupAssignments.find((entry) => entry.sourceKey === "base_model:rows")?.subgroups;
-    const baseModelGroups = baseModel.groups.map((group) => ({ ...group, subgroups: subgroupAssignments.find((entry) => entry.sourceId === group.id)?.subgroups }));
-    const category = mapDraftPriceMatricesToCategoryGroups(applyDraft, matrixRouting);
-    const modular = mapDraftModularPricing(applyDraft);
-    const accessories = mapDraftOptionGroupsToAccessories(applyDraft, routingPlan);
+    const subgroupFor = (pricingType: ProductTemplateGroupReferenceType, groupId: string) => subgroupAssignments.find((entry) => entry.pricingType === pricingType && entry.groupId === groupId)?.subgroups;
+    const flatSubgroups = subgroupAssignments.find((entry) => entry.sourceKey === "base_model:rows" && entry.pricingType === "base_model")?.subgroups;
+    const baseModelGroups = baseModel.groups.map((group) => ({ ...group, subgroups: subgroupFor("base_model", group.id) }));
+    const categoryResult = mapDraftPriceMatricesToCategoryGroups(applyDraft, matrixRouting);
+    const category = { ...categoryResult, groups: categoryResult.groups.map((group) => ({ ...group, subgroups: subgroupFor("finish_category", group.id) })) };
+    const modularResult = mapDraftModularPricing(applyDraft);
+    const modular = { ...modularResult, groups: modularResult.groups.map((group) => ({ ...group, subgroups: subgroupFor("modular", group.id) })) };
+    const accessoryResult = mapDraftOptionGroupsToAccessories(applyDraft, routingPlan);
+    const accessories = { ...accessoryResult, groups: accessoryResult.groups.map((group) => ({ ...group, subgroups: subgroupFor("accessory", group.id) })) };
     const draftPresence = getDraftPricingSectionPresence(applyDraft);
     draftPresence.workstation = workstation.rows.length > 0;
     draftPresence.baseModel = baseModel.rows.length > 0 || baseModel.groups.length > 0;
@@ -503,7 +507,7 @@ export function ProductTemplateForm({
     if (conflicts.length && !confirmed) return conflicts;
     replacePendingImages(images);
     replacePendingSubgroupImages(subgroupImages);
-    if (workstation.rows.length) setWorkstationReplacement((current) => ({ rows: workstation.rows, version: (current?.version ?? 0) + 1 }));
+    if (workstation.rows.length) setWorkstationReplacement((current) => ({ rows: workstation.rows, subgroups: subgroupAssignments.find((entry) => entry.pricingType === "workstation")?.subgroups, version: (current?.version ?? 0) + 1 }));
     if (baseModel.rows.length || baseModel.groups.length) setBaseModelReplacement((current) => ({ groups: baseModelGroups, rows: baseModel.rows, flatSubgroups, version: (current?.version ?? 0) + 1 }));
     if (category.groups.length) setCategoryReplacement((current) => ({ groups: category.groups, version: (current?.version ?? 0) + 1 }));
     if (applyDraft.pricing.modularGroups.length && modular.compatible) setModularReplacement((current) => ({ groups: modular.groups, version: (current?.version ?? 0) + 1 }));
@@ -602,7 +606,7 @@ export function ProductTemplateForm({
       return { field, pricingType: image.pricingType, rowId: image.rowId };
     });
     formData.set("pending_row_references", JSON.stringify(metadata));
-    const subgroupMetadata = Object.values(pendingSubgroupImagesRef.current).map((image, index) => { const field = `pending_subgroup_reference_file_${index}`; formData.append(field, image.file, image.file.name); return { field, pricingType: image.pricingType, subgroupId: image.subgroupId }; });
+    const subgroupMetadata = Object.values(pendingSubgroupImagesRef.current).map((image, index) => { const field = `pending_subgroup_reference_file_${index}`; formData.append(field, image.file, image.file.name); return { field, pricingType: image.pricingType, groupId: image.groupId, subgroupId: image.subgroupId }; });
     formData.set("pending_subgroup_references", JSON.stringify(subgroupMetadata));
     await baseSubmitAction(formData);
   };

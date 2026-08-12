@@ -34,6 +34,21 @@ function evaluate(groups: unknown, row: string, selections: Record<string, Recor
   return evaluateAccessoryConfigurationForModel({ accessoryGroups: groups, baseModelGroupId, baseModelRowId: row, selectedQuantitiesByGroupId: selections });
 }
 
+test("canonical accessory subgroups round-trip without changing item or conditional identity", () => {
+  const source = { ...group("service", "companion", [rule("desk")]), subgroups: [{ id: "length-123", subgroup_name: "L 123.6", sort_order: 3, is_active: true, row_ids: ["standard"] }] };
+  const parsed = parseAccessoryConfigurationGroups([source]);
+  assert.equal(parsed.valid, true);
+  assert.deepEqual(serializeAccessoryConfigurationGroups(parsed.groups)[0].subgroups, source.subgroups);
+  assert.equal(parsed.groups[0].items?.[0].id, "standard");
+  assert.deepEqual(parsed.groups[0].conditional_configuration, source.conditional_configuration);
+});
+
+test("an accessory item can belong to at most one subgroup while ungrouped remains valid", () => {
+  const duplicate = { ...group("service", "accessory", []), subgroups: [{ id: "a", subgroup_name: "A", sort_order: 0, is_active: true, row_ids: ["standard"] }, { id: "b", subgroup_name: "B", sort_order: 1, is_active: true, row_ids: ["standard"] }] };
+  assert.equal(parseAccessoryConfigurationGroups([duplicate]).issues.some((issue) => issue.code === "duplicate_subgroup_member"), true);
+  assert.equal(parseAccessoryConfigurationGroups([{ ...duplicate, subgroups: duplicate.subgroups.slice(0, 1) }]).valid, true);
+});
+
 test("legacy optional and required groups preserve existing behavior", () => {
   const optional = { id: "optional", group_name: "Accessories", group_is_required: false, items };
   const required = { id: "required", group_name: "Required", group_is_required: true, items };

@@ -12,6 +12,7 @@ import {
   workstationPricingGroupReferenceAvailability,
 } from "@/lib/products/finish-category-reference-ui";
 import {
+  LEGACY_WORKSTATION_GROUP_ID,
   flattenWorkstationPricingRows,
   serializeWorkstationPricingGroups,
   workstationPricingGroups,
@@ -134,6 +135,7 @@ export function DeskingSizePricingTable({
   brandDefaultCurrency,
   onHasDataChange,
   replacementRows,
+  replacementSubgroups,
   replacementVersion,
   templateCurrency,
   templateId,
@@ -143,6 +145,7 @@ export function DeskingSizePricingTable({
   brandDefaultCurrency?: string | null;
   onHasDataChange?: (hasWorkstationData: boolean) => void;
   replacementRows?: DeskingSizePricingRow[] | null;
+  replacementSubgroups?: WorkstationPricingGroup["subgroups"];
   replacementVersion?: number;
   templateCurrency?: string | null;
   templateId: string;
@@ -157,6 +160,7 @@ export function DeskingSizePricingTable({
       is_active: group.is_active,
       sort_order: group.sort_order,
       items: group.items.map(normalizedRow),
+      ...(group.subgroups ? { subgroups: group.subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] })) } : {}),
     })) as WorkstationPricingGroup<DeskingSizePricingRow>[], [rows]);
   const importedIdsRef = useRef<Set<string>>(new Set());
   const [groups, setGroups] = useState<WorkstationPricingGroup<DeskingSizePricingRow>[]>(() => initialGroups);
@@ -197,10 +201,10 @@ export function DeskingSizePricingTable({
     if (!shouldApplyWorkstationReplacement(replacementVersion, appliedReplacementVersion.current)) return;
     appliedReplacementVersion.current = replacementVersion;
     const nextRows = (replacementRows ?? []).map(normalizedRow);
-    setGroups((current) => replaceWholeTemplateWorkstationRows(current, nextRows, stableId("workstation-group")));
+    setGroups((current) => replaceWholeTemplateWorkstationRows(current, nextRows, LEGACY_WORKSTATION_GROUP_ID).map((group) => ({ ...group, ...(replacementSubgroups ? { subgroups: replacementSubgroups } : {}) })));
     setDraftRows({});
     setEditingRows({});
-  }, [replacementRows, replacementVersion]);
+  }, [replacementRows, replacementSubgroups, replacementVersion]);
 
   useEffect(() => {
     onHasDataChange?.(hasMeaningfulWorkstationPricing(flattenWorkstationPricingRows(effectiveGroups)));
