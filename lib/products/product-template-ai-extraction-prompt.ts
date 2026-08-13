@@ -1,4 +1,4 @@
-export const extractionPromptFocuses = ["full", "base_model", "workstation", "category_matrix", "modular", "accessories", "product_details", "materials"] as const;
+export const extractionPromptFocuses = ["full", "base_model", "workstation", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating"] as const;
 export type ExtractionPromptFocus = typeof extractionPromptFocuses[number];
 
 const relatedAccessoriesRule = "Also extract any clearly related accessories, options, companion components, required add-ons, optional add-ons, selection constraints, and applicability information found in the supplied source into optionGroups. Do not ignore them merely because the selected extraction focus is pricing.";
@@ -12,6 +12,55 @@ const focusInstructions: Record<ExtractionPromptFocus, string> = {
   accessories: `EXTRACTION FOCUS: Accessories / Configuration Only\nFocus only on optionGroups for accessories, options, companion/service components, add-ons, prices, codes, dimensions, specifications, explicit selection semantics, defaults, quantities, and applicability clues. Preserve explicit applicability in specification or warnings when v1 cannot encode it. Do not invent conditional rules or require main-product pricing extraction.`,
   product_details: `EXTRACTION FOCUS: Product Details / Specifications\nFocus on template identity, description, master and model specifications, dimensions, supplier/reference codes, origin, and manufacturer. Do not invent pricing; only preserve clearly visible, structurally safe prices.`,
   materials: `EXTRACTION FOCUS: Materials / Finishes\nFocus on materialSuggestions: finish/material names, codes, colours, combinations, top/base relationships, source-heading isolation, notes, and applicability. Do not merge neighbouring material sections or create Material Library records.`,
+  chair_seating: `EXTRACTION FOCUS: Chair & Seating
+Use this focus when the supplied source primarily contains chairs, seating, benches, stools, waiting seating, lounge seating, or related seating systems. Extract supplied pages faithfully; do not force all seating into one template.
+
+MODEL AND CODE BINDING
+For every model, bind its exact manufacturer model/article code, description, back type, base/frame, model-defining mechanism, dimensions, specification, and printed price/matrix row. Read each model header independently: never shift descriptions between neighbouring rows/columns or infer them from visual order, nearby images, or naming patterns. Preserve model/article, upholstery-grade, fabric/leather-grade, mechanism, armrest, base, castor/glide, shell/frame finish, delivery, composite-code fragments, and reference codes exactly; never normalize, correct, complete, or generate theoretical code permutations.
+
+LEGEND AND PRICE SEMANTICS
+Before interpreting filled/open circles, bullets, equals signs, dashes, blanks, plus prices, +PTS, or footnotes, locate and read the manufacturer legend. Symbol meaning is not universal. If unclear, keep an uncertain value null where applicable and add a specific extractionWarning. Explicit complete model price is the printed row/matrix price; “+52”, “+52 PTS”, or equivalent is an additive option price, not a full model price. “=” means included/no surcharge only when the legend says so. Blank is null; explicit 0 is 0; a dash needs legend-supported unavailable/not-applicable/no-price treatment or a warning.
+
+DENSE OPTION TABLE ROW BINDING
+For every Chair & Seating option row, extract one bound source row in this exact order: description → exact supplier code → printed numeric price/surcharge → symbol/marker → applicable model columns → footnote/restriction. Never borrow a price, symbol, or applicability from an adjacent row or column. O, o, open circles, bullets, =, and dashes are markers, not prices by themselves; interpret them from the legend and table context. A row with an option marker plus 30 has price 30, not 0. Only an actual printed numeric 0, 0.00, €0, 0 PTS, or equivalent may become JSON number 0. Keep blank/no supplied price as null; use null plus a specific extractionWarning for unreadable or uncertain price.
+
+Before finalizing each dense option group, second-pass verify label ↔ supplier code ↔ printed price ↔ row position and compare consecutive numeric rows with the visible source sequence. If a symbol or blank caused a one-row shift, correct it from the source. If alignment remains uncertain, set the affected price to null and add extractionWarning; never preserve a guessed shift. Do not turn an open-circle marker into a zero-cost warning.
+
+STANDARD, INCLUDED, AND UPGRADES
+Establish each model/family's standard/included equipment before paid options: mechanism, base/frame, arms, castors/glides, shell, delivery, and back type where supported. Put included equipment in model/template description or specification; do not add it again as a priced accessory. A separately priced verified upgrade is an option only for applicable models. Do not make standard and paid alternatives equal paid accessories or double-charge. “Prepared for” is not included or a priced accessory.
+
+UPHOLSTERY AND MATERIALS
+For a complete Model × Upholstery Grade table, use pricing.priceMatrices and preserve exact grade labels/codes and every row/column price/null cell. For base model + separate upholstery surcharge, preserve base model pricing plus a separately priced supported configuration/option; never invent a fake complete-price matrix. For a no-price fabric/finish list, use materialSuggestions/guidance, not a matrix. Preserve COM/customer-own-material terminology exactly: use a priced category only when explicit; otherwise retain it in specification/material guidance and warning as needed. Upholstery price grades are not actual selected Material Library fabrics/colours and must not become accessory items.
+
+MODEL-DEFINING VS CONFIGURABLE
+If a different back, base/frame, height, shell, or seat structure has a different manufacturer model/article code, use Base / Model or matrix rows. If the same code has a separately coded/priced selectable alternative, use Accessories / Configuration. Back types and four-leg/sled/cantilever/pyramid/four-star/five-star/counter bases are normally model-defining when separately coded. Mechanism alternatives for the same model must be one logically exclusive option group; standard mechanism is included/default information and paid alternatives are options. Armrests, castors, and glides are included characteristics, options, or model rows according to source evidence; never make them available to every seating model.
+
+APPLICABILITY, COMPANIONS, AND EXCLUSIONS
+Preserve explicit “only for”, “only with”, “not for”, “not available with”, “except”, article/model lists, retrofit restrictions, and other applicability in current routing-compatible option information where possible. Explicit “always complete with”, “must be completed with”, or “requires” rules should express required option/companion intent using optionGroups selection metadata where supported. Never infer required relationships. PDT v1 has no complete cross-option exclusion graph: preserve incompatibilities, non-retrofittable items, linking restrictions, and stacking restrictions in specification plus clear extractionWarnings; do not silently discard them.
+
+MODEL APPLICABILITY AND FUNCTION GROUPS
+Do not expose an option to every chair model merely because it shares a family table. Preserve exact model applicability, especially among swivel, counter, fixed-base/cantilever, and mechanism variants. Counter chairs with dedicated footrings, glides, columns, or bases must not inherit normal swivel-chair castors, columns, or incompatible options. Chair function rows (seat depth, inclination, lumbar, combined packages) must be classified from source as mutually exclusive, additive, bundled, or model-specific; never assume unrestricted simultaneous compatibility. When PDT v1 cannot safely represent applicability or function compatibility, retain the source-supported option and add extractionWarning for Smart Setup manual routing.
+
+SPECIAL SEATING
+Handle beam/waiting seating (seat count, beam length, seat/table combinations, supports/legs, linking); training/multipurpose seating (writing tablet, antipanic joint, wheels/sled, row connector, stacking, arms); lounge/outdoor/bench/pouf/cushion families; and counter/stool seating (height, footring, glides/castors, counter dimensions) as source-supported distinct products/configurations. Required beam legs/supports may be required companion intent only when explicit. Do not apply normal office-chair options without source support. Keep simple sources simple: two direct-priced chairs, shell colours, and one cushion do not justify fake matrices, conditional options, or excessive groups.
+
+TECHNICAL CONTENT AND WARNINGS
+Put useful stackability, consumption, carton, weight/volume, certification, outdoor, and fire notes in specification when supported; use warnings when manual configuration/commercial review is needed. Preserve MOQ/minimum-order and on-request conditions in specification and/or warnings; on-request is not unavailable, included, or zero price. Use visual subgroups and image/reference suggestions only where source-supported configurations share meaningful diagrams. Chair specifications should prioritize seating/back/upholstery, mechanism, arms, base/frame, castors/glides, headrest/lumbar, stackability/outdoor use, and dimensions. Template-level specification must remain true for the whole product family and future Add More JSON batches: keep batch/model-specific mechanisms at row level. Add specific warnings for unclear legend, standard-vs-option uncertainty, ambiguous matrix columns, code/description mismatch risk, unsupported exclusions, MOQ/on-request review, incomplete composite codes, and incompletely represented option applicability.
+
+CHAIR ROW SPECIFICATION QUALITY
+For every clearly identified chair/seating priced row, write row.specification as a concise quotation-ready commercial description, not a fragment such as "Synchronous mechanism. Armrests optional." Combine only source-supported facts: seating type/configuration; backrest type or height; upholstery, mesh, Chillback, or equivalent manufacturer term; mechanism; comfort-seat, headrest, armrest, counter/stool, footring, glides, and significant standard construction/equipment where model-defining. Make sibling row differences clear: for example medium-high versus high-back, headrest, comfort seat, or counter-chair configuration. Do not include price, currency, supplier/reference codes, JSON/Smart Setup language, or internal applicability wording. Detailed dimensions belong in the dimensions field; mention dimensions only where commercially necessary to distinguish the model, such as counter height or a source-emphasized back/overall size. Keep template.specification family-wide and safe for other mechanisms or configurations in future batches. If useful source facts are absent, do not invent them.
+
+CHAIR ACCESSORY SPECIFICATION QUALITY
+For every Chair & Seating optionGroups.items[].specification, write a short quotation-friendly phrase, usually 3–10 words, stating what the accessory/option is. Use only source-supported distinguishing facts such as colour, hard- or soft-floor use, 2D/3D/4D adjustment, polished aluminium, high/low column, adjustable support, headrest, or footring. Examples: "With black coat hanger", "Black floor glides for hard-floor surfaces", "2D T-armrests with width and height adjustment", and "5-star polished aluminium chair base". Describe included/default equipment too; never use vague wording such as "Basic equipment." Do not write a paragraph or include price, currency, supplier/reference code, JSON/internal terminology, or marketing text. Keep applicability, compatibility, exclusions, and required/optional selection information in routing-compatible option fields or extractionWarnings; it must not replace the short item specification. Make sibling accessory items clearly distinguishable using only supported facts.
+
+FINAL CHAIR JSON VALIDATION GATE — DO NOT RETURN UNTIL ALL PASS
+Before returning ProductTemplateDraft JSON, correct every resolvable failure. Re-read each final pricing matrix column character-by-character from the highest-quality visible source: column id ↔ source code ↔ label. Never substitute a different manufacturer grade; if the visible source cannot resolve a conflict, use a stable generated column id with an exact supported readable label, or mark affected pricing uncertain with extractionWarning. Then verify every row.price key matches its final column id exactly; no stale key may remain after correction.
+
+Search final JSON for every price 0, including matrix values. Zero requires explicit printed numeric 0/0.00/€0/0 PTS, explicit included/standard with no surcharge, or a legend that clearly establishes a no-surcharge selectable alternative. O/open-circle/option marker alone never justifies zero. For each priced option verify description → exact supplier code → numeric surcharge → symbol → model applicability; a numeric surcharge on that visible row wins. Compare dense-table numeric sequences with the visible source and re-read any mismatch; if unresolved, set affected price(s) to null plus extractionWarning rather than preserve a row shift.
+
+Template-level description/specification must stay true for the whole family and future Add More JSON batches: keep batch/model-specific mechanisms at row level. Do not emit unrestricted maxSelections: null for function packages unless the source proves independent additive compatibility; otherwise use the safest supported selection metadata and/or extractionWarning for Smart Setup manual routing. Preserve model-specific restrictions, including counter-chair glides/footrings, swivel castors, coat hangers, and column/base choices; retain wording and extractionWarnings when PDT cannot encode them fully. supplierName must be explicitly established by the supplied manufacturer source; never infer it from recognition, filename, or context. Otherwise use supplierName: null and, where useful, extractionWarning.
+
+Final consistency: matrix codes and row keys agree; every zero is source-justified; no marker-alone zero or row shift remains; template specification is family-wide; function compatibility is not overstated; supplierName is source-supported; and warnings state unresolved facts rather than justify guesses. If source remains uncertain, null plus extractionWarning is preferred over a guessed commercial value.`,
 };
 
 export function getProductTemplateAiExtractionPrompt(focus: ExtractionPromptFocus = "full") {
@@ -384,7 +433,6 @@ The JSON must conform exactly to this ProductTemplateDraft v1 shape. Use empty a
   "confidence": null,
   "sources": [{ "id": "", "documentName": null, "pageNumber": null, "region": null, "rawText": null }]
 }
-
 The shape above is a field contract, not required sample content. Retain every current ProductTemplateDraft v1 nested field and row shape exactly as encoded by the software schema. Do not change, remove, rename, or extend any v1 field. Do not add new schema fields. Do not include placeholder rows merely because schema examples exist. If a collection has no supported data, return an empty array. Every included item, row, column, group, matrix, material suggestion, linked family suggestion, and source must have a valid non-empty ID.
 
 FINAL CHECK BEFORE RESPONDING
@@ -420,4 +468,232 @@ Before returning the JSON, verify internally that:
 27. Material notes remain under the correct source material heading.
 
 Return only the final JSON object now.`;
+}
+
+export const productTemplateSetupPlanningFocuses = ["general", "chair_seating"] as const;
+export type ProductTemplateSetupPlanningFocus = typeof productTemplateSetupPlanningFocuses[number];
+
+const planningFocusInstructions: Record<ProductTemplateSetupPlanningFocus, string> = {
+  general: "",
+  chair_seating: `CHAIR & SEATING PLANNING FOCUS
+Use this focus for task, executive, visitor, conference, training, beam/waiting, lounge, outdoor, stool, and related seating ranges. First classify each supplied seating section as simple direct-price seating, encoded/composite finish family, Model × upholstery-grade matrix, base price plus surcharge, one shell across base architectures, beam/waiting, training/multipurpose, lounge/outdoor, or counter/stool. One source can contain several patterns; do not force every chair range into an upholstery matrix.
+
+CHAIR TEMPLATE STRUCTURE
+One Product Template normally represents one commercially understandable seating family with coherent configuration logic. Do not split merely for high/mid/low back, mesh/upholstered variants, upholstery grades, base choices, or comfort-seat variants when one Sales configurator remains coherent. Split substantially different office/task, conference, visitor/cantilever, dining, lounge, bench/pouf, or rule systems when a combined template would confuse Sales. Never make one template per SKU.
+
+For every seating model referenced in the plan, bind exact model/article code → source description → back type → base/frame → main dimensions → standard equipment. Manufacturer codes are immutable source identifiers: copy character-by-character; never normalize, infer from neighbouring rows, or translate model, upholstery-grade, mechanism, base, armrest, castor/glide, shell/frame, delivery, or composite-code fragments. For example, SG3 must never become 803, S03, or SG-3 unless explicitly printed. Cross-check every short pricing/category code against the nearest source table header, legend, category heading, or model heading. Read the manufacturer legend before interpreting circles, bullets, =, dashes, blanks, +PTS/+price, or footnotes; symbol meaning is not universal.
+
+SOURCE PRIORITY HIERARCHY
+When representations conflict, use this evidence order: actual visible/rendered manufacturer page; clear table/header text visible on that page; reliable embedded PDF text; extracted text; OCR-like/transcribed text. Higher-priority evidence overrides lower-priority transcription errors. Do not preserve obvious OCR corruption when a visible manufacturer header clearly resolves it: use the visible source value. Use UNCONFIRMED CODE only when the highest-quality available source itself is genuinely unclear, not merely because OCR/extracted text differs. Apply this hierarchy in the final pass to model and upholstery codes, option codes, prices, symbols, footnotes, dimensions, dense-table associations, and page references.
+
+CHAIR CONFIGURATION DECISIONS
+Identify standard/included mechanism, base/frame, arms, castors/glides, back/frame, and delivery before alternatives; never recommend an included item as another priced accessory. Different model/article code for back/base/frame/height/shell/seat structure normally means Base / Model or matrix row. Same code with separately priced selectable alternative normally means Accessories / Configuration. Alternative mechanisms are usually one mutually exclusive configuration group. Classify armrests as included, optional for the same model, or model-defining; check castor/glide applicability by exact model and do not apply task-chair choices to sled, cantilever, fixed four-leg, or counter chairs without source evidence. Actively surface not retrofittable, cannot combine, not available with, only for, exceptions, and stacking restrictions as WARNING / MANUAL REVIEW with their plain-English meaning when current rules cannot represent them.
+
+UPHOLSTERY AND SPECIAL SEATING
+Complete Model × Upholstery Grade pricing → Category / Matrix as PRIMARY PRICING DESTINATION. Its matrix rows are pricing-authoritative model rows: retain exact model code, readable name, dimensions, specification, and row image/reference where available; do not duplicate these model prices into Base / Model pricing merely to retain identity. Base / Model may be noted conceptually only. Base model plus upholstery surcharge → base model plus supported option/configuration; no-price upholstery list → Manufacturer Finish Guidance; COM/customer-own material retains exact pricing/conditions or becomes warning/specification. Pricing grades such as SG2 / SG3 / HP4 belong to active Category / Matrix columns, not Manufacturer Finish Guidance. Actual fabric/material names belong to Manufacturer Finish Guidance or later Material Library selection. Price grades are not accessory items. Surface “only for”, exclusions, retrofitting, stacking, footring/glide, and article-specific restrictions; recommend existing rules when representable or MANUAL DECISION / warning when not.
+
+FINAL CHAIR SOURCE GATE — DO NOT RETURN UNTIL ALL PASS
+Before returning PRODUCT SETUP PLAN, re-read the supplied source using the source-priority hierarchy and correct every resolvable failure; do not merely warn about it. (1) Search the final answer for manufacturer identifiers joined by -, –, —, to, through, from, or ...: inferred ranges are forbidden because identifiers are not numeric sequences. Use exact verified codes, or source-safe wording such as “all explicitly listed upholstered-back models on printed catalogue pages X–Y”; use a range only when the manufacturer explicitly defines it. (2) Re-read every final pricing-grade/category/matrix code from the highest-quality visible source; do not output OCR corruption such as S01, 562, or LGG when the rendered source clearly shows SG1, SG2, SG3, HP4, LG6, or LG7. Use UNCONFIRMED CODE only when that highest-quality source is genuinely unclear. (3) O, o, ○, open circles, and option markers are not numeric zero: establish zero only from an actual printed 0, 0.00, €0, 0 PTS, or equivalent, and read symbol + printed price + legend together. Never classify NO-COST ALTERNATIVE from an O/open-circle alone. (4) For every important component, verify description → exact code → exact printed price/surcharge → applicable model column → symbol → footnote; never borrow an adjacent value. If unverified, use UNCONFIRMED / MANUAL DECISION. (5) Do not claim a price conflict, duplicate price, discrepancy, or double-charge risk until both compared rows are independently re-read. Check whether a configuration code and boxed order code are related codes for the same physical item; if their description and verified price align, report that relationship rather than a conflict. (6) One physical commercial choice equals one component entry. Split distinct finish roles, armrest types, codes, prices, or statuses. Give each entry exactly one status: INCLUDED / STANDARD, NO-COST ALTERNATIVE, PAID UPGRADE, REQUIRED SEPARATE ITEM, OPTIONAL SEPARATE ITEM, ON REQUEST, or UNCONFIRMED. Never combine statuses; mark Required only with explicit required/must/always complete with/requires evidence. A separately priced optional item is not Required Companion. (7) Preserve finish meaning: “components remain black” is not an exclusion or availability restriction. (8) PDF page is the actual position in the uploaded file, never a printed label or calculated offset. Keep it within known file page count; a spread may be “PDF page 1 / printed catalogue pages 124–125”. If unavailable, say “PDF page unavailable / printed catalogue page X”. (9) Re-scan refer to, see, accessories overview, fabric chart, see collection, see page, and equivalents; put missing referenced content under Pages to inspect manually and do not invent a page. (10) Final consistency: template count, code/grade spelling, page mappings, pricing destination/batches, matrix authority, and standard-versus-paid statuses must agree. No inferred ranges, out-of-file PDF pages, duplicate matrix/Base-Model prices, or unsupported zero-price assumptions may remain. If unresolved from source, use UNCONFIRMED / MANUAL DECISION. Source fidelity is more important than completeness.
+
+For beam seating inspect seat count, beam/table combinations, supports/legs and linking; explicit required legs/supports may be local Required Companion/required exactly-one only when explicit. For training inspect writing tablet, anti-panic, linking, wheels/sled, stacking and exact applicability. For lounge/outdoor distinguish dining chair, armchair, lounge, rocker, bench, pouf and cushions by sensible quotation configuration; cushions can be local or standalone based on source. For counter/stools inspect higher dimensions, footring and glides. Preserve composite-code patterns without generating theoretical combinations. Put MOQ, on-request, stackability, outdoor suitability and relevant technical notes into warning/specification guidance. Keep genuinely simple seating products simple.`
+};
+
+export function buildProductTemplateSetupPlanningPrompt(focus: ProductTemplateSetupPlanningFocus = "general") {
+  return `You are planning how a manufacturer price list should be entered into ProjectWorkflow.
+
+DO NOT EXTRACT ProductTemplateDraft JSON. DO NOT RETURN JSON.
+
+${planningFocusInstructions[focus]}
+
+Analyze the complete supplied manufacturer PDF/document and produce a practical, human-readable setup plan before extraction. Use only source-supported products, prices, compatibility, requirements, relationships, and actual PDF viewer page numbers. Do not invent data or guess page relationships. Separate explicit manufacturer facts from recommendations; label uncertainty as MANUAL DECISION. If a source shows an accessory but does not explicitly establish its applicability to every family, do not assume it applies to all Product Templates: label MANUAL DECISION — applicability not explicit in source.
+
+USER LANGUAGE AND MANUFACTURER TERMINOLOGY
+Write the entire PRODUCT SETUP PLAN in the same language as the user's request; if that language cannot be reliably determined, default to English. English is preferred unless the user asks otherwise. Use simple, clear commercial English suitable for Sales, estimators, designers, and procurement users; do not make foreign-language catalogue wording the primary explanation.
+
+Translate manufacturer descriptions from any source language into the user's language. Put the clear translated description first and show the original manufacturer term secondarily only where useful for verification, for example: “Cable Tray” followed by “Manufacturer term: ‘[original term]’”, or “Panel-Base Workstation” followed by “Source label: ‘[original term]’”. Do not repeatedly show original terms that add no verification value. Apply this equally to Italian, German, French, Spanish, Chinese, Arabic, and other languages.
+
+Never translate, modify, or replace supplier codes, article numbers, reference codes, finish codes, model codes, or official manufacturer family identifiers. Keep official families/codes as commercial identifiers, but pair them with a clear translated description, for example “[official family] — [clear English family description]”. For finishes, prefer the English name plus the original manufacturer name/code where useful; retain the exact original code and prefer a manufacturer's official English translation where provided.
+
+When quoting manufacturer instructions, first state the plain-language meaning, then include Source wording only if useful for verification. For component evidence, explain what the manufacturer shows/states in the user's language first and place any original-language wording secondarily. Always use ProjectWorkflow labels consistently in English exactly as follows: Base / Model; Workstation; Category / Matrix; Modular; Accessories / Configuration; Manufacturer Finish Guidance; Normal Accessory; Conditional Option; Required Companion; Include Locally; Standalone Product; Both; Manual Decision; INCLUDED; PREPARED FOR; REQUIRED SEPARATE ITEM; OPTIONAL SEPARATE ITEM; UNCONFIRMED.
+
+PAGE NUMBERING
+First determine whether the document contains printed catalogue page numbers. When both PDF viewer and printed catalogue numbering can be identified, ALWAYS provide both in every page reference using this exact form: “PDF page 3 / printed catalogue page 12”; for ranges, “PDF pages 3–5 / printed catalogue pages 12–14”. Never provide only “Page 12” when PDF and printed numbering differ. If only one numbering system is genuinely available, state that explicitly: “PDF page 12 / printed catalogue page not shown” or “PDF page unavailable / printed catalogue page 42”. Do not guess either number. If PDF page 1 does not correspond to printed catalogue page 1, detect the offset and place a PAGE NUMBERING NOTE near the top of the plan explaining the relationship and confirming that all references below use both numbering systems. Use the same dual-number format in Main source pages, Shared/supporting pages, extraction batches, Shared / Common Element Strategy, and Extraction Order.
+
+PRODUCT TEMPLATE SPLITTING
+Prefer one commercially understandable product family per Product Template. Do not create one template per SKU, a giant template for unrelated families, or arbitrary page-count splits. A coherent family may contain many sizes/models. Consider separate templates for distinct typologies, structures, configuration logic, pricing structures, or very large independent ranges. Keep quotation configuration understandable.
+
+PROJECTWORKFLOW DESTINATIONS
+- Base / Model Pricing: direct-priced model/SKU/size variants and normal model tables. Supports groups, rows/models, price/currency, dimensions, specifications, visual subgroups, and images. Quotation flow is Family → Configuration/Subgroup → Model.
+- Workstation Pricing: only workstation size/layout/orientation rows with base and, where supported, additional price.
+- Category / Matrix Pricing: only a genuine row × category/finish/fabric pricing matrix with meaningful ordered rows and columns; a visual table alone is insufficient.
+- Modular Pricing: only genuine modular families with hierarchy/modules and shared price columns. Do not flatten modular structure.
+- Accessories / Configuration: optional accessories, required components, conditional options, and companion parts. Supports Normal Accessory, Conditional Option, Required Companion, selection rules, applicable Base/Model rows, allowed items, fixed quantity, subgroups, and images.
+
+ACCESSORY RULES AND TEMPLATE-LOCAL LIMITATION
+Recommend an accessory rule only when source-supported. An explicit “always complete with” may be Required Companion; an explicit mutually exclusive supported choice may be REQUIRED / EXACTLY ONE; an optional item may be Normal Accessory. Otherwise use MANUAL DECISION.
+
+Accessories are TEMPLATE-LOCAL. A Product Template cannot use an accessory stored in another Product Template as its own configuration choice, and Required Companion/Conditional Option rules cannot reference another template. If Product A requires Art.X during Product A configuration, Art.X must exist locally within Product A. This is a valid reason for local inclusion/duplication.
+
+SHARED/COMMON ACCESSORY APPLICABILITY EVIDENCE
+An item appearing in Shared Elements, Common Elements, Accessories, General Accessories, Common Components, a shared price table, or an overview/index page ONLY proves that it exists in the manufacturer range. It does NOT prove compatibility with every Product Template/family. Never infer applicability solely because an accessory appears in a shared/common section.
+
+Before recommending an accessory as Include Locally, Required Companion, Conditional Option, or Normal Accessory, find manufacturer-source evidence connecting it to the relevant family/configuration. Acceptable evidence is: EXPLICIT (manufacturer directly states compatibility); CROSS-REFERENCED (the relevant family page directly points to the accessory/common page); VISUALLY CONFIRMED (a manufacturer diagram clearly and unambiguously shows the relationship); or UNCONFIRMED (the accessory exists in a shared/common section but applicability is not established). Only EXPLICIT, CROSS-REFERENCED, or clearly VISUALLY CONFIRMED accessories may normally be recommended for local inclusion. UNCONFIRMED must become MANUAL DECISION — compatibility not established by supplied source.
+
+For every shared/common accessory recommendation, output:
+Accessory: [manufacturer description/code]
+Affected Product Template:
+Applicability evidence: EXPLICIT / CROSS-REFERENCED / VISUALLY CONFIRMED / UNCONFIRMED
+Source: PDF page X / printed catalogue page Y
+Evidence: short explanation of what the manufacturer actually shows/states
+Recommended strategy: Include Locally / Standalone Product / Both / Manual Decision
+Reason:
+
+Overview pages listing modesty panels, cable trays, central covers, tops, partitions, screens, accessories, or meeting tables are document-navigation clues only. Do not automatically propagate those items to every family shown. Follow referenced pages and verify compatibility; even a family-page cross-reference means inspect the referenced page to determine which rows/items actually apply. Do not infer compatibility from visual similarity or furniture-domain assumptions. If a structural relationship appears redundant, use it only as a reason to flag MANUAL DECISION, never as proof.
+
+Before completing each Product Template section, ask: “For every accessory I am recommending inside this Product Template, what source evidence proves that it belongs to this family?” If no defensible evidence exists, remove the recommendation or mark MANUAL DECISION — compatibility not established by supplied source. It is better to omit an uncertain accessory than to incorrectly attach it to a Product Template.
+
+COMPONENT COMMERCIAL STATUS
+For every accessory/component relationship, classify exactly one commercial status. Do not collapse these into a generic “accessory”:
+- INCLUDED: the component is explicitly included in the listed product price/package.
+- PREPARED FOR: the product has holes, cut-outs, brackets, wiring/mounting provision, recesses, or similar provision for the component, but the source does not state that the component itself is included.
+- REQUIRED SEPARATE ITEM: the manufacturer explicitly says “always complete with”, “must be completed with”, “requires”, “add Art.X”, “complete with quantity X”, or equivalent, and the component has its own code/price.
+- OPTIONAL SEPARATE ITEM: compatible/available and separately selectable or priced, but not mandatory.
+- UNCONFIRMED: the relationship is not clear enough.
+
+Do not assume INCLUDED merely because a drawing shows the accessory, the product is “with holes for”, “prepared for”, “provision for”, “pre-drilled for”, “cut-out for”, “suitable for mounting”, or “cable passage provided for”, the accessory appears in the same diagram, or it appears in a shared/common section. Those phrases normally mean PREPARED FOR, not INCLUDED; preparedness is not itself a priced accessory. Classify INCLUDED only with explicit manufacturer evidence that the component is part of the supplied product/package/price. If uncertain, use UNCONFIRMED / MANUAL DECISION.
+
+If an item is INCLUDED, do not recommend adding it again as a priced accessory: mention it only in the specification/description where useful and flag POTENTIAL DOUBLE CHARGE if it could be added separately. If status is PREPARED FOR, do not add the accessory automatically; determine separately whether the actual accessory is REQUIRED SEPARATE ITEM, OPTIONAL SEPARATE ITEM, or UNCONFIRMED. Flag PREPARED FOR ≠ INCLUDED where wording could be misunderstood.
+
+Map REQUIRED SEPARATE ITEM to Required Companion or an appropriate supported required selection rule. Map a verified OPTIONAL SEPARATE ITEM to Normal Accessory only for the applicable product/configuration; do not auto-select it or treat it as included. Quantity is permitted only when explicitly supported.
+
+Generic example: “bench with holes for top-access and cable tray” means PREPARED FOR top-access and cable tray. “always complete with 2 Art.X” means Art.X is REQUIRED SEPARATE ITEM, Qty 2. A cable tray appearing elsewhere with its own price but no mandatory language is OPTIONAL SEPARATE ITEM. Do not hardcode supplier names or real codes.
+
+For each shared accessory, choose a configuration strategy rather than automatically recommending duplication merely because it appears on a shared/common page:
+- Include locally: required companion, conditional option, normal accessory that Sales should select while configuring that product, or an item on which internal configuration depends.
+- Standalone product: genuinely quoted independently, no in-template rule depends on it, and it does not need to appear as an option in another Product Template.
+- Both: only when commercially justified because a local configurator copy is required and the item is also sold independently.
+- Manual decision: applicability or Sales configuration need is not explicit in the source.
+
+For optional shared accessories such as modesty panels, cable trays, screens, and shared accessories, evaluate whether Sales needs to select them during the main product configuration. If yes, recommend Include locally; if no, recommend Standalone product where appropriate; if uncertain, use MANUAL DECISION. Identify the strategy, reason, affected templates, and any duplicated or reused supplier/price-list code ambiguity.
+
+VISUAL SUBGROUPS, IMAGES, AND FINISH GUIDANCE
+Hierarchy: Pricing Type → Group → Subgroup → Row/Item. Rows/items remain pricing-authoritative; subgroups are visual/organizational only. Recommend subgroups only for source-supported shared diagrams, shapes/configurations, size families, or orientations. State the appropriate image level: Group image, Subgroup image, Row image; do not duplicate images unnecessarily.
+
+Actual selectable materials/finishes remain controlled by ProjectWorkflow Material Library linkage. Manufacturer materialSuggestions are informational Manufacturer Finish Guidance only. Recommend “Extract as Manufacturer Finish Guidance” for finish-code tables, allowable top/leg finishes, or colour guidance unless the pages directly form pricing/category configuration. Do not create another material-selection system.
+
+MULTIPLE BATCHES AND SHARED PAGES
+External LLM limits may require multiple coherent batches for one template using + Add More JSON. Batch by commercial source structure, never equal page counts. INCLUDED components do not need a separate accessory extraction unless independently sold. Include REQUIRED SEPARATE ITEM pages in the relevant product extraction/Add More batch. Include OPTIONAL SEPARATE ITEM pages only when verified compatible and useful in the configurator. PREPARED FOR wording alone is not reason to extract the accessory page. UNCONFIRMED remains under Pages to inspect manually. Include a shared accessory page in a Product Template extraction batch only if at least one relevant item on that page has verified applicability. For every template, list MAIN SOURCE PAGES and SHARED / SUPPORTING PAGES, stating whether each is included in extraction, a later Add More JSON batch, Manufacturer Finish Guidance, an independent product, or manual inspection. Good boundaries must also support future Prices Only, Selected Sections, New Item, and Not Found updates.
+
+Return human-readable output only, using exactly this structure:
+
+==================================================
+PRODUCT SETUP PLAN
+==================================================
+Overall recommendation:
+- Number of Product Templates: X
+- Short explanation
+
+--------------------------------------------
+PRODUCT 1 — [Template Name]
+--------------------------------------------
+Why this should be a separate Product Template:
+
+Main source pages:
+- PDF page X / printed catalogue page Y
+
+Shared/supporting pages:
+- PDF page X / printed catalogue page Y
+
+Pages to inspect manually:
+
+Recommended ProjectWorkflow setup:
+- Base / Model:
+- Workstation:
+- Category / Matrix:
+- Modular:
+- Accessories / Configuration:
+- Manufacturer Finish Guidance:
+
+Recommended visual subgroups and images:
+
+Accessory / Required Companion strategy:
+
+Component/accessory recommendations:
+Component: [description/code]
+Affected Product Template:
+Commercial status: INCLUDED / PREPARED FOR / REQUIRED SEPARATE ITEM / OPTIONAL SEPARATE ITEM / UNCONFIRMED
+Applicability evidence: EXPLICIT / CROSS-REFERENCED / VISUALLY CONFIRMED / UNCONFIRMED
+Source: PDF page X / printed catalogue page Y
+Evidence: short manufacturer-supported explanation
+ProjectWorkflow treatment: No separate item / Information only / Required Companion / Conditional Option / Normal Accessory / Manual Decision
+Quantity: only if explicitly supported
+
+Extraction batches:
+Batch 1 — [name]
+PDF pages:
+Printed catalogue pages:
+Purpose:
+Recommended AI extraction focus:
+
+Batch 2 — [name]
+PDF pages:
+Printed catalogue pages:
+Purpose:
+Recommended AI extraction focus:
+
+Important manual decisions:
+
+${focus === "chair_seating" ? `CHAIR / SEATING CONFIGURATION SUMMARY
+- Seating subtype:
+- Pricing pattern:
+- Primary pricing destination:
+- Pricing-authoritative structure:
+- Pricing grades:
+- Actual material/finish guidance:
+- Model-defining features:
+- Standard equipment:
+- Paid alternatives:
+- Commercial option statuses:
+- Upholstery pricing method:
+- Mechanism strategy:
+- Base/frame strategy:
+- Armrest strategy:
+- Castor/glide strategy:
+- Applicability/exclusions:
+- MOQ/on-request notes:
+- Referenced supporting pages:
+- Restrictions/manual-review warnings:
+- SOURCE VERIFICATION SUMMARY
+- Verified critical items:
+- Unconfirmed critical items:
+- Manual decisions:
+` : ""}
+
+Repeat PRODUCT sections as needed.
+
+==================================================
+SHARED / COMMON ELEMENT STRATEGY
+==================================================
+VERIFIED SHARED ACCESSORIES
+For each accessory whose compatibility is established, use dual PDF/printed page references and state: Accessory; affected templates; Applicability evidence; Source; Evidence; Configuration strategy (Include locally, Standalone product, Both, or Manual decision); reason; whether it is only Manufacturer Finish Guidance; and any supplier-code ambiguity.
+
+POSSIBLE SHARED ACCESSORIES — MANUAL DECISION
+List items that exist in a manufacturer shared section but whose family compatibility is not proven. Do not put their pages into an extraction batch; list them as Pages to inspect manually instead. Do not use blanket duplication wording.
+
+==================================================
+EXTRACTION ORDER
+==================================================
+Provide numbered steps using the real workflow: create template, copy the appropriate extraction prompt, extract Batch 1 using dual PDF/printed page references, import to Smart Setup, use + Add More JSON for later batches, review destinations/rules, apply locally, and save.
+
+${focus === "chair_seating" ? `==================================================
+SOURCE VERIFICATION SUMMARY
+==================================================
+Verified critical items:
+
+Unconfirmed critical items:
+
+` : ""}==================================================
+WARNINGS / MANUAL DECISIONS
+==================================================
+List ambiguous supplier codes, cross-template component risks, unclear required rules, unclear page relationships, potentially huge templates, matrix uncertainties, and material guidance versus actual selectable materials.`;
 }

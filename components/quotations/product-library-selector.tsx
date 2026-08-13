@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { addProductTemplateToQuotation } from "@/app/quotations/actions";
 import { listProductTemplateRowReferences } from "@/app/products/templates/row-reference-actions";
 import { listProductTemplateSubgroupReferences } from "@/app/products/templates/subgroup-reference-actions";
@@ -903,18 +903,20 @@ function ProductImagePreviewDialog({
   templateName,
 }: {
   currentIndex: number;
-  images: Array<{ label: string; path: string }>;
+  images: Array<{ label: string; path?: string; previewUrl?: string }>;
   onClose: () => void;
   onNavigate: (nextIndex: number) => void;
-  onSelect: (path: string) => void;
+  onSelect?: (path: string) => void;
   templateName: string;
 }) {
   const [previewUrl, setPreviewUrl] = useState("");
+  const [zoom, setZoom] = useState(100);
   const currentImage = images[currentIndex] ?? null;
 
   useEffect(() => {
     let cancelled = false;
     const path = currentImage?.path ?? null;
+    if (currentImage?.previewUrl) return;
 
     if (!path) {
       window.queueMicrotask(() => {
@@ -934,7 +936,9 @@ function ProductImagePreviewDialog({
     return () => {
       cancelled = true;
     };
-  }, [currentImage?.path]);
+  }, [currentImage?.path, currentImage?.previewUrl]);
+
+  const navigate = useCallback((nextIndex: number) => { setZoom(100); onNavigate(nextIndex); }, [onNavigate]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -946,79 +950,80 @@ function ProductImagePreviewDialog({
 
       if (event.key === "ArrowLeft" && currentIndex > 0) {
         event.preventDefault();
-        onNavigate(currentIndex - 1);
+        navigate(currentIndex - 1);
         return;
       }
 
       if (event.key === "ArrowRight" && currentIndex < images.length - 1) {
         event.preventDefault();
-        onNavigate(currentIndex + 1);
+        navigate(currentIndex + 1);
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [currentIndex, images.length, onClose, onNavigate]);
+  }, [currentIndex, images.length, onClose, navigate]);
 
   if (!currentImage) {
     return null;
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/75 px-4 py-6">
-      <div className="w-full max-w-6xl rounded-2xl border border-zinc-800 bg-zinc-950 text-white shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b border-zinc-800 px-5 py-4">
+    <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }} className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 px-3 py-3 sm:px-4 sm:py-6">
+      <div role="dialog" aria-modal="true" aria-label="Product diagram preview" className="flex max-h-[94vh] w-full max-w-6xl flex-col rounded-2xl border border-zinc-200 bg-white text-zinc-900 shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-zinc-200 px-4 py-3 sm:px-5 sm:py-4">
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-400">{currentImage.label}</p>
-            <h3 className="mt-1 truncate text-lg font-semibold text-white">{templateName}</h3>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">{currentImage.label}</p>
+            <h3 className="mt-1 truncate text-lg font-semibold text-zinc-900">{templateName}</h3>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:border-zinc-500 hover:text-white"
+            className="rounded-md border border-zinc-300 px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-500 hover:text-zinc-950"
           >
             Close
           </button>
         </div>
-        <div className="flex flex-col gap-4 p-5">
-          <div className="flex items-center justify-center overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-4">
-            {previewUrl ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-3 p-3 sm:p-5">
+          <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-xl border border-zinc-200 bg-zinc-50 p-3 sm:p-4">
+            {currentImage.previewUrl || previewUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={previewUrl}
+                src={currentImage.previewUrl || previewUrl}
                 alt={`${templateName} ${currentImage.label}`}
-                className="max-h-[72vh] w-full object-contain"
+                className="max-h-[78vh] max-w-full object-contain"
+                style={{ width: zoom === 100 ? undefined : `${zoom}%` }}
               />
             ) : (
-              <div className="flex h-[360px] w-full items-center justify-center text-sm text-zinc-400">Image preview unavailable</div>
+              <div className="flex h-[360px] w-full items-center justify-center text-sm text-zinc-500">Image preview unavailable</div>
             )}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap gap-2">
+            {images.length > 1 ? <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => onNavigate(currentIndex - 1)}
+                onClick={() => navigate(currentIndex - 1)}
                 disabled={currentIndex === 0}
-                className="rounded-md border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:border-zinc-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded-md border border-zinc-300 px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Previous
               </button>
               <button
                 type="button"
-                onClick={() => onNavigate(currentIndex + 1)}
+                onClick={() => navigate(currentIndex + 1)}
                 disabled={currentIndex >= images.length - 1}
-                className="rounded-md border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:border-zinc-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded-md border border-zinc-300 px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Next
-              </button>
-            </div>
-            <button
+              </button><span className="text-xs text-zinc-500">{currentIndex + 1} / {images.length}</span>
+            </div> : <span />}
+            <div className="flex items-center gap-2"><button type="button" onClick={() => setZoom((value) => Math.max(50, value - 25))} aria-label="Zoom out" className="rounded-md border border-zinc-300 px-3 py-2 text-xs font-semibold">−</button><button type="button" onClick={() => setZoom(100)} className="rounded-md border border-zinc-300 px-3 py-2 text-xs font-semibold">Fit</button><span className="text-xs text-zinc-600">{zoom}%</span><button type="button" onClick={() => setZoom((value) => Math.min(250, value + 25))} aria-label="Zoom in" className="rounded-md border border-zinc-300 px-3 py-2 text-xs font-semibold">+</button>{onSelect ? <button
               type="button"
-              onClick={() => onSelect(currentImage.path)}
+              onClick={() => currentImage.path && onSelect(currentImage.path)}
               className="rounded-md bg-emerald-900 px-4 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800"
             >
               Use this image
-            </button>
+            </button> : null}</div>
           </div>
         </div>
       </div>
@@ -1073,6 +1078,7 @@ export function ProductLibrarySelector({
   const [selectedOptions, setSelectedOptions] = useState<Record<string, Record<string, string | string[]>>>({});
   const [selectedImages, setSelectedImages] = useState<Record<string, string>>({});
   const [imagePreview, setImagePreview] = useState<{ templateId: string; imageIndex: number } | null>(null);
+  const [diagramPreview, setDiagramPreview] = useState<{ label: string; templateId: string; title: string; url: string } | null>(null);
   const [additionalClusterQuantities, setAdditionalClusterQuantities] = useState<Record<string, number>>({});
   const [accessoryQuantities, setAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [selectedDeskingSizes, setSelectedDeskingSizes] = useState<Record<string, string>>({});
@@ -2984,8 +2990,10 @@ export function ProductLibrarySelector({
                             <div>
                               {selectedVariantRow ? (
                                 <div className="mt-2 flex gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-                                  {/* eslint-disable-next-line @next/next/no-img-element -- private signed thumbnail */}
-                                  {selectedVariantReference?.previewUrl ? <img src={selectedVariantReference.previewUrl} alt="Model reference" className="h-16 w-16 shrink-0 rounded-md border border-zinc-200 bg-white object-contain" loading="lazy" /> : null}
+                                  {selectedVariantReference?.previewUrl ? <div className="shrink-0"><button type="button" onClick={() => setDiagramPreview({ label: "Product diagram", templateId: template.id, title: pricingDisplayName(selectedVariantRow) || selectedVariantRow.variant_name || templateSelectionName(template), url: selectedVariantReference.previewUrl! })} className="block cursor-zoom-in rounded-md transition hover:opacity-80" aria-label="View larger product diagram">
+                                    {/* eslint-disable-next-line @next/next/no-img-element -- resolved private preview URL */}
+                                    <img src={selectedVariantReference.previewUrl} alt="Model reference" className="h-16 w-16 rounded-md border border-zinc-200 bg-white object-contain" loading="lazy" />
+                                  </button><button type="button" onClick={() => setDiagramPreview({ label: "Product diagram", templateId: template.id, title: pricingDisplayName(selectedVariantRow) || selectedVariantRow.variant_name || templateSelectionName(template), url: selectedVariantReference.previewUrl! })} className="mt-1 text-[10px] font-semibold text-emerald-900 hover:text-emerald-700">View larger</button></div> : null}
                                   <div className="min-w-0">
                                   <p className="text-xs font-semibold text-zinc-900">
                                     {pricingDisplayName(selectedVariantRow) || selectedVariantRow.variant_name}
@@ -4531,6 +4539,7 @@ export function ProductLibrarySelector({
                           templateName={templateSelectionName(template)}
                         />
                       ) : null}
+                      {diagramPreview?.templateId === template.id ? <ProductImagePreviewDialog currentIndex={0} images={[{ label: diagramPreview.label, previewUrl: diagramPreview.url }]} onClose={() => setDiagramPreview(null)} onNavigate={() => {}} templateName={diagramPreview.title} /> : null}
                     </article>
                   );
                 }) : null}

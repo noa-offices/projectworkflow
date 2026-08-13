@@ -16,7 +16,7 @@ import {
   TemplateCategoryFields,
 } from "@/components/products/template-category-fields";
 import { TemplateFormShell } from "@/components/products/template-form-shell";
-import { CopyAiExtractionPrompt } from "@/components/products/copy-ai-extraction-prompt";
+import { CopyAiExtractionPrompt, CopyAiSetupPlanningPrompt } from "@/components/products/copy-ai-extraction-prompt";
 import { SmartProductJsonImport } from "@/components/products/smart-product-json-import";
 import { PendingRowReferenceProvider } from "@/components/products/pending-row-reference-context";
 import { PendingSubgroupReferenceProvider } from "@/components/products/pending-subgroup-reference-context";
@@ -456,6 +456,7 @@ export function ProductTemplateForm({
   const showExistingImportBanner = Boolean(template && existingImportDraft);
   const submitMode = mode ?? (template ? "update" : "create");
   const [expandedSections, setExpandedSections] = useState({
+    smartSetup: false,
     details: !compactAccordionMode,
     advanced: false,
     gallery: false,
@@ -621,6 +622,7 @@ export function ProductTemplateForm({
 
   function setAllSectionsOpen(nextValue: boolean) {
     setExpandedSections({
+      smartSetup: nextValue,
       details: nextValue,
       advanced: nextValue,
       gallery: nextValue,
@@ -705,27 +707,31 @@ export function ProductTemplateForm({
       {extraHiddenFields}
       <FormSection
         title="Smart Product Setup"
-        description="Extract manufacturer product details, specifications, pricing, and options, then review before applying."
+        description="Use external AI to plan, extract, and review manufacturer product data before saving."
         className="border-emerald-200 bg-emerald-50/40"
+        isOpen={expandedSections.smartSetup}
+        onToggle={() => setExpandedSections((current) => ({ ...current, smartSetup: !current.smartSetup }))}
+        summary={!expandedSections.smartSetup ? "AI planning, extraction, import & update tools. 4 AI tools available." : undefined}
       >
-        <div className="flex flex-wrap gap-2 md:col-span-2 xl:col-span-3">
-          <CopyAiExtractionPrompt />
-          <SmartProductJsonImport onRequestApply={requestSmartDraftApply} />
-          {template || approvedSmartDraft ? <SmartProductJsonImport buttonLabel="✦ Add / Update from AI JSON" loadInitialWorkspace={currentSmartWorkspace} onApplyManufacturerFields={applyManufacturerFields} onApplyManufacturerPrices={applyManufacturerPrices} onRequestApply={requestIncrementalSmartDraftApply} /> : null}
-        </div>
-        <div className="grid gap-3 text-xs leading-5 text-emerald-950 md:col-span-2 md:grid-cols-3 xl:col-span-3">
-          {[
-            ["1", "Copy Prompt", "Copy the extraction instructions."],
-            ["2", "Generate JSON", "Use ChatGPT or Gemini with manufacturer price lists, technical pages, or both."],
-            ["3", "Import & Review", "Paste the JSON here, review or edit it, then apply it to this template."],
-          ].map(([step, title, text]) => (
-            <div key={step} className="flex gap-2">
-              <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-emerald-700 text-[10px] font-bold text-white">{step}</span>
-              <p><span className="font-semibold">{title}.</span> {text}</p>
+        <div className="space-y-3 md:col-span-2 xl:col-span-3">
+          <section className="rounded-lg border border-zinc-200 bg-white/80 p-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2"><div><h3 className="text-xs font-bold tracking-wide text-zinc-900">AI PROMPT TOOLS</h3><p className="mt-1 text-xs text-zinc-600">Prepare instructions to use with ChatGPT, Gemini, Claude, or another LLM.</p></div><span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-600">External AI</span></div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3"><div className="flex items-center gap-2"><span className="flex size-5 items-center justify-center rounded-full border border-zinc-300 bg-white text-[10px] font-bold text-zinc-700">1</span><p className="text-sm font-semibold text-zinc-900">Setup Planning</p></div><p className="mt-1 text-xs text-zinc-600">Plan product splits, pages &amp; batches.</p><p className="mt-1 text-[11px] text-zinc-500">Returns a setup plan — not JSON. Best for large or complicated price lists.</p><div className="mt-3"><CopyAiSetupPlanningPrompt /></div></div>
+              <div className="rounded-md border border-emerald-200 bg-emerald-50/60 p-3"><div className="flex items-center gap-2"><span className="flex size-5 items-center justify-center rounded-full bg-emerald-700 text-[10px] font-bold text-white">2</span><p className="text-sm font-semibold text-emerald-950">Extract Product Data</p></div><p className="mt-1 text-xs text-emerald-900">Generate ProductTemplateDraft JSON for selected product/pages.</p><p className="mt-1 text-[11px] text-emerald-800">Use after deciding which product/pages to extract.</p><div className="mt-3"><CopyAiExtractionPrompt /></div></div>
             </div>
-          ))}
+          </section>
+          <div className="flex justify-center text-sm font-semibold text-emerald-700" aria-hidden="true">↓</div>
+          <section className="rounded-lg border border-emerald-200 bg-white/80 p-3">
+            <div><h3 className="text-xs font-bold tracking-wide text-emerald-950">IMPORT &amp; UPDATE</h3><p className="mt-1 text-xs text-emerald-900">Review AI-generated JSON before applying it to this Product Template.</p></div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="rounded-md border border-emerald-300 bg-emerald-50 p-3"><div className="flex items-center gap-2"><span className="flex size-5 items-center justify-center rounded-full bg-emerald-700 text-[10px] font-bold text-white">3</span><p className="text-sm font-semibold text-emerald-950">Import &amp; Review JSON</p></div><p className="mt-1 text-xs text-emerald-900">Paste new AI extraction.</p><div className="mt-3"><SmartProductJsonImport buttonLabel="Import & Review JSON" onRequestApply={requestSmartDraftApply} /></div></div>
+              {template || approvedSmartDraft ? <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3"><p className="text-sm font-semibold text-zinc-900">Update Existing Template</p><p className="mt-1 text-xs text-zinc-600">Add data or update saved content.</p><div className="mt-3"><SmartProductJsonImport buttonLabel="Update Existing Template" loadInitialWorkspace={currentSmartWorkspace} onApplyManufacturerFields={applyManufacturerFields} onApplyManufacturerPrices={applyManufacturerPrices} onRequestApply={requestIncrementalSmartDraftApply} /></div></div> : null}
+            </div>
+            <p className="mt-3 rounded-md border border-emerald-100 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-950"><span className="font-semibold">Information:</span> Nothing is saved until you apply the reviewed data and save the Product Template.</p>
+          </section>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-emerald-100 bg-white/60 px-3 py-2 text-xs text-emerald-950"><span className="font-semibold">1&nbsp; Copy Prompt</span><span aria-hidden="true">→</span><span className="font-semibold">2&nbsp; Generate JSON</span><span aria-hidden="true">→</span><span className="font-semibold">3&nbsp; Import &amp; Review</span><span aria-hidden="true">→</span><span className="font-semibold">4&nbsp; Apply &amp; Save</span><span className="text-emerald-800">Use Setup Planning first for complex price lists.</span></div>
         </div>
-        <p className="text-xs text-emerald-900 md:col-span-2 xl:col-span-3">Nothing is saved until you apply the reviewed data and save the Product Template.</p>
       </FormSection>
       {smartSetupNotice ? <details className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950"><summary className="cursor-pointer font-semibold">AI data applied. {smartSetupNotice.includes("No pricing data") ? "Review the result." : "Show notes."}</summary><p className="mt-2 text-xs leading-5">{smartSetupNotice}</p></details> : null}
       {!template && importDraft && importMode === "new" ? (
