@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   evaluateAccessoryConfigurationForModel,
   parseAccessoryConfigurationGroups,
+  resolveAccessoryApplicabilityTarget,
   serializeAccessoryConfigurationGroups,
 } from "./accessory-conditional-configuration.js";
 
@@ -124,6 +125,34 @@ test("identity matches Base/Model group and row only", () => {
   assert.equal(evaluate([top], "same-row", {}, "other-group").groups[0].visible, false);
   const changedCodes = { ...top, items: items.map((item) => ({ ...item, supplier_price_list_code: `NEW-${item.id}` })) };
   assert.equal(evaluate([changedCodes], "same-row").groups[0].visible, true);
+});
+
+test("price-matrix targets parse and resolve by stable group and row IDs", () => {
+  const target = { kind: "price_matrix", group_id: "everyis1", row_id: "ev111" } as const;
+  const coatHanger = group("coat-hanger", "conditional_option", [{ target, required: false, visible: true }], "choose_multiple");
+  const parsed = parseAccessoryConfigurationGroups([coatHanger]);
+  assert.equal(parsed.valid, true);
+  assert.deepEqual(resolveAccessoryApplicabilityTarget(parsed.groups[0].conditional_configuration!.applicability[0]), target);
+  assert.equal(evaluateAccessoryConfigurationForModel({ accessoryGroups: [coatHanger], baseModelGroupId: null, baseModelRowId: null, selectedModelTarget: target }).groups[0].visible, true);
+  assert.equal(evaluateAccessoryConfigurationForModel({ accessoryGroups: [coatHanger], baseModelGroupId: null, baseModelRowId: null, selectedModelTarget: { ...target, row_id: "ev711" } }).groups[0].visible, false);
+});
+
+test("price-matrix targets preserve required, allowed-items, all-items, and fixed-quantity behavior", () => {
+  const target = { kind: "price_matrix", group_id: "everyis1", row_id: "ev111" } as const;
+  const restricted = group("coat-hanger", "companion", [{ target, required: true, visible: true, allowed_item_ids: ["standard", "schuko"], fixed_quantity: 2 }], "choose_multiple");
+  const selected = (quantities: Record<string, number>) => evaluateAccessoryConfigurationForModel({ accessoryGroups: [restricted], baseModelGroupId: null, baseModelRowId: null, selectedModelTarget: target, selectedQuantitiesByGroupId: { "coat-hanger": quantities } });
+  assert.deepEqual(selected({}).groups[0].allowedItemIds, ["standard", "schuko"]);
+  assert.equal(selected({ standard: 1 }).groups[0].validationCode, "fixed_quantity_mismatch");
+  assert.equal(selected({ standard: 2 }).valid, true);
+  const all = group("all", "conditional_option", [{ target, required: false, visible: true }], "choose_multiple");
+  assert.deepEqual(evaluateAccessoryConfigurationForModel({ accessoryGroups: [all], baseModelGroupId: null, baseModelRowId: null, selectedModelTarget: target }).groups[0].allowedItemIds, items.map((item) => item.id));
+});
+
+test("invalid price-matrix targets fail safely", () => {
+  const invalid = group("coat-hanger", "conditional_option", [{ target: { kind: "price_matrix", group_id: "everyis1", row_id: "" }, required: false, visible: true }]);
+  const parsed = parseAccessoryConfigurationGroups([invalid]);
+  assert.equal(parsed.valid, false);
+  assert.equal(parsed.issues.some((issue) => issue.code === "missing_applicability_target_row_id"), true);
 });
 
 test("malformed metadata is reported without crashing", () => {

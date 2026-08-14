@@ -2,13 +2,16 @@ import type { ProductTemplateDraft, ProductTemplateDraftMatrixRow, ProductTempla
 import { createSmartSetupReviewRouting, type SmartReviewDestination, type SmartReviewRoute, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
 
 export type SmartAdditionalGroupAction = "add" | "merge" | "skip";
+export type SmartAdditionalGroupClassification = "EXACT_DUPLICATE" | "LIKELY_EXISTING_GROUP" | "POSSIBLE_MATCH" | "NEW_GROUP";
 export type SmartAdditionalGroupDecision = {
   action: SmartAdditionalGroupAction;
   destination: SmartReviewDestination;
   targetKey: string | null;
   duplicateChoices: Record<string, "existing" | "incoming">;
 };
-export type SmartAdditionalGroup = { route: SmartReviewRoute; compatibleTargets: SmartReviewRoute[] };
+export type SmartAdditionalGroupEvidence = { matchingItems: number; incomingItems: number; newItems: number; differences: number; text: string };
+export type SmartAdditionalGroupMatch = { classification: SmartAdditionalGroupClassification; recommendedAction: SmartAdditionalGroupAction; bestMatch: SmartReviewRoute | null; evidence: SmartAdditionalGroupEvidence };
+export type SmartAdditionalGroup = { route: SmartReviewRoute; compatibleTargets: SmartReviewRoute[]; match: SmartAdditionalGroupMatch };
 
 type ReviewRow = ProductTemplateDraftPricedRow | ProductTemplateDraftMatrixRow;
 
@@ -25,6 +28,24 @@ function routeRows(draft: ProductTemplateDraft, route: SmartReviewRoute): Review
   return draft.optionGroups.find((group) => group.id === route.sourceId)?.items ?? [];
 }
 
+function normalizedText(value: string) { return value.trim().toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
+function normalizedCodes(row: ReviewRow) { return new Set([...row.supplierCodes, ...row.referenceCodes].map((code) => code.trim().toLocaleUpperCase()).filter(Boolean)); }
+function hasIntersection(left: ReadonlySet<string>, right: ReadonlySet<string>) { return [...left].some((value) => right.has(value)); }
+function strongRowMatch(existing: ReviewRow, incoming: ReviewRow) {
+  const existingCodes = normalizedCodes(existing); const incomingCodes = normalizedCodes(incoming);
+  if (existingCodes.size && incomingCodes.size) return hasIntersection(existingCodes, incomingCodes);
+  return Boolean(existing.id && incoming.id && existing.id === incoming.id);
+}
+
+function comparedDifferences(current: ReviewRow, incoming: ReviewRow) {
+  return [
+    ["price", "price" in current ? current.price : current.prices, "price" in incoming ? incoming.price : incoming.prices],
+    ["specification", current.specification, incoming.specification], ["dimensions", current.dimensions, incoming.dimensions],
+    ["supplier codes", current.supplierCodes, incoming.supplierCodes], ["reference codes", current.referenceCodes, incoming.referenceCodes],
+    ["currency", current.currency, incoming.currency], ["display name", current.displayName, incoming.displayName],
+  ].filter(([, existingValue, incomingValue]) => JSON.stringify(existingValue) !== JSON.stringify(incomingValue)).map(([field]) => field as string);
+}
+
 function compatible(currentDraft: ProductTemplateDraft, incomingDraft: ProductTemplateDraft, current: SmartReviewRoute, incoming: SmartReviewRoute) {
   if (current.sourceKind !== incoming.sourceKind) return false;
   if (current.sourceKind !== "matrix" && current.sourceKind !== "modular") return true;
@@ -36,22 +57,46 @@ function compatible(currentDraft: ProductTemplateDraft, incomingDraft: ProductTe
 
 export function smartAdditionalJsonGroups(currentDraft: ProductTemplateDraft, currentPlan: SmartSetupReviewRoutingPlan, incomingDraft: ProductTemplateDraft) {
   const incomingPlan = createSmartSetupReviewRouting(incomingDraft);
-  return incomingPlan.routes.map((route): SmartAdditionalGroup => ({
-    route,
-    compatibleTargets: currentPlan.routes.filter((target) => compatible(currentDraft, incomingDraft, target, route)),
-  }));
+  return incomingPlan.routes.map((route): SmartAdditionalGroup => {
+    const compatibleTargets = currentPlan.routes.filter((target) => compatible(currentDraft, incomingDraft, target, route));
+    return { route, compatibleTargets, match: classifySmartAdditionalGroup(currentDraft, incomingDraft, route, compatibleTargets) };
+  });
+}
+
+export function classifySmartAdditionalGroup(currentDraft: ProductTemplateDraft, incomingDraft: ProductTemplateDraft, incomingRoute: SmartReviewRoute, compatibleTargets: SmartReviewRoute[]): SmartAdditionalGroupMatch {
+  const incomingRows = routeRows(incomingDraft, incomingRoute);
+  const incomingName = normalizedText(incomingRoute.groupName);
+  const candidates = compatibleTargets.map((target, index) => {
+    const existingRows = routeRows(currentDraft, target);
+    const matched = incomingRows.flatMap((incoming) => {
+      const existing = existingRows.find((row) => strongRowMatch(row, incoming));
+      return existing ? [{ existing, incoming, differences: comparedDifferences(existing, incoming) }] : [];
+    });
+    const matchingItems = matched.length; const differences = matched.reduce((count, item) => count + item.differences.length, 0);
+    const exactName = incomingName.length > 0 && incomingName === normalizedText(target.groupName);
+    const similarName = exactName || (incomingName.length > 2 && normalizedText(target.groupName).includes(incomingName)) || (normalizedText(target.groupName).length > 2 && incomingName.includes(normalizedText(target.groupName)));
+    return { target, matchingItems, differences, exactName, similarName, index };
+  }).sort((left, right) => right.matchingItems - left.matchingItems || Number(right.exactName) - Number(left.exactName) || Number(right.similarName) - Number(left.similarName) || Math.abs(incomingRows.length - routeRows(currentDraft, left.target).length) - Math.abs(incomingRows.length - routeRows(currentDraft, right.target).length) || left.index - right.index);
+  const best = candidates[0];
+  if (!best) return { classification: "NEW_GROUP", recommendedAction: "add", bestMatch: null, evidence: { matchingItems: 0, incomingItems: incomingRows.length, newItems: incomingRows.length, differences: 0, text: "No strong existing-group match found." } };
+  const newItems = incomingRows.length - best.matchingItems;
+  const sufficientlyStrongExact = incomingRows.length > 0 && best.matchingItems === incomingRows.length && best.differences === 0 && (best.exactName || incomingRows.length > 1 || normalizedCodes(incomingRows[0]).size > 1);
+  if (sufficientlyStrongExact) return { classification: "EXACT_DUPLICATE", recommendedAction: "skip", bestMatch: best.target, evidence: { matchingItems: best.matchingItems, incomingItems: incomingRows.length, newItems, differences: 0, text: `${best.matchingItems}/${incomingRows.length} incoming items already exist in '${best.target.groupName}'. No commercial differences detected.` } };
+  const matrixWithNewRows = (incomingRoute.sourceKind === "matrix" || incomingRoute.sourceKind === "modular") && incomingRows.length > 0 && newItems > 0;
+  if (best.matchingItems > 0 || matrixWithNewRows) {
+    const differenceText = best.differences ? `; ${best.differences} commercial difference${best.differences === 1 ? "" : "s"} detected` : "";
+    const newText = newItems ? `${best.matchingItems} existing item${best.matchingItems === 1 ? "" : "s"} + ${newItems} new item${newItems === 1 ? "" : "s"} detected` : `${best.matchingItems}/${incomingRows.length} incoming items already exist`;
+    return { classification: "LIKELY_EXISTING_GROUP", recommendedAction: "merge", bestMatch: best.target, evidence: { matchingItems: best.matchingItems, incomingItems: incomingRows.length, newItems, differences: best.differences, text: `${newText} in '${best.target.groupName}'${differenceText}.` } };
+  }
+  if (best.similarName) return { classification: "POSSIBLE_MATCH", recommendedAction: "add", bestMatch: best.target, evidence: { matchingItems: 0, incomingItems: incomingRows.length, newItems: incomingRows.length, differences: 0, text: `Possible name match with '${best.target.groupName}'; no strong supplier/reference-code overlap found.` } };
+  return { classification: "NEW_GROUP", recommendedAction: "add", bestMatch: null, evidence: { matchingItems: 0, incomingItems: incomingRows.length, newItems: incomingRows.length, differences: 0, text: "No strong existing-group match found." } };
 }
 
 export function smartAdditionalDuplicateRows(currentDraft: ProductTemplateDraft, incomingDraft: ProductTemplateDraft, incomingRoute: SmartReviewRoute, targetRoute: SmartReviewRoute) {
   const existing = routeRows(currentDraft, targetRoute);
   return routeRows(incomingDraft, incomingRoute).flatMap((incoming) => {
     const current = duplicateRow(existing, incoming);
-    const fields = current ? [
-      ["price", "price" in current ? current.price : current.prices, "price" in incoming ? incoming.price : incoming.prices],
-      ["specification", current.specification, incoming.specification], ["dimensions", current.dimensions, incoming.dimensions],
-      ["supplier codes", current.supplierCodes, incoming.supplierCodes], ["reference codes", current.referenceCodes, incoming.referenceCodes],
-      ["currency", current.currency, incoming.currency], ["display name", current.displayName, incoming.displayName],
-    ].filter(([, existingValue, incomingValue]) => JSON.stringify(existingValue) !== JSON.stringify(incomingValue)).map(([field]) => field as string) : [];
+    const fields = current ? comparedDifferences(current, incoming) : [];
     return current ? [{ key: incoming.id, existing: current, incoming, fields }] : [];
   });
 }

@@ -8,11 +8,46 @@ import { baseModelSubgroupsForSmartSetupApply, pendingRowImagesForSmartSetupAppl
 const row = (id: string, code: string, price: number | null, displayName = id): ProductTemplateDraftPricedRow => ({ id, label: displayName, displayName, dimensions: null, currency: "EUR", price, specification: null, supplierCodes: code ? [code] : [], referenceCodes: [] });
 const draft = (name: string, rows: ProductTemplateDraftPricedRow[] = []): ProductTemplateDraft => ({ version: 1, template: { templateName: name, templateCode: null, itemCode: null, internalSelectionName: null, description: null, specification: null, origin: null, supplierName: null, dimensions: null, supplierCodes: [], referenceCodes: [] }, defaultCurrency: "EUR", pricing: { workstationRows: [], baseModelRows: rows, priceMatrices: [], modularGroups: [] }, optionGroups: [], materialSuggestions: [], linkedFamilySuggestions: [], extractionWarnings: [], confidence: 1, sources: [] });
 const decision = (action: "add" | "merge" | "skip", targetKey: string | null = null, duplicateChoices: Record<string, "existing" | "incoming"> = {}, destination: SmartAdditionalGroupDecision["destination"] = "base_model"): SmartAdditionalGroupDecision => ({ action, destination, targetKey, duplicateChoices });
+const optionGroup = (id: string, label: string, items: ProductTemplateDraftPricedRow[]) => ({ id, label, selection: { mode: "optional" as const, minSelections: 0, maxSelections: null, defaultItemIds: [] }, items });
 
 test("additional JSON opens a logical-group preview with compatible targets", () => {
   const current = draft("Reviewed", [row("a", "1AF 001", 10)]); const incoming = draft("Incoming", [row("b", "1AF 002", 20)]);
   const groups = smartAdditionalJsonGroups(current, createSmartSetupReviewRouting(current), incoming);
   assert.equal(groups.length, 1); assert.equal(groups[0].route.rowCount, 1); assert.equal(groups[0].compatibleTargets[0].key, "base_model:rows");
+});
+
+test("identical accessory code sets are exact duplicates and secondary codes are strong identity", () => {
+  const current = draft("Current"); const incoming = draft("Incoming");
+  current.optionGroups = [optionGroup("coat", "Coat Hanger", [{ ...row("old-1", "3217K", 10, "Coat Hanger 3217K"), supplierCodes: ["X", "3217K"] }, row("old-2", "3283K", 20, "Coat Hanger 3283K")])];
+  incoming.optionGroups = [optionGroup("coat-next", "Coat Hanger", [{ ...row("new-1", "3217K", 10, "Coat Hanger 3217K"), supplierCodes: ["X", "3217K"] }, row("new-2", "3283K", 20, "Coat Hanger 3283K")])];
+  const group = smartAdditionalJsonGroups(current, createSmartSetupReviewRouting(current), incoming).find((item) => item.route.sourceKind === "option")!;
+  assert.equal(group.match.classification, "EXACT_DUPLICATE"); assert.equal(group.match.recommendedAction, "skip"); assert.equal(group.match.bestMatch?.groupName, "Coat Hanger");
+});
+
+test("new or commercially changed accessory items recommend merge", () => {
+  const current = draft("Current"); const incoming = draft("Incoming");
+  current.optionGroups = [optionGroup("arms", "Armrests", [row("703-old", "703", 120), row("760-old", "760", 130)])];
+  incoming.optionGroups = [optionGroup("arms-next", "Armrests", [row("703-new", "703", 125), row("760-new", "760", 130), row("770-new", "770", 140)])];
+  const group = smartAdditionalJsonGroups(current, createSmartSetupReviewRouting(current), incoming).find((item) => item.route.sourceKind === "option")!;
+  assert.equal(group.match.classification, "LIKELY_EXISTING_GROUP"); assert.equal(group.match.recommendedAction, "merge"); assert.equal(group.match.bestMatch?.groupName, "Armrests"); assert.equal(group.match.evidence.newItems, 1); assert.ok(group.match.evidence.differences > 0);
+});
+
+test("a single reused code without group-name support is not an exact duplicate", () => {
+  const current = draft("Current"); const incoming = draft("Incoming");
+  current.optionGroups = [optionGroup("delivery", "Delivery", [row("old", "COMMON", 10)])]; incoming.optionGroups = [optionGroup("hanger", "Coat Hanger", [row("new", "COMMON", 10)])];
+  const group = smartAdditionalJsonGroups(current, createSmartSetupReviewRouting(current), incoming).find((item) => item.route.sourceKind === "option")!;
+  assert.notEqual(group.match.classification, "EXACT_DUPLICATE");
+});
+
+test("matching matrix columns with new rows recommend merge while identical rows skip", () => {
+  const current = draft("Current"); const incoming = draft("Incoming");
+  current.pricing.priceMatrices = [{ id: "matrix", label: "EVERYis1", columns: [{ id: "sg1", label: "SG1" }], rows: [{ ...row("ev111", "EV111", 100, "EV111"), prices: { sg1: 100 } }] }];
+  incoming.pricing.priceMatrices = [{ id: "matrix-next", label: "EVERYis1", columns: [{ id: "sg1", label: "SG1" }], rows: [{ ...row("ev161", "EV161", 100), prices: { sg1: 100 } }] }];
+  let group = smartAdditionalJsonGroups(current, createSmartSetupReviewRouting(current), incoming).find((item) => item.route.sourceKind === "matrix")!;
+  assert.equal(group.match.classification, "LIKELY_EXISTING_GROUP"); assert.equal(group.match.recommendedAction, "merge");
+  incoming.pricing.priceMatrices[0].rows = [{ ...row("other-id", "EV111", 100, "EV111"), prices: { sg1: 100 } }];
+  group = smartAdditionalJsonGroups(current, createSmartSetupReviewRouting(current), incoming).find((item) => item.route.sourceKind === "matrix")!;
+  assert.equal(group.match.classification, "EXACT_DUPLICATE"); assert.equal(group.match.recommendedAction, "skip");
 });
 
 test("skip changes no reviewed fields and add preserves edited template fields", () => {

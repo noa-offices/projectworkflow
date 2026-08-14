@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ProductTemplateDraft, ProductTemplateDraftPriceMatrix } from "./product-template-draft.js";
-import { clipboardImageFile } from "./product-template-row-image-client.js";
+import { assertCompressedProductImageSize, clipboardImageFile, clipboardImageFileFromClipboard, formatProductImageSize, MAX_STAGED_PRODUCT_IMAGE_BYTES } from "./product-template-row-image-client.js";
 import { createSmartSetupReviewRouting } from "./smart-product-review-routing.js";
 import { baseModelSubgroupsForSmartSetupApply, canonicalSubgroupsForSmartSetupApply, disposeStagedReviewedRowImages, pendingRowImagesForSmartSetupApply, pendingSubgroupImagesForSmartSetupApply, reviewedRowImageKey, reviewedSubgroupImageKey, updateStagedReviewedRowImage, uploadPendingRowImagesAfterSave, type SmartReviewedPricingSubgroups, type StagedReviewedRowImage } from "./smart-product-row-images.js";
 
@@ -31,6 +31,22 @@ test("staged placeholders isolate multiple rows and replace/remove only their ta
 test("non-image clipboard content is rejected before compression", () => {
   assert.equal(clipboardImageFile([{ type: "text/plain" } as File]), null);
   assert.equal(clipboardImageFile([{ type: "text/plain" } as File, { type: "image/png" } as File])?.type, "image/png");
+});
+
+test("clipboard image extraction prioritizes image items and falls back to files", () => {
+  const itemImage = { type: "image/png", kind: "file", getAsFile: () => ({ type: "image/png", name: "item.png" } as File) } as DataTransferItem;
+  const pdfItem = { type: "application/pdf", kind: "file", getAsFile: () => ({ type: "application/pdf" } as File) } as DataTransferItem;
+  assert.equal(clipboardImageFileFromClipboard({ items: [itemImage], files: [] } as unknown as DataTransfer)?.name, "item.png");
+  assert.equal(clipboardImageFileFromClipboard({ items: [pdfItem], files: [{ type: "image/webp", name: "fallback.webp" } as File] } as unknown as DataTransfer)?.name, "fallback.webp");
+  assert.equal(clipboardImageFileFromClipboard({ items: [pdfItem], files: [] } as unknown as DataTransfer), null);
+});
+
+test("compressed image final-size guard and formatter use the shared 1 MB limit", () => {
+  assert.doesNotThrow(() => assertCompressedProductImageSize(MAX_STAGED_PRODUCT_IMAGE_BYTES));
+  assert.throws(() => assertCompressedProductImageSize(MAX_STAGED_PRODUCT_IMAGE_BYTES + 1), /still larger than 1 MB after compression/);
+  assert.equal(formatProductImageSize(842), "842 B");
+  assert.equal(formatProductImageSize(186 * 1024), "186 KB");
+  assert.equal(formatProductImageSize(MAX_STAGED_PRODUCT_IMAGE_BYTES), "1.0 MB");
 });
 
 test("staged images survive edits and follow stable rows through supported routing", () => {

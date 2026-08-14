@@ -2,6 +2,7 @@ import {
   evaluateAccessoryConfigurationForModel,
   parseAccessoryConfigurationGroups,
   type AccessoryConfigurationEvaluation,
+  type AccessoryApplicabilityTarget,
 } from "../products/accessory-conditional-configuration";
 
 export type ProductAccessorySelectionEvaluation = AccessoryConfigurationEvaluation & {
@@ -34,11 +35,13 @@ export function evaluateProductAccessorySelection({
   accessoryGroups,
   baseModelGroupId,
   baseModelRowId,
+  selectedModelTarget,
   selectedQuantities = {},
 }: {
   accessoryGroups: unknown;
   baseModelGroupId?: string | null;
   baseModelRowId?: string | null;
+  selectedModelTarget?: AccessoryApplicabilityTarget | null;
   selectedQuantities?: Record<string, number | null | undefined>;
 }): ProductAccessorySelectionEvaluation {
   const parsed = parseAccessoryConfigurationGroups(accessoryGroups);
@@ -69,6 +72,7 @@ export function evaluateProductAccessorySelection({
     accessoryGroups: parsed.groups,
     baseModelGroupId,
     baseModelRowId,
+    selectedModelTarget,
     selectedQuantitiesByGroupId,
   });
   const activeQuantities = Object.fromEntries(

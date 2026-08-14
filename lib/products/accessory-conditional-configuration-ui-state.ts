@@ -5,6 +5,8 @@ import type {
   AccessoryModelApplicabilityRule,
   AccessorySelectionMode,
 } from "./accessory-conditional-configuration";
+import { accessoryApplicabilityTargetKey, resolveAccessoryApplicabilityTarget } from "./accessory-conditional-configuration";
+import type { ApplicabilityTargetChoice } from "./applicability-target-choices";
 
 function withConfiguration(
   group: AccessoryConfigurationGroup,
@@ -33,7 +35,7 @@ export function setAccessoryConditionalEnabled(group: AccessoryConfigurationGrou
 }
 
 export function setAccessoryConfigurationRole(group: AccessoryConfigurationGroup, role: AccessoryConfigurationRole): AccessoryConfigurationGroup {
-  return withConfiguration(group, (configuration) => ({ ...configuration, role }));
+  return withConfiguration(group, (configuration) => ({ ...configuration, role, ...(role === "companion" ? { applicability: configuration.applicability.map((rule) => ({ ...rule, required: true })) } : {}) }));
 }
 
 export function setAccessorySelectionMode(group: AccessoryConfigurationGroup, selection: AccessorySelectionMode): AccessoryConfigurationGroup {
@@ -59,6 +61,34 @@ export function addAccessoryApplicabilityRule(
         visible: true,
       }],
     };
+  });
+}
+
+export function setAccessoryApplicabilityTargets(
+  group: AccessoryConfigurationGroup,
+  choices: ApplicabilityTargetChoice[],
+  selectedKeys: Set<string>,
+): AccessoryConfigurationGroup {
+  return withConfiguration(group, (configuration) => {
+    const choiceByKey = new Map(choices.map((choice) => [choice.key, choice]));
+    const existingKeys = new Set<string>();
+    const retained = configuration.applicability.filter((rule) => {
+      const target = resolveAccessoryApplicabilityTarget(rule);
+      if (!target) return true;
+      const key = accessoryApplicabilityTargetKey(target);
+      if (!choiceByKey.has(key)) return true;
+      if (!selectedKeys.has(key)) return false;
+      existingKeys.add(key);
+      return true;
+    });
+    const additions: AccessoryModelApplicabilityRule[] = choices.flatMap<AccessoryModelApplicabilityRule>((choice) => {
+      if (!selectedKeys.has(choice.key) || existingKeys.has(choice.key)) return [];
+      const required = configuration.role === "companion";
+      return choice.kind === "base_model"
+        ? [{ base_model_group_id: choice.groupId, base_model_row_id: choice.rowId, required, visible: true }]
+        : [{ target: { kind: "price_matrix" as const, group_id: choice.groupId, row_id: choice.rowId }, required, visible: true }];
+    });
+    return { ...configuration, applicability: [...retained, ...additions] };
   });
 }
 

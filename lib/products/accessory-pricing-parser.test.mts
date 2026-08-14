@@ -11,6 +11,7 @@ const metadata = {
 };
 const legacyGroup = { id: "legacy", group_name: "Accessories", group_is_required: true, is_active: true, sort_order: 0, items: [{ id: "legacy-item", item_name: "Legacy", supplier_price_list_code: "LEG", price: null, currency: "EUR", specification: "Legacy spec", is_active: true, sort_order: 0 }] };
 const conditionalGroup = { ...legacyGroup, id: "top-group", group_name: "Top Access", group_is_required: false, items: [{ ...legacyGroup.items[0], id: "top", price: 0 }], conditional_configuration: metadata };
+const categories = [{ id: "everyis1", group_name: "EVERYis1", price_categories: ["Cat A"], items: [{ id: "ev111", variant_name: "EV111", prices: { "Cat A": 100 } }] }];
 
 test("legacy group saves without injecting conditional metadata", () => {
   const parsed = parseAccessoryPricingJson(JSON.stringify([legacyGroup]), variants);
@@ -51,6 +52,14 @@ test("Base/Model group and row references must exist", () => {
   const removedRow = [{ ...variants[0], items: [] }];
   assert.throws(() => parseAccessoryPricingJson(JSON.stringify([conditionalGroup]), removedRow), (error: unknown) =>
     error instanceof AccessoryPricingContractError && error.issues.some((issue) => issue.code === "unknown_base_model_reference"));
+});
+
+test("Category / Matrix target references round-trip and reject missing stable IDs", () => {
+  const target = { kind: "price_matrix", group_id: "everyis1", row_id: "ev111" } as const;
+  const matrixGroup = { ...conditionalGroup, conditional_configuration: { ...metadata, applicability: [{ target, required: false, visible: true }] } };
+  assert.deepEqual(parseAccessoryPricingJson(JSON.stringify([matrixGroup]), variants, categories)[0].conditional_configuration?.applicability[0].target, target);
+  assert.throws(() => parseAccessoryPricingJson(JSON.stringify([matrixGroup]), variants, [{ ...categories[0], items: [] }]), (error: unknown) =>
+    error instanceof AccessoryPricingContractError && error.issues.some((issue) => issue.code === "unknown_price_matrix_reference"));
 });
 
 test("null and zero prices remain distinct", () => {

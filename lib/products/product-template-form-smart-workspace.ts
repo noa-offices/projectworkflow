@@ -1,6 +1,7 @@
 import { baseModelPricingGroups, LEGACY_BASE_MODEL_GROUP_ID, type BaseModelPricingSubgroup } from "./base-model-pricing-groups";
 import type { ProductTemplateDraft, ProductTemplateDraftCurrency, ProductTemplateDraftDimension, ProductTemplateDraftPricedRow } from "./product-template-draft";
 import { createSmartSetupReviewRouting, type SmartReviewAccessoryConfiguration, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
+import { ACCESSORY_APPLICABILITY_TARGET_KINDS, type AccessoryApplicabilityTarget } from "./accessory-conditional-configuration";
 import type { SmartReviewedPricingSubgroups } from "./smart-product-row-images";
 import { normalizeWorkstationPricing } from "./workstation-pricing-groups";
 
@@ -16,11 +17,26 @@ const parse = (value: string) => { try { const parsed: unknown = JSON.parse(valu
 const row = (item: JsonRow): ProductTemplateDraftPricedRow => ({ id: text(item.id) ?? crypto.randomUUID(), label: text(item.variant_name ?? item.label ?? item.item_name), displayName: text(item.display_name ?? item.item_name), dimensions: dimension(item.dimension ?? item.default_dimension), currency: currency(item.currency), price: price(item.price ?? item.default_price), specification: text(item.specification), supplierCodes: code(item.supplier_price_list_code ?? item.base_supplier_price_list_code), referenceCodes: [] });
 const matrixRow = (item: JsonRow, columns: string[]) => { const base = row(item); const prices = (item.prices && typeof item.prices === "object" ? item.prices : {}) as Record<string, unknown>; return { id: base.id, label: base.label, displayName: base.displayName, dimensions: base.dimensions, currency: base.currency, specification: base.specification, supplierCodes: base.supplierCodes, referenceCodes: base.referenceCodes, prices: Object.fromEntries(columns.map((column) => [column, price(prices[column] ?? (column === "price" ? base.price : null))])) }; };
 const subgroups = (value: unknown) => Array.isArray(value) ? value as BaseModelPricingSubgroup[] : [];
+const applicabilityTarget = (value: unknown): AccessoryApplicabilityTarget | undefined => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as JsonRow;
+  const kind = text(raw.kind);
+  const groupId = text(raw.group_id);
+  const rowId = text(raw.row_id);
+  return kind && ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(kind as AccessoryApplicabilityTarget["kind"]) && groupId && rowId
+    ? { kind: kind as AccessoryApplicabilityTarget["kind"], group_id: groupId, row_id: rowId }
+    : undefined;
+};
 
 function accessoryConfiguration(group: JsonRow): SmartReviewAccessoryConfiguration {
   const raw = group.conditional_configuration as JsonRow | undefined;
   const selection = raw?.selection === "exactly_one" ? (group.group_is_required ? "required_exactly_one" : "optional_exactly_one") : raw?.selection === "at_least_one" ? "required_at_least_one" : raw?.selection === "choose_multiple" ? "multiple" : "optional_multiple";
-  return { role: raw?.role === "conditional_option" || raw?.role === "companion" ? raw.role : "accessory", selection, rules: Array.isArray(raw?.applicability) ? raw.applicability.flatMap((rule) => rule && typeof rule === "object" ? [{ baseModelGroupId: text((rule as JsonRow).base_model_group_id) ?? "", baseModelRowId: text((rule as JsonRow).base_model_row_id) ?? "", required: (rule as JsonRow).required === true, ...(Array.isArray((rule as JsonRow).allowed_item_ids) ? { allowedItemIds: (rule as JsonRow).allowed_item_ids as string[] } : {}), ...(Number.isFinite(Number((rule as JsonRow).fixed_quantity)) ? { fixedQuantity: Number((rule as JsonRow).fixed_quantity) } : {}) }] : []) : [] };
+  return { role: raw?.role === "conditional_option" || raw?.role === "companion" ? raw.role : "accessory", selection, rules: Array.isArray(raw?.applicability) ? raw.applicability.flatMap((rule) => {
+    if (!rule || typeof rule !== "object") return [];
+    const item = rule as JsonRow;
+    const target = applicabilityTarget(item.target);
+    return [{ ...(target ? { target } : { baseModelGroupId: text(item.base_model_group_id) ?? "", baseModelRowId: text(item.base_model_row_id) ?? "" }), required: item.required === true, ...(Array.isArray(item.allowed_item_ids) ? { allowedItemIds: item.allowed_item_ids as string[] } : {}), ...(Number.isFinite(Number(item.fixed_quantity)) ? { fixedQuantity: Number(item.fixed_quantity) } : {}) }];
+  }) : [] };
 }
 
 export function productTemplateFormSmartWorkspace(snapshot: FormSnapshot): { draft: ProductTemplateDraft; plan: SmartSetupReviewRoutingPlan; subgroups: SmartReviewedPricingSubgroups } {

@@ -14,7 +14,7 @@ import {
   type VariantPricingRow,
   VariantPricingTable,
 } from "@/components/products/variant-pricing-tables";
-import { countStandardCategoryPricingRows } from "@/lib/products/category-pricing-groups";
+import { countStandardCategoryPricingRows, groupedStandardCategoryPricingRows } from "@/lib/products/category-pricing-groups";
 import {
   baseModelPricingGroups,
   flattenBaseModelPricingRows,
@@ -172,8 +172,14 @@ export function TemplatePricingSections({
   const [currentBaseModelGroups, setCurrentBaseModelGroups] = useState<BaseModelPricingGroup<VariantPricingRow>[]>(() =>
     baseModelPricingGroups<VariantPricingRow>(Array.isArray(variantPricingRows) ? variantPricingRows : []),
   );
+  const [currentCategoryPricingGroups, setCurrentCategoryPricingGroups] = useState<CategoryPricingRow[]>(() =>
+    groupedStandardCategoryPricingRows<CategoryPricingRow>(categoryPricingRows),
+  );
   const handleBaseModelGroupsChange = useCallback((groups: BaseModelPricingGroup<VariantPricingRow>[]) => {
     setCurrentBaseModelGroups(groups);
+  }, []);
+  const handleCategoryPricingGroupsChange = useCallback((groups: CategoryPricingRow[]) => {
+    setCurrentCategoryPricingGroups(groups);
   }, []);
   const reportWorkstationData = useCallback((hasData: boolean) => onSectionDataChange?.("workstation", hasData), [onSectionDataChange]);
   const reportBaseModelData = useCallback((hasData: boolean) => onSectionDataChange?.("baseModel", hasData), [onSectionDataChange]);
@@ -280,6 +286,7 @@ export function TemplatePricingSections({
       ) : null}
       <AccessoryPricingTable
         baseModelGroups={currentBaseModelGroups}
+        categoryPricingGroups={currentCategoryPricingGroups}
         brandDefaultCurrency={brandDefaultCurrency}
         rows={accessoryPricingRows}
         templateCurrency={templateCurrency}
@@ -306,6 +313,7 @@ export function TemplatePricingSections({
       ) : null}
       <CategoryPricingTable
         brandDefaultCurrency={brandDefaultCurrency}
+        onGroupsChange={handleCategoryPricingGroupsChange}
         rows={categoryPricingRows}
         templateCurrency={templateCurrency}
         replacementGroups={categoryReplacement?.groups}

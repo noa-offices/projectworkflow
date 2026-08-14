@@ -1160,8 +1160,8 @@ function categoryPricingValue(formData: FormData) {
   }
 }
 
-function accessoryPricingValue(formData: FormData, baseModelPricing: unknown) {
-  return parseAccessoryPricingJson(textValue(formData, "accessory_pricing"), baseModelPricing);
+function accessoryPricingValue(formData: FormData, baseModelPricing: unknown, categoryPricing: unknown) {
+  return parseAccessoryPricingJson(textValue(formData, "accessory_pricing"), baseModelPricing, categoryPricing);
 }
 
 async function normalizeTemplateImagePayload<
@@ -1224,6 +1224,7 @@ function templatePayload(formData: FormData, userId?: string) {
   ) as Record<(typeof imageFields)[number], string | null>;
 
   const variantPricing = variantPricingValue(formData);
+  const categoryPricing = categoryPricingValue(formData);
   const payload = {
     brand_id: textValue(formData, "brand_id"),
     main_category_id: optionalTextValue(formData, "main_category_id"),
@@ -1242,8 +1243,8 @@ function templatePayload(formData: FormData, userId?: string) {
     reference_image_url: optionalTextValue(formData, "reference_image_url"),
     desking_size_pricing: deskingSizePricingValue(formData),
     variant_pricing: variantPricing,
-    category_pricing: categoryPricingValue(formData),
-    accessory_pricing: accessoryPricingValue(formData, variantPricing),
+    category_pricing: categoryPricing,
+    accessory_pricing: accessoryPricingValue(formData, variantPricing, categoryPricing),
     unit_label: textValue(formData, "unit_label") || "Pc",
     currency: normalizeCurrency(textValue(formData, "currency") || defaultCurrency),
     default_unit_price: numberValue(formData, "default_unit_price", 0),

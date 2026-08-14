@@ -43,6 +43,7 @@ import {
   type AccessoryGroupEvaluation,
 } from "@/lib/products/accessory-conditional-configuration";
 import { evaluateProductAccessorySelection } from "@/lib/quotations/product-accessory-configuration";
+import { accessoryOptionLabel } from "@/lib/quotations/accessory-option-label";
 import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
 import { productTemplateRowReferenceKey, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
@@ -596,7 +597,7 @@ function AccessoryConfigurationFields({
                 >
                   <option value="">{evaluation.required ? `Select ${group.group_name}` : `No ${group.group_name}`}</option>
                   {items.map((item) => (
-                    <option key={item.id} value={item.id}>{item.item_name} - {formatMoney(item.currency ?? rowCurrency, numberValue(item.price))}</option>
+                    <option key={item.id} value={item.id}>{accessoryOptionLabel(item, formatMoney(item.currency ?? rowCurrency, numberValue(item.price)))}</option>
                   ))}
                 </select>
               ) : (
@@ -1671,13 +1672,19 @@ export function ProductLibrarySelector({
                   const hasMixedWorkstationCurrencies = usesWorkstationFlow && workstationCurrencies.length > 1;
                   const missingRequiredWorkstationSelection = usesWorkstationFlow && !selectedSizeRow;
                   const missingRequiredModularSelection = usesModularPricing && selectedModularItems.length === 0;
+                  const selectedAccessoryModelTarget = usesVariantPricing && selectedVariantGroup?.id && selectedVariantRow?.id
+                    ? { kind: "base_model" as const, group_id: selectedVariantGroup.id, row_id: selectedVariantRow.id }
+                    : usesCategoryPricing && selectedCategoryGroup?.id && selectedCategoryRow?.id
+                      ? { kind: "price_matrix" as const, group_id: selectedCategoryGroup.id, row_id: selectedCategoryRow.id }
+                      : null;
                   const accessoryConfiguration = evaluateProductAccessorySelection({
                     accessoryGroups: allAccessoryGroups,
                     baseModelGroupId: usesVariantPricing ? selectedVariantGroup?.id : null,
                     baseModelRowId: usesVariantPricing ? selectedVariantRow?.id : null,
+                    selectedModelTarget: selectedAccessoryModelTarget,
                     selectedQuantities: templatePricingAccessoryQuantities,
                   });
-                  const missingConditionalModelSelection = accessoryConfiguration.hasConditionalConfiguration && (!selectedVariantRow || !selectedVariantGroup);
+                  const missingConditionalModelSelection = accessoryConfiguration.hasConditionalConfiguration && !selectedAccessoryModelTarget;
                   const missingRequiredAccessorySelection = !accessoryConfiguration.valid || missingConditionalModelSelection;
                   const derivedDesking = isDesking && selectedSizeRow
                     ? deskingSizePricingCalculation({
@@ -2822,8 +2829,11 @@ export function ProductLibrarySelector({
                                 <select
                                   value={selectedCategoryGroup.id ?? ""}
                                   onChange={(event) => {
+                                    const nextGroup = categoryGroups.find((group) => group.id === event.target.value);
+                                    const nextRow = nextGroup?.items.find((row) => row.is_active !== false);
                                     setSelectedCategoryGroups((current) => ({ ...current, [template.id]: event.target.value }));
-                                    setSelectedCategoryRows((current) => ({ ...current, [template.id]: "" }));
+                                    setSelectedCategoryRows((current) => ({ ...current, [template.id]: nextRow?.id ?? "" }));
+                                    setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, selectedModelTarget: nextGroup?.id && nextRow?.id ? { kind: "price_matrix", group_id: nextGroup.id, row_id: nextRow.id } : null, selectedQuantities: current[template.id] ?? {} }).activeQuantities }));
                                   }}
                                   className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                                 >
@@ -2839,7 +2849,11 @@ export function ProductLibrarySelector({
                               <span className="text-[10px] font-bold uppercase text-zinc-500">Variant</span>
                               <select
                                 value={selectedCategoryRow?.id ?? ""}
-                                onChange={(event) => setSelectedCategoryRows((current) => ({ ...current, [template.id]: event.target.value }))}
+                                onChange={(event) => {
+                                  const nextRowId = event.target.value;
+                                  setSelectedCategoryRows((current) => ({ ...current, [template.id]: nextRowId }));
+                                  setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, selectedModelTarget: selectedCategoryGroup?.id ? { kind: "price_matrix", group_id: selectedCategoryGroup.id, row_id: nextRowId } : null, selectedQuantities: current[template.id] ?? {} }).activeQuantities }));
+                                }}
                                 className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                               >
                                 {categoryRows.map((row, index) => (

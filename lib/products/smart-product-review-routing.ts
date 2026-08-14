@@ -1,4 +1,4 @@
-import type { AccessoryConfigurationRole, AccessorySelectionMode } from "./accessory-conditional-configuration";
+import { accessoryApplicabilityTargetKey, type AccessoryApplicabilityTarget, type AccessoryConfigurationRole, type AccessorySelectionMode } from "./accessory-conditional-configuration";
 import type { ProductTemplateDraft } from "./product-template-draft";
 import { classifyDraftPriceMatrix } from "./product-template-draft-pricing-routing";
 import type { DraftPriceMatrixRoute } from "./product-template-draft-pricing-routing";
@@ -7,7 +7,7 @@ import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups";
 export const SMART_REVIEW_DESTINATIONS = ["base_model", "workstation", "category_matrix", "modular", "accessory", "skip"] as const;
 export type SmartReviewDestination = typeof SMART_REVIEW_DESTINATIONS[number];
 export type SmartReviewSelection = "optional_multiple" | "optional_exactly_one" | "required_exactly_one" | "required_at_least_one" | "multiple";
-export type SmartReviewRule = { baseModelGroupId: string; baseModelRowId: string; required: boolean; allowedItemIds?: string[]; fixedQuantity?: number };
+export type SmartReviewRule = { baseModelGroupId?: string; baseModelRowId?: string; target?: AccessoryApplicabilityTarget; required: boolean; allowedItemIds?: string[]; fixedQuantity?: number };
 export type SmartReviewAccessoryConfiguration = { role: AccessoryConfigurationRole; selection: SmartReviewSelection; rules: SmartReviewRule[] };
 export type SmartReviewRoute = {
   key: string;
@@ -79,13 +79,24 @@ export function smartReviewSelectionContract(selection: SmartReviewSelection): {
   return { selection: "unrestricted", required: false };
 }
 
+export function smartReviewRuleTarget(rule: SmartReviewRule): AccessoryApplicabilityTarget | null {
+  if (rule.target) return rule.target;
+  return rule.baseModelGroupId && rule.baseModelRowId
+    ? { kind: "base_model", group_id: rule.baseModelGroupId, row_id: rule.baseModelRowId }
+    : null;
+}
+
 export function validateSmartSetupReviewRouting(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan) {
   const errors: string[] = [];
   const routeKeys = new Set(plan.routes.map((route) => route.key));
   if (routeKeys.size !== plan.routes.length) errors.push("Duplicate reviewed routing groups were found.");
-  const baseRows = new Set([
-    ...(plan.routes.find((route) => route.key === "base_model:rows")?.destination === "base_model" ? draft.pricing.baseModelRows.map((row) => `${LEGACY_BASE_MODEL_GROUP_ID}\u0000${row.id}`) : []),
-    ...draft.pricing.priceMatrices.flatMap((matrix) => plan.routes.find((route) => route.key === `matrix:${matrix.id}`)?.destination === "base_model" ? matrix.rows.map((row) => `${matrix.id}\u0000${row.id}`) : []),
+  const modelTargets = new Set([
+    ...(plan.routes.find((route) => route.key === "base_model:rows")?.destination === "base_model" ? draft.pricing.baseModelRows.map((row) => accessoryApplicabilityTargetKey({ kind: "base_model", group_id: LEGACY_BASE_MODEL_GROUP_ID, row_id: row.id })) : []),
+    ...draft.pricing.priceMatrices.flatMap((matrix) => {
+      const destination = plan.routes.find((route) => route.key === `matrix:${matrix.id}`)?.destination;
+      const kind = destination === "base_model" ? "base_model" : destination === "category_matrix" ? "price_matrix" : null;
+      return kind ? matrix.rows.map((row) => accessoryApplicabilityTargetKey({ kind, group_id: matrix.id, row_id: row.id })) : [];
+    }),
   ]);
   plan.routes.forEach((route) => {
     if (!route.supportedDestinations.includes(route.destination)) errors.push(`${route.sourceName} cannot be applied to the selected destination.`);
@@ -97,10 +108,12 @@ export function validateSmartSetupReviewRouting(draft: ProductTemplateDraft, pla
       : draft.pricing.priceMatrices.find((matrix) => matrix.id === route.sourceId)?.rows.map((row) => row.id) ?? []);
     const ruleKeys = new Set<string>();
     route.accessory?.rules.forEach((rule) => {
-      const key = `${rule.baseModelGroupId}\u0000${rule.baseModelRowId}`;
+      const target = smartReviewRuleTarget(rule);
+      const key = target ? accessoryApplicabilityTargetKey(target) : "";
+      if (!target) errors.push(`${route.sourceName} has an incomplete applicable model target.`);
       if (ruleKeys.has(key)) errors.push(`${route.sourceName} has a duplicate applicable model rule.`);
-      ruleKeys.add(key);
-      if (!baseRows.has(key)) errors.push(`${route.sourceName} references a model not routed to Base / Model Pricing.`);
+      if (key) ruleKeys.add(key);
+      if (target && !modelTargets.has(key)) errors.push(`${route.sourceName} references a model not routed to Base / Model or Category / Matrix Pricing.`);
       if (rule.fixedQuantity !== undefined && (!Number.isInteger(rule.fixedQuantity) || rule.fixedQuantity <= 0)) errors.push(`${route.sourceName} has an invalid fixed quantity.`);
       if (route.accessory?.selection === "required_exactly_one" && rule.fixedQuantity !== undefined && rule.fixedQuantity !== 1) errors.push(`${route.sourceName} must use fixed quantity 1 for Required / Exactly One.`);
       if (rule.allowedItemIds?.length === 0) errors.push(`${route.sourceName} requires at least one allowed item when Specific Items is selected.`);

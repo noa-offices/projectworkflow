@@ -5,6 +5,7 @@ import { BASE_MODEL_GROUP_PRICING_TYPE } from "./base-model-pricing-groups.js";
 import {
   addAccessoryApplicabilityRule,
   removeAccessoryApplicabilityRule,
+  setAccessoryApplicabilityTargets,
   setAccessoryConditionalEnabled,
   setAccessoryConfigurationRole,
   setAccessoryRuleAllowedItems,
@@ -43,6 +44,22 @@ test("model rules use stable IDs, prevent duplicates, update, and remove indepen
   assert.deepEqual(group.conditional_configuration?.applicability[0], { base_model_group_id: "base-group", base_model_row_id: "model-a", required: true, visible: true, fixed_quantity: 1 });
   group = removeAccessoryApplicabilityRule(group, 0);
   assert.equal(group.conditional_configuration?.applicability[0].base_model_row_id, "model-b");
+});
+
+test("multi-select targets preserve retained rules, author matrix targets, and keep unavailable rules", () => {
+  const choices = [
+    { key: "base_model\u0000base\u0000a", kind: "base_model" as const, groupId: "base", rowId: "a", groupLabel: "Desks", code: "A", displayName: "Desk A" },
+    { key: "price_matrix\u0000matrix\u0000m", kind: "price_matrix" as const, groupId: "matrix", rowId: "m", groupLabel: "Seating", code: "M", displayName: "Chair M" },
+  ];
+  let group = addAccessoryApplicabilityRule(setAccessoryConditionalEnabled(legacy, true), "base", "a");
+  group = updateAccessoryApplicabilityRule(group, 0, { required: true, allowed_item_ids: ["item-a"], fixed_quantity: 1 });
+  group = { ...group, conditional_configuration: { ...group.conditional_configuration!, applicability: [...group.conditional_configuration!.applicability, { target: { kind: "base_model", group_id: "missing", row_id: "row" }, required: false, visible: true }] } };
+  group = setAccessoryApplicabilityTargets(group, choices, new Set(choices.map((choice) => choice.key)));
+  assert.deepEqual(group.conditional_configuration?.applicability[0], { base_model_group_id: "base", base_model_row_id: "a", required: true, visible: true, allowed_item_ids: ["item-a"], fixed_quantity: 1 });
+  assert.deepEqual(group.conditional_configuration?.applicability[1], { target: { kind: "base_model", group_id: "missing", row_id: "row" }, required: false, visible: true });
+  assert.deepEqual(group.conditional_configuration?.applicability[2], { target: { kind: "price_matrix", group_id: "matrix", row_id: "m" }, required: false, visible: true });
+  const unchanged = setAccessoryApplicabilityTargets(group, choices, new Set(choices.map((choice) => choice.key)));
+  assert.deepEqual(unchanged, group);
 });
 
 test("allowed-all omits IDs while specific items and stale warnings preserve IDs", () => {

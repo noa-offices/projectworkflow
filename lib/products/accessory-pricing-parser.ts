@@ -1,12 +1,14 @@
 import { defaultCurrency, normalizeCurrency } from "../currencies";
 import {
   parseAccessoryConfigurationGroups,
+  resolveAccessoryApplicabilityTarget,
   serializeAccessoryConfigurationGroups,
   type AccessoryConfigurationGroup,
   type AccessoryConfigurationIssue,
   type AccessoryConfigurationItem,
 } from "./accessory-conditional-configuration";
 import { baseModelPricingGroups } from "./base-model-pricing-groups";
+import { groupedStandardCategoryPricingRows } from "./category-pricing-groups";
 import { parseNullablePricingNumber } from "./nullable-pricing";
 
 export class AccessoryPricingContractError extends Error {
@@ -61,9 +63,16 @@ function normalizeGroups(groups: AccessoryConfigurationGroup[]) {
   return normalized.filter((group) => group.items.length);
 }
 
-function baseModelReferenceIssues(groups: AccessoryConfigurationGroup[], baseModelPricing: unknown) {
-  const identities = new Set(
+function pricingTargetReferenceIssues(groups: AccessoryConfigurationGroup[], baseModelPricing: unknown, categoryPricing: unknown) {
+  const baseModelIdentities = new Set(
     baseModelPricingGroups(baseModelPricing).flatMap((group) =>
+      group.items.flatMap((row) => typeof row.id === "string" && row.id
+        ? [`${group.id}\u0000${row.id}`]
+        : []),
+    ),
+  );
+  const matrixIdentities = new Set(
+    groupedStandardCategoryPricingRows(Array.isArray(categoryPricing) ? categoryPricing : []).flatMap((group) =>
       group.items.flatMap((row) => typeof row.id === "string" && row.id
         ? [`${group.id}\u0000${row.id}`]
         : []),
@@ -72,10 +81,15 @@ function baseModelReferenceIssues(groups: AccessoryConfigurationGroup[], baseMod
   const issues: AccessoryConfigurationIssue[] = [];
   groups.forEach((group, groupIndex) => {
     group.conditional_configuration?.applicability.forEach((rule, ruleIndex) => {
-      if (!identities.has(`${rule.base_model_group_id}\u0000${rule.base_model_row_id}`)) {
+      const target = resolveAccessoryApplicabilityTarget(rule);
+      if (!target) return;
+      const exists = target.kind === "base_model"
+        ? baseModelIdentities.has(`${target.group_id}\u0000${target.row_id}`)
+        : matrixIdentities.has(`${target.group_id}\u0000${target.row_id}`);
+      if (!exists) {
         issues.push({
-          code: "unknown_base_model_reference",
-          message: `Base/Model reference '${rule.base_model_group_id} / ${rule.base_model_row_id}' does not exist in the submitted pricing data.`,
+          code: target.kind === "base_model" ? "unknown_base_model_reference" : "unknown_price_matrix_reference",
+          message: `${target.kind === "base_model" ? "Base/Model" : "Category / Matrix"} reference '${target.group_id} / ${target.row_id}' does not exist in the submitted pricing data.`,
           path: `accessory_pricing[${groupIndex}].conditional_configuration.applicability[${ruleIndex}]`,
         });
       }
@@ -84,7 +98,7 @@ function baseModelReferenceIssues(groups: AccessoryConfigurationGroup[], baseMod
   return issues;
 }
 
-export function parseAccessoryPricingJson(rawValue: string | null | undefined, baseModelPricing: unknown = []) {
+export function parseAccessoryPricingJson(rawValue: string | null | undefined, baseModelPricing: unknown = [], categoryPricing: unknown = []) {
   if (!rawValue) return [];
   let raw: unknown;
   try {
@@ -97,7 +111,7 @@ export function parseAccessoryPricingJson(rawValue: string | null | undefined, b
   if (!parsed.valid) throw new AccessoryPricingContractError(parsed.issues);
   const normalized = normalizeGroups(parsed.groups);
   const normalizedContract = parseAccessoryConfigurationGroups(normalized);
-  const issues = [...normalizedContract.issues, ...baseModelReferenceIssues(normalizedContract.groups, baseModelPricing)];
+  const issues = [...normalizedContract.issues, ...pricingTargetReferenceIssues(normalizedContract.groups, baseModelPricing, categoryPricing)];
   if (issues.length) throw new AccessoryPricingContractError(issues);
   return serializeAccessoryConfigurationGroups(normalizedContract.groups);
 }

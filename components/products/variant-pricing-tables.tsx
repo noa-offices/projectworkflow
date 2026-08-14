@@ -55,7 +55,9 @@ import { hasMeaningfulCategoryPricing } from "@/lib/products/category-pricing-st
 import { hasMeaningfulModularPricing } from "@/lib/products/modular-pricing-state";
 import { hasMeaningfulAccessoryPricing } from "@/lib/products/accessory-pricing-state";
 import {
+  accessoryApplicabilityTargetKey,
   parseAccessoryConfigurationGroups,
+  resolveAccessoryApplicabilityTarget,
   serializeAccessoryConfigurationGroups,
   type AccessoryConditionalConfiguration,
   type AccessoryConfigurationGroup,
@@ -63,15 +65,16 @@ import {
   type AccessorySelectionMode,
 } from "@/lib/products/accessory-conditional-configuration";
 import {
-  addAccessoryApplicabilityRule,
   removeAccessoryApplicabilityRule,
   setAccessoryConditionalEnabled,
+  setAccessoryApplicabilityTargets,
   setAccessoryConfigurationRole,
   setAccessoryRuleAllowedItems,
   setAccessorySelectionMode,
   staleAccessoryRuleItemIds,
   updateAccessoryApplicabilityRule,
 } from "@/lib/products/accessory-conditional-configuration-ui-state";
+import { applicabilityTargetChoiceLabel, applicabilityTargetChoices } from "@/lib/products/applicability-target-choices";
 import {
   TEMPLATE_IMPORT_APPLY_EVENT,
   TEMPLATE_IMPORT_RESET_EVENT,
@@ -289,6 +292,7 @@ function normalizeAccessoryGroups(rows?: AccessoryPricingRow[] | null) {
 
   return normalizedGroups.length ? normalizedGroups : [];
 }
+
 
 function CurrencySelect({
   onChange,
@@ -750,6 +754,7 @@ export function VariantPricingTable({
 
 export function CategoryPricingTable({
   brandDefaultCurrency,
+  onGroupsChange,
   onHasDataChange,
   replacementGroups,
   replacementVersion,
@@ -759,6 +764,7 @@ export function CategoryPricingTable({
   templateCurrency,
 }: {
   brandDefaultCurrency?: string | null;
+  onGroupsChange?: (groups: CategoryPricingRow[]) => void;
   onHasDataChange?: (hasCategoryPricingData: boolean) => void;
   replacementGroups?: CategoryPricingRow[] | null;
   replacementVersion?: number;
@@ -820,7 +826,8 @@ export function CategoryPricingTable({
 
   useEffect(() => {
     onHasDataChange?.(hasMeaningfulCategoryPricing(groups));
-  }, [groups, onHasDataChange]);
+    onGroupsChange?.(groups);
+  }, [groups, onGroupsChange, onHasDataChange]);
 
   useEffect(() => {
     const handleApply = (event: Event) => {
@@ -1560,16 +1567,20 @@ export function ModularItemPricingTable({
 
 function AccessoryConditionalRuleEditor({
   baseModelGroups,
+  categoryPricingGroups,
   group,
   onChange,
 }: {
   baseModelGroups: BaseModelPricingGroup<VariantPricingRow>[];
+  categoryPricingGroups: CategoryPricingRow[];
   group: AccessoryPricingRow;
   onChange: (group: AccessoryPricingRow) => void;
 }) {
-  const [selectedModelKey, setSelectedModelKey] = useState("");
+  const [modelsOpen, setModelsOpen] = useState(false);
+  const [pendingModelKeys, setPendingModelKeys] = useState<Set<string>>(new Set());
   const configuration = group.conditional_configuration;
-  const modelChoices = baseModelGroups.flatMap((baseGroup) => baseGroup.is_active === false ? [] : baseGroup.items.flatMap((row) => {
+  const [rulesCollapsed, setRulesCollapsed] = useState(() => Boolean(configuration?.applicability.length));
+  /* Legacy single-select formatter retired in favor of shared target choices.
     if (row.is_active === false || !baseGroup.id || !row.id) return [];
     const details = [row.display_name || row.variant_name || "Unnamed model", row.supplier_price_list_code, row.dimension].filter(Boolean);
     return [{
@@ -1578,16 +1589,32 @@ function AccessoryConditionalRuleEditor({
       key: `${baseGroup.id}\u0000${row.id}`,
       label: `${baseGroup.group_name} / ${details.join(" — ")}`,
     }];
-  }));
-  const availableChoices = modelChoices.filter((choice) => !configuration?.applicability.some((rule) =>
-    rule.base_model_group_id === choice.baseModelGroupId && rule.base_model_row_id === choice.baseModelRowId));
+  })); */
+  const modelChoices = applicabilityTargetChoices(baseModelGroups, categoryPricingGroups);
+  const choiceByKey = new Map(modelChoices.map((choice) => [choice.key, choice]));
+  const ruleKey = (rule: NonNullable<typeof configuration>["applicability"][number]) => {
+    const target = resolveAccessoryApplicabilityTarget(rule);
+    return target ? accessoryApplicabilityTargetKey(target) : "";
+  };
+  const selectedKeys = new Set((configuration?.applicability ?? []).map(ruleKey).filter(Boolean));
+  const requiredRuleCount = (configuration?.applicability ?? []).filter((rule) => rule.required).length;
+  const unavailableRuleCount = (configuration?.applicability ?? []).filter((rule) => !choiceByKey.has(ruleKey(rule))).length;
+  const summaryCodes = (configuration?.applicability ?? []).flatMap((rule) => choiceByKey.get(ruleKey(rule))?.code ?? []).slice(0, 3);
   const staleItemIds = staleAccessoryRuleItemIds(group as AccessoryConfigurationGroup);
 
   function update(transform: (current: AccessoryConfigurationGroup) => AccessoryConfigurationGroup) {
     onChange(transform(group as AccessoryConfigurationGroup) as AccessoryPricingRow);
   }
 
+  useEffect(() => {
+    if (!modelsOpen) return;
+    const onEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setModelsOpen(false); };
+    document.addEventListener("keydown", onEscape);
+    return () => document.removeEventListener("keydown", onEscape);
+  }, [modelsOpen]);
+
   return (
+    <>
     <details className="mt-3 border-t border-zinc-100 pt-3">
       <summary className="cursor-pointer text-xs font-semibold text-emerald-900">Advanced Configuration / Conditional Rules</summary>
       <div className="mt-3 space-y-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
@@ -1634,45 +1661,21 @@ function AccessoryConditionalRuleEditor({
                 </select>
               </label>
             </div>
-            <div>
-              <p className="text-xs font-semibold text-zinc-700">Applicable Models</p>
-              <p className="mt-1 text-[11px] text-zinc-500">Models without a rule are not shown for this group.</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <select value={selectedModelKey} onChange={(event) => setSelectedModelKey(event.target.value)} disabled={!availableChoices.length} className="h-9 min-w-0 flex-1 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800">
-                  <option value="">{availableChoices.length ? "Select Base / Model" : "All available models already added"}</option>
-                  {availableChoices.map((choice) => <option key={choice.key} value={choice.key}>{choice.label}</option>)}
-                </select>
-                <button
-                  type="button"
-                  disabled={!selectedModelKey}
-                  onClick={() => {
-                    const choice = modelChoices.find((candidate) => candidate.key === selectedModelKey);
-                    if (!choice) return;
-                    update((current) => addAccessoryApplicabilityRule(current, choice.baseModelGroupId, choice.baseModelRowId));
-                    setSelectedModelKey("");
-                  }}
-                  className="h-9 rounded-md border border-emerald-200 bg-white px-3 text-xs font-semibold text-emerald-900 disabled:cursor-not-allowed disabled:text-zinc-400"
-                >
-                  + Add Model Rule
-                </button>
+            <div className="rounded-md border border-emerald-100 bg-emerald-50/40 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0"><p className="text-xs font-semibold text-emerald-950">Applicable Models</p>{configuration.applicability.length ? <><p className="mt-1 text-[11px] text-emerald-800">{configuration.applicability.length} selected · {requiredRuleCount} required{unavailableRuleCount ? ` · ⚠ ${unavailableRuleCount} unavailable` : ""}</p>{summaryCodes.length ? <p className="mt-0.5 truncate text-[11px] text-emerald-800">{summaryCodes.join(", ")}{configuration.applicability.length > summaryCodes.length ? ` +${configuration.applicability.length - summaryCodes.length} more` : ""}</p> : null}</> : <p className="mt-1 text-[11px] text-emerald-800">Choose Base / Model or Category / Matrix rows.</p>}</div>
+                <div className="flex gap-2"><button type="button" onClick={() => { setPendingModelKeys(new Set(selectedKeys)); setModelsOpen(true); }} className="h-8 rounded border border-emerald-200 bg-white px-2 text-xs font-semibold text-emerald-900">Edit</button>{configuration.applicability.length ? <button type="button" aria-expanded={!rulesCollapsed} onClick={() => setRulesCollapsed((current) => !current)} className="h-8 rounded border border-emerald-200 bg-white px-2 text-xs font-semibold text-emerald-900">{rulesCollapsed ? "Show" : "Hide"}</button> : null}</div>
               </div>
-            </div>
-            <div className="space-y-2">
+              {!rulesCollapsed ? <div className="mt-3 space-y-1 border-t border-emerald-100 pt-3">
               {configuration.applicability.map((rule, ruleIndex) => {
-                const model = modelChoices.find((choice) => choice.baseModelGroupId === rule.base_model_group_id && choice.baseModelRowId === rule.base_model_row_id);
+                const model = choiceByKey.get(ruleKey(rule));
                 const usesSpecificItems = rule.allowed_item_ids !== undefined;
                 return (
-                  <div key={`${rule.base_model_group_id}:${rule.base_model_row_id}`} className="rounded-md border border-zinc-200 bg-white p-3">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <p className="text-xs font-semibold text-zinc-900">{model?.label ?? "Unavailable Base / Model row"}</p>
-                        {!model ? <p className="mt-1 text-[11px] text-red-700">This rule references a removed model and must be corrected before saving.</p> : null}
-                      </div>
-                      <button type="button" onClick={() => update((current) => removeAccessoryApplicabilityRule(current, ruleIndex))} className="text-xs font-semibold text-red-700">Remove Rule</button>
-                    </div>
-                    <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                      <label className="flex items-center gap-2 text-xs text-zinc-700">
-                        <input type="checkbox" checked={rule.required} onChange={(event) => update((current) => updateAccessoryApplicabilityRule(current, ruleIndex, { required: event.target.checked }))} />
+                  <div key={ruleKey(rule) || `unavailable:${ruleIndex}`} className="rounded border border-zinc-200 bg-white p-2">
+                    <div className="grid gap-2 sm:grid-cols-[minmax(12rem,1fr)_auto_minmax(8rem,auto)_minmax(6rem,auto)_auto] sm:items-end">
+                      <div><p className={`text-xs font-semibold ${model ? "text-zinc-900" : "text-amber-800"}`}>{model ? applicabilityTargetChoiceLabel(model) : "Unavailable model target · ⚠"}</p>{model ? <p className="mt-0.5 text-[10px] text-zinc-500">{model.groupLabel}</p> : <p className="mt-0.5 text-[10px] text-amber-700">Preserved until corrected.</p>}</div>
+                      <label className="flex items-center gap-1 text-xs text-zinc-700">
+                        <input type="checkbox" checked={configuration.role === "companion" || rule.required} disabled={configuration.role === "companion"} onChange={(event) => update((current) => updateAccessoryApplicabilityRule(current, ruleIndex, { required: event.target.checked }))} />
                         Required
                       </label>
                       <label className="block text-xs text-zinc-600">
@@ -1687,17 +1690,17 @@ function AccessoryConditionalRuleEditor({
                         </select>
                       </label>
                       <label className="block text-xs text-zinc-600">
-                        <span className="font-semibold text-zinc-700">Fixed Quantity (optional)</span>
+                        <span className="font-semibold text-zinc-700">Fixed Qty</span>
                         <input
                           type="number"
                           min={1}
                           step={1}
                           value={rule.fixed_quantity ?? ""}
                           onChange={(event) => update((current) => updateAccessoryApplicabilityRule(current, ruleIndex, { fixed_quantity: event.target.value ? Math.max(1, Math.trunc(Number(event.target.value) || 1)) : undefined }))}
-                          className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 outline-none focus:border-emerald-800"
+                          className="mt-1 h-8 w-20 border border-zinc-300 bg-white px-2 outline-none focus:border-emerald-800"
                         />
                       </label>
-                    </div>
+                      <button type="button" onClick={() => update((current) => removeAccessoryApplicabilityRule(current, ruleIndex))} className="text-xs font-semibold text-red-700">Remove</button></div>
                     {configuration.selection === "exactly_one" && rule.fixed_quantity !== undefined && rule.fixed_quantity !== 1 ? <p className="mt-2 text-[11px] text-red-700">Exactly One requires a fixed quantity of 1.</p> : null}
                     {usesSpecificItems ? (
                       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
@@ -1722,12 +1725,15 @@ function AccessoryConditionalRuleEditor({
                 );
               })}
               {!configuration.applicability.length ? <p className="rounded-md border border-dashed border-zinc-200 px-3 py-2 text-xs text-zinc-500">No applicable models configured.</p> : null}
+              </div> : null}
             </div>
             {staleItemIds.length ? <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">One or more allowed items were removed. Update the affected rule before saving.</p> : null}
           </>
         ) : null}
       </div>
     </details>
+    {modelsOpen ? <div role="dialog" aria-modal="true" aria-label="Choose applicable models" className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setModelsOpen(false); }}><div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl bg-white p-4 shadow-xl"><div><h3 className="font-semibold">Applicable Models</h3><p className="mt-1 text-xs text-zinc-500">Choose Base / Model or Category / Matrix rows for this configuration.</p></div><div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto border-y border-zinc-100 py-2">{[...new Map(modelChoices.map((choice) => [`${choice.kind}\u0000${choice.groupId}`, choice])).values()].map((groupChoice) => <div key={`${groupChoice.kind}:${groupChoice.groupId}`}><p className="px-2 text-[10px] font-bold uppercase text-zinc-500">{groupChoice.kind === "base_model" ? "Base / Model" : "Category / Matrix"} — {groupChoice.groupLabel}</p>{modelChoices.filter((choice) => choice.kind === groupChoice.kind && choice.groupId === groupChoice.groupId).map((choice) => <label key={choice.key} className="flex cursor-pointer items-start gap-2 rounded p-2 text-sm hover:bg-zinc-50"><input type="checkbox" checked={pendingModelKeys.has(choice.key)} onChange={(event) => setPendingModelKeys((current) => { const next = new Set(current); if (event.target.checked) next.add(choice.key); else next.delete(choice.key); return next; })} /><span>{choice.code ? <><strong>{choice.code}</strong>{choice.displayName !== choice.code ? ` — ${choice.displayName}` : ""}</> : choice.displayName}</span></label>)}</div>)}</div><div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setModelsOpen(false)} className="rounded border border-zinc-300 px-3 py-2 text-sm font-semibold">Cancel</button><button type="button" onClick={() => { update((current) => setAccessoryApplicabilityTargets(current, modelChoices, pendingModelKeys)); setModelsOpen(false); }} className="rounded bg-emerald-900 px-3 py-2 text-sm font-semibold text-white">Done</button></div></div></div> : null}
+    </>
   );
 }
 
@@ -1742,6 +1748,7 @@ function accessoryGroupSummary(group: AccessoryPricingRow) {
 
 export function AccessoryPricingTable({
   baseModelGroups = [],
+  categoryPricingGroups = [],
   brandDefaultCurrency,
   onHasDataChange,
   replacementGroups,
@@ -1752,6 +1759,7 @@ export function AccessoryPricingTable({
   templateCurrency,
 }: {
   baseModelGroups?: BaseModelPricingGroup<VariantPricingRow>[];
+  categoryPricingGroups?: CategoryPricingRow[];
   brandDefaultCurrency?: string | null;
   onHasDataChange?: (hasAccessoryPricingData: boolean) => void;
   replacementGroups?: AccessoryPricingRow[] | null;
@@ -1987,7 +1995,7 @@ export function AccessoryPricingTable({
             </div>
             {!collapsedGroups[groupId] ? <>
             {groupActionNotices[groupId] ? <p role="status" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">{groupActionNotices[groupId]}</p> : null}
-            <AccessoryConditionalRuleEditor baseModelGroups={baseModelGroups} group={group} onChange={(nextGroup) => setGroups((current) => current.map((entry, index) => index === groupIndex ? nextGroup : entry))} />
+            <AccessoryConditionalRuleEditor baseModelGroups={baseModelGroups} categoryPricingGroups={categoryPricingGroups} group={group} onChange={(nextGroup) => setGroups((current) => current.map((entry, index) => index === groupIndex ? nextGroup : entry))} />
             <div className="mt-3 rounded-md border border-emerald-100 bg-emerald-50/40 p-3">
               <div className="flex items-center justify-between gap-2"><div><p className="text-xs font-semibold text-emerald-950">Visual subgroups</p><p className="text-[10px] text-emerald-800">Organizational only; accessory rules and prices are unchanged.</p></div><button type="button" onClick={() => { const id = idFor("accessory-subgroup", group.subgroups?.length ?? 0); updateGroup(groupIndex, { subgroups: [...(group.subgroups ?? []), createBaseModelPricingSubgroup(id, "New Subgroup", group.subgroups?.length ?? 0)] }); setCollapsedAccessorySubgroups((current) => ({ ...current, [id]: false })); }} className="rounded-md border border-emerald-200 bg-white px-2 py-1 text-xs font-semibold text-emerald-900">+ Add Subgroup</button></div>
               {(group.subgroups ?? []).length ? <div className="mt-3 space-y-2">{[...(group.subgroups ?? [])].sort((a, b) => a.sort_order - b.sort_order).map((subgroup) => <div key={subgroup.id} className="rounded-md border border-zinc-200 bg-white p-2"><div className="flex flex-wrap items-start gap-2"><button type="button" onClick={() => setCollapsedAccessorySubgroups((current) => ({ ...current, [subgroup.id]: !current[subgroup.id] }))} className="h-8 w-8 rounded border border-zinc-200 text-xs">{collapsedAccessorySubgroups[subgroup.id] ? ">" : "v"}</button><PricingSubgroupReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} pricingType="accessory" groupId={groupId} subgroupId={subgroup.id} /><div className="min-w-52 flex-1"><input value={subgroup.subgroup_name} onChange={(event) => updateGroup(groupIndex, { subgroups: (group.subgroups ?? []).map((entry) => entry.id === subgroup.id ? { ...entry, subgroup_name: event.target.value } : entry) })} className="h-8 w-full border border-zinc-200 px-2 text-sm font-semibold outline-none focus:border-emerald-800" /><p className="mt-1 text-xs text-zinc-500">{subgroup.row_ids.length} items</p></div><label className="flex items-center gap-1 text-xs text-zinc-600"><input type="checkbox" checked={subgroup.is_active} onChange={(event) => updateGroup(groupIndex, { subgroups: (group.subgroups ?? []).map((entry) => entry.id === subgroup.id ? { ...entry, is_active: event.target.checked } : entry) })} />Active</label><button type="button" onClick={() => updateGroup(groupIndex, { subgroups: (group.subgroups ?? []).filter((entry) => entry.id !== subgroup.id) })} className="text-xs font-semibold text-red-700">Remove subgroup</button></div>{!collapsedAccessorySubgroups[subgroup.id] ? <div className="mt-2 space-y-1 border-t border-zinc-100 pt-2">{(group.items ?? []).filter((item) => item.id && subgroup.row_ids.includes(item.id)).map((item) => <p key={item.id} className="text-xs text-zinc-700">{item.supplier_price_list_code ? `${item.supplier_price_list_code} — ` : ""}{item.item_name}</p>)}</div> : null}</div>)}</div> : null}

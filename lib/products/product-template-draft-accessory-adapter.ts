@@ -1,6 +1,7 @@
 import type { ProductTemplateDraft, ProductTemplateDraftMatrixRow, ProductTemplateDraftOptionGroup, ProductTemplateDraftPricedRow } from "./product-template-draft";
+import type { AccessoryModelApplicabilityRule } from "./accessory-conditional-configuration";
 import { directMatrixRowPrice, routeDraftPriceMatrices } from "./product-template-draft-pricing-routing";
-import { smartReviewMatrixOverrides, smartReviewSelectionContract, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
+import { smartReviewMatrixOverrides, smartReviewRuleTarget, smartReviewSelectionContract, type SmartReviewRule, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
 
 type AccessoryGroup = {
   id: string;
@@ -9,8 +10,19 @@ type AccessoryGroup = {
   is_active: boolean;
   sort_order: number;
   items: Array<{ id: string; item_name: string; supplier_price_list_code: string; price: number | null; currency?: string; specification: string; is_active: boolean; sort_order: number }>;
-  conditional_configuration?: { role: "accessory" | "conditional_option" | "companion"; selection: "unrestricted" | "exactly_one" | "at_least_one" | "choose_multiple"; applicability: Array<{ base_model_group_id: string; base_model_row_id: string; required: boolean; visible: boolean; allowed_item_ids?: string[]; fixed_quantity?: number }> };
+  conditional_configuration?: { role: "accessory" | "conditional_option" | "companion"; selection: "unrestricted" | "exactly_one" | "at_least_one" | "choose_multiple"; applicability: AccessoryModelApplicabilityRule[] };
 };
+
+function mapReviewedRule(rule: SmartReviewRule): AccessoryModelApplicabilityRule {
+  const target = smartReviewRuleTarget(rule);
+  return {
+    ...(rule.target && target ? { target } : { base_model_group_id: rule.baseModelGroupId, base_model_row_id: rule.baseModelRowId }),
+    required: rule.required,
+    visible: true,
+    ...(rule.allowedItemIds ? { allowed_item_ids: rule.allowedItemIds } : {}),
+    ...(rule.fixedQuantity !== undefined ? { fixed_quantity: rule.fixedQuantity } : {}),
+  };
+}
 
 function primaryCode(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMatrixRow, warnings: string[], itemKind: string) {
   const codes = [...row.supplierCodes, ...row.referenceCodes];
@@ -62,7 +74,7 @@ export function mapDraftOptionGroupsToAccessories(draft: ProductTemplateDraft, r
     const configuration = reviewedRoute?.accessory ? {
       role: reviewedRoute.accessory.role,
       selection: reviewedContract?.selection ?? "unrestricted",
-      applicability: reviewedRoute.accessory.rules.map((rule) => ({ base_model_group_id: rule.baseModelGroupId, base_model_row_id: rule.baseModelRowId, required: rule.required, visible: true, ...(rule.allowedItemIds ? { allowed_item_ids: rule.allowedItemIds } : {}), ...(rule.fixedQuantity !== undefined ? { fixed_quantity: rule.fixedQuantity } : {}) })),
+      applicability: reviewedRoute.accessory.rules.map(mapReviewedRule),
     } : selectionConfiguration(group);
     return [{
       id: group.id,
@@ -87,7 +99,7 @@ export function mapDraftOptionGroupsToAccessories(draft: ProductTemplateDraft, r
       group_is_required: reviewedRoute?.accessory ? smartReviewSelectionContract(reviewedRoute.accessory.selection).required : false,
       is_active: true,
       sort_order: optionGroups.length + routeIndex,
-      conditional_configuration: reviewedRoute?.accessory ? { role: reviewedRoute.accessory.role, selection: smartReviewSelectionContract(reviewedRoute.accessory.selection).selection, applicability: reviewedRoute.accessory.rules.map((rule) => ({ base_model_group_id: rule.baseModelGroupId, base_model_row_id: rule.baseModelRowId, required: rule.required, visible: true, ...(rule.allowedItemIds ? { allowed_item_ids: rule.allowedItemIds } : {}), ...(rule.fixedQuantity !== undefined ? { fixed_quantity: rule.fixedQuantity } : {}) })) } : { role: "companion", selection: "exactly_one", applicability: [] },
+      conditional_configuration: reviewedRoute?.accessory ? { role: reviewedRoute.accessory.role, selection: smartReviewSelectionContract(reviewedRoute.accessory.selection).selection, applicability: reviewedRoute.accessory.rules.map(mapReviewedRule) } : { role: "companion", selection: "exactly_one", applicability: [] },
       items: route.matrix.rows.map((item, itemIndex) => mapItem(item, directMatrixRowPrice(item, column) ?? null, itemIndex, warnings, "Companion item")),
     }];
   });

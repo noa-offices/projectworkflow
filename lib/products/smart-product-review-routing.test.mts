@@ -62,3 +62,24 @@ test("unsupported routes, duplicate model rules, unknown items, and invalid quan
   assert.equal(validation.valid, false);
   assert.match(validation.errors.join(" "), /cannot be applied|duplicate|allowed item|fixed quantity 1/i);
 });
+
+test("review routing accepts stable Category / Matrix targets and preserves pricing authority", () => {
+  const plan = createSmartSetupReviewRouting(draft);
+  const top = plan.routes.find((route) => route.sourceId === "top")!;
+  top.accessory = { role: "conditional_option", selection: "optional_multiple", rules: [{ target: { kind: "price_matrix", group_id: "ARCA", row_id: "ARCA-row" }, required: false, allowedItemIds: ["top-item"] }] };
+  assert.equal(validateSmartSetupReviewRouting(draft, plan).valid, true);
+  const applied = draftForSmartSetupReviewApply(draft, plan);
+  const mapped = mapDraftOptionGroupsToAccessories(applied, plan).groups.find((group) => group.id === "top")!;
+  assert.deepEqual(mapped.conditional_configuration?.applicability[0], { target: { kind: "price_matrix", group_id: "ARCA", row_id: "ARCA-row" }, required: false, visible: true, allowed_item_ids: ["top-item"] });
+  assert.equal(mapDraftBaseModelPricing(applied, smartReviewMatrixOverrides(plan)).groups.some((group) => group.id === "ARCA"), false);
+  assert.equal(mapDraftPriceMatricesToCategoryGroups(applied, smartReviewMatrixOverrides(plan)).groups.filter((group) => group.id === "ARCA").length, 1);
+});
+
+test("review routing rejects nonexistent Category / Matrix targets", () => {
+  const plan = createSmartSetupReviewRouting(draft);
+  const top = plan.routes.find((route) => route.sourceId === "top")!;
+  top.accessory = { role: "conditional_option", selection: "optional_multiple", rules: [{ target: { kind: "price_matrix", group_id: "ARCA", row_id: "missing" }, required: false }] };
+  const validation = validateSmartSetupReviewRouting(draft, plan);
+  assert.equal(validation.valid, false);
+  assert.match(validation.errors.join(" "), /not routed to Base \/ Model or Category \/ Matrix Pricing/i);
+});

@@ -56,6 +56,26 @@ test("supplier codes and prices are not rule identity or client authority", () =
   assert.deepEqual(result.activeQuantities, { top: 1 });
 });
 
+test("Category / Matrix model targets drive authoritative Product Library accessory evaluation", () => {
+  const matrixGroup = {
+    id: "coat-hanger",
+    group_name: "Coat Hanger",
+    group_is_required: false,
+    items: [{ id: "black", price: 20 }, { id: "white", price: 25 }],
+    conditional_configuration: {
+      role: "companion",
+      selection: "at_least_one",
+      applicability: [{ target: { kind: "price_matrix", group_id: "everyis1", row_id: "ev111" }, required: true, visible: true, allowed_item_ids: ["black", "white"], fixed_quantity: 1 }],
+    },
+  };
+  const target = { kind: "price_matrix" as const, group_id: "everyis1", row_id: "ev111" };
+  const missing = evaluateProductAccessorySelection({ accessoryGroups: [matrixGroup], selectedModelTarget: target });
+  assert.equal(missing.groups[0].visible, true);
+  assert.equal(missing.groups[0].validationCode, "required_selection_missing");
+  assert.equal(evaluateProductAccessorySelection({ accessoryGroups: [matrixGroup], selectedModelTarget: target, selectedQuantities: { black: 1 } }).valid, true);
+  assert.equal(evaluateProductAccessorySelection({ accessoryGroups: [matrixGroup], selectedModelTarget: { ...target, row_id: "ev711" } }).groups[0].visible, false);
+});
+
 test("server quantity input accepts only unique positive whole numbers", () => {
   assert.deepEqual(parseSubmittedAccessoryQuantities(["top:1", "top-alt:2"]), { errors: [], quantities: { top: 1, "top-alt": 2 } });
   for (const values of [["top:0"], ["top:-1"], ["top:1.5"], ["top:nope"], ["top:1:extra"], ["unknown"], ["top:1", "top:2"]]) {

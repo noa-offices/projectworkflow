@@ -4,9 +4,18 @@ export const ACCESSORY_SELECTION_MODES = ["unrestricted", "exactly_one", "at_lea
 export type AccessoryConfigurationRole = typeof ACCESSORY_CONFIGURATION_ROLES[number];
 export type AccessorySelectionMode = typeof ACCESSORY_SELECTION_MODES[number];
 
+export const ACCESSORY_APPLICABILITY_TARGET_KINDS = ["base_model", "price_matrix"] as const;
+export type AccessoryApplicabilityTargetKind = typeof ACCESSORY_APPLICABILITY_TARGET_KINDS[number];
+export type AccessoryApplicabilityTarget = {
+  kind: AccessoryApplicabilityTargetKind;
+  group_id: string;
+  row_id: string;
+};
+
 export type AccessoryModelApplicabilityRule = {
-  base_model_group_id: string;
-  base_model_row_id: string;
+  base_model_group_id?: string;
+  base_model_row_id?: string;
+  target?: AccessoryApplicabilityTarget;
   required: boolean;
   visible: boolean;
   allowed_item_ids?: string[];
@@ -83,6 +92,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function addIssue(issues: AccessoryConfigurationIssue[], code: string, path: string, message: string) {
   issues.push({ code, path, message });
+}
+
+export function resolveAccessoryApplicabilityTarget(
+  rule: Pick<AccessoryModelApplicabilityRule, "base_model_group_id" | "base_model_row_id" | "target">,
+): AccessoryApplicabilityTarget | null {
+  if (rule.target && ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(rule.target.kind) && rule.target.group_id && rule.target.row_id) {
+    return rule.target;
+  }
+  if (rule.base_model_group_id && rule.base_model_row_id) {
+    return { kind: "base_model", group_id: rule.base_model_group_id, row_id: rule.base_model_row_id };
+  }
+  return null;
+}
+
+export function accessoryApplicabilityTargetKey(target: AccessoryApplicabilityTarget) {
+  return `${target.kind}\u0000${target.group_id}\u0000${target.row_id}`;
 }
 
 export function parseAccessoryConfigurationGroups(value: unknown): ParsedAccessoryConfiguration {
@@ -174,15 +199,32 @@ export function parseAccessoryConfigurationGroups(value: unknown): ParsedAccesso
         addIssue(issues, "malformed_rule", rulePath, "Applicability rule must be an object.");
         return;
       }
-      const groupId = typeof rawRule.base_model_group_id === "string" ? rawRule.base_model_group_id.trim() : "";
-      const rowId = typeof rawRule.base_model_row_id === "string" ? rawRule.base_model_row_id.trim() : "";
-      if (!groupId) addIssue(issues, "missing_base_model_group_id", `${rulePath}.base_model_group_id`, "Base/Model group ID is required.");
-      if (!rowId) addIssue(issues, "missing_base_model_row_id", `${rulePath}.base_model_row_id`, "Base/Model row ID is required.");
-      const ruleKey = `${groupId}\u0000${rowId}`;
-      if (groupId && rowId && ruleKeys.has(ruleKey)) {
-        addIssue(issues, "duplicate_applicability_rule", rulePath, "Only one applicability rule is allowed for the same Base/Model group and row.");
+      const legacyGroupId = typeof rawRule.base_model_group_id === "string" ? rawRule.base_model_group_id.trim() : "";
+      const legacyRowId = typeof rawRule.base_model_row_id === "string" ? rawRule.base_model_row_id.trim() : "";
+      const rawTarget = rawRule.target;
+      let target: AccessoryApplicabilityTarget | null = null;
+      if (rawTarget !== undefined) {
+        if (!isRecord(rawTarget)) {
+          addIssue(issues, "malformed_applicability_target", `${rulePath}.target`, "Applicability target must be an object.");
+        } else {
+          const kind = rawTarget.kind;
+          const groupId = typeof rawTarget.group_id === "string" ? rawTarget.group_id.trim() : "";
+          const rowId = typeof rawTarget.row_id === "string" ? rawTarget.row_id.trim() : "";
+          if (typeof kind !== "string" || !ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(kind as AccessoryApplicabilityTargetKind)) addIssue(issues, "invalid_applicability_target_kind", `${rulePath}.target.kind`, "Applicability target kind must be Base/Model or Price Matrix.");
+          if (!groupId) addIssue(issues, "missing_applicability_target_group_id", `${rulePath}.target.group_id`, "Applicability target group ID is required.");
+          if (!rowId) addIssue(issues, "missing_applicability_target_row_id", `${rulePath}.target.row_id`, "Applicability target row ID is required.");
+          if (typeof kind === "string" && ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(kind as AccessoryApplicabilityTargetKind) && groupId && rowId) target = { kind: kind as AccessoryApplicabilityTargetKind, group_id: groupId, row_id: rowId };
+        }
+      } else {
+        if (!legacyGroupId) addIssue(issues, "missing_base_model_group_id", `${rulePath}.base_model_group_id`, "Base/Model group ID is required.");
+        if (!legacyRowId) addIssue(issues, "missing_base_model_row_id", `${rulePath}.base_model_row_id`, "Base/Model row ID is required.");
+        if (legacyGroupId && legacyRowId) target = { kind: "base_model", group_id: legacyGroupId, row_id: legacyRowId };
       }
-      ruleKeys.add(ruleKey);
+      if (target) {
+        const ruleKey = accessoryApplicabilityTargetKey(target);
+        if (ruleKeys.has(ruleKey)) addIssue(issues, "duplicate_applicability_rule", rulePath, "Only one applicability rule is allowed for the same pricing group and row.");
+        ruleKeys.add(ruleKey);
+      }
       if (typeof rawRule.required !== "boolean") addIssue(issues, "invalid_required", `${rulePath}.required`, "Required must be boolean.");
       if (typeof rawRule.visible !== "boolean") addIssue(issues, "invalid_visible", `${rulePath}.visible`, "Visible must be boolean.");
 
@@ -242,11 +284,13 @@ export function evaluateAccessoryConfigurationForModel({
   accessoryGroups,
   baseModelGroupId,
   baseModelRowId,
+  selectedModelTarget,
   selectedQuantitiesByGroupId = {},
 }: {
   accessoryGroups: unknown;
   baseModelGroupId: string | null | undefined;
   baseModelRowId: string | null | undefined;
+  selectedModelTarget?: AccessoryApplicabilityTarget | null;
   selectedQuantitiesByGroupId?: Record<string, Record<string, number | null | undefined>>;
 }): AccessoryConfigurationEvaluation {
   const parsed = parseAccessoryConfigurationGroups(accessoryGroups);
@@ -272,9 +316,13 @@ export function evaluateAccessoryConfigurationForModel({
     if (groupIssues.length) return groupFailure(groupId, role, selectedIds, groupIssues[0].message);
 
     const allItemIds = (group.items ?? []).filter((item) => item.is_active !== false).map((item) => item.id).filter((id): id is string => Boolean(id));
-    const matchingRule = configuration?.applicability.find((rule) =>
-      rule.base_model_group_id === baseModelGroupId && rule.base_model_row_id === baseModelRowId,
-    );
+    const selectedTarget = selectedModelTarget ?? (baseModelGroupId && baseModelRowId
+      ? { kind: "base_model" as const, group_id: baseModelGroupId, row_id: baseModelRowId }
+      : null);
+    const matchingRule = selectedTarget ? configuration?.applicability.find((rule) => {
+      const target = resolveAccessoryApplicabilityTarget(rule);
+      return target?.kind === selectedTarget.kind && target.group_id === selectedTarget.group_id && target.row_id === selectedTarget.row_id;
+    }) : undefined;
     const requiresMatchingRule = Boolean(configuration && (configuration.role !== "accessory" || configuration.applicability.length));
     const visible = group.is_active !== false && (!requiresMatchingRule || Boolean(matchingRule?.visible));
     const required = visible && (matchingRule ? matchingRule.required : group.group_is_required === true);
