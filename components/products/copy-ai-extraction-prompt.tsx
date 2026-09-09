@@ -5,7 +5,7 @@ import { buildProductTemplateSetupPlanningPrompt, getProductTemplateAiExtraction
 
 const choices: Array<{ focus: ExtractionPromptFocus; label: string; description: string }> = [
   { focus: "full", label: "Full Product / Complete Extraction", description: "Extract all clearly supported product details, pricing, options, materials, finishes and technical information." },
-  { focus: "base_model", label: "Base / Model Pricing", description: "Focus on directly priced models, variants, configurations, dimensions and supplier codes." },
+  { focus: "base_model", label: "Base / Model Pricing", description: "Focus on directly priced models, variants, desk sizes/configurations, dimensions and supplier codes." },
   { focus: "workstation", label: "Workstation Pricing", description: "Focus on workstation sizes, layouts, configurations, additional pricing and related accessories." },
   { focus: "category_matrix", label: "Category / Matrix Pricing", description: "Focus on row-by-category pricing such as fabric, leather, finish or other price matrices." },
   { focus: "modular", label: "Modular Pricing", description: "Focus on modular families, modules, groups, shared price categories and related configuration." },

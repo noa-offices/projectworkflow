@@ -103,6 +103,53 @@ test("focused prompts retain the v1 contract, price safety, source fidelity, and
   assert.ok(getProductTemplateAiExtractionPrompt("accessories").includes("Do not invent conditional rules"));
 });
 
+test("base model focus adds desk safeguards without changing focus registration or generic behavior", () => {
+  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating"]);
+  const prompt = getProductTemplateAiExtractionPrompt("base_model");
+  [
+    "Focus on directly priced models, variants, configurations, dimensions",
+    "one direct price per manufacturer code",
+    "one-column matrix whose only column is a generic \"Price\" is not a genuine Category / Matrix structure",
+    "never flatten a genuine matrix into Base/Model",
+    "SOURCE ROW COMPLETENESS",
+    "Never intentionally omit, abbreviate, sample, summarize, or truncate",
+    "representative rows only",
+    "DESKS / EXECUTIVE DESKS",
+    "standard, executive, or managerial desks",
+    "LH/RH, SX/DX, left/right or reversible orientation",
+    "standard/ceramic/3D-foil/eco-leather",
+    "DENSE DESK ROW PRICE BINDING",
+    "Every numeric price must be verified against its own code row",
+    "Same width plus similar description does not mean same price",
+    "compare the full visible code-and-price sequence",
+    "complete desk-with-return code/price may be a Base/Model row",
+    "included service/support unit",
+    "Explicit required wording must never be downgraded to optional",
+    "complete alternative code set",
+    "SUPPORTING VS FREESTANDING SERVICE UNITS",
+    "only those mapped codes are support-service candidates",
+    "must not be merged into the support-unit group",
+    "do not expand the support set beyond those codes",
+    "always complete with 1 top access",
+    "WITHOUT-hole and WITH-hole desks",
+    "never inherit the no-hole price onto the with-hole code",
+    "REFERENCED COMPONENT CODE COMPLETENESS",
+    "ART.041-042-043",
+    "extractionWarning naming the missing referenced code",
+    "Ignored — separate Workstation product-family cycle",
+    "FINAL DESK SAFETY CHECK",
+    "direct single-price rows use pricing.baseModelRows rather than artificial one-column priceMatrices",
+    "no relevant row was intentionally truncated",
+    "every direct-price row has its own code -> price verification",
+    "freestanding units were not silently treated as required support units",
+    "referenced component code sets were checked completely",
+    "explicit printed zero is 0; blank is null",
+    "symbols/open circles are not automatically zero",
+    "visible source evidence overrides OCR assumptions",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Base / Model prompt to contain: ${expected}`));
+  assert.ok(!prompt.includes("CHAIR ROW SPECIFICATION QUALITY"));
+});
+
 test("chair and seating focus preserves seating-specific source rules without changing v1", () => {
   const prompt = getProductTemplateAiExtractionPrompt("chair_seating");
   [
