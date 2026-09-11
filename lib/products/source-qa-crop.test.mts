@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cropForZoom, existingSourceCropTargets, normalizeSourceCrop, selectedSourceCropTargets, sourceCropSearchPages, uniqueSourceCropTarget, validSourceCrop, type SourceCropTarget } from "./source-qa-crop.js";
+import { cropForZoom, existingSourceCropTargets, mergeSourceCropTargetIds, nextSourceCropTarget, normalizeSourceCrop, removeSourceCropTargetIds, selectedSourceCropTargets, sourceCropSearchPages, sourceQaTextGeometry, sourceQaTextGeometryMatch, sourceQaTextGeometryViewport, uniqueSourceCropTarget, validSourceCrop, type SourceCropTarget } from "./source-qa-crop.js";
 const targets: SourceCropTarget[] = [
   { id: "one", sourceKey: "base_model:rows", rowId: "one", label: "IN120 — Table", codes: ["IN120"], kind: "Base / Model" },
   { id: "two", sourceKey: "base_model:rows", rowId: "two", label: "IN120E — Electrified", codes: ["IN120E"], kind: "Base / Model" },
@@ -12,4 +12,26 @@ test("selects each crop target once and detects existing images across the selec
   assert.deepEqual(selectedSourceCropTargets(targets, ["one", "two", "one", "missing"]).map((target) => target.id), ["one", "two"]);
   assert.deepEqual(existingSourceCropTargets(targets, ["one", "two", "three"], new Set(["two", "three"])).map((target) => target.id), ["two", "three"]);
   assert.equal(uniqueSourceCropTarget(targets, "in120e")?.id, "two");
+});
+test("finds the next missing target in visible group order before moving groups", () => {
+  const ordered = [...targets, { id: "four", sourceKey: "matrix:rows", rowId: "four", label: "IN124 — Table", codes: ["IN124"], kind: "Category / Matrix" as const }];
+  assert.equal(nextSourceCropTarget(ordered, "one", new Set(["two"]), ["one"])?.id, "three");
+  assert.equal(nextSourceCropTarget(ordered, "three", new Set(), ["one", "two", "three"])?.id, "four");
+  assert.equal(nextSourceCropTarget(ordered, "four", new Set(), ordered.map((target) => target.id)), null);
+});
+test("keeps normal and electrified rows independently eligible after IN122", () => {
+  const infinity: SourceCropTarget[] = ["IN120", "IN120E", "IN122", "IN122E", "IN124", "IN124E"].map((code) => ({ id: code, sourceKey: "matrix:infinity", rowId: code, label: code + " — Table", codes: [code], kind: "Category / Matrix" }));
+  assert.equal(nextSourceCropTarget(infinity, "IN122", new Set(["IN120", "IN120E", "IN122"]), ["IN122"])?.id, "IN122E");
+  assert.equal(nextSourceCropTarget(infinity, "IN122", new Set(["IN120", "IN120E", "IN122"]), ["IN122", "IN122E"])?.id, "IN124");
+  assert.equal(nextSourceCropTarget(infinity, "IN124E", new Set(["IN120", "IN120E", "IN122", "IN122E", "IN124", "IN124E"]), ["IN124E"]), null);
+});
+test("resolves exact and split PDF text geometry at the active viewport scale", () => {
+  const geometry = sourceQaTextGeometry([{ str: "IN122", transform: [1, 0, 0, 1, 100, 400], width: 30, height: 10 }, { str: "E", transform: [1, 0, 0, 1, 130, 400], width: 8, height: 10 }]);
+  const match = sourceQaTextGeometryMatch(geometry, "in122e"); assert.deepEqual(match && { x: match.x, width: match.width }, { x: 100, width: 38 });
+  assert.deepEqual(sourceQaTextGeometryViewport(match!, 600, 2), { x: 200, y: 380, width: 76, height: 20 });
+  assert.equal(sourceQaTextGeometryMatch(geometry, "missing"), null);
+});
+test("merges and clears one displayed target group without affecting other selections", () => {
+  assert.deepEqual(mergeSourceCropTargetIds(["one", "three"], ["one", "two"]), ["one", "three", "two"]);
+  assert.deepEqual(removeSourceCropTargetIds(["one", "two", "three"], ["one", "two"]), ["three"]);
 });
