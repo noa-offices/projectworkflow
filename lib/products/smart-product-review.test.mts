@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeProductTemplateDraft, type ProductTemplateDraft } from "./product-template-draft.js";
 import {
+  applySmartProductReviewCurrencyOverride,
+  collectPricedRowCurrencies,
   createReviewedProductTemplateDraft,
+  deriveSmartProductReviewCurrencyState,
+  fillNullPricedRowCurrenciesFromDefault,
   formatDraftPrice,
   getSmartProductReviewSections,
   reviewedProductTemplateDraftForApply,
@@ -95,4 +99,62 @@ test("Apply receives the current reviewed draft and warning summary uses current
     warnings: ["Review source applicability.", "Validation warning"],
   });
   assert.equal(normalizeProductTemplateDraft(edited).valid, true);
+});
+
+function currencyDraft() {
+  return structuredClone(reviewedSource);
+}
+
+test("currency state derives common, default-filled, unresolved, and mixed priced rows", () => {
+  const allEur = currencyDraft();
+  assert.deepEqual(deriveSmartProductReviewCurrencyState(allEur), { kind: "common", currency: "EUR", hasUnresolvedPricedRows: false });
+
+  const defaultFilled = currencyDraft();
+  defaultFilled.pricing.priceMatrices[0].rows[0].currency = null;
+  const filled = fillNullPricedRowCurrenciesFromDefault(defaultFilled);
+  assert.equal(filled.pricing.priceMatrices[0].rows[0].currency, "EUR");
+  assert.deepEqual(deriveSmartProductReviewCurrencyState(filled), { kind: "common", currency: "EUR", hasUnresolvedPricedRows: false });
+
+  const unresolved = currencyDraft();
+  unresolved.defaultCurrency = null;
+  unresolved.pricing.priceMatrices[0].rows[0].currency = null;
+  unresolved.pricing.priceMatrices[1].rows[0].currency = null;
+  unresolved.optionGroups[0].items[0].currency = null;
+  assert.deepEqual(deriveSmartProductReviewCurrencyState(unresolved), { kind: "unresolved", currency: null, hasUnresolvedPricedRows: true });
+  assert.throws(() => reviewedProductTemplateDraftForApply(unresolved), /Select a currency/);
+
+  const mixed = currencyDraft();
+  mixed.pricing.priceMatrices[1].rows[0].currency = "USD";
+  assert.deepEqual(deriveSmartProductReviewCurrencyState(mixed), { kind: "mixed", currency: null, hasUnresolvedPricedRows: false });
+  assert.doesNotThrow(() => reviewedProductTemplateDraftForApply(mixed));
+  mixed.optionGroups[0].items[0].currency = null;
+  assert.deepEqual(deriveSmartProductReviewCurrencyState(mixed), { kind: "mixed", currency: null, hasUnresolvedPricedRows: true });
+});
+
+test("zero is a priced value for unresolved currency checks", () => {
+  const value = currencyDraft();
+  value.defaultCurrency = null;
+  value.pricing.priceMatrices = [];
+  value.optionGroups = [];
+  value.pricing.baseModelRows = [{ id: "free", label: "Free", displayName: null, dimensions: null, currency: null, price: 0, specification: null, supplierCodes: [], referenceCodes: [] }];
+  assert.deepEqual(collectPricedRowCurrencies(value), [null]);
+  assert.equal(deriveSmartProductReviewCurrencyState(value).hasUnresolvedPricedRows, true);
+});
+
+test("global currency override covers every pricing structure without changing amounts", () => {
+  const value = currencyDraft();
+  value.pricing.workstationRows = [{ id: "desk", label: "Desk", displayName: null, dimensions: null, currency: "USD", price: 0, additionalPrice: 25, layoutType: null, specification: null, supplierCodes: [], referenceCodes: [] }];
+  value.pricing.baseModelRows = [{ id: "base", label: "Base", displayName: null, dimensions: null, currency: null, price: 100, specification: null, supplierCodes: [], referenceCodes: [] }];
+  value.pricing.modularGroups = [{ id: "modules", label: "Modules", defaultDimensions: null, defaultSpecification: null, matrix: { id: "module-matrix", label: null, columns: [{ id: "cat", label: "Cat" }], rows: [{ id: "module", label: "Module", displayName: null, dimensions: null, currency: "USD", specification: null, supplierCodes: [], referenceCodes: [], prices: { cat: 0 } }] } }];
+  const overridden = applySmartProductReviewCurrencyOverride(value, "AED");
+  assert.equal(overridden.defaultCurrency, "AED");
+  assert.deepEqual(collectPricedRowCurrencies(overridden), ["AED", "AED", "AED", "AED", "AED", "AED"]);
+  assert.equal(value.pricing.baseModelRows[0].currency, null);
+  assert.equal(overridden.pricing.workstationRows[0].price, 0);
+  assert.equal(overridden.pricing.workstationRows[0].additionalPrice, 25);
+  assert.equal(overridden.pricing.baseModelRows[0].price, 100);
+  assert.equal(overridden.pricing.priceMatrices[0].rows[0].prices["cat-a"], 1323);
+  assert.equal(overridden.pricing.priceMatrices[1].rows[0].prices["cat-a"], 900);
+  assert.equal(overridden.pricing.modularGroups[0].matrix.rows[0].prices.cat, 0);
+  assert.equal(overridden.optionGroups[0].items[0].price, 32);
 });

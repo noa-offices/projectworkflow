@@ -1,4 +1,5 @@
 import type { ProductTemplateDraft, ProductTemplateDraftMatrixRow, ProductTemplateDraftPricedRow } from "./product-template-draft";
+import { fillNullPricedRowCurrenciesFromDefault } from "./smart-product-review";
 import { createSmartSetupReviewRouting, type SmartReviewDestination, type SmartReviewRoute, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
 
 export type SmartAdditionalGroupAction = "add" | "merge" | "skip";
@@ -131,7 +132,8 @@ function mergeSupplemental<T extends { id: string; supplierCodes?: string[]; ref
 export function applySmartAdditionalJson(currentDraft: ProductTemplateDraft, currentPlan: SmartSetupReviewRoutingPlan, incomingDraft: ProductTemplateDraft, decisions: Record<string, SmartAdditionalGroupDecision>) {
   const draft = structuredClone(currentDraft);
   const plan = structuredClone(currentPlan);
-  const incomingPlan = createSmartSetupReviewRouting(incomingDraft);
+  const preparedIncomingDraft = fillNullPricedRowCurrenciesFromDefault(incomingDraft);
+  const incomingPlan = createSmartSetupReviewRouting(preparedIncomingDraft);
   const groupIds = new Set(plan.routes.map((route) => route.sourceId));
 
   incomingPlan.routes.forEach((incomingRoute) => {
@@ -139,33 +141,33 @@ export function applySmartAdditionalJson(currentDraft: ProductTemplateDraft, cur
     if (!decision || decision.action === "skip") return;
     if (decision.action === "merge" && decision.targetKey) {
       const target = plan.routes.find((route) => route.key === decision.targetKey);
-      if (!target || !compatible(draft, incomingDraft, target, incomingRoute)) return;
-      if (target.sourceKind === "workstation") draft.pricing.workstationRows = mergeRows(draft.pricing.workstationRows, incomingDraft.pricing.workstationRows, decision.duplicateChoices);
-      else if (target.sourceKind === "base_model") draft.pricing.baseModelRows = mergeRows(draft.pricing.baseModelRows, incomingDraft.pricing.baseModelRows, decision.duplicateChoices);
+      if (!target || !compatible(draft, preparedIncomingDraft, target, incomingRoute)) return;
+      if (target.sourceKind === "workstation") draft.pricing.workstationRows = mergeRows(draft.pricing.workstationRows, preparedIncomingDraft.pricing.workstationRows, decision.duplicateChoices);
+      else if (target.sourceKind === "base_model") draft.pricing.baseModelRows = mergeRows(draft.pricing.baseModelRows, preparedIncomingDraft.pricing.baseModelRows, decision.duplicateChoices);
       else if (target.sourceKind === "matrix") {
         const existing = draft.pricing.priceMatrices.find((group) => group.id === target.sourceId);
-        const incoming = incomingDraft.pricing.priceMatrices.find((group) => group.id === incomingRoute.sourceId);
+        const incoming = preparedIncomingDraft.pricing.priceMatrices.find((group) => group.id === incomingRoute.sourceId);
         if (existing && incoming) existing.rows = mergeRows(existing.rows, incoming.rows, decision.duplicateChoices);
       } else if (target.sourceKind === "modular") {
         const existing = draft.pricing.modularGroups.find((group) => group.id === target.sourceId);
-        const incoming = incomingDraft.pricing.modularGroups.find((group) => group.id === incomingRoute.sourceId);
+        const incoming = preparedIncomingDraft.pricing.modularGroups.find((group) => group.id === incomingRoute.sourceId);
         if (existing && incoming) existing.matrix.rows = mergeRows(existing.matrix.rows, incoming.matrix.rows, decision.duplicateChoices);
       } else {
         const existing = draft.optionGroups.find((group) => group.id === target.sourceId);
-        const incoming = incomingDraft.optionGroups.find((group) => group.id === incomingRoute.sourceId);
+        const incoming = preparedIncomingDraft.optionGroups.find((group) => group.id === incomingRoute.sourceId);
         if (existing && incoming) existing.items = mergeRows(existing.items, incoming.items, decision.duplicateChoices);
       }
       target.rowCount = routeRows(draft, target).length;
       return;
     }
 
-    if (incomingRoute.sourceKind === "workstation") draft.pricing.workstationRows = mergeRows(draft.pricing.workstationRows, incomingDraft.pricing.workstationRows, decision.duplicateChoices);
-    else if (incomingRoute.sourceKind === "base_model") draft.pricing.baseModelRows = mergeRows(draft.pricing.baseModelRows, incomingDraft.pricing.baseModelRows, decision.duplicateChoices);
+    if (incomingRoute.sourceKind === "workstation") draft.pricing.workstationRows = mergeRows(draft.pricing.workstationRows, preparedIncomingDraft.pricing.workstationRows, decision.duplicateChoices);
+    else if (incomingRoute.sourceKind === "base_model") draft.pricing.baseModelRows = mergeRows(draft.pricing.baseModelRows, preparedIncomingDraft.pricing.baseModelRows, decision.duplicateChoices);
     else {
       const sourceId = uniqueGroupId(incomingRoute.sourceId, groupIds); groupIds.add(sourceId);
-      if (incomingRoute.sourceKind === "matrix") { const group = structuredClone(incomingDraft.pricing.priceMatrices.find((item) => item.id === incomingRoute.sourceId)!); group.id = sourceId; draft.pricing.priceMatrices.push(group); }
-      else if (incomingRoute.sourceKind === "modular") { const group = structuredClone(incomingDraft.pricing.modularGroups.find((item) => item.id === incomingRoute.sourceId)!); group.id = sourceId; draft.pricing.modularGroups.push(group); }
-      else { const group = structuredClone(incomingDraft.optionGroups.find((item) => item.id === incomingRoute.sourceId)!); group.id = sourceId; draft.optionGroups.push(group); }
+      if (incomingRoute.sourceKind === "matrix") { const group = structuredClone(preparedIncomingDraft.pricing.priceMatrices.find((item) => item.id === incomingRoute.sourceId)!); group.id = sourceId; draft.pricing.priceMatrices.push(group); }
+      else if (incomingRoute.sourceKind === "modular") { const group = structuredClone(preparedIncomingDraft.pricing.modularGroups.find((item) => item.id === incomingRoute.sourceId)!); group.id = sourceId; draft.pricing.modularGroups.push(group); }
+      else { const group = structuredClone(preparedIncomingDraft.optionGroups.find((item) => item.id === incomingRoute.sourceId)!); group.id = sourceId; draft.optionGroups.push(group); }
       const route = { ...structuredClone(incomingRoute), key: `${incomingRoute.sourceKind}:${sourceId}`, sourceId, destination: decision.destination };
       if (route.destination === "accessory" && !route.accessory) route.accessory = { role: "accessory", selection: "optional_multiple", rules: [] };
       plan.routes.push(route);
@@ -175,9 +177,9 @@ export function applySmartAdditionalJson(currentDraft: ProductTemplateDraft, cur
     else if (incomingRoute.sourceKind === "workstation" || incomingRoute.sourceKind === "base_model") plan.routes.push({ ...structuredClone(incomingRoute), destination: decision.destination });
   });
 
-  draft.materialSuggestions = mergeSupplemental(draft.materialSuggestions, incomingDraft.materialSuggestions);
-  draft.linkedFamilySuggestions = mergeSupplemental(draft.linkedFamilySuggestions, incomingDraft.linkedFamilySuggestions);
-  draft.extractionWarnings = [...new Set([...draft.extractionWarnings, ...incomingDraft.extractionWarnings])];
-  draft.sources = mergeSupplemental(draft.sources, incomingDraft.sources);
+  draft.materialSuggestions = mergeSupplemental(draft.materialSuggestions, preparedIncomingDraft.materialSuggestions);
+  draft.linkedFamilySuggestions = mergeSupplemental(draft.linkedFamilySuggestions, preparedIncomingDraft.linkedFamilySuggestions);
+  draft.extractionWarnings = [...new Set([...draft.extractionWarnings, ...preparedIncomingDraft.extractionWarnings])];
+  draft.sources = mergeSupplemental(draft.sources, preparedIncomingDraft.sources);
   return { draft, plan };
 }

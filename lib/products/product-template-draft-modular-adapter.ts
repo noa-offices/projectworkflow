@@ -47,6 +47,10 @@ export function mapDraftModularPricing(draft: ProductTemplateDraft) {
           priceCategories[index],
           row.prices[column.id],
         ])),
+        unavailable_categories: (row.unavailableCategoryIds ?? []).flatMap((id) => {
+          const index = analysis.sharedColumns.findIndex((column) => column.id === id);
+          return index < 0 ? [] : [priceCategories[index]];
+        }),
         is_active: true,
         sort_order: rowIndex,
       };

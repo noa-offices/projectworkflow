@@ -9,7 +9,7 @@ test("category draft mapping preserves source-driven columns, order, null, and z
     defaultCurrency: null,
     pricing: {
       workstationRows: [], baseModelRows: [], modularGroups: [],
-      priceMatrices: [{ id: "arca", label: "ARCA", columns: [{ id: "com-s", label: "COM / S" }, { id: "t", label: "T" }, { id: "m", label: "M" }, { id: "f", label: "F" }, { id: "l", label: "L" }, { id: "p", label: "P" }, { id: "px", label: "PX" }], rows: [{ id: "arca-seat", label: "Seat", displayName: null, dimensions: null, currency: "EUR", specification: null, supplierCodes: [], referenceCodes: [], prices: { "com-s": null, t: 0, m: 125, f: null, l: null, p: null, px: null } }] }],
+      priceMatrices: [{ id: "arca", label: "ARCA", columns: [{ id: "com-s", label: "COM / S" }, { id: "t", label: "T" }, { id: "m", label: "M" }, { id: "f", label: "F" }, { id: "l", label: "L" }, { id: "p", label: "P" }, { id: "px", label: "PX" }], rows: [{ id: "arca-seat", label: "Seat", displayName: null, dimensions: null, currency: "EUR", specification: null, supplierCodes: [], referenceCodes: [], prices: { "com-s": null, t: 0, m: 125, f: null, l: null, p: null, px: null }, unavailableCategoryIds: ["com-s"] }] }],
     },
     optionGroups: [], materialSuggestions: [], linkedFamilySuggestions: [], extractionWarnings: [], confidence: null, sources: [],
   });
@@ -17,6 +17,7 @@ test("category draft mapping preserves source-driven columns, order, null, and z
   assert.equal(result.groups[0].items[0].prices?.["COM / S"], null);
   assert.equal(result.groups[0].items[0].prices?.T, 0);
   assert.equal(result.groups[0].items[0].prices?.M, 125);
+  assert.deepEqual(result.groups[0].items[0].unavailable_categories, ["COM / S"]);
 });
 
 test("direct-price matrices are excluded while ambiguous one-column matrices remain with warnings", () => {

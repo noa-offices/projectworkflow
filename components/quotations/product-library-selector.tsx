@@ -49,7 +49,9 @@ import { productTemplateRowReferenceKey, type ProductTemplateRowReferencePreview
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 import {
   buildCompanyStyleProductSpecification,
+  buildModularCompositionSpecification,
   resolveProductDimensionSnapshot,
+  resolveFinalProductSpecification,
   resolveProductOriginSnapshot,
   resolveProductSpecificationSnapshot,
 } from "@/lib/quotations/product-template-snapshot";
@@ -180,7 +182,8 @@ type CategoryPricingRow = {
   supplier_price_list_code?: string;
   dimension?: string;
   currency?: string;
-  prices?: Record<string, number>;
+  prices?: Record<string, number | null>;
+  unavailable_categories?: string[];
   specification?: string;
   modular_default_dimension?: string | null;
   modular_default_specification?: string | null;
@@ -1632,6 +1635,7 @@ export function ProductLibrarySelector({
                       };
                     }))
                     .filter((line) => line.qty > 0);
+                  const hasUnavailableSelectedPrice = (usesModularPricing && selectedModularItems.some((line) => line.row.unavailable_categories?.includes(selectedFabricCategory))) || Boolean(usesCategoryPricing && selectedCategoryRow?.unavailable_categories?.includes(selectedFabricCategory));
                   const groupedOptions = new Map<string, ProductLibraryComponent[]>();
                   const templateSelections = selectedOptions[template.id] ?? {};
                   const additionalClusterQty = Math.max(
@@ -1672,19 +1676,23 @@ export function ProductLibrarySelector({
                   const hasMixedWorkstationCurrencies = usesWorkstationFlow && workstationCurrencies.length > 1;
                   const missingRequiredWorkstationSelection = usesWorkstationFlow && !selectedSizeRow;
                   const missingRequiredModularSelection = usesModularPricing && selectedModularItems.length === 0;
-                  const selectedAccessoryModelTarget = usesVariantPricing && selectedVariantGroup?.id && selectedVariantRow?.id
-                    ? { kind: "base_model" as const, group_id: selectedVariantGroup.id, row_id: selectedVariantRow.id }
-                    : usesCategoryPricing && selectedCategoryGroup?.id && selectedCategoryRow?.id
-                      ? { kind: "price_matrix" as const, group_id: selectedCategoryGroup.id, row_id: selectedCategoryRow.id }
-                      : null;
+                  const selectedAccessoryModelTargets = usesModularPricing
+                    ? selectedModularItems.map((item) => ({ kind: "modular" as const, group_id: item.groupId, row_id: item.id }))
+                    : usesVariantPricing && selectedVariantGroup?.id && selectedVariantRow?.id
+                      ? [{ kind: "base_model" as const, group_id: selectedVariantGroup.id, row_id: selectedVariantRow.id }]
+                      : usesCategoryPricing && selectedCategoryGroup?.id && selectedCategoryRow?.id
+                        ? [{ kind: "price_matrix" as const, group_id: selectedCategoryGroup.id, row_id: selectedCategoryRow.id }]
+                        : [];
+                  const selectedAccessoryModelTarget = selectedAccessoryModelTargets[0] ?? null;
                   const accessoryConfiguration = evaluateProductAccessorySelection({
                     accessoryGroups: allAccessoryGroups,
                     baseModelGroupId: usesVariantPricing ? selectedVariantGroup?.id : null,
                     baseModelRowId: usesVariantPricing ? selectedVariantRow?.id : null,
                     selectedModelTarget: selectedAccessoryModelTarget,
+                    selectedModelTargets: selectedAccessoryModelTargets,
                     selectedQuantities: templatePricingAccessoryQuantities,
                   });
-                  const missingConditionalModelSelection = accessoryConfiguration.hasConditionalConfiguration && !selectedAccessoryModelTarget;
+                  const missingConditionalModelSelection = accessoryConfiguration.hasConditionalConfiguration && selectedAccessoryModelTargets.length === 0;
                   const missingRequiredAccessorySelection = !accessoryConfiguration.valid || missingConditionalModelSelection;
                   const derivedDesking = isDesking && selectedSizeRow
                     ? deskingSizePricingCalculation({
@@ -2148,12 +2156,25 @@ export function ProductLibrarySelector({
                     brandOriginById.get(template.brand_id) ?? null,
                   );
                   const supplierNameSnapshot = template.supplier_name ?? null;
+                  const modularCompositionSpecification = usesModularPricing
+                    ? buildModularCompositionSpecification({
+                        items: selectedModularItems.map((line) => ({
+                          itemName: pricingDisplayName(line.row) || line.row.variant_name || "Modular item",
+                          quantity: line.qty,
+                          specification: line.row.specification,
+                        })),
+                        modularDefaultSpecification: configuredSpecification || modularDefaults.defaultSpecification,
+                        selectedCategory: selectedFabricCategory,
+                        templateDefaultSpecification: template.default_specification,
+                        templateDescription: template.description,
+                      })
+                    : null;
                   const companyStyleSpecification = buildCompanyStyleProductSpecification({
                     accessorySnapshots,
                     linkedProductSnapshots,
                     primarySpecification:
-                      (usesWorkstationFlow || usesModularPricing ? configuredSpecification : null) ??
-                      (usesModularPricing ? modularDefaults.defaultSpecification : null) ??
+                      (usesWorkstationFlow ? configuredSpecification : null) ??
+                      modularCompositionSpecification ??
                       selectedCategoryRow?.specification ??
                       selectedVariantRow?.specification ??
                       null,
@@ -2170,8 +2191,8 @@ export function ProductLibrarySelector({
                   const localSpecification = resolveProductSpecificationSnapshot({
                     companyStyleSpecification,
                     selectedCategorySpecification:
-                      (usesWorkstationFlow || usesModularPricing ? configuredSpecification : null) ??
-                      (usesModularPricing ? modularDefaults.defaultSpecification : null) ??
+                      (usesWorkstationFlow ? configuredSpecification : null) ??
+                      modularCompositionSpecification ??
                       selectedCategoryRow?.specification ??
                       null,
                     selectedVariantSpecification: selectedVariantRow?.specification ?? null,
@@ -2199,9 +2220,11 @@ export function ProductLibrarySelector({
                     localDimension ? `Dimension: ${localDimension}` : null,
                   ].filter(Boolean).join("\n");
                   const finalSpecificationWasEdited = Boolean(finalSpecificationEditedByTemplate[template.id]);
-                  const finalSpecification = finalSpecificationWasEdited
-                    ? (finalSpecifications[template.id] ?? generatedFinalSpecification)
-                    : generatedFinalSpecification;
+                  const finalSpecification = resolveFinalProductSpecification({
+                    editedSpecification: finalSpecifications[template.id],
+                    generatedSpecification: generatedFinalSpecification,
+                    wasEdited: finalSpecificationWasEdited,
+                  });
                   const savedFinalSpecification = finalSpecificationWasEdited ? finalSpecification : localSpecification;
                   const selectedSupplierPriceListCode =
                     (usesModularPricing
@@ -2950,6 +2973,7 @@ export function ProductLibrarySelector({
                                     {group.items.map((row) => {
                                       const modularRowId = row.id ?? row.variant_name ?? row.display_name ?? "";
                                       const modularQty = templateModularQuantities[modularRowId] ?? 0;
+                                      const modularUnavailable = row.unavailable_categories?.includes(selectedFabricCategory);
                                       const modularUnitPrice = numberValue(row.prices?.[selectedFabricCategory]);
                                       return (
                                         <div key={modularRowId} className="grid gap-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 md:grid-cols-[minmax(0,1fr)_100px]">
@@ -2963,7 +2987,7 @@ export function ProductLibrarySelector({
                                               ) : null}
                                               {row.supplier_price_list_code ? <p>Supplier code: {row.supplier_price_list_code}</p> : null}
                                               {row.dimension ? <p>Dimension: {row.dimension}</p> : null}
-                                              <p>Price: {formatMoney(row.currency ?? template.currency, modularUnitPrice)}</p>
+                                              <p>Price: {modularUnavailable ? "N/A" : formatMoney(row.currency ?? template.currency, modularUnitPrice)}</p>
                                               {row.specification ? <p>{row.specification}</p> : null}
                                             </div>
                                           </div>
@@ -4119,6 +4143,7 @@ export function ProductLibrarySelector({
                             Select at least one modular item to add this product.
                           </p>
                         ) : null}
+                        {hasUnavailableSelectedPrice ? <p className="text-xs leading-5 text-amber-700">The selected category is unavailable for one or more selected modular items.</p> : null}
                         {missingConditionalModelSelection ? (
                           <p className="text-xs leading-5 text-amber-700">
                             Select a valid Base/Model to configure required components and options.
@@ -4287,7 +4312,7 @@ export function ProductLibrarySelector({
                                   ) : null}
                                   <textarea
                                     name="final_specification_override"
-                                    value={finalSpecification}
+                                    value={finalSpecification ?? ""}
                                     onChange={(event) => {
                                       setFinalSpecifications((current) => ({
                                         ...current,
@@ -4337,7 +4362,7 @@ export function ProductLibrarySelector({
                                   onAddLocalItem?.(localProductItem);
                                   setIsOpen(false);
                                 }}
-                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision}
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice}
                                   className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                                 >
                                   Add to Local Workspace
@@ -4345,7 +4370,7 @@ export function ProductLibrarySelector({
                               ) : (
                                 <button
                                   type="submit"
-                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision}
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice}
                                   className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                                 >
                                   Add

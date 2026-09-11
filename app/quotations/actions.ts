@@ -65,7 +65,9 @@ import {
 import { quotationSalesFolderKey } from "@/lib/quotations/sales-attribution";
 import {
   buildCompanyStyleProductSpecification,
+  buildModularCompositionSpecification,
   resolveProductDimensionSnapshot,
+  resolveFinalProductSpecification,
   resolveProductOriginSnapshot,
   resolveProductSpecificationSnapshot,
 } from "@/lib/quotations/product-template-snapshot";
@@ -6082,6 +6084,11 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     template.default_specification ??
     template.description ??
     null;
+  const configuredModularSpecification = configuredSpecificationInput ??
+    modularDefaults.defaultSpecification ??
+    template.default_specification ??
+    template.description ??
+    null;
   const selectedWorkstationLayoutType = selectedSizePricing
     ? (selectedSizePricing.layout_type === "Both"
         ? workstationLayoutTypeInput ?? "Linear"
@@ -6458,12 +6465,25 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         : undefined)
     : undefined;
   const proposedImagePath = productImageSnapshotPath(selectedProposedImage);
+  const modularCompositionSpecification = usesModularPricing
+    ? buildModularCompositionSpecification({
+        items: selectedModularItems.map((item) => ({
+          itemName: item.item_name,
+          quantity: item.qty,
+          specification: item.specification,
+        })),
+        modularDefaultSpecification: configuredModularSpecification,
+        selectedCategory,
+        templateDefaultSpecification: template.default_specification,
+        templateDescription: template.description,
+      })
+    : null;
   const companyStyleSpecification = buildCompanyStyleProductSpecification({
     accessorySnapshots: selectedAccessoryPricing,
     linkedProductSnapshots: selectedLinkedProducts,
     primarySpecification:
       (derivedDesking ? configuredWorkstationSpecification : null) ??
-      (usesModularPricing ? modularDefaults.defaultSpecification : null) ??
+      modularCompositionSpecification ??
       selectedCategoryPricingRow?.specification ??
       selectedVariantPricingRow?.specification ??
       null,
@@ -6476,11 +6496,11 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         }
       : template,
   });
-  const specificationSnapshot = (finalSpecificationWasEdited ? finalSpecificationOverrideInput : null) ?? resolveProductSpecificationSnapshot({
+  const generatedSpecificationSnapshot = resolveProductSpecificationSnapshot({
     companyStyleSpecification,
     selectedCategorySpecification:
       (derivedDesking ? configuredWorkstationSpecification : null) ??
-      (usesModularPricing ? modularDefaults.defaultSpecification : null) ??
+      modularCompositionSpecification ??
       selectedCategoryPricingRow?.specification ??
       null,
     selectedVariantSpecification: selectedVariantPricingRow?.specification ?? null,
@@ -6491,6 +6511,11 @@ export async function addProductTemplateToQuotation(formData: FormData) {
           default_specification: modularDefaults.defaultSpecification ?? template.default_specification,
         }
       : template,
+  });
+  const specificationSnapshot = resolveFinalProductSpecification({
+    editedSpecification: finalSpecificationOverrideInput,
+    generatedSpecification: generatedSpecificationSnapshot,
+    wasEdited: finalSpecificationWasEdited,
   });
   const dimensionSnapshot = resolveProductDimensionSnapshot({
     derivedDeskingDimension:
@@ -6924,7 +6949,6 @@ export async function updateQuotationItem(formData: FormData) {
     note: "Updated row price manually.",
     supabase,
   });
-
   await createAuditLog(supabase, {
     entityType: "quotation_item",
     entityId: id,

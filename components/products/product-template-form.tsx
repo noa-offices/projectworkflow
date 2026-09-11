@@ -41,6 +41,7 @@ import { applyManufacturerFieldPatches, type ManufacturerFieldPatch, type Manufa
 import { applyManufacturerUpdateActions, type ManufacturerItemAction } from "@/lib/products/manufacturer-item-actions";
 import { ManufacturerFinishGuidancePanel } from "@/components/products/manufacturer-finish-guidance";
 import { mergeManufacturerFinishGuidance, normalizeManufacturerFinishGuidance, type ManufacturerFinishGuidance } from "@/lib/products/manufacturer-finish-guidance";
+import { deleteTemporaryProductSource } from "@/lib/products/temporary-product-source";
 
 type ProductTemplateImageField =
   | "proposed_image_url_1"
@@ -464,6 +465,7 @@ export function ProductTemplateForm({
   });
   const [currentPricingData, setCurrentPricingData] = useState<SmartSetupSectionPresence>({ workstation: false, baseModel: false, category: false, modular: false, accessory: false });
   const [approvedSmartDraft, setApprovedSmartDraft] = useState<ProductTemplateDraft | null>(null);
+  const [smartSourcePdfMeta, setSmartSourcePdfMeta] = useState<{ sourcePdfStoragePath?: string; sourcePdfFileName?: string } | null>(null);
   const [materialSuggestions, setMaterialSuggestions] = useState<ManufacturerFinishGuidance[]>(() => normalizeManufacturerFinishGuidance(template?.material_suggestions));
   const [smartSetupNotice, setSmartSetupNotice] = useState("");
   const [workstationReplacement, setWorkstationReplacement] = useState<{ pricing?: unknown; rows: DeskingSizePricingRow[]; subgroups?: BaseModelPricingSubgroup[]; version: number } | null>(null);
@@ -499,7 +501,7 @@ export function ProductTemplateForm({
   const replacePendingSubgroupImage = (pricingType: ProductTemplateGroupReferenceType, groupId: string, subgroupId: string, file: File, previewUrl: string) => setPendingSubgroupImages((current) => { const key = pendingSubgroupImageKey(pricingType, groupId, subgroupId); const previous = current[key]; if (previous && previous.previewUrl !== previewUrl) URL.revokeObjectURL(previous.previewUrl); const next = { ...current, [key]: { file, previewUrl, pricingType, groupId, subgroupId } }; pendingSubgroupImagesRef.current = next; return next; });
   const removePendingSubgroupImage = (pricingType: ProductTemplateGroupReferenceType, groupId: string, subgroupId: string) => setPendingSubgroupImages((current) => { const key = pendingSubgroupImageKey(pricingType, groupId, subgroupId); const previous = current[key]; if (previous) URL.revokeObjectURL(previous.previewUrl); const next = { ...current }; delete next[key]; pendingSubgroupImagesRef.current = next; return next; });
   useEffect(() => () => Object.values(pendingSubgroupImagesRef.current).forEach((image) => URL.revokeObjectURL(image.previewUrl)), []);
-  function requestSmartDraftApply(draft: ProductTemplateDraft, routingPlan?: SmartSetupReviewRoutingPlan, confirmed = false, images: PendingProductTemplateRowImage[] = [], subgroupAssignments: SmartAppliedPricingSubgroups[] = [], subgroupImages: PendingProductTemplateSubgroupImage[] = [], incremental = false, incrementalSections: SmartSetupPricingSection[] = []) {
+  function requestSmartDraftApply(draft: ProductTemplateDraft, routingPlan?: SmartSetupReviewRoutingPlan, confirmed = false, images: PendingProductTemplateRowImage[] = [], subgroupAssignments: SmartAppliedPricingSubgroups[] = [], subgroupImages: PendingProductTemplateSubgroupImage[] = [], sourcePdfMeta?: { sourcePdfStoragePath?: string; sourcePdfFileName?: string }, incremental = false, incrementalSections: SmartSetupPricingSection[] = []) {
     const applyDraft = routingPlan ? draftForSmartSetupReviewApply(draft, routingPlan) : draft;
     const matrixRouting = routingPlan ? smartReviewMatrixOverrides(routingPlan) : undefined;
     const workstation = mapDraftWorkstationRows(applyDraft);
@@ -521,6 +523,7 @@ export function ProductTemplateForm({
     if (!accessories.groups.length) draftPresence.accessory = false;
     const conflicts = getSmartSetupOverwriteConflicts(draftPresence, currentPricingData);
     if (conflicts.length && !confirmed) return conflicts;
+    setSmartSourcePdfMeta(sourcePdfMeta ?? null);
     if (incremental) {
       mergePendingImages(images);
       mergePendingSubgroupImages(subgroupImages);
@@ -554,7 +557,7 @@ export function ProductTemplateForm({
     const fields = ["template_name", "template_code", "item_code", "internal_selection_name", "description", "default_specification", "origin", "supplier_name", "currency", "desking_size_pricing", "variant_pricing", "category_pricing", "modular_item_pricing", "modular_item_pricing_defaults", "accessory_pricing"];
     return Object.fromEntries(fields.map((field) => [field, typeof data.get(field) === "string" ? String(data.get(field)) : ""]));
   }
-  function currentSmartWorkspace() { const snapshot = currentFormSnapshot(); return snapshot ? productTemplateFormSmartWorkspace(snapshot) : null; }
+  function currentSmartWorkspace() { const snapshot = currentFormSnapshot(); return snapshot ? { ...productTemplateFormSmartWorkspace(snapshot), sourcePdfStoragePath: smartSourcePdfMeta?.sourcePdfStoragePath, sourcePdfFileName: smartSourcePdfMeta?.sourcePdfFileName } : null; }
   function applyManufacturerPricingState(state: Pick<ManufacturerFieldPatchState, "deskingSizePricing" | "variantPricing" | "categoryPricing" | "modularPricing" | "accessoryPricing">, affected: Set<string>) {
     if (affected.has("workstation")) setWorkstationReplacement((current) => ({ pricing: state.deskingSizePricing, rows: [], version: (current?.version ?? 0) + 1 }));
     if (affected.has("base_model")) {
@@ -590,7 +593,7 @@ export function ProductTemplateForm({
     const count = patches.length + actions.length; setSmartSetupNotice(`${count} manufacturer change${count === 1 ? "" : "s"} applied locally. Save the Product Template to persist.`);
     return { ok: true as const };
   }
-  const requestIncrementalSmartDraftApply = (draft: ProductTemplateDraft, routingPlan?: SmartSetupReviewRoutingPlan, confirmed = false, images: PendingProductTemplateRowImage[] = [], subgroupAssignments: SmartAppliedPricingSubgroups[] = [], subgroupImages: PendingProductTemplateSubgroupImage[] = []) => {
+  const requestIncrementalSmartDraftApply = (draft: ProductTemplateDraft, routingPlan?: SmartSetupReviewRoutingPlan, confirmed = false, images: PendingProductTemplateRowImage[] = [], subgroupAssignments: SmartAppliedPricingSubgroups[] = [], subgroupImages: PendingProductTemplateSubgroupImage[] = [], sourcePdfMeta?: { sourcePdfStoragePath?: string; sourcePdfFileName?: string }) => {
     void confirmed;
     const current = currentSmartWorkspace();
     const currentDraft = current ? draftForSmartSetupReviewApply(current.draft, current.plan) : null;
@@ -602,7 +605,7 @@ export function ProductTemplateForm({
       JSON.stringify(mapDraftModularPricing(currentDraft)) !== JSON.stringify(mapDraftModularPricing(nextDraft)) ? "modular" : null,
       JSON.stringify(mapDraftOptionGroupsToAccessories(currentDraft, current!.plan)) !== JSON.stringify(mapDraftOptionGroupsToAccessories(nextDraft, routingPlan)) ? "accessory" : null,
     ].filter((section): section is SmartSetupPricingSection => section !== null) : ["workstation", "baseModel", "category", "modular", "accessory"];
-    return requestSmartDraftApply(draft, routingPlan, true, images, subgroupAssignments, subgroupImages, true, changed);
+    return requestSmartDraftApply(draft, routingPlan, true, images, subgroupAssignments, subgroupImages, sourcePdfMeta, true, changed);
   };
   const updatePricingData = useCallback((section: keyof SmartSetupSectionPresence, hasData: boolean) => {
     setCurrentPricingData((current) => current[section] === hasData ? current : { ...current, [section]: hasData });
@@ -689,6 +692,11 @@ export function ProductTemplateForm({
     const subgroupMetadata = Object.values(pendingSubgroupImagesRef.current).map((image, index) => { const field = `pending_subgroup_reference_file_${index}`; formData.append(field, image.file, image.file.name); return { field, pricingType: image.pricingType, groupId: image.groupId, subgroupId: image.subgroupId }; });
     formData.set("pending_subgroup_references", JSON.stringify(subgroupMetadata));
     await baseSubmitAction(formData);
+    if (smartSourcePdfMeta?.sourcePdfStoragePath) {
+      const cleanup = await deleteTemporaryProductSource(smartSourcePdfMeta.sourcePdfStoragePath);
+      if (cleanup.ok) setSmartSourcePdfMeta(null);
+      else setSmartSetupNotice("Product Template saved. Temporary source PDF cleanup could not be completed.");
+    }
   };
 
   return (

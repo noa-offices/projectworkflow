@@ -119,5 +119,9 @@ export function validateCommercialDraft(draft: ProductTemplateDraft, context?: C
       if (requiredCompanionText.test(item.specification ?? "")) findings.push(finding("warning", "REQUIRED_COMPANION_TEXT", { kind: "option_item", groupId: group.id, itemId: item.id, field: "specification" }, "Possible required-companion rule", "This item contains language that may require companion configuration. Review the rule before Apply.", "review_rules"));
     });
   });
-  return findings;
+  const unavailableMatrixCells = new Set([
+    ...draft.pricing.priceMatrices.flatMap((matrix) => matrix.rows.flatMap((row) => (row.unavailableCategoryIds ?? []).map((columnId) => `price_matrix_cell:${matrix.id}:${row.id}:${columnId}`))),
+    ...draft.pricing.modularGroups.flatMap((group) => group.matrix.rows.flatMap((row) => (row.unavailableCategoryIds ?? []).map((columnId) => `modular_item:${group.id}:${row.id}:${columnId}`))),
+  ]);
+  return findings.filter((item) => item.code !== "MISSING_PRICE" || !unavailableMatrixCells.has(`${item.location.kind}:${item.location.groupId}:${item.location.rowId}:${item.location.columnId}`));
 }

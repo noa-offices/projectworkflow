@@ -97,6 +97,9 @@ export function validateSmartSetupReviewRouting(draft: ProductTemplateDraft, pla
       const kind = destination === "base_model" ? "base_model" : destination === "category_matrix" ? "price_matrix" : null;
       return kind ? matrix.rows.map((row) => accessoryApplicabilityTargetKey({ kind, group_id: matrix.id, row_id: row.id })) : [];
     }),
+    ...draft.pricing.modularGroups.flatMap((group) => plan.routes.find((route) => route.key === `modular:${group.id}`)?.destination === "modular"
+      ? group.matrix.rows.map((row) => accessoryApplicabilityTargetKey({ kind: "modular", group_id: group.id, row_id: row.id }))
+      : []),
   ]);
   plan.routes.forEach((route) => {
     if (!route.supportedDestinations.includes(route.destination)) errors.push(`${route.sourceName} cannot be applied to the selected destination.`);
@@ -113,7 +116,7 @@ export function validateSmartSetupReviewRouting(draft: ProductTemplateDraft, pla
       if (!target) errors.push(`${route.sourceName} has an incomplete applicable model target.`);
       if (ruleKeys.has(key)) errors.push(`${route.sourceName} has a duplicate applicable model rule.`);
       if (key) ruleKeys.add(key);
-      if (target && !modelTargets.has(key)) errors.push(`${route.sourceName} references a model not routed to Base / Model or Category / Matrix Pricing.`);
+      if (target && !modelTargets.has(key)) errors.push(`${route.sourceName} references a row not routed to Base / Model, Category / Matrix, or Modular Pricing.`);
       if (rule.fixedQuantity !== undefined && (!Number.isInteger(rule.fixedQuantity) || rule.fixedQuantity <= 0)) errors.push(`${route.sourceName} has an invalid fixed quantity.`);
       if (route.accessory?.selection === "required_exactly_one" && rule.fixedQuantity !== undefined && rule.fixedQuantity !== 1) errors.push(`${route.sourceName} must use fixed quantity 1 for Required / Exactly One.`);
       if (rule.allowedItemIds?.length === 0) errors.push(`${route.sourceName} requires at least one allowed item when Specific Items is selected.`);

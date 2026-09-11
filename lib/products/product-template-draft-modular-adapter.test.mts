@@ -20,6 +20,7 @@ test("compatible modular groups map separately and preserve shared price semanti
   assert.deepEqual(result.priceCategories, ["Cat B", "Cat C", "Cat D"]);
   assert.equal(result.groups.length, 2);
   assert.deepEqual(result.groups[1].items[0].prices, { "Cat B": 355, "Cat C": 0, "Cat D": null });
+  assert.deepEqual(result.groups[1].items[0].unavailable_categories, []);
   assert.match(result.warnings[0], /only the primary code/);
 });
 

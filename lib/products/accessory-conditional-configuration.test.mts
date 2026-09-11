@@ -137,6 +137,35 @@ test("price-matrix targets parse and resolve by stable group and row IDs", () =>
   assert.equal(evaluateAccessoryConfigurationForModel({ accessoryGroups: [coatHanger], baseModelGroupId: null, baseModelRowId: null, selectedModelTarget: { ...target, row_id: "ev711" } }).groups[0].visible, false);
 });
 
+test("modular targets parse, serialize, and activate only for selected modular rows", () => {
+  const left = { kind: "modular", group_id: "avana-large", row_id: "left" } as const;
+  const feet = group("feet", "companion", [{ target: left, required: true, visible: true, allowed_item_ids: ["standard"], fixed_quantity: 1 }]);
+  const parsed = parseAccessoryConfigurationGroups([feet]);
+  assert.equal(parsed.valid, true);
+  assert.deepEqual(resolveAccessoryApplicabilityTarget(parsed.groups[0].conditional_configuration!.applicability[0]), left);
+  assert.deepEqual(serializeAccessoryConfigurationGroups(parsed.groups), [feet]);
+  const unselected = evaluateAccessoryConfigurationForModel({ accessoryGroups: [feet], baseModelGroupId: null, baseModelRowId: null, selectedModelTargets: [] });
+  assert.equal(unselected.groups[0].visible, false);
+  const selected = (quantities: Record<string, number> = {}) => evaluateAccessoryConfigurationForModel({ accessoryGroups: [feet], baseModelGroupId: null, baseModelRowId: null, selectedModelTargets: [left], selectedQuantitiesByGroupId: { feet: quantities } });
+  assert.equal(selected().groups[0].validationCode, "required_selection_missing");
+  assert.equal(selected({ standard: 1 }).valid, true);
+});
+
+test("multiple selected modular rows union options and preserve every required rule without multiplying fixed quantity", () => {
+  const left = { kind: "modular", group_id: "avana", row_id: "left" } as const;
+  const centre = { kind: "modular", group_id: "avana", row_id: "centre" } as const;
+  const rules = [
+    { target: left, required: true, visible: true, allowed_item_ids: ["standard"], fixed_quantity: 1 },
+    { target: centre, required: true, visible: true, allowed_item_ids: ["standard"], fixed_quantity: 1 },
+  ];
+  const feet = group("feet", "companion", rules);
+  const result = evaluateAccessoryConfigurationForModel({ accessoryGroups: [feet], baseModelGroupId: null, baseModelRowId: null, selectedModelTargets: [left, centre], selectedQuantitiesByGroupId: { feet: { standard: 1 } } });
+  assert.equal(result.valid, true);
+  assert.equal(result.groups[0].fixedQuantity, 1);
+  const conflicting = group("feet", "companion", [{ ...rules[0] }, { ...rules[1], allowed_item_ids: ["schuko"] }]);
+  assert.equal(evaluateAccessoryConfigurationForModel({ accessoryGroups: [conflicting], baseModelGroupId: null, baseModelRowId: null, selectedModelTargets: [left, centre] }).groups[0].validationCode, "conflicting_required_rules");
+});
+
 test("price-matrix targets preserve required, allowed-items, all-items, and fixed-quantity behavior", () => {
   const target = { kind: "price_matrix", group_id: "everyis1", row_id: "ev111" } as const;
   const restricted = group("coat-hanger", "companion", [{ target, required: true, visible: true, allowed_item_ids: ["standard", "schuko"], fixed_quantity: 2 }], "choose_multiple");

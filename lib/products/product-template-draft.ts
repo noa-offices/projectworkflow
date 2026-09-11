@@ -78,6 +78,7 @@ export type ProductTemplateDraftMatrixColumn = {
 
 export type ProductTemplateDraftMatrixRow = Omit<ProductTemplateDraftPricedRow, "price"> & {
   prices: Record<string, ProductTemplateDraftPrice>;
+  unavailableCategoryIds?: string[];
 };
 
 export type ProductTemplateDraftPriceMatrix = {
@@ -334,8 +335,13 @@ function matrix(value: unknown, path: string, issues: IssueCollector): ProductTe
     columns.forEach((column) => {
       if (!(column.id in prices)) error(issues, `${path}.rows[${index}].prices.${column.id}`, "Missing matrix price cell.");
     });
+    const unavailableCategoryIds = codeList(item.unavailableCategoryIds, `${path}.rows[${index}].unavailableCategoryIds`, issues).filter((columnId) => {
+      if (columnIds.has(columnId)) return true;
+      error(issues, `${path}.rows[${index}].unavailableCategoryIds`, `Unknown matrix column id '${columnId}'.`);
+      return false;
+    });
     const base = pricedRow({ ...item, price: null }, `${path}.rows[${index}]`, issues);
-    return { ...base, prices };
+    return { ...base, prices, unavailableCategoryIds };
   });
   uniqueIds(rows.map((row) => row.id), `${path}.rows`, issues);
 

@@ -76,6 +76,20 @@ test("Category / Matrix model targets drive authoritative Product Library access
   assert.equal(evaluateProductAccessorySelection({ accessoryGroups: [matrixGroup], selectedModelTarget: { ...target, row_id: "ev711" } }).groups[0].visible, false);
 });
 
+test("selected modular rows activate conditional and required accessories together", () => {
+  const left = { kind: "modular", group_id: "sofa", row_id: "left" } as const;
+  const right = { kind: "modular", group_id: "sofa", row_id: "right" } as const;
+  const feet = { id: "feet", group_name: "Feet", items: [{ id: "feet-a", price: 20 }], conditional_configuration: { role: "companion", selection: "exactly_one", applicability: [{ target: left, required: true, visible: true, allowed_item_ids: ["feet-a"], fixed_quantity: 1 }] } };
+  const connector = { id: "connector", group_name: "Connector", items: [{ id: "connector-b", price: 5 }], conditional_configuration: { role: "conditional_option", selection: "choose_multiple", applicability: [{ target: right, required: false, visible: true, allowed_item_ids: ["connector-b"] }] } };
+  const centreOnly = evaluateProductAccessorySelection({ accessoryGroups: [feet, connector], selectedModelTargets: [{ ...left, row_id: "centre" }] });
+  assert.deepEqual(centreOnly.groups.map((group) => group.visible), [false, false]);
+  const required = evaluateProductAccessorySelection({ accessoryGroups: [feet, connector], selectedModelTargets: [left] });
+  assert.equal(required.groups[0].validationCode, "required_selection_missing");
+  const combined = evaluateProductAccessorySelection({ accessoryGroups: [feet, connector], selectedModelTargets: [left, right], selectedQuantities: { "feet-a": 1 } });
+  assert.equal(combined.valid, true);
+  assert.deepEqual(combined.groups.map((group) => [group.visible, group.required]), [[true, true], [true, false]]);
+});
+
 test("server quantity input accepts only unique positive whole numbers", () => {
   assert.deepEqual(parseSubmittedAccessoryQuantities(["top:1", "top-alt:2"]), { errors: [], quantities: { top: 1, "top-alt": 2 } });
   for (const values of [["top:0"], ["top:-1"], ["top:1.5"], ["top:nope"], ["top:1:extra"], ["unknown"], ["top:1", "top:2"]]) {

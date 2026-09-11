@@ -1,7 +1,76 @@
-import type { ProductTemplateDraft, ProductTemplateDraftDimension, ProductTemplateDraftPrice, ProductTemplateDraftSelectionRule } from "./product-template-draft";
+import type { ProductTemplateDraft, ProductTemplateDraftCurrency, ProductTemplateDraftDimension, ProductTemplateDraftPrice, ProductTemplateDraftSelectionRule } from "./product-template-draft";
+
+export type SmartProductReviewCurrencyState = {
+  kind: "common" | "mixed" | "unresolved" | "none";
+  currency: ProductTemplateDraftCurrency | null;
+  hasUnresolvedPricedRows: boolean;
+};
+
+function isNumericPrice(value: ProductTemplateDraftPrice) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+export function collectPricedRowCurrencies(draft: ProductTemplateDraft) {
+  const currencies: Array<ProductTemplateDraftCurrency | null> = [];
+  draft.pricing.workstationRows.forEach((row) => {
+    if (isNumericPrice(row.price) || isNumericPrice(row.additionalPrice)) currencies.push(row.currency);
+  });
+  draft.pricing.baseModelRows.forEach((row) => {
+    if (isNumericPrice(row.price)) currencies.push(row.currency);
+  });
+  draft.pricing.priceMatrices.forEach((matrix) => matrix.rows.forEach((row) => {
+    if (Object.values(row.prices).some(isNumericPrice)) currencies.push(row.currency);
+  }));
+  draft.pricing.modularGroups.forEach((group) => group.matrix.rows.forEach((row) => {
+    if (Object.values(row.prices).some(isNumericPrice)) currencies.push(row.currency);
+  }));
+  draft.optionGroups.forEach((group) => group.items.forEach((item) => {
+    if (isNumericPrice(item.price)) currencies.push(item.currency);
+  }));
+  return currencies;
+}
+
+export function deriveSmartProductReviewCurrencyState(draft: ProductTemplateDraft): SmartProductReviewCurrencyState {
+  const rowCurrencies = collectPricedRowCurrencies(draft);
+  if (!rowCurrencies.length) return { kind: draft.defaultCurrency ? "common" : "none", currency: draft.defaultCurrency, hasUnresolvedPricedRows: false };
+  const explicitCurrencies = [...new Set(rowCurrencies.filter((currency): currency is ProductTemplateDraftCurrency => currency !== null))];
+  const hasNullRows = rowCurrencies.some((currency) => currency === null);
+  const safeDefault = draft.defaultCurrency !== null && explicitCurrencies.every((currency) => currency === draft.defaultCurrency);
+  const hasUnresolvedPricedRows = hasNullRows && !safeDefault;
+  if (explicitCurrencies.length > 1) return { kind: "mixed", currency: null, hasUnresolvedPricedRows };
+  const commonCurrency = explicitCurrencies[0] ?? (safeDefault ? draft.defaultCurrency : null);
+  if (commonCurrency) return { kind: "common", currency: commonCurrency, hasUnresolvedPricedRows };
+  return { kind: "unresolved", currency: null, hasUnresolvedPricedRows: true };
+}
+
+export function fillNullPricedRowCurrenciesFromDefault(draft: ProductTemplateDraft) {
+  const defaultCurrency = draft.defaultCurrency;
+  if (!defaultCurrency) return structuredClone(draft);
+  const explicitCurrencies = new Set(collectPricedRowCurrencies(draft).filter((currency): currency is ProductTemplateDraftCurrency => currency !== null));
+  if ([...explicitCurrencies].some((currency) => currency !== defaultCurrency)) return structuredClone(draft);
+  const next = structuredClone(draft);
+  next.pricing.workstationRows.forEach((row) => { if ((isNumericPrice(row.price) || isNumericPrice(row.additionalPrice)) && row.currency === null) row.currency = defaultCurrency; });
+  next.pricing.baseModelRows.forEach((row) => { if (isNumericPrice(row.price) && row.currency === null) row.currency = defaultCurrency; });
+  next.pricing.priceMatrices.forEach((matrix) => matrix.rows.forEach((row) => { if (Object.values(row.prices).some(isNumericPrice) && row.currency === null) row.currency = defaultCurrency; }));
+  next.pricing.modularGroups.forEach((group) => group.matrix.rows.forEach((row) => { if (Object.values(row.prices).some(isNumericPrice) && row.currency === null) row.currency = defaultCurrency; }));
+  next.optionGroups.forEach((group) => group.items.forEach((item) => { if (isNumericPrice(item.price) && item.currency === null) item.currency = defaultCurrency; }));
+  return next;
+}
+
+export function applySmartProductReviewCurrencyOverride(draft: ProductTemplateDraft, currency: ProductTemplateDraftCurrency) {
+  const next = structuredClone(draft);
+  next.defaultCurrency = currency;
+  // This is an explicit label/interpretation override. Numeric prices are never converted.
+  next.pricing.workstationRows.forEach((row) => { row.currency = currency; });
+  next.pricing.baseModelRows.forEach((row) => { row.currency = currency; });
+  next.pricing.priceMatrices.forEach((matrix) => matrix.rows.forEach((row) => { row.currency = currency; }));
+  next.pricing.modularGroups.forEach((group) => group.matrix.rows.forEach((row) => { row.currency = currency; }));
+  next.optionGroups.forEach((group) => group.items.forEach((item) => { item.currency = currency; }));
+  return next;
+}
 
 export function createReviewedProductTemplateDraft(draft: ProductTemplateDraft) {
-  return structuredClone(draft);
+  return fillNullPricedRowCurrenciesFromDefault(draft);
 }
 
 export function nullableReviewNumber(value: string) {
@@ -107,7 +176,11 @@ export function updateReviewedMaterialSuggestion(
 }
 
 export function reviewedProductTemplateDraftForApply(draft: ProductTemplateDraft) {
-  return draft;
+  const resolved = fillNullPricedRowCurrenciesFromDefault(draft);
+  if (deriveSmartProductReviewCurrencyState(resolved).hasUnresolvedPricedRows) {
+    throw new Error("Select a currency before applying imported prices.");
+  }
+  return resolved;
 }
 
 export function smartProductWarningSummary(draft: ProductTemplateDraft, validationWarnings: string[]) {

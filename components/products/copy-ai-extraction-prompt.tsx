@@ -4,20 +4,18 @@ import { useRef, useState } from "react";
 import { buildProductTemplateSetupPlanningPrompt, getProductTemplateAiExtractionPrompt, type ExtractionPromptFocus, type ProductTemplateSetupPlanningFocus } from "@/lib/products/product-template-ai-extraction-prompt";
 
 const choices: Array<{ focus: ExtractionPromptFocus; label: string; description: string }> = [
-  { focus: "full", label: "Full Product / Complete Extraction", description: "Extract all clearly supported product details, pricing, options, materials, finishes and technical information." },
-  { focus: "base_model", label: "Base / Model Pricing", description: "Focus on directly priced models, variants, desk sizes/configurations, dimensions and supplier codes." },
-  { focus: "workstation", label: "Workstation Pricing", description: "Focus on workstation sizes, layouts, configurations, additional pricing and related accessories." },
-  { focus: "category_matrix", label: "Category / Matrix Pricing", description: "Focus on row-by-category pricing such as fabric, leather, finish or other price matrices." },
-  { focus: "modular", label: "Modular Pricing", description: "Focus on modular families, modules, groups, shared price categories and related configuration." },
-  { focus: "accessories", label: "Accessories / Configuration Only", description: "Focus only on accessories, options, companion components and configuration rules." },
-  { focus: "product_details", label: "Product Details / Specifications", description: "Focus on product identity, descriptions, technical specifications, dimensions and model details." },
-  { focus: "materials", label: "Materials / Finishes", description: "Focus on finish codes, materials, colours, combinations and applicability." },
+  { focus: "base_model", label: "Desks / Executive Desks", description: "Extract desk models, sizes, returns, service units, top-access and related desk configuration." },
   { focus: "chair_seating", label: "Chair & Seating", description: "Chair-specific extraction for models, upholstery matrices, mechanisms, bases, arms, castors/glides, and seating options." },
+  { focus: "sofa_lounge", label: "Sofas / Lounge / Armchairs", description: "Extract sofas, lounge armchairs, modular seating, upholstery pricing and related lounge configuration." },
+  { focus: "meeting_conference", label: "Meeting / Conference Tables", description: "Extract complete meeting tables, terminal/intermediate systems, top-access and related cable management." },
 ];
 
 const planningChoices: Array<{ focus: ProductTemplateSetupPlanningFocus; label: string; description: string }> = [
   { focus: "general", label: "General / Auto Detect", description: "Analyze any manufacturer price list and recommend Product Template splits, pages, batches and setup order." },
   { focus: "chair_seating", label: "Chair & Seating", description: "Chair-specific planning for seating models, upholstery pricing, mechanisms, bases, arms, castors/glides, and seating configuration." },
+  { focus: "desk_executive", label: "Desks / Executive Desks", description: "Plan desk models, sizes, returns, service units, top-access and related desk configuration." },
+  { focus: "sofa_lounge", label: "Sofas / Lounge / Armchairs", description: "Plan sofas, lounge armchairs, modular seating, upholstery pricing and related lounge configuration." },
+  { focus: "meeting_conference", label: "Meeting / Conference Tables", description: "Plan complete meeting tables, terminal/intermediate systems, top-access and related cable management." },
 ];
 
 export function CopyAiExtractionPrompt() {

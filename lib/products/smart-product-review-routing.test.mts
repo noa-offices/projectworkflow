@@ -81,5 +81,18 @@ test("review routing rejects nonexistent Category / Matrix targets", () => {
   top.accessory = { role: "conditional_option", selection: "optional_multiple", rules: [{ target: { kind: "price_matrix", group_id: "ARCA", row_id: "missing" }, required: false }] };
   const validation = validateSmartSetupReviewRouting(draft, plan);
   assert.equal(validation.valid, false);
-  assert.match(validation.errors.join(" "), /not routed to Base \/ Model or Category \/ Matrix Pricing/i);
+  assert.match(validation.errors.join(" "), /not routed to Base \/ Model, Category \/ Matrix, or Modular Pricing/i);
+});
+
+test("review routing accepts and persists stable Modular row targets", () => {
+  const modularDraft: ProductTemplateDraft = structuredClone(draft);
+  modularDraft.pricing.modularGroups = [{ id: "avana", label: "Avana LARGE", defaultDimensions: null, defaultSpecification: null, matrix: matrix("avana", [{ id: "cat-b", label: "Cat B" }], { "cat-b": 100 }) }];
+  const plan = createSmartSetupReviewRouting(modularDraft);
+  const top = plan.routes.find((route) => route.sourceId === "top")!;
+  top.accessory = { role: "companion", selection: "required_exactly_one", rules: [{ target: { kind: "modular", group_id: "avana", row_id: "avana-row" }, required: true, allowedItemIds: ["top-item"], fixedQuantity: 1 }] };
+  assert.equal(validateSmartSetupReviewRouting(modularDraft, plan).valid, true);
+  const mapped = mapDraftOptionGroupsToAccessories(draftForSmartSetupReviewApply(modularDraft, plan), plan).groups.find((group) => group.id === "top")!;
+  assert.deepEqual(mapped.conditional_configuration?.applicability[0], { target: { kind: "modular", group_id: "avana", row_id: "avana-row" }, required: true, visible: true, allowed_item_ids: ["top-item"], fixed_quantity: 1 });
+  top.accessory.rules[0] = { ...top.accessory.rules[0], target: { kind: "modular", group_id: "avana", row_id: "missing" } };
+  assert.equal(validateSmartSetupReviewRouting(modularDraft, plan).valid, false);
 });

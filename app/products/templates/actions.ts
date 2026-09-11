@@ -10,6 +10,11 @@ import {
   groupedStandardCategoryPricingRows,
   normalizeCategoryPriceLabel,
 } from "@/lib/products/category-pricing-groups";
+import {
+  explicitCategoryPriceValue,
+  explicitPricingCategoryLabels,
+  manualDefaultPriceCategories,
+} from "@/lib/products/pricing-category-columns";
 import { materialDisplayCategoryLabel } from "@/lib/products/material-classification";
 import { manufacturerFinishGuidanceFromForm } from "@/lib/products/manufacturer-finish-guidance";
 import { parseNullablePricingNumber } from "@/lib/products/nullable-pricing";
@@ -1024,18 +1029,14 @@ function categoryPricingValue(formData: FormData) {
       ...(Array.isArray(parsedModular) ? parsedModular.filter((row) => row?.pricing_type !== MODULAR_GROUP_PRICING_TYPE) : []),
     ];
 
-    const normalizeCategoryRow = (row: Record<string, unknown>, index: number) => {
+    const normalizeCategoryRow = (row: Record<string, unknown>, index: number, explicitCategories: string[] = []) => {
       const prices = typeof row.prices === "object" && row.prices !== null
         ? row.prices as Record<string, unknown>
         : {};
-      const normalizedPrices = new Map<string, number | null>([
-        ["Cat A", null],
-        ["Cat B", null],
-        ["Cat C", null],
-        ["Cat D", null],
-      ]);
+      const normalizedPrices = new Map<string, number | null>((explicitCategories.length ? explicitCategories : manualDefaultPriceCategories)
+        .map((category) => [category, parseNullablePricingNumber(explicitCategoryPriceValue(prices, category))]));
 
-      Object.entries(prices).forEach(([key, value]) => {
+      if (!explicitCategories.length) Object.entries(prices).forEach(([key, value]) => {
         const label = normalizeCategoryPriceLabel(key);
         if (!label) {
           return;
@@ -1064,6 +1065,8 @@ function categoryPricingValue(formData: FormData) {
         dimension: typeof row.dimension === "string" ? row.dimension.trim() : "",
         currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
         prices: Object.fromEntries(normalizedPrices.entries()),
+        unavailable_categories: Array.from(new Set((Array.isArray(row.unavailable_categories) ? row.unavailable_categories : [])
+          .filter((category): category is string => typeof category === "string" && normalizedPrices.has(category)))),
         specification: typeof row.specification === "string" ? row.specification.trim() : "",
         modular_default_dimension:
           typeof row.modular_default_dimension === "string" && row.modular_default_dimension.trim()
@@ -1087,9 +1090,9 @@ function categoryPricingValue(formData: FormData) {
         : "Finish Category Pricing",
       sort_order: Number.isFinite(Number(group.sort_order)) ? Number(group.sort_order) : groupIndex,
       is_active: group.is_active !== false,
-      price_categories: Array.from(new Set((group.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean))),
+      price_categories: explicitPricingCategoryLabels(group.price_categories),
       items: (group.items ?? [])
-        .map((item, itemIndex) => normalizeCategoryRow(item as Record<string, unknown>, itemIndex))
+        .map((item, itemIndex) => normalizeCategoryRow(item as Record<string, unknown>, itemIndex, explicitPricingCategoryLabels(group.price_categories)))
         .filter((row) =>
           row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price !== null) || row.specification,
         ),
@@ -1097,7 +1100,9 @@ function categoryPricingValue(formData: FormData) {
 
     const modularGroups = (Array.isArray(parsedModular) ? parsedModular : [])
       .filter((row) => row?.pricing_type === MODULAR_GROUP_PRICING_TYPE)
-      .map((group, groupIndex) => ({
+      .map((group, groupIndex) => {
+        const priceCategories = explicitPricingCategoryLabels(group.price_categories);
+        return {
         id: typeof group.id === "string" && group.id ? group.id : `modular-group-${groupIndex}`,
         pricing_type: MODULAR_GROUP_PRICING_TYPE,
         group_name: typeof group.group_name === "string" && group.group_name.trim()
@@ -1105,13 +1110,15 @@ function categoryPricingValue(formData: FormData) {
           : "Modular Items",
         sort_order: Number.isFinite(Number(group.sort_order)) ? Number(group.sort_order) : groupIndex,
         is_active: group.is_active !== false,
+        price_categories: priceCategories,
         items: (Array.isArray(group.items) ? group.items : [])
-          .map((item, itemIndex) => normalizeCategoryRow(item as Record<string, unknown>, itemIndex))
+          .map((item, itemIndex) => normalizeCategoryRow(item as Record<string, unknown>, itemIndex, priceCategories))
           .map((item) => ({ ...item, pricing_type: MODULAR_ITEM_PRICING_TYPE }))
           .filter((row) =>
             row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price !== null) || row.specification,
           ),
-      }))
+        };
+      })
       .filter((group) => (group.items?.length ?? 0) > 0 || group.group_name);
 
     const rows = sourceRows
@@ -1146,6 +1153,7 @@ function categoryPricingValue(formData: FormData) {
         dimension: "",
         currency: defaultCurrency,
         prices: Object.fromEntries([["Cat A", null], ["Cat B", null], ["Cat C", null], ["Cat D", null]]),
+        unavailable_categories: [],
         specification: "",
         modular_default_dimension: modularDefaultDimension,
         modular_default_specification: modularDefaultSpecification,

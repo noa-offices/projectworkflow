@@ -4,7 +4,7 @@ export const ACCESSORY_SELECTION_MODES = ["unrestricted", "exactly_one", "at_lea
 export type AccessoryConfigurationRole = typeof ACCESSORY_CONFIGURATION_ROLES[number];
 export type AccessorySelectionMode = typeof ACCESSORY_SELECTION_MODES[number];
 
-export const ACCESSORY_APPLICABILITY_TARGET_KINDS = ["base_model", "price_matrix"] as const;
+export const ACCESSORY_APPLICABILITY_TARGET_KINDS = ["base_model", "price_matrix", "modular"] as const;
 export type AccessoryApplicabilityTargetKind = typeof ACCESSORY_APPLICABILITY_TARGET_KINDS[number];
 export type AccessoryApplicabilityTarget = {
   kind: AccessoryApplicabilityTargetKind;
@@ -210,7 +210,7 @@ export function parseAccessoryConfigurationGroups(value: unknown): ParsedAccesso
           const kind = rawTarget.kind;
           const groupId = typeof rawTarget.group_id === "string" ? rawTarget.group_id.trim() : "";
           const rowId = typeof rawTarget.row_id === "string" ? rawTarget.row_id.trim() : "";
-          if (typeof kind !== "string" || !ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(kind as AccessoryApplicabilityTargetKind)) addIssue(issues, "invalid_applicability_target_kind", `${rulePath}.target.kind`, "Applicability target kind must be Base/Model or Price Matrix.");
+          if (typeof kind !== "string" || !ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(kind as AccessoryApplicabilityTargetKind)) addIssue(issues, "invalid_applicability_target_kind", `${rulePath}.target.kind`, "Applicability target kind must be Base/Model, Price Matrix, or Modular.");
           if (!groupId) addIssue(issues, "missing_applicability_target_group_id", `${rulePath}.target.group_id`, "Applicability target group ID is required.");
           if (!rowId) addIssue(issues, "missing_applicability_target_row_id", `${rulePath}.target.row_id`, "Applicability target row ID is required.");
           if (typeof kind === "string" && ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(kind as AccessoryApplicabilityTargetKind) && groupId && rowId) target = { kind: kind as AccessoryApplicabilityTargetKind, group_id: groupId, row_id: rowId };
@@ -285,12 +285,14 @@ export function evaluateAccessoryConfigurationForModel({
   baseModelGroupId,
   baseModelRowId,
   selectedModelTarget,
+  selectedModelTargets,
   selectedQuantitiesByGroupId = {},
 }: {
   accessoryGroups: unknown;
   baseModelGroupId: string | null | undefined;
   baseModelRowId: string | null | undefined;
   selectedModelTarget?: AccessoryApplicabilityTarget | null;
+  selectedModelTargets?: AccessoryApplicabilityTarget[];
   selectedQuantitiesByGroupId?: Record<string, Record<string, number | null | undefined>>;
 }): AccessoryConfigurationEvaluation {
   const parsed = parseAccessoryConfigurationGroups(accessoryGroups);
@@ -316,18 +318,23 @@ export function evaluateAccessoryConfigurationForModel({
     if (groupIssues.length) return groupFailure(groupId, role, selectedIds, groupIssues[0].message);
 
     const allItemIds = (group.items ?? []).filter((item) => item.is_active !== false).map((item) => item.id).filter((id): id is string => Boolean(id));
-    const selectedTarget = selectedModelTarget ?? (baseModelGroupId && baseModelRowId
+    const legacyTarget = selectedModelTarget ?? (baseModelGroupId && baseModelRowId
       ? { kind: "base_model" as const, group_id: baseModelGroupId, row_id: baseModelRowId }
       : null);
-    const matchingRule = selectedTarget ? configuration?.applicability.find((rule) => {
+    const targets = [...new Map([...(selectedModelTargets ?? []), ...(legacyTarget ? [legacyTarget] : [])].map((target) => [accessoryApplicabilityTargetKey(target), target])).values()];
+    const targetKeys = new Set(targets.map(accessoryApplicabilityTargetKey));
+    const matchingRules = configuration?.applicability.filter((rule) => {
       const target = resolveAccessoryApplicabilityTarget(rule);
-      return target?.kind === selectedTarget.kind && target.group_id === selectedTarget.group_id && target.row_id === selectedTarget.row_id;
-    }) : undefined;
+      return target ? targetKeys.has(accessoryApplicabilityTargetKey(target)) : false;
+    }) ?? [];
+    const visibleRules = matchingRules.filter((rule) => rule.visible);
     const requiresMatchingRule = Boolean(configuration && (configuration.role !== "accessory" || configuration.applicability.length));
-    const visible = group.is_active !== false && (!requiresMatchingRule || Boolean(matchingRule?.visible));
-    const required = visible && (matchingRule ? matchingRule.required : group.group_is_required === true);
+    const visible = group.is_active !== false && (!requiresMatchingRule || visibleRules.length > 0);
+    const requiredRules = visibleRules.filter((rule) => rule.required);
+    const required = visible && (matchingRules.length ? requiredRules.length > 0 : group.group_is_required === true);
+    const allowedByRule = visibleRules.map((rule) => rule.allowed_item_ids === undefined ? allItemIds : allItemIds.filter((id) => rule.allowed_item_ids?.includes(id)));
     const allowedItemIds = visible
-      ? matchingRule?.allowed_item_ids === undefined ? allItemIds : allItemIds.filter((id) => matchingRule.allowed_item_ids?.includes(id))
+      ? visibleRules.length ? [...new Set(allowedByRule.flat())] : allItemIds
       : [];
     const allowedSet = new Set(allowedItemIds);
     const staleItemIds = selectedIds.filter((id) => !allowedSet.has(id));
@@ -336,16 +343,27 @@ export function evaluateAccessoryConfigurationForModel({
     const selection = configuration?.selection ?? (group.group_is_required ? "at_least_one" : "unrestricted");
     const minSelections = required ? 1 : 0;
     const maxSelections = selection === "exactly_one" ? 1 : null;
-    const fixedQuantity = matchingRule?.fixed_quantity ?? null;
+    const fixedQuantities = [...new Set(visibleRules.flatMap((rule) => rule.fixed_quantity === undefined ? [] : [rule.fixed_quantity]))];
+    const fixedQuantity = fixedQuantities.length === 1 ? fixedQuantities[0] : null;
+    const requiredAllowedSets = requiredRules.map((rule) => new Set(rule.allowed_item_ids === undefined ? allItemIds : allItemIds.filter((id) => rule.allowed_item_ids?.includes(id))));
+    const requiredIntersection = requiredAllowedSets.length ? [...requiredAllowedSets[0]].filter((id) => requiredAllowedSets.every((set) => set.has(id))) : [];
+    const incompatibleRequiredRules = selection === "exactly_one" && requiredAllowedSets.length > 1 && requiredIntersection.length === 0;
+    const missingRequiredRule = requiredAllowedSets.some((set) => !eligibleSelections.some((id) => set.has(id)));
     let validationCode: string | null = null;
     let validationMessage: string | null = null;
 
     if (staleItemIds.length) {
       validationCode = "stale_selection";
-      validationMessage = "One or more selected items are not applicable to the selected Base/Model.";
-    } else if (eligibleSelections.length < minSelections) {
+      validationMessage = "One or more selected items are not applicable to the selected product configuration.";
+    } else if (incompatibleRequiredRules) {
+      validationCode = "conflicting_required_rules";
+      validationMessage = "Selected product rows require incompatible exactly-one accessory choices.";
+    } else if (fixedQuantities.length > 1) {
+      validationCode = "conflicting_fixed_quantity";
+      validationMessage = "Selected product rows require conflicting fixed quantities for this accessory group.";
+    } else if (eligibleSelections.length < minSelections || missingRequiredRule) {
       validationCode = "required_selection_missing";
-      validationMessage = "Select at least one applicable item from this group.";
+      validationMessage = "Select the required applicable item for every selected product row.";
     } else if (maxSelections !== null && eligibleSelections.length > maxSelections) {
       validationCode = "too_many_selections";
       validationMessage = "Select no more than one item from this group.";

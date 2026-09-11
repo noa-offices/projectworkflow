@@ -36,12 +36,14 @@ export function evaluateProductAccessorySelection({
   baseModelGroupId,
   baseModelRowId,
   selectedModelTarget,
+  selectedModelTargets,
   selectedQuantities = {},
 }: {
   accessoryGroups: unknown;
   baseModelGroupId?: string | null;
   baseModelRowId?: string | null;
   selectedModelTarget?: AccessoryApplicabilityTarget | null;
+  selectedModelTargets?: AccessoryApplicabilityTarget[];
   selectedQuantities?: Record<string, number | null | undefined>;
 }): ProductAccessorySelectionEvaluation {
   const parsed = parseAccessoryConfigurationGroups(accessoryGroups);
@@ -73,6 +75,7 @@ export function evaluateProductAccessorySelection({
     baseModelGroupId,
     baseModelRowId,
     selectedModelTarget,
+    selectedModelTargets,
     selectedQuantitiesByGroupId,
   });
   const activeQuantities = Object.fromEntries(

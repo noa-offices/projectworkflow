@@ -28,6 +28,13 @@ export type ProductSpecificationWorkstationVariantInput = {
   variant_name?: string | null;
 };
 
+export type ModularCompositionSpecificationItem = {
+  itemName?: string | null;
+  label?: string | null;
+  quantity?: number | null;
+  specification?: string | null;
+};
+
 function compactText(value: string | null | undefined) {
   return typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
 }
@@ -35,6 +42,99 @@ function compactText(value: string | null | undefined) {
 function sentenceWithPeriod(value: string) {
   const trimmed = value.trim().replace(/[.,;:\s]+$/g, "");
   return trimmed ? `${trimmed}.` : "";
+}
+
+function readableModularLabel(value: string) {
+  const normalized = compactText(value)
+    .replace(/\s+[-–]\s+(?=\d+\s*[x×]\s*\d+)/gi, " ")
+    .replace(/(\d)\s*[xX]\s*(?=\d)/g, "$1×")
+    .replace(/(\d)(cm|mm)\b/gi, "$1 $2");
+  if (normalized === normalized.toUpperCase()) return normalized.toLowerCase();
+  return normalized.replace(/\b[A-Z][a-z]+\b/g, (word) => word.toLowerCase());
+}
+
+function pluralizeModularLabel(value: string) {
+  const words = value.split(" ");
+  const dimensionIndex = words.findIndex((word) => /^\d/.test(word));
+  const lastWordIndex = (dimensionIndex < 0 ? words.length : dimensionIndex) - 1;
+  if (lastWordIndex < 0) return value;
+  const phrase = words.slice(0, lastWordIndex + 1).join(" ");
+  if (/\bchaise longue$/i.test(phrase)) {
+    words.splice(lastWordIndex - 1, 2, "chaises", "longues");
+    return words.join(" ");
+  }
+  const word = words[lastWordIndex];
+  if (/s$/i.test(word)) return value;
+  if (/[^aeiou]y$/i.test(word)) words[lastWordIndex] = `${word.slice(0, -1)}ies`;
+  else if (/(?:s|x|z|ch|sh)$/i.test(word)) words[lastWordIndex] = `${word}es`;
+  else words[lastWordIndex] = `${word}s`;
+  return words.join(" ");
+}
+
+function appendUpholsteryCategory(specification: string | null, selectedCategory?: string | null) {
+  if (!specification) return null;
+  const category = compactText(selectedCategory);
+  if (!category || specification.toLowerCase().includes(category.toLowerCase())) return specification;
+  return `${sentenceWithPeriod(specification)} Upholstery: ${sentenceWithPeriod(category)}`;
+}
+
+function naturalModularJoin(parts: string[]) {
+  if (parts.length < 3) return naturalJoin(parts);
+  return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+}
+
+export function buildModularCompositionSpecification({
+  items,
+  modularDefaultSpecification,
+  selectedCategory,
+  templateDefaultSpecification,
+  templateDescription,
+}: {
+  items: ModularCompositionSpecificationItem[];
+  modularDefaultSpecification?: string | null;
+  selectedCategory?: string | null;
+  templateDefaultSpecification?: string | null;
+  templateDescription?: string | null;
+}) {
+  const selectedItems = items.flatMap((item) => {
+    const quantity = Math.trunc(Number(item.quantity));
+    const label = compactText(item.itemName) || compactText(item.label);
+    return Number.isFinite(quantity) && quantity > 0 && label ? [{ ...item, label, quantity }] : [];
+  });
+  const baseSpecification = firstNonEmptySnapshotText(
+    modularDefaultSpecification,
+    templateDefaultSpecification,
+    templateDescription,
+  );
+
+  if (!selectedItems.length) return baseSpecification ? sentenceWithPeriod(baseSpecification) : null;
+  if (selectedItems.length === 1 && selectedItems[0].quantity === 1) {
+    const rowSpecification = compactText(selectedItems[0].specification);
+    if (rowSpecification) return appendUpholsteryCategory(sentenceWithPeriod(rowSpecification), selectedCategory);
+  }
+
+  const quantities = selectedItems.map((item) => {
+    const label = readableModularLabel(item.label);
+    return `${item.quantity} ${item.quantity === 1 ? label : pluralizeModularLabel(label)}`;
+  });
+  const baseStem = compactText(baseSpecification)
+    .replace(/[.,;:\s]+$/g, "")
+    .replace(/\bcompris(?:e|es|ing)\b.*$/i, "")
+    .replace(/[.,;:\s]+$/g, "") || "Modular lounge seating";
+  const composition = `${baseStem} comprising ${naturalModularJoin(quantities)}.`;
+  return appendUpholsteryCategory(composition, selectedCategory);
+}
+
+export function resolveFinalProductSpecification({
+  editedSpecification,
+  generatedSpecification,
+  wasEdited,
+}: {
+  editedSpecification?: string | null;
+  generatedSpecification: string | null;
+  wasEdited: boolean;
+}) {
+  return wasEdited ? editedSpecification ?? generatedSpecification : generatedSpecification;
 }
 
 function naturalJoin(parts: string[]) {

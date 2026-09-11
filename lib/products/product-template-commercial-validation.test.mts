@@ -36,6 +36,17 @@ test("commercial validator leaves ProductTemplateDraft structural validation unc
   assert.equal(invalid.valid, false);
 });
 
+test("commercial validator distinguishes an explicit unavailable matrix cell from a missing price", () => {
+  const value = draft();
+  value.pricing.priceMatrices.push({ id: "legs", label: "Legs", columns: [{ id: "painted", label: "Painted" }, { id: "chromed", label: "Chromed" }], rows: [
+    { ...row("known-missing", null), prices: { painted: 867, chromed: null }, unavailableCategoryIds: [] },
+    { ...row("not-offered", null), prices: { painted: 867, chromed: null }, unavailableCategoryIds: ["chromed"] },
+  ] });
+  const missing = validateCommercialDraft(value).filter((item) => item.code === "MISSING_PRICE");
+  assert.equal(missing.length, 1);
+  assert.equal(missing[0].location.rowId, "known-missing");
+});
+
 test("commercial validator detects only conservative incoming matrix code drift in matching matrices", () => {
   const existing = draft();
   existing.pricing.priceMatrices.push({ id: "upholstery", label: "Upholstery", columns: [{ id: "sg3", label: "SG3" }, { id: "lg6", label: "LG6" }, { id: "hp4", label: "HP4" }], rows: [] });

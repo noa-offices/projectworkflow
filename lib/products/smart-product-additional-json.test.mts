@@ -3,6 +3,7 @@ import test from "node:test";
 import type { ProductTemplateDraft, ProductTemplateDraftPricedRow } from "./product-template-draft.js";
 import { applySmartAdditionalJson, smartAdditionalDuplicateRows, smartAdditionalJsonGroups, type SmartAdditionalGroupDecision } from "./smart-product-additional-json.js";
 import { createSmartSetupReviewRouting } from "./smart-product-review-routing.js";
+import { deriveSmartProductReviewCurrencyState } from "./smart-product-review.js";
 import { baseModelSubgroupsForSmartSetupApply, pendingRowImagesForSmartSetupApply, reviewedRowImageKey } from "./smart-product-row-images.js";
 
 const row = (id: string, code: string, price: number | null, displayName = id): ProductTemplateDraftPricedRow => ({ id, label: displayName, displayName, dimensions: null, currency: "EUR", price, specification: null, supplierCodes: code ? [code] : [], referenceCodes: [] });
@@ -103,4 +104,15 @@ test("staged images and subgroup membership remain attached while incoming rows 
   assert.equal(pendingRowImagesForSmartSetupApply(merged.draft, merged.plan, { [reviewedRowImageKey("base_model:rows", "a")]: image })[0].rowId, "a");
   const subgroups = baseModelSubgroupsForSmartSetupApply(merged.draft, merged.plan, { "base_model:rows": [{ id: "sg", subgroup_name: "Existing", sort_order: 0, is_active: true, row_ids: ["a"] }] });
   assert.deepEqual(subgroups[0].subgroups[0].row_ids, ["a"]); assert.ok(!subgroups[0].subgroups[0].row_ids.includes("b"));
+});
+
+test("additional JSON materializes its own safe default currency before merge", () => {
+  const current = draft("Current", [row("eur", "EUR-1", 10)]);
+  const incoming = draft("Incoming", [{ ...row("usd", "USD-1", 20), currency: null }]);
+  incoming.defaultCurrency = "USD";
+  const merged = applySmartAdditionalJson(current, createSmartSetupReviewRouting(current), incoming, {
+    "base_model:rows": decision("merge", "base_model:rows"),
+  });
+  assert.equal(merged.draft.pricing.baseModelRows[1].currency, "USD");
+  assert.deepEqual(deriveSmartProductReviewCurrencyState(merged.draft), { kind: "mixed", currency: null, hasUnresolvedPricedRows: false });
 });

@@ -8,6 +8,11 @@ import {
   standardCategoryPriceColumns,
 } from "@/lib/products/category-pricing-groups";
 import {
+  explicitCategoryPriceValue,
+  explicitPricingCategoryLabels,
+  manualDefaultPriceCategories,
+} from "@/lib/products/pricing-category-columns";
+import {
   MODULAR_GROUP_PRICING_TYPE,
   MODULAR_ITEM_PRICING_TYPE,
   modularItemPricingGroups,
@@ -110,6 +115,7 @@ export type CategoryPricingRow = {
   dimension?: string;
   currency?: string;
   prices?: Record<string, number | null>;
+  unavailable_categories?: string[];
   specification?: string;
   modular_default_dimension?: string | null;
   modular_default_specification?: string | null;
@@ -145,7 +151,7 @@ export type AccessoryPricingItem = {
   sort_order?: number;
 };
 
-const defaultPriceCategories = ["Cat A", "Cat B", "Cat C", "Cat D"];
+const defaultPriceCategories = manualDefaultPriceCategories;
 
 function idFor(prefix: string, sortOrder: number) {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -228,8 +234,9 @@ function normalizeCategory(row: CategoryPricingRow, index: number, priceCategori
     dimension: row.dimension?.trim() ?? "",
     currency: normalizeCurrency(row.currency ?? defaultCurrency),
     prices: priceCategories
-      ? Object.fromEntries(priceCategories.map((category) => [category, parseNullablePricingNumber(normalizedPriceMap(row.prices)[category])]))
+      ? Object.fromEntries(priceCategories.map((category) => [category, parseNullablePricingNumber(explicitCategoryPriceValue(row.prices, category))]))
       : normalizedPriceMap(row.prices),
+    unavailable_categories: Array.from(new Set((row.unavailable_categories ?? []).filter((category) => !priceCategories || priceCategories.includes(category)))),
     specification: row.specification?.trim() ?? "",
     modular_default_dimension:
       typeof row.modular_default_dimension === "string" && row.modular_default_dimension.trim()
@@ -356,13 +363,12 @@ function categoryPricingRowWithColumns(
   row: CategoryPricingRow,
   priceCategories: string[],
 ): CategoryPricingRow {
-  const normalized = normalizedPriceMap(row.prices, false);
-
   return {
     ...row,
     prices: Object.fromEntries(
-      priceCategories.map((category) => [category, parseNullablePricingNumber(normalized[category])]),
+      priceCategories.map((category) => [category, parseNullablePricingNumber(explicitCategoryPriceValue(row.prices, category))]),
     ),
+    unavailable_categories: (row.unavailable_categories ?? []).filter((category) => priceCategories.includes(category)),
   };
 }
 
@@ -399,10 +405,11 @@ function normalizeCategoryGroup(
   index: number,
   includeDefaultPriceCategories = true,
 ): CategoryPricingRow {
+  const explicitCategories = explicitPricingCategoryLabels(row.price_categories);
   const priceCategories = Array.from(new Set([
-    ...(includeDefaultPriceCategories ? defaultPriceCategories : []),
-    ...((row.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean)),
-    ...(row.items ?? []).flatMap((item) => Object.keys(item.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean)),
+    ...(explicitCategories.length ? explicitCategories : includeDefaultPriceCategories ? defaultPriceCategories : []),
+    ...(explicitCategories.length ? [] : (row.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean)),
+    ...(explicitCategories.length ? [] : (row.items ?? []).flatMap((item) => Object.keys(item.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean))),
   ]));
   const items = Array.isArray(row.items)
     ? row.items.map((item, itemIndex) => normalizeCategory(item, itemIndex, priceCategories))
@@ -422,10 +429,11 @@ function normalizeCategoryGroup(
 function normalizeModularGroups(rows?: CategoryPricingRow[] | null, includeDefaultPriceCategories = true) {
   return modularItemPricingGroups(rows).map((group, groupIndex) => {
     const sourceGroup = group as CategoryPricingRow;
+    const explicitCategories = explicitPricingCategoryLabels(sourceGroup.price_categories);
     const priceCategories = Array.from(new Set([
-      ...(includeDefaultPriceCategories ? defaultPriceCategories : []),
-      ...(sourceGroup.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean),
-      ...(sourceGroup.items ?? []).flatMap((item) => Object.keys(item.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean)),
+      ...(explicitCategories.length ? explicitCategories : includeDefaultPriceCategories ? defaultPriceCategories : []),
+      ...(explicitCategories.length ? [] : (sourceGroup.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean)),
+      ...(explicitCategories.length ? [] : (sourceGroup.items ?? []).flatMap((item) => Object.keys(item.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean))),
     ]));
 
     return {
@@ -447,13 +455,15 @@ function normalizeModularGroups(rows?: CategoryPricingRow[] | null, includeDefau
 }
 
 function modularPriceCategories(groups: CategoryPricingRow[], includeDefaultPriceCategories = true) {
+  const declared = groups.flatMap((group) => explicitPricingCategoryLabels(group.price_categories));
   return Array.from(new Set([
-    ...(includeDefaultPriceCategories ? defaultPriceCategories : []),
+    ...(declared.length ? [] : includeDefaultPriceCategories ? defaultPriceCategories : []),
     ...groups.flatMap((group) => [
-      ...(group.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean),
-      ...(group.items ?? []).flatMap((row) =>
+      ...explicitPricingCategoryLabels(group.price_categories),
+      ...(explicitPricingCategoryLabels(group.price_categories).length ? [] : (group.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean)),
+      ...(explicitPricingCategoryLabels(group.price_categories).length ? [] : (group.items ?? []).flatMap((row) =>
         Object.keys(row.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean),
-      ),
+      )),
     ]),
   ]));
 }
@@ -1142,7 +1152,7 @@ export function CategoryPricingTable({
                           <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.display_name ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
                           <td className="px-2 py-2 align-top"><input value={normalizedRow.supplier_price_list_code ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                           <td className="px-2 py-2 align-top"><input value={normalizedRow.dimension ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { dimension: e.target.value })} className="h-10 min-w-[140px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
-                              {groupPriceCategories.map((category) => <td key={category} className="px-2 py-2 align-top"><input type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { prices: { ...normalizedRow.prices, [category]: parseNullablePricingNumber(e.target.value) } })} className="h-10 min-w-[116px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>)}
+                              {groupPriceCategories.map((category) => { const unavailable = normalizedRow.unavailable_categories?.includes(category); return <td key={category} className="px-2 py-2 align-top"><div className="flex gap-1"><input disabled={unavailable} type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { prices: { ...normalizedRow.prices, [category]: parseNullablePricingNumber(e.target.value) } })} className="h-10 min-w-[88px] border border-zinc-200 px-3 outline-none focus:border-emerald-800 disabled:bg-zinc-100" /><button type="button" onClick={() => updateItem(groupIndex, itemIndex, { prices: { ...normalizedRow.prices, [category]: unavailable ? normalizedRow.prices?.[category] ?? null : null }, unavailable_categories: unavailable ? (normalizedRow.unavailable_categories ?? []).filter((item) => item !== category) : [...(normalizedRow.unavailable_categories ?? []), category] })} className="border border-zinc-300 px-1 text-[10px] font-semibold">{unavailable ? "N/A" : "N/A?"}</button></div></td>; })}
                           <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={normalizedRow.currency} onChange={(currency) => updateItem(groupIndex, itemIndex, { currency })} /></div></td>
                           <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /></td>
                           <td className="px-2 py-2 align-top"><input type="checkbox" checked={normalizedRow.is_active !== false} onChange={(e) => updateItem(groupIndex, itemIndex, { is_active: e.target.checked })} /></td>
