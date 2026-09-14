@@ -3,6 +3,107 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { buildProductTemplateSetupPlanningPrompt, extractionPromptFocuses, getProductTemplateAiExtractionPrompt, productTemplateSetupPlanningFocuses } from "./product-template-ai-extraction-prompt.js";
 
+test("global planning architecture contract precedes and governs every furniture focus", () => {
+  const required = [
+    "Identify manufacturer-defined commercial/product families before proposing Product Templates",
+    "A catalogue subsection or heading alone does not justify a Product Template",
+    "SEPARATE LATER",
+    "SOURCE / EXTRACTION BATCHES",
+    "| Batch | Section | Printed pages | PDF pages | Purpose |",
+    "Prefer the FEWEST Product Templates",
+    "Always evaluate (1) BASE / MODEL, then (2) CATEGORY / MATRIX, then (3) MODULAR",
+    "Multiple direct-priced rows do not justify Matrix",
+    "Multiple finish codes at the same price belong in Finish Guidance/options",
+    "establish compatibility / allowed applicability only, never a requirement",
+    "are valid sold configurations and never imply that the omitted component must be purchased",
+    "GLOBAL PLANNING SELF-CHECK",
+  ];
+
+  productTemplateSetupPlanningFocuses.forEach((focus) => {
+    const prompt = buildProductTemplateSetupPlanningPrompt(focus);
+    required.forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} planning prompt to contain: ${expected}`));
+    const globalIndex = prompt.indexOf("GLOBAL PLANNING ARCHITECTURE DECISION CONTRACT");
+    const categoryIndex = prompt.indexOf("PLANNING FOCUS");
+    if (focus !== "general") assert.ok(globalIndex >= 0 && globalIndex < categoryIndex, `Expected global planning contract before ${focus} focus`);
+  });
+});
+
+test("every planning focus requires a family extraction roadmap before product detail", () => {
+  const required = [
+    "FAMILY / EXTRACTION ROADMAP - MANDATORY",
+    "including when the supplied source contains only one commercial family",
+    "| Family | Printed pages | PDF pages | Recommended setup | Extract separately? | Priority |",
+    "write \"Unavailable\" in either column",
+    "Base / Model + companions",
+    "Can combine with <family>",
+    "BEST FIRST TEST, Current, Next, or Later",
+    "choose only one BEST FIRST TEST",
+    "Do not replace the table with prose",
+    "collapse unrelated families into one broad page span",
+    "LAS STORAGE FAMILY CHECK",
+    "Pedestals, Service Units, Lateral Storage, Nomadi, Smart Cabinets, Universal Cabinets, Lockers, and Shared-Side Bookcases",
+    "Universal Cabinets may be BEST FIRST TEST",
+    "never one broad range spanning unrelated families",
+  ];
+
+  productTemplateSetupPlanningFocuses.forEach((focus) => {
+    const prompt = buildProductTemplateSetupPlanningPrompt(focus);
+    required.forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} planning prompt to contain: ${expected}`));
+    assert.ok(prompt.indexOf("FAMILY / EXTRACTION ROADMAP\n| Family") < prompt.indexOf("PRODUCT 1 - [Template Name]"), `Expected roadmap before products in ${focus} planning prompt`);
+  });
+});
+
+test("global extraction architecture contract enforces safe routing and supplemental family behavior", () => {
+  const required = [
+    "Extract one clean selected family at a time",
+    "When each SKU has only one direct price, use pricing.baseModelRows",
+    "one column labelled \"Standard Price\" is an invalid one-column fake Matrix and is explicitly forbidden",
+    "True Cat A-D prices may use pricing.priceMatrices",
+    "Ordinary size, finish, LH/RH, open/closed, accessory, and catalogue-layout variation must not trigger pricing.modularGroups",
+    "Preserve authoritative terminal/intermediate or other genuine module rows",
+    "Every directly priced source SKU remains a separate authoritative row",
+    "Never merge distinct supplier codes",
+    "prove COMPATIBILITY / ALLOWED APPLICABILITY ONLY; they do not make required=true",
+    "must never create the omitted component as required",
+    "extend the existing selected family, preserve existing authoritative rows",
+    "return supplemental JSON suitable for + Add More JSON",
+    "Do not absorb nearby unrelated families",
+    "Finish pages with codes, colours, or availability but no explicit price difference normally produce materialSuggestions",
+    "GLOBAL EXTRACTION SELF-CHECK",
+  ];
+
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    required.forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} extraction prompt to contain: ${expected}`));
+    assert.ok(prompt.indexOf("GLOBAL EXTRACTION ARCHITECTURE DECISION CONTRACT") < prompt.indexOf("EXTRACTION FOCUS:"), `Expected global extraction contract before ${focus} focus`);
+  });
+});
+
+test("global compatibility and wall-fixing semantics remain commercial-evidence-safe", () => {
+  const planningRequired = [
+    "for whole blind doors only",
+    "for split blind doors",
+    "for glass doors",
+    "establish compatibility / allowed applicability only, never a requirement",
+    "must be completed with\" or \"always complete with",
+    "Treat \"must be fixed to wall\" or \"wall fixing required to prevent overturning\" as an installation/safety requirement",
+    "\"Wall fixing kit included\" is INCLUDED in the base SKU and must not be duplicated",
+    "\"fixing kit must be ordered separately\"",
+    "A fixing-kit page reference or compatibility wording alone is not required",
+  ];
+  const extractionRequired = [
+    "prove COMPATIBILITY / ALLOWED APPLICABILITY ONLY; they do not make required=true",
+    "\"must be completed with\", \"mandatory\", \"required\", \"order additionally\", \"cannot be used without\", or \"always complete with\"",
+    "\"Must be fixed to wall\" or \"wall fixing required to prevent overturning\" is an installation/safety requirement only",
+    "\"Wall fixing kit included\" is included in the base SKU and must not be duplicated as an accessory",
+    "\"fixing kit must be ordered separately\"",
+    "\"See fixing kit page X\" or \"compatible with fixing kit\" is reference/compatibility only",
+  ];
+
+  productTemplateSetupPlanningFocuses.forEach((focus) => planningRequired.forEach((expected) => assert.ok(buildProductTemplateSetupPlanningPrompt(focus).includes(expected), `Expected ${focus} planning prompt to contain: ${expected}`)));
+  extractionPromptFocuses.forEach((focus) => extractionRequired.forEach((expected) => assert.ok(getProductTemplateAiExtractionPrompt(focus).includes(expected), `Expected ${focus} extraction prompt to contain: ${expected}`)));
+});
+
 test("AI extraction prompt preserves the approved ProductTemplateDraft v1 extraction rules", () => {
   const prompt = getProductTemplateAiExtractionPrompt();
   [

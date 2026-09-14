@@ -3,6 +3,30 @@ export type ExtractionPromptFocus = typeof extractionPromptFocuses[number];
 
 const relatedAccessoriesRule = "Also extract any clearly related accessories, options, companion components, required add-ons, optional add-ons, selection constraints, and applicability information found in the supplied source into optionGroups. Do not ignore them merely because the selected extraction focus is pricing.";
 
+const globalExtractionArchitectureContract = `GLOBAL EXTRACTION ARCHITECTURE DECISION CONTRACT - APPLY BEFORE THE SELECTED FURNITURE FOCUS
+First identify the manufacturer-defined commercial/product family and its source boundaries. Extract one clean selected family at a time. Do not absorb nearby unrelated families into the same ProductTemplateDraft unless the user explicitly included them in this extraction batch. For example, a Universal Cabinets batch must not absorb Pedestals, Smart Cabinets, Lockers, or Shared-side Bookcases merely because they are nearby in a Storage chapter.
+
+GLOBAL PRICING ROUTING ORDER
+Evaluate every source structure in this order: (1) BASE / MODEL, (2) CATEGORY / MATRIX, (3) MODULAR.
+- BASE / MODEL is the default for every authoritative commercial SKU row with its own supplier code, direct price, dimensions/configuration, and identity. Multiple rows, sizes, finishes, handed variants, or catalogue headings do not justify Matrix or Modular.
+- CATEGORY / MATRIX requires a genuine manufacturer-proven commercial category dimension, such as Model row x Fabric Cat A / B / C / D or explicit finish-price classes. An ordinary SKU row x one column labelled "Standard Price" is an invalid one-column fake Matrix and is explicitly forbidden. When each SKU has only one direct price, use pricing.baseModelRows. True Cat A-D prices may use pricing.priceMatrices.
+- MODULAR requires source-proven component-built composition, such as terminal/intermediate/end units, sofa modules, workstation compositions, or shared-side bookcases. Ordinary size, finish, LH/RH, open/closed, accessory, and catalogue-layout variation must not trigger pricing.modularGroups. Preserve authoritative terminal/intermediate or other genuine module rows when composition is proven.
+
+AUTHORITATIVE ROW PRESERVATION
+Every directly priced source SKU remains a separate authoritative row. Preserve its supplier code, display/model name, dimensions, direct price, currency, specification, handedness/configuration, and source traceability. Never merge distinct supplier codes or replace manufacturer-priced rows with synthetic combinations.
+
+CONFIGURATION EVIDENCE
+Create Included item, Required Companion, Optional Companion, allowed-item applicability, or mutual exclusion only when manufacturer evidence supports that exact relationship. "Compatible with", "suitable for", "for use with", "for X only", "for whole blind doors only", "for split blind doors", "for glass doors", "can be completed with", and "available with" prove COMPATIBILITY / ALLOWED APPLICABILITY ONLY; they do not make required=true or prove exactly-one selection. Mandatory status needs explicit evidence such as "must be completed with", "mandatory", "required", "order additionally", "cannot be used without", or "always complete with". A sold configuration described as "without shelves", "without doors", "without armrests", "without top-access", or "open cabinet" must never create the omitted component as required. "Must be fixed to wall" or "wall fixing required to prevent overturning" is an installation/safety requirement only: preserve it in specification or warning, including depth/height applicability where supported, but do not create a separately priced Required Companion. "Wall fixing kit included" is included in the base SKU and must not be duplicated as an accessory. A Required Companion is valid only when the source explicitly identifies a separate required commercial kit, for example "complete with fixing kit Art. XXX", "fixing kit must be ordered separately", or "required kit Art. XXX". "See fixing kit page X" or "compatible with fixing kit" is reference/compatibility only. If price, inclusion, requirement, compatibility, or applicability is unproven, use null, extractionWarnings, or manual-review wording as the schema permits; do not guess.
+
+SUPPLEMENTAL BATCHES / ADD MORE JSON
+The supplied source may be a later batch of components, doors, hardware, accessories, finishes, or other supporting pages. When it is clearly supplemental, extend the existing selected family, preserve existing authoritative rows, add only missing components/applicability, and return supplemental JSON suitable for + Add More JSON. Do not rename or restructure the main family or create a duplicate Product Template merely because this is a new JSON batch. Preserve source codes and identities so existing merge logic can detect duplicates.
+
+FINISH VERSUS PRICE
+Finish pages with codes, colours, or availability but no explicit price difference normally produce materialSuggestions, Manufacturer Finish Guidance, or option metadata - not pricing rows. Create a pricing Matrix only when the source explicitly proves category-based price variation.
+
+GLOBAL EXTRACTION SELF-CHECK - CORRECT BEFORE RETURNING JSON
+Verify that no direct-priced SKU was put in Matrix; no one-column "Standard Price" Matrix was created; no Modular structure was invented; no distinct supplier codes were merged; compatibility did not create Required Companion; "without X" did not make X required; no unrelated manufacturer family was included; no missing price was invented; finish codes did not become pricing without evidence; and a supplemental batch preserved the existing family.`;
+
 const focusInstructions: Record<ExtractionPromptFocus, string> = {
   full: `EXTRACTION FOCUS: Full Product / Complete Extraction\nExtract all clearly supported product details, pricing, options, materials, finishes, and technical information. ${relatedAccessoriesRule}`,
   base_model: `EXTRACTION FOCUS: Base / Model Pricing
@@ -193,6 +217,8 @@ export function getProductTemplateAiExtractionPrompt(focus: ExtractionPromptFocu
 Analyze only the manufacturer screenshot, PDF, image, or other source material supplied in this conversation. Use existing ProjectWorkflow context only as supporting context; never let ProjectWorkflow context override the manufacturer source.
 
 Your task is to return exactly one valid ProductTemplateDraft v1 JSON object.
+
+${globalExtractionArchitectureContract}
 
 ${focusInstructions[focus]}
 
@@ -600,6 +626,69 @@ Return only the final JSON object now.`;
 
 export const productTemplateSetupPlanningFocuses = ["general", "chair_seating", "desk_executive", "sofa_lounge", "meeting_conference", "storage_cabinets"] as const;
 export type ProductTemplateSetupPlanningFocus = typeof productTemplateSetupPlanningFocuses[number];
+
+const globalPlanningArchitectureContract = `GLOBAL PLANNING ARCHITECTURE DECISION CONTRACT - APPLY BEFORE THE FURNITURE-SPECIFIC FOCUS
+First understand the manufacturer's catalogue architecture. Identify manufacturer-defined commercial/product families before proposing Product Templates, and separate genuinely different systems even when they share a chapter. For example, Universal Cabinets, Pedestals, Service Units, Smart Cabinets, Lockers, and Shared-side Bookcases are not automatically one Storage family; Executive Desks, Operative Desks, Workstations, Meeting Tables, and Credenzas are not automatically one Desk family.
+
+PLAN ONE CLEAN FAMILY AT A TIME
+Recommend exactly which source pages belong together for each logical extraction batch and why. Identify the manufacturer section/family, precise printed catalogue pages, PDF pages where known, purpose, and whether to include now or handle separately. Separate main/core product pages from supporting components and doors/hardware. Do not merely recommend one broad page span when source evidence permits meaningful batches. Use dual PDF/printed numbering and exact ranges when available; never guess missing numbering.
+
+FAMILY / EXTRACTION ROADMAP - MANDATORY
+Before detailed PRODUCT sections, always output this compact table, including when the supplied source contains only one commercial family:
+| Family | Printed pages | PDF pages | Recommended setup | Extract separately? | Priority |
+| --- | ---: | ---: | --- | --- | --- |
+Use one row per true commercial family, not per page heading, size, handedness, finish, accessory, or component page. Attach tops, shelves, doors, handles, hinges, and other supporting pages to their parent family unless the manufacturer treats them as an independent commercial family. Populate Printed pages and PDF pages from source evidence; write "Unavailable" in either column when its numbering system is unavailable. Recommended setup must be one of: Base / Model; Category / Matrix; Modular; Base / Model + companions; Base / Model + options; Modular + companions. Extract separately? must be Yes, No, or "Can combine with <family>". Priority must be BEST FIRST TEST, Current, Next, or Later. When multiple families exist, choose only one BEST FIRST TEST based on strongest complete evidence, architectural usefulness, manageable extraction size, and representative complexity; do not automatically choose the first PDF family. Do not replace the table with prose, omit it because detailed Product sections follow, or collapse unrelated families into one broad page span.
+
+LAS STORAGE FAMILY CHECK
+When those distinct manufacturer families are present, roadmap rows must keep Pedestals, Service Units, Lateral Storage, Nomadi, Smart Cabinets, Universal Cabinets, Lockers, and Shared-Side Bookcases separate. Universal Cabinets may be BEST FIRST TEST when its source evidence is the strongest complete, representative, manageable family; do not infer this without evidence.
+
+FEWEST SAFE PRODUCT TEMPLATES
+Prefer the FEWEST Product Templates that preserve authoritative pricing, configuration logic, commercial identity, and compatibility safety. A catalogue subsection or heading alone does not justify a Product Template. Do not split merely because dimensions, shelves, handedness, finish, headings, "without shelves", or "with doors" differ. Split only for a real architecture boundary: complete direct-priced product versus configurable carcass, genuinely different pricing mechanism, fundamentally different composition logic, different Product Library configuration workflow, or unrelated commercial family.
+
+GLOBAL PRICING DECISION ORDER
+Always evaluate (1) BASE / MODEL, then (2) CATEGORY / MATRIX, then (3) MODULAR.
+- BASE / MODEL: default for authoritative commercial SKUs with their own supplier code, direct price, and dimensions/configuration. Multiple direct-priced rows do not justify Matrix.
+- CATEGORY / MATRIX: only for a genuine manufacturer-proven row-by-category price dimension, such as Model x Fabric Cat A / B / C / D or explicit finish-price classes. Many SKUs, many finishes, a visual grid, or one "Standard Price" column do not justify Matrix.
+- MODULAR: only for proven component-built composition such as terminal/intermediate/end units, sofa modules, workstation compositions, or shared-side bookcases. Normal size, finish, handed, open/closed, and accessory variation is not Modular.
+A row with its own supplier code and direct price is commercially authoritative; preserve it rather than replacing it with synthetic combinations.
+
+CONFIGURATION AND FINISH EVIDENCE
+Keep INCLUDED, REQUIRED SEPARATE, OPTIONAL SEPARATE, COMPATIBLE ONLY, ADVISORY / INSTALLATION REQUIREMENT, and UNCONFIRMED distinct. "Compatible with", "suitable for", "for use with", "for X only", "for whole blind doors only", "for split blind doors", "for glass doors", "can be completed with", and "available with" establish compatibility / allowed applicability only, never a requirement or exactly-one rule. Required status needs explicit mandatory evidence such as "must be completed with" or "always complete with"; otherwise use Manual Decision / Warning. "Without shelves", "without doors", "without armrests", "without top-access", and "open cabinet" are valid sold configurations and never imply that the omitted component must be purchased. Treat "must be fixed to wall" or "wall fixing required to prevent overturning" as an installation/safety requirement in specification or warning, not a separately priced Required Companion; retain depth/height applicability where supported. "Wall fixing kit included" is INCLUDED in the base SKU and must not be duplicated. Only an explicit separate commercial kit, such as "complete with fixing kit Art. XXX", "fixing kit must be ordered separately", or "required kit Art. XXX", can be Required Companion. A fixing-kit page reference or compatibility wording alone is not required. Multiple finish codes at the same price belong in Finish Guidance/options; only explicit finish/category price differences justify Matrix.
+
+UNRELATED FAMILIES
+Actively identify nearby manufacturer families that must be handled separately. Put them under SEPARATE LATER with their printed/PDF page ranges when known and a short reason; do not mix them into the current extraction batch.
+
+GLOBAL PLANNING SELF-CHECK - CORRECT THE PLAN BEFORE RETURNING
+Check: Did I create Matrix where Base / Model is sufficient? Did I create Modular without real composition? Did headings alone split templates? Did compatibility become requirement? Did "without" create a missing required component? Did I mix unrelated families? Did I provide usable source page ranges and batches? Could fewer templates preserve the same commercial truth? Did I include FAMILY / EXTRACTION ROADMAP before PRODUCT sections, represent every detected commercial family, provide printed/PDF page columns, recommended setup, extract-separately guidance, and priority, choose at most one BEST FIRST TEST, and avoid a broad range covering unrelated families?
+
+GLOBAL PLANNING OUTPUT CONTRACT
+Return direct, practical output without catalogue prose. This global structure takes precedence over any narrower category output wording when they conflict:
+PAGE NUMBERING NOTE
+PRODUCT SETUP PLAN
+Overall:
+- Product Templates: X
+- Families: [short list]
+- Main reason: [one sentence]
+FAMILY / EXTRACTION ROADMAP
+| Family | Printed pages | PDF pages | Recommended setup | Extract separately? | Priority |
+| --- | ---: | ---: | --- | --- | --- |
+PRODUCT 1 - [Template Name]
+- Primary setup: [Base / Model | Category / Matrix | Modular]
+- Configuration: [one sentence]
+- Required Components: [summary or None]
+- Optional Components: [summary or None]
+- Finish Guidance: [summary or None]
+- Extraction pages: [core family pages and supporting pages as separate compact dual-numbered references; never one broad range spanning unrelated families]
+- Manual Decision: [issue or None]
+Repeat PRODUCT sections only for genuinely separate templates.
+SOURCE / EXTRACTION BATCHES
+| Batch | Section | Printed pages | PDF pages | Purpose |
+SEPARATE LATER
+- [Other manufacturer families and page ranges excluded from this extraction]
+IGNORED
+- [Commercially irrelevant source material or None]
+WARNINGS
+- [Critical unresolved warning or None]`;
 
 const planningFocusInstructions: Record<ProductTemplateSetupPlanningFocus, string> = {
   general: "",
@@ -1033,6 +1122,8 @@ STORAGE OUTPUT BREVITY RULES
   return `You are planning how a manufacturer price list should be entered into ProjectWorkflow.
 
 DO NOT EXTRACT ProductTemplateDraft JSON. DO NOT RETURN JSON.
+
+${globalPlanningArchitectureContract}
 
 ${planningFocusInstructions[focus]}
 
