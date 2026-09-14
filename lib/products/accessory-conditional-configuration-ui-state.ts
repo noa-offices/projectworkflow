@@ -86,7 +86,7 @@ export function setAccessoryApplicabilityTargets(
       const required = configuration.role === "companion";
       return choice.kind === "base_model"
         ? [{ base_model_group_id: choice.groupId, base_model_row_id: choice.rowId, required, visible: true }]
-        : [{ target: { kind: "price_matrix" as const, group_id: choice.groupId, row_id: choice.rowId }, required, visible: true }];
+        : [{ target: { kind: choice.kind, group_id: choice.groupId, row_id: choice.rowId }, required, visible: true }];
     });
     return { ...configuration, applicability: [...retained, ...additions] };
   });

@@ -1,12 +1,14 @@
 import type { ProductTemplateDraft } from "./product-template-draft";
+import type { OriginalImportedJsonSource } from "./original-imported-json-sources";
 
 export type SourceQaAiIssueType = "missing_source_row" | "supplier_model_code_mismatch" | "price_value_mismatch" | "row_binding_mismatch" | "classification_mismatch" | "excluded_scope_import";
 export type SourceQaAiSeverity = "critical" | "warning" | "info";
 export type SourceQaAiConfidence = "high" | "medium" | "low";
 export type SourceQaAiIssue = { id: string; type: SourceQaAiIssueType; severity: SourceQaAiSeverity; confidence: SourceQaAiConfidence; supplierModelCode: string | null; sourcePage: number | null; sourceEvidence: string | null; sourceValue: string | number | null; jsonLocation: string | null; jsonValue: string | number | boolean | null; explanation: string };
 export type SourceQaAiReport = { version: 1; summary: { issueCount: number; highSeverityCount: number; reviewRequired: boolean }; issues: SourceQaAiIssue[] };
-export type SourceQaAiRequest = { sourcePdfStoragePath: string; sourcePdfFileName: string; draft: ProductTemplateDraft };
-export type SourceQaAiActionResult = { ok: true; report: SourceQaAiReport } | { ok: false; message: string };
+export type SourceQaAiRequest = { sourcePdfStoragePath: string; sourcePdfFileName: string; originalImportedJsonSources: OriginalImportedJsonSource[]; draft: ProductTemplateDraft };
+export type SourceQaAiActionErrorCode = "invalid_source_pdf" | "invalid_draft" | "missing_original_json" | "invalid_original_json" | "too_many_original_json_sources" | "original_json_too_large" | "source_pdf_unavailable" | "invalid_report" | "provider_failed";
+export type SourceQaAiActionResult = { ok: true; report: SourceQaAiReport } | { ok: false; message: string; code: SourceQaAiActionErrorCode };
 
 const types = new Set<SourceQaAiIssueType>(["missing_source_row", "supplier_model_code_mismatch", "price_value_mismatch", "row_binding_mismatch", "classification_mismatch", "excluded_scope_import"]);
 const severities = new Set<SourceQaAiSeverity>(["critical", "warning", "info"]);

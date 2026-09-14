@@ -1,4 +1,4 @@
-export const extractionPromptFocuses = ["full", "base_model", "workstation", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference"] as const;
+export const extractionPromptFocuses = ["full", "base_model", "workstation", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"] as const;
 export type ExtractionPromptFocus = typeof extractionPromptFocuses[number];
 
 const relatedAccessoriesRule = "Also extract any clearly related accessories, options, companion components, required add-ons, optional add-ons, selection constraints, and applicability information found in the supplied source into optionGroups. Do not ignore them merely because the selected extraction focus is pricing.";
@@ -44,6 +44,20 @@ For Desk source material, verify that direct single-price rows use pricing.baseM
   accessories: `EXTRACTION FOCUS: Accessories / Configuration Only\nFocus only on optionGroups for accessories, options, companion/service components, add-ons, prices, codes, dimensions, specifications, explicit selection semantics, defaults, quantities, and applicability clues. Preserve explicit applicability in specification or warnings when v1 cannot encode it. Do not invent conditional rules or require main-product pricing extraction.`,
   product_details: `EXTRACTION FOCUS: Product Details / Specifications\nFocus on template identity, description, master and model specifications, dimensions, supplier/reference codes, origin, and manufacturer. Do not invent pricing; only preserve clearly visible, structurally safe prices.`,
   materials: `EXTRACTION FOCUS: Materials / Finishes\nFocus on materialSuggestions: finish/material names, codes, colours, combinations, top/base relationships, source-heading isolation, notes, and applicability. Do not merge neighbouring material sections or create Material Library records.`,
+  storage_cabinets: `EXTRACTION FOCUS: Storage / Cabinets / Credenzas
+Extract only source-supported cabinets, credenzas, pedestals, service units, lateral storage, lockers, carcasses, doors, tops, shelves, locks, hardware, and storage accessories. Ignore unrelated desks, workstations, seating, tables, and furniture.
+
+DIRECT PRICING AND ROW IDENTITY
+Use pricing.baseModelRows for every authoritative directly priced complete SKU and directly priced carcass: open cabinet, blind-door cabinet, drawer/file-drawer cabinet, pedestal, mobile pedestal, credenza, service unit, lateral storage, sliding-door cabinet, or carcass. Preserve exact source code, display name, dimensions with raw text/unit, price, source wording, and compatibility text. Do not synthesize combined cabinet SKUs. Each code, price, dimension, or LH/RH/SX/DX/Left/Right difference is a separate authoritative row. Do not infer reversibility. Ordinary cabinet size variation is never Modular. A sold "without adjustable shelves", "without shelves", "without doors", or open-cabinet SKU is a valid authoritative configuration; never create missing shelves or doors as required components.
+
+COMPATIBILITY, REQUIREMENTS, AND INCLUDED ITEMS
+"For whole blind doors only", "for split blind doors", "for glass doors", "suitable for", "compatible with", "can be completed with", "available with", and "shown with" prove allowed compatibility only. They do not prove Required Companion, required option, or exactly-one selection. Create a required relationship only for explicit mandatory completion evidence. If compatibility is clear but requirement is not, preserve narrow applicability in option metadata/specification and add extractionWarning when needed. Explicitly included components belong in the row specification and must not be duplicated as required accessories. Separately priced/coded doors, shelves, drawers, file drawers, handles, 175-degree hinges, dampers, keyed-alike cylinders, locks, and internals belong in optionGroups only with source-backed code, price, and narrow carcass/width/depth/height applicability. Preserve source incompatibilities as applicability or warning; do not invent mutually-exclusive logic.
+
+TOPS, WALL FIXING, LOCKS, AND FINISHES
+Distinguish finishing top INCLUDED, REQUIRED SEPARATE, OPTIONAL SEPARATE, NOT REQUIRED, and compatibility/reference only. "Complete with finishing top" plus a separate code/price may be Required Companion; "can also be used without finishing top" is not required. A mandatory wall-fixing instruction is a safety/configuration fact, not a priced companion unless a specific separate kit is identified. An included wall-fixing kit remains specification only; a separately coded mandatory kit may be Required Companion. Lock choices may be options; use required-exactly-one only where source explicitly requires a lock choice. Keep carcass, front/door, metal, glass, and handle finishes distinct. Finish codes sharing one price are materialSuggestions/option metadata, not pricing.priceMatrices. Use pricing.priceMatrices only for genuine row-by-category commercial pricing, such as a fabric-category priced cushion.
+
+MODULAR AND FINAL SAFETY
+Use pricing.modularGroups only for manufacturer-proven component-built composition, such as explicit start/intermediate/end shared-side storage systems. Do not route ordinary cabinets, carcasses, doors, shelves, or size variants to Modular. If structural composition rules are unclear, extract authoritative priced rows and add extractionWarning rather than inventing constraints. Bind every code to its own supplied price; use null for missing/unknown price, never infer adjacent prices. Before returning JSON verify Base/Model routing for direct rows, separate handed variants, structured/raw dimensions, conservative required evidence, included-kit non-duplication, finish-versus-price separation, narrow applicability, and warnings for ambiguous door/top/wall-kit/compatibility/composition evidence. ${relatedAccessoriesRule}`,
   meeting_conference: `EXTRACTION FOCUS: Meeting / Conference Tables
 Extract only meeting, conference, boardroom, terminal/end, intermediate/central, extendable, multi-section, and genuinely related cable-management or structural table items. Ignore desks, executive desks, workstations, bench desks, coffee/side tables, storage, pedestals, unrelated cabinets, seating, screens, reception products, and unrelated furniture.
 
@@ -584,11 +598,31 @@ Before returning the JSON, verify internally that:
 Return only the final JSON object now.`;
 }
 
-export const productTemplateSetupPlanningFocuses = ["general", "chair_seating", "desk_executive", "sofa_lounge", "meeting_conference"] as const;
+export const productTemplateSetupPlanningFocuses = ["general", "chair_seating", "desk_executive", "sofa_lounge", "meeting_conference", "storage_cabinets"] as const;
 export type ProductTemplateSetupPlanningFocus = typeof productTemplateSetupPlanningFocuses[number];
 
 const planningFocusInstructions: Record<ProductTemplateSetupPlanningFocus, string> = {
   general: "",
+  storage_cabinets: `STORAGE / CABINETS / CREDENZAS PLANNING FOCUS
+Plan cabinets, credenzas, pedestals, service units, lateral storage, lockers, doors, tops, internals, and related configuration from manufacturer evidence only. Ignore unrelated desks, workstations, seating, tables, and other furniture unless explicitly required by the storage system.
+
+PRIMARY PRICING DESTINATION
+Route complete direct-priced cabinet, open cabinet, door cabinet, drawer cabinet, credenza, pedestal, service unit, or sliding-door SKU with an authoritative supplier code to Base / Model. Preserve exact code, dimensions, handedness, and price. Width, depth, or height variation alone is Base / Model, not Modular. Use Category / Matrix only where the manufacturer explicitly shows genuine commercial category or finish pricing; finish codes or multiple finishes alone are Manufacturer Finish Guidance, not Matrix. Use Modular only when the source proves independently selectable component-built compositions. Do not force ordinary cabinet variants into Modular.
+
+TEMPLATE BOUNDARIES
+Prefer the fewest Product Templates that preserve pricing authority, compatibility safety, and configuration clarity. Do not create a new template merely because shelves are omitted, internal shelf structure differs, a subsection has a separate heading, or a cabinet is sold without adjustable shelves. Keep same-family, same Base / Model, same finish-logic, and same compatibility-architecture variants together using visual subgroups or variants. Split only for a meaningful structural/configuration boundary: complete direct-priced products versus configurable carcasses, genuinely different pricing engine, incompatible option/companion architecture, distinct composition logic, or materially different Product Library workflow. Do not split merely for catalogue organization.
+
+CONFIGURATION EVIDENCE
+Keep explicit LH/RH/SX/DX source SKUs as separate authoritative variants. Identify carcass-only, blind-door, glass-door, split-door, sliding-door, drawer, shelf, file-drawer, top, side-panel, back-panel, wall-fixing, lock, handle, and internal-accessory evidence. Compatibility wording such as "for whole blind doors only" or "for split blind doors and all types glass doors" proves compatible door types only; it does not prove a door is mandatory. Separately classify compatible door types, required door selection, optional door selection, and included door. Use Required Companion only when the source explicitly requires completion or clearly proves an incomplete carcass cannot be validly sold/used without the separate door. If ambiguous, report compatibility and use Manual Decision / Warning. Never invent combinations or required companions. Treat a complete open cabinet as a complete product unless the source explicitly requires completion.
+
+STATUS AND FINISH RULES
+For finishing tops, wall-fixing kits, shelves, drawers, file drawers, locks, and internal accessories distinguish INCLUDED, REQUIRED SEPARATE, OPTIONAL, mandatory installation instruction, advisory-only text, and UNCONFIRMED. A safety note alone does not create an accessory row. Do not make a finishing top required unless manufacturer wording establishes it. Detect mechanical, combination, or electronic lock choices, but recommend an exactly-one requirement only when the source clearly requires a lock selection. Preserve width/depth/height/carcass applicability for separately priced components.
+
+SHARED-SIDE BOOKCASES
+Treat shared-side bookcases cautiously. State whether the source proves complete direct-priced units or a genuine start/intermediate/end composition. Recommend Modular only for proven component-built composition. If safe structural selection cannot be represented, use Manual Decision / Warning; do not invent start/end rules.
+
+FINAL STORAGE SOURCE GATE
+Before returning PRODUCT SETUP PLAN, verify exact code, description, price, dimensions, handedness, component status, compatibility, and source page binding. Confirm the fewest coherent templates were chosen; without-shelves/internal-structure variants were not split without a real configuration boundary; direct-priced cabinets remain Base / Model; simple size variants were not made Modular; compatible doors were not made Required Companions without explicit mandatory evidence; complete open cabinets remain complete where supported; finish guidance was not converted to Matrix without commercial pricing evidence; and shared-side bookcases were not forced into Modular. Return only unresolved critical issues under Manual Decision or WARNINGS. Source fidelity is more important than completeness.`,
   chair_seating: `CHAIR & SEATING PLANNING FOCUS
 Use this focus for task, executive, visitor, conference, training, beam/waiting, lounge, outdoor, stool, and related seating ranges. First classify each supplied seating section as simple direct-price seating, encoded/composite finish family, Model × upholstery-grade matrix, base price plus surcharge, one shell across base architectures, beam/waiting, training/multipurpose, lounge/outdoor, or counter/stool. One source can contain several patterns; do not force every chair range into an upholstery matrix.
 
@@ -709,7 +743,7 @@ Before returning PRODUCT SETUP PLAN, internally correct every resolvable issue. 
 };
 
 export function buildProductTemplateSetupPlanningPrompt(focus: ProductTemplateSetupPlanningFocus = "general") {
-  const sharedAccessoryEvidenceInstructions = focus === "chair_seating" || focus === "desk_executive" || focus === "sofa_lounge" || focus === "meeting_conference"
+  const sharedAccessoryEvidenceInstructions = focus === "chair_seating" || focus === "desk_executive" || focus === "sofa_lounge" || focus === "meeting_conference" || focus === "storage_cabinets"
     ? `Internally verify every shared/common accessory recommendation against its affected Product Template, applicability evidence, dual-numbered source page, manufacturer evidence, configuration strategy, and any supplier-code ambiguity. Return only verified shared items that materially affect setup in SHARED / COMMON; put only unresolved critical applicability issues under Manual review.`
     : `For every shared/common accessory recommendation, output:
 Accessory: [manufacturer description/code]
@@ -719,10 +753,10 @@ Source: PDF page X / printed catalogue page Y
 Evidence: short explanation of what the manufacturer actually shows/states
 Recommended strategy: Include Locally / Standalone Product / Both / Manual Decision
 Reason:`;
-  const sharedAccessoryStrategyInstructions = focus === "chair_seating" || focus === "desk_executive" || focus === "sofa_lounge" || focus === "meeting_conference"
+  const sharedAccessoryStrategyInstructions = focus === "chair_seating" || focus === "desk_executive" || focus === "sofa_lounge" || focus === "meeting_conference" || focus === "storage_cabinets"
     ? `For optional shared accessories, internally evaluate whether Sales needs them during the main product configuration and verify the strategy, reason, affected templates, and any duplicated or reused supplier/price-list code ambiguity. Return only items that materially affect setup or require a critical Manual Decision.`
     : `For optional shared accessories such as modesty panels, cable trays, screens, and shared accessories, evaluate whether Sales needs to select them during the main product configuration. If yes, recommend Include locally; if no, recommend Standalone product where appropriate; if uncertain, use MANUAL DECISION. Identify the strategy, reason, affected templates, and any duplicated or reused supplier/price-list code ambiguity.`;
-  const batchOutputInstructions = focus === "chair_seating" || focus === "desk_executive" || focus === "sofa_lounge" || focus === "meeting_conference"
+  const batchOutputInstructions = focus === "chair_seating" || focus === "desk_executive" || focus === "sofa_lounge" || focus === "meeting_conference" || focus === "storage_cabinets"
     ? `For every template, internally verify MAIN SOURCE PAGES and SHARED / SUPPORTING PAGES and how each belongs in extraction, a later Add More JSON batch, Manufacturer Finish Guidance, an independent product, or manual inspection. Return these only through the compact Main pages, Extraction, Finish Guidance, Manual Decision, SHARED / COMMON, or WARNINGS lines.`
     : `For every template, list MAIN SOURCE PAGES and SHARED / SUPPORTING PAGES, stating whether each is included in extraction, a later Add More JSON batch, Manufacturer Finish Guidance, an independent product, or manual inspection.`;
   const outputInstructions = focus === "chair_seating" ? `Analyze thoroughly internally, but return only the shortest practical Chair & Seating setup plan needed for ProjectWorkflow decisions. Do not explain reasoning step-by-step.
@@ -961,6 +995,41 @@ WARNINGS / MANUAL DECISIONS
 ==================================================
 List ambiguous supplier codes, cross-template component risks, unclear required rules, unclear page relationships, potentially huge templates, matrix uncertainties, and material guidance versus actual selectable materials.`;
 
+  const storageOutputInstructions = `Analyze thoroughly internally, but return only the shortest practical Storage / Cabinets / Credenzas setup plan. Do not expose reasoning or add text before or after the plan.
+
+Return human-readable output using exactly this structure:
+
+PRODUCT SETUP PLAN
+
+Overall:
+- Product Templates: X
+- Families: [short family/template names]
+- Main reason: [one short sentence]
+
+PRODUCT 1 - [Template Name]
+- Primary setup: [Base / Model | Category / Matrix only if commercially proven | Modular only if composition is proven]
+- Configuration: [one short sentence]
+- Required Components: [short factual summary or None]
+- Optional Components: [short factual summary or None]
+- Finish Guidance: [short summary]
+- Extraction: [compact relevant PDF / printed page range]
+- Manual Decision: [short issue or None]
+
+Repeat PRODUCT sections only when more than one genuinely separate template is needed.
+
+IGNORED
+- [short list or None]
+
+WARNINGS
+- [only real blockers/manual risks, otherwise None]
+
+STORAGE OUTPUT BREVITY RULES
+- Return only the structure above; aim for roughly 10-25 concise lines for a normal family.
+- Do not list every SKU, component, or finish code.
+- Keep separate-carcass/door compatibility, finishing-top status, wall-fixing status, and lock choice to one factual line each only when they affect setup.
+- Do not force Modular for size variants or unproven shared-side bookcase structures.
+- Perform the final Storage source gate internally; return only unresolved critical issues under Manual Decision or WARNINGS.`;
+
   return `You are planning how a manufacturer price list should be entered into ProjectWorkflow.
 
 DO NOT EXTRACT ProductTemplateDraft JSON. DO NOT RETURN JSON.
@@ -1039,5 +1108,5 @@ Actual selectable materials/finishes remain controlled by ProjectWorkflow Materi
 MULTIPLE BATCHES AND SHARED PAGES
 External LLM limits may require multiple coherent batches for one template using + Add More JSON. Batch by commercial source structure, never equal page counts. INCLUDED components do not need a separate accessory extraction unless independently sold. Include REQUIRED SEPARATE ITEM pages in the relevant product extraction/Add More batch. Include OPTIONAL SEPARATE ITEM pages only when verified compatible and useful in the configurator. PREPARED FOR wording alone is not reason to extract the accessory page. UNCONFIRMED remains under Pages to inspect manually. Include a shared accessory page in a Product Template extraction batch only if at least one relevant item on that page has verified applicability. ${batchOutputInstructions} Good boundaries must also support future Prices Only, Selected Sections, New Item, and Not Found updates.
 
-${outputInstructions}`;
+${focus === "storage_cabinets" ? storageOutputInstructions : outputInstructions}`;
 }

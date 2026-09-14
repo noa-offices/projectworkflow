@@ -21,7 +21,7 @@ import {
   type BaseModelPricingGroup,
   type BaseModelPricingSubgroup,
 } from "@/lib/products/base-model-pricing-groups";
-import { modularItemPricingRows } from "@/lib/products/modular-pricing";
+import { modularItemPricingGroups, modularItemPricingRows } from "@/lib/products/modular-pricing";
 import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
 import {
   TemplateImportActionButton,
@@ -175,6 +175,9 @@ export function TemplatePricingSections({
   const [currentCategoryPricingGroups, setCurrentCategoryPricingGroups] = useState<CategoryPricingRow[]>(() =>
     groupedStandardCategoryPricingRows<CategoryPricingRow>(categoryPricingRows),
   );
+  const [currentModularPricingGroups, setCurrentModularPricingGroups] = useState<CategoryPricingRow[]>(() =>
+    modularItemPricingGroups<CategoryPricingRow>(categoryPricingRows),
+  );
   const handleBaseModelGroupsChange = useCallback((groups: BaseModelPricingGroup<VariantPricingRow>[]) => {
     setCurrentBaseModelGroups(groups);
   }, []);
@@ -287,6 +290,7 @@ export function TemplatePricingSections({
       <AccessoryPricingTable
         baseModelGroups={currentBaseModelGroups}
         categoryPricingGroups={currentCategoryPricingGroups}
+        modularPricingGroups={currentModularPricingGroups}
         brandDefaultCurrency={brandDefaultCurrency}
         rows={accessoryPricingRows}
         templateCurrency={templateCurrency}
@@ -333,6 +337,7 @@ export function TemplatePricingSections({
       replacementGroups={modularReplacement?.groups}
       replacementVersion={modularReplacement?.version}
       onHasDataChange={reportModularData}
+      onGroupsChange={setCurrentModularPricingGroups}
       templateId={templateId}
       templateIsPersisted={templateIsPersisted}
     />

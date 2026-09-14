@@ -15,6 +15,7 @@ import { nextClientNumber } from "@/lib/clients/client-numbering";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import {
   flattenStandardCategoryPricingRows,
+  groupedStandardCategoryPricingRows,
   standardCategoryPriceColumns as groupedCategoryPriceColumns,
 } from "@/lib/products/category-pricing-groups";
 import {
@@ -26,6 +27,7 @@ import {
 import type { AccessoryConditionalConfiguration } from "@/lib/products/accessory-conditional-configuration";
 import { evaluateProductAccessorySelection, parseSubmittedAccessoryQuantities } from "@/lib/quotations/product-accessory-configuration";
 import {
+  modularItemPricingGroups,
   modularItemPricingRows,
   modularPricingDefaultsFromRows,
 } from "@/lib/products/modular-pricing";
@@ -486,11 +488,12 @@ function modularItemQuantities(formData: FormData) {
   for (const value of formData.getAll("modular_item_selection")) {
     if (typeof value !== "string") continue;
 
-    const [id, rawQty] = value.split(":");
+    const parts = value.split(":");
+    const [groupId, id, rawQty] = parts.length === 3 ? parts : [null, parts[0], parts[1]];
     const qty = Math.max(0, Math.trunc(Number(rawQty) || 0));
 
     if (id && qty > 0) {
-      quantities.set(id, qty);
+      quantities.set(groupId ? `${groupId}\u0000${id}` : id, qty);
     }
   }
 
@@ -6035,36 +6038,34 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   if (selectedVariantPricingRow && submittedVariantGroupId && !selectedVariantGroup) {
     redirectWithMessage(redirectPath, "The selected Base/Model group and model do not match.");
   }
-  if (hasConditionalAccessoryConfiguration && (!selectedVariantPricingRow || !selectedVariantGroup)) {
-    redirectWithMessage(redirectPath, "Select a valid Base/Model before configuring required components or options.");
-  }
-  const accessoryConfiguration = evaluateProductAccessorySelection({
-    accessoryGroups: authoritativeAccessoryGroups,
-    baseModelGroupId: selectedVariantGroup?.id ?? null,
-    baseModelRowId: selectedVariantPricingRow?.id ?? null,
-    selectedQuantities: Object.fromEntries(submittedAccessoryPricingQtyById),
-  });
-  if (!accessoryConfiguration.valid) {
-    const invalidGroup = accessoryConfiguration.groups.find((group) => !group.valid);
-    const groupName = authoritativeAccessoryGroups.find((group) => group.id === invalidGroup?.groupId)?.group_name;
-    redirectWithMessage(
-      redirectPath,
-      groupName
-        ? `Review ${groupName}: ${invalidGroup?.validationMessage ?? "the selection is invalid."}`
-        : "Review accessory selections: an item is missing, invalid, or not applicable to the selected model.",
-    );
-  }
-  const accessoryPricingQtyById = new Map(Object.entries(accessoryConfiguration.activeQuantities));
   const selectedCategoryPricingRow = selectedVariantPricingRow
     ? null
     : selectedCategoryPricing(formData, template.category_pricing);
+  const submittedCategoryGroupId = textValue(formData, "category_pricing_group_id");
+  const activeCategoryGroups = groupedStandardCategoryPricingRows<CategoryPricingRow>(template.category_pricing)
+    .filter((group) => group.is_active !== false)
+    .map((group) => ({ ...group, items: (group.items ?? []).filter((row) => row.is_active !== false) }));
+  const matchingCategoryGroups = selectedCategoryPricingRow
+    ? activeCategoryGroups.filter((group) => group.items.some((row) => row.id === selectedCategoryPricingRow.id))
+    : [];
+  const selectedCategoryGroup = submittedCategoryGroupId
+    ? matchingCategoryGroups.find((group) => group.id === submittedCategoryGroupId) ?? null
+    : matchingCategoryGroups.length === 1 ? matchingCategoryGroups[0] : null;
+  if (selectedCategoryPricingRow && submittedCategoryGroupId && !selectedCategoryGroup) {
+    redirectWithMessage(redirectPath, "The selected Category/Matrix group and row do not match.");
+  }
   const selectedSizePricing = selectedVariantPricingRow || selectedCategoryPricingRow
     ? null
     : selectedDeskingSize(formData, template.desking_size_pricing);
   const selectedWorkstationVariantPricingRow = selectedSizePricing
     ? selectedVariantPricing(formData, template.variant_pricing, "workstation_variant_pricing_row_id")
     : null;
-  const modularRows = activeModularRows(template.category_pricing);
+  const modularGroups = modularItemPricingGroups<CategoryPricingRow>(template.category_pricing)
+    .filter((group) => group.is_active !== false)
+    .map((group) => ({ ...group, items: (group.items ?? []).filter((row) => row.is_active !== false) }));
+  const modularRows = modularGroups.flatMap((group) => group.items)
+    .filter((row) => row.variant_name || row.dimension || Object.values(row.prices ?? {}).some((price) => calculationNumber(price) > 0))
+    .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
   const modularDefaults = modularPricingDefaultsFromRows(template.category_pricing);
   const usesModularPricing = modularRows.length > 0;
   const configuredDimensionInput = optionalTextValue(formData, "configured_dimension");
@@ -6094,16 +6095,17 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         ? workstationLayoutTypeInput ?? "Linear"
         : selectedSizePricing.layout_type ?? "Linear")
     : null;
-  const selectedModularItems = modularRows
-    .map((row) => {
+  const selectedModularItems = modularGroups
+    .flatMap((group) => group.items.map((row) => {
       const id = row.id ?? row.variant_name ?? row.display_name ?? "";
-      const qty = modularQtyById.get(id) ?? 0;
+      const qty = modularQtyById.get(`${group.id}\u0000${id}`) ?? modularQtyById.get(id) ?? 0;
       const unitPrice = money(calculationNumber(row.prices?.[selectedCategory]));
 
       return {
         currency: normalizeCurrency(row.currency ?? template.currency ?? defaultCurrency),
         dimension: row.dimension ?? null,
         display_name: row.display_name ?? null,
+        group_id: group.id,
         id,
         item_name: row.display_name || row.variant_name || "Modular item",
         qty,
@@ -6113,11 +6115,38 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         unit_price: unitPrice,
         variant_name: row.variant_name ?? null,
       };
-    })
+    }))
     .filter((line) => line.qty > 0);
   if (usesModularPricing && !selectedModularItems.length) {
     redirectWithMessage(redirectPath, "Select at least one modular item before adding this product.");
   }
+  const selectedAccessoryModelTargets = selectedVariantPricingRow && selectedVariantGroup
+    ? [{ kind: "base_model" as const, group_id: selectedVariantGroup.id, row_id: selectedVariantPricingRow.id ?? "" }]
+    : selectedCategoryPricingRow && selectedCategoryGroup
+      ? [{ kind: "price_matrix" as const, group_id: selectedCategoryGroup.id ?? "", row_id: selectedCategoryPricingRow.id ?? "" }]
+      : selectedModularItems.map((item) => ({ kind: "modular" as const, group_id: item.group_id, row_id: item.id }));
+  if (hasConditionalAccessoryConfiguration && !selectedAccessoryModelTargets.length) {
+    redirectWithMessage(redirectPath, "Select a valid Base/Model, Category/Matrix, or Modular row before configuring required components or options.");
+  }
+  const accessoryConfiguration = evaluateProductAccessorySelection({
+    accessoryGroups: authoritativeAccessoryGroups,
+    baseModelGroupId: selectedVariantGroup?.id ?? null,
+    baseModelRowId: selectedVariantPricingRow?.id ?? null,
+    selectedModelTarget: selectedAccessoryModelTargets[0] ?? null,
+    selectedModelTargets: selectedAccessoryModelTargets,
+    selectedQuantities: Object.fromEntries(submittedAccessoryPricingQtyById),
+  });
+  if (!accessoryConfiguration.valid) {
+    const invalidGroup = accessoryConfiguration.groups.find((group) => !group.valid);
+    const groupName = authoritativeAccessoryGroups.find((group) => group.id === invalidGroup?.groupId)?.group_name;
+    redirectWithMessage(
+      redirectPath,
+      groupName
+        ? `Review ${groupName}: ${invalidGroup?.validationMessage ?? "the selection is invalid."}`
+        : "Review accessory selections: an item is missing, invalid, or not applicable to the selected pricing row.",
+    );
+  }
+  const accessoryPricingQtyById = new Map(Object.entries(accessoryConfiguration.activeQuantities));
   const selectedCategoryPrice = selectedCategoryPricingRow
     ? money(calculationNumber(selectedCategoryPricingRow.prices?.[selectedCategory]))
     : 0;

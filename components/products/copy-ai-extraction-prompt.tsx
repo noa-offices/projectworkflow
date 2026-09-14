@@ -8,6 +8,7 @@ const choices: Array<{ focus: ExtractionPromptFocus; label: string; description:
   { focus: "chair_seating", label: "Chair & Seating", description: "Chair-specific extraction for models, upholstery matrices, mechanisms, bases, arms, castors/glides, and seating options." },
   { focus: "sofa_lounge", label: "Sofas / Lounge / Armchairs", description: "Extract sofas, lounge armchairs, modular seating, upholstery pricing and related lounge configuration." },
   { focus: "meeting_conference", label: "Meeting / Conference Tables", description: "Extract complete meeting tables, terminal/intermediate systems, top-access and related cable management." },
+  { focus: "storage_cabinets", label: "Storage / Cabinets / Credenzas", description: "Extract cabinets, credenzas, pedestals, service units, carcasses, doors, tops, shelves, locks and storage accessories." },
 ];
 
 const planningChoices: Array<{ focus: ProductTemplateSetupPlanningFocus; label: string; description: string }> = [
@@ -16,6 +17,7 @@ const planningChoices: Array<{ focus: ProductTemplateSetupPlanningFocus; label: 
   { focus: "desk_executive", label: "Desks / Executive Desks", description: "Plan desk models, sizes, returns, service units, top-access and related desk configuration." },
   { focus: "sofa_lounge", label: "Sofas / Lounge / Armchairs", description: "Plan sofas, lounge armchairs, modular seating, upholstery pricing and related lounge configuration." },
   { focus: "meeting_conference", label: "Meeting / Conference Tables", description: "Plan complete meeting tables, terminal/intermediate systems, top-access and related cable management." },
+  { focus: "storage_cabinets", label: "Storage / Cabinets / Credenzas", description: "Plan cabinets, credenzas, pedestals, service units, storage systems, lockers, doors, tops, internals and related configuration." },
 ];
 
 export function CopyAiExtractionPrompt() {

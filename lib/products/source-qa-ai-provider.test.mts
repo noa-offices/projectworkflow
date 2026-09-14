@@ -8,7 +8,7 @@ const coverageDraft = {
   pricing: { baseModelRows: [{ supplierCodes: ["BASE-100"], dimensions: { rawText: "1000x600" }, price: 10 }], priceMatrices: [{ rows: [{ supplierCodes: ["MATRIX-200"], prices: { standard: 20 } }] }], modularGroups: [{ matrix: { rows: [{ supplierCodes: ["MOD-300"], prices: { standard: 30 } }] } }], workstationRows: [{ supplierCodes: ["WORK-NULL"], price: null }] },
   optionGroups: [{ selection: { mode: "required_choose_one" }, items: [{ supplierCodes: ["ACC-ZERO"], price: 0 }] }],
 };
-const input = (bytes = new ArrayBuffer(4), draft: object = {}) => ({ sourcePdf: { fileName: "source.pdf", bytes }, draft: draft as never });
+const input = (bytes = new ArrayBuffer(4), draft: object = {}, originalImportedJsonSources = [{ id: "source-1", rawJson: '{"supplier_code":"BASE-100"}' }]) => ({ sourcePdf: { fileName: "source.pdf", bytes }, originalImportedJsonSources, draft: draft as never });
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const completed = (value: unknown) => ({ status: "completed", output: [{ content: [{ type: "output_text", text: JSON.stringify(value) }] }] });
 
@@ -34,7 +34,7 @@ test("rejects oversized PDF and draft before fetch", async () => {
 test("sends the four-pass exhaustive verification protocol and full pricing fixture", async () => {
   let body: Record<string, unknown> | null = null;
   await withProvider(async (_url, init) => { body = JSON.parse(String(init?.body)); return response(completed(report)); }, async () => { await verifySourceQaWithProvider(input(undefined, coverageDraft)); });
-  const request = body as unknown as Record<string, unknown>; const instructions = String(request.instructions); const content = ((request.input as Array<{ content: Array<{ text?: string }> }>)[0]?.content[1]?.text) ?? "";
+  const request = body as unknown as Record<string, unknown>; const instructions = String(request.instructions); const content = ((request.input as Array<{ content: Array<{ text?: string }> }>)[0]?.content[2]?.text) ?? "";
   ["PASS 1", "PASS 2", "PASS 3", "PASS 4", "every enumerated price-bearing JSON row", "DENSE-TABLE BINDING RULE", "Printed 0 is a real zero", "blank source price is blank/null", "code-only report is incomplete", "Consolidate duplicate findings", "character-for-character", "9MU202a ≠ 9MU202", "ABC-R ≠ ABC", "ML18/1 ≠ ML18", "X-20 ≠ X20", "For every coded JSON row", "independently of price verification"].forEach((value) => assert.match(instructions, new RegExp(value)));
   ["BASE-100", "1000x600", "MATRIX-200", "MOD-300", "WORK-NULL", "ACC-ZERO", "\"price\":null", "\"price\":0"].forEach((value) => assert.ok(content.includes(value), value));
 });
@@ -59,4 +59,21 @@ test("duplicates remain schema-valid but are forbidden by the provider instructi
 test("sanitizes provider HTTP errors and timeouts", async () => {
   await withProvider(async () => response({}, 500), async () => await assert.rejects(verifySourceQaWithProvider(input()), /provider request failed/));
   await withProvider(async () => { const error = new Error("timeout"); error.name = "AbortError"; throw error; }, async () => await assert.rejects(verifySourceQaWithProvider(input()), /request timed out/));
+});
+
+test("sends each original source separately and rejects invalid source collections", async () => {
+  let body: Record<string, unknown> | null = null;
+  const sources = [{ id: "one", rawJson: '{"code":"IN120E"}' }, { id: "two", rawJson: '{"code":"IN127E"}' }];
+  await withProvider(async (_url, init) => { body = JSON.parse(String(init?.body)); return response(completed(report)); }, async () => { await verifySourceQaWithProvider(input(undefined, {}, sources)); });
+  const request = body as unknown as Record<string, unknown>;
+  const content = (request.input as Array<{ content: Array<{ text?: string }> }>)[0]?.content ?? [];
+  assert.equal(request.store, false);
+  assert.match(String(request.instructions), /PDF is the source of truth/);
+  assert.match(String(request.instructions), /secondary context only/);
+  assert.match(content[1]?.text ?? "", /Original Imported JSON Source 1:[\s\S]*IN120E[\s\S]*Original Imported JSON Source 2:[\s\S]*IN127E/);
+  await withProvider(async () => { throw new Error("fetch should not run"); }, async () => {
+    await assert.rejects(verifySourceQaWithProvider(input(undefined, {}, [])), /At least one original/);
+    await assert.rejects(verifySourceQaWithProvider(input(undefined, {}, Array.from({ length: 11 }, (_, index) => ({ id: String(index), rawJson: "{}" })))), /At most 10/);
+    await assert.rejects(verifySourceQaWithProvider(input(undefined, {}, [{ id: "large", rawJson: "x".repeat(2 * 1024 * 1024 + 1) }])), /2 MB/);
+  });
 });

@@ -50,10 +50,12 @@ export function applicabilityTargetChoice(
 export function applicabilityTargetChoices(
   baseModelGroups: PricingGroup[],
   priceMatrixGroups: PricingGroup[],
+  modularGroups: PricingGroup[] = [],
 ): ApplicabilityTargetChoice[] {
   return [
     ...baseModelGroups.flatMap((group) => (group.items ?? []).flatMap((row) => applicabilityTargetChoice("base_model", group, row) ?? [])),
     ...priceMatrixGroups.flatMap((group) => (group.items ?? []).flatMap((row) => applicabilityTargetChoice("price_matrix", group, row) ?? [])),
+    ...modularGroups.flatMap((group) => (group.items ?? []).flatMap((row) => applicabilityTargetChoice("modular", group, row) ?? [])),
   ];
 }
 

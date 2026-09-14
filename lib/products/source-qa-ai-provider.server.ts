@@ -1,9 +1,10 @@
 import "server-only";
 
 import type { ProductTemplateDraft } from "./product-template-draft";
+import { validateOriginalImportedJsonSources, type OriginalImportedJsonSource } from "./original-imported-json-sources";
 import { parseSourceQaAiReport, type SourceQaAiReport } from "./source-qa-ai-contract";
 
-export type SourceQaAiProviderInput = { sourcePdf: { fileName: string; bytes: ArrayBuffer }; draft: ProductTemplateDraft };
+export type SourceQaAiProviderInput = { sourcePdf: { fileName: string; bytes: ArrayBuffer }; originalImportedJsonSources: OriginalImportedJsonSource[]; draft: ProductTemplateDraft };
 export const DEFAULT_SOURCE_QA_AI_MODEL = "gpt-4.1";
 const MAX_PDF_BYTES = 15 * 1024 * 1024;
 const MAX_DRAFT_BYTES = 2 * 1024 * 1024;
@@ -12,7 +13,7 @@ export class SourceQaAiProviderError extends Error {}
 
 const schema = { type: "object", additionalProperties: false, required: ["version", "summary", "issues"], properties: { version: { type: "integer", const: 1 }, summary: { type: "object", additionalProperties: false, required: ["issueCount", "highSeverityCount", "reviewRequired"], properties: { issueCount: { type: "integer", minimum: 0 }, highSeverityCount: { type: "integer", minimum: 0 }, reviewRequired: { type: "boolean" } } }, issues: { type: "array", items: { type: "object", additionalProperties: false, required: ["id", "type", "severity", "confidence", "supplierModelCode", "sourcePage", "sourceEvidence", "sourceValue", "jsonLocation", "jsonValue", "explanation"], properties: { id: { type: "string", minLength: 1 }, type: { type: "string", enum: ["missing_source_row", "supplier_model_code_mismatch", "price_value_mismatch", "row_binding_mismatch", "classification_mismatch", "excluded_scope_import"] }, severity: { type: "string", enum: ["critical", "warning", "info"] }, confidence: { type: "string", enum: ["high", "medium", "low"] }, supplierModelCode: { type: ["string", "null"] }, sourcePage: { type: ["integer", "null"], minimum: 1 }, sourceEvidence: { type: ["string", "null"] }, sourceValue: { type: ["string", "number", "null"] }, jsonLocation: { type: ["string", "null"] }, jsonValue: { type: ["string", "number", "boolean", "null"] }, explanation: { type: "string", minLength: 1 } } } } } } as const;
 
-const instructions = `You are a verification system, not an extractor and not an editor. Compare the supplied manufacturer PDF against the supplied ProductTemplateDraft JSON. Internally complete every pass below before returning only evidence-supported discrepancies matching the supplied schema. Do not return the internal checklist.
+const instructions = `You are a verification system, not an extractor and not an editor. The manufacturer PDF is the source of truth. Compare it primarily against every separately bounded Original Imported JSON source: this is the extracted representation being verified. The reviewed ProductTemplateDraft is secondary context only, used only to identify possible Smart Setup transformation/integrity differences. If original JSON differs from the PDF, report an extraction-fidelity issue. If original JSON matches the PDF but reviewedDraft differs, treat it only as a possible transformation/integrity concern. Do not trust extractionWarnings, confidence values, prior AI commentary, inferred manufacturer conventions, or naming patterns over literal PDF evidence. Literal printed source values and codes always outrank inference. Do not invent discrepancies. Internally complete every pass below before returning only evidence-supported discrepancies matching the supplied schema. Do not return the internal checklist.
 
 PASS 1 — ENUMERATE JSON COMMERCIAL ROWS: Enumerate every JSON row/item containing supplier/model code, dimensions, price/value, currency-related value, applicability, or required/optional/included classification. Include Base / Model, Category / Matrix, Workstation, Modular, Accessory / Configuration, nested options/items, null prices, and explicit numeric zero prices. Do not skip rows because another mismatch was found.
 
@@ -43,8 +44,8 @@ function outputText(value: unknown) {
   return null;
 }
 
-async function requestReport(input: SourceQaAiProviderInput, apiKey: string, draftJson: string, signal: AbortSignal) {
-  const response = await fetch("https://api.openai.com/v1/responses", { method: "POST", signal, headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.SOURCE_QA_AI_MODEL?.trim() || DEFAULT_SOURCE_QA_AI_MODEL, store: false, instructions: instructions + exactCodeRules, input: [{ role: "user", content: [{ type: "input_file", filename: input.sourcePdf.fileName, file_data: `data:application/pdf;base64,${Buffer.from(input.sourcePdf.bytes).toString("base64")}` }, { type: "input_text", text: `ProductTemplateDraft JSON:\n${draftJson}` }] }], text: { format: { type: "json_schema", name: "source_qa_ai_report", strict: true, schema } } }) });
+async function requestReport(input: SourceQaAiProviderInput, apiKey: string, originalJsonText: string, draftJson: string, signal: AbortSignal) {
+  const response = await fetch("https://api.openai.com/v1/responses", { method: "POST", signal, headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.SOURCE_QA_AI_MODEL?.trim() || DEFAULT_SOURCE_QA_AI_MODEL, store: false, instructions: instructions + exactCodeRules, input: [{ role: "user", content: [{ type: "input_file", filename: input.sourcePdf.fileName, file_data: `data:application/pdf;base64,${Buffer.from(input.sourcePdf.bytes).toString("base64")}` }, { type: "input_text", text: originalJsonText }, { type: "input_text", text: `Reviewed ProductTemplateDraft JSON (secondary context only):\n${draftJson}` }] }], text: { format: { type: "json_schema", name: "source_qa_ai_report", strict: true, schema } } }) });
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) throw new SourceQaAiProviderError("AI Source QA provider authentication failed.");
     if (response.status === 429) throw new SourceQaAiProviderError("AI Source QA provider is temporarily unavailable.");
@@ -60,11 +61,14 @@ export async function verifySourceQaWithProvider(input: SourceQaAiProviderInput)
   if (!apiKey) throw new SourceQaAiProviderError("AI Source QA is not configured yet.");
   if (!input.sourcePdf.fileName.toLowerCase().endsWith(".pdf") || !input.sourcePdf.bytes.byteLength) throw new SourceQaAiProviderError("Source PDF is invalid.");
   if (input.sourcePdf.bytes.byteLength > MAX_PDF_BYTES) throw new SourceQaAiProviderError("Source PDF exceeds the Source QA V1 limit.");
+  const originalSources = validateOriginalImportedJsonSources(input.originalImportedJsonSources);
+  if (!originalSources.valid) throw new SourceQaAiProviderError(originalSources.message);
   const draftJson = JSON.stringify(input.draft);
   if (Buffer.byteLength(draftJson, "utf8") > MAX_DRAFT_BYTES) throw new SourceQaAiProviderError("Product draft exceeds the Source QA V1 limit.");
   const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    for (let attempt = 0; attempt < 2; attempt += 1) { const report = await requestReport(input, apiKey, draftJson, controller.signal); if (report) return report; }
+    const originalJsonText = originalSources.sources.map((source, index) => `Original Imported JSON Source ${index + 1}:\n${source.rawJson}`).join("\n\n");
+    for (let attempt = 0; attempt < 2; attempt += 1) { const report = await requestReport(input, apiKey, originalJsonText, draftJson, controller.signal); if (report) return report; }
     throw new SourceQaAiProviderError("AI Source QA returned an invalid report.");
   } catch (error) {
     if (error instanceof SourceQaAiProviderError) throw error;

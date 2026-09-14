@@ -12,6 +12,7 @@ import {
 import type { ImageDisplaySettings } from "@/components/images/image-adjustment-dialog";
 import { ProductTemplateForm } from "@/components/products/product-template-form";
 import { ManufacturerFinishGuidancePanel } from "@/components/products/manufacturer-finish-guidance";
+import { FinalSpecificationAiControl } from "@/components/quotations/final-specification-ai-control";
 import { normalizeManufacturerFinishGuidance } from "@/lib/products/manufacturer-finish-guidance";
 import {
   FinishSelectionsEditor,
@@ -47,6 +48,7 @@ import { accessoryOptionLabel } from "@/lib/quotations/accessory-option-label";
 import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
 import { productTemplateRowReferenceKey, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
+import { buildFinalSpecificationRequest } from "@/lib/quotations/final-specification-ai-selection";
 import {
   buildCompanyStyleProductSpecification,
   buildModularCompositionSpecification,
@@ -2551,6 +2553,57 @@ export function ProductLibrarySelector({
                       finish.finish_description,
                     ))
                     .map((finish) => finishSelectionLabel(finish));
+                  const selectedModelLabel = usesModularPricing
+                    ? selectedModularItems
+                        .map((line) => `${pricingDisplayName(line.row) || line.row.variant_name || "Modular item"} x ${line.qty}`)
+                        .join(", ")
+                    : usesWorkstationFlow
+                      ? [
+                          selectedSizeRow?.label,
+                          selectedWorkstationVariantRow
+                            ? pricingDisplayName(selectedWorkstationVariantRow) || selectedWorkstationVariantRow.variant_name
+                            : null,
+                        ].filter(Boolean).join(" / ") || null
+                      : pricingDisplayName(selectedCategoryRow) || pricingDisplayName(selectedVariantRow) || null;
+                  const finalSpecificationAiRequest = buildFinalSpecificationRequest({
+                    currentSpecification: finalSpecification,
+                    productName: template.template_name,
+                    selectedModel: selectedModelLabel,
+                    selectedDimensions: localDimension,
+                    finishes: [
+                      ...selectedFinishSummary.map((label) => ({ label, selected: true })),
+                      ...(usesCategoryPricing || usesModularPricing
+                        ? [{ label: selectedFabricCategory, selected: true }]
+                        : []),
+                    ],
+                    options: selectedOptionSnapshots.map((option) => ({ label: option.label, selected: true })),
+                    accessories: [
+                      ...selectedPricingAccessories.map((line) => ({ label: line.accessory.item_name, quantity: line.qty })),
+                      ...selectedLinkedProducts.flatMap((line) => line.qty > 0
+                        ? line.selectedAccessories.map((accessoryLine) => ({ label: accessoryLine.accessory.item_name, quantity: accessoryLine.qty }))
+                        : []),
+                    ],
+                    companions: selectedLinkedProducts.map((line) => ({
+                      label: [
+                        line.instance.label.trim() || line.link.label || line.childTemplate.template_name,
+                        line.childVariantRow?.variant_name || (line.childCategoryRow ? line.childCategory : null),
+                      ].filter(Boolean).join(": "),
+                      quantity: line.qty,
+                    })),
+                    selectedRowFacts: [
+                      usesWorkstationFlow || usesModularPricing ? configuredSpecification : null,
+                      selectedCategoryRow?.specification,
+                      selectedVariantRow?.specification,
+                      selectedSizeRow?.specification,
+                      selectedWorkstationVariantRow?.specification,
+                      ...selectedModularItems.map((line) => line.row.specification),
+                      ...selectedOptionSnapshots.map((option) => option.specification),
+                      ...selectedPricingAccessories.map((line) => line.accessory.specification),
+                      ...selectedLinkedProducts.flatMap((line) => line.qty > 0
+                        ? [line.childCategoryRow?.specification, line.childVariantRow?.specification]
+                        : []),
+                    ],
+                  });
                   const sourceTotalsList = Array.from(originalCurrencyTotals.entries())
                     .filter(([, amount]) => amount > 0)
                     .map(([currency, amount]) => ({
@@ -4352,6 +4405,19 @@ export function ProductLibrarySelector({
                                       This only updates the current quotation item. Template specification stays unchanged.
                                     </p>
                                   )}
+                                  <FinalSpecificationAiControl
+                                    request={finalSpecificationAiRequest}
+                                    onUseSuggestion={(specification) => {
+                                      setFinalSpecifications((current) => ({
+                                        ...current,
+                                        [template.id]: specification,
+                                      }));
+                                      setFinalSpecificationEditedByTemplate((current) => ({
+                                        ...current,
+                                        [template.id]: true,
+                                      }));
+                                    }}
+                                  />
                                 </div>
                               </div>
                             <div className="sticky bottom-0 -mx-4 -mb-4 mt-1 border-t border-zinc-200 bg-white px-4 py-4">
@@ -4452,7 +4518,7 @@ export function ProductLibrarySelector({
                                   key={line.id}
                                   type="hidden"
                                   name="modular_item_selection"
-                                  value={`${line.id}:${line.qty}`}
+                                  value={`${line.groupId}:${line.id}:${line.qty}`}
                                 />
                               ))}
                             </>
