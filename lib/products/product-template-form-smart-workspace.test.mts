@@ -51,3 +51,11 @@ test("live modular hidden JSON remains available to manufacturer comparison", ()
   assert.equal(workspace.draft.pricing.modularGroups[0].id, "modules");
   assert.equal(workspace.draft.pricing.modularGroups[0].matrix.rows[0].prices["Cat A"], 12);
 });
+
+test("live category-priced accessories preserve group categories and independent item price maps", () => {
+  const priceCategories = [{ id: "cat-b", label: "B" }, { id: "cat-supreme", label: "SUPREME" }];
+  const workspace = productTemplateFormSmartWorkspace({ desking_size_pricing: "[]", variant_pricing: "[]", category_pricing: "[]", accessory_pricing: JSON.stringify([{ id: "cushions", group_name: "Cushions", price_categories: priceCategories, items: [{ id: "958", item_name: "Cushion 958", price: null, prices: { "cat-b": 93, "cat-supreme": 162 } }, { id: "959", item_name: "Cushion 959", price: null, prices: { "cat-b": 107, "cat-supreme": 189 } }] }]) });
+  assert.deepEqual(workspace.draft.optionGroups[0].priceCategories, priceCategories);
+  assert.deepEqual(workspace.draft.optionGroups[0].items[0].prices, { "cat-b": 93, "cat-supreme": 162 });
+  assert.deepEqual(workspace.draft.optionGroups[0].items[1].prices, { "cat-b": 107, "cat-supreme": 189 });
+});

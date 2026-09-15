@@ -26,6 +26,8 @@ function normalizeItem(row: AccessoryConfigurationItem, index: number) {
     item_name: typeof row.item_name === "string" ? row.item_name.trim() : "",
     supplier_price_list_code: typeof row.supplier_price_list_code === "string" ? row.supplier_price_list_code.trim() : "",
     price: parseNullablePricingNumber(row.price),
+    ...(row.prices && typeof row.prices === "object" && !Array.isArray(row.prices) ? { prices: Object.fromEntries(Object.entries(row.prices).map(([id, value]) => [id, parseNullablePricingNumber(value)])) } : {}),
+    ...(Array.isArray(row.unavailable_price_categories) ? { unavailable_price_categories: Array.from(new Set(row.unavailable_price_categories.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim()))) } : {}),
     currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
     ...(typeof row.dimension === "string" && row.dimension.trim() ? { dimension: row.dimension.trim() } : {}),
     specification: typeof row.specification === "string" ? row.specification.trim() : "",
@@ -49,6 +51,7 @@ function normalizeGroups(groups: AccessoryConfigurationGroup[]) {
     group_is_required: row.group_is_required === true,
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
     is_active: row.is_active !== false,
+    ...(Array.isArray(row.price_categories) ? { price_categories: row.price_categories.flatMap((category) => typeof category?.id === "string" && category.id.trim() && typeof category?.label === "string" && category.label.trim() ? [{ id: category.id.trim(), label: category.label.trim() }] : []) } : {}),
     items: (row.items ?? []).map(normalizeItem).filter(meaningfulItem),
   }));
 

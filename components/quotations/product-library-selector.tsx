@@ -199,6 +199,7 @@ type AccessoryPricingRow = {
   id?: string;
   group_name?: string;
   group_is_required?: boolean;
+  price_categories?: Array<{ id: string; label: string }>;
   items?: AccessoryPricingItem[];
   item_name?: string;
   supplier_price_list_code?: string;
@@ -217,6 +218,8 @@ type AccessoryPricingItem = {
   item_name?: string;
   supplier_price_list_code?: string;
   price?: number | null;
+  prices?: Record<string, number | null>;
+  unavailable_price_categories?: string[];
   currency?: string;
   dimension?: string;
   specification?: string;
@@ -563,6 +566,18 @@ function AccessoryItemMetadata({ groupId, item, onViewDiagram, rowReferences }: 
   return <>{showsDimension ? <span className="mt-1 block text-[11px] text-zinc-500"><span className="font-semibold text-zinc-700">Size:</span> {dimension}</span> : null}{reference?.previewUrl ? <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); onViewDiagram(item, reference.previewUrl!); }} className="mt-1 text-[11px] font-semibold text-emerald-900 hover:text-emerald-700">View diagram</button> : null}</>;
 }
 
+function AccessoryCategoryPriceSelector({ group, item, value, onChange, currency }: { group: ReturnType<typeof activeAccessoryRows>[number]; item: AccessoryPricingItem; value: string; onChange: (value: string) => void; currency: string }) {
+  const categories = (group.price_categories ?? []).filter((category) => item.prices?.[category.id] !== null && item.prices?.[category.id] !== undefined && !item.unavailable_price_categories?.includes(category.id));
+  if (!categories.length) return null;
+  const selected = categories.find((category) => category.id === value) ?? categories[0];
+  return <span className="mt-1 flex items-center gap-2 text-[11px] text-zinc-600"><span>Category:</span><select value={selected.id} onChange={(event) => onChange(event.target.value)} className="h-7 border border-zinc-300 bg-white px-1 text-[11px]"><>{categories.map((category) => <option key={category.id} value={category.id}>{category.label}</option>)}</></select><span className="font-semibold text-zinc-900">{formatMoney(item.currency ?? currency, numberValue(item.prices?.[selected.id]))}</span></span>;
+}
+
+function accessoryDisplayPrice(group: ReturnType<typeof activeAccessoryRows>[number], item: AccessoryPricingItem, categoryId: string) {
+  const category = (group.price_categories ?? []).find((entry) => entry.id === categoryId) ?? (group.price_categories ?? []).find((entry) => item.prices?.[entry.id] !== null && item.prices?.[entry.id] !== undefined && !item.unavailable_price_categories?.includes(entry.id));
+  return category ? numberValue(item.prices?.[category.id]) : numberValue(item.price);
+}
+
 function AccessoryGroupHeader({ expanded, groupName, itemCount, required, selectedCount, onToggle }: { expanded: boolean; groupName: string; itemCount: number; required: boolean; selectedCount: number; onToggle: () => void }) {
   return <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex w-full items-center justify-between gap-3 text-left">
     <span className="min-w-0 text-xs font-semibold text-zinc-900"><span aria-hidden="true" className="mr-1.5 text-zinc-500">{expanded ? "▾" : "▸"}</span>{groupName}</span>
@@ -672,7 +687,7 @@ function categoryPriceColumns(rows?: CategoryPricingRow[] | null) {
   ]));
 }
 
-function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
+function activeAccessoryRows(rows?: AccessoryPricingRow[] | null): Array<AccessoryPricingRow & { id: string; group_name: string; group_is_required: boolean; is_active: boolean; sort_order: number; items: AccessoryPricingItem[]; subgroups: NonNullable<AccessoryPricingRow["subgroups"]> }> {
   const sourceRows = Array.isArray(rows) ? rows : [];
   const groups = sourceRows
     .filter((row) => row.group_name || row.items)
@@ -687,6 +702,7 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
       id: group.id ?? `add-on-group-${groupIndex}`,
       group_name: group.group_name?.trim() || "Accessories",
       group_is_required: group.group_is_required === true,
+      price_categories: group.price_categories,
       conditional_configuration: group.conditional_configuration,
       is_active: group.is_active !== false,
       sort_order: numberValue(group.sort_order, groupIndex),
@@ -1133,6 +1149,7 @@ export function ProductLibrarySelector({
   const [finalSpecificationEditedByTemplate, setFinalSpecificationEditedByTemplate] = useState<Record<string, boolean>>({});
   const [selectedWorkstationLayouts, setSelectedWorkstationLayouts] = useState<Record<string, string>>({});
   const [pricingAccessoryQuantities, setPricingAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
+  const [selectedAccessoryCategories, setSelectedAccessoryCategories] = useState<Record<string, string>>({});
   const [expandedAccessoryGroups, setExpandedAccessoryGroups] = useState<Record<string, boolean>>({});
   const [linkedProductInstancesByLinkId, setLinkedProductInstancesByLinkId] = useState<Record<string, LinkedProductInstance[]>>({});
   const [linkedProductQuantities, setLinkedProductQuantities] = useState<Record<string, number>>({});
@@ -1753,10 +1770,17 @@ export function ProductLibrarySelector({
                     .flatMap((group) =>
                       group.items.map((accessory) => {
                         const id = accessory.id ?? accessory.item_name ?? "";
+                        const categoryKey = `${template.id}:${group.id}:${id}`;
+                        const availableCategories = (group.price_categories ?? []).filter((category) => accessory.prices?.[category.id] !== null && accessory.prices?.[category.id] !== undefined && !accessory.unavailable_price_categories?.includes(category.id));
+                        const selectedCategory = availableCategories.find((category) => category.id === selectedAccessoryCategories[categoryKey]) ?? availableCategories[0] ?? null;
+                        const unitPrice = selectedCategory ? numberValue(accessory.prices?.[selectedCategory.id]) : numberValue(accessory.price);
 
                         return {
                           accessory,
                           groupName: group.group_name,
+                          groupId: group.id,
+                          selectedCategory,
+                          unitPrice,
                           qty: Math.max(0, Math.trunc(numberValue(accessoryConfiguration.activeQuantities[id]))),
                         };
                       }),
@@ -1764,7 +1788,7 @@ export function ProductLibrarySelector({
                     .filter((line) => line.qty > 0);
                   const matchingAccessoryTotal = selectedPricingAccessories
                     .filter((line) => normalizeCurrency(line.accessory.currency ?? rowCurrency) === normalizeCurrency(rowCurrency))
-                    .reduce((total, line) => total + line.qty * numberValue(line.accessory.price), 0);
+                    .reduce((total, line) => total + line.qty * line.unitPrice, 0);
                   const hasMixedAccessoryCurrencies = selectedPricingAccessories.some(
                     (line) => normalizeCurrency(line.accessory.currency ?? rowCurrency) !== normalizeCurrency(rowCurrency),
                   );
@@ -1909,7 +1933,7 @@ export function ProductLibrarySelector({
                     );
                   }
                   for (const line of selectedPricingAccessories) {
-                    addCurrencyTotal(line.accessory.currency ?? rowCurrency, line.qty * numberValue(line.accessory.price));
+                    addCurrencyTotal(line.accessory.currency ?? rowCurrency, line.qty * line.unitPrice);
                   }
                   for (const line of selectedLinkedProducts) {
                     if (line.qty > 0 && line.link.add_to_parent_price) {
@@ -2119,10 +2143,16 @@ export function ProductLibrarySelector({
                     group_name: line.groupName,
                     item_name: line.accessory.item_name,
                     qty: line.qty,
-                    price: numberValue(line.accessory.price),
+                    id: line.accessory.id ?? null,
+                    group_id: line.groupId,
+                    dimension: line.accessory.dimension ?? null,
+                    selected_category_id: line.selectedCategory?.id ?? null,
+                    selected_category_label: line.selectedCategory?.label ?? null,
+                    price: line.unitPrice,
                     currency: normalizeCurrency(line.accessory.currency ?? rowCurrency),
                     supplier_price_list_code: line.accessory.supplier_price_list_code ?? null,
                     specification: line.accessory.specification ?? "",
+                    ...(line.accessory.importantRequirements?.length ? { importantRequirements: line.accessory.importantRequirements } : {}),
                   }));
                   const linkedProductSnapshots = selectedLinkedProducts.map((line) => ({
                     item_type: "linked_product",
@@ -2534,12 +2564,12 @@ export function ProductLibrarySelector({
                   const pricingAccessorySummary = selectedPricingAccessories.map((line) => ({
                     currency: normalizeCurrency(line.accessory.currency ?? rowCurrency),
                     dimension: line.accessory.dimension ?? null,
-                    detail: line.accessory.specification ?? line.groupName,
                     label: line.accessory.item_name || "Accessory",
                     supplierCode: line.accessory.supplier_price_list_code ?? null,
                     qty: line.qty,
-                    total: quotationMoneyValue(line.qty * numberValue(line.accessory.price)),
-                    unitPrice: quotationMoneyValue(numberValue(line.accessory.price)),
+                    detail: [line.selectedCategory?.label ? `Category: ${line.selectedCategory.label}` : null, line.accessory.specification ?? line.groupName].filter(Boolean).join(" / "),
+                    total: quotationMoneyValue(line.qty * line.unitPrice),
+                    unitPrice: quotationMoneyValue(line.unitPrice),
                   }));
                   const modularSummary = selectedModularItems.map((line) => ({
                     currency: normalizeCurrency(line.row.currency ?? rowCurrency),
@@ -3261,6 +3291,7 @@ export function ProductLibrarySelector({
                                                 className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle"
                                               />
                                               <span className="font-medium text-zinc-900">{accessory.item_name}</span>
+                                              <AccessoryCategoryPriceSelector group={group} item={accessory} currency={rowCurrency} value={selectedAccessoryCategories[`${template.id}:${group.id}:${id}`] ?? ""} onChange={(categoryId) => setSelectedAccessoryCategories((current) => ({ ...current, [`${template.id}:${group.id}:${id}`]: categoryId }))} />
                                               {accessory.supplier_price_list_code ? (
                                                 <span className="mt-1 block text-[11px] text-zinc-500">
                                                   <span className="font-semibold text-zinc-700">Supplier Code:</span> {accessory.supplier_price_list_code}<AccessoryItemMetadata groupId={group.id} item={accessory} rowReferences={rowReferenceImages} onViewDiagram={(item, url) => setDiagramPreview({ label: "Accessory diagram", templateId: template.id, title: [item.item_name || "Accessory", item.supplier_price_list_code, item.dimension].filter(Boolean).join(" — "), url })} />
@@ -3268,7 +3299,7 @@ export function ProductLibrarySelector({
                                               ) : null}
                                             </span>
                                             <span className="font-semibold">
-                                              {formatMoney(accessory.currency ?? rowCurrency, numberValue(accessory.price))}
+                                              {formatMoney(accessory.currency ?? rowCurrency, accessoryDisplayPrice(group, accessory, selectedAccessoryCategories[`${template.id}:${group.id}:${id}`] ?? ""))}
                                             </span>
                                             <input
                                               type="number"
@@ -3344,6 +3375,7 @@ export function ProductLibrarySelector({
                                             className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle"
                                           />
                                           <span className="font-medium text-zinc-900">{accessory.item_name}</span>
+                                          <AccessoryCategoryPriceSelector group={group} item={accessory} currency={rowCurrency} value={selectedAccessoryCategories[`${template.id}:${group.id}:${id}`] ?? ""} onChange={(categoryId) => setSelectedAccessoryCategories((current) => ({ ...current, [`${template.id}:${group.id}:${id}`]: categoryId }))} />
                                           {accessory.supplier_price_list_code ? (
                                             <span className="mt-1 block text-[11px] text-zinc-500">
                                               <span className="font-semibold text-zinc-700">Supplier Code:</span> {accessory.supplier_price_list_code}<AccessoryItemMetadata groupId={group.id} item={accessory} rowReferences={rowReferenceImages} onViewDiagram={(item, url) => setDiagramPreview({ label: "Accessory diagram", templateId: template.id, title: [item.item_name || "Accessory", item.supplier_price_list_code, item.dimension].filter(Boolean).join(" — "), url })} />
@@ -3351,7 +3383,7 @@ export function ProductLibrarySelector({
                                           ) : null}
                                         </span>
                                         <span className="font-semibold">
-                                          {formatMoney(accessory.currency ?? rowCurrency, numberValue(accessory.price))}
+                                          {formatMoney(accessory.currency ?? rowCurrency, accessoryDisplayPrice(group, accessory, selectedAccessoryCategories[`${template.id}:${group.id}:${id}`] ?? ""))}
                                         </span>
                                         <input
                                           type="number"
@@ -4575,12 +4607,10 @@ export function ProductLibrarySelector({
                             />
                           ) : null}
                           {selectedPricingAccessories.map((line) => (
-                            <input
-                              key={line.accessory.id ?? line.accessory.item_name}
-                              type="hidden"
-                              name="accessory_pricing_qty"
-                              value={`${line.accessory.id ?? line.accessory.item_name ?? ""}:${line.qty}`}
-                            />
+                            <Fragment key={line.accessory.id ?? line.accessory.item_name}>
+                              <input type="hidden" name="accessory_pricing_qty" value={`${line.accessory.id ?? line.accessory.item_name ?? ""}:${line.qty}`} />
+                              {line.selectedCategory ? <input type="hidden" name="accessory_pricing_category" value={`${line.accessory.id ?? ""}:${line.selectedCategory.id}`} /> : null}
+                            </Fragment>
                           ))}
                           {selectedLinkedProducts.map((line) => (
                             line.qty > 0 ? (

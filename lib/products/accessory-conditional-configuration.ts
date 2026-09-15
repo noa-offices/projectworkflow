@@ -33,6 +33,8 @@ export type AccessoryConfigurationItem = Record<string, unknown> & {
   item_name?: string;
   supplier_price_list_code?: string;
   price?: number | null;
+  prices?: Record<string, number | null>;
+  unavailable_price_categories?: string[];
   currency?: string;
   dimension?: string;
   specification?: string;
@@ -47,6 +49,7 @@ export type AccessoryConfigurationGroup = Record<string, unknown> & {
   group_is_required?: boolean;
   is_active?: boolean;
   sort_order?: number;
+  price_categories?: Array<{ id: string; label: string }>;
   items?: AccessoryConfigurationItem[];
   subgroups?: Array<{ id: string; subgroup_name: string; sort_order: number; is_active: boolean; row_ids: string[] }>;
   conditional_configuration?: AccessoryConditionalConfiguration;

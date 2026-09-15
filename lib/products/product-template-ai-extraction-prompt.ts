@@ -9,7 +9,7 @@ First identify the manufacturer-defined commercial/product family and its source
 GLOBAL PRICING ROUTING ORDER
 Evaluate every source structure in this order: (1) BASE / MODEL, (2) CATEGORY / MATRIX, (3) MODULAR.
 - BASE / MODEL is the default for every authoritative PRIMARY sellable product SKU row with its own supplier code, direct price, dimensions/configuration, and identity. The primary product is what the user would select first, such as a cabinet, pedestal, CPU holder, service unit, desk, chair, sofa, or meeting table. Multiple rows, sizes, finishes, handed variants, or catalogue headings do not justify Matrix or Modular.
-- CATEGORY / MATRIX requires a genuine manufacturer-proven commercial category dimension, such as Model row x Fabric Cat A / B / C / D or explicit finish-price classes. An ordinary SKU row x one column labelled "Standard Price" is an invalid one-column fake Matrix and is explicitly forbidden. When each SKU has only one direct price, use pricing.baseModelRows. True Cat A-D prices may use pricing.priceMatrices.
+- CATEGORY / MATRIX requires a genuine manufacturer-proven commercial category dimension, such as Model row x Fabric Cat A / B / C / D or explicit finish-price classes. An ordinary SKU row x one column labelled "Standard Price" is an invalid one-column fake Matrix and is explicitly forbidden. When each PRIMARY product SKU has category-dependent prices, use pricing.priceMatrices; when a SUPPORTING accessory has category-dependent prices, keep it in optionGroups with priceCategories and item prices. When each SKU has only one direct price, use pricing.baseModelRows.
 - MODULAR requires source-proven component-built composition, such as terminal/intermediate/end units, sofa modules, workstation compositions, or shared-side bookcases. Ordinary size, finish, LH/RH, open/closed, accessory, and catalogue-layout variation must not trigger pricing.modularGroups. Preserve authoritative terminal/intermediate or other genuine module rows when composition is proven.
 
 AUTHORITATIVE ROW PRESERVATION
@@ -420,7 +420,7 @@ When the same category label genuinely represents the same commercial category a
 
 OPTION GROUPS
 
-For optionGroups extract group id, label, selection, and items. Each item uses the normal priced-row fields.
+For optionGroups extract group id, label, selection, and items. Each item uses the normal priced-row fields. For category-priced accessories, include priceCategories: [{ id, label }] in printed order and item prices keyed by category id; preserve null/unavailable cells and keep the accessory out of primary priceMatrices.
 
 Use only these selection modes: "optional", "choose_one", "choose_multiple", "required_choose_one", "required_choose_at_least_one".
 
@@ -605,12 +605,12 @@ The JSON must conform exactly to this ProductTemplateDraft v1 shape. Use empty a
   "template": { "templateName": null, "templateCode": null, "itemCode": null, "internalSelectionName": null, "description": null, "specification": null, "origin": null, "supplierName": null, "dimensions": null, "supplierCodes": [], "referenceCodes": [] },
   "defaultCurrency": null,
   "pricing": {
-    "workstationRows": [{ "id": "", "label": null, "displayName": null, "dimensions": null, "currency": null, "price": null, "additionalPrice": null, "layoutType": null, "specification": null, "supplierCodes": [], "referenceCodes": [] }],
-    "baseModelRows": [{ "id": "", "label": null, "displayName": null, "dimensions": null, "currency": null, "price": null, "specification": null, "supplierCodes": [], "referenceCodes": [] }],
-    "priceMatrices": [{ "id": "", "label": null, "columns": [{ "id": "", "label": null }], "rows": [{ "id": "", "label": null, "displayName": null, "dimensions": null, "currency": null, "specification": null, "supplierCodes": [], "referenceCodes": [], "prices": { "column-id": null } }] }],
-    "modularGroups": [{ "id": "", "label": null, "defaultDimensions": null, "defaultSpecification": null, "matrix": { "id": "", "label": null, "columns": [{ "id": "", "label": null }], "rows": [{ "id": "", "label": null, "displayName": null, "dimensions": null, "currency": null, "specification": null, "supplierCodes": [], "referenceCodes": [], "prices": { "column-id": null } }] } }]
+    "workstationRows": [{ "id": "", "label": null, "displayName": null, "dimensions": null, "currency": null, "price": null, "additionalPrice": null, "layoutType": null, "specification": null, "importantRequirements": [], "supplierCodes": [], "referenceCodes": [] }],
+    "baseModelRows": [{ "id": "", "label": null, "displayName": null, "dimensions": null, "currency": null, "price": null, "specification": null, "importantRequirements": [], "supplierCodes": [], "referenceCodes": [] }],
+    "priceMatrices": [{ "id": "", "label": null, "columns": [{ "id": "", "label": null }], "rows": [{ "id": "", "label": null, "displayName": null, "dimensions": null, "currency": null, "specification": null, "importantRequirements": [], "supplierCodes": [], "referenceCodes": [], "prices": { "column-id": null } }] }],
+    "modularGroups": [{ "id": "", "label": null, "defaultDimensions": null, "defaultSpecification": null, "matrix": { "id": "", "label": null, "columns": [{ "id": "", "label": null }], "rows": [{ "id": "", "label": null, "displayName": null, "dimensions": null, "currency": null, "specification": null, "importantRequirements": [], "supplierCodes": [], "referenceCodes": [], "prices": { "column-id": null } }] } }]
   },
-  "optionGroups": [{ "id": "", "label": null, "selection": { "mode": "optional", "minSelections": 0, "maxSelections": null, "defaultItemIds": [] }, "items": [{ "id": "", "label": null, "displayName": null, "dimensions": null, "currency": null, "price": null, "specification": null, "supplierCodes": [], "referenceCodes": [] }] }],
+  "optionGroups": [{ "id": "", "label": null, "selection": { "mode": "optional", "minSelections": 0, "maxSelections": null, "defaultItemIds": [] }, "priceCategories": [{ "id": "cat-b", "label": "B" }], "items": [{ "id": "", "label": null, "displayName": null, "dimensions": null, "currency": null, "price": null, "prices": { "cat-b": null }, "specification": null, "importantRequirements": [], "supplierCodes": [], "referenceCodes": [] }] }],
   "materialSuggestions": [{ "id": "", "label": null, "notes": null, "supplierCodes": [], "referenceCodes": [] }],
   "linkedFamilySuggestions": [{ "id": "", "templateName": null, "templateCode": null, "defaultQuantity": null, "notes": null, "supplierCodes": [], "referenceCodes": [] }],
   "extractionWarnings": [],
@@ -618,6 +618,8 @@ The JSON must conform exactly to this ProductTemplateDraft v1 shape. Use empty a
   "sources": [{ "id": "", "documentName": null, "pageNumber": null, "region": null, "rawText": null }]
 }
 The shape above is a field contract, not required sample content. Retain every current ProductTemplateDraft v1 nested field and row shape exactly as encoded by the software schema. Do not change, remove, or rename fields, and do not add fields beyond documented contract fields such as unavailableCategoryIds. Do not include placeholder rows merely because schema examples exist. If a collection has no supported data, return an empty array. Every included item, row, column, group, matrix, material suggestion, linked family suggestion, and source must have a valid non-empty ID.
+
+ACCESSORY CATEGORY-PRICE EXAMPLE: A CUSHIONS optionGroup may use priceCategories in source order [{ id: "B", label: "B" }, { id: "C", label: "C" }, { id: "D", label: "D" }, { id: "E", label: "E" }, { id: "F", label: "F" }, { id: "G", label: "G" }, { id: "SUPREME", label: "SUPREME" }]. For 1AG 958 Cushion for pedestals, use prices { "B": 93, "C": 99, "D": 105, "E": 110, "F": 115, "G": 121, "SUPREME": 162 } in that option item. This is a category-priced accessory in optionGroups, NOT pricing.priceMatrices. Ordinary accessories remain scalar-priced: use price and omit prices/priceCategories. A chair model × upholstery category price table remains a PRIMARY pricing.priceMatrices structure.
 
 FINAL CHECK BEFORE RESPONDING
 

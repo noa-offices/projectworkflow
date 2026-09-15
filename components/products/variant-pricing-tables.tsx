@@ -131,6 +131,7 @@ export type AccessoryPricingRow = {
   id?: string;
   group_name?: string;
   group_is_required?: boolean;
+  price_categories?: Array<{ id: string; label: string }>;
   items?: AccessoryPricingItem[];
   item_name?: string;
   supplier_price_list_code?: string;
@@ -150,6 +151,8 @@ export type AccessoryPricingItem = {
   item_name?: string;
   supplier_price_list_code?: string;
   price?: number | null;
+  prices?: Record<string, number | null>;
+  unavailable_price_categories?: string[];
   currency?: string;
   dimension?: string;
   specification?: string;
@@ -266,6 +269,8 @@ function normalizeAccessoryItem(row: AccessoryPricingItem, index: number): Acces
     item_name: row.item_name?.trim() ?? "",
     supplier_price_list_code: row.supplier_price_list_code?.trim() ?? "",
     price: parseNullablePricingNumber(row.price),
+    ...(row.prices ? { prices: Object.fromEntries(Object.entries(row.prices).map(([key, value]) => [key, parseNullablePricingNumber(value)])) } : {}),
+    ...(row.unavailable_price_categories?.length ? { unavailable_price_categories: Array.from(new Set(row.unavailable_price_categories)) } : {}),
     currency: normalizeCurrency(row.currency ?? defaultCurrency),
     dimension: row.dimension?.trim() ?? "",
     specification: row.specification?.trim() ?? "",
@@ -286,6 +291,7 @@ function normalizeAccessoryGroup(row: AccessoryPricingRow, index: number): Acces
     group_is_required: row.group_is_required === true,
     is_active: row.is_active !== false,
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
+    ...(row.price_categories?.length ? { price_categories: row.price_categories.map((category) => ({ ...category })) } : {}),
     items: (row.items?.length ? row.items : flatItem).map(normalizeAccessoryItem),
     ...(row.conditional_configuration ? { conditional_configuration: row.conditional_configuration } : {}),
     ...(row.subgroups ? { subgroups: row.subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] })) } : {}),
@@ -2017,6 +2023,7 @@ export function AccessoryPricingTable({
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" aria-expanded={!collapsedGroups[groupId]} aria-label={collapsedGroups[groupId] ? "Expand accessory group" : "Collapse accessory group"} onClick={() => setCollapsedGroups((current) => ({ ...current, [groupId]: !current[groupId] }))} className="h-8 w-8 rounded-md border border-zinc-200 bg-white text-sm font-semibold text-zinc-700">{collapsedGroups[groupId] ? ">" : "v"}</button>
               <input value={group.group_name ?? ""} onChange={(e) => updateGroup(groupIndex, { group_name: e.target.value })} placeholder="Accessories / Optional Items" className="h-8 w-56 border border-zinc-200 px-2 text-sm font-semibold outline-none focus:border-emerald-800" />
+              <label className="flex items-center gap-1 text-xs text-zinc-600">Categories <input value={(group.price_categories ?? []).map((category) => category.label).join(", ")} onChange={(event) => updateGroup(groupIndex, { price_categories: event.target.value.split(",").map((label) => label.trim()).filter(Boolean).map((label) => ({ id: label, label })) })} placeholder="B, C, Supreme" className="h-8 w-48 border border-zinc-200 px-2" /></label>
               <p className="text-xs text-zinc-500">{accessoryGroupSummary(group)}</p>
               <label className="flex items-center gap-2 text-xs text-zinc-600">
                 <input type="checkbox" checked={group.is_active !== false} onChange={(e) => updateGroup(groupIndex, { is_active: e.target.checked })} />
@@ -2059,7 +2066,7 @@ export function AccessoryPricingTable({
                       <td className="px-2 py-2 align-top"><AutoGrowTextarea value={item.item_name ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { item_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[260px]" /></td>
                       <td className="px-2 py-2 align-top"><input value={item.supplier_price_list_code ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                       <td className="px-2 py-2 align-top"><input value={item.dimension ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { dimension: e.target.value })} className="h-10 min-w-[180px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
-                      <td className="px-2 py-2 align-top"><input type="number" value={item.price ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { price: parseNullablePricingNumber(e.target.value) })} className="h-10 min-w-[120px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
+                      <td className="px-2 py-2 align-top">{(group.price_categories ?? []).length ? <div className="flex min-w-[220px] flex-wrap gap-1">{(group.price_categories ?? []).map((category) => <label key={category.id} className="text-[10px] text-zinc-600">{category.label}<input type="number" value={item.prices?.[category.id] ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { prices: { ...item.prices, [category.id]: parseNullablePricingNumber(e.target.value) } })} className="ml-1 h-8 w-16 border border-zinc-200 px-1" /></label>)}</div> : <input type="number" value={item.price ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { price: parseNullablePricingNumber(e.target.value) })} className="h-10 min-w-[120px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" />}</td>
                       <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={item.currency} onChange={(currency) => updateItem(groupIndex, itemIndex, { currency })} /></div></td>
                       <td className="px-2 py-2 align-top"><AutoGrowTextarea value={item.specification ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /><ImportantRequirementsTextarea value={item.importantRequirements} onChange={(importantRequirements) => updateItem(groupIndex, itemIndex, { importantRequirements })} /></td>
                       <td className="px-2 py-2 align-top"><input type="checkbox" checked={item.is_active !== false} onChange={(e) => updateItem(groupIndex, itemIndex, { is_active: e.target.checked })} /></td>

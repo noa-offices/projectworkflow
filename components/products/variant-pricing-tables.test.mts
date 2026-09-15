@@ -11,3 +11,15 @@ test("pricing editors keep important requirements separate and normalize one lin
   const source = readFileSync("components/products/variant-pricing-tables.tsx", "utf8");
   ["function ImportantRequirementsTextarea", "One requirement per line", "reviewImportantRequirements(next)", "value={row.importantRequirements}", "value={normalizedRow.importantRequirements}", "value={item.importantRequirements}", "{ importantRequirements }"] .forEach((expected) => assert.ok(source.includes(expected)));
 });
+
+test("accessory editor replacement state retains category definitions and price maps", () => {
+  const source = readFileSync("components/products/variant-pricing-tables.tsx", "utf8");
+  [
+    "row.price_categories?.length ? { price_categories: row.price_categories.map((category) => ({ ...category })) }",
+    "row.prices ? { prices: Object.fromEntries(Object.entries(row.prices)",
+    "setGroups(normalizeAccessoryGroups(replacementGroups))",
+    "(group.price_categories ?? []).length",
+    "item.prices?.[category.id] ?? \"\"",
+    'name="accessory_pricing" value={serialized}',
+  ].forEach((expected) => assert.ok(source.includes(expected), `Expected category accessory editor handoff: ${expected}`));
+});

@@ -107,6 +107,22 @@ test("global extraction contract routes component-only SKUs through accessories 
   });
 });
 
+test("embedded ProductTemplateDraft contract documents category-priced accessories without changing primary Matrix routing", () => {
+  const prompt = getProductTemplateAiExtractionPrompt();
+  [
+    '"workstationRows": [{ "id": "",',
+    '"importantRequirements": []',
+    '"priceCategories": [{ "id": "cat-b", "label": "B" }]',
+    '"prices": { "cat-b": null }',
+    "ACCESSORY CATEGORY-PRICE EXAMPLE",
+    "1AG 958 Cushion for pedestals",
+    "category-priced accessory in optionGroups, NOT pricing.priceMatrices",
+    "Ordinary accessories remain scalar-priced: use price and omit prices/priceCategories",
+    "chair model × upholstery category price table remains a PRIMARY pricing.priceMatrices structure",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected synchronized contract field: ${expected}`));
+  assert.ok(!prompt.includes('"optionGroups": [{ "id": "", "label": null, "selection": { "mode": "optional", "minSelections": 0, "maxSelections": null, "defaultItemIds": [] }, "items":'));
+});
+
 test("global extraction contract separates row requirements from descriptive specifications", () => {
   extractionPromptFocuses.forEach((focus) => {
     const prompt = getProductTemplateAiExtractionPrompt(focus);

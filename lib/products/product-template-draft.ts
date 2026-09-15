@@ -113,11 +113,19 @@ export type ProductTemplateDraftSelectionRule = {
 
 export type ProductTemplateDraftOptionItem = ProductTemplateDraftPricedRow;
 
+export type ProductTemplateDraftOptionPriceCategory = { id: string; label: string };
+
+export type ProductTemplateDraftCategoryPricedOptionItem = ProductTemplateDraftOptionItem & {
+  prices?: Record<string, ProductTemplateDraftPrice>;
+  unavailablePriceCategoryIds?: string[];
+};
+
 export type ProductTemplateDraftOptionGroup = {
   id: string;
   label: string | null;
   selection: ProductTemplateDraftSelectionRule;
-  items: ProductTemplateDraftOptionItem[];
+  priceCategories?: ProductTemplateDraftOptionPriceCategory[];
+  items: ProductTemplateDraftCategoryPricedOptionItem[];
 };
 
 export type ProductTemplateDraftMaterialSuggestion = ProductTemplateDraftReferences & {
@@ -459,13 +467,17 @@ export function normalizeProductTemplateDraft(input: unknown): ProductTemplateDr
   uniqueIds(modularGroups.map((item) => item.id), "draft.pricing.modularGroups", issues);
   const optionGroups = array(root.optionGroups, "draft.optionGroups", issues).map((value, index) => {
     const item = object(value, `draft.optionGroups[${index}]`, issues);
+    const priceCategories = array(item.priceCategories, `draft.optionGroups[${index}].priceCategories`, issues).map((value, categoryIndex) => { const category = object(value, `draft.optionGroups[${index}].priceCategories[${categoryIndex}]`, issues); return { id: requiredId(category.id, `draft.optionGroups[${index}].priceCategories[${categoryIndex}].id`, issues), label: requiredId(category.label, `draft.optionGroups[${index}].priceCategories[${categoryIndex}].label`, issues) }; });
+    uniqueIds(priceCategories.map((category) => category.id), `draft.optionGroups[${index}].priceCategories`, issues);
+    const categoryIds = new Set(priceCategories.map((category) => category.id));
     const items = array(item.items, `draft.optionGroups[${index}].items`, issues)
-      .map((row, rowIndex) => pricedRow(row, `draft.optionGroups[${index}].items[${rowIndex}]`, issues));
+      .map((row, rowIndex) => { const source = object(row, `draft.optionGroups[${index}].items[${rowIndex}]`, issues); const base = pricedRow(source, `draft.optionGroups[${index}].items[${rowIndex}]`, issues); const values = object(source.prices, `draft.optionGroups[${index}].items[${rowIndex}].prices`, issues); const prices = Object.fromEntries(Object.entries(values).map(([id, value]) => [id, price(value, `draft.optionGroups[${index}].items[${rowIndex}].prices.${id}`, issues)])); Object.keys(prices).forEach((id) => { if (!categoryIds.has(id)) error(issues, `draft.optionGroups[${index}].items[${rowIndex}].prices.${id}`, "Unknown accessory price category."); }); return { ...base, ...(priceCategories.length ? { prices } : {}) }; });
     uniqueIds(items.map((option) => option.id), `draft.optionGroups[${index}].items`, issues);
     return {
       id: requiredId(item.id, `draft.optionGroups[${index}].id`, issues),
       label: nullableText(item.label, `draft.optionGroups[${index}].label`, issues),
       selection: selection(item.selection, new Set(items.map((option) => option.id)), `draft.optionGroups[${index}].selection`, issues),
+      ...(priceCategories.length ? { priceCategories } : {}),
       items,
     };
   });

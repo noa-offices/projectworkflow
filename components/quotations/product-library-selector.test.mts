@@ -17,3 +17,8 @@ test("accessory groups use independent visual collapse state without changing se
   const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
   ["expandedAccessoryGroups", "function AccessoryGroupHeader", 'type="button" aria-expanded={expanded}', "itemCount={group.items.length}", "selectedCount={selectedCount}", "groupHasNoSelection || selectedCount > 0", "evaluation.required || selectedCount > 0 || Boolean(validationMessage)", "{expanded ? <div", "AccessoryItemMetadata", "templatePricingAccessoryQuantities"].forEach((expected) => assert.ok(source.includes(expected)));
 });
+
+test("category-priced accessories use independent accessory category state and selected prices", () => {
+  const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
+  ["selectedAccessoryCategories", "AccessoryCategoryPriceSelector", "accessoryDisplayPrice", "selected_category_id", "selected_category_label", "accessory_pricing_category", "line.unitPrice"].forEach((expected) => assert.ok(source.includes(expected)));
+});

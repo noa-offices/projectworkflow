@@ -62,3 +62,18 @@ test("optional maximum-one groups map to exactly-one configuration without an ob
   assert.equal(result.errors.length, 0);
   assert.deepEqual(result.groups[0].conditional_configuration, { role: "accessory", selection: "exactly_one", applicability: [] });
 });
+
+test("category-priced accessories apply without flattening group categories or item prices", () => {
+  const source = draft("optional", 0, null);
+  source.optionGroups[0].priceCategories = [{ id: "cat-b", label: "B (Crepe / Time)" }, { id: "cat-supreme", label: "SUPREME" }];
+  source.optionGroups[0].items[0] = { ...source.optionGroups[0].items[0], price: null, prices: { "cat-b": 93, "cat-supreme": 162 } };
+  source.optionGroups[0].items[1] = { ...source.optionGroups[0].items[1], price: null, prices: { "cat-b": 107, "cat-supreme": 189 } };
+  source.optionGroups[0].priceCategories = source.optionGroups[0].priceCategories.map((category) => category.id === "cat-b" ? { ...category, label: "B" } : category);
+  const result = mapDraftOptionGroupsToAccessories(source);
+  assert.deepEqual(result.groups[0].price_categories, source.optionGroups[0].priceCategories);
+  assert.deepEqual(result.groups[0].price_categories, [{ id: "cat-b", label: "B" }, { id: "cat-supreme", label: "SUPREME" }]);
+  assert.deepEqual(result.groups[0].items[0].prices, { "cat-b": 93, "cat-supreme": 162 });
+  assert.deepEqual(result.groups[0].items[1].prices, { "cat-b": 107, "cat-supreme": 189 });
+  assert.equal(result.groups[0].items[0].price, null);
+  assert.equal(result.groups[0].conditional_configuration, undefined);
+});

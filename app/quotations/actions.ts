@@ -714,7 +714,7 @@ function categoryPriceColumns(rows?: CategoryPricingRow[] | null) {
   ]));
 }
 
-function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
+function activeAccessoryRows(rows?: AccessoryPricingRow[] | null): Array<AccessoryPricingRow & { id: string; group_name: string; group_is_required: boolean; is_active: boolean; sort_order: number; items: AccessoryPricingItem[] }> {
   const sourceRows = Array.isArray(rows) ? rows : [];
   const groups = sourceRows
     .filter((row) => row.group_name || row.items)
@@ -722,6 +722,7 @@ function activeAccessoryRows(rows?: AccessoryPricingRow[] | null) {
       id: group.id ?? `add-on-group-${groupIndex}`,
       group_name: group.group_name?.trim() || "Accessories",
       group_is_required: group.group_is_required === true,
+      price_categories: group.price_categories,
       conditional_configuration: group.conditional_configuration,
       is_active: group.is_active !== false,
       sort_order: calculationNumber(group.sort_order, groupIndex),
@@ -1365,6 +1366,7 @@ type AccessoryPricingRow = {
   id?: string;
   group_name?: string;
   group_is_required?: boolean;
+  price_categories?: Array<{ id: string; label: string }>;
   items?: AccessoryPricingItem[];
   item_name?: string;
   supplier_price_list_code?: string;
@@ -1381,8 +1383,12 @@ type AccessoryPricingItem = {
   item_name?: string;
   supplier_price_list_code?: string;
   price?: number | null;
+  prices?: Record<string, number | null>;
+  unavailable_price_categories?: string[];
   currency?: string;
+  dimension?: string;
   specification?: string;
+  importantRequirements?: string[];
   is_active?: boolean;
   sort_order?: number;
 };
@@ -5896,6 +5902,11 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const selectedTemplateImagePath = optionalTextValue(formData, "selected_template_image_path");
   const accessoryQtyById = accessoryQuantities(formData);
   const accessoryPricingSelection = parseSubmittedAccessoryQuantities(formData.getAll("accessory_pricing_qty"));
+  const submittedAccessoryCategoryById = new Map(formData.getAll("accessory_pricing_category").flatMap((value) => {
+    if (typeof value !== "string") return [];
+    const separator = value.indexOf(":");
+    return separator > 0 && value.slice(separator + 1) ? [[value.slice(0, separator), value.slice(separator + 1)] as const] : [];
+  }));
   const submittedAccessoryPricingQtyById = new Map(Object.entries(accessoryPricingSelection.quantities));
   const modularQtyById = modularItemQuantities(formData);
   const linkedProductSelectionInputs = linkedProductSelections(formData);
@@ -6212,6 +6223,13 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     .flatMap((group) =>
       group.items.map((accessory) => {
         const id = accessory.id ?? accessory.item_name ?? "";
+        const categories = Array.isArray(group.price_categories) ? group.price_categories : [];
+        const categoryId = submittedAccessoryCategoryById.get(id) ?? null;
+        const category = categories.find((entry) => entry.id === categoryId) ?? null;
+        if (categories.length && (!category || accessory.prices?.[category.id] === null || accessory.prices?.[category.id] === undefined || accessory.unavailable_price_categories?.includes(category.id))) {
+          redirectWithMessage(redirectPath, `Select an available category for ${accessory.item_name ?? "this accessory"}.`);
+        }
+        const authoritativePrice = category ? calculationNumber(accessory.prices?.[category.id]) : calculationNumber(accessory.price);
 
         return {
           type: "add_on",
@@ -6220,10 +6238,15 @@ export async function addProductTemplateToQuotation(formData: FormData) {
           group_name: group.group_name,
           item_name: accessory.item_name ?? "",
           qty: accessoryPricingQtyById.get(id) ?? 0,
-          price: calculationNumber(accessory.price),
+          price: authoritativePrice,
+          group_id: group.id,
+          dimension: accessory.dimension ?? null,
+          selected_category_id: category?.id ?? null,
+          selected_category_label: category?.label ?? null,
           currency: normalizeCurrency(accessory.currency ?? rowCurrency),
           supplier_price_list_code: accessory.supplier_price_list_code ?? null,
           specification: accessory.specification ?? "",
+          importantRequirements: accessory.importantRequirements ?? [],
         };
       }),
     )

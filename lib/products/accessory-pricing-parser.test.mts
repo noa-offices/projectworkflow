@@ -81,3 +81,10 @@ test("accessory requirements round-trip separately from specification", () => {
   assert.equal(parsed[0].items?.[0].specification, "Included fixing kit.");
   assert.deepEqual(parsed[0].items?.[0].importantRequirements, ["Finishing top required", "Wall fixing required"]);
 });
+
+test("category-priced accessories retain group categories and authoritative price maps", () => {
+  const cushions = { ...legacyGroup, price_categories: [{ id: "B", label: "Cat B" }, { id: "SUPREME", label: "Supreme" }], items: [{ ...legacyGroup.items[0], prices: { B: 93, SUPREME: 162 }, unavailable_price_categories: ["G"] }] };
+  const parsed = parseAccessoryPricingJson(JSON.stringify([cushions]), variants);
+  assert.deepEqual(parsed[0].price_categories, cushions.price_categories);
+  assert.deepEqual(parsed[0].items?.[0].prices, { B: 93, SUPREME: 162 });
+});

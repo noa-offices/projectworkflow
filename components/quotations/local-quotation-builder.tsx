@@ -1038,7 +1038,14 @@ function sourceSnapshotDetails(item: LocalQuotationItem) {
           .map((entry) => {
             const itemRecord = recordEntries(entry);
             const qty = typeof itemRecord.qty === "number" ? ` x${itemRecord.qty}` : "";
-            return `${stringValue(itemRecord, "item_name")}${qty}`.trim();
+            const category = stringValue(itemRecord, "selected_category_label");
+            const price = stringValue(itemRecord, "price");
+            const currency = stringValue(itemRecord, "currency");
+            return [
+              `${stringValue(itemRecord, "item_name")}${qty}`.trim(),
+              category ? `Category: ${category}` : "",
+              price ? `${currency || item.currency || "AED"} ${price}` : "",
+            ].filter(Boolean).join(" / ");
           })
           .filter(Boolean);
         const groupName = stringValue(groupRecord, "group_name") || "Accessories";
