@@ -62,6 +62,18 @@ test("global extraction architecture contract enforces safe routing and suppleme
     "Ordinary size, finish, LH/RH, open/closed, accessory, and catalogue-layout variation must not trigger pricing.modularGroups",
     "Preserve authoritative terminal/intermediate or other genuine module rows",
     "Every directly priced source SKU remains a separate authoritative row",
+    "PRIMARY PRODUCTS VERSUS SUPPORTING COMPONENTS",
+    "cabinet, pedestal, CPU holder, service unit, desk, chair, sofa, or meeting table",
+    "A joining ring, finishing top, side panel, handle kit, hinge kit, damper, wall-fixing kit, extra shelf, connecting bracket, cable tray, optional cushion, or feet kit normally belongs in optionGroups",
+    "being a component does not prove it is required",
+    "1AG 967 \"Joining Ring for Low Smart Cabinets\" is a supporting accessory/component, not a Base / Model cabinet row",
+    "ROW-LEVEL IMPORTANT REQUIREMENTS",
+    '"importantRequirements": string[]',
+    "HARD FIELD SEPARATION",
+    "specification contains descriptive product facts only",
+    "importantRequirements contains actionable user obligations or restrictions only",
+    "Wall fixing kit included\" remains specification",
+    "A requirement represented in importantRequirements must not be repeated in specification",
     "Never merge distinct supplier codes",
     "prove COMPATIBILITY / ALLOWED APPLICABILITY ONLY; they do not make required=true",
     "must never create the omitted component as required",
@@ -76,6 +88,102 @@ test("global extraction architecture contract enforces safe routing and suppleme
     const prompt = getProductTemplateAiExtractionPrompt(focus);
     required.forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} extraction prompt to contain: ${expected}`));
     assert.ok(prompt.indexOf("GLOBAL EXTRACTION ARCHITECTURE DECISION CONTRACT") < prompt.indexOf("EXTRACTION FOCUS:"), `Expected global extraction contract before ${focus} focus`);
+  });
+});
+
+test("global extraction contract routes component-only SKUs through accessories without overcorrecting primary products", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "PRIMARY PRODUCTS VERSUS SUPPORTING COMPONENTS",
+      "cabinet, pedestal, CPU holder, service unit",
+      "joining ring, finishing top",
+      "extra shelf",
+      "optionGroups / Accessories / Configuration",
+      "merely because it has its own supplier code and price",
+      "Independently determine whether it is Required Companion, Optional / Normal Accessory, Included, or compatibility only",
+      "not a Base / Model cabinet row",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain: ${expected}`));
+  });
+});
+
+test("global extraction contract separates row requirements from descriptive specifications", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      'BAD: { "specification": "Open low cabinet. Structure depth 35 cm. Must be fixed to wall to prevent overturning. Complete with finishing top (sold separately).", "importantRequirements": [] }',
+      'GOOD: { "specification": "Open low cabinet. Structure depth 35 cm.", "importantRequirements": ["Wall fixing required for 35 cm depth to prevent overturning", "Finishing top required"] }',
+      "Structure for whole blind doors only\" remains specification",
+      "must be completed with finishing top",
+      "must be fixed to wall",
+      "must be ordered separately, and required separately as candidates",
+      "no requirement is duplicated in specification",
+      "Base / Model",
+      "Category / Matrix",
+      "Modular",
+      "Workstation",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain: ${expected}`));
+  });
+});
+
+test("global extraction contract forbids sampling and preserves exhaustive page-traceable commercial extraction", () => {
+  const required = [
+    "EXHAUSTIVE COMMERCIAL EXTRACTION - NO SAMPLING",
+    "Never return a representative sample, representative rows, example models only, selected permutations, sample formatting capacity, \"omitted for brevity\"",
+    "Every source row with its own supplier code, price, or dimensions/configuration is an authoritative commercial row and must remain separate",
+    "even when it repeats a price, dimensions, family, commercial structure, or description already extracted",
+    "later widths/heights, LH/RH variants, depth variants, and \"without adjustable shelves\"",
+    "OUTPUT-LIMIT PAGE BOUNDARY",
+    "Extract only complete contiguous source pages, stop at a clear page boundary",
+    "add extractionWarning stating exactly which source pages remain and that a supplemental extraction is required",
+    "Never stop mid-page solely for output size.",
+    "REFERENCED BUT UNSUPPLIED SUPPORT PAGES",
+    "preserve the stated requirement/reference, add an extractionWarning that the companion SKU/price is pending supplemental extraction, and do not invent its code, price, or availability.",
+    "PAGE TRACEABILITY",
+    "sources must include meaningful pageNumber values for supplied pages when page numbers are available",
+    "sources must contain a distinct meaningful entry for every supplied page that materially contributes",
+    "never collapse a multi-page batch to its first page",
+    "A single material page may use one source entry.",
+    "Do not create source entries for unused pages.",
+    "including supplemental pages, has a distinct sources entry with a known page number.",
+    "every supplier-coded priced row in the supplied scope was extracted",
+    "no representative/sample/briefness language or behavior was used",
+    "no repetitive-looking row was omitted",
+    "known source page numbers are present in sources",
+  ];
+
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    required.forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} exhaustive extraction rule: ${expected}`));
+  });
+});
+
+test("global traceability covers every material source page without inventing unused pages", () => {
+  const required = [
+    "For a multi-page extraction, sources must contain a distinct meaningful entry for every supplied page that materially contributes",
+    "never collapse a multi-page batch to its first page.",
+    "A single material page may use one source entry.",
+    "Do not create source entries for unused pages.",
+    "including supplemental pages, has a distinct sources entry with a known page number.",
+  ];
+  extractionPromptFocuses.forEach((focus) => required.forEach((expected) => assert.ok(getProductTemplateAiExtractionPrompt(focus).includes(expected), `Expected ${focus} page coverage rule: ${expected}`)));
+});
+
+test("partial extraction batches preserve their parent template identity", () => {
+  const required = [
+    "PARENT TEMPLATE IDENTITY ACROSS PARTIAL BATCHES",
+    "A page/output-limited partial batch is not a new commercial family or Product Template.",
+    "Keep template.templateName, commercial family identity, and pricing architecture of the planned/source parent family",
+    "a low/medium-cabinet partial batch remains \"Universal Cabinets\"",
+    "a later high-cabinet supplemental batch also targets \"Universal Cabinets\"",
+    "represent partial status only in extractionWarnings",
+    "Never rename or split the parent template from the extracted subset unless source evidence genuinely proves a separate Product Template.",
+    "a partial batch did not rename or split its parent template",
+  ];
+
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    required.forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} parent identity rule: ${expected}`));
   });
 });
 

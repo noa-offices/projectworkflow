@@ -1,16 +1,22 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { normalizeProductTemplateDraft, type ProductTemplateDraft } from "./product-template-draft.js";
 import {
   applySmartProductReviewCurrencyOverride,
   collectPricedRowCurrencies,
+  collectSourcePageNumbers,
+  compactSourcePageRanges,
   createReviewedProductTemplateDraft,
   deriveSmartProductReviewCurrencyState,
   fillNullPricedRowCurrenciesFromDefault,
   formatDraftPrice,
   getSmartProductReviewSections,
+  partialExtractionStatus,
+  reviewImportantRequirements,
   reviewedProductTemplateDraftForApply,
   smartProductWarningSummary,
+  smartProductExtractionCoverage,
   updateReviewedMaterialSuggestion,
   updateReviewedMatrix,
   updateReviewedMatrixPrice,
@@ -18,6 +24,49 @@ import {
   updateReviewedOptionItem,
   updateReviewedTemplate,
 } from "./smart-product-review.js";
+
+test("important requirements use one trimmed, distinct line per saved value", () => {
+  assert.deepEqual(reviewImportantRequirements(" Finishing top required \n\nWall fixing required\nFinishing top required "), ["Finishing top required", "Wall fixing required"]);
+  assert.deepEqual(reviewImportantRequirements(""), []);
+});
+
+test("Smart Setup keeps imported requirements in a dedicated expanded-row textarea", () => {
+  const source = readFileSync("components/products/smart-product-json-import.tsx", "utf8");
+  ["Important Requirements", "One requirement per line", "reviewImportantRequirements", "value={row.importantRequirements}"].forEach((expected) => assert.ok(source.includes(expected)));
+  assert.ok((source.match(/ImportantRequirementsField/g) ?? []).length >= 4);
+});
+
+test("partial extraction status detects explicit continuation warnings only", () => {
+  const warning = "Extraction complete through printed page 44. Printed pages 45–54 remain and must be extracted in the next supplemental batch.";
+  assert.deepEqual(partialExtractionStatus(["Unreadable price.", warning]), { warning, extractedThrough: "Printed page 44", remainingPages: "Printed pages 45-54" });
+  assert.equal(partialExtractionStatus(["Unreadable price."]), null);
+  assert.equal(partialExtractionStatus(["Supplemental extraction required for a source image."]), null);
+});
+
+test("partial extraction status uses the latest batch and clears without a continuation warning", () => {
+  const first = "Extraction complete through printed pages 38-44. Printed pages 45-54 remain and must be extracted in the next supplemental batch.";
+  const latest = "Extraction complete through printed page 49. Printed pages 50-54 remain and must be extracted in the next supplemental batch.";
+  assert.deepEqual(partialExtractionStatus([first, latest]), { warning: latest, extractedThrough: "Printed page 49", remainingPages: "Printed pages 50-54" });
+  assert.equal(partialExtractionStatus([]), null);
+});
+
+test("partial extraction UI reuses Add More JSON and preserves normal warnings generically", () => {
+  const source = readFileSync("components/products/smart-product-json-import.tsx", "utf8");
+  ["PARTIAL EXTRACTION", "MORE EXTRACTION REQUIRED", "EXTRACTION COVERAGE", "Source batches:", "Continue the existing product family; do not create a new template.", "smart-product-add-more-json", "smart-product-partial-extraction", "Review warnings"].forEach((expected) => assert.ok(source.includes(expected)));
+  assert.ok(!source.includes("Universal Cabinets"));
+});
+
+test("extraction coverage compacts all imported source pages and uses only explicit pending warnings", () => {
+  assert.equal(compactSourcePageRanges([38, 39, 40, 41, 42, 43, 44]), "38–44");
+  assert.equal(compactSourcePageRanges([38, 39, 40, 45, 46]), "38–40, 45–46");
+  const draft = structuredClone(reviewedSource);
+  draft.sources = [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 54].map((pageNumber) => ({ id: `page-${pageNumber}`, documentName: null, pageNumber, region: null, rawText: null }));
+  draft.extractionWarnings = ["Unreadable price.", "Extraction complete through printed page 44. Printed pages 45-54 remain and must be extracted in the next supplemental batch."];
+  assert.deepEqual(collectSourcePageNumbers(draft), [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54]);
+  assert.deepEqual(smartProductExtractionCoverage(draft, 2), { extractedPages: "38–54", pendingPages: "45-54", status: "PARTIAL", sourceBatchCount: 2 });
+  draft.extractionWarnings = ["Finishing top reference pending review."];
+  assert.deepEqual(smartProductExtractionCoverage(draft, 2), { extractedPages: "38–54", pendingPages: null, status: "COMPLETE", sourceBatchCount: 2 });
+});
 
 test("review helpers preserve explicit zero and omit empty pricing sections", () => {
   assert.equal(formatDraftPrice(null), "—");

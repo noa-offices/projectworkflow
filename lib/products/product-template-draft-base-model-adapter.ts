@@ -8,7 +8,7 @@ function dimensionText(dimension: ProductTemplateDraftPricedRow["dimensions"]) {
 
 function mapRow(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMatrixRow, price: number | null, index: number) {
   const codes = [...row.supplierCodes, ...row.referenceCodes];
-  return { id: row.id, variant_name: row.label ?? row.id, display_name: row.displayName ?? row.label ?? "", supplier_price_list_code: codes[0] ?? "", dimension: dimensionText(row.dimensions), price, currency: row.currency ?? undefined, specification: row.specification ?? "", is_active: true, sort_order: index };
+  return { id: row.id, variant_name: row.label ?? row.id, display_name: row.displayName ?? row.label ?? "", supplier_price_list_code: codes[0] ?? "", dimension: dimensionText(row.dimensions), price, currency: row.currency ?? undefined, specification: row.specification ?? "", ...(row.importantRequirements?.length ? { importantRequirements: row.importantRequirements } : {}), is_active: true, sort_order: index };
 }
 
 export function mapDraftBaseModelRows(draft: ProductTemplateDraft) {

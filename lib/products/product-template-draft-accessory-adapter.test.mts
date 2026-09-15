@@ -27,6 +27,15 @@ test("safe accessory groups preserve prices, order, required state, and code war
   assert.equal(required.groups[0].group_is_required, true);
 });
 
+test("accessory dimensions preserve authoritative raw source text", () => {
+  const source = draft("optional", 0, null);
+  source.optionGroups[0].items[0] = { ...source.optionGroups[0].items[0], dimensions: { width: 90, depth: 37, height: null, diameter: null, unit: "cm", rawText: " L.90 x p.37 " } };
+  source.optionGroups[0].items[1] = { ...source.optionGroups[0].items[1], dimensions: null };
+  const result = mapDraftOptionGroupsToAccessories(source);
+  assert.equal(result.groups[0].items[0].dimension, "L.90 x p.37");
+  assert.equal("dimension" in result.groups[0].items[1], false);
+});
+
 test("human-readable display names take precedence over code-like labels without changing code or configuration mapping", () => {
   const source = draft("optional", 0, 1);
   source.optionGroups[0].items[0] = { ...source.optionGroups[0].items[0], id: "service-right", label: "1AF 090", displayName: "Service Unit W123.6 - Right", supplierCodes: ["1AF 090"], referenceCodes: [] };

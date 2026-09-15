@@ -19,6 +19,7 @@ export class AccessoryPricingContractError extends Error {
 }
 
 function normalizeItem(row: AccessoryConfigurationItem, index: number) {
+  const importantRequirements = Array.isArray(row.importantRequirements) ? Array.from(new Set(row.importantRequirements.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean))) : [];
   return {
     ...row,
     id: typeof row.id === "string" && row.id ? row.id : `add-on-${index}`,
@@ -26,7 +27,9 @@ function normalizeItem(row: AccessoryConfigurationItem, index: number) {
     supplier_price_list_code: typeof row.supplier_price_list_code === "string" ? row.supplier_price_list_code.trim() : "",
     price: parseNullablePricingNumber(row.price),
     currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
+    ...(typeof row.dimension === "string" && row.dimension.trim() ? { dimension: row.dimension.trim() } : {}),
     specification: typeof row.specification === "string" ? row.specification.trim() : "",
+    ...(importantRequirements.length ? { importantRequirements } : {}),
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
     is_active: row.is_active !== false,
   };

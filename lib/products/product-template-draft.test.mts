@@ -50,6 +50,15 @@ test("price semantics preserve zero and normalize an empty price to null", () =>
   assert.deepEqual(result.draft?.pricing.baseModelRows[0].supplierCodes, ["L", "R"]);
 });
 
+test("important requirements remain separate, ordered, trimmed, and deduplicated", () => {
+  const draft = baseDraft();
+  draft.pricing.baseModelRows.push({ id: "cabinet", label: "Cabinet", price: 100, specification: "Open high cabinet.", importantRequirements: [" Finishing top required ", "", "Wall fixing required", "Finishing top required", 42] });
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, true);
+  assert.equal(result.draft?.pricing.baseModelRows[0].specification, "Open high cabinet.");
+  assert.deepEqual(result.draft?.pricing.baseModelRows[0].importantRequirements, ["Finishing top required", "Wall fixing required"]);
+});
+
 test("unsupported versions, malformed prices, and duplicate matrix ids are rejected", () => {
   const version = baseDraft();
   version.version = 2;

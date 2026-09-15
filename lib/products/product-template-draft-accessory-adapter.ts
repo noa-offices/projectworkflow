@@ -9,7 +9,7 @@ type AccessoryGroup = {
   group_is_required: boolean;
   is_active: boolean;
   sort_order: number;
-  items: Array<{ id: string; item_name: string; supplier_price_list_code: string; price: number | null; currency?: string; specification: string; is_active: boolean; sort_order: number }>;
+  items: Array<{ id: string; item_name: string; supplier_price_list_code: string; price: number | null; currency?: string; dimension?: string; specification: string; is_active: boolean; sort_order: number }>;
   conditional_configuration?: { role: "accessory" | "conditional_option" | "companion"; selection: "unrestricted" | "exactly_one" | "at_least_one" | "choose_multiple"; applicability: AccessoryModelApplicabilityRule[] };
 };
 
@@ -31,7 +31,8 @@ function primaryCode(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMa
 }
 
 function mapItem(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMatrixRow, price: number | null, index: number, warnings: string[], itemKind: string) {
-  return { id: row.id, item_name: row.displayName ?? row.label ?? row.id, supplier_price_list_code: primaryCode(row, warnings, itemKind), price, currency: row.currency ?? undefined, specification: row.specification ?? "", is_active: true, sort_order: index };
+  const dimension = row.dimensions?.rawText?.trim();
+  return { id: row.id, item_name: row.displayName ?? row.label ?? row.id, supplier_price_list_code: primaryCode(row, warnings, itemKind), price, currency: row.currency ?? undefined, ...(dimension ? { dimension } : {}), specification: row.specification ?? "", ...(row.importantRequirements?.length ? { importantRequirements: row.importantRequirements } : {}), is_active: true, sort_order: index };
 }
 
 function topAccessContext(value: string) {

@@ -34,7 +34,9 @@ export type AccessoryConfigurationItem = Record<string, unknown> & {
   supplier_price_list_code?: string;
   price?: number | null;
   currency?: string;
+  dimension?: string;
   specification?: string;
+  importantRequirements?: string[];
   is_active?: boolean;
   sort_order?: number;
 };

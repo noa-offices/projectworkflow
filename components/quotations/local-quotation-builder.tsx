@@ -1027,6 +1027,7 @@ function sourceSnapshotDetails(item: LocalQuotationItem) {
   const exchangeRatesSummary = Object.entries(exchangeRates)
     .map(([currency, rate]) => `${currency}: ${stringValue({ value: rate }, "value")}`)
     .filter(Boolean);
+  const importantRequirements = Array.isArray(source.importantRequirements) ? source.importantRequirements.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim()) : [];
 
   return {
     accessorySummary: accessoryGroups
@@ -1083,6 +1084,7 @@ function sourceSnapshotDetails(item: LocalQuotationItem) {
     sourcePriceType: stringValue(sourcePriceReference, "source_price_type"),
     exchangeRatesSummary,
     convertedTotalAed: stringValue(currencyConversion, "converted_total_aed"),
+    importantRequirements,
   };
 }
 
@@ -2673,6 +2675,7 @@ export function LocalQuotationBuilder({
       { label: "Accessories", value: snapshotDetails.accessorySummary.join(" | ") },
       { label: "Linked families", value: snapshotDetails.linkedFamilySummary.join(" | ") },
       { label: "Finish/material snapshot", value: item.finish_snapshot || finishSnapshotValue(selectedFinishes) },
+      { label: "Important Requirements", value: snapshotDetails.importantRequirements.join(" • ") },
     ].filter((row) => Boolean(row.value));
     const internalMetadata = internalItemMetadata(item);
     return (

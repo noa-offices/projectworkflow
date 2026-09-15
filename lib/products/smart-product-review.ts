@@ -6,6 +6,43 @@ export type SmartProductReviewCurrencyState = {
   hasUnresolvedPricedRows: boolean;
 };
 
+export type PartialExtractionStatus = { warning: string; extractedThrough: string | null; remainingPages: string | null };
+
+function printedPageLabel(value: string, plural = false) {
+  return `Printed page${plural ? "s" : ""} ${value.replace(/\s+/g, " ").trim()}`;
+}
+
+export function partialExtractionStatus(warnings: string[]): PartialExtractionStatus | null {
+  for (const warning of [...warnings].reverse()) {
+    const normalized = warning.replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
+    const partial = /extraction complete through/i.test(normalized) && (/(?:page|pages)\s+\d+(?:\s*-\s*\d+)?\s+remain/i.test(normalized) || /supplemental extraction (?:is )?required/i.test(normalized));
+    if (!partial) continue;
+    const extracted = /extraction complete through\s+(?:printed\s+)?pages?\s+(\d+(?:\s*-\s*\d+)?)/i.exec(normalized)?.[1] ?? null;
+    const remaining = /(?:printed\s+)?pages?\s+(\d+(?:\s*-\s*\d+)?)\s+remain/i.exec(normalized)?.[1] ?? null;
+    return { warning, extractedThrough: extracted ? printedPageLabel(extracted, extracted.includes("-")) : null, remainingPages: remaining ? printedPageLabel(remaining, remaining.includes("-")) : null };
+  }
+  return null;
+}
+
+export function collectSourcePageNumbers(draft: ProductTemplateDraft) {
+  return [...new Set(draft.sources.map((source) => source.pageNumber).filter((pageNumber): pageNumber is number => typeof pageNumber === "number" && Number.isInteger(pageNumber) && pageNumber > 0))].sort((left, right) => left - right);
+}
+
+export function compactSourcePageRanges(pageNumbers: number[]) {
+  const pages = [...new Set(pageNumbers.filter((pageNumber) => Number.isInteger(pageNumber) && pageNumber > 0))].sort((left, right) => left - right);
+  return pages.reduce<string[]>((ranges, page, index) => {
+    const previous = pages[index - 1];
+    if (index === 0 || page !== previous + 1) ranges.push(String(page));
+    else if (page === previous + 1) ranges[ranges.length - 1] = ranges[ranges.length - 1].includes("–") ? `${ranges[ranges.length - 1].split("–")[0]}–${page}` : `${previous}–${page}`;
+    return ranges;
+  }, []).join(", ");
+}
+
+export function smartProductExtractionCoverage(draft: ProductTemplateDraft, sourceBatchCount: number) {
+  const partial = partialExtractionStatus(draft.extractionWarnings);
+  return { extractedPages: compactSourcePageRanges(collectSourcePageNumbers(draft)), pendingPages: partial?.remainingPages?.replace(/^Printed pages?\s+/i, "") ?? null, status: partial ? "PARTIAL" : "COMPLETE", sourceBatchCount } as const;
+}
+
 function isNumericPrice(value: ProductTemplateDraftPrice) {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -81,6 +118,10 @@ export function nullableReviewNumber(value: string) {
 
 export function reviewCodeList(value: string) {
   return Array.from(new Set(value.split(/[\n,]+/).map((code) => code.trim()).filter(Boolean)));
+}
+
+export function reviewImportantRequirements(value: string) {
+  return Array.from(new Set(value.split(/\n/).map((requirement) => requirement.trim()).filter(Boolean)));
 }
 
 export function reviewDimensionRawText(

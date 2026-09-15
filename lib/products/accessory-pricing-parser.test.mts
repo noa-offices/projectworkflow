@@ -67,3 +67,17 @@ test("null and zero prices remain distinct", () => {
   assert.equal(parsed[0].items?.[0].price, null);
   assert.equal(parsed[1].items?.[0].price, 0);
 });
+
+test("optional accessory dimensions round-trip while legacy rows remain unchanged", () => {
+  const dimensioned = { ...legacyGroup, items: [{ ...legacyGroup.items[0], dimension: " L.90 x p.37 " }] };
+  const parsed = parseAccessoryPricingJson(JSON.stringify([dimensioned]), variants);
+  assert.equal(parsed[0].items?.[0].dimension, "L.90 x p.37");
+  assert.equal("dimension" in (parseAccessoryPricingJson(JSON.stringify([legacyGroup]), variants)[0].items?.[0] ?? {}), false);
+});
+
+test("accessory requirements round-trip separately from specification", () => {
+  const requirements = { ...legacyGroup, items: [{ ...legacyGroup.items[0], specification: "Included fixing kit.", importantRequirements: [" Finishing top required ", "Finishing top required", "Wall fixing required"] }] };
+  const parsed = parseAccessoryPricingJson(JSON.stringify([requirements]), variants);
+  assert.equal(parsed[0].items?.[0].specification, "Included fixing kit.");
+  assert.deepEqual(parsed[0].items?.[0].importantRequirements, ["Finishing top required", "Wall fixing required"]);
+});

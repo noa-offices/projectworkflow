@@ -42,6 +42,7 @@ export function mapDraftModularPricing(draft: ProductTemplateDraft) {
         supplier_price_list_code: codes[0] ?? "",
         dimension: dimensionText(row.dimensions),
         specification: row.specification ?? "",
+        ...(row.importantRequirements?.length ? { importantRequirements: row.importantRequirements } : {}),
         currency: row.currency ?? undefined,
         prices: Object.fromEntries(analysis.sharedColumns.map((column, index) => [
           priceCategories[index],

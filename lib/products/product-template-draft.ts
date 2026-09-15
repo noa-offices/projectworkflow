@@ -64,6 +64,7 @@ export type ProductTemplateDraftPricedRow = ProductTemplateDraftReferences & {
   currency: ProductTemplateDraftCurrency | null;
   price: ProductTemplateDraftPrice;
   specification: string | null;
+  importantRequirements?: string[];
 };
 
 export type ProductTemplateDraftWorkstationRow = ProductTemplateDraftPricedRow & {
@@ -278,6 +279,18 @@ function references(value: Record<string, unknown>, path: string, issues: IssueC
   };
 }
 
+function importantRequirements(value: unknown, path: string, issues: IssueCollector) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) { warning(issues, path, "Expected an array."); return undefined; }
+  const requirements: string[] = [];
+  value.forEach((item, index) => {
+    if (typeof item !== "string") { warning(issues, `${path}[${index}]`, "Expected a string."); return; }
+    const trimmed = item.trim();
+    if (trimmed && !requirements.includes(trimmed)) requirements.push(trimmed);
+  });
+  return requirements;
+}
+
 function dimensions(value: unknown, path: string, issues: IssueCollector): ProductTemplateDraftDimension | null {
   if (value === undefined || value === null) return null;
   const source = object(value, path, issues);
@@ -299,6 +312,7 @@ function dimensions(value: unknown, path: string, issues: IssueCollector): Produ
 
 function pricedRow(value: unknown, path: string, issues: IssueCollector): ProductTemplateDraftPricedRow {
   const source = object(value, path, issues);
+  const requirements = importantRequirements(source.importantRequirements, `${path}.importantRequirements`, issues);
   return {
     id: requiredId(source.id, `${path}.id`, issues),
     label: nullableText(source.label, `${path}.label`, issues),
@@ -307,6 +321,7 @@ function pricedRow(value: unknown, path: string, issues: IssueCollector): Produc
     currency: currency(source.currency, `${path}.currency`, issues),
     price: price(source.price, `${path}.price`, issues),
     specification: nullableText(source.specification, `${path}.specification`, issues),
+    ...(requirements?.length ? { importantRequirements: requirements } : {}),
     ...references(source, path, issues),
   };
 }

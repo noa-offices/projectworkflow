@@ -166,6 +166,7 @@ type VariantPricingRow = {
   price?: number;
   currency?: string;
   specification?: string;
+  importantRequirements?: string[];
   is_active?: boolean;
   sort_order?: number;
 };
@@ -187,6 +188,7 @@ type CategoryPricingRow = {
   prices?: Record<string, number | null>;
   unavailable_categories?: string[];
   specification?: string;
+  importantRequirements?: string[];
   modular_default_dimension?: string | null;
   modular_default_specification?: string | null;
   is_active?: boolean;
@@ -202,6 +204,7 @@ type AccessoryPricingRow = {
   supplier_price_list_code?: string;
   price?: number | null;
   currency?: string;
+  dimension?: string;
   specification?: string;
   is_active?: boolean;
   sort_order?: number;
@@ -215,7 +218,9 @@ type AccessoryPricingItem = {
   supplier_price_list_code?: string;
   price?: number | null;
   currency?: string;
+  dimension?: string;
   specification?: string;
+  importantRequirements?: string[];
   is_active?: boolean;
   sort_order?: number;
 };
@@ -546,18 +551,45 @@ function InternalMetaLine({
   );
 }
 
+function ImportantRequirementsBlock({ requirements }: { requirements?: string[] }) {
+  const items = requirements?.filter((item) => item.trim()) ?? [];
+  return items.length ? <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-950"><p className="font-semibold">Important Requirements</p><ul className="mt-1 list-disc space-y-0.5 pl-4">{items.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></div> : null;
+}
+
+function AccessoryItemMetadata({ groupId, item, onViewDiagram, rowReferences }: { groupId: string; item: AccessoryPricingItem; onViewDiagram: (item: AccessoryPricingItem, previewUrl: string) => void; rowReferences: Readonly<Record<string, ProductTemplateRowReferencePreview>> }) {
+  const dimension = item.dimension?.trim();
+  const showsDimension = Boolean(dimension && !item.item_name?.toLocaleLowerCase().includes(dimension.toLocaleLowerCase()));
+  const reference = item.id ? rowReferences[productTemplateRowReferenceKey("accessory", groupId, item.id)] : null;
+  return <>{showsDimension ? <span className="mt-1 block text-[11px] text-zinc-500"><span className="font-semibold text-zinc-700">Size:</span> {dimension}</span> : null}{reference?.previewUrl ? <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); onViewDiagram(item, reference.previewUrl!); }} className="mt-1 text-[11px] font-semibold text-emerald-900 hover:text-emerald-700">View diagram</button> : null}</>;
+}
+
+function AccessoryGroupHeader({ expanded, groupName, itemCount, required, selectedCount, onToggle }: { expanded: boolean; groupName: string; itemCount: number; required: boolean; selectedCount: number; onToggle: () => void }) {
+  return <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex w-full items-center justify-between gap-3 text-left">
+    <span className="min-w-0 text-xs font-semibold text-zinc-900"><span aria-hidden="true" className="mr-1.5 text-zinc-500">{expanded ? "▾" : "▸"}</span>{groupName}</span>
+    <span className="shrink-0 text-[10px] font-medium text-zinc-500">{itemCount} {itemCount === 1 ? "item" : "items"} · {required && selectedCount === 0 ? "Required" : `${selectedCount} selected`}</span>
+  </button>;
+}
+
 function AccessoryConfigurationFields({
   evaluations,
   groups,
   onQuantityChange,
   quantities,
   rowCurrency,
+  rowReferences,
+  onViewDiagram,
+  isGroupExpanded,
+  onGroupExpandedChange,
 }: {
   evaluations: AccessoryGroupEvaluation[];
   groups: ReturnType<typeof activeAccessoryRows>;
   onQuantityChange: (groupItemIds: string[], itemId: string, quantity: number, replaceGroup: boolean) => void;
   quantities: Record<string, number>;
   rowCurrency: string;
+  rowReferences: Readonly<Record<string, ProductTemplateRowReferencePreview>>;
+  onViewDiagram: (item: AccessoryPricingItem, previewUrl: string) => void;
+  isGroupExpanded: (groupId: string, defaultExpanded: boolean) => boolean;
+  onGroupExpandedChange: (groupId: string, expanded: boolean) => void;
 }) {
   const sections = [
     { role: "companion", title: "Required Components" },
@@ -587,14 +619,13 @@ function AccessoryConfigurationFields({
               ? `Select one ${group.group_name}.`
               : evaluation.validationMessage
             : null;
+          const selectedCount = items.filter((item) => (quantities[item.id ?? ""] ?? 0) > 0).length;
+          const expanded = isGroupExpanded(group.id, evaluation.required || selectedCount > 0 || Boolean(validationMessage));
 
           return (
             <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
-              <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
-                {group.group_name}
-                {evaluation.required ? <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">Required</span> : null}
-              </legend>
-              {exactlyOne ? (
+              <AccessoryGroupHeader expanded={expanded} groupName={group.group_name} itemCount={items.length} required={evaluation.required} selectedCount={selectedCount} onToggle={() => onGroupExpandedChange(group.id, !expanded)} />
+              {expanded && exactlyOne ? (<>
                 <select
                   value={selectedId}
                   onChange={(event) => onQuantityChange(groupItemIds, event.target.value, event.target.value ? 1 : 0, true)}
@@ -605,7 +636,8 @@ function AccessoryConfigurationFields({
                     <option key={item.id} value={item.id}>{accessoryOptionLabel(item, formatMoney(item.currency ?? rowCurrency, numberValue(item.price)))}</option>
                   ))}
                 </select>
-              ) : (
+                {items.filter((item) => item.id === selectedId).map((item) => <AccessoryItemMetadata key={item.id} groupId={group.id} item={item} rowReferences={rowReferences} onViewDiagram={onViewDiagram} />)}</>
+              ) : expanded ? (
                 <div className="mt-1 space-y-2">
                   {items.map((item) => {
                     const itemId = item.id ?? "";
@@ -615,7 +647,7 @@ function AccessoryConfigurationFields({
                         <span className="min-w-0">
                           <input type="checkbox" checked={quantity > 0} onChange={(event) => onQuantityChange(groupItemIds, itemId, event.target.checked ? evaluation.fixedQuantity ?? Math.max(1, quantity || 1) : 0, false)} className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle" />
                           <span className="font-medium text-zinc-900">{item.item_name}</span>
-                          {item.supplier_price_list_code ? <span className="mt-1 block text-[11px] text-zinc-500"><span className="font-semibold text-zinc-700">Supplier Code:</span> {item.supplier_price_list_code}</span> : null}
+                          {item.supplier_price_list_code ? <span className="mt-1 block text-[11px] text-zinc-500"><span className="font-semibold text-zinc-700">Supplier Code:</span> {item.supplier_price_list_code}</span> : null}<AccessoryItemMetadata groupId={group.id} item={item} rowReferences={rowReferences} onViewDiagram={onViewDiagram} />
                         </span>
                         <span className="font-semibold">{formatMoney(item.currency ?? rowCurrency, numberValue(item.price))}</span>
                         <input type="number" min={1} step={1} value={quantity || evaluation.fixedQuantity || 1} disabled={quantity <= 0 || evaluation.fixedQuantity !== null} onChange={(event) => onQuantityChange(groupItemIds, itemId, Math.max(1, Math.trunc(Number(event.target.value) || 1)), false)} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100" />
@@ -623,8 +655,8 @@ function AccessoryConfigurationFields({
                     );
                   })}
                 </div>
-              )}
-              {validationMessage ? <p className="mt-1 text-[10px] text-amber-700">{validationMessage}</p> : null}
+              ) : null}
+              {expanded && validationMessage ? <p className="mt-1 text-[10px] text-amber-700">{validationMessage}</p> : null}
             </fieldset>
           );
         })}
@@ -1101,6 +1133,7 @@ export function ProductLibrarySelector({
   const [finalSpecificationEditedByTemplate, setFinalSpecificationEditedByTemplate] = useState<Record<string, boolean>>({});
   const [selectedWorkstationLayouts, setSelectedWorkstationLayouts] = useState<Record<string, string>>({});
   const [pricingAccessoryQuantities, setPricingAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
+  const [expandedAccessoryGroups, setExpandedAccessoryGroups] = useState<Record<string, boolean>>({});
   const [linkedProductInstancesByLinkId, setLinkedProductInstancesByLinkId] = useState<Record<string, LinkedProductInstance[]>>({});
   const [linkedProductQuantities, setLinkedProductQuantities] = useState<Record<string, number>>({});
   const [linkedAccessoryQuantities, setLinkedAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
@@ -1262,6 +1295,7 @@ export function ProductLibrarySelector({
   const closeTemplateEditor = () => {
     setTemplateEditor(null);
   };
+  const accessoryGroupExpansionKey = (templateId: string, groupId: string) => `${templateId}:${groupId}`;
 
   return (
     <>
@@ -2255,6 +2289,7 @@ export function ProductLibrarySelector({
                     selected_category: selectedFabricCategory,
                     supplier_price_list_code: line.row.supplier_price_list_code ?? null,
                     specification: line.row.specification ?? "",
+                    ...(line.row.importantRequirements?.length ? { importantRequirements: line.row.importantRequirements } : {}),
                     dimension: line.row.dimension ?? null,
                     qty: line.qty,
                     unit_price: quotationMoneyValue(line.unitPrice),
@@ -2280,6 +2315,7 @@ export function ProductLibrarySelector({
                       supplier: supplierNameSnapshot,
                       supplier_price_list_code: selectedSupplierPriceListCode,
                       specification: savedFinalSpecification,
+                      importantRequirements: Array.from(new Set([...(selectedVariantRow?.importantRequirements ?? []), ...(selectedCategoryRow?.importantRequirements ?? []), ...selectedModularItems.flatMap((line) => line.row.importantRequirements ?? [])])),
                       description: template.description ?? null,
                       default_specification:
                         (usesWorkstationFlow || usesModularPricing ? configuredSpecification : null) ??
@@ -2497,6 +2533,7 @@ export function ProductLibrarySelector({
                     : null;
                   const pricingAccessorySummary = selectedPricingAccessories.map((line) => ({
                     currency: normalizeCurrency(line.accessory.currency ?? rowCurrency),
+                    dimension: line.accessory.dimension ?? null,
                     detail: line.accessory.specification ?? line.groupName,
                     label: line.accessory.item_name || "Accessory",
                     supplierCode: line.accessory.supplier_price_list_code ?? null,
@@ -2974,6 +3011,7 @@ export function ProductLibrarySelector({
                                 <InternalMetaLine label="Supplier Code" value={selectedCategoryRow.supplier_price_list_code} />
                                 <InternalMetaLine label="Group" value={selectedCategoryGroup?.group_name ?? null} />
                                 <InternalMetaLine label="Specification" value={selectedCategoryRow.specification} />
+                                <ImportantRequirementsBlock requirements={selectedCategoryRow.importantRequirements} />
                               </div>
                             ) : null}
                           </div>
@@ -3041,7 +3079,7 @@ export function ProductLibrarySelector({
                                               {row.supplier_price_list_code ? <p>Supplier code: {row.supplier_price_list_code}</p> : null}
                                               {row.dimension ? <p>Dimension: {row.dimension}</p> : null}
                                               <p>Price: {modularUnavailable ? "N/A" : formatMoney(row.currency ?? template.currency, modularUnitPrice)}</p>
-                                              {row.specification ? <p>{row.specification}</p> : null}
+                                              {row.specification ? <p>{row.specification}</p> : null}<ImportantRequirementsBlock requirements={row.importantRequirements} />
                                             </div>
                                           </div>
                                           <label className="block">
@@ -3100,6 +3138,7 @@ export function ProductLibrarySelector({
                                   />
                                   <InternalMetaLine label="Supplier Code" value={selectedVariantRow.supplier_price_list_code} />
                                   <InternalMetaLine label="Specification" value={selectedVariantRow.specification} />
+                                  <ImportantRequirementsBlock requirements={selectedVariantRow.importantRequirements} />
                                   </div>
                                 </div>
                               ) : null}
@@ -3113,6 +3152,10 @@ export function ProductLibrarySelector({
                           groups={allAccessoryGroups}
                           quantities={templatePricingAccessoryQuantities}
                           rowCurrency={rowCurrency}
+                          rowReferences={rowReferenceImages}
+                          onViewDiagram={(item, url) => setDiagramPreview({ label: "Accessory diagram", templateId: template.id, title: [item.item_name || "Accessory", item.supplier_price_list_code, item.dimension].filter(Boolean).join(" — "), url })}
+                          isGroupExpanded={(groupId, defaultExpanded) => expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, groupId)] ?? defaultExpanded}
+                          onGroupExpandedChange={(groupId, expanded) => setExpandedAccessoryGroups((current) => ({ ...current, [accessoryGroupExpansionKey(template.id, groupId)]: expanded }))}
                           onQuantityChange={(groupItemIds, itemId, quantity, replaceGroup) =>
                             setPricingAccessoryQuantities((current) => {
                               const next = { ...(current[template.id] ?? {}) };
@@ -3185,16 +3228,13 @@ export function ProductLibrarySelector({
                                 {accessoryGroups.map((group) => {
                                   const groupHasNoSelection = group.group_is_required === true &&
                                     group.items.every((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) === 0);
+                                  const selectedCount = group.items.filter((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) > 0).length;
+                                  const expanded = expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, group.id)] ?? (groupHasNoSelection || selectedCount > 0);
 
                                   return (
                                   <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
-                                    <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
-                                      {group.group_name}
-                                      {group.group_is_required ? (
-                                        <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">Required</span>
-                                      ) : null}
-                                    </legend>
-                                    <div className="mt-1 space-y-2">
+                                    <AccessoryGroupHeader expanded={expanded} groupName={group.group_name} itemCount={group.items.length} required={group.group_is_required} selectedCount={selectedCount} onToggle={() => setExpandedAccessoryGroups((current) => ({ ...current, [accessoryGroupExpansionKey(template.id, group.id)]: !expanded }))} />
+                                    {expanded ? <div className="mt-1 space-y-2">
                                       {group.items.map((accessory, accessoryIndex) => {
                                         const id = accessory.id ?? accessory.item_name ?? "";
                                         const qty = templatePricingAccessoryQuantities[id] ?? 0;
@@ -3223,7 +3263,7 @@ export function ProductLibrarySelector({
                                               <span className="font-medium text-zinc-900">{accessory.item_name}</span>
                                               {accessory.supplier_price_list_code ? (
                                                 <span className="mt-1 block text-[11px] text-zinc-500">
-                                                  <span className="font-semibold text-zinc-700">Supplier Code:</span> {accessory.supplier_price_list_code}
+                                                  <span className="font-semibold text-zinc-700">Supplier Code:</span> {accessory.supplier_price_list_code}<AccessoryItemMetadata groupId={group.id} item={accessory} rowReferences={rowReferenceImages} onViewDiagram={(item, url) => setDiagramPreview({ label: "Accessory diagram", templateId: template.id, title: [item.item_name || "Accessory", item.supplier_price_list_code, item.dimension].filter(Boolean).join(" — "), url })} />
                                                 </span>
                                               ) : null}
                                             </span>
@@ -3250,8 +3290,8 @@ export function ProductLibrarySelector({
                                           </label></Fragment>
                                         );
                                       })}
-                                    </div>
-                                    {groupHasNoSelection ? (
+                                    </div> : null}
+                                    {expanded && groupHasNoSelection ? (
                                       <p className="mt-1 text-[10px] text-amber-700">
                                         Select at least one item from this group to continue.
                                       </p>
@@ -3271,16 +3311,13 @@ export function ProductLibrarySelector({
                             {accessoryGroups.map((group) => {
                               const groupHasNoSelection = group.group_is_required === true &&
                                 group.items.every((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) === 0);
+                              const selectedCount = group.items.filter((item) => (templatePricingAccessoryQuantities[item.id ?? item.item_name ?? ""] ?? 0) > 0).length;
+                              const expanded = expandedAccessoryGroups[accessoryGroupExpansionKey(template.id, group.id)] ?? (groupHasNoSelection || selectedCount > 0);
 
                               return (
                               <fieldset key={group.id} className="border border-zinc-200 bg-zinc-50 p-2">
-                                <legend className="px-1 text-[10px] font-bold uppercase text-zinc-500">
-                                  {group.group_name}
-                                  {group.group_is_required ? (
-                                    <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">Required</span>
-                                  ) : null}
-                                </legend>
-                                <div className="mt-1 space-y-2">
+                                <AccessoryGroupHeader expanded={expanded} groupName={group.group_name} itemCount={group.items.length} required={group.group_is_required} selectedCount={selectedCount} onToggle={() => setExpandedAccessoryGroups((current) => ({ ...current, [accessoryGroupExpansionKey(template.id, group.id)]: !expanded }))} />
+                                {expanded ? <div className="mt-1 space-y-2">
                                   {group.items.map((accessory, accessoryIndex) => {
                                     const id = accessory.id ?? accessory.item_name ?? "";
                                     const qty = templatePricingAccessoryQuantities[id] ?? 0;
@@ -3309,7 +3346,7 @@ export function ProductLibrarySelector({
                                           <span className="font-medium text-zinc-900">{accessory.item_name}</span>
                                           {accessory.supplier_price_list_code ? (
                                             <span className="mt-1 block text-[11px] text-zinc-500">
-                                              <span className="font-semibold text-zinc-700">Supplier Code:</span> {accessory.supplier_price_list_code}
+                                              <span className="font-semibold text-zinc-700">Supplier Code:</span> {accessory.supplier_price_list_code}<AccessoryItemMetadata groupId={group.id} item={accessory} rowReferences={rowReferenceImages} onViewDiagram={(item, url) => setDiagramPreview({ label: "Accessory diagram", templateId: template.id, title: [item.item_name || "Accessory", item.supplier_price_list_code, item.dimension].filter(Boolean).join(" — "), url })} />
                                             </span>
                                           ) : null}
                                         </span>
@@ -3336,8 +3373,8 @@ export function ProductLibrarySelector({
                                       </label></Fragment>
                                     );
                                   })}
-                                </div>
-                                {groupHasNoSelection ? (
+                                </div> : null}
+                                {expanded && groupHasNoSelection ? (
                                   <p className="mt-1 text-[10px] text-amber-700">
                                     Select at least one item from this group to continue.
                                   </p>
@@ -3915,6 +3952,7 @@ export function ProductLibrarySelector({
                                               <span className="font-semibold text-zinc-700">Supplier Code:</span> {line.supplierCode}
                                             </p>
                                           ) : null}
+                                          {line.dimension ? <p className="text-zinc-500"><span className="font-semibold text-zinc-700">Size:</span> {line.dimension}</p> : null}
                                           {line.detail ? <p className="text-zinc-500">{line.detail}</p> : null}
                                         </div>
                                         <div className="shrink-0 text-right">

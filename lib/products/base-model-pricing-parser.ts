@@ -8,6 +8,7 @@ import {
 } from "./base-model-pricing-groups";
 
 function normalizeServerBaseModelRow(row: BaseModelPricingRow, index: number) {
+  const importantRequirements = Array.isArray(row.importantRequirements) ? Array.from(new Set(row.importantRequirements.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean))) : [];
   return {
     ...row,
     id: typeof row.id === "string" && row.id ? row.id : `variant-${index}`,
@@ -18,6 +19,7 @@ function normalizeServerBaseModelRow(row: BaseModelPricingRow, index: number) {
     price: parseNullablePricingNumber(row.price),
     currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
     specification: typeof row.specification === "string" ? row.specification.trim() : "",
+    ...(importantRequirements.length ? { importantRequirements } : {}),
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
     is_active: row.is_active !== false,
   };

@@ -18,6 +18,12 @@ test("server parser accepts legacy rows and preserves IDs, null, zero, and exact
   assert.deepEqual(parsed.map((item) => item.price), [null, 0, 123.45]);
 });
 
+test("server parser preserves separate trimmed, distinct important requirements", () => {
+  const parsed = parseBaseModelPricingJson(JSON.stringify([{ ...row, importantRequirements: [" Finishing top required ", "", "Wall fixing required", "Finishing top required"] }])) as Array<typeof row & { importantRequirements?: string[] }>;
+  assert.equal(parsed[0].specification, "Spec");
+  assert.deepEqual(parsed[0].importantRequirements, ["Finishing top required", "Wall fixing required"]);
+});
+
 test("server parser accepts grouped arrays, preserves empty groups, and round-trips", () => {
   const input = [
     { id: "executive", pricing_type: BASE_MODEL_GROUP_PRICING_TYPE, group_name: "Executive", is_active: true, sort_order: 0, items: [row] },
