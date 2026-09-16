@@ -27,11 +27,15 @@ import {
 import type { AccessoryConditionalConfiguration } from "@/lib/products/accessory-conditional-configuration";
 import { evaluateProductAccessorySelection, parseSubmittedAccessoryQuantities } from "@/lib/quotations/product-accessory-configuration";
 import {
+  isDirectModularPricingGroup,
   modularItemPricingGroups,
   modularItemPricingRows,
   modularPricingDefaultsFromRows,
+  modularRowRole,
 } from "@/lib/products/modular-pricing";
-import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
+import { validateModularCompositionGroups } from "@/lib/products/modular-composition";
+import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-conditional-configuration";
+import { findWorkstationPricingRow, flattenWorkstationPricingRows, workstationPricingGroups } from "@/lib/products/workstation-pricing-groups";
 import {
   quotationOptionNoFromQuotationNo,
   quotationRootBaseNo,
@@ -682,8 +686,12 @@ function activeDeskingSizeRows(rows: unknown) {
 function selectedDeskingSize(formData: FormData, rows: unknown) {
   const selectedId = textValue(formData, "desking_size_id");
   const activeRows = activeDeskingSizeRows(rows);
-
-  return activeRows.find((row) => row.id === selectedId) ?? activeRows[0] ?? null;
+  if (!selectedId) return activeRows[0] ?? null;
+  const match = findWorkstationPricingRow<DeskingSizePricingRow>(rows, {
+    groupId: textValue(formData, "workstation_pricing_group_id"),
+    rowId: selectedId,
+  });
+  return match ? normalizedDeskingSizeRow(match.row, 0) : null;
 }
 
 function activeVariantRows(rows: unknown) {
@@ -1322,6 +1330,7 @@ type DeskingSizePricingRow = {
   additional_supplier_price_list_code?: string;
   currency?: string;
   specification?: string;
+  importantRequirements?: string[];
   default_dimension?: string;
   sort_order?: number;
   is_active?: boolean;
@@ -1355,9 +1364,14 @@ type CategoryPricingRow = {
   dimension?: string;
   currency?: string;
   prices?: Record<string, number>;
+  /** Direct-priced modular rows carry one scalar price instead of category cells. */
+  price?: number | null;
   specification?: string;
   modular_default_dimension?: string | null;
   modular_default_specification?: string | null;
+  modular_pricing_mode?: string | null;
+  modular_composition?: { min_starters?: number | null; max_starters?: number | null } | null;
+  modular_role?: string | null;
   is_active?: boolean;
   sort_order?: number;
 };
@@ -1562,18 +1576,17 @@ function currentSourcePriceFromSnapshot({
   }
 
   const deskingData = recordValue(data?.desking);
+  const workstationRowId = stringRecordValue(deskingData?.workstation_row_id);
   const deskingLabel = stringRecordValue(deskingData?.size_label);
-  if (deskingLabel) {
+  if (workstationRowId || deskingLabel) {
     if (calculationNumber(deskingData?.accessory_price) > 0) return null;
-
-    const matches = flattenWorkstationPricingRows(template.desking_size_pricing ?? [])
-      .map(recordValue)
-      .filter(isRecord)
-      .filter((row) => row.label === deskingLabel);
-
-    if (matches.length !== 1) return null;
-
-    const currentSize = matches[0];
+    const match = findWorkstationPricingRow(template.desking_size_pricing ?? [], {
+      groupId: stringRecordValue(deskingData?.workstation_group_id),
+      rowId: workstationRowId,
+      legacyLabel: workstationRowId ? null : deskingLabel,
+    });
+    if (!match) return null;
+    const currentSize = match.row;
     sourceCurrency = normalizeCurrency(stringRecordValue(currentSize.currency) ?? template.currency);
     sourcePrice = quotationMoneyValue(
       calculationNumber(currentSize.default_price) +
@@ -6068,6 +6081,20 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const selectedSizePricing = selectedVariantPricingRow || selectedCategoryPricingRow
     ? null
     : selectedDeskingSize(formData, template.desking_size_pricing);
+  const submittedDeskingSizeId = textValue(formData, "desking_size_id");
+  const submittedWorkstationGroupId = textValue(formData, "workstation_pricing_group_id");
+  if (submittedDeskingSizeId && !selectedSizePricing) {
+    redirectWithMessage(redirectPath, "The selected workstation row is no longer available.");
+  }
+  const activeWorkstationGroups = workstationPricingGroups<DeskingSizePricingRow>(template.desking_size_pricing)
+    .filter((group) => group.is_active)
+    .map((group) => ({ ...group, items: group.items.map((row, index) => ({ ...row, id: row.id || `${group.id}-size-${index}` })).filter((row) => row.is_active !== false) }));
+  const selectedWorkstationGroup = selectedSizePricing
+    ? activeWorkstationGroups.find((group) => (!submittedWorkstationGroupId || group.id === submittedWorkstationGroupId) && group.items.some((row) => row.id === selectedSizePricing.id)) ?? null
+    : null;
+  if (selectedSizePricing && !selectedWorkstationGroup) {
+    redirectWithMessage(redirectPath, "The selected workstation group and row do not match.");
+  }
   const selectedWorkstationVariantPricingRow = selectedSizePricing
     ? selectedVariantPricing(formData, template.variant_pricing, "workstation_variant_pricing_row_id")
     : null;
@@ -6075,7 +6102,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     .filter((group) => group.is_active !== false)
     .map((group) => ({ ...group, items: (group.items ?? []).filter((row) => row.is_active !== false) }));
   const modularRows = modularGroups.flatMap((group) => group.items)
-    .filter((row) => row.variant_name || row.dimension || Object.values(row.prices ?? {}).some((price) => calculationNumber(price) > 0))
+    .filter((row) => row.variant_name || row.dimension || calculationNumber(row.price) > 0 || Object.values(row.prices ?? {}).some((price) => calculationNumber(price) > 0))
     .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
   const modularDefaults = modularPricingDefaultsFromRows(template.category_pricing);
   const usesModularPricing = modularRows.length > 0;
@@ -6110,7 +6137,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     .flatMap((group) => group.items.map((row) => {
       const id = row.id ?? row.variant_name ?? row.display_name ?? "";
       const qty = modularQtyById.get(`${group.id}\u0000${id}`) ?? modularQtyById.get(id) ?? 0;
-      const unitPrice = money(calculationNumber(row.prices?.[selectedCategory]));
+      // The template's own stored price is authoritative in both modes; submitted prices are never trusted.
+      const unitPrice = money(calculationNumber(isDirectModularPricingGroup(group) ? row.price : row.prices?.[selectedCategory]));
 
       return {
         currency: normalizeCurrency(row.currency ?? template.currency ?? defaultCurrency),
@@ -6119,6 +6147,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         group_id: group.id,
         id,
         item_name: row.display_name || row.variant_name || "Modular item",
+        modular_role: modularRowRole(row),
+        pricing_mode: isDirectModularPricingGroup(group) ? "direct" as const : "matrix" as const,
         qty,
         specification: row.specification ?? "",
         supplier_price_list_code: row.supplier_price_list_code ?? null,
@@ -6131,13 +6161,22 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   if (usesModularPricing && !selectedModularItems.length) {
     redirectWithMessage(redirectPath, "Select at least one modular item before adding this product.");
   }
-  const selectedAccessoryModelTargets = selectedVariantPricingRow && selectedVariantGroup
+  const modularCompositionIssue = validateModularCompositionGroups(
+    modularGroups,
+    (groupId, rowId) => modularQtyById.get(`${groupId}\u0000${rowId}`) ?? modularQtyById.get(rowId) ?? 0,
+  );
+  if (usesModularPricing && modularCompositionIssue) {
+    redirectWithMessage(redirectPath, modularCompositionIssue.message);
+  }
+  const selectedAccessoryModelTargets = selectedSizePricing?.id && selectedWorkstationGroup
+    ? [{ kind: "workstation" as const, group_id: selectedWorkstationGroup.id, row_id: selectedSizePricing.id }]
+    : selectedVariantPricingRow && selectedVariantGroup
     ? [{ kind: "base_model" as const, group_id: selectedVariantGroup.id, row_id: selectedVariantPricingRow.id ?? "" }]
     : selectedCategoryPricingRow && selectedCategoryGroup
       ? [{ kind: "price_matrix" as const, group_id: selectedCategoryGroup.id ?? "", row_id: selectedCategoryPricingRow.id ?? "" }]
       : selectedModularItems.map((item) => ({ kind: "modular" as const, group_id: item.group_id, row_id: item.id }));
   if (hasConditionalAccessoryConfiguration && !selectedAccessoryModelTargets.length) {
-    redirectWithMessage(redirectPath, "Select a valid Base/Model, Category/Matrix, or Modular row before configuring required components or options.");
+    redirectWithMessage(redirectPath, "Select a valid Base/Model, Category/Matrix, Modular, or Workstation row before configuring required components or options.");
   }
   const accessoryConfiguration = evaluateProductAccessorySelection({
     accessoryGroups: authoritativeAccessoryGroups,
@@ -6145,6 +6184,10 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     baseModelRowId: selectedVariantPricingRow?.id ?? null,
     selectedModelTarget: selectedAccessoryModelTargets[0] ?? null,
     selectedModelTargets: selectedAccessoryModelTargets,
+    selectedModelTargetQuantities: Object.fromEntries(selectedModularItems.map((item) => [
+      accessoryApplicabilityTargetKey({ kind: "modular", group_id: item.group_id, row_id: item.id }),
+      item.qty,
+    ])),
     selectedQuantities: Object.fromEntries(submittedAccessoryPricingQtyById),
   });
   if (!accessoryConfiguration.valid) {
@@ -6623,7 +6666,18 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     price: item.unit_price,
     total: item.total,
     currency: item.currency,
+    // Phase 2 composition identity: stable row/group ids, role and pricing mode
+    // so a reopened quotation restores the exact composition.
+    group_id: item.group_id,
+    row_id: item.id,
+    pricing_mode: item.pricing_mode,
+    ...(item.modular_role ? { modular_role: item.modular_role } : {}),
   }));
+  const modularCompositionSummary = selectedModularItems.length
+    ? selectedModularItems
+        .map((item) => `${item.modular_role ? `${item.modular_role[0].toUpperCase()}${item.modular_role.slice(1)} ` : ""}${item.item_name} × ${item.qty}`)
+        .join(" + ")
+    : null;
   const workstationVariantSnapshot = selectedWorkstationVariantPricingRow
     ? {
         item_type: "add_on",
@@ -6657,6 +6711,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     : finalSelectedOptionsWithAccessories;
   const deskingSourceData = derivedDesking
     ? {
+        workstation_row_id: selectedSizePricing?.id ?? null,
+        workstation_group_id: selectedWorkstationGroup?.id ?? null,
         size_label: derivedDesking.sizeLabel,
         cluster_label: derivedDesking.clusterLabel,
         additional_qty: derivedDesking.additionalClusterQty,
@@ -6666,6 +6722,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         configured_dimension: configuredDimension || null,
         default_dimension: selectedSizePricing?.default_dimension ?? null,
         default_specification: selectedSizePricing?.specification ?? null,
+        importantRequirements: selectedSizePricing?.importantRequirements ?? [],
         layout_type: derivedDesking.layoutType,
         default_price: derivedDesking.basePrice,
         base_supplier_price_list_code: derivedDesking.baseSupplierPriceListCode,
@@ -6763,6 +6820,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         template.default_specification,
       description: template.description,
       specification: specificationSnapshot,
+      importantRequirements: selectedSizePricing?.importantRequirements ?? [],
       dimension: dimensionSnapshot,
       dimensions: dimensionSnapshot,
       size_label: dimensionSnapshot,
@@ -6818,6 +6876,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
               default_dimension: modularDefaults.defaultDimension,
               default_specification: modularDefaults.defaultSpecification,
               selected_category: selectedCategory,
+              composition_summary: modularCompositionSummary,
               items: modularSnapshots,
             },
           }

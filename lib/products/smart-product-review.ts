@@ -1,4 +1,9 @@
-import type { ProductTemplateDraft, ProductTemplateDraftCurrency, ProductTemplateDraftDimension, ProductTemplateDraftPrice, ProductTemplateDraftSelectionRule } from "./product-template-draft";
+import { draftModularRows, type ProductTemplateDraft, type ProductTemplateDraftCurrency, type ProductTemplateDraftDimension, type ProductTemplateDraftPrice, type ProductTemplateDraftSelectionRule } from "./product-template-draft";
+
+/** Prices of a modular row in either pricing mode (matrix cells or one direct price). */
+function modularRowPrices(row: { prices?: Record<string, ProductTemplateDraftPrice>; price?: ProductTemplateDraftPrice }) {
+  return row.prices ? Object.values(row.prices) : [row.price ?? null];
+}
 
 export type SmartProductReviewCurrencyState = {
   kind: "common" | "mixed" | "unresolved" | "none";
@@ -58,8 +63,8 @@ export function collectPricedRowCurrencies(draft: ProductTemplateDraft) {
   draft.pricing.priceMatrices.forEach((matrix) => matrix.rows.forEach((row) => {
     if (Object.values(row.prices).some(isNumericPrice)) currencies.push(row.currency);
   }));
-  draft.pricing.modularGroups.forEach((group) => group.matrix.rows.forEach((row) => {
-    if (Object.values(row.prices).some(isNumericPrice)) currencies.push(row.currency);
+  draft.pricing.modularGroups.forEach((group) => draftModularRows(group).forEach((row) => {
+    if (modularRowPrices(row).some(isNumericPrice)) currencies.push(row.currency);
   }));
   draft.optionGroups.forEach((group) => group.items.forEach((item) => {
     if (isNumericPrice(item.price)) currencies.push(item.currency);
@@ -89,7 +94,7 @@ export function fillNullPricedRowCurrenciesFromDefault(draft: ProductTemplateDra
   next.pricing.workstationRows.forEach((row) => { if ((isNumericPrice(row.price) || isNumericPrice(row.additionalPrice)) && row.currency === null) row.currency = defaultCurrency; });
   next.pricing.baseModelRows.forEach((row) => { if (isNumericPrice(row.price) && row.currency === null) row.currency = defaultCurrency; });
   next.pricing.priceMatrices.forEach((matrix) => matrix.rows.forEach((row) => { if (Object.values(row.prices).some(isNumericPrice) && row.currency === null) row.currency = defaultCurrency; }));
-  next.pricing.modularGroups.forEach((group) => group.matrix.rows.forEach((row) => { if (Object.values(row.prices).some(isNumericPrice) && row.currency === null) row.currency = defaultCurrency; }));
+  next.pricing.modularGroups.forEach((group) => draftModularRows(group).forEach((row) => { if (modularRowPrices(row).some(isNumericPrice) && row.currency === null) row.currency = defaultCurrency; }));
   next.optionGroups.forEach((group) => group.items.forEach((item) => { if (isNumericPrice(item.price) && item.currency === null) item.currency = defaultCurrency; }));
   return next;
 }
@@ -101,7 +106,7 @@ export function applySmartProductReviewCurrencyOverride(draft: ProductTemplateDr
   next.pricing.workstationRows.forEach((row) => { row.currency = currency; });
   next.pricing.baseModelRows.forEach((row) => { row.currency = currency; });
   next.pricing.priceMatrices.forEach((matrix) => matrix.rows.forEach((row) => { row.currency = currency; }));
-  next.pricing.modularGroups.forEach((group) => group.matrix.rows.forEach((row) => { row.currency = currency; }));
+  next.pricing.modularGroups.forEach((group) => draftModularRows(group).forEach((row) => { row.currency = currency; }));
   next.optionGroups.forEach((group) => group.items.forEach((item) => { item.currency = currency; }));
   return next;
 }

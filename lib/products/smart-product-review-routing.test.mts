@@ -96,3 +96,49 @@ test("review routing accepts and persists stable Modular row targets", () => {
   top.accessory.rules[0] = { ...top.accessory.rules[0], target: { kind: "modular", group_id: "avana", row_id: "missing" } };
   assert.equal(validateSmartSetupReviewRouting(modularDraft, plan).valid, false);
 });
+
+test("explicit optional category-priced accessories override service-unit name heuristics", () => {
+  const categoryIds = ["B", "C", "D", "E", "F", "G", "SUPREME"];
+  const optionalDraft: ProductTemplateDraft = structuredClone(draft);
+  optionalDraft.optionGroups = [{
+    id: "cushions",
+    label: "Cushions for Pedestals and Service Units",
+    priceCategories: categoryIds.map((id) => ({ id, label: id })),
+    selection: { mode: "optional", minSelections: 0, maxSelections: null, defaultItemIds: [] },
+    items: [
+      { id: "958", label: "Cushion for pedestals", displayName: null, dimensions: null, currency: "EUR", price: null, prices: Object.fromEntries(categoryIds.map((id, index) => [id, index + 1])), specification: null, supplierCodes: ["1AG 958"], referenceCodes: [] },
+      { id: "959", label: "Cushion for service unit", displayName: null, dimensions: null, currency: "EUR", price: null, prices: Object.fromEntries(categoryIds.map((id, index) => [id, index + 11])), specification: null, supplierCodes: ["1AG 959"], referenceCodes: [] },
+    ],
+  }];
+  const plan = createSmartSetupReviewRouting(optionalDraft);
+  const route = plan.routes.find((item) => item.sourceId === "cushions")!;
+  assert.deepEqual(route.accessory, { role: "accessory", selection: "optional_multiple", rules: [] });
+  const saved = mapDraftOptionGroupsToAccessories(draftForSmartSetupReviewApply(optionalDraft, plan), plan).groups[0];
+  assert.equal(saved.conditional_configuration, undefined);
+  assert.deepEqual(saved.price_categories, categoryIds.map((id) => ({ id, label: id })));
+  assert.deepEqual(saved.items.map((item) => item.prices), optionalDraft.optionGroups[0].items.map((item) => item.prices));
+});
+
+test("explicit required service-unit selection remains a required companion", () => {
+  const requiredDraft: ProductTemplateDraft = structuredClone(draft);
+  requiredDraft.optionGroups = [{
+    id: "service-cabinet",
+    label: "Service Cabinet",
+    selection: { mode: "required_choose_one", minSelections: 1, maxSelections: 1, defaultItemIds: [] },
+    items: [{ id: "cabinet", label: "Cabinet", displayName: null, dimensions: null, currency: "EUR", price: 10, specification: null, supplierCodes: ["CAB"], referenceCodes: [] }],
+  }];
+  const route = createSmartSetupReviewRouting(requiredDraft).routes.find((item) => item.sourceId === "service-cabinet")!;
+  assert.deepEqual(route.accessory, { role: "companion", selection: "required_exactly_one", rules: [] });
+});
+
+test("service-unit name heuristic is used only when source selection is absent", () => {
+  const ambiguousDraft: ProductTemplateDraft = structuredClone(draft);
+  ambiguousDraft.optionGroups = [{
+    id: "legacy-service",
+    label: "Service Units",
+    selection: undefined as never,
+    items: [{ id: "service", label: "Service unit", displayName: null, dimensions: null, currency: "EUR", price: 10, specification: null, supplierCodes: ["SERVICE"], referenceCodes: [] }],
+  }];
+  const route = createSmartSetupReviewRouting(ambiguousDraft).routes.find((item) => item.sourceId === "legacy-service")!;
+  assert.deepEqual(route.accessory, { role: "companion", selection: "required_exactly_one", rules: [] });
+});

@@ -1,5 +1,5 @@
 import type { OriginalImportedJsonSource } from "./original-imported-json-sources";
-import type { ProductTemplateDraft, ProductTemplateDraftMatrixRow, ProductTemplateDraftPricedRow } from "./product-template-draft";
+import { draftModularRows, type ProductTemplateDraft, type ProductTemplateDraftMatrixRow, type ProductTemplateDraftPricedRow } from "./product-template-draft";
 import type { SpecificationEnrichmentContext, SpecificationEnrichmentRow } from "./specification-enrichment-contract";
 import type { BatchSpecificationEnrichmentProviderItem } from "./specification-enrichment-contract";
 import { matchSpecificationEnrichmentSourceContext } from "./specification-enrichment-source-context";
@@ -43,7 +43,7 @@ export function flattenBatchSpecificationTargets(draft: ProductTemplateDraft): B
     ...draft.pricing.baseModelRows.map((row) => target(targetId.baseModel(row.id), "base_model", row, { templateName, groupLabel: "Base / Model Pricing", rowType: "base_model" })),
     ...draft.pricing.workstationRows.map((row) => target(targetId.workstation(row.id), "workstation", row, { templateName, groupLabel: "Workstation Pricing", rowType: "workstation" })),
     ...draft.pricing.priceMatrices.flatMap((matrix) => matrix.rows.map((row) => target(targetId.matrix(matrix.id, row.id), "matrix", row, { templateName, groupLabel: matrix.label, rowType: "category_matrix" }))),
-    ...draft.pricing.modularGroups.flatMap((group) => group.matrix.rows.map((row) => target(targetId.modular(group.id, row.id), "modular", row, { templateName, groupLabel: group.label ?? group.matrix.label, rowType: "modular" }))),
+    ...draft.pricing.modularGroups.flatMap((group) => draftModularRows(group).map((row) => target(targetId.modular(group.id, row.id), "modular", row, { templateName, groupLabel: group.label ?? group.matrix?.label ?? null, rowType: "modular" }))),
     ...draft.optionGroups.flatMap((group) => group.items.map((row) => target(targetId.option(group.id, row.id), "option", row, { templateName, groupLabel: group.label, rowType: "accessory" }))),
   ];
 }
@@ -91,7 +91,9 @@ export function applyBatchSpecificationSuggestions(draft: ProductTemplateDraft, 
       baseModelRows: draft.pricing.baseModelRows.map((row) => patch(row, targetId.baseModel(row.id))),
       workstationRows: draft.pricing.workstationRows.map((row) => patch(row, targetId.workstation(row.id))),
       priceMatrices: draft.pricing.priceMatrices.map((matrix) => ({ ...matrix, rows: matrix.rows.map((row) => patch(row, targetId.matrix(matrix.id, row.id))) })),
-      modularGroups: draft.pricing.modularGroups.map((group) => ({ ...group, matrix: { ...group.matrix, rows: group.matrix.rows.map((row) => patch(row, targetId.modular(group.id, row.id))) } })),
+      modularGroups: draft.pricing.modularGroups.map((group) => (group.matrix
+        ? { ...group, matrix: { ...group.matrix, rows: group.matrix.rows.map((row) => patch(row, targetId.modular(group.id, row.id))) } }
+        : { ...group, directRows: (group.directRows ?? []).map((row) => patch(row, targetId.modular(group.id, row.id))) })),
     },
     optionGroups: draft.optionGroups.map((group) => ({ ...group, items: group.items.map((row) => patch(row, targetId.option(group.id, row.id))) })),
   };

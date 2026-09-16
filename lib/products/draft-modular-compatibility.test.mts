@@ -12,7 +12,7 @@ const base = (columns: Array<{ id: string; label: string }>): ProductTemplateDra
 });
 test("modular compatibility preserves nullable cells and rejects incompatible columns", () => {
   const draft = base([{ id: "b", label: "Cat B" }, { id: "c", label: "Cat C" }, { id: "d", label: "Cat D" }]);
-  const result = analyzeDraftModularCompatibility(draft); assert.equal(result.compatible, true); assert.equal(result.groups[0].matrix.rows[0].prices.b, null); assert.equal(result.groups[0].matrix.rows[0].prices.c, 0); assert.equal(result.groups[0].matrix.rows[0].prices.d, 355);
+  const result = analyzeDraftModularCompatibility(draft); assert.equal(result.compatible, true); assert.equal(result.groups[0].matrix!.rows[0].prices.b, null); assert.equal(result.groups[0].matrix!.rows[0].prices.c, 0); assert.equal(result.groups[0].matrix!.rows[0].prices.d, 355);
   const incompatible = base([{ id: "b", label: "Cat B" }, { id: "e", label: "Cat E" }, { id: "f", label: "Cat F" }]);
   assert.equal(analyzeDraftModularCompatibility({ ...draft, pricing: { ...draft.pricing, modularGroups: [...draft.pricing.modularGroups, ...incompatible.pricing.modularGroups] } }).compatible, false);
 });

@@ -1,4 +1,4 @@
-import type { ProductTemplateDraft, ProductTemplateDraftMatrixRow, ProductTemplateDraftPricedRow } from "./product-template-draft";
+import { draftModularColumns, draftModularRows, isDirectModularGroup, type ProductTemplateDraft, type ProductTemplateDraftMatrixRow, type ProductTemplateDraftPricedRow } from "./product-template-draft";
 import { fillNullPricedRowCurrenciesFromDefault } from "./smart-product-review";
 import { createSmartSetupReviewRouting, type SmartReviewDestination, type SmartReviewRoute, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
 
@@ -25,7 +25,7 @@ function routeRows(draft: ProductTemplateDraft, route: SmartReviewRoute): Review
   if (route.sourceKind === "workstation") return draft.pricing.workstationRows;
   if (route.sourceKind === "base_model") return draft.pricing.baseModelRows;
   if (route.sourceKind === "matrix") return draft.pricing.priceMatrices.find((group) => group.id === route.sourceId)?.rows ?? [];
-  if (route.sourceKind === "modular") return draft.pricing.modularGroups.find((group) => group.id === route.sourceId)?.matrix.rows ?? [];
+  if (route.sourceKind === "modular") return draft.pricing.modularGroups.filter((group) => group.id === route.sourceId).flatMap((group) => draftModularRows(group));
   return draft.optionGroups.find((group) => group.id === route.sourceId)?.items ?? [];
 }
 
@@ -52,7 +52,7 @@ function compatible(currentDraft: ProductTemplateDraft, incomingDraft: ProductTe
   if (current.sourceKind !== "matrix" && current.sourceKind !== "modular") return true;
   const columns = (draft: ProductTemplateDraft, route: SmartReviewRoute) => route.sourceKind === "matrix"
     ? draft.pricing.priceMatrices.find((group) => group.id === route.sourceId)?.columns.map((column) => column.id) ?? []
-    : draft.pricing.modularGroups.find((group) => group.id === route.sourceId)?.matrix.columns.map((column) => column.id) ?? [];
+    : draft.pricing.modularGroups.filter((group) => group.id === route.sourceId).flatMap((group) => draftModularColumns(group).map((column) => column.id));
   return JSON.stringify(columns(currentDraft, current)) === JSON.stringify(columns(incomingDraft, incoming));
 }
 
@@ -151,7 +151,11 @@ export function applySmartAdditionalJson(currentDraft: ProductTemplateDraft, cur
       } else if (target.sourceKind === "modular") {
         const existing = draft.pricing.modularGroups.find((group) => group.id === target.sourceId);
         const incoming = preparedIncomingDraft.pricing.modularGroups.find((group) => group.id === incomingRoute.sourceId);
-        if (existing && incoming) existing.matrix.rows = mergeRows(existing.matrix.rows, incoming.matrix.rows, decision.duplicateChoices);
+        if (existing && incoming && isDirectModularGroup(existing) && isDirectModularGroup(incoming)) {
+          existing.directRows = mergeRows(existing.directRows ?? [], incoming.directRows ?? [], decision.duplicateChoices);
+        } else if (existing?.matrix && incoming?.matrix) {
+          existing.matrix.rows = mergeRows(existing.matrix.rows, incoming.matrix.rows, decision.duplicateChoices);
+        }
       } else {
         const existing = draft.optionGroups.find((group) => group.id === target.sourceId);
         const incoming = preparedIncomingDraft.optionGroups.find((group) => group.id === incomingRoute.sourceId);

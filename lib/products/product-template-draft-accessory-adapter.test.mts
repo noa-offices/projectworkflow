@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { PRODUCT_TEMPLATE_DRAFT_VERSION, type ProductTemplateDraft, type ProductTemplateDraftSelectionMode } from "./product-template-draft.js";
 import { mapDraftOptionGroupsToAccessories } from "./product-template-draft-accessory-adapter.js";
+import { createSmartSetupReviewRouting } from "./smart-product-review-routing.js";
 
 function draft(mode: ProductTemplateDraftSelectionMode, minSelections: number, maxSelections: number | null, defaultItemIds: string[] = []): ProductTemplateDraft {
   return {
@@ -76,4 +77,12 @@ test("category-priced accessories apply without flattening group categories or i
   assert.deepEqual(result.groups[0].items[1].prices, { "cat-b": 107, "cat-supreme": 189 });
   assert.equal(result.groups[0].items[0].price, null);
   assert.equal(result.groups[0].conditional_configuration, undefined);
+});
+
+test("reviewed accessory mapping preserves modular quantity scaling", () => {
+  const source = draft("choose_multiple", 0, null);
+  source.optionGroups[0].conditionalConfiguration = { role: "companion", selection: "choose_multiple", applicability: [{ target: { kind: "modular", group_id: "oxi", row_id: "starter" }, required: true, visible: true, fixed_quantity: 2, scale_with_target_quantity: true }] };
+  const mapped = mapDraftOptionGroupsToAccessories(source, createSmartSetupReviewRouting(source));
+  assert.equal(mapped.groups[0].conditional_configuration?.applicability[0].scale_with_target_quantity, true);
+  assert.equal(mapDraftOptionGroupsToAccessories(source).groups[0].conditional_configuration?.applicability[0].scale_with_target_quantity, true);
 });

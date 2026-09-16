@@ -22,7 +22,7 @@ import {
   type BaseModelPricingSubgroup,
 } from "@/lib/products/base-model-pricing-groups";
 import { modularItemPricingGroups, modularItemPricingRows } from "@/lib/products/modular-pricing";
-import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
+import { flattenWorkstationPricingRows, workstationPricingGroups, type WorkstationPricingGroup } from "@/lib/products/workstation-pricing-groups";
 import {
   TemplateImportActionButton,
   type QuotationRowImportDraft,
@@ -178,6 +178,9 @@ export function TemplatePricingSections({
   const [currentModularPricingGroups, setCurrentModularPricingGroups] = useState<CategoryPricingRow[]>(() =>
     modularItemPricingGroups<CategoryPricingRow>(categoryPricingRows),
   );
+  const [currentWorkstationPricingGroups, setCurrentWorkstationPricingGroups] = useState<WorkstationPricingGroup<DeskingSizePricingRow>[]>(() =>
+    workstationPricingGroups<DeskingSizePricingRow>(deskingSizePricingRows ?? []),
+  );
   const handleBaseModelGroupsChange = useCallback((groups: BaseModelPricingGroup<VariantPricingRow>[]) => {
     setCurrentBaseModelGroups(groups);
   }, []);
@@ -243,6 +246,7 @@ export function TemplatePricingSections({
         replacementSubgroups={workstationReplacement?.subgroups}
         replacementVersion={workstationReplacement?.version}
         onHasDataChange={reportWorkstationData}
+        onGroupsChange={setCurrentWorkstationPricingGroups}
       />
     </>
   );
@@ -291,6 +295,7 @@ export function TemplatePricingSections({
         baseModelGroups={currentBaseModelGroups}
         categoryPricingGroups={currentCategoryPricingGroups}
         modularPricingGroups={currentModularPricingGroups}
+        workstationPricingGroups={currentWorkstationPricingGroups}
         brandDefaultCurrency={brandDefaultCurrency}
         rows={accessoryPricingRows}
         templateCurrency={templateCurrency}

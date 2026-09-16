@@ -23,3 +23,9 @@ test("accessory editor replacement state retains category definitions and price 
     'name="accessory_pricing" value={serialized}',
   ].forEach((expected) => assert.ok(source.includes(expected), `Expected category accessory editor handoff: ${expected}`));
 });
+
+test("conditional configuration editor includes workstation applicability choices", () => {
+  const source = readFileSync("components/products/variant-pricing-tables.tsx", "utf8");
+  assert.ok(source.includes("applicabilityTargetChoices(baseModelGroups, categoryPricingGroups, modularPricingGroups, workstationPricingGroups)"));
+  assert.ok(source.includes("workstationPricingGroups={workstationPricingGroups}"));
+});

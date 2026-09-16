@@ -31,10 +31,14 @@ import {
   standardCategoryPriceColumns as groupedCategoryPriceColumns,
 } from "@/lib/products/category-pricing-groups";
 import {
+  isDirectModularPricingGroup,
   modularItemPricingGroups,
   modularItemPricingRows,
   modularPricingDefaultsFromRows,
+  modularRowRole,
 } from "@/lib/products/modular-pricing";
+import { validateModularCompositionGroups } from "@/lib/products/modular-composition";
+import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-conditional-configuration";
 import { baseModelPricingGroups, flattenBaseModelPricingRows, type BaseModelPricingGroup } from "@/lib/products/base-model-pricing-groups";
 import { baseModelPricingSubgroupForRow, baseModelSubgroupReferenceKey } from "@/lib/products/base-model-pricing-subgroups";
 import { guidedBaseModelSelection } from "@/lib/quotations/guided-base-model-selection";
@@ -45,7 +49,7 @@ import {
 } from "@/lib/products/accessory-conditional-configuration";
 import { evaluateProductAccessorySelection } from "@/lib/quotations/product-accessory-configuration";
 import { accessoryOptionLabel } from "@/lib/quotations/accessory-option-label";
-import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
+import { flattenWorkstationPricingRows, workstationPricingGroups } from "@/lib/products/workstation-pricing-groups";
 import { productTemplateRowReferenceKey, type ProductTemplateRowReferencePreview } from "@/lib/products/product-template-row-references";
 import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-pricing";
 import { buildFinalSpecificationRequest } from "@/lib/quotations/final-specification-ai-selection";
@@ -152,6 +156,7 @@ type DeskingSizePricingRow = {
   additional_supplier_price_list_code?: string;
   currency?: string;
   specification?: string;
+  importantRequirements?: string[];
   default_dimension?: string;
   sort_order?: number;
   is_active?: boolean;
@@ -186,11 +191,16 @@ type CategoryPricingRow = {
   dimension?: string;
   currency?: string;
   prices?: Record<string, number | null>;
+  /** Direct-priced modular rows carry one scalar price instead of category cells. */
+  price?: number | null;
   unavailable_categories?: string[];
   specification?: string;
   importantRequirements?: string[];
   modular_default_dimension?: string | null;
   modular_default_specification?: string | null;
+  modular_pricing_mode?: string | null;
+  modular_composition?: { min_starters?: number | null; max_starters?: number | null } | null;
+  modular_role?: string | null;
   is_active?: boolean;
   sort_order?: number;
 };
@@ -449,18 +459,17 @@ function PriceCheckBadge({
   );
 }
 
-function activeSizePricingRows(rows: unknown) {
-  return flattenWorkstationPricingRows<DeskingSizePricingRow>(Array.isArray(rows) ? rows : [], { activeGroupsOnly: true })
-    .map((row, index) => normalizedSizePricingRow(row, index))
-    .filter((row) => row.is_active !== false)
-    .filter((row) =>
-      Boolean(
-        row.label?.trim() ||
-        row.default_dimension?.trim() ||
-        numberValue(row.default_price) > 0 ||
-        numberValue(row.additional_price) > 0,
-      ))
-    .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
+function activeWorkstationPricingGroups(rows: unknown) {
+  return workstationPricingGroups<DeskingSizePricingRow>(Array.isArray(rows) ? rows : [])
+    .filter((group) => group.is_active)
+    .map((group) => ({
+      ...group,
+      items: group.items
+        .map((row, index) => normalizedSizePricingRow({ ...row, id: row.id || `${group.id}-size-${index}` }, index))
+        .filter((row) => row.is_active !== false)
+        .filter((row) => Boolean(row.label?.trim() || row.default_dimension?.trim() || numberValue(row.default_price) > 0 || numberValue(row.additional_price) > 0))
+        .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order)),
+    }));
 }
 
 function activeVariantRows(rows: unknown) {
@@ -488,7 +497,7 @@ function BaseModelHierarchySelector({ currency, groups, onSelect, rowReferences,
 function activeModularRows(rows?: CategoryPricingRow[] | null) {
   return modularItemPricingRows(rows)
     .filter((row) => row.is_active !== false)
-    .filter((row) => row.variant_name || row.display_name || row.dimension || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
+    .filter((row) => row.variant_name || row.display_name || row.dimension || numberValue(row.price) > 0 || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
     .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
 }
 
@@ -502,9 +511,12 @@ function activeModularGroups(rows?: CategoryPricingRow[] | null) {
       group_name: sourceGroup.group_name?.trim() || "Modular Items",
       is_active: sourceGroup.is_active !== false,
       sort_order: numberValue(sourceGroup.sort_order, groupIndex),
+      // Preserve the Phase 2 direct-pricing mode and composition contract.
+      modular_pricing_mode: sourceGroup.modular_pricing_mode ?? null,
+      modular_composition: sourceGroup.modular_composition ?? null,
       items: (sourceGroup.items ?? [])
         .filter((row) => row.is_active !== false)
-        .filter((row) => row.variant_name || row.display_name || row.dimension || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
+        .filter((row) => row.variant_name || row.display_name || row.dimension || numberValue(row.price) > 0 || Object.values(row.prices ?? {}).some((price) => numberValue(price) > 0))
         .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order)),
     };
   })
@@ -1614,7 +1626,9 @@ export function ProductLibrarySelector({
                     ? categoryNameById.get(template.sub_category_id)
                     : null;
                   const templateComponents = componentsByTemplate.get(template.id) ?? [];
-                  const sizePricingRows = activeSizePricingRows(template.desking_size_pricing);
+                  const activeWorkstationGroups = activeWorkstationPricingGroups(template.desking_size_pricing);
+                  const sizePricingRows = activeWorkstationGroups.flatMap((group) => group.items)
+                    .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
                   const workstationCurrencies = Array.from(
                     new Set(sizePricingRows.map((row) => normalizeCurrency(row.currency ?? template.currency))),
                   );
@@ -1675,19 +1689,27 @@ export function ProductLibrarySelector({
                     .flatMap((group) => group.items.map((row) => {
                       const id = row.id ?? row.variant_name ?? row.display_name ?? "";
                       const qty = Math.max(0, Math.trunc(numberValue(templateModularQuantities[id])));
-                      const price = numberValue(row.prices?.[selectedFabricCategory]);
+                      // Direct-priced modules carry one authoritative scalar price; matrix modules stay category-priced.
+                      const price = isDirectModularPricingGroup(group)
+                        ? numberValue(row.price)
+                        : numberValue(row.prices?.[selectedFabricCategory]);
 
                       return {
                         groupId: group.id,
                         groupName: group.group_name,
                         id,
                         qty,
+                        role: modularRowRole(row),
                         row,
                         total: qty * price,
                         unitPrice: price,
                       };
                     }))
                     .filter((line) => line.qty > 0);
+                  const modularCompositionIssue = validateModularCompositionGroups(
+                    modularGroups,
+                    (groupId, rowId) => numberValue(templateModularQuantities[rowId] ?? 0) * (modularGroups.some((group) => group.id === groupId && group.items.some((row) => (row.id ?? "") === rowId)) ? 1 : 0),
+                  );
                   const hasUnavailableSelectedPrice = (usesModularPricing && selectedModularItems.some((line) => line.row.unavailable_categories?.includes(selectedFabricCategory))) || Boolean(usesCategoryPricing && selectedCategoryRow?.unavailable_categories?.includes(selectedFabricCategory));
                   const groupedOptions = new Map<string, ProductLibraryComponent[]>();
                   const templateSelections = selectedOptions[template.id] ?? {};
@@ -1707,6 +1729,9 @@ export function ProductLibrarySelector({
                     sizePricingRows.find((row) => row.id === selectedDeskingSizes[template.id]) ??
                     sizePricingRows[0] ??
                     null;
+                  const selectedWorkstationGroup = selectedSizeRow
+                    ? activeWorkstationGroups.find((group) => group.items.some((row) => row.id === selectedSizeRow.id)) ?? null
+                    : null;
                   const configuredDimension = usesModularPricing
                     ? configuredDimensions[template.id] ?? modularDefaults.defaultDimension ?? ""
                     : configuredDimensions[template.id] ?? selectedSizeRow?.default_dimension ?? selectedSizeRow?.label ?? "";
@@ -1728,8 +1753,10 @@ export function ProductLibrarySelector({
                     : "";
                   const hasMixedWorkstationCurrencies = usesWorkstationFlow && workstationCurrencies.length > 1;
                   const missingRequiredWorkstationSelection = usesWorkstationFlow && !selectedSizeRow;
-                  const missingRequiredModularSelection = usesModularPricing && selectedModularItems.length === 0;
-                  const selectedAccessoryModelTargets = usesModularPricing
+                  const missingRequiredModularSelection = usesModularPricing && (selectedModularItems.length === 0 || Boolean(modularCompositionIssue));
+                  const selectedAccessoryModelTargets = usesWorkstationFlow && selectedWorkstationGroup?.id && selectedSizeRow?.id
+                    ? [{ kind: "workstation" as const, group_id: selectedWorkstationGroup.id, row_id: selectedSizeRow.id }]
+                    : usesModularPricing
                     ? selectedModularItems.map((item) => ({ kind: "modular" as const, group_id: item.groupId, row_id: item.id }))
                     : usesVariantPricing && selectedVariantGroup?.id && selectedVariantRow?.id
                       ? [{ kind: "base_model" as const, group_id: selectedVariantGroup.id, row_id: selectedVariantRow.id }]
@@ -1743,6 +1770,10 @@ export function ProductLibrarySelector({
                     baseModelRowId: usesVariantPricing ? selectedVariantRow?.id : null,
                     selectedModelTarget: selectedAccessoryModelTarget,
                     selectedModelTargets: selectedAccessoryModelTargets,
+                    selectedModelTargetQuantities: Object.fromEntries(selectedModularItems.map((item) => [
+                      accessoryApplicabilityTargetKey({ kind: "modular", group_id: item.groupId, row_id: item.id }),
+                      item.qty,
+                    ])),
                     selectedQuantities: templatePricingAccessoryQuantities,
                   });
                   const missingConditionalModelSelection = accessoryConfiguration.hasConditionalConfiguration && selectedAccessoryModelTargets.length === 0;
@@ -2345,7 +2376,7 @@ export function ProductLibrarySelector({
                       supplier: supplierNameSnapshot,
                       supplier_price_list_code: selectedSupplierPriceListCode,
                       specification: savedFinalSpecification,
-                      importantRequirements: Array.from(new Set([...(selectedVariantRow?.importantRequirements ?? []), ...(selectedCategoryRow?.importantRequirements ?? []), ...selectedModularItems.flatMap((line) => line.row.importantRequirements ?? [])])),
+                      importantRequirements: Array.from(new Set([...(selectedSizeRow?.importantRequirements ?? []), ...(selectedVariantRow?.importantRequirements ?? []), ...(selectedCategoryRow?.importantRequirements ?? []), ...selectedModularItems.flatMap((line) => line.row.importantRequirements ?? [])])),
                       description: template.description ?? null,
                       default_specification:
                         (usesWorkstationFlow || usesModularPricing ? configuredSpecification : null) ??
@@ -2387,12 +2418,15 @@ export function ProductLibrarySelector({
                       ...(derivedDesking
                         ? {
                             desking: {
+                              workstation_row_id: selectedSizeRow?.id ?? null,
+                              workstation_group_id: selectedWorkstationGroup?.id ?? null,
                               size_label: derivedDesking.sizeLabel,
                               cluster_label: derivedDesking.clusterLabel,
                               dimension: derivedDesking.dimension,
                               configured_dimension: configuredDimension || null,
                               default_dimension: selectedSizeRow?.default_dimension ?? null,
                               default_specification: selectedSizeRow?.specification ?? null,
+                              importantRequirements: selectedSizeRow?.importantRequirements ?? [],
                               layout_type: selectedWorkstationLayout || null,
                               total_modules: derivedDesking.totalModules,
                               total_seats: derivedDesking.totalSeats,
@@ -2845,12 +2879,22 @@ export function ProductLibrarySelector({
                               </span>
                               <select
                                 value={selectedSizeRow?.id ?? ""}
-                                onChange={(event) =>
+                                onChange={(event) => {
+                                  const nextRowId = event.target.value;
+                                  const nextGroup = activeWorkstationGroups.find((group) => group.items.some((row) => row.id === nextRowId));
                                   setSelectedDeskingSizes((current) => ({
                                     ...current,
-                                    [template.id]: event.target.value,
-                                  }))
-                                }
+                                    [template.id]: nextRowId,
+                                  }));
+                                  setPricingAccessoryQuantities((current) => ({
+                                    ...current,
+                                    [template.id]: evaluateProductAccessorySelection({
+                                      accessoryGroups: allAccessoryGroups,
+                                      selectedModelTarget: nextGroup?.id && nextRowId ? { kind: "workstation", group_id: nextGroup.id, row_id: nextRowId } : null,
+                                      selectedQuantities: current[template.id] ?? {},
+                                    }).activeQuantities,
+                                  }));
+                                }}
                                 className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
                               >
                                 {sizePricingRows.map((row, index) => (
@@ -2876,6 +2920,7 @@ export function ProductLibrarySelector({
                                   <p>Additional supplier code: {selectedSizeRow.additional_supplier_price_list_code}</p>
                                 ) : null}
                                 {selectedSizeRow.specification ? <p>{selectedSizeRow.specification}</p> : null}
+                                <ImportantRequirementsBlock requirements={selectedSizeRow.importantRequirements} />
                                 {selectedSizeRow.default_dimension ? <p>Default dimension: {selectedSizeRow.default_dimension}</p> : null}
                               </div>
                             ) : null}
@@ -3090,17 +3135,27 @@ export function ProductLibrarySelector({
                                   <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
                                     {group.group_name || "Modular Items"}
                                   </p>
+                                  {isDirectModularPricingGroup(group) ? (
+                                    <p className="mt-1 text-[11px] text-zinc-600">
+                                      {selectedModularItems.filter((line) => line.groupId === group.id).length
+                                        ? selectedModularItems.filter((line) => line.groupId === group.id).map((line) => `${line.role ? `${line.role[0].toUpperCase()}${line.role.slice(1)} ` : ""}${pricingDisplayName(line.row) || line.row.variant_name || line.id} × ${line.qty}`).join(" + ")
+                                        : "Select a starter module, then add intermediate modules."}
+                                    </p>
+                                  ) : null}
                                   <div className="mt-2 space-y-2">
                                     {group.items.map((row) => {
                                       const modularRowId = row.id ?? row.variant_name ?? row.display_name ?? "";
                                       const modularQty = templateModularQuantities[modularRowId] ?? 0;
-                                      const modularUnavailable = row.unavailable_categories?.includes(selectedFabricCategory);
-                                      const modularUnitPrice = numberValue(row.prices?.[selectedFabricCategory]);
+                                      const modularDirect = isDirectModularPricingGroup(group);
+                                      const modularUnavailable = !modularDirect && row.unavailable_categories?.includes(selectedFabricCategory);
+                                      const modularUnitPrice = modularDirect ? numberValue(row.price) : numberValue(row.prices?.[selectedFabricCategory]);
+                                      const modularRole = modularRowRole(row);
                                       return (
                                         <div key={modularRowId} className="grid gap-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 md:grid-cols-[minmax(0,1fr)_100px]">
                                           <div className="min-w-0">
                                             <p className="font-semibold text-zinc-950">
                                               {pricingDisplayName(row) || row.variant_name || "Modular item"}
+                                              {modularRole ? <span className="ml-2 rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900">{modularRole}</span> : null}
                                             </p>
                                             <div className="mt-1 space-y-1 text-xs leading-5 text-zinc-600">
                                               {row.variant_name && pricingDisplayName(row) !== row.variant_name ? (
@@ -4263,7 +4318,7 @@ export function ProductLibrarySelector({
                         ) : null}
                         {missingRequiredModularSelection ? (
                           <p className="text-xs leading-5 text-amber-700">
-                            Select at least one modular item to add this product.
+                            {modularCompositionIssue?.message ?? "Select at least one modular item to add this product."}
                           </p>
                         ) : null}
                         {hasUnavailableSelectedPrice ? <p className="text-xs leading-5 text-amber-700">The selected category is unavailable for one or more selected modular items.</p> : null}
@@ -4558,11 +4613,10 @@ export function ProductLibrarySelector({
                             />
                           ) : null}
                           {derivedDesking && selectedSizeRow ? (
-                            <input
-                              type="hidden"
-                              name="desking_size_id"
-                              value={selectedSizeRow.id ?? ""}
-                            />
+                            <>
+                              <input type="hidden" name="desking_size_id" value={selectedSizeRow.id ?? ""} />
+                              <input type="hidden" name="workstation_pricing_group_id" value={selectedWorkstationGroup?.id ?? ""} />
+                            </>
                           ) : null}
                           {usesWorkstationFlow && selectedSizeRow ? (
                             <>

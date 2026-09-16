@@ -19,9 +19,10 @@ function mapReviewedRule(rule: SmartReviewRule): AccessoryModelApplicabilityRule
   return {
     ...(rule.target && target ? { target } : { base_model_group_id: rule.baseModelGroupId, base_model_row_id: rule.baseModelRowId }),
     required: rule.required,
-    visible: true,
+    visible: rule.visible !== false,
     ...(rule.allowedItemIds ? { allowed_item_ids: rule.allowedItemIds } : {}),
     ...(rule.fixedQuantity !== undefined ? { fixed_quantity: rule.fixedQuantity } : {}),
+    ...(rule.scaleWithTargetQuantity === true ? { scale_with_target_quantity: true } : {}),
   };
 }
 
@@ -62,6 +63,20 @@ function selectionIsSafe(group: ProductTemplateDraftOptionGroup) {
     (mode === "required_choose_at_least_one" && minSelections === 1 && maxSelections === null);
 }
 
+function reviewedConfiguration(route: SmartSetupReviewRoutingPlan["routes"][number] | undefined) {
+  const accessory = route?.accessory;
+  if (!accessory) return undefined;
+  if (accessory.role === "accessory" && accessory.selection === "optional_multiple" && !accessory.rules.length) {
+    return undefined;
+  }
+  const reviewedContract = smartReviewSelectionContract(accessory.selection);
+  return {
+    role: accessory.role,
+    selection: reviewedContract.selection,
+    applicability: accessory.rules.map(mapReviewedRule),
+  };
+}
+
 export function mapDraftOptionGroupsToAccessories(draft: ProductTemplateDraft, reviewedPlan?: SmartSetupReviewRoutingPlan) {
   const warnings: string[] = [];
   const errors: string[] = [];
@@ -73,11 +88,7 @@ export function mapDraftOptionGroupsToAccessories(draft: ProductTemplateDraft, r
       return [];
     }
     const reviewedContract = reviewedRoute?.accessory ? smartReviewSelectionContract(reviewedRoute.accessory.selection) : null;
-    const configuration = reviewedRoute?.accessory ? {
-      role: reviewedRoute.accessory.role,
-      selection: reviewedContract?.selection ?? "unrestricted",
-      applicability: reviewedRoute.accessory.rules.map(mapReviewedRule),
-    } : selectionConfiguration(group);
+    const configuration = reviewedConfiguration(reviewedRoute) ?? group.conditionalConfiguration ?? selectionConfiguration(group);
     return [{
       id: group.id,
       group_name: reviewedRoute?.groupName ?? group.label ?? group.id,

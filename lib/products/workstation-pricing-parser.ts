@@ -1,5 +1,6 @@
 import { normalizeCurrency, defaultCurrency } from "../currencies";
 import { parseNullablePricingNumber } from "./nullable-pricing";
+import { reviewImportantRequirements } from "./smart-product-review";
 import {
   normalizeWorkstationPricing,
   serializeWorkstationPricingGroups,
@@ -33,6 +34,7 @@ function normalizedServerRow(row: WorkstationPricingRow, index: number) {
     additional_supplier_price_list_code: typeof row.additional_supplier_price_list_code === "string" ? row.additional_supplier_price_list_code.trim() : "",
     currency: normalizeCurrency(typeof row.currency === "string" ? row.currency : defaultCurrency),
     specification: typeof row.specification === "string" ? row.specification.trim() : "",
+    importantRequirements: reviewImportantRequirements(Array.isArray(row.importantRequirements) ? row.importantRequirements.join("\n") : ""),
     default_dimension: typeof row.default_dimension === "string" ? row.default_dimension.trim() : "",
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
     is_active: row.is_active !== false,
@@ -64,7 +66,7 @@ export function parseWorkstationPricingJson(rawValue: string | null | undefined)
 
   const groups = normalized.groups.map((group) => ({
     ...group,
-    items: group.items.map(normalizedServerRow).filter(meaningfulRow),
+    items: group.items.map((row, index) => normalizedServerRow({ ...row, id: typeof row.id === "string" && row.id ? row.id : `${group.id}-size-${index}` }, index)).filter(meaningfulRow),
   }));
 
   if (normalized.sourceKind === "legacy") return groups[0]?.items ?? [];

@@ -33,7 +33,7 @@ import {
   latestBrandPriceListUpdate,
   productTemplatePriceCheckState,
 } from "@/lib/product-price-check";
-import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
+import { findWorkstationPricingRow } from "@/lib/products/workstation-pricing-groups";
 import { flattenBaseModelPricingRows } from "@/lib/products/base-model-pricing-groups";
 import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
 import {
@@ -738,17 +738,17 @@ function currentSourcePriceForItem({
   }
 
   const deskingData = recordValue(sourceData?.desking);
+  const workstationRowId = stringValue(deskingData?.workstation_row_id);
   const deskingLabel = stringValue(deskingData?.size_label);
-  if (deskingLabel) {
+  if (workstationRowId || deskingLabel) {
     if (numericValue(deskingData?.accessory_price) > 0) return null;
-
-    const matches = flattenWorkstationPricingRows(template.desking_size_pricing ?? [])
-      .map(recordValue)
-      .filter(isRecord)
-      .filter((row) => row?.label === deskingLabel);
-    if (matches.length !== 1) return null;
-
-    const currentSize = matches[0];
+    const match = findWorkstationPricingRow(template.desking_size_pricing ?? [], {
+      groupId: stringValue(deskingData?.workstation_group_id),
+      rowId: workstationRowId,
+      legacyLabel: workstationRowId ? null : deskingLabel,
+    });
+    if (!match) return null;
+    const currentSize = match.row;
     sourceCurrency = normalizeCurrency(stringValue(currentSize.currency) ?? template.currency);
     sourcePrice = quotationMoneyValue(
       numericValue(currentSize.default_price) +

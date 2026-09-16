@@ -4,7 +4,7 @@ export const ACCESSORY_SELECTION_MODES = ["unrestricted", "exactly_one", "at_lea
 export type AccessoryConfigurationRole = typeof ACCESSORY_CONFIGURATION_ROLES[number];
 export type AccessorySelectionMode = typeof ACCESSORY_SELECTION_MODES[number];
 
-export const ACCESSORY_APPLICABILITY_TARGET_KINDS = ["base_model", "price_matrix", "modular"] as const;
+export const ACCESSORY_APPLICABILITY_TARGET_KINDS = ["base_model", "price_matrix", "modular", "workstation"] as const;
 export type AccessoryApplicabilityTargetKind = typeof ACCESSORY_APPLICABILITY_TARGET_KINDS[number];
 export type AccessoryApplicabilityTarget = {
   kind: AccessoryApplicabilityTargetKind;
@@ -20,6 +20,13 @@ export type AccessoryModelApplicabilityRule = {
   visible: boolean;
   allowed_item_ids?: string[];
   fixed_quantity?: number;
+  /**
+   * Opt-in: multiply fixed_quantity by the selected quantity of this rule's
+   * target row and sum across matching rules (a composed bench needing 2 units
+   * per module). Absent/false keeps the historic static fixed_quantity meaning
+   * for every Base/Model, Price Matrix, Workstation, and Modular rule.
+   */
+  scale_with_target_quantity?: boolean;
 };
 
 export type AccessoryConditionalConfiguration = {
@@ -215,7 +222,7 @@ export function parseAccessoryConfigurationGroups(value: unknown): ParsedAccesso
           const kind = rawTarget.kind;
           const groupId = typeof rawTarget.group_id === "string" ? rawTarget.group_id.trim() : "";
           const rowId = typeof rawTarget.row_id === "string" ? rawTarget.row_id.trim() : "";
-          if (typeof kind !== "string" || !ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(kind as AccessoryApplicabilityTargetKind)) addIssue(issues, "invalid_applicability_target_kind", `${rulePath}.target.kind`, "Applicability target kind must be Base/Model, Price Matrix, or Modular.");
+          if (typeof kind !== "string" || !ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(kind as AccessoryApplicabilityTargetKind)) addIssue(issues, "invalid_applicability_target_kind", `${rulePath}.target.kind`, "Applicability target kind must be Base/Model, Price Matrix, Modular, or Workstation.");
           if (!groupId) addIssue(issues, "missing_applicability_target_group_id", `${rulePath}.target.group_id`, "Applicability target group ID is required.");
           if (!rowId) addIssue(issues, "missing_applicability_target_row_id", `${rulePath}.target.row_id`, "Applicability target row ID is required.");
           if (typeof kind === "string" && ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(kind as AccessoryApplicabilityTargetKind) && groupId && rowId) target = { kind: kind as AccessoryApplicabilityTargetKind, group_id: groupId, row_id: rowId };
@@ -251,7 +258,20 @@ export function parseAccessoryConfigurationGroups(value: unknown): ParsedAccesso
       if (rawRule.fixed_quantity !== undefined && (!Number.isInteger(rawRule.fixed_quantity) || Number(rawRule.fixed_quantity) <= 0)) {
         addIssue(issues, "invalid_fixed_quantity", `${rulePath}.fixed_quantity`, "Fixed quantity must be a positive integer.");
       }
-      if (selection === "exactly_one" && rawRule.fixed_quantity !== undefined && rawRule.fixed_quantity !== 1) {
+      const scaled = rawRule.scale_with_target_quantity === true;
+      if (rawRule.scale_with_target_quantity !== undefined && typeof rawRule.scale_with_target_quantity !== "boolean") {
+        addIssue(issues, "invalid_quantity_scaling", `${rulePath}.scale_with_target_quantity`, "Quantity scaling must be boolean.");
+      }
+      if (scaled && rawRule.fixed_quantity === undefined) {
+        addIssue(issues, "invalid_quantity_scaling", `${rulePath}.scale_with_target_quantity`, "Quantity scaling requires a fixed quantity.");
+      }
+      if (scaled && target && target.kind !== "modular") {
+        addIssue(issues, "invalid_quantity_scaling", `${rulePath}.scale_with_target_quantity`, "Quantity scaling is only supported for modular targets.");
+      }
+      if (scaled && selection === "exactly_one") {
+        addIssue(issues, "invalid_cardinality", `${rulePath}.scale_with_target_quantity`, "Quantity scaling cannot be combined with exactly-one selection.");
+      }
+      if (selection === "exactly_one" && !scaled && rawRule.fixed_quantity !== undefined && rawRule.fixed_quantity !== 1) {
         addIssue(issues, "invalid_cardinality", `${rulePath}.fixed_quantity`, "Exactly-one selection requires a fixed quantity of one.");
       }
     });
@@ -291,6 +311,7 @@ export function evaluateAccessoryConfigurationForModel({
   baseModelRowId,
   selectedModelTarget,
   selectedModelTargets,
+  selectedModelTargetQuantities,
   selectedQuantitiesByGroupId = {},
 }: {
   accessoryGroups: unknown;
@@ -298,6 +319,12 @@ export function evaluateAccessoryConfigurationForModel({
   baseModelRowId: string | null | undefined;
   selectedModelTarget?: AccessoryApplicabilityTarget | null;
   selectedModelTargets?: AccessoryApplicabilityTarget[];
+  /**
+   * How many units of each selected target row the customer chose, keyed by
+   * accessoryApplicabilityTargetKey. Only consumed by rules that opt into
+   * scale_with_target_quantity; target identity itself stays deduplicated.
+   */
+  selectedModelTargetQuantities?: Record<string, number>;
   selectedQuantitiesByGroupId?: Record<string, Record<string, number | null | undefined>>;
 }): AccessoryConfigurationEvaluation {
   const parsed = parseAccessoryConfigurationGroups(accessoryGroups);
@@ -348,8 +375,19 @@ export function evaluateAccessoryConfigurationForModel({
     const selection = configuration?.selection ?? (group.group_is_required ? "at_least_one" : "unrestricted");
     const minSelections = required ? 1 : 0;
     const maxSelections = selection === "exactly_one" ? 1 : null;
-    const fixedQuantities = [...new Set(visibleRules.flatMap((rule) => rule.fixed_quantity === undefined ? [] : [rule.fixed_quantity]))];
-    const fixedQuantity = fixedQuantities.length === 1 ? fixedQuantities[0] : null;
+    const scaledRules = visibleRules.filter((rule) => rule.scale_with_target_quantity === true && rule.fixed_quantity !== undefined);
+    const staticFixedQuantities = [...new Set(visibleRules.flatMap((rule) => rule.scale_with_target_quantity === true || rule.fixed_quantity === undefined ? [] : [rule.fixed_quantity]))];
+    // Scaled rules are additive across every selected modular row: Σ(fixed_quantity × selected row quantity).
+    const scaledTotal = scaledRules.reduce((total, rule) => {
+      const target = resolveAccessoryApplicabilityTarget(rule);
+      const selectedUnits = target ? Number(selectedModelTargetQuantities?.[accessoryApplicabilityTargetKey(target)] ?? 1) : 1;
+      const units = Number.isFinite(selectedUnits) && selectedUnits > 0 ? Math.trunc(selectedUnits) : 1;
+      return total + Number(rule.fixed_quantity) * units;
+    }, 0);
+    const fixedQuantities = scaledRules.length ? [...staticFixedQuantities, scaledTotal] : staticFixedQuantities;
+    const fixedQuantity = scaledRules.length
+      ? (staticFixedQuantities.length ? null : scaledTotal)
+      : fixedQuantities.length === 1 ? fixedQuantities[0] : null;
     const requiredAllowedSets = requiredRules.map((rule) => new Set(rule.allowed_item_ids === undefined ? allItemIds : allItemIds.filter((id) => rule.allowed_item_ids?.includes(id))));
     const requiredIntersection = requiredAllowedSets.length ? [...requiredAllowedSets[0]].filter((id) => requiredAllowedSets.every((set) => set.has(id))) : [];
     const incompatibleRequiredRules = selection === "exactly_one" && requiredAllowedSets.length > 1 && requiredIntersection.length === 0;

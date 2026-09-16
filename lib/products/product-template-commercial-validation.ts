@@ -1,4 +1,4 @@
-import type { ProductTemplateDraft, ProductTemplateDraftPrice, ProductTemplateDraftPricedRow } from "./product-template-draft";
+import { draftModularRows, type ProductTemplateDraft, type ProductTemplateDraftPrice, type ProductTemplateDraftPricedRow } from "./product-template-draft";
 
 export type CommercialValidationSeverity = "warning" | "info";
 export type CommercialValidationRecommendedAction = "verify_source" | "review_rules" | "review_configuration" | "review_value";
@@ -92,7 +92,7 @@ export function validateCommercialDraft(draft: ProductTemplateDraft, context?: C
     matrix.rows.forEach((row) => matrix.columns.forEach((column) => priceFindings(findings, row.prices[column.id] ?? null, { kind, groupId, rowId: row.id, columnId: column.id, field: `prices.${column.id}` }, `Matrix cell “${rowName(row)}” / “${column.label ?? column.id}”`)));
   };
   draft.pricing.priceMatrices.forEach((matrix) => inspectMatrix(matrix, "price_matrix_cell", matrix.id));
-  draft.pricing.modularGroups.forEach((group) => inspectMatrix(group.matrix, "modular_item", group.id));
+  draft.pricing.modularGroups.forEach((group) => { if (group.matrix) inspectMatrix(group.matrix, "modular_item", group.id); });
 
   if (context?.existingDraft) {
     const existingMatrices = context.existingDraft.pricing.priceMatrices;
@@ -121,7 +121,7 @@ export function validateCommercialDraft(draft: ProductTemplateDraft, context?: C
   });
   const unavailableMatrixCells = new Set([
     ...draft.pricing.priceMatrices.flatMap((matrix) => matrix.rows.flatMap((row) => (row.unavailableCategoryIds ?? []).map((columnId) => `price_matrix_cell:${matrix.id}:${row.id}:${columnId}`))),
-    ...draft.pricing.modularGroups.flatMap((group) => group.matrix.rows.flatMap((row) => (row.unavailableCategoryIds ?? []).map((columnId) => `modular_item:${group.id}:${row.id}:${columnId}`))),
+    ...draft.pricing.modularGroups.flatMap((group) => draftModularRows(group).flatMap((row) => ("unavailableCategoryIds" in row ? row.unavailableCategoryIds ?? [] : []).map((columnId) => `modular_item:${group.id}:${row.id}:${columnId}`))),
   ]);
   return findings.filter((item) => item.code !== "MISSING_PRICE" || !unavailableMatrixCells.has(`${item.location.kind}:${item.location.groupId}:${item.location.rowId}:${item.location.columnId}`));
 }

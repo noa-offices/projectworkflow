@@ -5,6 +5,7 @@ import { buildProductTemplateSetupPlanningPrompt, getProductTemplateAiExtraction
 
 const choices: Array<{ focus: ExtractionPromptFocus; label: string; description: string }> = [
   { focus: "base_model", label: "Desks / Executive Desks", description: "Extract desk models, sizes, returns, service units, top-access and related desk configuration." },
+  { focus: "workstation", label: "Workstations / Bench Systems", description: "Plan and extract workstation desks, benches, clusters, screens, required structural companions, cable management, and related storage." },
   { focus: "chair_seating", label: "Chair & Seating", description: "Chair-specific extraction for models, upholstery matrices, mechanisms, bases, arms, castors/glides, and seating options." },
   { focus: "sofa_lounge", label: "Sofas / Lounge / Armchairs", description: "Extract sofas, lounge armchairs, modular seating, upholstery pricing and related lounge configuration." },
   { focus: "meeting_conference", label: "Meeting / Conference Tables", description: "Extract complete meeting tables, terminal/intermediate systems, top-access and related cable management." },
@@ -15,6 +16,7 @@ const planningChoices: Array<{ focus: ProductTemplateSetupPlanningFocus; label: 
   { focus: "general", label: "General / Auto Detect", description: "Analyze any manufacturer price list and recommend Product Template splits, pages, batches and setup order." },
   { focus: "chair_seating", label: "Chair & Seating", description: "Chair-specific planning for seating models, upholstery pricing, mechanisms, bases, arms, castors/glides, and seating configuration." },
   { focus: "desk_executive", label: "Desks / Executive Desks", description: "Plan desk models, sizes, returns, service units, top-access and related desk configuration." },
+  { focus: "workstation", label: "Workstations / Bench Systems", description: "Plan workstation and bench families, direct-priced systems, starter/add-on architecture, required companions, screens, storage integration, and extraction batches." },
   { focus: "sofa_lounge", label: "Sofas / Lounge / Armchairs", description: "Plan sofas, lounge armchairs, modular seating, upholstery pricing and related lounge configuration." },
   { focus: "meeting_conference", label: "Meeting / Conference Tables", description: "Plan complete meeting tables, terminal/intermediate systems, top-access and related cable management." },
   { focus: "storage_cabinets", label: "Storage / Cabinets / Credenzas", description: "Plan cabinets, credenzas, pedestals, service units, storage systems, lockers, doors, tops, internals and related configuration." },

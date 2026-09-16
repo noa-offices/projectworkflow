@@ -5,6 +5,7 @@ import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/c
 import { resolveDefaultPricingCurrency } from "@/components/products/pricing-default-currency";
 import { parseNullablePricingNumber } from "@/lib/products/nullable-pricing";
 import { hasMeaningfulWorkstationPricing } from "@/lib/products/workstation-pricing-state";
+import { reviewImportantRequirements } from "@/lib/products/smart-product-review";
 import { PricingGroupReferenceImages } from "@/components/products/finish-category-group-reference-images";
 import { PricingRowReferenceImage } from "@/components/products/pricing-row-reference-image";
 import {
@@ -50,6 +51,7 @@ export type DeskingSizePricingRow = {
   additional_supplier_price_list_code?: string;
   currency?: string;
   specification?: string;
+  importantRequirements?: string[];
   default_dimension?: string;
   sort_order?: number;
   is_active?: boolean;
@@ -125,6 +127,7 @@ function normalizedRow(row: DeskingSizePricingRow, index: number): DeskingSizePr
     additional_supplier_price_list_code: row.additional_supplier_price_list_code?.trim() || "",
     currency: normalizeCurrency(row.currency ?? defaultCurrency),
     specification: row.specification?.trim() || "",
+    importantRequirements: reviewImportantRequirements(Array.isArray(row.importantRequirements) ? row.importantRequirements.join("\n") : ""),
     default_dimension: row.default_dimension?.trim() || fallbackDimension,
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
     is_active: row.is_active !== false,
@@ -134,6 +137,7 @@ function normalizedRow(row: DeskingSizePricingRow, index: number): DeskingSizePr
 export function DeskingSizePricingTable({
   brandDefaultCurrency,
   onHasDataChange,
+  onGroupsChange,
   replacementPricing,
   replacementRows,
   replacementSubgroups,
@@ -145,6 +149,7 @@ export function DeskingSizePricingTable({
 }: {
   brandDefaultCurrency?: string | null;
   onHasDataChange?: (hasWorkstationData: boolean) => void;
+  onGroupsChange?: (groups: WorkstationPricingGroup<DeskingSizePricingRow>[]) => void;
   replacementPricing?: unknown;
   replacementRows?: DeskingSizePricingRow[] | null;
   replacementSubgroups?: WorkstationPricingGroup["subgroups"];
@@ -161,7 +166,7 @@ export function DeskingSizePricingTable({
       group_name: group.group_name,
       is_active: group.is_active,
       sort_order: group.sort_order,
-      items: group.items.map(normalizedRow),
+      items: group.items.map((row, index) => normalizedRow({ ...row, id: row.id || `${group.id}-size-${index}` }, index)),
       ...(group.subgroups ? { subgroups: group.subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] })) } : {}),
     })) as WorkstationPricingGroup<DeskingSizePricingRow>[], [rows]);
   const importedIdsRef = useRef<Set<string>>(new Set());
@@ -204,7 +209,7 @@ export function DeskingSizePricingTable({
     appliedReplacementVersion.current = replacementVersion;
     const nextRows = (replacementRows ?? []).map(normalizedRow);
     setGroups((current) => Array.isArray(replacementPricing)
-      ? workstationPricingGroups<DeskingSizePricingRow>(replacementPricing).map((group) => ({ ...group, items: group.items.map(normalizedRow), ...(group.subgroups ? { subgroups: group.subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] })) } : {}) }))
+      ? workstationPricingGroups<DeskingSizePricingRow>(replacementPricing).map((group) => ({ ...group, items: group.items.map((row, index) => normalizedRow({ ...row, id: row.id || `${group.id}-size-${index}` }, index)), ...(group.subgroups ? { subgroups: group.subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] })) } : {}) }))
       : replaceWholeTemplateWorkstationRows(current, nextRows, LEGACY_WORKSTATION_GROUP_ID).map((group) => ({ ...group, ...(replacementSubgroups ? { subgroups: replacementSubgroups } : {}) })));
     setDraftRows({});
     setEditingRows({});
@@ -213,6 +218,10 @@ export function DeskingSizePricingTable({
   useEffect(() => {
     onHasDataChange?.(hasMeaningfulWorkstationPricing(flattenWorkstationPricingRows(effectiveGroups)));
   }, [effectiveGroups, onHasDataChange]);
+
+  useEffect(() => {
+    onGroupsChange?.(effectiveGroups);
+  }, [effectiveGroups, onGroupsChange]);
 
   useEffect(() => {
     const handleApply = (event: Event) => {
@@ -507,6 +516,7 @@ export function DeskingSizePricingTable({
               <th className="px-2 py-2">Additional Supplier / Price List Code</th>
               <th className="px-2 py-2">Currency</th>
               <th className="px-2 py-2">Default Workstation Specification</th>
+              <th className="px-2 py-2">Important Requirements</th>
               <th className="px-2 py-2">Default Dimension</th>
               <th className="px-2 py-2">Active</th>
               <th className="px-2 py-2">Actions</th>
@@ -628,6 +638,19 @@ export function DeskingSizePricingTable({
                       <span className="whitespace-pre-wrap">{row.specification || "-"}</span>
                     )}
                   </td>
+                  <td className="px-2 py-2 align-top">
+                    {isEditing ? (
+                      <textarea
+                        value={(draft.importantRequirements ?? []).join("\n")}
+                        rows={3}
+                        placeholder="One requirement per line"
+                        onChange={(event) => updateDraft(key, { importantRequirements: event.target.value.split(/\r?\n/) })}
+                        className="min-h-[64px] min-w-[240px] border border-zinc-200 px-2 py-1 outline-none focus:border-emerald-800"
+                      />
+                    ) : (
+                      <span className="whitespace-pre-wrap">{row.importantRequirements?.join("\n") || "-"}</span>
+                    )}
+                  </td>
                   <td className="px-2 py-2">
                     {isEditing ? (
                       <input
@@ -694,7 +717,7 @@ export function DeskingSizePricingTable({
             })}
             {!group.items.length ? (
               <tr>
-                <td colSpan={11} className="px-3 py-5 text-center text-zinc-500">
+                <td colSpan={12} className="px-3 py-5 text-center text-zinc-500">
                   No workstation sizes yet.
                 </td>
               </tr>

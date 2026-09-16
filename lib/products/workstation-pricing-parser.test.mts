@@ -62,3 +62,15 @@ test("targeted flat-reader behavior sees grouped rows and counts items, not grou
   assert.equal(selected?.label, "B");
   assert.equal(Number(selected?.default_price) + Number(selected?.additional_price) * 2, 150);
 });
+
+test("server parser preserves normalized workstation requirements", () => {
+  const parsed = parseWorkstationPricingJson(JSON.stringify([{ ...row, importantRequirements: [" Required legs ", "Required legs", "Cable tray"] }]));
+  assert.deepEqual((parsed[0] as { importantRequirements: string[] }).importantRequirements, ["Required legs", "Cable tray"]);
+});
+
+test("rows missing legacy IDs receive deterministic group-scoped IDs that persist on save", () => {
+  const input = [{ id: "bench", pricing_type: WORKSTATION_GROUP_PRICING_TYPE, group_name: "Bench", is_active: true, sort_order: 0, items: [{ label: "Old row", default_price: 10 }] }];
+  const first = parseWorkstationPricingJson(JSON.stringify(input));
+  assert.equal((first[0] as { items: Array<{ id: string }> }).items[0].id, "bench-size-0");
+  assert.deepEqual(parseWorkstationPricingJson(JSON.stringify(first)), first);
+});

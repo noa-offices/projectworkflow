@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { buildProductTemplateSetupPlanningPrompt, extractionPromptFocuses, getProductTemplateAiExtractionPrompt, productTemplateSetupPlanningFocuses } from "./product-template-ai-extraction-prompt.js";
+import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups.js";
+import { LEGACY_WORKSTATION_GROUP_ID, workstationPricingGroups } from "./workstation-pricing-groups.js";
+import { normalizeProductTemplateDraft } from "./product-template-draft.js";
 
 test("global planning architecture contract precedes and governs every furniture focus", () => {
   const required = [
@@ -58,7 +61,7 @@ test("global extraction architecture contract enforces safe routing and suppleme
     "Extract one clean selected family at a time",
     "When each SKU has only one direct price, use pricing.baseModelRows",
     "one column labelled \"Standard Price\" is an invalid one-column fake Matrix and is explicitly forbidden",
-    "True Cat A-D prices may use pricing.priceMatrices",
+    "When each PRIMARY product SKU has category-dependent prices, use pricing.priceMatrices",
     "Ordinary size, finish, LH/RH, open/closed, accessory, and catalogue-layout variation must not trigger pricing.modularGroups",
     "Preserve authoritative terminal/intermediate or other genuine module rows",
     "Every directly priced source SKU remains a separate authoritative row",
@@ -253,11 +256,11 @@ test("AI extraction prompt preserves the approved ProductTemplateDraft v1 extrac
     "workstationRows",
     "baseModelRows",
     "simple single product family",
-    "one clearly labelled direct Price column",
+    "do not create a fake one-column priceMatrix merely to preserve them",
     "separate Base / Model Pricing groups",
     "required companions",
     "priceMatrices",
-    "Modular Group -> Module Rows -> Matrix Columns -> Price Cells",
+    "For Matrix Modular preserve Modular Group -> Module Rows -> matrix columns -> row price maps",
     "optionGroups",
     "supplierCodes",
     "referenceCodes",
@@ -495,7 +498,7 @@ test("Sofa family-specific extraction block stays within the compressed target",
   const source = readFileSync("lib/products/product-template-ai-extraction-prompt.ts", "utf8");
   const startMarker = '  sofa_lounge: \`EXTRACTION FOCUS: Sofas / Lounge / Armchairs';
   const start = source.indexOf(startMarker);
-  const end = source.indexOf("\`,\n};", start);
+  const end = source.indexOf("\`,\r\n};", start);
   assert.ok(start >= 0 && end > start, "Expected to locate the Sofa/Lounge extraction block");
   const familyBlock = source.slice(start, end);
   assert.ok(familyBlock.length >= 8_000, `Expected compressed Sofa block to retain sufficient safeguards; got ${familyBlock.length} characters`);
@@ -573,7 +576,7 @@ test("setup planning prompt is human-readable, source-faithful, and separate fro
 });
 
 test("planning focuses preserve general and chair planning and add desk-specific planning safely", () => {
-  assert.deepEqual(productTemplateSetupPlanningFocuses, ["general", "chair_seating", "desk_executive", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  assert.deepEqual(productTemplateSetupPlanningFocuses, ["general", "chair_seating", "desk_executive", "workstation", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
   const general = buildProductTemplateSetupPlanningPrompt();
   const chair = buildProductTemplateSetupPlanningPrompt("chair_seating");
   const desk = buildProductTemplateSetupPlanningPrompt("desk_executive");
@@ -846,19 +849,23 @@ test("prompt choosers expose only refined extraction focuses and preserve planni
   const source = readFileSync("components/products/copy-ai-extraction-prompt.tsx", "utf8");
   const [extractionChoices, planningSection] = source.split("const planningChoices");
   const visibleExtractionFocuses = [...extractionChoices.matchAll(/\{ focus: "([^"]+)", label:/g)].map((match) => match[1]);
-  assert.deepEqual(visibleExtractionFocuses, ["base_model", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
-  ["Desks / Executive Desks", "Chair & Seating", "Sofas / Lounge / Armchairs", "Meeting / Conference Tables", "Storage / Cabinets / Credenzas"].forEach((label) => assert.ok(extractionChoices.includes(`label: "${label}"`)));
+  assert.deepEqual(visibleExtractionFocuses, ["base_model", "workstation", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  ["Desks / Executive Desks", "Workstations / Bench Systems", "Chair & Seating", "Sofas / Lounge / Armchairs", "Meeting / Conference Tables", "Storage / Cabinets / Credenzas"].forEach((label) => assert.ok(extractionChoices.includes(`label: "${label}"`)));
   ["Base / Model Pricing", "Category / Matrix Pricing", "Full Product / Complete Extraction", "Workstation Pricing", "Modular Pricing", "Accessories / Configuration Only", "Product Details / Specifications", "Materials / Finishes"].forEach((label) => assert.ok(!extractionChoices.includes(`label: "${label}"`)));
   assert.ok(extractionChoices.includes("Extract sofas, lounge armchairs, modular seating, upholstery pricing and related lounge configuration."));
   assert.ok(extractionChoices.includes("Extract complete meeting tables, terminal/intermediate systems, top-access and related cable management."));
+  assert.ok(extractionChoices.includes('{ focus: "workstation", label: "Workstations / Bench Systems"'));
+  assert.ok(extractionChoices.includes("Plan and extract workstation desks, benches, clusters, screens, required structural companions, cable management, and related storage."));
   assert.ok(planningSection.includes('{ focus: "desk_executive", label: "Desks / Executive Desks"'));
   assert.ok(planningSection.includes("Plan desk models, sizes, returns, service units, top-access and related desk configuration."));
+  assert.ok(planningSection.includes('{ focus: "workstation", label: "Workstations / Bench Systems"'));
+  assert.ok(planningSection.includes("Plan workstation and bench families, direct-priced systems, starter/add-on architecture, required companions, screens, storage integration, and extraction batches."));
   assert.ok(planningSection.includes('{ focus: "sofa_lounge", label: "Sofas / Lounge / Armchairs"'));
   assert.ok(planningSection.includes("Plan sofas, lounge armchairs, modular seating, upholstery pricing and related lounge configuration."));
   assert.ok(planningSection.includes('{ focus: "meeting_conference", label: "Meeting / Conference Tables"'));
   assert.ok(planningSection.includes("Plan complete meeting tables, terminal/intermediate systems, top-access and related cable management."));
-  ["general", "chair_seating", "desk_executive", "sofa_lounge", "meeting_conference", "storage_cabinets"].forEach((focus) => assert.ok(planningSection.includes(`focus: "${focus}"`)));
-  assert.deepEqual([...planningSection.matchAll(/\{ focus: "([^"]+)", label:/g)].map((match) => match[1]), ["general", "chair_seating", "desk_executive", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  ["general", "chair_seating", "desk_executive", "workstation", "sofa_lounge", "meeting_conference", "storage_cabinets"].forEach((focus) => assert.ok(planningSection.includes(`focus: "${focus}"`)));
+  assert.deepEqual([...planningSection.matchAll(/\{ focus: "([^"]+)", label:/g)].map((match) => match[1]), ["general", "chair_seating", "desk_executive", "workstation", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
 });
 
 test("Storage/Cabinets extraction is conservative, row-authoritative, and isolated", () => {
@@ -902,4 +909,522 @@ test("Storage/Cabinets planning is source-safe and keeps generic routing decisio
     "If ambiguous, report compatibility and use Manual Decision / Warning.",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Storage planning prompt to contain: ${expected}`));
   ["CHAIR & SEATING PLANNING FOCUS", "DESKS / EXECUTIVE DESKS PLANNING FOCUS", "SOFAS / LOUNGE / ARMCHAIRS PLANNING FOCUS", "MEETING / CONFERENCE TABLES PLANNING FOCUS"].forEach((unexpected) => assert.ok(!prompt.includes(unexpected)));
+});
+
+test("global workstation routing principle applies before any furniture focus and the word workstation alone does not force workstationRows", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "GLOBAL WORKSTATION ROUTING PRINCIPLE",
+      "The words \"workstation\", \"bench\", \"cluster\", and \"operative\" do not automatically mean pricing.workstationRows",
+      "never move a direct-priced workstation/bench SKU into pricing.workstationRows merely because the source uses one of those words",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain global workstation routing rule: ${expected}`));
+    const globalIndex = prompt.indexOf("GLOBAL WORKSTATION ROUTING PRINCIPLE");
+    const focusIndex = prompt.indexOf("EXTRACTION FOCUS:");
+    assert.ok(globalIndex >= 0 && globalIndex < focusIndex, `Expected global workstation routing principle before ${focus} focus`);
+  });
+});
+
+test("workstation extraction focus routes direct-priced SKUs to Base/Model and only simple complete-price families to workstationRows", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "WORKSTATION ROUTING HIERARCHY",
+    "BASE / MODEL FOR COMPLETE WORKSTATION SKUS",
+    "a complete L-shaped workstation SKU, separate DX/SX workstation SKUs, a complete desk-plus-service-unit SKU, or a cabinet-supported complete workstation sold as one authoritative SKU",
+    "never move a direct-priced SKU into workstationRows merely because the manufacturer calls it a workstation",
+    "WORKSTATION ROWS SUITABILITY",
+    "no free-form starter/add-on structural composition",
+    "no component-built price calculation",
+    "no independent finish-price matrix",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation extraction focus preserves handedness, importantRequirements, required companions, and fixed quantities", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "WORKSTATION ROW IMPORTANT REQUIREMENTS",
+    "Workstation rows support importantRequirements: string[] using the same global separation rules as other priced rows",
+    "HANDED WORKSTATIONS",
+    "OXI 111 008 — DX and 111 009 — SX",
+    "do not infer reversibility",
+    "WORKSTATION REQUIRED COMPANIONS",
+    "workstation-row applicability",
+    "with exactly one selection and every source-supported allowed item",
+    "FIXED QUANTITY",
+    "always complete with 2 ART.058",
+    "Never convert an explicit fixed quantity into quantity 1",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation extraction focus keeps compatibility from becoming a required companion and preserves model-defining variants", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "OPTIONAL WORKSTATION ACCESSORIES",
+    "Ordinary compatibility wording alone (for example \"compatible with\", \"suitable for\") does not make such an item required",
+    "MODEL-DEFINING VARIANTS",
+    "TE160 and TE160E",
+    "Do not automatically convert TE160E into TE160 plus an electrification option when the manufacturer prices both as distinct SKU rows",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation extraction focus routes starter/add-on and component-built or finish-dependent pricing away from workstationRows", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "STARTER / ADD-ON SYSTEMS",
+    "must NOT be used for true structural starter/add-on composition",
+    "route them to direct Modular: pricingMode: \"direct\" with directRows, not Base/Model and not a fake one-column matrix",
+    "Use role \"starter\" for a starter and \"intermediate\" for an add-on",
+    "BENCH EXTENSION DISTINCTION",
+    "Do not assume \"bench extension\" always means Modular",
+    "COMPONENT-PRICED WORKSTATIONS",
+    "do not force it into workstationRows: use Modular when manufacturer pricing is genuinely component-built",
+    "FINISH-DEPENDENT PRICING",
+    "use Category / Matrix for a complete product or Modular matrix pricing for a component-built system",
+    "do not create an implicit finish-price mechanism inside workstationRows",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation extraction focus does not invent seat counts and preserves the OXI/X3/Terra/Colan regression patterns", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "SEAT COUNT",
+    "do not invent seat calculations, assume every bench base represents a fixed number of seats, or infer additional seats from an extension unless source/current supported workstation pricing explicitly proves it",
+    "OXI, X3, TERRA/PIEM, AND COLAN REGRESSION PATTERNS",
+    "OXI 111 008 / 111 009) must remain separate authoritative rows",
+    "OXI 111 623 / 111 624 with ART.175 or ART.129",
+    "preserves one Required Companion at unit price EUR 69 with conditionalConfiguration.selection \"at_least_one\" (never \"exactly_one\"), fixed_quantity: 2, and scale_with_target_quantity: true",
+    "An X3-style starter/add-on bench system must NOT be flattened into workstation base/additional pricing",
+    "Terra/Piem-style direct-priced complete Bench and Bench Extension SKUs are preserved",
+    "A Colan-style workstation must not double count structure price, top price, screen price, and a published total set price",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation-specific regression and composition rules stay isolated from other furniture focuses and planning stays unaffected", () => {
+  const workstationOnlySafeguards = [
+    "OXI, X3, TERRA/PIEM, AND COLAN REGRESSION PATTERNS",
+    "WORKSTATION ROUTING HIERARCHY",
+    "STARTER / ADD-ON SYSTEMS",
+    "BENCH EXTENSION DISTINCTION",
+  ];
+  extractionPromptFocuses
+    .filter((focus) => focus !== "workstation")
+    .forEach((focus) => workstationOnlySafeguards.forEach((safeguard) => assert.ok(!getProductTemplateAiExtractionPrompt(focus).includes(safeguard), `Expected ${focus} extraction prompt to remain isolated from Workstation-specific rules: ${safeguard}`)));
+
+  const desk = buildProductTemplateSetupPlanningPrompt("desk_executive");
+  const chairExtraction = getProductTemplateAiExtractionPrompt("chair_seating");
+  const sofaExtraction = getProductTemplateAiExtractionPrompt("sofa_lounge");
+  const storageExtraction = getProductTemplateAiExtractionPrompt("storage_cabinets");
+  assert.ok(desk.includes("Ignored — separate Workstation product-family cycle."), "Expected Desk planning to still exclude Workstations");
+  assert.ok(desk.includes("never recommend Workstation Pricing"), "Expected Desk planning Workstation exclusion to remain unchanged");
+  assert.ok(chairExtraction.includes("MODEL AND CODE BINDING"), "Expected Chair extraction focus to remain unchanged");
+  assert.ok(sofaExtraction.includes("PRICING STRUCTURE DECISION — HIGH PRIORITY"), "Expected Sofa extraction focus to remain unchanged");
+  assert.ok(storageExtraction.includes("Use pricing.baseModelRows for every authoritative directly priced complete SKU and directly priced carcass"), "Expected Storage extraction focus to remain unchanged");
+});
+
+test("planning prompts state Workstation architecture, why, and family evidence before recommending Workstation Pricing", () => {
+  productTemplateSetupPlanningFocuses.forEach((focus) => {
+    const prompt = buildProductTemplateSetupPlanningPrompt(focus);
+    [
+      "The words workstation, bench, cluster, and operative do not by themselves justify this destination",
+      "first check whether the family is actually a complete direct-priced SKU (Base / Model), a genuine finish/category price dimension (Category / Matrix), or a proven starter/add-on or component-built composition (Modular) before recommending Workstation Pricing",
+      "state the recommended architecture and why, whether the source shows complete SKU pricing, required companions, fixed quantities, starter/add-on composition, finish-dependent pricing, or separately priced screens/accessories",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} planning prompt to contain: ${expected}`));
+  });
+});
+
+test("Workstations / Bench Systems is exposed exactly once in both focus choosers and reuses the existing workstation prompt key", () => {
+  const source = readFileSync("components/products/copy-ai-extraction-prompt.tsx", "utf8");
+  const [extractionChoices, planningSection] = source.split("const planningChoices");
+
+  assert.ok(extractionPromptFocuses.includes("workstation"), "Expected extraction focus registry to already include workstation");
+  assert.ok(productTemplateSetupPlanningFocuses.includes("workstation"), "Expected planning focus registry to include workstation");
+
+  const extractionMatches = [...extractionChoices.matchAll(/\{ focus: "workstation", label: "([^"]+)"/g)];
+  assert.equal(extractionMatches.length, 1, "Expected exactly one workstation entry in the extraction chooser");
+  assert.equal(extractionMatches[0][1], "Workstations / Bench Systems");
+
+  const planningMatches = [...planningSection.matchAll(/\{ focus: "workstation", label: "([^"]+)"/g)];
+  assert.equal(planningMatches.length, 1, "Expected exactly one workstation entry in the planning chooser");
+  assert.equal(planningMatches[0][1], "Workstations / Bench Systems");
+
+  // Both choosers must reference the single existing "workstation" key, not a new one.
+  assert.ok(!source.includes('"workstation_bench"') && !source.includes('"bench_systems"'), "Expected no duplicate/new workstation focus key to have been introduced");
+});
+
+test("selecting Workstations / Bench Systems generates the existing workstation extraction prompt with its full contract", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "EXTRACTION FOCUS: Workstation Pricing",
+    "GLOBAL WORKSTATION ROUTING PRINCIPLE",
+    "The words \"workstation\", \"bench\", \"cluster\", and \"operative\" do not automatically mean pricing.workstationRows",
+    "WORKSTATION ROUTING HIERARCHY",
+    "BASE / MODEL FOR COMPLETE WORKSTATION SKUS",
+    "WORKSTATION ROWS SUITABILITY",
+    "WORKSTATION REQUIRED COMPANIONS",
+    "FIXED QUANTITY",
+    "STARTER / ADD-ON SYSTEMS",
+    "COMPONENT-PRICED WORKSTATIONS",
+    "FINISH-DEPENDENT PRICING",
+    "OXI, X3, TERRA/PIEM, AND COLAN REGRESSION PATTERNS",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected copied workstation extraction prompt to contain: ${expected}`));
+});
+
+test("selecting Workstations / Bench Systems in planning generates a selectable, distinct workstation planning prompt", () => {
+  const generalPrompt = buildProductTemplateSetupPlanningPrompt("general");
+  const workstationPrompt = buildProductTemplateSetupPlanningPrompt("workstation");
+  assert.notEqual(workstationPrompt, generalPrompt, "Expected the workstation planning prompt to be distinct from General / Auto Detect");
+  [
+    "WORKSTATION / BENCH SYSTEMS PLANNING FOCUS",
+    "GLOBAL PLANNING ARCHITECTURE DECISION CONTRACT",
+    "PROJECTWORKFLOW DESTINATIONS",
+    "Workstation Pricing: only simple, complete-price workstation/bench",
+  ].forEach((expected) => assert.ok(workstationPrompt.includes(expected), `Expected workstation planning prompt to contain: ${expected}`));
+  const globalIndex = workstationPrompt.indexOf("GLOBAL PLANNING ARCHITECTURE DECISION CONTRACT");
+  const focusIndex = workstationPrompt.indexOf("WORKSTATION / BENCH SYSTEMS PLANNING FOCUS");
+  assert.ok(globalIndex >= 0 && globalIndex < focusIndex, "Expected global planning contract before the workstation planning focus");
+});
+
+test("adding Workstations / Bench Systems leaves every other extraction and planning focus option unchanged", () => {
+  ["full", "base_model", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"].forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus as typeof extractionPromptFocuses[number]);
+    assert.ok(!prompt.includes("OXI, X3, TERRA/PIEM, AND COLAN REGRESSION PATTERNS"), `Expected ${focus} extraction prompt to remain free of workstation-only regression rules`);
+  });
+  ["general", "chair_seating", "desk_executive", "sofa_lounge", "meeting_conference", "storage_cabinets"].forEach((focus) => {
+    const prompt = buildProductTemplateSetupPlanningPrompt(focus as typeof productTemplateSetupPlanningFocuses[number]);
+    assert.ok(!prompt.includes("WORKSTATION / BENCH SYSTEMS PLANNING FOCUS"), `Expected ${focus} planning prompt to remain free of the new workstation planning focus block`);
+  });
+  const desk = buildProductTemplateSetupPlanningPrompt("desk_executive");
+  assert.ok(desk.includes("Ignored — separate Workstation product-family cycle."), "Expected Desk planning to still exclude Workstations");
+});
+
+test("global rule forbids synthesizing a fixed quantity into a fake bundled item or multiplied price (OXI ART.058 regression, Test A)", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "FIXED QUANTITY VS SYNTHETIC BUNDLED ITEMS",
+      "Never synthesize a bundled/multiplied item such as \"2 x ART.058\", \"3 x bracket\", or \"set of 4 feet\"",
+      "ART.058 at supplier code 111 058, unit price EUR 69, remains one row priced at EUR 69, never a synthesized EUR 138 item",
+      "Never calculate or store unit price × required quantity as a new authoritative item price",
+      "Only extract a bundle/kit/set as one priced row when the manufacturer itself sells and prices it as a single commercial kit/set SKU with its own code and price",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to forbid synthetic quantity bundling: ${expected}`));
+  });
+  const workstationPrompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "preserve ART.058 as one Required Companion item at its real manufacturer unit price; never synthesize a \"2 x ART.058\" item or a doubled/multiplied price",
+    "never calculate unit price × quantity into a new item price",
+  ].forEach((expected) => assert.ok(workstationPrompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("global rule requires explicit pricing-routing-compatible targeting via conditionalConfiguration for a row-specific required companion (OXI 111 623/111 624, Test B)", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "ROW-SPECIFIC REQUIRED/OPTIONAL APPLICABILITY",
+      "is incomplete unless the extraction emits explicit applicability naming the exact target row(s), never a vague or collection-wide requirement",
+      "Use the companion optionGroup's conditionalConfiguration.applicability, with one rule per target row using target: { kind, group_id, row_id }",
+      "from the exact supported target kinds base_model, price_matrix, modular, and workstation",
+      "Do not create a globally required companion when the source requirement applies only to selected rows",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to require explicit row targeting: ${expected}`));
+  });
+  const workstationPrompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "This is a CHOOSE-ONE COMPANION (see COMPANION SELECTION MODE below): set the outer optionGroup.selection to { \"mode\": \"required_choose_at_least_one\", \"minSelections\": 1, \"maxSelections\": null, \"defaultItemIds\": [] }",
+    "and set conditionalConfiguration on that optionGroup (role \"companion\", selection \"exactly_one\") with one applicability rule per exact target row",
+    "If \"oxi-q-ws-dx\" was emitted in pricing.baseModelRows, use target: { kind: \"base_model\", group_id: \"legacy-base-model-main\", row_id: \"oxi-q-ws-dx\" }",
+    "If and only if it was legitimately emitted in pricing.workstationRows, use target: { kind: \"workstation\", group_id: \"legacy-workstation-main\", row_id: \"oxi-q-ws-dx\" }",
+    "row_id is the row's own draft id, never its supplierCodes entry (\"111 623\")",
+    "each required true and allowed_item_ids naming ART.175 and ART.129",
+    "never create a global/unscoped required companion when the source requirement applies only to selected rows",
+  ].forEach((expected) => assert.ok(workstationPrompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("applicability target kind is selected after the authoritative pricing route, not from workstation wording", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "APPLICABILITY TARGETS FOLLOW ACTUAL PRICING ROUTING",
+    'If the row is in pricing.baseModelRows, use target.kind "base_model" and group_id "legacy-base-model-main".',
+    'If it is in pricing.workstationRows, use target.kind "workstation" and group_id "legacy-workstation-main".',
+    'If it is in pricing.priceMatrices[n].rows, use target.kind "price_matrix" and that pricing.priceMatrices[n].id.',
+    'If it is in either pricing.modularGroups[n].matrix.rows or pricing.modularGroups[n].directRows, use target.kind "modular" and that pricing.modularGroups[n].id.',
+    "In every case row_id is the exact already-emitted row.id, never a supplier code.",
+    "Never point a Base/Model, Matrix, or Modular row at a workstation target.",
+    'for either a pricing.modularGroups[n].matrix.rows or pricing.modularGroups[n].directRows bench use { kind: "modular", group_id: "<that exact modularGroup.id>", row_id: "<that exact modular row.id>" }',
+    "Never point a Modular row at a workstation target.",
+    'fixed_quantity to 2',
+    "ART.058 as one Required Companion item at its real manufacturer unit price",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected routing-compatible applicability instruction: ${expected}`));
+  assert.ok(!prompt.includes('with target.kind "workstation", target.group_id "legacy-workstation-main", and target.row_id equal to each applicable bench/module row'));
+});
+
+test("global rule forbids extracting from prompt regression examples or unsupplied pages (OXI_T 111 026/111 027, Test C)", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "SOURCE-BATCH AUTHORITY AND PROMPT EXAMPLE FIREWALL",
+      "Extract only products, rows, prices, requirements, and components whose authoritative source is visibly present in the supplied extraction batch for this call",
+      "Do not extract from prior planning output, examples embedded in this prompt, earlier catalogue knowledge, remembered manufacturer data, page references mentioned in instructions but not supplied, or other uploaded batches not included in this call",
+      "is a NON-SOURCE architectural example only, never source authority",
+      "never output a prompt example's code/price/page as authoritative extracted data",
+      "Supplied extraction batch covers printed pages 10–15 and 20. Printed pages 16–19 remain unextracted.",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain source-batch firewall rule: ${expected}`));
+    // Simulated OXI_T codes belonging to an unsupplied page must never appear anywhere in the prompt itself.
+    assert.ok(!prompt.includes("111 026"), `Expected ${focus} prompt to never leak out-of-scope OXI_T code 111 026`);
+    assert.ok(!prompt.includes("111 027"), `Expected ${focus} prompt to never leak out-of-scope OXI_T code 111 027`);
+  });
+});
+
+test("importantRequirements stays informational and never replaces the structural conditionalConfiguration rule (Test D)", () => {
+  const workstationPrompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "Always complete with 2 Art.058 top-access units.",
+    "AND set conditionalConfiguration.applicability[].fixed_quantity to 2 plus scale_with_target_quantity: true on the companion optionGroup.",
+    "conditionalConfiguration.selection to \"at_least_one\" — never \"exactly_one\", which the runtime rejects together with scale_with_target_quantity",
+    "Its target must follow the actual emitted row",
+    "Never point a Modular row at a workstation target.",
+  ].forEach((expected) => assert.ok(workstationPrompt.includes(expected), `Expected workstation prompt to contain both informational and structural evidence: ${expected}`));
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(
+      prompt.includes("importantRequirements remains informational/user-facing") && prompt.includes("it does not replace conditionalConfiguration, and neither field may substitute for the other"),
+      `Expected ${focus} prompt to state importantRequirements does not replace structural conditionalConfiguration`,
+    );
+  });
+});
+
+test("fixed-quantity and applicability rules apply globally across furniture focuses without disturbing existing routing", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(prompt.includes("chair/sofa feet kits, cabinet wall-fixing components, handles, grommet sets, shelves, screens, and support legs"), `Expected ${focus} prompt to extend the synthetic-item rule globally`);
+  });
+  assert.ok(getProductTemplateAiExtractionPrompt("chair_seating").includes("MODEL AND CODE BINDING"), "Expected Chair extraction focus to remain unchanged");
+  assert.ok(getProductTemplateAiExtractionPrompt("sofa_lounge").includes("PRICING STRUCTURE DECISION — HIGH PRIORITY"), "Expected Sofa extraction focus to remain unchanged");
+  assert.ok(getProductTemplateAiExtractionPrompt("storage_cabinets").includes("Use pricing.baseModelRows for every authoritative directly priced complete SKU and directly priced carcass"), "Expected Storage extraction focus to remain unchanged");
+});
+
+test("visible ProductTemplateDraft v1 contract exposes the actual conditionalConfiguration/applicability structure with workstation target and fixed quantity", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      '"conditionalConfiguration": { "role": "companion", "selection": "exactly_one", "applicability": [{ "target": { "kind": "workstation", "group_id": "", "row_id": "" }, "required": true, "visible": true }] }',
+      "OPTIONGROUPS.CONDITIONALCONFIGURATION - ROW-SPECIFIC ENFORCEMENT",
+      "optionGroups[].conditionalConfiguration is OPTIONAL and reuses the runtime AccessoryConditionalConfiguration/AccessoryModelApplicabilityRule shape exactly",
+      "Omit it entirely for an ordinary, independently selectable accessory with no row-specific requirement",
+      "role: \"accessory\" | \"conditional_option\" | \"companion\"",
+      "selection: \"unrestricted\" | \"exactly_one\" | \"at_least_one\" | \"choose_multiple\"",
+      "target: { kind: \"base_model\" | \"price_matrix\" | \"modular\" | \"workstation\", group_id, row_id }",
+      "allowed_item_ids: optional array restricting which of this group's items apply under that rule",
+      "fixed_quantity: a positive integer for an explicit manufacturer-required quantity",
+      "OMIT the field entirely when no fixed quantity applies; never emit \"fixed_quantity\": null",
+      "never fabricate a \"N x <code>\" item to represent it",
+      "Emit conditionalConfiguration IN ADDITION TO, never instead of, the informational importantRequirements text",
+      "do not add fields beyond documented contract fields such as unavailableCategoryIds or conditionalConfiguration",
+      "TARGET GROUP_ID CONVENTION",
+      "row_id always equals the exact stable id already assigned to that row/item in that structure",
+      "never a supplierCodes entry such as \"111 623\", and never invented from a code, label, or family name",
+      "use group_id: \"legacy-base-model-main\" only for an actual base_model target and group_id: \"legacy-workstation-main\" only for an actual workstation target",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to expose conditionalConfiguration schema: ${expected}`));
+  });
+});
+
+test("OXI ART.058 example in the extraction prompt targets exact workstation rows with fixed_quantity and never invents an EUR 138 bundled price", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("fixed_quantity to 2 plus scale_with_target_quantity: true on the companion optionGroup"), "Expected the prompt to instruct setting fixed_quantity=2 structurally");
+  assert.ok(prompt.includes("conditionalConfiguration.selection to \"at_least_one\" — never \"exactly_one\""), "Expected the prompt to require at_least_one, never exactly_one, for the scaled ART.058 companion");
+  assert.ok(prompt.includes("ART.058 at supplier code 111 058, unit price EUR 69, remains one row priced at EUR 69, never a synthesized EUR 138 item"), "Expected the prompt to explicitly forbid the EUR 138 synthetic price and preserve the real EUR 69 unit price");
+});
+
+test("every extraction prompt requires JSON-safe escaping for source strings", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "Return strict, parseable JSON only.",
+      "Escape every embedded double quote inside every JSON string as",
+      "escape backslashes when JSON requires it",
+      "rawText, specifications, labels, warnings, notes, and every other string field",
+      "Never escape underscore _.",
+      "Never emit \\_ anywhere in JSON keys or string values",
+      "Do not use smart substitutions, Markdown fences, or prose as a workaround.",
+      '"rawText": "BENCH ... \\"OXI_P\\" ..."',
+      "the exact response would be accepted by standard JSON.parse",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain JSON escaping guidance: ${expected}`));
+  });
+});
+
+test("prompt documents actual confidence, direct Modular targets, and mutually exclusive Modular forms", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "confidence must be null or a number from 0 through 1.",
+    "Use 0.95 for 95%, 0.8 for 80%, and 1 for 100%; never emit 95 for 95%.",
+    "pricing.modularGroups[n].matrix.rows or pricing.modularGroups[n].directRows",
+    'DIRECT MODULAR: pricingMode: "direct" with directRows; OMIT matrix entirely.',
+    "MATRIX MODULAR: matrix with rows/prices; OMIT directRows",
+    "Never emit an empty matrix as a placeholder inside a direct Modular group.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected prompt contract: ${expected}`));
+  assert.ok(!prompt.includes('VALID JSON:\n"rawText": "BENCH ... \\"OXI\\_P\\" ..."'));
+});
+
+test("Phase 2 direct Modular and ART.058 scaling contract are visible to extraction", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  ["\"pricingMode\": \"direct\"", "\"directRows\"", "\"role\": \"starter\"", "\"composition\": { \"minStarters\": 1, \"maxStarters\": 1 }", "scale_with_target_quantity", "111 065", "111 069", "EUR 69"].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Phase 2 contract field ${expected}`));
+  assert.ok(prompt.includes("not Base/Model and not a fake one-column matrix"));
+});
+
+test("generic Modular and workstation fixed-quantity guidance support both Modular pricing modes", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "For Matrix Modular preserve Modular Group -> Module Rows -> matrix columns -> row price maps",
+    "For Direct Modular preserve Modular Group -> directRows with scalar row price, optional row role, and optional composition; there are no Matrix columns.",
+    "Never flatten separate manufacturer Modular groups into one generic group or matrix.",
+    "for either a pricing.modularGroups[n].matrix.rows or pricing.modularGroups[n].directRows bench use",
+    "for OXI_P Direct Modular, ART.058 targets those exact directRows.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected dual-mode Modular guidance: ${expected}`));
+});
+
+test("one-column Matrix contradiction is removed: multiple direct-price families stay in baseModelRows instead of a fake Matrix", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("base_model");
+  assert.ok(!prompt.includes("Preserve each family as a separate priceMatrix with its source family label and one clearly labelled direct Price column"), "Expected the old one-column-Matrix workaround wording to be removed");
+  [
+    "do not create a fake one-column priceMatrix merely to preserve them",
+    "a one-column \"Price\" matrix remains a forbidden fake Matrix no matter how many families exist",
+    "keep every row in pricing.baseModelRows",
+    "add an extractionWarning naming the distinct families present",
+    "Never restore a fake Matrix to represent that grouping",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected corrected Base/Model text to contain: ${expected}`));
+  extractionPromptFocuses.forEach((focus) => {
+    assert.ok(getProductTemplateAiExtractionPrompt(focus).includes("no one-column \"Standard Price\" Matrix was created, including as a workaround to preserve multiple Base/Model families"), `Expected ${focus} self-check to forbid the fake-Matrix workaround`);
+  });
+});
+
+test("Copy Prompt regression: the exact UI-facing builder function generates the workstation prompt with every latest contract change", () => {
+  // Same import and same call signature as components/products/copy-ai-extraction-prompt.tsx's
+  // CopyAiExtractionPrompt: getProductTemplateAiExtractionPrompt(focus) with focus = "workstation".
+  const generated = getProductTemplateAiExtractionPrompt("workstation");
+
+  [
+    // A. optionGroup conditionalConfiguration field (no invalid "fixed_quantity": null placeholder).
+    '"conditionalConfiguration": { "role": "companion", "selection": "exactly_one", "applicability": [{ "target": { "kind": "workstation", "group_id": "", "row_id": "" }, "required": true, "visible": true }] }',
+    // B. exact runtime applicability field names.
+    "role: \"accessory\" | \"conditional_option\" | \"companion\"",
+    "selection: \"unrestricted\" | \"exactly_one\" | \"at_least_one\" | \"choose_multiple\"",
+    "target: { kind: \"base_model\" | \"price_matrix\" | \"modular\" | \"workstation\", group_id, row_id }",
+    "allowed_item_ids: optional array restricting which of this group's items apply under that rule",
+    "required and visible: booleans",
+    "fixed_quantity: a positive integer for an explicit manufacturer-required quantity",
+    "OMIT the field entirely when no fixed quantity applies; never emit \"fixed_quantity\": null",
+    "TARGET GROUP_ID CONVENTION",
+    // C. workstation target kind and group_id reachable through the routing hierarchy and OXI example.
+    "target: { kind: \"workstation\", group_id: \"legacy-workstation-main\", row_id: \"oxi-q-ws-dx\" }",
+    "row_id is the row's own draft id, never its supplierCodes entry (\"111 623\")",
+    // D. ART.058 unit price preserved, fixed quantity structural, no synthetic multiplied item, correct selection mode.
+    "ART.058 at supplier code 111 058, unit price EUR 69, remains one row priced at EUR 69, never a synthesized EUR 138 item",
+    "fixed_quantity to 2 plus scale_with_target_quantity: true on the companion optionGroup",
+    "conditionalConfiguration.selection to \"at_least_one\" — never \"exactly_one\"",
+    "COMPANION SELECTION MODE — CHOOSE-ONE VS QUANTITY-SCALED",
+    "Never synthesize a bundled/multiplied item such as \"2 x ART.058\"",
+    "Never calculate or store unit price × required quantity as a new authoritative item price",
+    // E. source-example firewall (near the top banner plus the full section).
+    "IMPORTANT: Codes, prices, dimensions, page numbers, and manufacturer examples appearing inside this prompt (including its regression examples) are architectural examples only. They are NEVER extraction evidence.",
+    "SOURCE-BATCH AUTHORITY AND PROMPT EXAMPLE FIREWALL",
+    // F. current-batch-only authority.
+    "Extract only products, rows, prices, requirements, and components whose authoritative source is visibly present in the supplied extraction batch for this call",
+    "If a required or referenced component/row lies outside the supplied pages",
+  ].forEach((expected) => assert.ok(generated.includes(expected), `Expected the UI-generated workstation prompt to contain: ${expected}`));
+
+  // G. no instruction anywhere recommending a fake one-column direct-price Matrix.
+  assert.ok(!generated.includes("one clearly labelled direct Price column"), "Expected the generated prompt to no longer contain the legacy one-column fake-Matrix phrase");
+  assert.ok(!generated.includes("Preserve each family as a separate priceMatrix with its source family label"), "Expected the generated prompt to no longer instruct a separate one-column priceMatrix per family");
+});
+
+test("target-identity audit 1-2: the JSON contract example never shows an invalid fixed_quantity: null placeholder, and prose says to omit it instead", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    const contractStart = prompt.indexOf("PRODUCTTEMPLATEDRAFT V1 CONTRACT");
+    const contractEnd = prompt.indexOf("The shape above is a field contract", contractStart);
+    assert.ok(contractStart >= 0 && contractEnd > contractStart, `Expected ${focus} prompt to contain the PRODUCTTEMPLATEDRAFT V1 CONTRACT block`);
+    const contractBlock = prompt.slice(contractStart, contractEnd);
+    assert.ok(!contractBlock.includes('"fixed_quantity"'), `Expected ${focus} prompt's JSON contract example to omit the optional, non-nullable fixed_quantity field entirely rather than showing an invalid null placeholder`);
+    // The prohibition may still be stated in prose elsewhere (quoting the forbidden literal to forbid it).
+    assert.ok(prompt.includes('OMIT the field entirely when no fixed quantity applies; never emit "fixed_quantity": null'), `Expected ${focus} prompt to instruct omitting fixed_quantity instead of nulling it`);
+  });
+  const workstationPrompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(workstationPrompt.includes('never emit "fixed_quantity": null — omit the field when no fixed quantity applies'), "Expected the workstation FIXED QUANTITY section to repeat the omit-not-null rule");
+});
+
+test("target-identity audit 3: row_id must reference the extracted row's own draft id, never a supplier code", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(
+      prompt.includes("row_id always equals the exact stable id already assigned to that row/item in that structure") && prompt.includes('never a supplierCodes entry such as "111 623", and never invented from a code, label, or family name'),
+      `Expected ${focus} prompt to forbid using a supplier code as row_id`,
+    );
+  });
+  const workstationPrompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(workstationPrompt.includes('row_id is the row\'s own draft id, never its supplierCodes entry ("111 623")'), "Expected the workstation companion example to contrast row_id against the supplier code");
+});
+
+test("target-identity audit 4: the workstation target example always includes group_id alongside kind and row_id", () => {
+  const workstationPrompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(workstationPrompt.includes('target: { kind: "workstation", group_id: "legacy-workstation-main", row_id: "oxi-q-ws-dx" }'), "Expected the OXI companion example target to include group_id");
+  assert.ok(!workstationPrompt.includes('target: { kind: "workstation", row_id:'), "Expected no workstation target example to omit group_id");
+  extractionPromptFocuses.forEach((focus) => {
+    assert.ok(getProductTemplateAiExtractionPrompt(focus).includes('target: { kind: "base_model" | "price_matrix" | "modular" | "workstation", group_id, row_id }'), `Expected ${focus} prompt's generic target shape to require group_id`);
+  });
+});
+
+test("target-identity audit 5-6: Base/Model and Workstation group_id guidance matches the actual Apply-time adapter constants", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(prompt.includes(`use group_id: "${LEGACY_BASE_MODEL_GROUP_ID}" only for an actual base_model target and group_id: "${LEGACY_WORKSTATION_GROUP_ID}" only for an actual workstation target`), `Expected ${focus} prompt to cite the real runtime sentinel group ids by import, not a hardcoded guess`);
+  });
+  // Prove the cited sentinels are exactly what the Apply-time normalizers synthesize for a flat, group-less row list —
+  // the same shape pricing.baseModelRows[] / pricing.workstationRows[] always are in ProductTemplateDraft v1.
+  const workstationGroups = workstationPricingGroups([{ id: "oxi-q-ws-dx", label: "OXI Q Workstation DX", price: 1200 }]);
+  assert.equal(workstationGroups[0]?.id, LEGACY_WORKSTATION_GROUP_ID, "Expected the synthesized workstation group id to equal the prompt's cited sentinel");
+  assert.equal(workstationGroups[0]?.items[0]?.id, "oxi-q-ws-dx", "Expected the row's own id to be preserved unchanged into the synthesized group");
+});
+
+test("target-identity audit 7: a generated conditionalConfiguration survives normalization and needs no identity repair before Apply", () => {
+  const draft = {
+    version: 1,
+    template: { templateName: "OXI" },
+    defaultCurrency: "EUR",
+    pricing: {
+      workstationRows: [{ id: "oxi-q-ws-dx", label: "OXI Q Workstation DX", price: 1200, supplierCodes: ["111 623"] }],
+      baseModelRows: [], priceMatrices: [], modularGroups: [],
+    },
+    optionGroups: [{
+      id: "leg-choice", label: "Required Leg",
+      selection: { mode: "required_choose_one", minSelections: 1, maxSelections: 1, defaultItemIds: [] },
+      items: [
+        { id: "art-175", label: "ART.175", price: 45, supplierCodes: ["ART.175"] },
+        { id: "art-129", label: "ART.129", price: 52, supplierCodes: ["ART.129"] },
+      ],
+      conditionalConfiguration: {
+        role: "companion",
+        selection: "exactly_one",
+        applicability: [{ target: { kind: "workstation", group_id: LEGACY_WORKSTATION_GROUP_ID, row_id: "oxi-q-ws-dx" }, required: true, visible: true, allowed_item_ids: ["art-175", "art-129"] }],
+      },
+    }],
+    materialSuggestions: [], linkedFamilySuggestions: [], extractionWarnings: [], confidence: 0.9, sources: [],
+  };
+
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, true, `Expected the draft to normalize cleanly: ${JSON.stringify(result.errors)}`);
+  const rule = result.draft?.optionGroups[0].conditionalConfiguration?.applicability[0];
+  assert.equal(rule?.target?.kind, "workstation");
+  assert.equal(rule?.target?.group_id, LEGACY_WORKSTATION_GROUP_ID);
+  assert.equal(rule?.target?.row_id, "oxi-q-ws-dx");
+
+  // Prove the target's group_id/row_id already match what Apply will synthesize from the same flat workstationRows —
+  // no identity repair/rewrite is needed between extraction and Apply.
+  const appliedGroups = workstationPricingGroups(result.draft?.pricing.workstationRows ?? []);
+  assert.equal(appliedGroups[0]?.id, rule?.target?.group_id, "Expected the emitted group_id to already equal the group id Apply will synthesize");
+  assert.ok(appliedGroups[0]?.items.some((item) => item.id === rule?.target?.row_id), "Expected the emitted row_id to already match a row Apply will preserve");
+});
+
+test.skip("target-identity audit 8: existing Matrix/Modular target representability is unchanged (superseded by routing-compatible target coverage)", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(prompt.includes("for target.kind \"price_matrix\" or \"modular\", group_id is the exact pricing.priceMatrices[].id or pricing.modularGroups[].id that this draft already assigns to that matrix/group — both are already representable today, so reuse them exactly"), `Expected ${focus} prompt to keep Matrix/Modular group_id guidance unchanged`);
+  });
 });

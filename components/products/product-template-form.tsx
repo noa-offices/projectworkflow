@@ -106,6 +106,7 @@ type DeskingSizePricingRow = {
   additional_supplier_price_list_code?: string;
   currency?: string;
   specification?: string;
+  importantRequirements?: string[];
   default_dimension?: string;
   sort_order?: number;
   is_active?: boolean;

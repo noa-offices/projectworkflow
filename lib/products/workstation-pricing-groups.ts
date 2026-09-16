@@ -225,6 +225,30 @@ export function flattenWorkstationPricingRows<TRow extends WorkstationPricingRow
     .flatMap((group) => group.items.map(cloneRow));
 }
 
+export function findWorkstationPricingRow<TRow extends WorkstationPricingRow = WorkstationPricingRow>(
+  input: unknown,
+  selection: { groupId?: string | null; rowId?: string | null; legacyLabel?: string | null },
+) {
+  const groupId = selection.groupId?.trim();
+  const groups = validWorkstationPricing<TRow>(input).groups.filter((group) => group.is_active && (!groupId || group.id === groupId));
+  const rowId = selection.rowId?.trim();
+  if (rowId) {
+    const matches = groups.flatMap((group) => group.items.flatMap((row, index) => {
+      const effectiveRow = row.id ? row : { ...row, id: `${group.id}-size-${index}` };
+      return effectiveRow.is_active !== false && effectiveRow.id === rowId ? [{ group, row: effectiveRow as TRow }] : [];
+    }));
+    return matches.length === 1 ? { ...matches[0], matchedBy: "id" as const } : null;
+  }
+  const legacyLabel = selection.legacyLabel?.trim();
+  if (!legacyLabel) return null;
+  const matches = groups.flatMap((group) => group.items.flatMap((row) => (
+    row.is_active !== false && typeof row.label === "string" && row.label.trim() === legacyLabel
+      ? [{ group, row }]
+      : []
+  )));
+  return matches.length === 1 ? { ...matches[0], matchedBy: "label" as const } : null;
+}
+
 export function serializeWorkstationPricingGroups<TRow extends WorkstationPricingRow = WorkstationPricingRow>(
   groups: Array<WorkstationPricingGroup<TRow> | NormalizedWorkstationPricingGroup<TRow>>,
 ): WorkstationPricingGroup<TRow>[] {

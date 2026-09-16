@@ -177,6 +177,25 @@ test("price-matrix targets preserve required, allowed-items, all-items, and fixe
   assert.deepEqual(evaluateAccessoryConfigurationForModel({ accessoryGroups: [all], baseModelGroupId: null, baseModelRowId: null, selectedModelTarget: target }).groups[0].allowedItemIds, items.map((item) => item.id));
 });
 
+test("workstation targets enforce companions, compatibility, and fixed quantity", () => {
+  const target = { kind: "workstation", group_id: "oxi", row_id: "oxi-4" } as const;
+  const legs = group("legs", "companion", [{ target, required: true, visible: true, allowed_item_ids: ["standard"], fixed_quantity: 2 }], "choose_multiple");
+  const evaluateWorkstation = (selectedModelTarget: { kind: "workstation"; group_id: string; row_id: string }, quantity: number) => evaluateAccessoryConfigurationForModel({
+    accessoryGroups: [legs],
+    baseModelGroupId: null,
+    baseModelRowId: null,
+    selectedModelTarget,
+    selectedQuantitiesByGroupId: { legs: { standard: quantity } },
+  });
+  assert.equal(parseAccessoryConfigurationGroups([legs]).valid, true);
+  assert.equal(evaluateWorkstation(target, 0).groups[0].validationCode, "required_selection_missing");
+  assert.equal(evaluateWorkstation(target, 1).groups[0].validationCode, "fixed_quantity_mismatch");
+  assert.equal(evaluateWorkstation(target, 2).valid, true);
+  const incompatible = evaluateWorkstation({ ...target, row_id: "oxi-6" }, 2);
+  assert.equal(incompatible.groups[0].visible, false);
+  assert.deepEqual(incompatible.groups[0].staleItemIds, ["standard"]);
+});
+
 test("invalid price-matrix targets fail safely", () => {
   const invalid = group("coat-hanger", "conditional_option", [{ target: { kind: "price_matrix", group_id: "everyis1", row_id: "" }, required: false, visible: true }]);
   const parsed = parseAccessoryConfigurationGroups([invalid]);

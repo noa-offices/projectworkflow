@@ -22,3 +22,16 @@ test("category-priced accessories use independent accessory category state and s
   const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
   ["selectedAccessoryCategories", "AccessoryCategoryPriceSelector", "accessoryDisplayPrice", "selected_category_id", "selected_category_label", "accessory_pricing_category", "line.unitPrice"].forEach((expected) => assert.ok(source.includes(expected)));
 });
+
+test("workstation selection emits a stable applicability target and snapshots row identity", () => {
+  const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
+  [
+    'kind: "workstation" as const',
+    "selectedWorkstationGroup.id",
+    "workstation_row_id: selectedSizeRow?.id",
+    "workstation_group_id: selectedWorkstationGroup?.id",
+    'name="workstation_pricing_group_id"',
+    "importantRequirements: selectedSizeRow?.importantRequirements",
+    "evaluateProductAccessorySelection({",
+  ].forEach((expected) => assert.ok(source.includes(expected), `Expected workstation Product Library wiring: ${expected}`));
+});

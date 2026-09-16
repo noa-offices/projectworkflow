@@ -31,5 +31,5 @@ test("valid workstation, base, matrix, modular, and options drafts reach review 
   assert.equal(result.validation.draft?.pricing.workstationRows[0].price, null);
   assert.equal(result.validation.draft?.pricing.workstationRows[0].additionalPrice, 0);
   assert.equal(result.validation.draft?.pricing.priceMatrices[0].rows[0].prices.a, null);
-  assert.equal(result.validation.draft?.pricing.modularGroups[0].matrix.rows[0].prices.a, 0);
+  assert.equal(result.validation.draft?.pricing.modularGroups[0].matrix!.rows[0].prices.a, 0);
 });

@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -)",
+      "Bash(sed -i '15s/result\\\\.groups\\\\[0\\\\]\\\\.matrix\\\\./result.groups[0].matrix!./g' lib/products/draft-modular-compatibility.test.mts)",
+      "Bash(sed -i '107s/modularGroups\\\\[0\\\\]\\\\.matrix\\\\./modularGroups[0].matrix!./' lib/products/product-template-draft.test.mts)",
+      "Bash(sed -i '52s/modularGroups\\\\[0\\\\]\\\\.matrix\\\\./modularGroups[0].matrix!./' lib/products/product-template-form-smart-workspace.test.mts)",
+      "Bash(sed -i '57s/modularGroups\\\\[1\\\\]\\\\.matrix\\\\./modularGroups[1].matrix!./' lib/products/smart-product-five-section-integration.test.mts)",
+      "Bash(sed -i '34s/modularGroups\\\\[0\\\\]\\\\.matrix\\\\./modularGroups[0].matrix!./' lib/products/smart-product-json-import.test.mts)",
+      "Bash(npx --yes tsx --test lib/products/draft-modular-compatibility.test.mts lib/products/product-template-draft.test.mts lib/products/product-template-draft-modular-adapter.test.mts lib/products/accessory-conditional-configuration.test.mts lib/products/modular-pricing-state.test.mts)",
+      "Bash(npx --yes tsx --test lib/products/modular-direct-composition.test.mts)",
+      "Bash(npx --yes tsx --test lib/products/*.test.mts lib/quotations/*.test.mts)",
+      "Bash(npx --yes tsx --test lib/products/smart-product-five-section-integration.test.mts)",
+      "Bash(npx --yes tsx --test lib/products/source-qa-ai-provider.test.mts)"
+    ]
+  }
+}

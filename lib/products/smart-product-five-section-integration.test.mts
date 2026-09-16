@@ -54,7 +54,7 @@ test("all five adapters independently preserve null, zero, numbers, and hierarch
 
 test("unsafe modular and accessory sections yield no replacement payload", () => {
   const draft = fullDraft();
-  draft.pricing.modularGroups[1].matrix.columns = [{ id: "e", label: "Cat E" }];
+  draft.pricing.modularGroups[1].matrix!.columns = [{ id: "e", label: "Cat E" }];
   draft.optionGroups[0].selection = { mode: "required_choose_one", minSelections: 1, maxSelections: 1, defaultItemIds: ["option-free"] };
   assert.equal(mapDraftModularPricing(draft).compatible, false);
   assert.deepEqual(mapDraftModularPricing(draft).groups, []);

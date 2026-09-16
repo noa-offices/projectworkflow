@@ -2,6 +2,16 @@ export const MODULAR_ITEM_PRICING_TYPE = "modular_item";
 export const MODULAR_META_PRICING_TYPE = "modular_meta";
 export const MODULAR_GROUP_PRICING_TYPE = "modular_group";
 
+/** Opt-in marker: the group prices rows by one scalar `price`, not category columns. */
+export const DIRECT_MODULAR_PRICING_MODE = "direct";
+export const MODULAR_ROLES = ["starter", "intermediate", "terminal"] as const;
+export type ModularRole = typeof MODULAR_ROLES[number];
+
+export type ModularCompositionShape = {
+  min_starters?: number | null;
+  max_starters?: number | null;
+};
+
 export type ModularCategoryPricingShape = {
   group_name?: string | null;
   id?: string | null;
@@ -11,7 +21,34 @@ export type ModularCategoryPricingShape = {
   sort_order?: number | null;
   modular_default_dimension?: string | null;
   modular_default_specification?: string | null;
+  modular_pricing_mode?: string | null;
+  modular_composition?: ModularCompositionShape | null;
+  modular_role?: string | null;
+  price?: number | null;
 };
+
+/** Direct-priced modular groups are opt-in; every legacy group stays matrix-priced. */
+export function isDirectModularPricingGroup(group: ModularCategoryPricingShape | null | undefined) {
+  return group?.modular_pricing_mode === DIRECT_MODULAR_PRICING_MODE;
+}
+
+export function modularRowRole(row: ModularCategoryPricingShape | null | undefined): ModularRole | null {
+  const role = typeof row?.modular_role === "string" ? row.modular_role : "";
+  return MODULAR_ROLES.includes(role as ModularRole) ? role as ModularRole : null;
+}
+
+/** Normalized starter cardinality for a direct-priced composition group. */
+export function modularCompositionRule(group: ModularCategoryPricingShape | null | undefined) {
+  if (!isDirectModularPricingGroup(group)) return null;
+  const composition = group?.modular_composition;
+  if (!composition) return null;
+  const min = Number(composition.min_starters);
+  const max = composition.max_starters === null || composition.max_starters === undefined ? null : Number(composition.max_starters);
+  return {
+    minStarters: Number.isInteger(min) && min >= 0 ? min : 0,
+    maxStarters: max !== null && Number.isInteger(max) && max >= 1 ? max : null,
+  };
+}
 
 export function isModularItemPricingRow(row: ModularCategoryPricingShape | null | undefined) {
   return row?.pricing_type === MODULAR_ITEM_PRICING_TYPE;

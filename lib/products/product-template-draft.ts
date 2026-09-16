@@ -4,6 +4,19 @@
  * to the current database payload or alter existing save behaviour.
  */
 
+import {
+  ACCESSORY_APPLICABILITY_TARGET_KINDS,
+  ACCESSORY_CONFIGURATION_ROLES,
+  ACCESSORY_SELECTION_MODES,
+  accessoryApplicabilityTargetKey,
+  type AccessoryApplicabilityTarget,
+  type AccessoryApplicabilityTargetKind,
+  type AccessoryConditionalConfiguration,
+  type AccessoryConfigurationRole,
+  type AccessoryModelApplicabilityRule,
+  type AccessorySelectionMode,
+} from "./accessory-conditional-configuration";
+
 export const PRODUCT_TEMPLATE_DRAFT_VERSION = 1 as const;
 
 const supportedCurrencies = new Set([
@@ -89,13 +102,57 @@ export type ProductTemplateDraftPriceMatrix = {
   rows: ProductTemplateDraftMatrixRow[];
 };
 
+export const PRODUCT_TEMPLATE_DRAFT_MODULAR_ROLES = ["starter", "intermediate", "terminal"] as const;
+export type ProductTemplateDraftModularRole = typeof PRODUCT_TEMPLATE_DRAFT_MODULAR_ROLES[number];
+
+/** A modular row priced by one direct scalar price instead of category columns. */
+export type ProductTemplateDraftModularDirectRow = ProductTemplateDraftPricedRow & {
+  role?: ProductTemplateDraftModularRole;
+};
+
+/**
+ * Minimal starter/intermediate composition contract for direct-priced modular
+ * groups (for example a starter bench plus zero or more intermediate benches).
+ * It is deliberately not a general rules DSL: only starter cardinality is
+ * constrained, and intermediates are blocked until a starter is selected.
+ */
+export type ProductTemplateDraftModularComposition = {
+  minStarters: number;
+  maxStarters: number | null;
+};
+
+export type ProductTemplateDraftModularPricingMode = "matrix" | "direct";
+
 export type ProductTemplateDraftModularGroup = {
   id: string;
   label: string | null;
   defaultDimensions: ProductTemplateDraftDimension | null;
   defaultSpecification: string | null;
-  matrix: ProductTemplateDraftPriceMatrix;
+  /** Absent means legacy "matrix" mode. */
+  pricingMode?: ProductTemplateDraftModularPricingMode;
+  /** Present for matrix mode only. */
+  matrix?: ProductTemplateDraftPriceMatrix;
+  /** Present for direct mode only. */
+  directRows?: ProductTemplateDraftModularDirectRow[];
+  composition?: ProductTemplateDraftModularComposition;
 };
+
+/** True when the group prices rows by one direct scalar price instead of category columns. */
+export function isDirectModularGroup(group: ProductTemplateDraftModularGroup) {
+  return group.pricingMode === "direct" || (!group.matrix && Array.isArray(group.directRows));
+}
+
+/** Category columns for a modular group; always empty for a direct-priced group. */
+export function draftModularColumns(group: ProductTemplateDraftModularGroup): ProductTemplateDraftMatrixColumn[] {
+  return isDirectModularGroup(group) ? [] : group.matrix?.columns ?? [];
+}
+
+/** Every priced row of a modular group, regardless of pricing mode. */
+export function draftModularRows(
+  group: ProductTemplateDraftModularGroup,
+): Array<ProductTemplateDraftMatrixRow | ProductTemplateDraftModularDirectRow> {
+  return isDirectModularGroup(group) ? group.directRows ?? [] : group.matrix?.rows ?? [];
+}
 
 export type ProductTemplateDraftSelectionMode =
   | "optional"
@@ -120,12 +177,21 @@ export type ProductTemplateDraftCategoryPricedOptionItem = ProductTemplateDraftO
   unavailablePriceCategoryIds?: string[];
 };
 
+/**
+ * Optional row-specific enforcement metadata, reusing the exact runtime
+ * AccessoryConditionalConfiguration shape (role/selection/applicability, with
+ * target.kind of base_model | price_matrix | modular | workstation,
+ * allowed_item_ids, fixed_quantity, and scale_with_target_quantity) so extraction can legally represent a
+ * Required Companion, its exact target rows, and any fixed quantity without
+ * inventing new field names. Ordinary option groups may omit this field.
+ */
 export type ProductTemplateDraftOptionGroup = {
   id: string;
   label: string | null;
   selection: ProductTemplateDraftSelectionRule;
   priceCategories?: ProductTemplateDraftOptionPriceCategory[];
   items: ProductTemplateDraftCategoryPricedOptionItem[];
+  conditionalConfiguration?: AccessoryConditionalConfiguration;
 };
 
 export type ProductTemplateDraftMaterialSuggestion = ProductTemplateDraftReferences & {
@@ -405,6 +471,103 @@ function selection(value: unknown, itemIds: Set<string>, path: string, issues: I
   return { mode: mode && allowedModes.includes(mode) ? mode : "optional", minSelections: min, maxSelections: max, defaultItemIds };
 }
 
+function modularComposition(
+  value: unknown,
+  path: string,
+  issues: IssueCollector,
+  rows: ProductTemplateDraftModularDirectRow[],
+): ProductTemplateDraftModularComposition {
+  const source = requiredObject(value, path, issues);
+  const minStarters = nullableFiniteNumber(source.minStarters, `${path}.minStarters`, issues) ?? 0;
+  const maxStarters = nullableFiniteNumber(source.maxStarters, `${path}.maxStarters`, issues);
+  if (!Number.isInteger(minStarters) || minStarters < 0) error(issues, `${path}.minStarters`, "Minimum starters must be a non-negative integer.");
+  if (maxStarters !== null && (!Number.isInteger(maxStarters) || maxStarters < 1)) error(issues, `${path}.maxStarters`, "Maximum starters must be a positive integer or null.");
+  if (maxStarters !== null && minStarters > maxStarters) error(issues, path, "Minimum starters cannot exceed maximum starters.");
+  if (minStarters > 0 && !rows.some((row) => row.role === "starter")) {
+    error(issues, path, "A composition requiring a starter needs at least one row with role 'starter'.");
+  }
+  return { minStarters, maxStarters };
+}
+
+function applicabilityTarget(value: unknown, path: string, issues: IssueCollector): AccessoryApplicabilityTarget | null {
+  const source = requiredObject(value, path, issues);
+  const kind = nullableText(source.kind, `${path}.kind`, issues);
+  if (!kind || !ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(kind as AccessoryApplicabilityTargetKind)) {
+    error(issues, `${path}.kind`, "Applicability target kind must be base_model, price_matrix, modular, or workstation.");
+    return null;
+  }
+  const groupId = requiredId(source.group_id, `${path}.group_id`, issues);
+  const rowId = requiredId(source.row_id, `${path}.row_id`, issues);
+  if (!groupId || !rowId) return null;
+  return { kind: kind as AccessoryApplicabilityTargetKind, group_id: groupId, row_id: rowId };
+}
+
+function applicabilityRule(value: unknown, path: string, issues: IssueCollector, itemIds: Set<string>, seenTargetKeys: Set<string>, selectionMode: string | null): AccessoryModelApplicabilityRule | null {
+  const source = requiredObject(value, path, issues);
+  const target = applicabilityTarget(source.target, `${path}.target`, issues);
+  if (!target) {
+    error(issues, `${path}.target`, "Applicability rule requires a target with kind, group_id, and row_id identifying the exact applicable row.");
+    return null;
+  }
+  const targetKey = accessoryApplicabilityTargetKey(target);
+  if (seenTargetKeys.has(targetKey)) error(issues, path, "Only one applicability rule is allowed for the same target row.");
+  seenTargetKeys.add(targetKey);
+  if (typeof source.required !== "boolean") error(issues, `${path}.required`, "Required must be true or false.");
+  if (source.visible !== undefined && typeof source.visible !== "boolean") error(issues, `${path}.visible`, "Visible must be true or false.");
+  const allowedItemIds = source.allowed_item_ids === undefined ? undefined : codeList(source.allowed_item_ids, `${path}.allowed_item_ids`, issues).filter((id) => {
+    if (itemIds.has(id)) return true;
+    error(issues, `${path}.allowed_item_ids`, `Allowed item id '${id}' does not exist in this option group.`);
+    return false;
+  });
+  const fixedQuantity = source.fixed_quantity === undefined ? undefined : nullableFiniteNumber(source.fixed_quantity, `${path}.fixed_quantity`, issues);
+  if (fixedQuantity !== undefined && fixedQuantity !== null && (!Number.isInteger(fixedQuantity) || fixedQuantity <= 0)) {
+    error(issues, `${path}.fixed_quantity`, "Fixed quantity must be a positive integer.");
+  }
+  const scaleWithTargetQuantity = source.scale_with_target_quantity;
+  if (scaleWithTargetQuantity !== undefined && typeof scaleWithTargetQuantity !== "boolean") {
+    error(issues, `${path}.scale_with_target_quantity`, "Quantity scaling must be boolean.");
+  }
+  if (scaleWithTargetQuantity === true && (fixedQuantity === undefined || fixedQuantity === null)) {
+    error(issues, `${path}.scale_with_target_quantity`, "Quantity scaling requires a fixed quantity.");
+  }
+  if (scaleWithTargetQuantity === true && target.kind !== "modular") {
+    error(issues, `${path}.scale_with_target_quantity`, "Quantity scaling is only supported for modular targets.");
+  }
+  if (scaleWithTargetQuantity === true && selectionMode === "exactly_one") {
+    error(issues, `${path}.scale_with_target_quantity`, "Quantity scaling cannot be combined with exactly-one selection.");
+  }
+  return {
+    target,
+    required: source.required === true,
+    visible: source.visible !== false,
+    ...(allowedItemIds?.length ? { allowed_item_ids: allowedItemIds } : {}),
+    ...(fixedQuantity ? { fixed_quantity: fixedQuantity } : {}),
+    ...(scaleWithTargetQuantity === true ? { scale_with_target_quantity: true } : {}),
+  };
+}
+
+function conditionalConfiguration(value: unknown, path: string, issues: IssueCollector, itemIds: Set<string>): AccessoryConditionalConfiguration | undefined {
+  if (value === undefined) return undefined;
+  const source = requiredObject(value, path, issues);
+  const role = nullableText(source.role, `${path}.role`, issues);
+  if (!role || !ACCESSORY_CONFIGURATION_ROLES.includes(role as AccessoryConfigurationRole)) {
+    error(issues, `${path}.role`, "Unknown accessory configuration role.");
+  }
+  const selectionMode = nullableText(source.selection, `${path}.selection`, issues);
+  if (!selectionMode || !ACCESSORY_SELECTION_MODES.includes(selectionMode as AccessorySelectionMode)) {
+    error(issues, `${path}.selection`, "Unknown accessory selection mode.");
+  }
+  const seenTargetKeys = new Set<string>();
+  const applicability = array(source.applicability, `${path}.applicability`, issues)
+    .map((rule, index) => applicabilityRule(rule, `${path}.applicability[${index}]`, issues, itemIds, seenTargetKeys, selectionMode))
+    .filter((rule): rule is AccessoryModelApplicabilityRule => rule !== null);
+  return {
+    role: (role && ACCESSORY_CONFIGURATION_ROLES.includes(role as AccessoryConfigurationRole) ? role : "accessory") as AccessoryConfigurationRole,
+    selection: (selectionMode && ACCESSORY_SELECTION_MODES.includes(selectionMode as AccessorySelectionMode) ? selectionMode : "unrestricted") as AccessorySelectionMode,
+    applicability,
+  };
+}
+
 function source(value: unknown, path: string, issues: IssueCollector): ProductTemplateDraftSource {
   const item = object(value, path, issues);
   const pageNumber = nullableFiniteNumber(item.pageNumber, `${path}.pageNumber`, issues);
@@ -455,13 +618,49 @@ export function normalizeProductTemplateDraft(input: unknown): ProductTemplateDr
     .map((value, index) => matrix(value, `draft.pricing.priceMatrices[${index}]`, issues));
   uniqueIds(priceMatrices.map((item) => item.id), "draft.pricing.priceMatrices", issues);
   const modularGroups = array(pricingInput.modularGroups, "draft.pricing.modularGroups", issues).map((value, index) => {
-    const item = object(value, `draft.pricing.modularGroups[${index}]`, issues);
+    const path = `draft.pricing.modularGroups[${index}]`;
+    const item = object(value, path, issues);
+    const base = {
+      id: requiredId(item.id, `${path}.id`, issues),
+      label: nullableText(item.label, `${path}.label`, issues),
+      defaultDimensions: dimensions(item.defaultDimensions, `${path}.defaultDimensions`, issues),
+      defaultSpecification: nullableText(item.defaultSpecification, `${path}.defaultSpecification`, issues),
+    };
+    const declaredMode = nullableText(item.pricingMode, `${path}.pricingMode`, issues);
+    if (declaredMode && declaredMode !== "matrix" && declaredMode !== "direct") {
+      error(issues, `${path}.pricingMode`, 'Modular pricing mode must be "matrix" or "direct".');
+    }
+    const hasDirectRows = item.directRows !== undefined;
+    const hasMatrix = item.matrix !== undefined;
+    const direct = declaredMode === "direct" || (!declaredMode && hasDirectRows && !hasMatrix);
+    if (direct && hasMatrix) {
+      error(issues, path, "A direct-priced modular group cannot also declare a category matrix.");
+    }
+    if (!direct && hasDirectRows) {
+      error(issues, path, "A matrix modular group cannot also declare directRows.");
+    }
+    if (!direct) {
+      return { ...base, ...(declaredMode ? { pricingMode: "matrix" as const } : {}), matrix: matrix(item.matrix, `${path}.matrix`, issues) };
+    }
+    const directRows = array(item.directRows, `${path}.directRows`, issues).map((row, rowIndex) => {
+      const rowPath = `${path}.directRows[${rowIndex}]`;
+      const source = object(row, rowPath, issues);
+      const role = nullableText(source.role, `${rowPath}.role`, issues);
+      if (role && !PRODUCT_TEMPLATE_DRAFT_MODULAR_ROLES.includes(role as ProductTemplateDraftModularRole)) {
+        error(issues, `${rowPath}.role`, 'Modular row role must be "starter", "intermediate", or "terminal".');
+      }
+      return {
+        ...pricedRow(source, rowPath, issues),
+        ...(role && PRODUCT_TEMPLATE_DRAFT_MODULAR_ROLES.includes(role as ProductTemplateDraftModularRole) ? { role: role as ProductTemplateDraftModularRole } : {}),
+      };
+    });
+    uniqueIds(directRows.map((row) => row.id), `${path}.directRows`, issues);
+    if (!directRows.length) error(issues, `${path}.directRows`, "A direct-priced modular group needs at least one row.");
     return {
-      id: requiredId(item.id, `draft.pricing.modularGroups[${index}].id`, issues),
-      label: nullableText(item.label, `draft.pricing.modularGroups[${index}].label`, issues),
-      defaultDimensions: dimensions(item.defaultDimensions, `draft.pricing.modularGroups[${index}].defaultDimensions`, issues),
-      defaultSpecification: nullableText(item.defaultSpecification, `draft.pricing.modularGroups[${index}].defaultSpecification`, issues),
-      matrix: matrix(item.matrix, `draft.pricing.modularGroups[${index}].matrix`, issues),
+      ...base,
+      pricingMode: "direct" as const,
+      directRows,
+      ...(item.composition === undefined ? {} : { composition: modularComposition(item.composition, `${path}.composition`, issues, directRows) }),
     };
   });
   uniqueIds(modularGroups.map((item) => item.id), "draft.pricing.modularGroups", issues);
@@ -473,12 +672,15 @@ export function normalizeProductTemplateDraft(input: unknown): ProductTemplateDr
     const items = array(item.items, `draft.optionGroups[${index}].items`, issues)
       .map((row, rowIndex) => { const source = object(row, `draft.optionGroups[${index}].items[${rowIndex}]`, issues); const base = pricedRow(source, `draft.optionGroups[${index}].items[${rowIndex}]`, issues); const values = object(source.prices, `draft.optionGroups[${index}].items[${rowIndex}].prices`, issues); const prices = Object.fromEntries(Object.entries(values).map(([id, value]) => [id, price(value, `draft.optionGroups[${index}].items[${rowIndex}].prices.${id}`, issues)])); Object.keys(prices).forEach((id) => { if (!categoryIds.has(id)) error(issues, `draft.optionGroups[${index}].items[${rowIndex}].prices.${id}`, "Unknown accessory price category."); }); return { ...base, ...(priceCategories.length ? { prices } : {}) }; });
     uniqueIds(items.map((option) => option.id), `draft.optionGroups[${index}].items`, issues);
+    const itemIds = new Set(items.map((option) => option.id));
+    const configuration = conditionalConfiguration(item.conditionalConfiguration, `draft.optionGroups[${index}].conditionalConfiguration`, issues, itemIds);
     return {
       id: requiredId(item.id, `draft.optionGroups[${index}].id`, issues),
       label: nullableText(item.label, `draft.optionGroups[${index}].label`, issues),
-      selection: selection(item.selection, new Set(items.map((option) => option.id)), `draft.optionGroups[${index}].selection`, issues),
+      selection: selection(item.selection, itemIds, `draft.optionGroups[${index}].selection`, issues),
       ...(priceCategories.length ? { priceCategories } : {}),
       items,
+      ...(configuration ? { conditionalConfiguration: configuration } : {}),
     };
   });
   uniqueIds(optionGroups.map((group) => group.id), "draft.optionGroups", issues);

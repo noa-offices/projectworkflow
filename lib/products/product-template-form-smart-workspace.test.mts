@@ -35,7 +35,7 @@ test("live form pricing becomes an authoritative reviewed workspace without losi
   const accessory = workspace.plan.routes.find((route) => route.key === "option:service")?.accessory;
   assert.equal(accessory?.role, "companion");
   assert.equal(accessory?.selection, "required_exactly_one");
-  assert.deepEqual(accessory?.rules[0], { baseModelGroupId: "executive", baseModelRowId: "model-a", required: true, allowedItemIds: ["service-right"], fixedQuantity: 1 });
+  assert.deepEqual(accessory?.rules[0], { baseModelGroupId: "executive", baseModelRowId: "model-a", required: true, visible: true, allowedItemIds: ["service-right"], fixedQuantity: 1 });
 });
 
 test("malformed or absent pricing JSON is isolated to empty sections", () => {
@@ -49,7 +49,18 @@ test("malformed or absent pricing JSON is isolated to empty sections", () => {
 test("live modular hidden JSON remains available to manufacturer comparison", () => {
   const workspace = productTemplateFormSmartWorkspace({ desking_size_pricing: "[]", variant_pricing: "[]", category_pricing: "[]", accessory_pricing: "[]", modular_item_pricing: JSON.stringify([{ id: "modules", pricing_type: "modular_group", group_name: "Modules", price_categories: ["Cat A"], items: [{ id: "module-a", display_name: "Module A", supplier_price_list_code: "MOD-A", prices: { "Cat A": 12 } }] }]) });
   assert.equal(workspace.draft.pricing.modularGroups[0].id, "modules");
-  assert.equal(workspace.draft.pricing.modularGroups[0].matrix.rows[0].prices["Cat A"], 12);
+  assert.equal(workspace.draft.pricing.modularGroups[0].matrix!.rows[0].prices["Cat A"], 12);
+});
+
+test("saved direct Modular and scaled applicability reopen without matrix conversion", () => {
+  const workspace = productTemplateFormSmartWorkspace({ desking_size_pricing: "[]", variant_pricing: "[]", category_pricing: "[]", modular_item_pricing: JSON.stringify([{ id: "oxi", pricing_type: "modular_group", modular_pricing_mode: "direct", modular_composition: { min_starters: 1, max_starters: 1 }, items: [{ id: "starter", display_name: "Starter", supplier_price_list_code: "111 065", price: 500, currency: "EUR", modular_role: "starter" }, { id: "add", display_name: "Add-on", supplier_price_list_code: "111 069", price: 300, currency: "EUR", modular_role: "intermediate" }] }]), accessory_pricing: JSON.stringify([{ id: "art-058", group_name: "ART.058", conditional_configuration: { role: "companion", selection: "choose_multiple", applicability: [{ target: { kind: "modular", group_id: "oxi", row_id: "starter" }, required: true, visible: true, fixed_quantity: 2, scale_with_target_quantity: true }] }, items: [{ id: "058", item_name: "ART.058", price: 69, currency: "EUR" }] }]) });
+  const group = workspace.draft.pricing.modularGroups[0];
+  assert.equal(group.pricingMode, "direct");
+  assert.equal(group.matrix, undefined);
+  assert.equal(group.directRows?.[0].price, 500);
+  assert.equal(group.directRows?.[1].role, "intermediate");
+  assert.deepEqual(group.composition, { minStarters: 1, maxStarters: 1 });
+  assert.equal(workspace.plan.routes.find((route) => route.key === "option:art-058")?.accessory?.rules[0].scaleWithTargetQuantity, true);
 });
 
 test("live category-priced accessories preserve group categories and independent item price maps", () => {
@@ -58,4 +69,12 @@ test("live category-priced accessories preserve group categories and independent
   assert.deepEqual(workspace.draft.optionGroups[0].priceCategories, priceCategories);
   assert.deepEqual(workspace.draft.optionGroups[0].items[0].prices, { "cat-b": 93, "cat-supreme": 162 });
   assert.deepEqual(workspace.draft.optionGroups[0].items[1].prices, { "cat-b": 107, "cat-supreme": 189 });
+});
+
+test("live workstation rows retain stable identity, layout, and important requirements", () => {
+  const pricing = [{ id: "bench", pricing_type: "workstation_group", group_name: "OXI", is_active: true, sort_order: 0, items: [{ id: "oxi-4", label: "4 person bench", layout_type: "Cluster", importantRequirements: [" Required legs ", "Required legs", "Cable tray"] }] }];
+  const workspace = productTemplateFormSmartWorkspace({ desking_size_pricing: JSON.stringify(pricing), variant_pricing: "[]", category_pricing: "[]", accessory_pricing: "[]" });
+  assert.equal(workspace.draft.pricing.workstationRows[0].id, "oxi-4");
+  assert.equal(workspace.draft.pricing.workstationRows[0].layoutType, "cluster");
+  assert.deepEqual(workspace.draft.pricing.workstationRows[0].importantRequirements, ["Required legs", "Cable tray"]);
 });

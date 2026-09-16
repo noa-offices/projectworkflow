@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ProductTemplateDraft } from "./product-template-draft.js";
 import {
+  findWorkstationPricingRow,
   flattenWorkstationPricingRows,
   hasExplicitWorkstationPricingGroupStructure,
   hasMeaningfulWorkstationPricingData,
@@ -125,4 +126,18 @@ test("row fallback ids are isolated and ProductTemplateDraft v1 workstationRows 
   assert.equal(workstationPricingRowId({}, 3), "size-3");
   const draftRows: ProductTemplateDraft["pricing"]["workstationRows"] = [];
   assert.ok(Array.isArray(draftRows));
+});
+
+test("workstation selections resolve by stable row id and only use labels for unambiguous legacy snapshots", () => {
+  const groups = [
+    { id: "bench", pricing_type: WORKSTATION_GROUP_PRICING_TYPE, group_name: "Bench", is_active: true, sort_order: 0, items: [rowA] },
+    { id: "cluster", pricing_type: WORKSTATION_GROUP_PRICING_TYPE, group_name: "Cluster", is_active: true, sort_order: 1, items: [rowB] },
+  ];
+  assert.equal(findWorkstationPricingRow(groups, { rowId: "row-b", legacyLabel: "1200 desk" })?.group.id, "cluster");
+  assert.equal(findWorkstationPricingRow(groups, { rowId: "missing", legacyLabel: "1200 desk" }), null);
+  assert.equal(findWorkstationPricingRow(groups, { legacyLabel: "1200 desk" })?.row.id, "row-a");
+  assert.equal(findWorkstationPricingRow([...groups, { ...groups[1], id: "duplicate", items: [{ ...rowB, id: "row-c", label: "1200 desk" }] }], { legacyLabel: "1200 desk" }), null);
+  const duplicateIds = [...groups, { ...groups[1], id: "duplicate", items: [{ ...rowB, id: "row-b" }] }];
+  assert.equal(findWorkstationPricingRow(duplicateIds, { rowId: "row-b" }), null);
+  assert.equal(findWorkstationPricingRow(duplicateIds, { groupId: "cluster", rowId: "row-b" })?.group.id, "cluster");
 });

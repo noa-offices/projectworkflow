@@ -1,4 +1,4 @@
-import type { ProductTemplateDraft, ProductTemplateDraftMatrixRow, ProductTemplateDraftPricedRow } from "./product-template-draft";
+import { draftModularRows, type ProductTemplateDraft, type ProductTemplateDraftMatrixRow, type ProductTemplateDraftPricedRow } from "./product-template-draft";
 
 export type SourceQaPage = { pageNumber: number; text: string };
 export type SourceQaFindingStatus = "matched" | "missing_candidate" | "conflict" | "intentionally_ignored";
@@ -27,7 +27,7 @@ function rows(draft: ProductTemplateDraft): Array<{ location: string; row: Produ
     ...draft.pricing.workstationRows.map((row) => ({ location: `workstation:${row.id}`, row })),
     ...draft.pricing.baseModelRows.map((row) => ({ location: `base_model:${row.id}`, row })),
     ...draft.pricing.priceMatrices.flatMap((matrix) => matrix.rows.map((row) => ({ location: `matrix:${matrix.id}:${row.id}`, row }))),
-    ...draft.pricing.modularGroups.flatMap((group) => group.matrix.rows.map((row) => ({ location: `modular:${group.id}:${row.id}`, row }))),
+    ...draft.pricing.modularGroups.flatMap((group) => draftModularRows(group).map((row) => ({ location: `modular:${group.id}:${row.id}`, row }))),
     ...draft.optionGroups.flatMap((group) => group.items.map((row) => ({ location: `option:${group.id}:${row.id}`, row }))),
   ];
 }

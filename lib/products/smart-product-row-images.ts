@@ -1,5 +1,5 @@
 import type { ProductTemplateGroupReferenceType } from "./product-template-group-references";
-import type { ProductTemplateDraft } from "./product-template-draft";
+import { draftModularRows, type ProductTemplateDraft } from "./product-template-draft";
 import type { SmartReviewDestination, SmartReviewRoute, SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
 import type { BaseModelPricingSubgroup } from "./base-model-pricing-groups";
 import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups";
@@ -35,7 +35,7 @@ function routeRowIds(draft: ProductTemplateDraft, route: SmartReviewRoute) {
   if (route.sourceKind === "workstation") return draft.pricing.workstationRows.map((row) => row.id);
   if (route.sourceKind === "base_model") return draft.pricing.baseModelRows.map((row) => row.id);
   if (route.sourceKind === "matrix") return draft.pricing.priceMatrices.find((matrix) => matrix.id === route.sourceId)?.rows.map((row) => row.id) ?? [];
-  if (route.sourceKind === "modular") return draft.pricing.modularGroups.find((group) => group.id === route.sourceId)?.matrix.rows.map((row) => row.id) ?? [];
+  if (route.sourceKind === "modular") return draft.pricing.modularGroups.filter((group) => group.id === route.sourceId).flatMap((group) => draftModularRows(group).map((row) => row.id));
   return draft.optionGroups.find((group) => group.id === route.sourceId)?.items.map((row) => row.id) ?? [];
 }
 

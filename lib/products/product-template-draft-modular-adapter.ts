@@ -1,5 +1,6 @@
 import { analyzeDraftModularCompatibility } from "./draft-modular-compatibility";
 import {
+  DIRECT_MODULAR_PRICING_MODE,
   MODULAR_GROUP_PRICING_TYPE,
   MODULAR_ITEM_PRICING_TYPE,
 } from "./modular-pricing";
@@ -22,6 +23,41 @@ export function mapDraftModularPricing(draft: ProductTemplateDraft) {
   }
 
   const priceCategories = analysis.sharedColumns.map((column) => column.label ?? column.id);
+  const directGroups = analysis.directGroups.map((group, groupIndex) => ({
+    id: group.id,
+    group_name: group.label ?? group.id,
+    price_categories: [] as string[],
+    pricing_type: MODULAR_GROUP_PRICING_TYPE,
+    modular_pricing_mode: DIRECT_MODULAR_PRICING_MODE,
+    ...(group.composition ? { modular_composition: { min_starters: group.composition.minStarters, max_starters: group.composition.maxStarters } } : {}),
+    is_active: true,
+    sort_order: analysis.groups.length + groupIndex,
+    items: (group.directRows ?? []).map((row, rowIndex) => {
+      const codes = [...row.supplierCodes, ...row.referenceCodes];
+      if (codes.length > 1) {
+        warnings.push(`Modular row '${row.label ?? row.displayName ?? row.id}' contains additional supplier/reference codes; only the primary code was applied.`);
+      }
+      return {
+        id: row.id,
+        pricing_type: MODULAR_ITEM_PRICING_TYPE,
+        variant_name: row.label ?? row.id,
+        display_name: row.displayName ?? row.label ?? "",
+        supplier_price_list_code: codes[0] ?? "",
+        dimension: dimensionText(row.dimensions),
+        specification: row.specification ?? "",
+        ...(row.importantRequirements?.length ? { importantRequirements: row.importantRequirements } : {}),
+        currency: row.currency ?? undefined,
+        price: row.price,
+        // Direct rows carry no category cells; the empty maps keep the runtime row
+        // shape uniform without implying a one-column matrix.
+        prices: {} as Record<string, number | null>,
+        unavailable_categories: [] as string[],
+        ...(row.role ? { modular_role: row.role } : {}),
+        is_active: true,
+        sort_order: rowIndex,
+      };
+    }),
+  }));
   const groups = analysis.groups.map((group, groupIndex) => ({
     id: group.id,
     group_name: group.label ?? group.id,
@@ -29,7 +65,7 @@ export function mapDraftModularPricing(draft: ProductTemplateDraft) {
     pricing_type: MODULAR_GROUP_PRICING_TYPE,
     is_active: true,
     sort_order: groupIndex,
-    items: group.matrix.rows.map((row, rowIndex) => {
+    items: (group.matrix?.rows ?? []).map((row, rowIndex) => {
       const codes = [...row.supplierCodes, ...row.referenceCodes];
       if (codes.length > 1) {
         warnings.push(`Modular row '${row.label ?? row.displayName ?? row.id}' contains additional supplier/reference codes; only the primary code was applied.`);
@@ -58,5 +94,5 @@ export function mapDraftModularPricing(draft: ProductTemplateDraft) {
     }),
   }));
 
-  return { compatible: true as const, groups, priceCategories, warnings, errors: [] as string[] };
+  return { compatible: true as const, groups: [...groups, ...directGroups], priceCategories, warnings, errors: [] as string[] };
 }

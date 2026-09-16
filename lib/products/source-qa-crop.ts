@@ -1,4 +1,4 @@
-import type { ProductTemplateDraft } from "./product-template-draft";
+import { draftModularRows, type ProductTemplateDraft } from "./product-template-draft";
 import type { SmartReviewedPricingSubgroups } from "./smart-product-row-images";
 import { normalizeSourceQaCode, type SourceQaPage } from "./source-qa";
 
@@ -33,7 +33,7 @@ export function nextSourceCropTarget(targets: SourceCropTarget[], currentTargetI
   return targets.slice(currentIndex + 1).find((target) => target.sourceKey === sourceKey && eligible(target)) ?? targets.slice(currentIndex + 1).find(eligible) ?? null;
 }
 export function sourceCropTargets(draft: ProductTemplateDraft, subgroups: SmartReviewedPricingSubgroups = {}): SourceCropTarget[] {
-  const rows = [...draft.pricing.baseModelRows.map((row) => ({ id: "base:" + row.id, sourceKey: "base_model:rows", rowId: row.id, label: rowLabel(row), codes: rowCodes(row), kind: "Base / Model" as const })), ...draft.pricing.priceMatrices.flatMap((matrix) => matrix.rows.map((row) => ({ id: "matrix:" + matrix.id + ":" + row.id, sourceKey: "matrix:" + matrix.id, rowId: row.id, label: rowLabel(row), codes: rowCodes(row), kind: "Category / Matrix" as const }))), ...draft.pricing.modularGroups.flatMap((group) => group.matrix.rows.map((row) => ({ id: "modular:" + group.id + ":" + row.id, sourceKey: "modular:" + group.id, rowId: row.id, label: rowLabel(row), codes: rowCodes(row), kind: "Modular" as const }))), ...draft.optionGroups.flatMap((group) => group.items.map((row) => ({ id: "option:" + group.id + ":" + row.id, sourceKey: "option:" + group.id, rowId: row.id, label: rowLabel(row), codes: rowCodes(row), kind: "Accessory" as const })))];
+  const rows = [...draft.pricing.baseModelRows.map((row) => ({ id: "base:" + row.id, sourceKey: "base_model:rows", rowId: row.id, label: rowLabel(row), codes: rowCodes(row), kind: "Base / Model" as const })), ...draft.pricing.priceMatrices.flatMap((matrix) => matrix.rows.map((row) => ({ id: "matrix:" + matrix.id + ":" + row.id, sourceKey: "matrix:" + matrix.id, rowId: row.id, label: rowLabel(row), codes: rowCodes(row), kind: "Category / Matrix" as const }))), ...draft.pricing.modularGroups.flatMap((group) => draftModularRows(group).map((row) => ({ id: "modular:" + group.id + ":" + row.id, sourceKey: "modular:" + group.id, rowId: row.id, label: rowLabel(row), codes: rowCodes(row), kind: "Modular" as const }))), ...draft.optionGroups.flatMap((group) => group.items.map((row) => ({ id: "option:" + group.id + ":" + row.id, sourceKey: "option:" + group.id, rowId: row.id, label: rowLabel(row), codes: rowCodes(row), kind: "Accessory" as const })))];
   const visualSubgroups = Object.entries(subgroups).flatMap(([sourceKey, items]) => items.map((item) => ({ id: "subgroup:" + sourceKey + ":" + item.id, sourceKey: "subgroup:" + sourceKey, rowId: item.id, label: "Subgroup — " + item.subgroup_name, codes: [], kind: "Visual subgroup" as const })));
   return [...rows, ...visualSubgroups];
 }

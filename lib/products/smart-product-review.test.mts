@@ -204,6 +204,6 @@ test("global currency override covers every pricing structure without changing a
   assert.equal(overridden.pricing.baseModelRows[0].price, 100);
   assert.equal(overridden.pricing.priceMatrices[0].rows[0].prices["cat-a"], 1323);
   assert.equal(overridden.pricing.priceMatrices[1].rows[0].prices["cat-a"], 900);
-  assert.equal(overridden.pricing.modularGroups[0].matrix.rows[0].prices.cat, 0);
+  assert.equal(overridden.pricing.modularGroups[0].matrix!.rows[0].prices.cat, 0);
   assert.equal(overridden.optionGroups[0].items[0].price, 32);
 });
