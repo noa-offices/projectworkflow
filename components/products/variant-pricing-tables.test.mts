@@ -51,6 +51,24 @@ test("all pricing-table editors reuse the floating scrollbar wrapper without cha
   ["name=\"variant_pricing\" value={serialized}", "name=\"category_pricing\" value={serialized}", "name=\"modular_item_pricing\" value={serialized}", "name=\"accessory_pricing\" value={serialized}"].forEach((expected) => assert.ok(source.includes(expected), `Expected preserved editor serialization: ${expected}`));
 });
 
+test("Matrix Modular rows expose the same compact Role selector as Direct Modular while keeping category price cells, and group composition is no longer gated to Direct Modular only", () => {
+  const source = readFileSync("components/products/variant-pricing-tables.tsx", "utf8");
+  [
+    // Role column/selector is now rendered for every modular group (direct or matrix), not only inside the directGroup branch.
+    '<th className="px-2 py-2">Role</th>',
+    'aria-label="Modular Role" value={normalizedRow.modular_role ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { modular_role: e.target.value || undefined })}',
+    // Matrix rows still render their category price-cell inputs, one per priceCategories entry.
+    "priceCategories.map((category) => <td key={category} className=\"px-2 py-2 align-top\"><input type=\"number\" value={normalizedRow.prices?.[category]",
+    // normalizeCategory (the Matrix row normalizer) now preserves modular_role instead of dropping it.
+    "const role = row.modular_role === \"starter\" || row.modular_role === \"intermediate\" || row.modular_role === \"terminal\" ? row.modular_role : undefined;",
+    "...(role ? { modular_role: role } : {}),",
+    // Group-level composition serialization is no longer wrapped inside the isDirectModularPricingGroup gate.
+    "...(group.modular_composition ? { modular_composition: group.modular_composition } : {}),",
+  ].forEach((expected) => assert.ok(source.includes(expected), `Expected Matrix Modular role/composition editor support: ${expected}`));
+  // The Role <th> now appears exactly once (shared by both branches), not duplicated per pricing mode.
+  assert.equal((source.match(/<th className="px-2 py-2">Role<\/th>/g) ?? []).length, 1);
+});
+
 test("Matrix and Accessory rows keep commercial pricing visible while collapsing verbose metadata", () => {
   const source = readFileSync("components/products/variant-pricing-tables.tsx", "utf8");
   ["expandedCategoryRowByGroup", "Edit / Details", "groupPriceCategories.map((category)", "unavailable_categories", "<details><summary", "item.prices?.[category.id]", "<ImportantRequirementsTextarea value={item.importantRequirements}"].forEach((expected) => assert.ok(source.includes(expected), `Expected compact Matrix/Accessory behavior: ${expected}`));

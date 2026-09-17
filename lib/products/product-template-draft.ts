@@ -93,6 +93,8 @@ export type ProductTemplateDraftMatrixColumn = {
 export type ProductTemplateDraftMatrixRow = Omit<ProductTemplateDraftPricedRow, "price"> & {
   prices: Record<string, ProductTemplateDraftPrice>;
   unavailableCategoryIds?: string[];
+  /** Same Modular role enum as Direct Modular rows; supports Matrix Modular composition such as a starter Bench plus intermediate Bench Extension rows that also carry finish/category-dependent prices. */
+  role?: ProductTemplateDraftModularRole;
 };
 
 export type ProductTemplateDraftPriceMatrix = {
@@ -438,7 +440,16 @@ function matrix(value: unknown, path: string, issues: IssueCollector): ProductTe
       return false;
     });
     const base = pricedRow({ ...item, price: null }, `${path}.rows[${index}]`, issues);
-    return { ...base, prices, unavailableCategoryIds };
+    const role = nullableText(item.role, `${path}.rows[${index}].role`, issues);
+    if (role && !PRODUCT_TEMPLATE_DRAFT_MODULAR_ROLES.includes(role as ProductTemplateDraftModularRole)) {
+      error(issues, `${path}.rows[${index}].role`, 'Modular row role must be "starter", "intermediate", or "terminal".');
+    }
+    return {
+      ...base,
+      prices,
+      unavailableCategoryIds,
+      ...(role && PRODUCT_TEMPLATE_DRAFT_MODULAR_ROLES.includes(role as ProductTemplateDraftModularRole) ? { role: role as ProductTemplateDraftModularRole } : {}),
+    };
   });
   uniqueIds(rows.map((row) => row.id), `${path}.rows`, issues);
 
@@ -483,7 +494,7 @@ function modularComposition(
   value: unknown,
   path: string,
   issues: IssueCollector,
-  rows: ProductTemplateDraftModularDirectRow[],
+  rows: Array<{ role?: ProductTemplateDraftModularRole }>,
 ): ProductTemplateDraftModularComposition {
   const source = requiredObject(value, path, issues);
   const minStarters = nullableFiniteNumber(source.minStarters, `${path}.minStarters`, issues) ?? 0;
@@ -650,7 +661,13 @@ export function normalizeProductTemplateDraft(input: unknown): ProductTemplateDr
       error(issues, path, "A matrix modular group cannot also declare directRows.");
     }
     if (!direct) {
-      return { ...base, ...(declaredMode ? { pricingMode: "matrix" as const } : {}), matrix: matrix(item.matrix, `${path}.matrix`, issues) };
+      const matrixResult = matrix(item.matrix, `${path}.matrix`, issues);
+      return {
+        ...base,
+        ...(declaredMode ? { pricingMode: "matrix" as const } : {}),
+        matrix: matrixResult,
+        ...(item.composition === undefined ? {} : { composition: modularComposition(item.composition, `${path}.composition`, issues, matrixResult.rows) }),
+      };
     }
     const directRows = array(item.directRows, `${path}.directRows`, issues).map((row, rowIndex) => {
       const rowPath = `${path}.directRows[${rowIndex}]`;

@@ -84,6 +84,73 @@ test("Matrix Modular groups keep their existing category-price-map behavior unch
   assert.equal("price" in group.items[0], false, "Expected a Matrix row to never gain a scalar price field");
 });
 
+/** Submitted "modular_item_pricing" FormData shape: a Matrix Modular group with starter/intermediate roles, composition, and finish-category prices, generic (not Terra-specific). */
+function matrixModularWithRolesSubmission() {
+  return JSON.stringify([{
+    id: "mod-composed",
+    group_name: "Composed Matrix Group",
+    pricing_type: "modular_group",
+    modular_composition: { min_starters: 1, max_starters: 1 },
+    is_active: true,
+    sort_order: 0,
+    price_categories: ["Standard", "Designs"],
+    items: [
+      { id: "row-starter", display_name: "Starter Row", prices: { Standard: 1310, Designs: 1874 }, unavailable_categories: [], modular_role: "starter", is_active: true, sort_order: 0 },
+      { id: "row-intermediate", display_name: "Extension Row", prices: { Standard: 1454, Designs: 2148 }, unavailable_categories: ["Designs"], modular_role: "intermediate", is_active: true, sort_order: 1 },
+    ],
+  }]);
+}
+
+test("Matrix Modular role survives Product Template save/reopen without gaining a Direct Modular pricing mode", () => {
+  const groups = categoryPricingValue("", matrixModularWithRolesSubmission(), "");
+  const group = findGroup(groups, "mod-composed");
+  assert.ok(group, "Expected the Matrix Modular group to survive normalization");
+  assert.equal("modular_pricing_mode" in group, false, "Expected Matrix Modular to remain matrix-mode by structure, never gaining modular_pricing_mode: \"direct\"");
+  const starter = group.items.find((item) => item.id === "row-starter")!;
+  const intermediate = group.items.find((item) => item.id === "row-intermediate")!;
+  assert.equal(starter.modular_role, "starter");
+  assert.equal(intermediate.modular_role, "intermediate");
+});
+
+test("Matrix Modular group composition survives Product Template save/reopen", () => {
+  const groups = categoryPricingValue("", matrixModularWithRolesSubmission(), "");
+  const group = findGroup(groups, "mod-composed");
+  assert.deepEqual(group.modular_composition, { min_starters: 1, max_starters: 1 });
+});
+
+test("Matrix Modular price maps remain unchanged when role/composition are present", () => {
+  const groups = categoryPricingValue("", matrixModularWithRolesSubmission(), "");
+  const group = findGroup(groups, "mod-composed");
+  const starter = group.items.find((item) => item.id === "row-starter")!;
+  const intermediate = group.items.find((item) => item.id === "row-intermediate")!;
+  assert.deepEqual(starter.prices, { Standard: 1310, Designs: 1874 });
+  assert.deepEqual(intermediate.prices, { Standard: 1454, Designs: 2148 });
+  assert.equal("price" in starter, false, "Expected a Matrix row to never gain a Direct Modular scalar price field");
+});
+
+test("Matrix Modular unavailableCategoryIds (unavailable_categories) remain unchanged when role/composition are present", () => {
+  const groups = categoryPricingValue("", matrixModularWithRolesSubmission(), "");
+  const group = findGroup(groups, "mod-composed");
+  const starter = group.items.find((item) => item.id === "row-starter")!;
+  const intermediate = group.items.find((item) => item.id === "row-intermediate")!;
+  assert.deepEqual(starter.unavailable_categories, []);
+  assert.deepEqual(intermediate.unavailable_categories, ["Designs"]);
+});
+
+test("Matrix Modular without role/composition remains backward compatible after the generic role/composition support", () => {
+  const matrixSubmission = JSON.stringify([{
+    id: "mod-plain", group_name: "Plain Matrix Group", pricing_type: "modular_group", is_active: true, sort_order: 0,
+    price_categories: ["Cat A"],
+    items: [{ id: "plain-row", display_name: "Plain Module", prices: { "Cat A": 500 }, is_active: true, sort_order: 0 }],
+  }]);
+  const groups = categoryPricingValue("", matrixSubmission, "");
+  const group = findGroup(groups, "mod-plain");
+  assert.equal("modular_pricing_mode" in group, false);
+  assert.equal("modular_composition" in group, false);
+  assert.equal("modular_role" in group.items[0], false, "Expected an old Matrix row with no role to stay exactly as before");
+  assert.deepEqual(group.items[0].prices, { "Cat A": 500 });
+});
+
 test("empty submissions return an empty array without throwing", () => {
   assert.deepEqual(categoryPricingValue("", "", ""), []);
 });

@@ -110,7 +110,7 @@ export function validateModularSelectionFamilyConflicts(
   return null;
 }
 
-/** Validates every direct-priced composition group in one product template, including cross-group selectionFamily exclusivity. */
+/** Validates every composition group (Direct or Matrix Modular) in one product template, including cross-group selectionFamily exclusivity for Direct Modular. */
 export function validateModularCompositionGroups(
   groups: ModularCategoryPricingShape[],
   quantityForRow: (groupId: string, rowId: string) => number,

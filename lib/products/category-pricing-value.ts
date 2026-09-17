@@ -50,6 +50,12 @@ export function categoryPricingValue(rawValue: string, modularRawValue: string, 
         normalizedPrices.set(label, parseNullablePricingNumber(value));
       });
 
+      // Same Modular role enum as Direct Modular rows; harmless for ordinary Category/Matrix rows,
+      // which simply never carry modular_role.
+      const role = typeof row.modular_role === "string" && (MODULAR_ROLES as readonly string[]).includes(row.modular_role)
+        ? row.modular_role as ModularRole
+        : undefined;
+
       return {
         id: typeof row.id === "string" && row.id ? row.id : `category-${index}`,
         pricing_type:
@@ -81,6 +87,7 @@ export function categoryPricingValue(rawValue: string, modularRawValue: string, 
           typeof row.modular_default_specification === "string" && row.modular_default_specification.trim()
             ? row.modular_default_specification.trim()
             : null,
+        ...(role ? { modular_role: role } : {}),
         sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
         is_active: row.is_active !== false,
       };
@@ -144,7 +151,10 @@ export function categoryPricingValue(rawValue: string, modularRawValue: string, 
       .map((group, groupIndex) => {
         const isDirect = group.modular_pricing_mode === "direct";
         const priceCategories = isDirect ? [] : explicitPricingCategoryLabels(group.price_categories);
-        const composition = isDirect && group.modular_composition && typeof group.modular_composition === "object" && !Array.isArray(group.modular_composition)
+        // Composition (starter/intermediate cardinality) is generic and applies to both Direct and
+        // Matrix Modular groups; only the scalar-price `modular_pricing_mode: "direct"` marker itself
+        // stays exclusive to Direct Modular.
+        const composition = group.modular_composition && typeof group.modular_composition === "object" && !Array.isArray(group.modular_composition)
           ? normalizeModularComposition(group.modular_composition as Record<string, unknown>)
           : null;
         const selectionFamily = typeof group.modular_selection_family === "string" && group.modular_selection_family.trim()
@@ -167,7 +177,8 @@ export function categoryPricingValue(rawValue: string, modularRawValue: string, 
           sort_order: Number.isFinite(Number(group.sort_order)) ? Number(group.sort_order) : groupIndex,
           is_active: group.is_active !== false,
           price_categories: priceCategories,
-          ...(isDirect ? { modular_pricing_mode: "direct" as const, ...(composition ? { modular_composition: composition } : {}) } : {}),
+          ...(isDirect ? { modular_pricing_mode: "direct" as const } : {}),
+          ...(composition ? { modular_composition: composition } : {}),
           ...(selectionFamily ? { modular_selection_family: selectionFamily } : {}),
           items,
         };

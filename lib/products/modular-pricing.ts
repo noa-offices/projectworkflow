@@ -44,9 +44,8 @@ export function modularRowRole(row: ModularCategoryPricingShape | null | undefin
   return MODULAR_ROLES.includes(role as ModularRole) ? role as ModularRole : null;
 }
 
-/** Normalized starter cardinality for a direct-priced composition group. */
+/** Normalized starter cardinality for a composition group. Applies to both Direct and Matrix Modular groups whenever the source proves starter/intermediate/terminal composition. */
 export function modularCompositionRule(group: ModularCategoryPricingShape | null | undefined) {
-  if (!isDirectModularPricingGroup(group)) return null;
   const composition = group?.modular_composition;
   if (!composition) return null;
   const min = Number(composition.min_starters);

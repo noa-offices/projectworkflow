@@ -64,6 +64,7 @@ export function mapDraftModularPricing(draft: ProductTemplateDraft) {
     group_name: group.label ?? group.id,
     price_categories: priceCategories,
     pricing_type: MODULAR_GROUP_PRICING_TYPE,
+    ...(group.composition ? { modular_composition: { min_starters: group.composition.minStarters, max_starters: group.composition.maxStarters } } : {}),
     ...(group.selectionFamily ? { modular_selection_family: group.selectionFamily } : {}),
     is_active: true,
     sort_order: groupIndex,
@@ -90,6 +91,7 @@ export function mapDraftModularPricing(draft: ProductTemplateDraft) {
           const index = analysis.sharedColumns.findIndex((column) => column.id === id);
           return index < 0 ? [] : [priceCategories[index]];
         }),
+        ...(row.role ? { modular_role: row.role } : {}),
         is_active: true,
         sort_order: rowIndex,
       };

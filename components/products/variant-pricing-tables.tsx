@@ -236,6 +236,10 @@ function normalizeVariant(row: VariantPricingRow, index: number): VariantPricing
 }
 
 function normalizeCategory(row: CategoryPricingRow, index: number, priceCategories?: string[]): CategoryPricingRow {
+  // Same Modular role enum as Direct Modular rows; supports Matrix Modular composition
+  // (for example a starter Bench row alongside intermediate Bench Extension rows that also
+  // carry finish/category-dependent prices). Harmless for ordinary Category/Matrix rows.
+  const role = row.modular_role === "starter" || row.modular_role === "intermediate" || row.modular_role === "terminal" ? row.modular_role : undefined;
   return {
     id: row.id || `category-${index}`,
     pricing_type: typeof row.pricing_type === "string" && row.pricing_type.trim()
@@ -268,6 +272,7 @@ function normalizeCategory(row: CategoryPricingRow, index: number, priceCategori
       typeof row.modular_default_specification === "string" && row.modular_default_specification.trim()
         ? row.modular_default_specification.trim()
         : null,
+    ...(role ? { modular_role: role } : {}),
     is_active: row.is_active !== false,
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
   };
@@ -1338,7 +1343,9 @@ export function ModularItemPricingTable({
           group_name: (group as CategoryPricingRow).group_name?.trim() || "Modular Items",
           is_active: (group as CategoryPricingRow).is_active !== false,
           pricing_type: MODULAR_GROUP_PRICING_TYPE,
-          ...(isDirectModularPricingGroup(group) ? { modular_pricing_mode: "direct", price_categories: [], ...(group.modular_composition ? { modular_composition: group.modular_composition } : {}) } : {}),
+          ...(isDirectModularPricingGroup(group) ? { modular_pricing_mode: "direct", price_categories: [] } : {}),
+          // Composition (starter/intermediate cardinality) applies to both Direct and Matrix Modular groups.
+          ...(group.modular_composition ? { modular_composition: group.modular_composition } : {}),
           ...(group.modular_selection_family?.trim() ? { modular_selection_family: group.modular_selection_family.trim() } : {}),
           sort_order: Number.isFinite(Number((group as CategoryPricingRow).sort_order))
             ? Number((group as CategoryPricingRow).sort_order)
@@ -1636,7 +1643,8 @@ export function ModularItemPricingTable({
                           <th className="px-2 py-2">Display name</th>
                           <th className="px-2 py-2">Supplier / Price List Code</th>
                           <th className="px-2 py-2">Dimension</th>
-                          {directGroup ? <><th className="px-2 py-2">Direct Price</th><th className="px-2 py-2">Role</th></> : priceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
+                          {directGroup ? <th className="px-2 py-2">Direct Price</th> : priceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
+                          <th className="px-2 py-2">Role</th>
                           <th className="px-2 py-2">Currency</th>
                           <th className="px-2 py-2">{directGroup ? "Details" : "Specification note"}</th>
                           <th className="px-2 py-2">Active</th>
@@ -1654,7 +1662,8 @@ export function ModularItemPricingTable({
                               <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.display_name ?? ""} onChange={(value) => updateRow(groupIndex, rowIndex, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
                               <td className="px-2 py-2 align-top"><input value={normalizedRow.supplier_price_list_code ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                               <td className="px-2 py-2 align-top"><input value={normalizedRow.dimension ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { dimension: e.target.value })} className="h-10 min-w-[140px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
-                              {directGroup ? <><td className="px-2 py-2 align-top"><input aria-label="Direct Price" type="number" value={normalizedRow.price ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { price: parseNullablePricingNumber(e.target.value) })} className="h-10 min-w-[116px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td><td className="px-2 py-2 align-top"><select aria-label="Modular Role" value={normalizedRow.modular_role ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { modular_role: e.target.value || undefined })} className="h-10 min-w-[130px] border border-zinc-200 px-2 outline-none focus:border-emerald-800"><option value="">None</option><option value="starter">Starter</option><option value="intermediate">Intermediate</option><option value="terminal">Terminal</option></select></td></> : priceCategories.map((category) => <td key={category} className="px-2 py-2 align-top"><input type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { prices: { ...normalizedRow.prices, [category]: parseNullablePricingNumber(e.target.value) } })} className="h-10 min-w-[116px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>)}
+                              {directGroup ? <td className="px-2 py-2 align-top"><input aria-label="Direct Price" type="number" value={normalizedRow.price ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { price: parseNullablePricingNumber(e.target.value) })} className="h-10 min-w-[116px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td> : priceCategories.map((category) => <td key={category} className="px-2 py-2 align-top"><input type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { prices: { ...normalizedRow.prices, [category]: parseNullablePricingNumber(e.target.value) } })} className="h-10 min-w-[116px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>)}
+                              <td className="px-2 py-2 align-top"><select aria-label="Modular Role" value={normalizedRow.modular_role ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { modular_role: e.target.value || undefined })} className="h-10 min-w-[130px] border border-zinc-200 px-2 outline-none focus:border-emerald-800"><option value="">None</option><option value="starter">Starter</option><option value="intermediate">Intermediate</option><option value="terminal">Terminal</option></select></td>
                               <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={normalizedRow.currency} onChange={(currency) => {
                                 userEditedCurrencyRowIds.current.add(normalizedRow.id ?? `${groupIndex}-${rowIndex}`);
                                 updateRow(groupIndex, rowIndex, { currency });

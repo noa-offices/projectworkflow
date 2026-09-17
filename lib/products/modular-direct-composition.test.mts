@@ -62,6 +62,30 @@ function matrixGroup(id = "sofa-modules") {
   };
 }
 
+/**
+ * A generic Matrix Modular group with starter/intermediate rows that also carry finish-category
+ * prices (architecture only — never named after a real manufacturer family). Mirrors the Terra
+ * Office shape: one composition group, two finish-category columns, starter + intermediate roles.
+ */
+function matrixGroupWithRoles(id = "composed-matrix", composition: unknown = { minStarters: 1, maxStarters: 1 }) {
+  return {
+    id,
+    label: "Composed Matrix Group",
+    defaultDimensions: null,
+    defaultSpecification: null,
+    matrix: {
+      id: `${id}-matrix`,
+      label: "Finish",
+      columns: [{ id: "standard", label: "Standard" }, { id: "designs", label: "Designs" }],
+      rows: [
+        { id: `${id}-starter`, label: "Starter Row", role: "starter", prices: { standard: 1310, designs: 1874 } },
+        { id: `${id}-intermediate`, label: "Extension Row", role: "intermediate", prices: { standard: 1454, designs: 2148 } },
+      ],
+    },
+    ...(composition === undefined ? {} : { composition }),
+  };
+}
+
 test("1-2: a direct-priced modular group parses and preserves the scalar row price, codes and requirements", () => {
   const draft = baseDraft();
   draft.pricing.modularGroups.push(oxiDirectGroup());
@@ -462,4 +486,171 @@ test("selectionFamily: OXI_P Direct Modular composition and ART.058 companion sc
   const evaluation = evaluateOxiCompanion([{ rowId: "oxi-p-starter-140", qty: 1 }, { rowId: "oxi-p-intermediate-140", qty: 2 }], 6);
   assert.equal(evaluation.groups[0].fixedQuantity, 6);
   assert.equal(evaluation.valid, true);
+});
+
+test("Matrix Modular: row role normalizes on Matrix rows (1)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(matrixGroupWithRoles());
+  const normalized = normalizeProductTemplateDraft(draft);
+  assert.equal(normalized.valid, true, JSON.stringify(normalized.errors));
+  const group = normalized.draft!.pricing.modularGroups[0];
+  assert.equal(isDirectModularGroup(group), false, "Expected the group to remain Matrix Modular by structure");
+  assert.equal(group.matrix!.rows[0].role, "starter");
+  assert.equal(group.matrix!.rows[1].role, "intermediate");
+});
+
+test("Matrix Modular: group composition normalizes for a Matrix group (2)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(matrixGroupWithRoles());
+  const normalized = normalizeProductTemplateDraft(draft);
+  assert.equal(normalized.valid, true);
+  const group = normalized.draft!.pricing.modularGroups[0];
+  assert.deepEqual(group.composition, { minStarters: 1, maxStarters: 1 });
+});
+
+test("Matrix Modular: composition validation rejects an unknown role and a starterless composition exactly as Direct Modular does", () => {
+  const badRole = baseDraft();
+  badRole.pricing.modularGroups.push({ ...matrixGroupWithRoles(), matrix: { ...matrixGroupWithRoles().matrix, rows: [{ id: "row", label: "Row", role: "middle", prices: {} }] } });
+  assert.equal(normalizeProductTemplateDraft(badRole).valid, false);
+
+  const noStarterRow = baseDraft();
+  noStarterRow.pricing.modularGroups.push({ ...matrixGroupWithRoles(), matrix: { ...matrixGroupWithRoles().matrix, rows: [{ id: "row", label: "Row", role: "intermediate", prices: {} }] } });
+  assert.equal(normalizeProductTemplateDraft(noStarterRow).valid, false);
+});
+
+test("Matrix Modular: role survives Draft -> Apply (3)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(matrixGroupWithRoles());
+  const mapped = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!);
+  const group = mapped.groups.find((group) => group.id === "composed-matrix")!;
+  assert.ok(group, "Expected the Matrix Modular group to map to runtime");
+  assert.equal(modularRowRole(group.items[0]), "starter");
+  assert.equal(modularRowRole(group.items[1]), "intermediate");
+  assert.equal(isDirectModularPricingGroup(group), false, "Expected Apply to keep the group matrix-mode, never scalar-priced");
+});
+
+test("Matrix Modular: composition survives Draft -> Apply (4)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(matrixGroupWithRoles());
+  const mapped = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!);
+  const group = mapped.groups.find((group) => group.id === "composed-matrix")!;
+  assert.deepEqual(modularCompositionRule(group), { minStarters: 1, maxStarters: 1 });
+});
+
+test("Matrix Modular: price maps and matrix columns survive Draft -> Apply unchanged (7)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(matrixGroupWithRoles());
+  const mapped = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!);
+  const group = mapped.groups.find((group) => group.id === "composed-matrix")!;
+  assert.deepEqual(group.price_categories, ["Standard", "Designs"]);
+  assert.deepEqual(group.items[0].prices, { Standard: 1310, Designs: 1874 });
+  assert.deepEqual(group.items[1].prices, { Standard: 1454, Designs: 2148 });
+});
+
+test("Matrix Modular: unavailableCategoryIds survive Draft -> Apply unchanged (8)", () => {
+  const draft = baseDraft();
+  const groupWithUnavailable = matrixGroupWithRoles();
+  (groupWithUnavailable.matrix.rows[1] as { unavailableCategoryIds?: string[] }).unavailableCategoryIds = ["designs"];
+  draft.pricing.modularGroups.push(groupWithUnavailable);
+  const mapped = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!);
+  const group = mapped.groups.find((group) => group.id === "composed-matrix")!;
+  assert.deepEqual(group.items[0].unavailable_categories, []);
+  assert.deepEqual(group.items[1].unavailable_categories, ["Designs"]);
+});
+
+test("Matrix Modular: an add-on/intermediate-only selection is invalid without a starter (9)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(matrixGroupWithRoles());
+  const mapped = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!);
+  const group = mapped.groups.find((group) => group.id === "composed-matrix")!;
+  const quantities: Record<string, number> = { "composed-matrix-intermediate": 1 };
+  const issue = validateModularCompositionGroups([group], (_groupId, rowId) => quantities[rowId] ?? 0);
+  assert.equal(issue?.code, "starter_missing_for_intermediate");
+});
+
+test("Matrix Modular: a starter-only selection passes when the composition allows it (10)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(matrixGroupWithRoles());
+  const mapped = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!);
+  const group = mapped.groups.find((group) => group.id === "composed-matrix")!;
+  const quantities: Record<string, number> = { "composed-matrix-starter": 1 };
+  assert.equal(validateModularCompositionGroups([group], (_groupId, rowId) => quantities[rowId] ?? 0), null);
+});
+
+test("Matrix Modular: starter + intermediate selection passes (11)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(matrixGroupWithRoles());
+  const mapped = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!);
+  const group = mapped.groups.find((group) => group.id === "composed-matrix")!;
+  const quantities: Record<string, number> = { "composed-matrix-starter": 1, "composed-matrix-intermediate": 2 };
+  assert.equal(validateModularCompositionGroups([group], (_groupId, rowId) => quantities[rowId] ?? 0), null);
+});
+
+test("Matrix Modular: selecting more starters than maxStarters fails (12)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(matrixGroupWithRoles());
+  const mapped = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!);
+  const group = mapped.groups.find((group) => group.id === "composed-matrix")!;
+  // Force two selected starters against a maxStarters: 1 rule by pretending the intermediate row is also a starter selection count-wise via a second quantity on the same starter row id is not possible;
+  // instead prove the bound using evaluateModularComposition directly with two starter selections.
+  const rule = modularCompositionRule(group)!;
+  const twoStarters = [
+    { qty: 2, roleValue: "starter" as const, rowId: "a" },
+  ];
+  assert.equal(evaluateModularComposition(rule, twoStarters)?.code, "too_many_starters");
+});
+
+test("Direct Modular composition/role regression: unaffected by generic Matrix Modular support (13)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(oxiDirectGroup());
+  const mapped = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!);
+  const group = mapped.groups[0];
+  assert.equal(isDirectModularPricingGroup(group), true);
+  assert.deepEqual(modularCompositionRule(group), { minStarters: 1, maxStarters: 1 });
+  const quantities: Record<string, number> = { "oxi-p-starter-140": 1, "oxi-p-intermediate-140": 1 };
+  assert.equal(validateModularCompositionGroups([group], (_groupId, rowId) => quantities[rowId] ?? 0), null);
+});
+
+test("OXI_P regression: starter/intermediate composition and ART.058 scaling remain unaffected (14)", () => {
+  const evaluation = evaluateOxiCompanion([{ rowId: "oxi-p-starter-140", qty: 1 }, { rowId: "oxi-p-intermediate-140", qty: 1 }], 4);
+  assert.equal(evaluation.groups[0].fixedQuantity, 4);
+  assert.equal(evaluation.valid, true);
+});
+
+test("X3 selectionFamily regression: exclusivity enforcement remains unaffected by generic Matrix Modular composition support (15)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(directGroup("group-a", "shared-family"), directGroup("group-b", "shared-family"));
+  const groups = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!).groups;
+  const bothSelected: Record<string, number> = { "group-a-starter": 1, "group-b-starter": 1 };
+  const issue = validateModularSelectionFamilyConflicts(groups, (_groupId, rowId) => bothSelected[rowId] ?? 0);
+  assert.equal(issue?.code, "conflicting_modular_selection_family");
+});
+
+test("Matrix Modular without role/composition remains fully backward compatible (16)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(matrixGroup());
+  const normalized = normalizeProductTemplateDraft(draft);
+  assert.equal(normalized.valid, true);
+  const group = normalized.draft!.pricing.modularGroups[0];
+  assert.equal("role" in group.matrix!.rows[0], false);
+  assert.equal("composition" in group, false);
+  const mapped = mapDraftModularPricing(normalized.draft!);
+  const runtimeGroup = mapped.groups.find((group) => group.id === "sofa-modules")!;
+  assert.equal(modularRowRole(runtimeGroup.items[0]), null);
+  assert.equal(modularCompositionRule(runtimeGroup), null);
+  assert.equal(validateModularCompositionGroups([runtimeGroup], () => 0), null);
+});
+
+test("Server validator (validateModularCompositionGroups, the same function used by the quotation submit action) catches an invalid Matrix Modular composition (17)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(matrixGroupWithRoles());
+  const mapped = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!);
+  const group = mapped.groups.find((group) => group.id === "composed-matrix")!;
+  // Simulate the server action's own quantity lookup shape: `(groupId, rowId) => ...`.
+  const submittedQuantities: Record<string, number> = { "composed-matrix-intermediate": 3 };
+  const issue = validateModularCompositionGroups(
+    [group],
+    (groupId, rowId) => (groupId === group.id ? submittedQuantities[rowId] ?? 0 : 0),
+  );
+  assert.equal(issue?.code, "starter_missing_for_intermediate", "Expected the shared server-authoritative validator to reject an intermediate-only Matrix Modular submission");
 });

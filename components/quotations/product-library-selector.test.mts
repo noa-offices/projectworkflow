@@ -282,3 +282,20 @@ test("Module Diagram modal close behavior, backdrop dismissal, and navigation re
     "onClick={() => navigate(currentIndex + 1)}",
   ].forEach((expected) => assert.ok(source.includes(expected), `Expected Module Diagram modal behavior to remain: ${expected}`));
 });
+
+test("Product Library composition blocking (modularCompositionIssue) is wired generically for both Matrix and Direct Modular, and Matrix Modular keeps its Fabric/Category selector without Direct Modular accordion assumptions", () => {
+  const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
+  [
+    // The shared validator runs over every modular group regardless of pricing mode.
+    "const modularCompositionIssue = validateModularCompositionGroups(",
+    // Blocking Add to Local Workspace / Add uses usesModularPricing (both pricing modes), not usesDirectModularPricing only.
+    "const missingRequiredModularSelection = usesModularPricing && (selectedModularItems.length === 0 || Boolean(modularCompositionIssue));",
+    "disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice}",
+    // Matrix Modular keeps its Fabric/Category selector, gated only by !usesDirectModularPricing (unaffected by role/composition support).
+    "{!usesDirectModularPricing ? <div className=\"grid gap-3 md:grid-cols-2\">",
+    "<span className=\"text-[10px] font-bold uppercase text-zinc-500\">Fabric / Category</span>",
+    // The Direct Modular accordion/selectionFamily machinery stays scoped to isDirectModularPricingGroup and is never applied to matrix groups.
+    "const directModularGroupCard = isDirectModularPricingGroup(group);",
+    "const groupExpanded = directModularGroupCard ? expandedModularGroupId === group.id : true;",
+  ].forEach((expected) => assert.ok(source.includes(expected), `Expected Product Library composition wiring: ${expected}`));
+});
