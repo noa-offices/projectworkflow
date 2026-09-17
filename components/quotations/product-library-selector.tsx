@@ -55,6 +55,7 @@ import { formatQuotationMoney, quotationMoneyValue } from "@/lib/quotation-prici
 import { buildFinalSpecificationRequest } from "@/lib/quotations/final-specification-ai-selection";
 import {
   buildCompanyStyleProductSpecification,
+  buildDirectModularDimensionSuggestion,
   buildModularCompositionSpecification,
   resolveProductDimensionSnapshot,
   resolveFinalProductSpecification,
@@ -647,6 +648,7 @@ function AccessoryConfigurationFields({
               : evaluation.validationMessage
             : null;
           const selectedCount = items.filter((item) => (quantities[item.id ?? ""] ?? 0) > 0).length;
+          const forcedItemId = evaluation.role === "companion" && evaluation.required && items.length === 1 && evaluation.fixedQuantity !== null ? items[0]?.id ?? "" : "";
           const expanded = isGroupExpanded(group.id, evaluation.required || selectedCount > 0 || Boolean(validationMessage));
 
           return (
@@ -668,16 +670,17 @@ function AccessoryConfigurationFields({
                 <div className="mt-1 space-y-2">
                   {items.map((item) => {
                     const itemId = item.id ?? "";
-                    const quantity = quantities[itemId] ?? 0;
+                    const forced = itemId === forcedItemId;
+                    const quantity = forced ? evaluation.fixedQuantity ?? 0 : quantities[itemId] ?? 0;
                     return (
                       <label key={itemId} className="grid gap-2 text-xs text-zinc-700 sm:grid-cols-[1fr_auto_80px] sm:items-center">
                         <span className="min-w-0">
-                          <input type="checkbox" checked={quantity > 0} onChange={(event) => onQuantityChange(groupItemIds, itemId, event.target.checked ? evaluation.fixedQuantity ?? Math.max(1, quantity || 1) : 0, false)} className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle" />
+                          <input type="checkbox" checked={quantity > 0} disabled={forced} onChange={(event) => onQuantityChange(groupItemIds, itemId, event.target.checked ? evaluation.fixedQuantity ?? Math.max(1, quantity || 1) : 0, false)} className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle" />
                           <span className="font-medium text-zinc-900">{item.item_name}</span>
                           {item.supplier_price_list_code ? <span className="mt-1 block text-[11px] text-zinc-500"><span className="font-semibold text-zinc-700">Supplier Code:</span> {item.supplier_price_list_code}</span> : null}<AccessoryItemMetadata groupId={group.id} item={item} rowReferences={rowReferences} onViewDiagram={onViewDiagram} />
                         </span>
                         <span className="font-semibold">{formatMoney(item.currency ?? rowCurrency, numberValue(item.price))}</span>
-                        <input type="number" min={1} step={1} value={quantity || evaluation.fixedQuantity || 1} disabled={quantity <= 0 || evaluation.fixedQuantity !== null} onChange={(event) => onQuantityChange(groupItemIds, itemId, Math.max(1, Math.trunc(Number(event.target.value) || 1)), false)} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100" />
+                        <input type="number" min={1} step={1} value={quantity || evaluation.fixedQuantity || 1} disabled={forced || quantity <= 0 || evaluation.fixedQuantity !== null} onChange={(event) => onQuantityChange(groupItemIds, itemId, Math.max(1, Math.trunc(Number(event.target.value) || 1)), false)} className="h-8 border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800 disabled:bg-zinc-100" />
                       </label>
                     );
                   })}
@@ -1155,7 +1158,9 @@ export function ProductLibrarySelector({
   const [selectedCategoryRows, setSelectedCategoryRows] = useState<Record<string, string>>({});
   const [selectedFabricCategories, setSelectedFabricCategories] = useState<Record<string, string>>({});
   const [selectedModularQuantities, setSelectedModularQuantities] = useState<Record<string, Record<string, number>>>({});
+  const [expandedDirectModularRow, setExpandedDirectModularRow] = useState<string | null>(null);
   const [configuredDimensions, setConfiguredDimensions] = useState<Record<string, string>>({});
+  const [configuredDimensionEditedByTemplate, setConfiguredDimensionEditedByTemplate] = useState<Record<string, boolean>>({});
   const [configuredSpecifications, setConfiguredSpecifications] = useState<Record<string, string>>({});
   const [finalSpecifications, setFinalSpecifications] = useState<Record<string, string>>({});
   const [finalSpecificationEditedByTemplate, setFinalSpecificationEditedByTemplate] = useState<Record<string, boolean>>({});
@@ -1651,6 +1656,7 @@ export function ProductLibrarySelector({
                   const usesWorkstationFlow = sizePricingRows.length > 0;
                   const usesVariantPricing = !usesWorkstationFlow && variantRows.length > 0;
                   const usesModularPricing = modularRows.length > 0;
+                  const usesDirectModularPricing = usesModularPricing && modularGroups.some((group) => isDirectModularPricingGroup(group));
                   const usesCategoryPricing = !usesVariantPricing && !usesModularPricing && categoryRows.length > 0;
                   const templatePricingAccessoryQuantities = pricingAccessoryQuantities[template.id] ?? {};
                   const templateModularQuantities = selectedModularQuantities[template.id] ?? {};
@@ -1675,7 +1681,7 @@ export function ProductLibrarySelector({
                         categoryRows[0] ??
                         null
                       : null;
-                  const availableCategoryColumns = usesModularPricing
+                  const availableCategoryColumns = usesModularPricing && !usesDirectModularPricing
                     ? categoryPriceColumns(modularRows)
                     : (selectedCategoryGroup?.price_categories ?? categoryPriceColumns(template.category_pricing));
                   const savedFabricCategory = selectedFabricCategories[template.id];
@@ -1710,7 +1716,7 @@ export function ProductLibrarySelector({
                     modularGroups,
                     (groupId, rowId) => numberValue(templateModularQuantities[rowId] ?? 0) * (modularGroups.some((group) => group.id === groupId && group.items.some((row) => (row.id ?? "") === rowId)) ? 1 : 0),
                   );
-                  const hasUnavailableSelectedPrice = (usesModularPricing && selectedModularItems.some((line) => line.row.unavailable_categories?.includes(selectedFabricCategory))) || Boolean(usesCategoryPricing && selectedCategoryRow?.unavailable_categories?.includes(selectedFabricCategory));
+                  const hasUnavailableSelectedPrice = (usesModularPricing && !usesDirectModularPricing && selectedModularItems.some((line) => line.row.unavailable_categories?.includes(selectedFabricCategory))) || Boolean(usesCategoryPricing && selectedCategoryRow?.unavailable_categories?.includes(selectedFabricCategory));
                   const groupedOptions = new Map<string, ProductLibraryComponent[]>();
                   const templateSelections = selectedOptions[template.id] ?? {};
                   const additionalClusterQty = Math.max(
@@ -1732,8 +1738,18 @@ export function ProductLibrarySelector({
                   const selectedWorkstationGroup = selectedSizeRow
                     ? activeWorkstationGroups.find((group) => group.items.some((row) => row.id === selectedSizeRow.id)) ?? null
                     : null;
+                  const suggestedDirectModularDimension = usesDirectModularPricing
+                    ? buildDirectModularDimensionSuggestion(selectedModularItems.map((line) => ({
+                        dimension: line.row.dimension,
+                        itemName: pricingDisplayName(line.row) || line.row.variant_name || "Modular item",
+                        quantity: line.qty,
+                      })))
+                    : null;
+                  const hasConfiguredDimensionOverride = Boolean(configuredDimensionEditedByTemplate[template.id]);
                   const configuredDimension = usesModularPricing
-                    ? configuredDimensions[template.id] ?? modularDefaults.defaultDimension ?? ""
+                    ? hasConfiguredDimensionOverride
+                      ? configuredDimensions[template.id] ?? ""
+                      : suggestedDirectModularDimension ?? configuredDimensions[template.id] ?? modularDefaults.defaultDimension ?? ""
                     : configuredDimensions[template.id] ?? selectedSizeRow?.default_dimension ?? selectedSizeRow?.label ?? "";
                   const configuredSpecification = usesWorkstationFlow || usesModularPricing
                     ? configuredSpecifications[template.id] ??
@@ -2256,18 +2272,22 @@ export function ProductLibrarySelector({
                   const modularCompositionSpecification = usesModularPricing
                     ? buildModularCompositionSpecification({
                         items: selectedModularItems.map((line) => ({
+                          dimension: line.row.dimension,
                           itemName: pricingDisplayName(line.row) || line.row.variant_name || "Modular item",
+                          importantRequirements: line.row.importantRequirements,
                           quantity: line.qty,
                           specification: line.row.specification,
                         })),
+                        accessories: usesDirectModularPricing ? accessorySnapshots : [],
                         modularDefaultSpecification: configuredSpecification || modularDefaults.defaultSpecification,
+                        modularPricingMode: usesDirectModularPricing ? "direct" : "matrix",
                         selectedCategory: selectedFabricCategory,
                         templateDefaultSpecification: template.default_specification,
                         templateDescription: template.description,
                       })
                     : null;
                   const companyStyleSpecification = buildCompanyStyleProductSpecification({
-                    accessorySnapshots,
+                    accessorySnapshots: usesDirectModularPricing ? [] : accessorySnapshots,
                     linkedProductSnapshots,
                     primarySpecification:
                       (usesWorkstationFlow ? configuredSpecification : null) ??
@@ -3096,7 +3116,7 @@ export function ProductLibrarySelector({
                             <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
                               Modular Configurator
                             </p>
-                            <div className="grid gap-3 md:grid-cols-2">
+                            {!usesDirectModularPricing ? <div className="grid gap-3 md:grid-cols-2">
                               <label className="block">
                                 <span className="text-[10px] font-bold uppercase text-zinc-500">Fabric / Category</span>
                                 <select
@@ -3109,17 +3129,8 @@ export function ProductLibrarySelector({
                                   ))}
                                 </select>
                               </label>
-                              <label className="block">
-                                <span className="text-[10px] font-bold uppercase text-zinc-500">Configured Dimension</span>
-                                <input
-                                  value={configuredDimension}
-                                  onChange={(event) => setConfiguredDimensions((current) => ({ ...current, [template.id]: event.target.value }))}
-                                  placeholder="e.g. 540x70x78 cmH"
-                                  className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
-                                />
-                              </label>
-                            </div>
-                            <label className="block">
+                            </div> : null}
+                            {!usesDirectModularPricing ? <label className="block">
                               <span className="text-[10px] font-bold uppercase text-zinc-500">Modular Specification</span>
                               <textarea
                                 value={configuredSpecification}
@@ -3128,7 +3139,7 @@ export function ProductLibrarySelector({
                                 rows={4}
                                 className="mt-1 min-h-[96px] w-full border border-zinc-300 bg-white px-3 py-2 text-xs outline-none focus:border-emerald-800"
                               />
-                            </label>
+                            </label> : null}
                             <div className="space-y-2">
                               {modularGroups.map((group) => (
                                 <div key={group.id} className="rounded-xl border border-zinc-200 bg-white p-3">
@@ -3142,7 +3153,15 @@ export function ProductLibrarySelector({
                                         : "Select a starter module, then add intermediate modules."}
                                     </p>
                                   ) : null}
-                                  <div className="mt-2 space-y-2">
+                                  {isDirectModularPricingGroup(group) ? <div className="mt-3 space-y-3">
+                                    {(["starter", "intermediate", "terminal", "none"] as const).map((role) => {
+                                      const rows = group.items.filter((row) => (modularRowRole(row) ?? "none") === role);
+                                      if (!rows.length) return null;
+                                      const heading = role === "none" ? "Modules" : `${role[0].toUpperCase()}${role.slice(1)}${role === "intermediate" ? " Modules" : "s"}`;
+                                      return <section key={role}><p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">{heading}</p><div className="overflow-x-auto rounded-md border border-zinc-200"><table className="w-full min-w-[680px] text-left text-xs"><thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500"><tr><th className="px-2 py-1.5">Module</th><th className="px-2 py-1.5">Supplier Code</th><th className="px-2 py-1.5">Dimension</th><th className="px-2 py-1.5">Price</th><th className="w-20 px-2 py-1.5">Qty</th><th className="w-16 px-2 py-1.5" /></tr></thead><tbody>{rows.map((row) => { const modularRowId = row.id ?? row.variant_name ?? row.display_name ?? ""; const expanded = expandedDirectModularRow === `${template.id}:${modularRowId}`; return <><tr key={modularRowId} className="border-t border-zinc-100"><td className="px-2 py-1.5 font-medium text-zinc-950">{pricingDisplayName(row) || row.variant_name || "Modular item"}</td><td className="px-2 py-1.5 text-zinc-600">{row.supplier_price_list_code || "—"}</td><td className="px-2 py-1.5 text-zinc-600">{row.dimension || "—"}</td><td className="px-2 py-1.5 font-semibold">{formatMoney(row.currency ?? template.currency, numberValue(row.price))}</td><td className="px-2 py-1.5"><input aria-label={`Quantity for ${pricingDisplayName(row) || row.variant_name || modularRowId}`} type="number" min={0} step={1} value={templateModularQuantities[modularRowId] ?? 0} onChange={(event) => setSelectedModularQuantities((current) => ({ ...current, [template.id]: { ...(current[template.id] ?? {}), [modularRowId]: Math.max(0, Math.trunc(Number(event.target.value) || 0)) } }))} className="h-7 w-16 border border-zinc-300 bg-white px-1 text-right outline-none focus:border-emerald-800" /></td><td className="px-2 py-1.5"><button type="button" onClick={() => setExpandedDirectModularRow(expanded ? null : `${template.id}:${modularRowId}`)} className="text-[11px] font-semibold text-emerald-900">Details</button></td></tr>{expanded ? <tr key={`${modularRowId}-details`} className="border-t border-zinc-100 bg-zinc-50"><td colSpan={6} className="px-2 py-2 text-xs text-zinc-700">{row.specification ? <p>{row.specification}</p> : null}<ImportantRequirementsBlock requirements={row.importantRequirements} /></td></tr> : null}</>; })}</tbody></table></div></section>;
+                                    })}
+                                  </div> : null}
+                                  {!isDirectModularPricingGroup(group) ? <div className="mt-2 space-y-2">
                                     {group.items.map((row) => {
                                       const modularRowId = row.id ?? row.variant_name ?? row.display_name ?? "";
                                       const modularQty = templateModularQuantities[modularRowId] ?? 0;
@@ -3159,7 +3178,7 @@ export function ProductLibrarySelector({
                                             </p>
                                             <div className="mt-1 space-y-1 text-xs leading-5 text-zinc-600">
                                               {row.variant_name && pricingDisplayName(row) !== row.variant_name ? (
-                                                <p>Module code: {row.variant_name}</p>
+                                                <p>Module: {row.variant_name}</p>
                                               ) : null}
                                               {row.supplier_price_list_code ? <p>Supplier code: {row.supplier_price_list_code}</p> : null}
                                               {row.dimension ? <p>Dimension: {row.dimension}</p> : null}
@@ -3189,7 +3208,7 @@ export function ProductLibrarySelector({
                                         </div>
                                       );
                                     })}
-                                  </div>
+                                  </div> : null}
                                 </div>
                               ))}
                             </div>
@@ -4288,7 +4307,7 @@ export function ProductLibrarySelector({
                             ) : null}
                           </div>
                         ) : null}
-                        {isDesking && !usesWorkstationFlow ? (
+                        {isDesking && !usesWorkstationFlow && !usesModularPricing ? (
                           <label className="block">
                             <span className="text-[10px] font-bold uppercase text-zinc-500">
                               Additional {derivedDesking?.clusterName ?? "CL2"} Quantity
@@ -4324,7 +4343,7 @@ export function ProductLibrarySelector({
                         {hasUnavailableSelectedPrice ? <p className="text-xs leading-5 text-amber-700">The selected category is unavailable for one or more selected modular items.</p> : null}
                         {missingConditionalModelSelection ? (
                           <p className="text-xs leading-5 text-amber-700">
-                            Select a valid Base/Model to configure required components and options.
+                            {usesModularPricing ? "Select a modular item to configure required components and options." : usesWorkstationFlow ? "Select a workstation configuration to configure required components and options." : usesCategoryPricing ? "Select a valid Category / Matrix row to configure required components and options." : "Select a valid Base/Model to configure required components and options."}
                           </p>
                         ) : null}
                         {hasMixedOptionCurrencies ? (
@@ -4482,6 +4501,24 @@ export function ProductLibrarySelector({
                           <p>Net Total: {formatQuotationMoney(previewCurrency, netTotalPreview)}</p>
                         </div>
                               <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-left text-xs leading-5 text-zinc-700">
+                                <p className="font-bold uppercase text-zinc-500">Final Details</p>
+                                {usesModularPricing ? <label className="block">
+                                  <span className="text-[10px] font-bold uppercase text-zinc-500">Configured Dimension</span>
+                                  <input
+                                    value={configuredDimension}
+                                    onChange={(event) => {
+                                      const value = event.target.value;
+                                      setConfiguredDimensionEditedByTemplate((current) => ({ ...current, [template.id]: Boolean(value.trim()) }));
+                                      setConfiguredDimensions((current) => {
+                                        if (value.trim()) return { ...current, [template.id]: value };
+                                        const { [template.id]: _discarded, ...remaining } = current;
+                                        return remaining;
+                                      });
+                                    }}
+                                    placeholder="e.g. 540x70x78 cmH"
+                                    className="mt-1 h-8 w-full border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-emerald-800"
+                                  />
+                                </label> : null}
                                 <p className="font-bold uppercase text-zinc-500">Final Specification</p>
                                 <div className="space-y-1 rounded-lg border border-zinc-200 bg-white p-3">
                                   <p className="font-semibold text-zinc-950">{templateSelectionName(template)}</p>

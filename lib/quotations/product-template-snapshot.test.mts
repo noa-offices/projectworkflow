@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildModularCompositionSpecification, resolveFinalProductSpecification } from "./product-template-snapshot.js";
+import { buildDirectModularDimensionSuggestion, buildModularCompositionSpecification, resolveFinalProductSpecification } from "./product-template-snapshot.js";
 
 const build = (items: Parameters<typeof buildModularCompositionSpecification>[0]["items"], overrides: Partial<Parameters<typeof buildModularCompositionSpecification>[0]> = {}) => buildModularCompositionSpecification({
   items,
@@ -51,6 +51,44 @@ test("falls back through template specification and description, then a neutral 
   assert.equal(build(items, { modularDefaultSpecification: null, templateDefaultSpecification: "Upholstered seating.", templateDescription: "Description." }), "Upholstered seating comprising 1 corner element.");
   assert.equal(build(items, { modularDefaultSpecification: null, templateDefaultSpecification: null, templateDescription: "Product description." }), "Product description comprising 1 corner element.");
   assert.equal(build(items, { modularDefaultSpecification: null, templateDefaultSpecification: null, templateDescription: null }), "Modular lounge seating comprising 1 corner element.");
+});
+
+test("uses neutral, case-preserving composition wording for Direct Modular rows", () => {
+  assert.equal(build([
+    { itemName: "Starter Bench - W120", quantity: 1 },
+    { itemName: "Intermediate Bench - W120", quantity: 1 },
+  ], { modularPricingMode: "direct" }), "Modular configuration comprising 1 Starter Bench - W 120 and 1 Intermediate Bench - W 120.");
+  assert.equal(build([{ itemName: "Corner Element", quantity: 1 }]), "Fully upholstered modular lounge seating comprising 1 corner element.");
+});
+
+test("builds a Direct Modular specification from rows, resolved companions, and useful requirements once", () => {
+  const result = buildModularCompositionSpecification({
+    items: [
+      { itemName: "Starter Bench - W120", quantity: 1, specification: "Bench with panel base.", importantRequirements: ["Always complete with 2 ART.058 top-access units.", "25 mm thick tops."] },
+      { itemName: "Intermediate Bench - W120", quantity: 1, specification: "Bench with panel base.", importantRequirements: ["25 mm thick tops."] },
+    ],
+    accessories: [
+      { item_name: "Top-Access (Soft-Close)", supplier_price_list_code: "ART.058", qty: 4, specification: "Top-access with soft-close mechanism." },
+      { item_name: "Unselected accessory", qty: 0, specification: "Must not appear." },
+    ],
+    modularPricingMode: "direct",
+  });
+  assert.equal(result, "Modular configuration comprising 1 Starter Bench - W 120 and 1 Intermediate Bench - W 120, Bench with panel base, 25 mm thick tops, and Complete with 4 Top-Access units with soft-close mechanism.");
+  assert.equal((result?.match(/Bench with panel base/g) ?? []).length, 1);
+  assert.ok(!result?.includes("Always complete with 2 ART.058"));
+  assert.ok(!result?.includes("Unselected accessory"));
+});
+
+test("suggests Direct Modular dimensions without calculating an unsupported overall width", () => {
+  assert.equal(buildDirectModularDimensionSuggestion([{ itemName: "Starter Bench - W120", quantity: 1, dimension: "W120 x D145.2 x H73.6 cm" }]), "W120 × D145.2 × H73.6 cm");
+  assert.equal(buildDirectModularDimensionSuggestion([
+    { itemName: "Starter Bench - W120", quantity: 1, dimension: "W120 x D145.2 x H73.6 cm" },
+    { itemName: "Intermediate Bench - W120", quantity: 1, dimension: "W120 x D145.2 x H73.6 cm" },
+  ]), "2 modules · each W120 × D145.2 × H73.6 cm");
+  assert.equal(buildDirectModularDimensionSuggestion([
+    { itemName: "Starter Bench - W120", quantity: 1, dimension: "W120 x D145.2 x H73.6 cm" },
+    { itemName: "Intermediate Bench - W140", quantity: 1, dimension: "W140 x D145.2 x H73.6 cm" },
+  ]), "Starter W120 + Intermediate W140 · D145.2 × H73.6 cm");
 });
 
 test("is deterministic across local/server item shapes and never mutates numeric pricing", () => {

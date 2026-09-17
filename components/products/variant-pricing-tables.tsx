@@ -1,6 +1,6 @@
 "use client";
 
-import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import {
   groupedStandardCategoryPricingRows,
@@ -15,6 +15,7 @@ import {
 import {
   MODULAR_GROUP_PRICING_TYPE,
   MODULAR_ITEM_PRICING_TYPE,
+  isDirectModularPricingGroup,
   modularItemPricingGroups,
   modularPricingDefaultsFromRows,
 } from "@/lib/products/modular-pricing";
@@ -42,6 +43,7 @@ import {
   baseModelPricingGroups,
   flattenBaseModelPricingRows,
   serializeBaseModelPricingGroups,
+  LEGACY_BASE_MODEL_GROUP_ID,
   type BaseModelPricingGroup,
   type BaseModelPricingSubgroup,
 } from "@/lib/products/base-model-pricing-groups";
@@ -269,6 +271,25 @@ function normalizeCategory(row: CategoryPricingRow, index: number, priceCategori
   };
 }
 
+function normalizeDirectModularRow(row: CategoryPricingRow, index: number): CategoryPricingRow {
+  return {
+    ...row,
+    id: row.id || `modular-${index}`,
+    pricing_type: MODULAR_ITEM_PRICING_TYPE,
+    variant_name: row.variant_name?.trim() ?? "",
+    display_name: row.display_name?.trim() ?? "",
+    supplier_price_list_code: row.supplier_price_list_code?.trim() ?? "",
+    dimension: row.dimension?.trim() ?? "",
+    currency: normalizeCurrency(row.currency ?? defaultCurrency),
+    price: parseNullablePricingNumber(row.price),
+    modular_role: row.modular_role === "starter" || row.modular_role === "intermediate" || row.modular_role === "terminal" ? row.modular_role : undefined,
+    specification: row.specification?.trim() ?? "",
+    ...(row.importantRequirements?.length ? { importantRequirements: reviewImportantRequirements(row.importantRequirements.join("\n")) } : {}),
+    is_active: row.is_active !== false,
+    sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
+  };
+}
+
 function normalizeAccessoryItem(row: AccessoryPricingItem, index: number): AccessoryPricingItem {
   return {
     id: row.id || `add-on-${index}`,
@@ -386,6 +407,47 @@ function ImportantRequirementsTextarea({ onChange, value }: { onChange: (value: 
   return <label className="mt-2 block"><span className="text-[10px] font-bold uppercase text-zinc-500">Important Requirements</span><AutoGrowTextarea value={(value ?? []).join("\n")} onChange={(next) => onChange(reviewImportantRequirements(next))} placeholder="One requirement per line" rows={2} minHeightClass="min-h-[56px]" widthClass="min-w-[360px]" /></label>;
 }
 
+/** Keeps a viewport-fixed scrollbar synchronized with the real table scroller. */
+function SyncedHorizontalScrollContainer({ children }: { children: ReactNode }) {
+  const groupRef = useRef<HTMLDivElement | null>(null);
+  const primaryRef = useRef<HTMLDivElement | null>(null);
+  const stickyRef = useRef<HTMLDivElement | null>(null);
+  const [overflow, setOverflow] = useState(false);
+  const [scrollWidth, setScrollWidth] = useState(0);
+  const [proxyPosition, setProxyPosition] = useState<{ left: number; width: number } | null>(null);
+  const measure = useCallback(() => {
+    const primary = primaryRef.current;
+    const group = groupRef.current;
+    if (!primary || !group) return;
+    const hasOverflow = primary.scrollWidth > primary.clientWidth + 1;
+    const rect = group.getBoundingClientRect();
+    const viewportVisible = rect.bottom > 0 && rect.top < window.innerHeight;
+    const left = Math.max(8, rect.left);
+    const width = Math.max(0, Math.min(rect.width, window.innerWidth - left - 8));
+    setOverflow(hasOverflow);
+    setScrollWidth(primary.scrollWidth);
+    setProxyPosition(hasOverflow && viewportVisible && width > 0 ? { left, width } : null);
+  }, []);
+  useEffect(() => {
+    const primary = primaryRef.current;
+    if (!primary) return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(primary);
+    Array.from(primary.children).forEach((child) => observer.observe(child));
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    measure();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [measure, children]);
+  const syncPrimary = () => { if (stickyRef.current && primaryRef.current) stickyRef.current.scrollLeft = primaryRef.current.scrollLeft; };
+  const syncSticky = () => { if (stickyRef.current && primaryRef.current) primaryRef.current.scrollLeft = stickyRef.current.scrollLeft; };
+  return <div ref={groupRef}><div ref={primaryRef} onScroll={syncPrimary} className="overflow-x-auto">{children}</div>{overflow && proxyPosition ? <div ref={stickyRef} onScroll={syncSticky} aria-label="Floating horizontal table scrollbar" className="fixed bottom-20 z-50 overflow-x-auto rounded border border-zinc-200 bg-white/95 shadow-sm" style={proxyPosition}><div style={{ width: scrollWidth, height: 1 }} /></div> : null}</div>;
+}
+
 function categoryPricingRowWithColumns(
   row: CategoryPricingRow,
   priceCategories: string[],
@@ -457,9 +519,10 @@ function normalizeCategoryGroup(
 function normalizeModularGroups(rows?: CategoryPricingRow[] | null, includeDefaultPriceCategories = true) {
   return modularItemPricingGroups(rows).map((group, groupIndex) => {
     const sourceGroup = group as CategoryPricingRow;
+    const direct = isDirectModularPricingGroup(sourceGroup);
     const explicitCategories = explicitPricingCategoryLabels(sourceGroup.price_categories);
     const priceCategories = Array.from(new Set([
-      ...(explicitCategories.length ? explicitCategories : includeDefaultPriceCategories ? defaultPriceCategories : []),
+      ...(direct ? [] : explicitCategories.length ? explicitCategories : includeDefaultPriceCategories ? defaultPriceCategories : []),
       ...(explicitCategories.length ? [] : (sourceGroup.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean)),
       ...(explicitCategories.length ? [] : (sourceGroup.items ?? []).flatMap((item) => Object.keys(item.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean))),
     ]));
@@ -470,23 +533,25 @@ function normalizeModularGroups(rows?: CategoryPricingRow[] | null, includeDefau
       group_name: sourceGroup.group_name?.trim() || "Modular Items",
       is_active: sourceGroup.is_active !== false,
       pricing_type: MODULAR_GROUP_PRICING_TYPE,
-      price_categories: priceCategories,
+      price_categories: direct ? [] : priceCategories,
+      ...(direct ? { modular_pricing_mode: "direct" } : {}),
+      ...(direct && sourceGroup.modular_composition ? { modular_composition: sourceGroup.modular_composition } : {}),
       sort_order: Number.isFinite(Number(sourceGroup.sort_order)) ? Number(sourceGroup.sort_order) : groupIndex,
       items: (sourceGroup.items ?? []).map((item, itemIndex) =>
-        normalizeCategory({
+        direct ? normalizeDirectModularRow(item, itemIndex) : normalizeCategory({
           ...item,
           pricing_type: MODULAR_ITEM_PRICING_TYPE,
-        }, itemIndex, priceCategories),
-      ),
+        }, itemIndex, priceCategories)),
     };
   });
 }
 
 function modularPriceCategories(groups: CategoryPricingRow[], includeDefaultPriceCategories = true) {
-  const declared = groups.flatMap((group) => explicitPricingCategoryLabels(group.price_categories));
+  const matrixGroups = groups.filter((group) => !isDirectModularPricingGroup(group));
+  const declared = matrixGroups.flatMap((group) => explicitPricingCategoryLabels(group.price_categories));
   return Array.from(new Set([
-    ...(declared.length ? [] : includeDefaultPriceCategories ? defaultPriceCategories : []),
-    ...groups.flatMap((group) => [
+    ...(declared.length || !matrixGroups.length ? [] : includeDefaultPriceCategories ? defaultPriceCategories : []),
+    ...matrixGroups.flatMap((group) => [
       ...explicitPricingCategoryLabels(group.price_categories),
       ...(explicitPricingCategoryLabels(group.price_categories).length ? [] : (group.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean)),
       ...(explicitPricingCategoryLabels(group.price_categories).length ? [] : (group.items ?? []).flatMap((row) =>
@@ -543,6 +608,7 @@ export function VariantPricingTable({
   const [groups, setGroups] = useState<BaseModelPricingGroup<VariantPricingRow>[]>(() => initialGroups);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => Object.fromEntries(initialGroups.map((group) => [group.id, true])));
   const [collapsedSubgroups, setCollapsedSubgroups] = useState<Record<string, boolean>>({});
+  const [expandedRowByGroup, setExpandedRowByGroup] = useState<Record<string, string | null>>({});
   const [groupActionNotices, setGroupActionNotices] = useState<Record<string, string>>({});
   const [referenceTargetGroupId, setReferenceTargetGroupId] = useState<string | null>(null);
   const persistedGroupIds = useMemo(() => persistedBaseModelPricingGroupIds(rows), [rows]);
@@ -566,7 +632,7 @@ export function VariantPricingTable({
     setGroups((current) => {
       const convertedGroups = (replacementGroups ?? []).map((group) => ({ ...group, items: group.items.map(normalizeVariant) }));
       const rows = (replacementRows ?? []).map(normalizeVariant);
-      const next = replaceWholeTemplateBaseModelPricing(current, rows, convertedGroups, idFor("base-model-group", 0));
+      const next = replaceWholeTemplateBaseModelPricing(current, rows, convertedGroups, LEGACY_BASE_MODEL_GROUP_ID);
       const flatRowIds = new Set(rows.flatMap((row) => row.id ? [row.id] : []));
       return next.map((group) => replacementFlatSubgroups?.length && group.items.some((row) => row.id && flatRowIds.has(row.id)) ? { ...group, subgroups: replacementFlatSubgroups } : group);
     });
@@ -739,7 +805,8 @@ export function VariantPricingTable({
           {groupActionNotices[group.id] ? <p className="mt-2 text-xs font-medium text-amber-800">{groupActionNotices[group.id]}</p> : null}
           {!collapsedGroups[group.id] && group.subgroups?.length ? <div className="mt-3 space-y-2">{[...group.subgroups].sort((a, b) => a.sort_order - b.sort_order).map((subgroup) => <div key={subgroup.id} className="rounded-md border border-zinc-200 bg-white p-2"><div className="flex flex-wrap items-start gap-2"><button type="button" onClick={() => setCollapsedSubgroups((current) => ({ ...current, [subgroup.id]: !current[subgroup.id] }))} className="h-8 w-8 rounded border border-zinc-200 text-xs">{collapsedSubgroups[subgroup.id] ? ">" : "v"}</button><PricingSubgroupReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} groupId={group.id} subgroupId={subgroup.id} /><div className="min-w-52 flex-1"><input value={subgroup.subgroup_name} onChange={(event) => setGroups((current) => current.map((entry) => entry.id === group.id ? updateBaseModelPricingSubgroup(entry, subgroup.id, { subgroup_name: event.target.value }) : entry))} className="h-8 w-full border border-zinc-200 px-2 text-sm font-semibold outline-none focus:border-emerald-800" /><p className="mt-1 text-xs text-zinc-500">{subgroup.row_ids.length} models</p></div><label className="flex items-center gap-1 text-xs text-zinc-600"><input type="checkbox" checked={subgroup.is_active} onChange={(event) => setGroups((current) => current.map((entry) => entry.id === group.id ? updateBaseModelPricingSubgroup(entry, subgroup.id, { is_active: event.target.checked }) : entry))} />Active</label><button type="button" onClick={() => setGroups((current) => current.map((entry) => entry.id === group.id ? removeBaseModelPricingSubgroup(entry, subgroup.id) : entry))} className="text-xs font-semibold text-red-700">Remove subgroup</button></div>{!collapsedSubgroups[subgroup.id] ? <p className="mt-2 border-t border-zinc-100 pt-2 text-xs text-zinc-500">Rows assigned below are visible while this subgroup is expanded.</p> : null}</div>)}</div> : null}
         </header>
-      <div hidden={collapsedGroups[group.id]} className="overflow-x-auto">
+      <div hidden={collapsedGroups[group.id]}>
+        <SyncedHorizontalScrollContainer>
         <table className="min-w-[1760px] w-full text-left text-xs">
           <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
             <tr>
@@ -751,7 +818,7 @@ export function VariantPricingTable({
               <th className="px-2 py-2">Dimension</th>
               <th className="px-2 py-2">Price</th>
               <th className="px-2 py-2">Currency</th>
-              <th className="px-2 py-2">Specification</th>
+              <th className="px-2 py-2">Details</th>
               <th className="px-2 py-2">Active</th>
               <th className="px-2 py-2">Actions</th>
             </tr>
@@ -759,7 +826,10 @@ export function VariantPricingTable({
           <tbody>
             {group.items.map((row, index) => {
               const subgroup = row.id ? baseModelPricingSubgroupForRow(group, row.id) : null;
-              return <tr key={row.id ?? index} hidden={Boolean(subgroup && collapsedSubgroups[subgroup.id])} className="border-t border-zinc-100 align-top">
+              const rowId = row.id ?? `variant-${index}`;
+              const expanded = expandedRowByGroup[group.id] === rowId;
+              return <>
+              <tr key={rowId} hidden={Boolean(subgroup && collapsedSubgroups[subgroup.id])} className="border-t border-zinc-100 align-top">
                 <td className="px-2 py-2 align-top">{row.id ? <PricingRowReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} pricingType="base_model" groupId={group.id} rowId={row.id} /> : <span className="text-[10px] text-zinc-400">Save row first</span>}</td>
                 <td className="px-2 py-2 align-top">{row.id ? <select value={subgroup?.id ?? ""} onChange={(event) => setGroups((current) => current.map((entry) => entry.id === group.id ? assignBaseModelRowToSubgroup(entry, row.id!, event.target.value || null) : entry))} className="h-10 min-w-[170px] border border-zinc-200 bg-white px-2"><option value="">Ungrouped</option>{(group.subgroups ?? []).map((entry) => <option key={entry.id} value={entry.id}>{entry.subgroup_name}</option>)}</select> : null}</td>
                 <td className="px-2 py-2 align-top"><input value={row.variant_name ?? ""} onChange={(e) => update(group.id, index, { variant_name: e.target.value })} className="h-10 min-w-[160px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
@@ -768,14 +838,17 @@ export function VariantPricingTable({
                 <td className="px-2 py-2 align-top"><input value={row.dimension ?? ""} onChange={(e) => update(group.id, index, { dimension: e.target.value })} className="h-10 min-w-[140px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                 <td className="px-2 py-2 align-top"><input type="number" value={row.price ?? ""} onChange={(e) => update(group.id, index, { price: parseNullablePricingNumber(e.target.value) })} className="h-10 min-w-[120px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                 <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={row.currency} onChange={(currency) => update(group.id, index, { currency })} /></div></td>
-                <td className="px-2 py-2 align-top"><AutoGrowTextarea value={row.specification ?? ""} onChange={(value) => update(group.id, index, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /><ImportantRequirementsTextarea value={row.importantRequirements} onChange={(importantRequirements) => update(group.id, index, { importantRequirements })} /></td>
+                <td className="px-2 py-2 align-top"><button type="button" aria-expanded={expanded} onClick={() => setExpandedRowByGroup((current) => ({ ...current, [group.id]: expanded ? null : rowId }))} className="rounded border border-zinc-300 px-2 py-1 text-xs font-semibold text-emerald-900">{expanded ? "Hide details" : "Edit / Details"}</button></td>
                 <td className="px-2 py-2 align-top"><input type="checkbox" checked={row.is_active !== false} onChange={(e) => update(group.id, index, { is_active: e.target.checked })} /></td>
                 <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => setGroups((current) => removeBaseModelPricingRow(current, group.id, index))} className="text-xs font-semibold text-red-700">Remove</button></div></td>
-              </tr>;
+              </tr>
+              {expanded ? <tr key={`${rowId}-details`} className="border-t border-zinc-200 bg-zinc-50"><td colSpan={11} className="p-3"><AutoGrowTextarea value={row.specification ?? ""} onChange={(value) => update(group.id, index, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-0 w-full" /><ImportantRequirementsTextarea value={row.importantRequirements} onChange={(importantRequirements) => update(group.id, index, { importantRequirements })} /></td></tr> : null}
+              </>;
             })}
             {!group.items.length ? <tr><td colSpan={11} className="px-3 py-5 text-center text-zinc-500">No size/model variants yet.</td></tr> : null}
           </tbody>
         </table>
+        </SyncedHorizontalScrollContainer>
       </div>
       </section>
       ))}
@@ -821,6 +894,7 @@ export function CategoryPricingTable({
   const [newCategoryNames, setNewCategoryNames] = useState<Record<string, string>>({});
   const [showCategoryCreators, setShowCategoryCreators] = useState<Record<string, boolean>>({});
   const [groupActionNotices, setGroupActionNotices] = useState<Record<string, string>>({});
+  const [expandedCategoryRowByGroup, setExpandedCategoryRowByGroup] = useState<Record<string, string | null>>({});
   const [importTargetGroupId, setImportTargetGroupId] = useState<string | null>(null);
   const [referenceTargetGroupId, setReferenceTargetGroupId] = useState<string | null>(null);
   const persistedGroupIds = useMemo(() => persistedFinishCategoryGroupIds(rows), [rows]);
@@ -1154,7 +1228,8 @@ export function CategoryPricingTable({
 
               {!groupPriceCategories.length ? <p className="mt-3 text-sm text-zinc-500">No price categories yet. Add a category before entering category prices.</p> : null}
 
-              <div className="mt-3 overflow-x-auto">
+              <div className="mt-3">
+                <SyncedHorizontalScrollContainer>
                 <table className="min-w-[1960px] w-full text-left text-xs">
                   <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
                     <tr>
@@ -1165,7 +1240,7 @@ export function CategoryPricingTable({
                       <th className="px-2 py-2">Dimension</th>
                       {groupPriceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
                       <th className="px-2 py-2">Currency</th>
-                      <th className="px-2 py-2">Specification</th>
+                      <th className="px-2 py-2">Details</th>
                       <th className="px-2 py-2">Active</th>
                       <th className="px-2 py-2">Actions</th>
                     </tr>
@@ -1173,8 +1248,10 @@ export function CategoryPricingTable({
                   <tbody>
                     {(group.items ?? []).map((row, itemIndex) => {
                       const normalizedRow = categoryPricingRowWithColumns(row, groupPriceCategories);
-                      return (
-                        <tr key={row.id ?? itemIndex} className="border-t border-zinc-100 align-top">
+                      const rowId = row.id ?? `category-${itemIndex}`;
+                      const expanded = expandedCategoryRowByGroup[groupId] === rowId;
+                      return <>
+                        <tr key={rowId} className="border-t border-zinc-100 align-top">
                           <td className="px-2 py-2 align-top">{group.id && row.id ? <PricingRowReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} pricingType="finish_category" groupId={group.id} rowId={row.id} /> : <span className="text-[10px] text-zinc-400">Save row first</span>}</td>
                           <td className="px-2 py-2 align-top"><input value={normalizedRow.variant_name ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { variant_name: e.target.value })} className="h-10 min-w-[160px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                           <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.display_name ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
@@ -1182,15 +1259,17 @@ export function CategoryPricingTable({
                           <td className="px-2 py-2 align-top"><input value={normalizedRow.dimension ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { dimension: e.target.value })} className="h-10 min-w-[140px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                               {groupPriceCategories.map((category) => { const unavailable = normalizedRow.unavailable_categories?.includes(category); return <td key={category} className="px-2 py-2 align-top"><div className="flex gap-1"><input disabled={unavailable} type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { prices: { ...normalizedRow.prices, [category]: parseNullablePricingNumber(e.target.value) } })} className="h-10 min-w-[88px] border border-zinc-200 px-3 outline-none focus:border-emerald-800 disabled:bg-zinc-100" /><button type="button" onClick={() => updateItem(groupIndex, itemIndex, { prices: { ...normalizedRow.prices, [category]: unavailable ? normalizedRow.prices?.[category] ?? null : null }, unavailable_categories: unavailable ? (normalizedRow.unavailable_categories ?? []).filter((item) => item !== category) : [...(normalizedRow.unavailable_categories ?? []), category] })} className="border border-zinc-300 px-1 text-[10px] font-semibold">{unavailable ? "N/A" : "N/A?"}</button></div></td>; })}
                           <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={normalizedRow.currency} onChange={(currency) => updateItem(groupIndex, itemIndex, { currency })} /></div></td>
-                          <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /><ImportantRequirementsTextarea value={normalizedRow.importantRequirements} onChange={(importantRequirements) => updateItem(groupIndex, itemIndex, { importantRequirements })} /></td>
+                          <td className="px-2 py-2 align-top"><button type="button" aria-expanded={expanded} onClick={() => setExpandedCategoryRowByGroup((current) => ({ ...current, [groupId]: expanded ? null : rowId }))} className="rounded border border-zinc-300 px-2 py-1 text-xs font-semibold text-emerald-900">{expanded ? "Hide details" : "Edit / Details"}</button></td>
                           <td className="px-2 py-2 align-top"><input type="checkbox" checked={normalizedRow.is_active !== false} onChange={(e) => updateItem(groupIndex, itemIndex, { is_active: e.target.checked })} /></td>
                           <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => updateGroup(groupIndex, { items: (group.items ?? []).filter((_, index) => index !== itemIndex) })} className="text-xs font-semibold text-red-700">Remove row</button></div></td>
                         </tr>
-                      );
+                        {expanded ? <tr key={`${rowId}-details`} className="border-t border-zinc-200 bg-zinc-50"><td colSpan={groupPriceCategories.length + 10} className="p-3"><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-0 w-full" /><ImportantRequirementsTextarea value={normalizedRow.importantRequirements} onChange={(importantRequirements) => updateItem(groupIndex, itemIndex, { importantRequirements })} /></td></tr> : null}
+                      </>;
                     })}
                     {!(group.items ?? []).length ? <tr><td colSpan={groupPriceCategories.length + 10} className="px-3 py-5 text-center text-zinc-500">No finish pricing rows in this group yet.</td></tr> : null}
                   </tbody>
                 </table>
+                </SyncedHorizontalScrollContainer>
               </div>
 
             </PricingGroupShell>
@@ -1238,6 +1317,7 @@ export function ModularItemPricingTable({
   const [defaultSpecification, setDefaultSpecification] = useState(modularDefaults.defaultSpecification ?? "");
   const [defaultDimension, setDefaultDimension] = useState(modularDefaults.defaultDimension ?? "");
   const [groupActionNotices, setGroupActionNotices] = useState<Record<string, string>>({});
+  const [expandedRowByGroup, setExpandedRowByGroup] = useState<Record<string, string | null>>({});
   const [referenceTargetGroupId, setReferenceTargetGroupId] = useState<string | null>(null);
   const persistedGroupIds = useMemo(() => persistedPricingGroupIds(rows, "modular"), [rows]);
   const userEditedCurrencyRowIds = useRef<Set<string>>(new Set());
@@ -1256,16 +1336,16 @@ export function ModularItemPricingTable({
           group_name: (group as CategoryPricingRow).group_name?.trim() || "Modular Items",
           is_active: (group as CategoryPricingRow).is_active !== false,
           pricing_type: MODULAR_GROUP_PRICING_TYPE,
+          ...(isDirectModularPricingGroup(group) ? { modular_pricing_mode: "direct", price_categories: [], ...(group.modular_composition ? { modular_composition: group.modular_composition } : {}) } : {}),
           sort_order: Number.isFinite(Number((group as CategoryPricingRow).sort_order))
             ? Number((group as CategoryPricingRow).sort_order)
             : groupIndex,
           ...(group.subgroups ? { subgroups: group.subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] })) } : {}),
           items: (group.items ?? []).map((row, index) =>
-            normalizeCategory({
+            isDirectModularPricingGroup(group) ? normalizeDirectModularRow(row, index) : normalizeCategory({
               ...categoryPricingRowWithColumns(row, priceCategories),
               pricing_type: MODULAR_ITEM_PRICING_TYPE,
-            }, index, priceCategories),
-          ),
+            }, index, priceCategories)),
         })),
       ),
     [groups, priceCategories],
@@ -1509,6 +1589,7 @@ export function ModularItemPricingTable({
           <div className="space-y-4">
             {groups.map((group, groupIndex) => {
               const groupId = group.id ?? `modular-group-${groupIndex}`;
+              const directGroup = isDirectModularPricingGroup(group);
               return (
               <div key={group.id ?? groupIndex} className="rounded-md border border-zinc-200 bg-white p-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1543,7 +1624,7 @@ export function ModularItemPricingTable({
                 </div>
                 {groupActionNotices[groupId] ? <p role="status" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">{groupActionNotices[groupId]}</p> : null}
                 {(group.items ?? []).length ? (
-                  <div className="mt-4 overflow-x-auto rounded-md border border-zinc-200 bg-white">
+                  <div className="mt-4 rounded-md border border-zinc-200 bg-white"><SyncedHorizontalScrollContainer>
                     <table className="min-w-[1960px] w-full text-left text-xs">
                       <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
                         <tr>
@@ -1552,37 +1633,39 @@ export function ModularItemPricingTable({
                           <th className="px-2 py-2">Display name</th>
                           <th className="px-2 py-2">Supplier / Price List Code</th>
                           <th className="px-2 py-2">Dimension</th>
-                          {priceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
+                          {directGroup ? <><th className="px-2 py-2">Direct Price</th><th className="px-2 py-2">Role</th></> : priceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
                           <th className="px-2 py-2">Currency</th>
-                          <th className="px-2 py-2">Specification note</th>
+                          <th className="px-2 py-2">{directGroup ? "Details" : "Specification note"}</th>
                           <th className="px-2 py-2">Active</th>
                           <th className="px-2 py-2">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
                         {(group.items ?? []).map((row, rowIndex) => {
-                          const normalizedRow = categoryPricingRowWithColumns(row, priceCategories);
-                          return (
+                          const normalizedRow = directGroup ? normalizeDirectModularRow(row, rowIndex) : categoryPricingRowWithColumns(row, priceCategories);
+                          const expanded = expandedRowByGroup[groupId] === normalizedRow.id;
+                          return (<>
                             <tr key={row.id ?? rowIndex} className="border-t border-zinc-100 align-top">
                               <td className="px-2 py-2 align-top">{group.id && row.id ? <PricingRowReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} pricingType="modular" groupId={group.id} rowId={row.id} /> : <span className="text-[10px] text-zinc-400">Save row first</span>}</td>
                               <td className="px-2 py-2 align-top"><input value={normalizedRow.variant_name ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { variant_name: e.target.value })} className="h-10 min-w-[160px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                               <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.display_name ?? ""} onChange={(value) => updateRow(groupIndex, rowIndex, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
                               <td className="px-2 py-2 align-top"><input value={normalizedRow.supplier_price_list_code ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                               <td className="px-2 py-2 align-top"><input value={normalizedRow.dimension ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { dimension: e.target.value })} className="h-10 min-w-[140px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
-                              {priceCategories.map((category) => <td key={category} className="px-2 py-2 align-top"><input type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { prices: { ...normalizedRow.prices, [category]: parseNullablePricingNumber(e.target.value) } })} className="h-10 min-w-[116px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>)}
+                              {directGroup ? <><td className="px-2 py-2 align-top"><input aria-label="Direct Price" type="number" value={normalizedRow.price ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { price: parseNullablePricingNumber(e.target.value) })} className="h-10 min-w-[116px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td><td className="px-2 py-2 align-top"><select aria-label="Modular Role" value={normalizedRow.modular_role ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { modular_role: e.target.value || undefined })} className="h-10 min-w-[130px] border border-zinc-200 px-2 outline-none focus:border-emerald-800"><option value="">None</option><option value="starter">Starter</option><option value="intermediate">Intermediate</option><option value="terminal">Terminal</option></select></td></> : priceCategories.map((category) => <td key={category} className="px-2 py-2 align-top"><input type="number" value={normalizedRow.prices?.[category] ?? ""} onChange={(e) => updateRow(groupIndex, rowIndex, { prices: { ...normalizedRow.prices, [category]: parseNullablePricingNumber(e.target.value) } })} className="h-10 min-w-[116px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>)}
                               <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={normalizedRow.currency} onChange={(currency) => {
                                 userEditedCurrencyRowIds.current.add(normalizedRow.id ?? `${groupIndex}-${rowIndex}`);
                                 updateRow(groupIndex, rowIndex, { currency });
                               }} /></div></td>
-                              <td className="px-2 py-2 align-top"><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => updateRow(groupIndex, rowIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /><ImportantRequirementsTextarea value={normalizedRow.importantRequirements} onChange={(importantRequirements) => updateRow(groupIndex, rowIndex, { importantRequirements })} /></td>
+                              <td className="px-2 py-2 align-top">{directGroup ? <button type="button" aria-expanded={expanded} onClick={() => setExpandedRowByGroup((current) => ({ ...current, [groupId]: expanded ? null : normalizedRow.id ?? null }))} className="rounded border border-zinc-300 px-2 py-1 text-xs font-semibold text-emerald-900">{expanded ? "Hide details" : "Edit / Details"}</button> : <><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => updateRow(groupIndex, rowIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /><ImportantRequirementsTextarea value={normalizedRow.importantRequirements} onChange={(importantRequirements) => updateRow(groupIndex, rowIndex, { importantRequirements })} /></>}</td>
                               <td className="px-2 py-2 align-top"><input type="checkbox" checked={normalizedRow.is_active !== false} onChange={(e) => updateRow(groupIndex, rowIndex, { is_active: e.target.checked })} /></td>
                               <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => setGroups((current) => current.map((currentGroup, currentGroupIndex) => currentGroupIndex === groupIndex ? { ...currentGroup, items: (currentGroup.items ?? []).filter((_, index) => index !== rowIndex) } : currentGroup))} className="text-xs font-semibold text-red-700">Remove</button></div></td>
                             </tr>
-                          );
+                            {directGroup && expanded ? <tr key={`${normalizedRow.id}-details`} className="border-t border-zinc-200 bg-zinc-50"><td colSpan={directGroup ? 12 : priceCategories.length + 10} className="p-3"><div className="grid gap-3 md:grid-cols-2"><div className="md:col-span-2"><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => updateRow(groupIndex, rowIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-0 w-full" /></div><ImportantRequirementsTextarea value={normalizedRow.importantRequirements} onChange={(importantRequirements) => updateRow(groupIndex, rowIndex, { importantRequirements })} /></div></td></tr> : null}
+                          </>);
                         })}
                       </tbody>
                     </table>
-                  </div>
+                  </SyncedHorizontalScrollContainer></div>
                 ) : (
                   <div className="mt-4 rounded-md border border-dashed border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-500">
                     <p>No modular item rows in this group yet.</p>
@@ -2053,7 +2136,8 @@ export function AccessoryPricingTable({
               <div className="flex items-center justify-between gap-2"><div><p className="text-xs font-semibold text-emerald-950">Visual subgroups</p><p className="text-[10px] text-emerald-800">Organizational only; accessory rules and prices are unchanged.</p></div><button type="button" onClick={() => { const id = idFor("accessory-subgroup", group.subgroups?.length ?? 0); updateGroup(groupIndex, { subgroups: [...(group.subgroups ?? []), createBaseModelPricingSubgroup(id, "New Subgroup", group.subgroups?.length ?? 0)] }); setCollapsedAccessorySubgroups((current) => ({ ...current, [id]: false })); }} className="rounded-md border border-emerald-200 bg-white px-2 py-1 text-xs font-semibold text-emerald-900">+ Add Subgroup</button></div>
               {(group.subgroups ?? []).length ? <div className="mt-3 space-y-2">{[...(group.subgroups ?? [])].sort((a, b) => a.sort_order - b.sort_order).map((subgroup) => <div key={subgroup.id} className="rounded-md border border-zinc-200 bg-white p-2"><div className="flex flex-wrap items-start gap-2"><button type="button" onClick={() => setCollapsedAccessorySubgroups((current) => ({ ...current, [subgroup.id]: !current[subgroup.id] }))} className="h-8 w-8 rounded border border-zinc-200 text-xs">{collapsedAccessorySubgroups[subgroup.id] ? ">" : "v"}</button><PricingSubgroupReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} pricingType="accessory" groupId={groupId} subgroupId={subgroup.id} /><div className="min-w-52 flex-1"><input value={subgroup.subgroup_name} onChange={(event) => updateGroup(groupIndex, { subgroups: (group.subgroups ?? []).map((entry) => entry.id === subgroup.id ? { ...entry, subgroup_name: event.target.value } : entry) })} className="h-8 w-full border border-zinc-200 px-2 text-sm font-semibold outline-none focus:border-emerald-800" /><p className="mt-1 text-xs text-zinc-500">{subgroup.row_ids.length} items</p></div><label className="flex items-center gap-1 text-xs text-zinc-600"><input type="checkbox" checked={subgroup.is_active} onChange={(event) => updateGroup(groupIndex, { subgroups: (group.subgroups ?? []).map((entry) => entry.id === subgroup.id ? { ...entry, is_active: event.target.checked } : entry) })} />Active</label><button type="button" onClick={() => updateGroup(groupIndex, { subgroups: (group.subgroups ?? []).filter((entry) => entry.id !== subgroup.id) })} className="text-xs font-semibold text-red-700">Remove subgroup</button></div>{!collapsedAccessorySubgroups[subgroup.id] ? <div className="mt-2 space-y-1 border-t border-zinc-100 pt-2">{(group.items ?? []).filter((item) => item.id && subgroup.row_ids.includes(item.id)).map((item) => <p key={item.id} className="text-xs text-zinc-700">{item.supplier_price_list_code ? `${item.supplier_price_list_code} — ` : ""}{item.item_name}</p>)}</div> : null}</div>)}</div> : null}
             </div>
-            <div className="mt-3 overflow-x-auto">
+            <div className="mt-3">
+              <SyncedHorizontalScrollContainer>
               <table className="min-w-[1600px] w-full text-left text-xs">
                 <thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500">
                   <tr>
@@ -2063,7 +2147,7 @@ export function AccessoryPricingTable({
                     <th className="px-2 py-2">Dimension</th>
                     <th className="px-2 py-2">Price</th>
                     <th className="px-2 py-2">Currency</th>
-                    <th className="px-2 py-2">Specification / Notes</th>
+                    <th className="px-2 py-2">Details</th>
                     <th className="px-2 py-2">Active</th>
                     <th className="px-2 py-2">Subgroup</th>
                     <th className="px-2 py-2">Actions</th>
@@ -2078,7 +2162,7 @@ export function AccessoryPricingTable({
                       <td className="px-2 py-2 align-top"><input value={item.dimension ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { dimension: e.target.value })} className="h-10 min-w-[180px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                       <td className="px-2 py-2 align-top">{(group.price_categories ?? []).length ? <div className="flex min-w-[220px] flex-wrap gap-1">{(group.price_categories ?? []).map((category) => <label key={category.id} className="text-[10px] text-zinc-600">{category.label}<input type="number" value={item.prices?.[category.id] ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { prices: { ...item.prices, [category.id]: parseNullablePricingNumber(e.target.value) } })} className="ml-1 h-8 w-16 border border-zinc-200 px-1" /></label>)}</div> : <input type="number" value={item.price ?? ""} onChange={(e) => updateItem(groupIndex, itemIndex, { price: parseNullablePricingNumber(e.target.value) })} className="h-10 min-w-[120px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" />}</td>
                       <td className="px-2 py-2 align-top"><div className="min-w-[110px]"><CurrencySelect value={item.currency} onChange={(currency) => updateItem(groupIndex, itemIndex, { currency })} /></div></td>
-                      <td className="px-2 py-2 align-top"><AutoGrowTextarea value={item.specification ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /><ImportantRequirementsTextarea value={item.importantRequirements} onChange={(importantRequirements) => updateItem(groupIndex, itemIndex, { importantRequirements })} /></td>
+                      <td className="px-2 py-2 align-top"><details><summary className="cursor-pointer rounded border border-zinc-300 px-2 py-1 text-xs font-semibold text-emerald-900">Edit / Details</summary><div className="mt-2 min-w-[360px]"><AutoGrowTextarea value={item.specification ?? ""} onChange={(value) => updateItem(groupIndex, itemIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /><ImportantRequirementsTextarea value={item.importantRequirements} onChange={(importantRequirements) => updateItem(groupIndex, itemIndex, { importantRequirements })} /></div></details></td>
                       <td className="px-2 py-2 align-top"><input type="checkbox" checked={item.is_active !== false} onChange={(e) => updateItem(groupIndex, itemIndex, { is_active: e.target.checked })} /></td>
                       <td className="px-2 py-2 align-top"><select value={(group.subgroups ?? []).find((subgroup) => item.id && subgroup.row_ids.includes(item.id))?.id ?? ""} onChange={(event) => { const subgroupId = event.target.value || null; if (!item.id) return; updateGroup(groupIndex, { subgroups: (group.subgroups ?? []).map((subgroup) => ({ ...subgroup, row_ids: subgroup.id === subgroupId ? [...subgroup.row_ids.filter((id) => id !== item.id), item.id!] : subgroup.row_ids.filter((id) => id !== item.id) })) }); }} className="h-10 min-w-[180px] border border-zinc-200 bg-white px-2"><option value="">Ungrouped</option>{(group.subgroups ?? []).map((subgroup) => <option key={subgroup.id} value={subgroup.id}>{subgroup.subgroup_name}</option>)}</select></td>
                       <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => updateGroup(groupIndex, { items: (group.items ?? []).filter((_, index) => index !== itemIndex), subgroups: (group.subgroups ?? []).map((subgroup) => ({ ...subgroup, row_ids: subgroup.row_ids.filter((id) => id !== item.id) })) })} className="text-xs font-semibold text-red-700">Remove item</button></div></td>
@@ -2087,6 +2171,7 @@ export function AccessoryPricingTable({
                   {!(group.items ?? []).length ? <tr><td colSpan={10} className="px-3 py-5 text-center text-zinc-500">No items in this group yet.</td></tr> : null}
                 </tbody>
               </table>
+              </SyncedHorizontalScrollContainer>
             </div>
             <button type="button" onClick={(event) => updateGroup(groupIndex, { items: [...(group.items ?? []), { id: idFor("add-on", group.items?.length ?? 0), currency: resolveDefaultPricingCurrency({ brandDefaultCurrency, existingRows: group.items ?? groups.flatMap((entry) => entry.items ?? []), savedTemplateCurrency: templateCurrency, trigger: event.currentTarget }), is_active: true, sort_order: group.items?.length ?? 0 }] })} className="mt-3 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">+ Add Accessory</button>
             </> : null}

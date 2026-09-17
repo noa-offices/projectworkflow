@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { AccessoryPricingContractError, parseAccessoryPricingJson } from "./accessory-pricing-parser.js";
 import { BASE_MODEL_GROUP_PRICING_TYPE } from "./base-model-pricing-groups.js";
+import { LEGACY_WORKSTATION_GROUP_ID } from "./workstation-pricing-groups.js";
 
 const variants = [{ id: "desks", pricing_type: BASE_MODEL_GROUP_PRICING_TYPE, group_name: "Desks", is_active: true, sort_order: 0, items: [{ id: "1AF003", variant_name: "Desk", price: 100 }] }];
 const metadata = {
@@ -87,4 +88,77 @@ test("category-priced accessories retain group categories and authoritative pric
   const parsed = parseAccessoryPricingJson(JSON.stringify([cushions]), variants);
   assert.deepEqual(parsed[0].price_categories, cushions.price_categories);
   assert.deepEqual(parsed[0].items?.[0].prices, { B: 93, SUPREME: 162 });
+});
+
+// --- Modular + Workstation applicability targets (Apply/save validation gap fix) ---
+
+const matrixModularGroups = [{
+  id: "mod-matrix-group", group_name: "Sofa Modules", pricing_type: "modular_group",
+  items: [{ id: "matrix-row-1", pricing_type: "modular_item", variant_name: "Corner", prices: { "Cat A": 990 }, is_active: true }],
+}];
+
+const directModularGroups = [{
+  id: "mod-oxi-p-bench", group_name: "OXI_P Bench", pricing_type: "modular_group", modular_pricing_mode: "direct",
+  modular_composition: { min_starters: 1, max_starters: 1 },
+  items: [
+    { id: "bench-starter-120", pricing_type: "modular_item", variant_name: "Starter 120", display_name: "Starter Bench 120", price: 425, is_active: true, modular_role: "starter" },
+    { id: "bench-intermediate-120", pricing_type: "modular_item", variant_name: "Intermediate 120", display_name: "Intermediate Bench 120", price: 421, is_active: true, modular_role: "intermediate" },
+  ],
+}];
+
+// Flat legacy-style workstation rows (no group wrapper) synthesize into one group under the
+// fixed sentinel id, matching the TARGET GROUP_ID CONVENTION the extraction prompt teaches.
+const workstationGroups = [{ id: "oxi-q-ws-dx", variant_name: "OXI Q DX", price: 1200, is_active: true }];
+
+function modularCompanionGroup(target: { kind: "modular"; group_id: string; row_id: string }, extra: Record<string, unknown> = {}) {
+  return { ...legacyGroup, id: "art058", group_name: "ART.058", items: [{ ...legacyGroup.items[0], id: "art-058-item", item_name: "ART.058", price: 69 }],
+    conditional_configuration: { role: "companion", selection: "at_least_one", applicability: [{ target, required: true, visible: true, fixed_quantity: 2, scale_with_target_quantity: true, ...extra }] } };
+}
+
+test("Matrix Modular target validates and an unknown Matrix Modular row is rejected", () => {
+  const target = { kind: "modular", group_id: "mod-matrix-group", row_id: "matrix-row-1" } as const;
+  const group = { ...conditionalGroup, conditional_configuration: { ...metadata, applicability: [{ target, required: false, visible: true }] } };
+  assert.deepEqual(parseAccessoryPricingJson(JSON.stringify([group]), variants, matrixModularGroups)[0].conditional_configuration?.applicability[0].target, target);
+  const unknownTarget = { kind: "modular", group_id: "mod-matrix-group", row_id: "matrix-row-missing" } as const;
+  const badGroup = { ...conditionalGroup, conditional_configuration: { ...metadata, applicability: [{ target: unknownTarget, required: false, visible: true }] } };
+  assert.throws(() => parseAccessoryPricingJson(JSON.stringify([badGroup]), variants, matrixModularGroups), (error: unknown) =>
+    error instanceof AccessoryPricingContractError && error.issues.some((issue) => issue.code === "unknown_modular_reference" && issue.message.startsWith("Modular reference")));
+});
+
+test("Direct Modular starter and intermediate targets both validate", () => {
+  const starterTarget = { kind: "modular", group_id: "mod-oxi-p-bench", row_id: "bench-starter-120" } as const;
+  const intermediateTarget = { kind: "modular", group_id: "mod-oxi-p-bench", row_id: "bench-intermediate-120" } as const;
+  assert.doesNotThrow(() => parseAccessoryPricingJson(JSON.stringify([modularCompanionGroup(starterTarget)]), variants, directModularGroups));
+  assert.doesNotThrow(() => parseAccessoryPricingJson(JSON.stringify([modularCompanionGroup(intermediateTarget)]), variants, directModularGroups));
+});
+
+test("an unknown Direct Modular row is rejected", () => {
+  const target = { kind: "modular", group_id: "mod-oxi-p-bench", row_id: "bench-starter-999" } as const;
+  assert.throws(() => parseAccessoryPricingJson(JSON.stringify([modularCompanionGroup(target)]), variants, directModularGroups), (error: unknown) =>
+    error instanceof AccessoryPricingContractError && error.issues.some((issue) => issue.code === "unknown_modular_reference"));
+});
+
+test("the correct row in the wrong Modular group is rejected", () => {
+  const target = { kind: "modular", group_id: "mod-wrong-group", row_id: "bench-starter-120" } as const;
+  assert.throws(() => parseAccessoryPricingJson(JSON.stringify([modularCompanionGroup(target)]), variants, directModularGroups), (error: unknown) =>
+    error instanceof AccessoryPricingContractError && error.issues.some((issue) => issue.code === "unknown_modular_reference"));
+});
+
+test("Workstation target validates and an unknown Workstation row is rejected", () => {
+  const target = { kind: "workstation", group_id: LEGACY_WORKSTATION_GROUP_ID, row_id: "oxi-q-ws-dx" } as const;
+  const group = { ...conditionalGroup, conditional_configuration: { ...metadata, applicability: [{ target, required: false, visible: true }] } };
+  assert.deepEqual(parseAccessoryPricingJson(JSON.stringify([group]), variants, [], workstationGroups)[0].conditional_configuration?.applicability[0].target, target);
+  const unknownTarget = { kind: "workstation", group_id: LEGACY_WORKSTATION_GROUP_ID, row_id: "oxi-q-ws-missing" } as const;
+  const badGroup = { ...conditionalGroup, conditional_configuration: { ...metadata, applicability: [{ target: unknownTarget, required: false, visible: true }] } };
+  assert.throws(() => parseAccessoryPricingJson(JSON.stringify([badGroup]), variants, [], workstationGroups), (error: unknown) =>
+    error instanceof AccessoryPricingContractError && error.issues.some((issue) => issue.code === "unknown_workstation_reference" && issue.message.startsWith("Workstation reference")));
+});
+
+test("OXI ART.058 regression: fixed_quantity and scale_with_target_quantity survive Apply/save validation for a Direct Modular target", () => {
+  const starterTarget = { kind: "modular", group_id: "mod-oxi-p-bench", row_id: "bench-starter-120" } as const;
+  const parsed = parseAccessoryPricingJson(JSON.stringify([modularCompanionGroup(starterTarget)]), variants, directModularGroups);
+  const rule = parsed[0].conditional_configuration?.applicability[0];
+  assert.equal(rule?.fixed_quantity, 2);
+  assert.equal(rule?.scale_with_target_quantity, true);
+  assert.equal(parsed[0].items?.[0].price, 69, "Expected the real ART.058 unit price to be preserved, never a multiplied EUR 138 price");
 });

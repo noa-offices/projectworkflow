@@ -12,6 +12,9 @@ export type ProductSpecificationOptionInput = {
 
 export type ProductSpecificationAccessoryInput = {
   item_name?: string | null;
+  importantRequirements?: string[] | null;
+  qty?: number | null;
+  supplier_price_list_code?: string | null;
   specification?: string | null;
 };
 
@@ -29,9 +32,11 @@ export type ProductSpecificationWorkstationVariantInput = {
 };
 
 export type ModularCompositionSpecificationItem = {
+  dimension?: string | null;
   itemName?: string | null;
   label?: string | null;
   quantity?: number | null;
+  importantRequirements?: string[] | null;
   specification?: string | null;
 };
 
@@ -83,15 +88,87 @@ function naturalModularJoin(parts: string[]) {
   return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
+function normalizedClauseKey(value: string) {
+  return compactText(value).replace(/[.,;:\s]+$/g, "").replace(/[-_]+/g, " ").toLowerCase();
+}
+
+function directAccessoryPhrase(accessory: ProductSpecificationAccessoryInput) {
+  const quantity = Math.trunc(Number(accessory.qty));
+  const itemName = compactText(accessory.item_name);
+  if (!Number.isFinite(quantity) || quantity < 1 || !itemName) return "";
+  const specification = compactText(accessory.specification).replace(/[.,;:\s]+$/g, "");
+  const nameWithoutParenthetical = itemName.replace(/\s*\([^)]*\)\s*/g, " ").trim();
+  const normalizedName = normalizedClauseKey(nameWithoutParenthetical);
+  const normalizedSpecification = normalizedClauseKey(specification);
+  const detail = normalizedSpecification.startsWith(`${normalizedName} with `)
+    ? specification.slice(nameWithoutParenthetical.length).trim()
+    : specification && !normalizedName.includes(normalizedSpecification)
+      ? `with ${specification.charAt(0).toLowerCase()}${specification.slice(1)}`
+      : "";
+  return `Complete with ${quantity} ${nameWithoutParenthetical} ${quantity === 1 ? "unit" : "units"}${detail ? ` ${detail}` : ""}`;
+}
+
+function isRequirementRepresentedByAccessory(requirement: string, accessories: ProductSpecificationAccessoryInput[]) {
+  const normalizedRequirement = normalizedClauseKey(requirement);
+  return accessories.some((accessory) => {
+    const quantity = Math.trunc(Number(accessory.qty));
+    if (!Number.isFinite(quantity) || quantity < 1) return false;
+    return [accessory.item_name, accessory.supplier_price_list_code]
+      .map((value) => normalizedClauseKey(value ?? ""))
+      .filter(Boolean)
+      .some((identifier) => normalizedRequirement.includes(identifier));
+  });
+}
+
+function formattedDirectDimension(value: string) {
+  return compactText(value).replace(/\s*[x×]\s*/gi, " × ");
+}
+
+function directModuleLabel(value: string) {
+  return compactText(value)
+    .replace(/\s+Bench\s*-\s*/i, " ")
+    .replace(/([A-Za-z])\s*(\d+\b)/g, "$1$2");
+}
+
+export function buildDirectModularDimensionSuggestion(items: ModularCompositionSpecificationItem[]) {
+  const selectedItems = items.flatMap((item) => {
+    const quantity = Math.trunc(Number(item.quantity));
+    const label = compactText(item.itemName) || compactText(item.label);
+    const dimension = formattedDirectDimension(item.dimension ?? "");
+    return Number.isFinite(quantity) && quantity > 0 && label ? [{ label, quantity, dimension }] : [];
+  }).filter((item) => item.dimension);
+  if (!selectedItems.length) return null;
+  const totalModules = selectedItems.reduce((total, item) => total + item.quantity, 0);
+  if (selectedItems.length === 1 && totalModules === 1) return selectedItems[0].dimension;
+  const dimensions = Array.from(new Set(selectedItems.map((item) => normalizedClauseKey(item.dimension))));
+  if (dimensions.length === 1) return `${totalModules} modules · each ${selectedItems[0].dimension}`;
+
+  const dimensionParts = selectedItems.map((item) => {
+    const match = item.dimension.match(/^(?:W\s*)?([\d.,]+)\s*×\s*(D\s*[\d.,]+)\s*×\s*(H\s*[\d.,]+(?:\s*cm|\s*mm)?)/i);
+    return match ? { ...item, width: match[1], depth: match[2], height: match[3] } : null;
+  });
+  if (dimensionParts.every(Boolean)) {
+    const parts = dimensionParts as Array<{ label: string; quantity: number; dimension: string; width: string; depth: string; height: string }>;
+    if (new Set(parts.map((item) => normalizedClauseKey(`${item.depth} ${item.height}`))).size === 1) {
+      return `${parts.map((item) => `${directModuleLabel(item.label)}${item.quantity > 1 ? ` × ${item.quantity}` : ""}`).join(" + ")} · ${parts[0].depth} × ${parts[0].height}`;
+    }
+  }
+  return selectedItems.map((item) => `${directModuleLabel(item.label)}: ${item.dimension}${item.quantity > 1 ? ` × ${item.quantity}` : ""}`).join(" · ");
+}
+
 export function buildModularCompositionSpecification({
   items,
+  accessories = [],
   modularDefaultSpecification,
+  modularPricingMode,
   selectedCategory,
   templateDefaultSpecification,
   templateDescription,
 }: {
   items: ModularCompositionSpecificationItem[];
+  accessories?: ProductSpecificationAccessoryInput[];
   modularDefaultSpecification?: string | null;
+  modularPricingMode?: "direct" | "matrix" | null;
   selectedCategory?: string | null;
   templateDefaultSpecification?: string | null;
   templateDescription?: string | null;
@@ -108,20 +185,39 @@ export function buildModularCompositionSpecification({
   );
 
   if (!selectedItems.length) return baseSpecification ? sentenceWithPeriod(baseSpecification) : null;
-  if (selectedItems.length === 1 && selectedItems[0].quantity === 1) {
+  const directModular = modularPricingMode === "direct";
+  if (!directModular && selectedItems.length === 1 && selectedItems[0].quantity === 1) {
     const rowSpecification = compactText(selectedItems[0].specification);
     if (rowSpecification) return appendUpholsteryCategory(sentenceWithPeriod(rowSpecification), selectedCategory);
   }
 
   const quantities = selectedItems.map((item) => {
-    const label = readableModularLabel(item.label);
+    const label = directModular
+      ? compactText(item.label).replace(/([A-Za-z])\s*(\d+\b)/g, "$1 $2")
+      : readableModularLabel(item.label);
     return `${item.quantity} ${item.quantity === 1 ? label : pluralizeModularLabel(label)}`;
   });
-  const baseStem = compactText(baseSpecification)
+  const normalizedBaseStem = compactText(baseSpecification)
     .replace(/[.,;:\s]+$/g, "")
     .replace(/\bcompris(?:e|es|ing)\b.*$/i, "")
-    .replace(/[.,;:\s]+$/g, "") || "Modular lounge seating";
+    .replace(/[.,;:\s]+$/g, "");
+  const baseStem = directModular && /\bmodular lounge seating\b/i.test(normalizedBaseStem)
+    ? "Modular configuration"
+    : normalizedBaseStem || (directModular ? "Modular configuration" : "Modular lounge seating");
   const composition = `${baseStem} comprising ${naturalModularJoin(quantities)}.`;
+  if (directModular) {
+    const rowDetails = uniqueFragments([
+      ...selectedItems.map((item) => compactText(item.specification)),
+      ...selectedItems.flatMap((item) => (item.importantRequirements ?? []).filter((requirement) => !isRequirementRepresentedByAccessory(requirement, accessories))),
+    ])
+      .map((fragment) => fragment.replace(/[.,;:\s]+$/g, ""))
+      .filter((fragment) => !composition.toLowerCase().includes(fragment.toLowerCase()));
+    const accessoryDetails = uniqueFragments(accessories.map(directAccessoryPhrase));
+    const details = [...rowDetails, ...accessoryDetails];
+    return details.length
+      ? `${composition.replace(/[.,;:\s]+$/g, "")}, ${naturalJoin(details)}.`
+      : composition;
+  }
   return appendUpholsteryCategory(composition, selectedCategory);
 }
 

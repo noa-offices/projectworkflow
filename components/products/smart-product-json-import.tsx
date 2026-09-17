@@ -122,19 +122,45 @@ function ImportantRequirementsField({ value, onChange }: { value?: string[]; onC
   return <label className="block md:col-span-2"><span className="mb-1 block text-xs font-medium text-zinc-600">Important Requirements</span><textarea aria-label="Important Requirements" value={(value ?? []).join("\n")} onChange={(event) => { const requirements = reviewImportantRequirements(event.target.value); onChange(requirements.length ? requirements : undefined); }} placeholder="One requirement per line" className={textareaClass} /></label>;
 }
 
-/** Compact editor for direct-priced modular rows: no category columns, one scalar price plus role. */
+/** Compact row/table editor for direct-priced modular rows: no category columns, one scalar price plus role. */
 function DirectModularRowsEditor({ composition, onChange, rows }: { composition: ProductTemplateDraftModularComposition | null; onChange: (rows: ProductTemplateDraftModularDirectRow[]) => void; rows: ProductTemplateDraftModularDirectRow[] }) {
-  const update = (index: number, patch: Partial<ProductTemplateDraftModularDirectRow>) => onChange(rows.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
-  return <div className="grid gap-2">
-    <p className="text-[11px] font-semibold uppercase text-zinc-500">Direct-priced modules{composition ? ` — starters ${composition.minStarters}–${composition.maxStarters ?? "∞"}` : ""}</p>
-    {rows.map((row, index) => <div key={row.id} className="grid gap-2 rounded-md border border-zinc-200 p-2 md:grid-cols-2">
-      <TextField label="Display name" value={row.displayName ?? row.label} onChange={(value) => update(index, { displayName: nullableText(value) })} />
-      <TextField label="Supplier code" value={row.supplierCodes[0] ?? ""} onChange={(value) => update(index, { supplierCodes: value.trim() ? [value.trim()] : [] })} />
-      <label className="block"><span className="mb-1 block text-xs font-medium text-zinc-600">Direct price</span><input type="number" step="0.01" value={row.price ?? ""} onChange={(event) => update(index, { price: event.target.value === "" ? null : Number(event.target.value) })} className={inputClass} /></label>
-      <label className="block"><span className="mb-1 block text-xs font-medium text-zinc-600">Role</span><select value={row.role ?? ""} onChange={(event) => update(index, { role: (event.target.value || undefined) as ProductTemplateDraftModularDirectRow["role"] })} className={inputClass}><option value="">None</option><option value="starter">Starter</option><option value="intermediate">Intermediate</option><option value="terminal">Terminal</option></select></label>
-      <TextField label="Specification" multiline value={row.specification} onChange={(value) => update(index, { specification: nullableText(value) })} />
-      <ImportantRequirementsField value={row.importantRequirements} onChange={(value) => update(index, { importantRequirements: value })} />
-    </div>)}
+  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+  const update = (rowId: string, patch: Partial<ProductTemplateDraftModularDirectRow>) => onChange(rows.map((row) => row.id === rowId ? { ...row, ...patch } : row));
+  return <div>
+    <p className="mb-2 text-[11px] font-semibold uppercase text-zinc-500">Direct-priced modules{composition ? ` — starters ${composition.minStarters}–${composition.maxStarters ?? "∞"}` : ""}</p>
+    <div className="overflow-x-auto"><table className="min-w-full text-left text-xs">
+      <thead className="border-b border-zinc-200 text-zinc-500"><tr>
+        <th className="min-w-56 px-2 py-2 font-semibold">Display Name</th>
+        <th className="min-w-32 px-2 py-2 font-semibold">Supplier Code</th>
+        <th className="min-w-40 px-2 py-2 font-semibold">Dimension</th>
+        <th className="min-w-28 px-2 py-2 font-semibold">Price</th>
+        <th className="min-w-32 px-2 py-2 font-semibold">Role</th>
+        <th className="min-w-28 px-2 py-2 font-semibold">Action</th>
+      </tr></thead>
+      <tbody>{rows.map((row) => {
+        const expanded = Boolean(expandedRows[row.id]);
+        const rowLabel = row.displayName || row.label || row.id;
+        return <Fragment key={row.id}>
+          <tr className="border-b border-zinc-100">
+            <td className="px-2 py-2 align-top"><input aria-label="Display name" value={row.displayName ?? row.label ?? ""} onChange={(event) => update(row.id, { displayName: nullableText(event.target.value) })} className="h-8 w-full rounded border border-zinc-300 bg-white px-2 outline-none focus:border-emerald-700" /></td>
+            <td className="px-2 py-2 align-top"><input aria-label={`${rowLabel} supplier code`} value={row.supplierCodes[0] ?? ""} onChange={(event) => update(row.id, { supplierCodes: event.target.value.trim() ? [event.target.value.trim()] : [] })} className="h-8 w-28 rounded border border-zinc-300 bg-white px-2 outline-none focus:border-emerald-700" /></td>
+            <td className="px-2 py-2 align-top text-zinc-600">{row.dimensions ? formatDraftDimensions(row.dimensions) : "-"}</td>
+            <td className="px-2 py-2 align-top"><input aria-label={`${rowLabel} price`} type="number" step="0.01" value={row.price ?? ""} onChange={(event) => update(row.id, { price: event.target.value === "" ? null : Number(event.target.value) })} className="h-8 w-24 rounded border border-zinc-300 bg-white px-2 outline-none focus:border-emerald-700" /></td>
+            <td className="px-2 py-2 align-top"><select aria-label={`${rowLabel} role`} value={row.role ?? ""} onChange={(event) => update(row.id, { role: (event.target.value || undefined) as ProductTemplateDraftModularDirectRow["role"] })} className="h-8 rounded border border-zinc-300 bg-white px-1"><option value="">None</option><option value="starter">Starter</option><option value="intermediate">Intermediate</option><option value="terminal">Terminal</option></select></td>
+            <td className="px-2 py-2 align-top"><button type="button" aria-expanded={expanded} aria-controls={`modular-direct-row-${row.id}`} onClick={() => setExpandedRows((current) => ({ ...current, [row.id]: !current[row.id] }))} className="rounded border border-zinc-300 px-2 py-1 font-semibold text-emerald-900">{expanded ? "Hide details" : "Edit / Details"}</button></td>
+          </tr>
+          {expanded ? <tr id={`modular-direct-row-${row.id}`} className="border-b border-zinc-200 bg-zinc-50"><td colSpan={6} className="p-3"><div className="grid gap-3 md:grid-cols-2">
+            <TextField label="Label" value={row.label} onChange={(value) => update(row.id, { label: nullableText(value) })} />
+            <TextField label="Supplier codes" value={row.supplierCodes.join(", ")} onChange={(value) => update(row.id, { supplierCodes: reviewCodeList(value) })} />
+            <TextField label="Reference codes" value={row.referenceCodes.join(", ")} onChange={(value) => update(row.id, { referenceCodes: reviewCodeList(value) })} />
+            <TextField label="Dimensions / raw text" value={row.dimensions?.rawText ?? ""} onChange={(value) => update(row.id, { dimensions: reviewDimensionRawText(row.dimensions, value) })} />
+            <label><span className="mb-1 block text-xs font-medium text-zinc-600">Currency</span><CurrencyField value={row.currency} onChange={(currency) => update(row.id, { currency })} /></label>
+            <div className="md:col-span-2"><TextField multiline label="Specification" value={row.specification} onChange={(value) => update(row.id, { specification: nullableText(value) })} /></div>
+            <ImportantRequirementsField value={row.importantRequirements} onChange={(value) => update(row.id, { importantRequirements: value })} />
+          </div></td></tr> : null}
+        </Fragment>;
+      })}</tbody>
+    </table></div>
   </div>;
 }
 

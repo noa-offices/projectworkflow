@@ -6106,15 +6106,17 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     .sort((left, right) => calculationNumber(left.sort_order) - calculationNumber(right.sort_order));
   const modularDefaults = modularPricingDefaultsFromRows(template.category_pricing);
   const usesModularPricing = modularRows.length > 0;
+  const usesDirectModularPricing = usesModularPricing && modularGroups.some((group) => isDirectModularPricingGroup(group));
   const configuredDimensionInput = optionalTextValue(formData, "configured_dimension");
   const configuredSpecificationInput = optionalTextValue(formData, "configured_specification");
   const finalSpecificationWasEdited = optionalTextValue(formData, "final_specification_was_edited") === "true";
   const finalSpecificationOverrideInput = optionalTextValue(formData, "final_specification_override");
   const workstationLayoutTypeInput = optionalTextValue(formData, "workstation_layout_type");
-  const selectedCategory =
-    textValue(formData, usesModularPricing ? "modular_pricing_category" : "category_pricing_category") ||
-    categoryPriceColumns(template.category_pricing)[0] ||
-    "Cat A";
+  const selectedCategory = usesDirectModularPricing
+    ? ""
+    : textValue(formData, usesModularPricing ? "modular_pricing_category" : "category_pricing_category") ||
+      categoryPriceColumns(template.category_pricing)[0] ||
+      "Cat A";
   const configuredDimension = configuredDimensionInput ??
     (selectedSizePricing?.default_dimension?.trim() || null) ??
     modularDefaults.defaultDimension;
@@ -6147,6 +6149,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         group_id: group.id,
         id,
         item_name: row.display_name || row.variant_name || "Modular item",
+        importantRequirements: (row as { importantRequirements?: string[] }).importantRequirements ?? [],
         modular_role: modularRowRole(row),
         pricing_mode: isDirectModularPricingGroup(group) ? "direct" as const : "matrix" as const,
         qty,
@@ -6563,18 +6566,22 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const modularCompositionSpecification = usesModularPricing
     ? buildModularCompositionSpecification({
         items: selectedModularItems.map((item) => ({
+          dimension: item.dimension,
           itemName: item.item_name,
+          importantRequirements: item.importantRequirements,
           quantity: item.qty,
           specification: item.specification,
         })),
+        accessories: usesDirectModularPricing ? selectedAccessoryPricing : [],
         modularDefaultSpecification: configuredModularSpecification,
+        modularPricingMode: usesDirectModularPricing ? "direct" : "matrix",
         selectedCategory,
         templateDefaultSpecification: template.default_specification,
         templateDescription: template.description,
       })
     : null;
   const companyStyleSpecification = buildCompanyStyleProductSpecification({
-    accessorySnapshots: selectedAccessoryPricing,
+    accessorySnapshots: usesDirectModularPricing ? [] : selectedAccessoryPricing,
     linkedProductSnapshots: selectedLinkedProducts,
     primarySpecification:
       (derivedDesking ? configuredWorkstationSpecification : null) ??

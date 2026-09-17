@@ -34,7 +34,11 @@ export function removeBaseModelPricingRow<TRow extends BaseModelPricingRow>(grou
 }
 
 export function replaceWholeTemplateBaseModelRows<TRow extends BaseModelPricingRow>(groups: BaseModelPricingGroup<TRow>[], rows: TRow[], replacementGroupId: string) {
-  if (groups.length === 1) { const rowIds = new Set(rows.flatMap((row) => typeof row.id === "string" ? [row.id] : [])); return [{ ...groups[0], items: rows, subgroups: groups[0].subgroups?.map((subgroup) => ({ ...subgroup, row_ids: subgroup.row_ids.filter((id) => rowIds.has(id)) })) }]; }
+  // Flat Smart Setup rows must always land under the caller-supplied id (the legacy group id the
+  // applicability targets were built against), never under whatever id the sole pre-existing group
+  // happens to carry - that id may be a random UUID from a manual "+ Add Group" click and would
+  // silently break every accessory rule that references LEGACY_BASE_MODEL_GROUP_ID.
+  if (groups.length === 1) { const rowIds = new Set(rows.flatMap((row) => typeof row.id === "string" ? [row.id] : [])); return [{ ...groups[0], id: replacementGroupId, items: rows, subgroups: groups[0].subgroups?.map((subgroup) => ({ ...subgroup, row_ids: subgroup.row_ids.filter((id) => rowIds.has(id)) })) }]; }
   return [{ ...createBaseModelPricingGroup<TRow>(replacementGroupId, 0), items: rows }];
 }
 
