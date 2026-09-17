@@ -25,7 +25,9 @@ Preserve every selected technical fact. Include supplied selected finish/materia
 
 FINAL SPECIFICATION STYLE: Return only the configured product-description/specification body. Do not repeat the product, template, or model name, and do not begin with it. Do not include dimensions, size, width, depth, height, diameter, or dimension formatting. The quotation/builder layout displays the product/model name and dimension line separately. Keep actually selected technical features, finishes, accessories, options, and configuration facts; do not remove important selected facts because name and dimensions are excluded. Avoid unnecessary repetition. Keep wording concise, professional, and quotation-ready.
 
-Do not mention price, currency, discount, supplier codes, model codes, internal codes, AI, JSON, QA, or internal workflow. Do not add marketing claims or unsupported material properties. Return specificationSuggestion null when the selected context is insufficient for a safe improvement.`;
+Do not mention price, currency, discount, supplier codes, model codes, internal codes, AI, JSON, QA, or internal workflow. Do not add marketing claims or unsupported material properties. Return specificationSuggestion null when the selected context is insufficient for a safe improvement.
+
+Write the resulting furniture product, not the internal configuration model: use natural furniture/quotation terminology instead of software-style phrasing. Consolidate repeated modules and repeated identical dimensions into concise composition wording instead of listing them again. Mention a selected accessory, option, or finish only when it is actually supplied as selected; never mention an unselected one. Do not include stock or commercial availability/status notes (for example wording about limited stock or supplies running out). Do not invent materials, finishes, dimensions, accessories, quantities, origin, or product features beyond the supplied selected facts; a supplied brand/origin fact may be preserved verbatim but never invented.`;
 
 const schema = {
   type: "object",

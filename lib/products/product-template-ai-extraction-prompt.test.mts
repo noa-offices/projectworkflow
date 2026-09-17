@@ -999,12 +999,353 @@ test("workstation extraction focus does not invent seat counts and preserves the
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
 });
 
+test("workstation extraction focus partitions Direct Modular compatibility families and does not split on width alone", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "DIRECT MODULAR COMPATIBILITY PARTITIONING",
+    "manufacturer-proven structural subfamilies that are NOT safely interchangeable under the current composition model",
+    "different top-depth families, different overall bench depth caused by those top depths, different middle-gap systems, different connector/interface systems, or different structural systems identified by manufacturer section A/B/etc.",
+    "The source must prove the commercial/structural distinction; do NOT rely only on dimensions",
+    "Width alone is not a reason to split",
+    "matching 120/140/160/180 starter rows plus matching 120/140/160/180 add-on rows belonging to the same structural system may remain in one Direct Modular group",
+    "Split by proven incompatibility, not by every dimension difference",
+    "preserve all authoritative priced rows, use the safest supported groups possible, and add an extractionWarning describing the unsupported relationship",
+    "never flatten the system to workstationRows or Base/Model merely to avoid the compatibility problem",
+    "never invent a new schema field or compatibility DSL",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation extraction focus applies the X3 38 mm / 215 mm plus 60/80 cm Direct Modular partition pattern and never mixes gap or top-depth systems", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "system A at a 38 mm middle gap and system B at a 215 mm middle gap",
+    "each with its own separate 60 cm top-depth starter/add-on rows and 80 cm top-depth starter/add-on rows",
+    "partition into four separate direct Modular groups instead of one mixed group: A/38 mm/60 cm tops, A/38 mm/80 cm tops, B/215 mm/60 cm tops, and B/215 mm/80 cm tops",
+    'each with pricingMode: "direct", starter rows using role "starter", add-on rows using role "intermediate", and composition { minStarters: 1, maxStarters: 1 }',
+    "never combine the 60 cm-top and 80 cm-top systems into one group, and never combine system A and system B",
+    "because the current composition model cannot enforce same-depth or same-gap composition inside a mixed group",
+    "These example gap/depth values are architectural examples only and remain governed by SOURCE-BATCH AUTHORITY AND PROMPT EXAMPLE FIREWALL",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain the X3 partition pattern: ${expected}`));
+});
+
+test("workstation extraction focus keeps X3-style PTS values out of supported currency codes", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "When an X3-style source labels its commercial amount column PTS rather than a supported currency, never reinterpret PTS as EUR, USD, or any other supported currency code",
+    "use defaultCurrency: null and row currency: null, preserve the explicit numeric PTS amount in price",
+    "add a concise extractionWarning that source values are expressed in PTS rather than a supported monetary currency",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain PTS handling: ${expected}`));
+});
+
+test("workstation extraction focus makes same-page inset return isolation a mandatory target-scope rule for the selected Bench template", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "SAME-PAGE UNRELATED PRIMARY PRODUCT ISOLATION — MANDATORY TARGET-SCOPE RULE",
+    "The current target ProductTemplateDraft must contain ONLY the selected commercial family",
+    "a separately sold inset return unit, desk return, pedestal, service unit, or other adjacent primary product MUST NOT be emitted into pricing.baseModelRows, pricing.workstationRows, pricing.priceMatrices, or pricing.modularGroups of that Bench template",
+    "options/surcharges that apply only to that excluded sibling product MUST also be excluded from the current template's optionGroups",
+    "do NOT broaden template.templateName, template.description, or template.specification to include the excluded sibling product merely because it appears on the same source page",
+    "This rule is mandatory whenever TARGET TEMPLATE SCOPE identifies one selected family. Same-page proximity never overrides target-template scope.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation extraction focus still allows linkedFamilySuggestion/extractionWarning as the safe way to preserve an excluded same-page sibling product", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "When useful, preserve the excluded sibling product only as:",
+    "linkedFamilySuggestions, when the relationship is clearly supported; or",
+    "extractionWarnings stating that the sibling product requires a separate extraction.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation X3 regression pattern makes the same-page inset return exclusion a target-scope rule, not an optional warning, and forbids the Desks & Benches template name", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "For the same X3-style Bench extraction, if the supplied page also contains separately priced inset return units before or after the Bench tables, those return units remain outside the selected Bench ProductTemplateDraft",
+    "Do not emit them into baseModelRows and do not emit their return-only surcharge/options into optionGroups",
+    'The Bench template identity must remain Bench-only; do not rename it to "Desks & Benches" or otherwise broaden its description/specification to include the excluded return family',
+    "This is a target-scope rule, not an optional warning.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation extraction focus scopes an optional surcharge to the exact rows the manufacturer publishes it beside", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "ROW-SPECIFIC OPTIONAL SURCHARGE APPLICABILITY",
+    "When a manufacturer prints an option/surcharge only beside specific priced rows, that placement is applicability evidence",
+    'when starter rows show a surcharge such as "W +387" and add-on rows do NOT show that surcharge, the W surcharge must NOT become a global unrestricted option applying to the whole Modular family',
+    'do NOT target add-on rows when the source only publishes the surcharge for starter rows',
+    "Do not invent cardinality or automatic quantity behavior for an optional surcharge",
+    "preserve the surcharge evidence in extractionWarnings, do not make it a misleading globally selectable accessory",
+    "do not bake the surcharge into the authoritative base SKU price",
+    "do not synthesize alternate priced SKUs unless the manufacturer itself publishes them as separate authoritative SKUs",
+    "a return unit's W +193 and a bench starter's W +387 remain two separate priced option items, never one universal W value",
+    "if the return unit is outside the selected Bench template, its W +193 option is also outside that Bench template",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation extraction focus states the exact apply-safe JSON shape for an optional row-specific surcharge", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "OPTIONAL ROW-SPECIFIC SURCHARGE SHAPE",
+    "When the source proves one optional surcharge/item available only for certain rows and no tighter cardinality is source-proven",
+    'outer optionGroup.selection { "mode": "optional", "minSelections": 0, "maxSelections": 1, "defaultItemIds": [] }',
+    'conditionalConfiguration { "role": "conditional_option", "selection": "unrestricted", "applicability": [ { "target": { "kind": "modular", "group_id": "<exact group id>", "row_id": "<exact row id>" }, "required": false, "visible": true, "allowed_item_ids": ["<option item id>"] } ] }',
+    "with one applicability rule per exact supported row",
+    'Do NOT use "exactly_one", "at_least_one", fixed_quantity, or scale_with_target_quantity for this optional row-specific case unless the manufacturer explicitly proves those semantics',
+    "do NOT make the item globally available",
+    "If several optional surcharge items are independently selectable and the source proves that, choose the existing appropriate apply-safe outer mode rather than inventing cardinality",
+    "If the source semantics still cannot be represented safely, emit an extractionWarning instead of fabricating enforcement",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation extraction focus applies the optional row-specific surcharge shape to the X3 W +387 example without leaking prompt-example data", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    'When an X3-style source prints a surcharge such as "W +387" beside starter rows only, with no equivalent marking on add-on rows',
+    "extract exactly one real surcharge option item using the OPTIONAL ROW-SPECIFIC SURCHARGE SHAPE above",
+    "no supplier code unless the source supplies one",
+    "price 387 only when visibly supplied",
+    "currency following the actual source (PTS is not a currency)",
+    "applicability targeting only the starter rows, required: false, and no add-on-row targets",
+    'do not extract "387" or "W" as authoritative data from this prompt\'s own example, only from the supplied source',
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation extraction focus adds a final safety check covering Direct Modular partitioning, same-page isolation, surcharge scoping, and PTS", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "WORKSTATION FINAL SAFETY CHECK",
+    "no incompatible Direct Modular structural families were merged into one group merely because all rows are starter/add-on rows",
+    "same-family width variants were not unnecessarily split",
+    "separate top-depth/gap systems were partitioned into distinct pricing.modularGroups where the current runtime cannot prevent invalid mixing",
+    "that when the selected target is a Bench family, no separately sold same-page inset return, desk return, pedestal, service unit, or sibling primary product appears anywhere in the returned pricing arrays or optionGroups, and the template name/description/specification were not broadened to include that excluded sibling family",
+    "a row-specific surcharge visible only beside starter rows was not made globally applicable to add-on rows",
+    "PTS or other non-currency commercial units were not relabelled as a supported currency",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("the embedded ProductTemplateDraft v1 contract shows a non-null selectionFamily example on the Direct Modular group shape for every focus", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(
+      prompt.includes('"pricingMode": "direct", "selectionFamily": "selection-family-id", "directRows":'),
+      `Expected ${focus} prompt's Direct Modular contract shape to show a non-null selectionFamily example between pricingMode and directRows`,
+    );
+    assert.ok(
+      !prompt.includes('"pricingMode": "direct", "selectionFamily": null,'),
+      `Expected ${focus} prompt's contract example to never show selectionFamily as null (the string may still appear inside the "never emit" instruction)`,
+    );
+  });
+});
+
+test("the prompt documents selectionFamily as an optional, source-proven cross-group exclusivity marker for every focus, and forbids null/empty values", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "DIRECT MODULAR SELECTION FAMILY",
+      "pricing.modularGroups[].selectionFamily is optional and applies only when the source proves that two or more Direct Modular groups are alternative configuration families that must not be selected together within one quotation item",
+      "emit the same non-empty stable selectionFamily string on every mutually exclusive Direct Modular group belonging to that alternative family",
+      "groups with different selectionFamily values may coexist",
+      "groups with no selectionFamily remain independent and may coexist",
+      "never invent selectionFamily merely because there are multiple Modular groups",
+      "never infer exclusivity only from dimensions, labels, group count, or visual proximity",
+      "use selectionFamily only when manufacturer structure proves that the groups are alternative configurations rather than simultaneously usable module groups",
+      "The runtime enforces that only one Direct Modular group sharing the same selectionFamily may contain selected quantities at a time",
+      "Do not use selectionFamily on Matrix Modular unless future ProjectWorkflow runtime support explicitly requires it",
+      // absent selectionFamily must be omitted; null/empty is forbidden
+      "selectionFamily is OPTIONAL. When no source-proven cross-group exclusivity exists, OMIT selectionFamily entirely",
+      'Never emit "selectionFamily": null or an empty string',
+      "The non-empty value shown in the field-contract example demonstrates the field shape only and is not required content",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain: ${expected}`));
+  });
+});
+
+test("FINAL CHECK item 15 confirms no undocumented ProductTemplateDraft fields were added and selectionFamily follows its documented contract", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(
+      prompt.includes("15. No undocumented ProductTemplateDraft fields were added; selectionFamily is used only according to the documented Direct Modular Selection Family contract."),
+      `Expected ${focus} prompt's FINAL CHECK item 15 to use the new selectionFamily-aware wording`,
+    );
+    assert.ok(!prompt.includes("15. The ProductTemplateDraft v1 schema has not been extended."), `Expected ${focus} prompt to no longer show the old FINAL CHECK item 15 wording`);
+  });
+});
+
+test("workstation extraction focus assigns the same selectionFamily to Direct Modular groups split for proven mutual exclusivity, never merely for organization", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "When incompatible Direct Modular subfamilies are split into separate groups specifically because they are alternative configurations of the SAME selected commercial product and must not be combined in one quotation item, assign those groups the same selectionFamily value",
+    "If the source proves that these are alternative configurations rather than simultaneously composable groups, all such Direct Modular groups must share one stable selectionFamily",
+    "Do not use selectionFamily merely because groups were split for organization or readability. The source must prove cross-group mutual exclusivity.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation X3 regression requires one shared selectionFamily across all four partitioned groups while the four-group partitioning, W +387, and same-page isolation rules remain unchanged", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    // selectionFamily addition
+    "Because these four X3-style groups represent alternative structural bench configurations that must not be combined within one quotation item, emit the SAME selectionFamily value on all four Direct Modular groups",
+    'Use one stable readable generated selectionFamily ID derived from the selected commercial family identity, for example "x3-bench-configuration"',
+    "The mutual exclusivity relationship must be supported by the supplied manufacturer source; the generated selectionFamily ID itself is an internal ProjectWorkflow identifier and does not need to appear verbatim in the manufacturer source",
+    "Prompt example strings remain non-source architectural examples.",
+    "The four groups remain separate pricing.modularGroups, but their shared selectionFamily tells ProjectWorkflow that selecting quantities from one group excludes simultaneous quantities from another group in the same family",
+    // four-group partitioning unchanged (item 9)
+    "partition into four separate direct Modular groups instead of one mixed group: A/38 mm/60 cm tops, A/38 mm/80 cm tops, B/215 mm/60 cm tops, and B/215 mm/80 cm tops",
+    "never combine the 60 cm-top and 80 cm-top systems into one group, and never combine system A and system B",
+    // W +387 starter-only surcharge unchanged (item 10)
+    'When an X3-style source prints a surcharge such as "W +387" beside starter rows only, with no equivalent marking on add-on rows',
+    "applicability targeting only the starter rows, required: false, and no add-on-row targets",
+    // same-page inset-return exclusion unchanged (item 11)
+    "For the same X3-style Bench extraction, if the supplied page also contains separately priced inset return units before or after the Bench tables, those return units remain outside the selected Bench ProductTemplateDraft",
+    "This is a target-scope rule, not an optional warning.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation final safety check verifies selectionFamily was applied to proven mutually exclusive groups and not to groups that may coexist", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "that when multiple Direct Modular groups are source-proven mutually exclusive alternative configurations of the same selected commercial family, they share one selectionFamily value",
+    "that selectionFamily was not added to groups that may validly coexist",
+    "no incompatible alternative groups requiring cross-group exclusivity were returned without selectionFamily merely because they had already been partitioned into separate modularGroups",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("the selectionFamily generated ID need not appear in source while the underlying exclusivity relationship still must, and the example string stays covered by the prompt-example firewall", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("The mutual exclusivity relationship must be supported by the supplied manufacturer source"));
+  assert.ok(prompt.includes("the generated selectionFamily ID itself is an internal ProjectWorkflow identifier and does not need to appear verbatim in the manufacturer source"));
+  assert.ok(prompt.includes("Prompt example strings remain non-source architectural examples."));
+  extractionPromptFocuses.forEach((focus) => {
+    assert.ok(
+      getProductTemplateAiExtractionPrompt(focus).includes(
+        "Every code, price, dimension, requirement, and page number shown in this prompt's own rules and regression examples (for example OXI, X3, Terra/Piem, or Colan codes) is a NON-SOURCE architectural example only, never source authority",
+      ),
+      `Expected ${focus} prompt to retain the general prompt-example firewall covering the selectionFamily example too`,
+    );
+  });
+});
+
+test("workstation extraction focus models one SKU with two finish-category prices as a matrix/category price map, never a surcharge", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "ALTERNATIVE FINISH PRICE COLUMNS",
+    "When a manufacturer row has one SKU and multiple price columns aligned to finish/material/category legends",
+    "model those values as Matrix Modular / Category price columns for that same row",
+    "Never transform the second/full alternative price into a surcharge, an accessory, a conditional option, or a synthetic add-on SKU",
+    "both values are complete alternative prices for the identical SKU, not a base price plus an addition",
+    "Preserve each SKU as one row carrying its full finish-category price map",
+    "row TE160 prices Standard (BL / AN): 1310, Designs: 1874; row TE160E prices Standard (BL / AN): 1454, Designs: 2148",
+    "These example numbers are architectural examples only and remain subject to SOURCE-BATCH AUTHORITY AND PROMPT EXAMPLE FIREWALL",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation extraction focus routes a composing Bench/Extension pair to the same Modular group with starter/intermediate roles and no selectionFamily", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "STARTER PLUS EXTENSION COMPOSE TOGETHER",
+    "When the source proves a Bench and its Bench Extension are components of the SAME composable configuration",
+    'route the Bench rows to role "starter" and the Extension rows to role "intermediate" within the SAME Modular group',
+    "composition requiring at least one starter and, when source/runtime support it, no more than one starter per run",
+    "Do NOT assign selectionFamily between these starter and extension rows",
+    "selectionFamily is reserved for mutually exclusive alternative configuration families that must never be combined, never for starter/add-on rows that the source proves are meant to compose together",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation extraction focus adds the Terra Office regression: one Matrix Modular group, starter/intermediate roles, Standard/Designs categories, separate E-suffix SKUs, no Designs surcharge, no selectionFamily", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "For Terra Office-style Bench pricing where the source proves Bench and Bench Extension rows compose together (the Extension extends the Bench run rather than being an alternative product)",
+    "normal and E-suffix rows are real manufacturer SKUs, and one SKU carries separate full prices for standard finishes (for example BL/AN) versus special finishes (for example designs)",
+    'route as Matrix Modular: ONE Modular group containing Bench rows with role "starter", Bench Extension rows with role "intermediate", separate price categories for Standard (BL/AN) and Designs, E-suffix rows preserved as separate rows/SKUs, no synthetic Designs surcharge optionGroup, and no selectionFamily between the starter and extension rows',
+    "The E suffix remains a manufacturer SKU variant representing the machined/electrification-ready version and must not be converted into a surcharge",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation extraction focus warns on uncertain accessory applicability instead of blindly attaching every technical-page accessory", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "ACCESSORY PAGE COVERAGE",
+    "Do not blindly attach every accessory shown on a technical accessories page merely because it appears there",
+    "Preserve a clearly compatible item as an option only when the source proves its applicability to the selected family/rows",
+    "When applicability is uncertain, preserve the item as a linkedFamilySuggestion or add an extractionWarning describing the uncertainty",
+    "never silently drop a relevant supplied accessory page without warning, and never invent applicability to force an item into optionGroups",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation final safety check adds Terra-specific verifications: no finish-price-to-surcharge conversion, no starter/extension selectionFamily split, matrix categories used, E-suffix rows separate, accessory uncertainty warned", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "that a full alternative finish/category price for one SKU was not converted into a surcharge, accessory, conditional option, or synthetic add-on SKU",
+    "that starter and extension rows meant to compose together were not split apart by selectionFamily",
+    "that Matrix Modular price categories were used when one SKU has finish-dependent alternative prices",
+    "that E-suffix manufacturer SKUs remain separate rows rather than being converted into surcharges",
+    "that uncertain accessory applicability produced an extractionWarning or linkedFamilySuggestion rather than invented applicability",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("Terra fixes leave the X3 selectionFamily regression, OXI_P, and OXI_Q guidance unchanged, and the Matrix Modular contract stays valid", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    // X3 selectionFamily regression (item 10)
+    "Because these four X3-style groups represent alternative structural bench configurations that must not be combined within one quotation item, emit the SAME selectionFamily value on all four Direct Modular groups",
+    'Use one stable readable generated selectionFamily ID derived from the selected commercial family identity, for example "x3-bench-configuration"',
+    // OXI_P regression (item 11)
+    "OXI_P starter rows 111 065, 111 066, 111 067, and 111 068 plus intermediate rows 111 069, 111 070, 111 071, and 111 072 are a direct Modular composition when pages 14–15 prove that structure: use directRows with the respective starter/intermediate roles and composition minStarters: 1, maxStarters: 1",
+    // OXI_Q regression (item 12)
+    "OXI extracted id \"oxi-q-ws-dx\" with supplierCodes [\"111 623\"], always complete with either ART.175 or ART.129",
+    "OXI 111 623 / 111 624 with ART.175 or ART.129",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected unchanged regression text: ${expected}`));
+
+  // Matrix Modular contract remains valid (item 13) — for every focus, the embedded shape still
+  // shows a Matrix Modular group with columns/rows/prices ahead of the Direct Modular group.
+  extractionPromptFocuses.forEach((focus) => {
+    const focusPrompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(
+      focusPrompt.includes(
+        '"modularGroups": [{ "id": "", "label": null, "defaultDimensions": null, "defaultSpecification": null, "matrix": { "id": "", "label": null, "columns": [{ "id": "", "label": null }], "rows": [{ "id": "", "label": null, "displayName": null, "dimensions": null, "currency": null, "specification": null, "importantRequirements": [], "supplierCodes": [], "referenceCodes": [], "prices": { "column-id": null } }] } }',
+      ),
+      `Expected ${focus} prompt's Matrix Modular contract shape to remain valid`,
+    );
+  });
+});
+
+test("existing OXI_P Direct Modular and OXI_Q Base/Model/companion guidance remain unchanged after the Direct Modular partitioning additions", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "OXI_P starter rows 111 065, 111 066, 111 067, and 111 068 plus intermediate rows 111 069, 111 070, 111 071, and 111 072 are a direct Modular composition when pages 14–15 prove that structure: use directRows with the respective starter/intermediate roles and composition minStarters: 1, maxStarters: 1",
+    "OXI extracted id \"oxi-q-ws-dx\" with supplierCodes [\"111 623\"], always complete with either ART.175 or ART.129",
+    "OXI 111 008 / 111 009) must remain separate authoritative rows",
+    "OXI 111 623 / 111 624 with ART.175 or ART.129",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected unchanged OXI regression text: ${expected}`));
+});
+
+test("generic Direct Modular guidance stays valid for sofa/lounge systems and the source-example firewall remains intact", () => {
+  const sofaPrompt = getProductTemplateAiExtractionPrompt("sofa_lounge");
+  assert.ok(sofaPrompt.includes("If Sales can build one composition") || sofaPrompt.includes("pricing.modularGroups"), "Expected sofa/lounge focus to retain generic Modular routing");
+  assert.ok(!sofaPrompt.includes("DIRECT MODULAR COMPATIBILITY PARTITIONING"), "Expected the workstation-specific Direct Modular partitioning rule to stay isolated from sofa/lounge");
+
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(
+      prompt.includes(
+        "Every code, price, dimension, requirement, and page number shown in this prompt's own rules and regression examples (for example OXI, X3, Terra/Piem, or Colan codes) is a NON-SOURCE architectural example only, never source authority",
+      ),
+      `Expected ${focus} prompt to retain the prompt-example firewall covering X3`,
+    );
+  });
+});
+
 test("workstation-specific regression and composition rules stay isolated from other furniture focuses and planning stays unaffected", () => {
   const workstationOnlySafeguards = [
     "OXI, X3, TERRA/PIEM, AND COLAN REGRESSION PATTERNS",
     "WORKSTATION ROUTING HIERARCHY",
     "STARTER / ADD-ON SYSTEMS",
     "BENCH EXTENSION DISTINCTION",
+    "DIRECT MODULAR COMPATIBILITY PARTITIONING",
+    "SAME-PAGE UNRELATED PRIMARY PRODUCT ISOLATION",
+    "ROW-SPECIFIC OPTIONAL SURCHARGE APPLICABILITY",
+    "WORKSTATION FINAL SAFETY CHECK",
   ];
   extractionPromptFocuses
     .filter((focus) => focus !== "workstation")

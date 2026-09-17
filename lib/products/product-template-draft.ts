@@ -128,6 +128,14 @@ export type ProductTemplateDraftModularGroup = {
   label: string | null;
   defaultDimensions: ProductTemplateDraftDimension | null;
   defaultSpecification: string | null;
+  /**
+   * Optional generic cross-group exclusivity marker. When two or more Direct
+   * Modular groups share the same non-empty selectionFamily, only one of them
+   * may carry selected quantities within a single quotation item — they are
+   * alternative configuration choices, not composable groups. Absent means no
+   * exclusivity constraint (today's fully backward-compatible behavior).
+   */
+  selectionFamily?: string;
   /** Absent means legacy "matrix" mode. */
   pricingMode?: ProductTemplateDraftModularPricingMode;
   /** Present for matrix mode only. */
@@ -620,11 +628,13 @@ export function normalizeProductTemplateDraft(input: unknown): ProductTemplateDr
   const modularGroups = array(pricingInput.modularGroups, "draft.pricing.modularGroups", issues).map((value, index) => {
     const path = `draft.pricing.modularGroups[${index}]`;
     const item = object(value, path, issues);
+    const selectionFamily = nullableText(item.selectionFamily, `${path}.selectionFamily`, issues);
     const base = {
       id: requiredId(item.id, `${path}.id`, issues),
       label: nullableText(item.label, `${path}.label`, issues),
       defaultDimensions: dimensions(item.defaultDimensions, `${path}.defaultDimensions`, issues),
       defaultSpecification: nullableText(item.defaultSpecification, `${path}.defaultSpecification`, issues),
+      ...(selectionFamily ? { selectionFamily } : {}),
     };
     const declaredMode = nullableText(item.pricingMode, `${path}.pricingMode`, issues);
     if (declaredMode && declaredMode !== "matrix" && declaredMode !== "direct") {

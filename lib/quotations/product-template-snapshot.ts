@@ -92,6 +92,36 @@ function normalizedClauseKey(value: string) {
   return compactText(value).replace(/[.,;:\s]+$/g, "").replace(/[-_]+/g, " ").toLowerCase();
 }
 
+function isCommercialAvailabilityNote(value: string | null | undefined) {
+  const text = compactText(value);
+  if (!text) return false;
+  return /\b(?:item\s+)?available\s+while\s+(?:supplies|stocks?)\s+last(?:s)?\b/i.test(text) ||
+    /\bwhile\s+stocks?\s+lasts?\b/i.test(text) ||
+    /\bsubject\s+to\s+availability\b/i.test(text) ||
+    /\buntil\s+stock(?:s)?\s+(?:last|lasts|run(?:s)?\s+out)\b/i.test(text) ||
+    /\bstock\s+clearance\b/i.test(text);
+}
+
+function stripCommercialAvailabilityNotes(value: string | null | undefined) {
+  const text = compactText(value);
+  if (!text) return "";
+  if (!isCommercialAvailabilityNote(text)) return text;
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .filter((sentence) => !isCommercialAvailabilityNote(sentence))
+    .join(" ")
+    .trim();
+}
+
+function appendBrandOriginLine(text: string | null, brand?: string | null, origin?: string | null) {
+  const brandText = compactText(brand);
+  const originText = compactText(origin);
+  const line = brandText && originText ? `${brandText} – ${originText}` : brandText || null;
+  if (!line) return text;
+  const stem = text ? sentenceWithPeriod(text) : "";
+  return stem ? `${stem}\n${line}` : line;
+}
+
 function directAccessoryPhrase(accessory: ProductSpecificationAccessoryInput) {
   const quantity = Math.trunc(Number(accessory.qty));
   const itemName = compactText(accessory.item_name);
@@ -140,8 +170,13 @@ export function buildDirectModularDimensionSuggestion(items: ModularCompositionS
   if (!selectedItems.length) return null;
   const totalModules = selectedItems.reduce((total, item) => total + item.quantity, 0);
   if (selectedItems.length === 1 && totalModules === 1) return selectedItems[0].dimension;
+
+  // Only collapse into a generic "N modules" phrase when every selected line is genuinely the same
+  // module (same label repeated by quantity) — distinct roles such as Starter vs. Add-on must stay
+  // visibly composed even when their dimensions happen to match, never merged into one anonymous count.
+  const distinctLabels = new Set(selectedItems.map((item) => normalizedClauseKey(item.label)));
   const dimensions = Array.from(new Set(selectedItems.map((item) => normalizedClauseKey(item.dimension))));
-  if (dimensions.length === 1) return `${totalModules} modules · each ${selectedItems[0].dimension}`;
+  if (distinctLabels.size === 1 && dimensions.length === 1) return `${totalModules} modules · each ${selectedItems[0].dimension}`;
 
   const dimensionParts = selectedItems.map((item) => {
     const match = item.dimension.match(/^(?:W\s*)?([\d.,]+)\s*×\s*(D\s*[\d.,]+)\s*×\s*(H\s*[\d.,]+(?:\s*cm|\s*mm)?)/i);
@@ -150,29 +185,34 @@ export function buildDirectModularDimensionSuggestion(items: ModularCompositionS
   if (dimensionParts.every(Boolean)) {
     const parts = dimensionParts as Array<{ label: string; quantity: number; dimension: string; width: string; depth: string; height: string }>;
     if (new Set(parts.map((item) => normalizedClauseKey(`${item.depth} ${item.height}`))).size === 1) {
-      return `${parts.map((item) => `${directModuleLabel(item.label)}${item.quantity > 1 ? ` × ${item.quantity}` : ""}`).join(" + ")} · ${parts[0].depth} × ${parts[0].height}`;
+      return `${parts.map((item) => `${directModuleLabel(item.label)} × ${item.quantity}`).join(" + ")} · ${parts[0].depth} × ${parts[0].height}`;
     }
   }
-  return selectedItems.map((item) => `${directModuleLabel(item.label)}: ${item.dimension}${item.quantity > 1 ? ` × ${item.quantity}` : ""}`).join(" · ");
+  return selectedItems.map((item) => `${directModuleLabel(item.label)}: ${item.dimension} × ${item.quantity}`).join(" · ");
 }
 
 export function buildModularCompositionSpecification({
   items,
   accessories = [],
+  brand,
   modularDefaultSpecification,
   modularPricingMode,
+  origin,
   selectedCategory,
   templateDefaultSpecification,
   templateDescription,
 }: {
   items: ModularCompositionSpecificationItem[];
   accessories?: ProductSpecificationAccessoryInput[];
+  brand?: string | null;
   modularDefaultSpecification?: string | null;
   modularPricingMode?: "direct" | "matrix" | null;
+  origin?: string | null;
   selectedCategory?: string | null;
   templateDefaultSpecification?: string | null;
   templateDescription?: string | null;
 }) {
+  const withBrandOrigin = (text: string | null) => appendBrandOriginLine(text, brand, origin);
   const selectedItems = items.flatMap((item) => {
     const quantity = Math.trunc(Number(item.quantity));
     const label = compactText(item.itemName) || compactText(item.label);
@@ -184,11 +224,13 @@ export function buildModularCompositionSpecification({
     templateDescription,
   );
 
-  if (!selectedItems.length) return baseSpecification ? sentenceWithPeriod(baseSpecification) : null;
+  if (!selectedItems.length) return withBrandOrigin(baseSpecification ? sentenceWithPeriod(baseSpecification) : null);
   const directModular = modularPricingMode === "direct";
   if (!directModular && selectedItems.length === 1 && selectedItems[0].quantity === 1) {
-    const rowSpecification = compactText(selectedItems[0].specification);
-    if (rowSpecification) return appendUpholsteryCategory(sentenceWithPeriod(rowSpecification), selectedCategory);
+    const rowSpecification = stripCommercialAvailabilityNotes(selectedItems[0].specification);
+    if (rowSpecification) {
+      return withBrandOrigin(appendUpholsteryCategory(sentenceWithPeriod(rowSpecification), selectedCategory));
+    }
   }
 
   const quantities = selectedItems.map((item) => {
@@ -202,23 +244,29 @@ export function buildModularCompositionSpecification({
     .replace(/\bcompris(?:e|es|ing)\b.*$/i, "")
     .replace(/[.,;:\s]+$/g, "");
   const baseStem = directModular && /\bmodular lounge seating\b/i.test(normalizedBaseStem)
-    ? "Modular configuration"
-    : normalizedBaseStem || (directModular ? "Modular configuration" : "Modular lounge seating");
+    ? "Composition"
+    : normalizedBaseStem || (directModular ? "Composition" : "Modular lounge seating");
   const composition = `${baseStem} comprising ${naturalModularJoin(quantities)}.`;
   if (directModular) {
     const rowDetails = uniqueFragments([
-      ...selectedItems.map((item) => compactText(item.specification)),
+      ...selectedItems.map((item) => stripCommercialAvailabilityNotes(item.specification)),
       ...selectedItems.flatMap((item) => (item.importantRequirements ?? []).filter((requirement) => !isRequirementRepresentedByAccessory(requirement, accessories))),
     ])
       .map((fragment) => fragment.replace(/[.,;:\s]+$/g, ""))
       .filter((fragment) => !composition.toLowerCase().includes(fragment.toLowerCase()));
-    const accessoryDetails = uniqueFragments(accessories.map(directAccessoryPhrase));
+    const accessoryDetails = uniqueFragments(
+      accessories
+        .map((accessory) => ({ ...accessory, specification: stripCommercialAvailabilityNotes(accessory.specification) || null }))
+        .map(directAccessoryPhrase),
+    );
     const details = [...rowDetails, ...accessoryDetails];
-    return details.length
-      ? `${composition.replace(/[.,;:\s]+$/g, "")}, ${naturalJoin(details)}.`
-      : composition;
+    return withBrandOrigin(
+      details.length
+        ? `${composition.replace(/[.,;:\s]+$/g, "")}, ${naturalJoin(details)}.`
+        : composition,
+    );
   }
-  return appendUpholsteryCategory(composition, selectedCategory);
+  return withBrandOrigin(appendUpholsteryCategory(composition, selectedCategory));
 }
 
 export function resolveFinalProductSpecification({
@@ -341,19 +389,24 @@ export function firstNonEmptySnapshotText(...values: Array<string | null | undef
 
 export function buildCompanyStyleProductSpecification({
   accessorySnapshots,
+  brand,
   linkedProductSnapshots,
+  origin,
   primarySpecification,
   selectedOptionSnapshots,
   selectedWorkstationVariant,
   template,
 }: {
   accessorySnapshots: ProductSpecificationAccessoryInput[];
+  brand?: string | null;
   linkedProductSnapshots: ProductSpecificationLinkedProductInput[];
+  origin?: string | null;
   primarySpecification?: string | null;
   selectedOptionSnapshots: ProductSpecificationOptionInput[];
   selectedWorkstationVariant?: ProductSpecificationWorkstationVariantInput | null;
   template: ProductSpecificationTemplateInput;
 }) {
+  const withBrandOrigin = (text: string | null) => appendBrandOriginLine(text, brand, origin);
   const baseSpecification = compactText(
     firstNonEmptySnapshotText(
       primarySpecification,
@@ -364,12 +417,12 @@ export function buildCompanyStyleProductSpecification({
   const fragments = uniqueFragments([
     ...selectedOptionSnapshots.map((snapshot) => componentSpecificationPhrase(snapshot)),
     ...linkedProductSnapshots.map((snapshot) => linkedProductSpecificationPhrase(snapshot)),
-    ...accessorySnapshots.map((snapshot) => compactText(snapshot.specification) || compactText(snapshot.item_name)),
+    ...accessorySnapshots.map((snapshot) => stripCommercialAvailabilityNotes(snapshot.specification) || compactText(snapshot.item_name)),
     compactText(selectedWorkstationVariant?.specification) || compactText(selectedWorkstationVariant?.variant_name),
-  ]);
+  ].map((fragment) => stripCommercialAvailabilityNotes(fragment)));
 
   if (!baseSpecification) {
-    return sentenceWithPeriod(naturalJoin(fragments)) || null;
+    return withBrandOrigin(sentenceWithPeriod(naturalJoin(fragments)) || null);
   }
 
   const remainingFragments = fragments.filter(
@@ -377,10 +430,10 @@ export function buildCompanyStyleProductSpecification({
   );
 
   if (!remainingFragments.length) {
-    return sentenceWithPeriod(baseSpecification) || null;
+    return withBrandOrigin(sentenceWithPeriod(baseSpecification) || null);
   }
 
-  return `${baseSpecification.replace(/[.,;:\s]+$/g, "")}, ${naturalJoin(remainingFragments)}.`;
+  return withBrandOrigin(`${baseSpecification.replace(/[.,;:\s]+$/g, "")}, ${naturalJoin(remainingFragments)}.`);
 }
 
 export function resolveProductSpecificationSnapshot({

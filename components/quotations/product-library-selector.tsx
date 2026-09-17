@@ -24,6 +24,13 @@ import {
   type ProductTemplateMaterialGroupLink,
 } from "@/components/quotations/finish-selections-editor";
 import { formatMoney, normalizeCurrency } from "@/lib/currencies";
+import {
+  IMAGE_PREVIEW_ZOOM_MAX,
+  IMAGE_PREVIEW_ZOOM_MIN,
+  nextImagePreviewZoomIn,
+  nextImagePreviewZoomOut,
+  type ImagePreviewZoomMode,
+} from "@/lib/quotations/image-preview-zoom";
 import { createLocalId, localNow, type LocalQuotationItem } from "@/lib/local/quotation-workspace";
 import { productTemplatePriceCheckState } from "@/lib/product-price-check";
 import {
@@ -36,6 +43,7 @@ import {
   modularItemPricingRows,
   modularPricingDefaultsFromRows,
   modularRowRole,
+  modularSelectionFamily,
 } from "@/lib/products/modular-pricing";
 import { validateModularCompositionGroups } from "@/lib/products/modular-composition";
 import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-conditional-configuration";
@@ -598,6 +606,13 @@ function AccessoryGroupHeader({ expanded, groupName, itemCount, required, select
   </button>;
 }
 
+function ModularGroupHeader({ expanded, groupName, selectionSummary, onToggle }: { expanded: boolean; groupName: string; selectionSummary: string; onToggle: () => void }) {
+  return <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex w-full items-center justify-between gap-3 text-left">
+    <span className="min-w-0 text-xs font-bold uppercase tracking-wide text-zinc-700"><span aria-hidden="true" className="mr-1.5 text-zinc-500">{expanded ? "▾" : "▸"}</span>{groupName}</span>
+    <span className="shrink-0 text-[10px] font-medium text-zinc-500">{selectionSummary}</span>
+  </button>;
+}
+
 function AccessoryConfigurationFields({
   evaluations,
   groups,
@@ -979,8 +994,15 @@ function ProductImagePreviewDialog({
   templateName: string;
 }) {
   const [previewUrl, setPreviewUrl] = useState("");
-  const [zoom, setZoom] = useState(100);
+  // "fit" renders the image at its natural size (never upscaled), shrunk only as far as the
+  // preview area requires; a number is an explicit user-chosen zoom percentage.
+  const [zoomMode, setZoomMode] = useState<ImagePreviewZoomMode>("fit");
   const currentImage = images[currentIndex] ?? null;
+  const zoomIn = () => setZoomMode(nextImagePreviewZoomIn);
+  const zoomOut = () => setZoomMode(nextImagePreviewZoomOut);
+  const toggleFitAnd100 = () => setZoomMode((current) => (current === "fit" ? 100 : "fit"));
+  const zoomOutDisabled = zoomMode !== "fit" && zoomMode <= IMAGE_PREVIEW_ZOOM_MIN;
+  const zoomInDisabled = zoomMode !== "fit" && zoomMode >= IMAGE_PREVIEW_ZOOM_MAX;
 
   useEffect(() => {
     let cancelled = false;
@@ -1007,7 +1029,7 @@ function ProductImagePreviewDialog({
     };
   }, [currentImage?.path, currentImage?.previewUrl]);
 
-  const navigate = useCallback((nextIndex: number) => { setZoom(100); onNavigate(nextIndex); }, [onNavigate]);
+  const navigate = useCallback((nextIndex: number) => { setZoomMode("fit"); onNavigate(nextIndex); }, [onNavigate]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -1060,8 +1082,9 @@ function ProductImagePreviewDialog({
               <img
                 src={currentImage.previewUrl || previewUrl}
                 alt={`${templateName} ${currentImage.label}`}
+                onDoubleClick={toggleFitAnd100}
                 className="max-h-[78vh] max-w-full object-contain"
-                style={{ width: zoom === 100 ? undefined : `${zoom}%` }}
+                style={{ width: zoomMode === "fit" ? undefined : `${zoomMode}%` }}
               />
             ) : (
               <div className="flex h-[360px] w-full items-center justify-center text-sm text-zinc-500">Image preview unavailable</div>
@@ -1086,7 +1109,7 @@ function ProductImagePreviewDialog({
                 Next
               </button><span className="text-xs text-zinc-500">{currentIndex + 1} / {images.length}</span>
             </div> : <span />}
-            <div className="flex items-center gap-2"><button type="button" onClick={() => setZoom((value) => Math.max(50, value - 25))} aria-label="Zoom out" className="rounded-md border border-zinc-300 px-3 py-2 text-xs font-semibold">−</button><button type="button" onClick={() => setZoom(100)} className="rounded-md border border-zinc-300 px-3 py-2 text-xs font-semibold">Fit</button><span className="text-xs text-zinc-600">{zoom}%</span><button type="button" onClick={() => setZoom((value) => Math.min(250, value + 25))} aria-label="Zoom in" className="rounded-md border border-zinc-300 px-3 py-2 text-xs font-semibold">+</button>{onSelect ? <button
+            <div className="flex items-center gap-2"><button type="button" onClick={zoomOut} disabled={zoomOutDisabled} aria-label="Zoom out" className="rounded-md border border-zinc-300 px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40">−</button><button type="button" onClick={() => setZoomMode("fit")} className="rounded-md border border-zinc-300 px-3 py-2 text-xs font-semibold">Fit</button><span className="w-10 text-center text-xs text-zinc-600">{zoomMode === "fit" ? "Fit" : `${zoomMode}%`}</span><button type="button" onClick={zoomIn} disabled={zoomInDisabled} aria-label="Zoom in" className="rounded-md border border-zinc-300 px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40">+</button>{onSelect ? <button
               type="button"
               onClick={() => currentImage.path && onSelect(currentImage.path)}
               className="rounded-md bg-emerald-900 px-4 py-2 text-xs font-semibold text-white transition hover:bg-emerald-800"
@@ -1168,6 +1191,8 @@ export function ProductLibrarySelector({
   const [pricingAccessoryQuantities, setPricingAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [selectedAccessoryCategories, setSelectedAccessoryCategories] = useState<Record<string, string>>({});
   const [expandedAccessoryGroups, setExpandedAccessoryGroups] = useState<Record<string, boolean>>({});
+  const [expandedModularGroupByTemplate, setExpandedModularGroupByTemplate] = useState<Record<string, string | null>>({});
+  const [modularSelectionFamilyNoticeByTemplate, setModularSelectionFamilyNoticeByTemplate] = useState<Record<string, string | null>>({});
   const [linkedProductInstancesByLinkId, setLinkedProductInstancesByLinkId] = useState<Record<string, LinkedProductInstance[]>>({});
   const [linkedProductQuantities, setLinkedProductQuantities] = useState<Record<string, number>>({});
   const [linkedAccessoryQuantities, setLinkedAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
@@ -1717,6 +1742,55 @@ export function ProductLibrarySelector({
                     (groupId, rowId) => numberValue(templateModularQuantities[rowId] ?? 0) * (modularGroups.some((group) => group.id === groupId && group.items.some((row) => (row.id ?? "") === rowId)) ? 1 : 0),
                   );
                   const hasUnavailableSelectedPrice = (usesModularPricing && !usesDirectModularPricing && selectedModularItems.some((line) => line.row.unavailable_categories?.includes(selectedFabricCategory))) || Boolean(usesCategoryPricing && selectedCategoryRow?.unavailable_categories?.includes(selectedFabricCategory));
+                  const directModularGroupIds = usesDirectModularPricing
+                    ? modularGroups.filter((group) => isDirectModularPricingGroup(group)).map((group) => group.id)
+                    : [];
+                  const defaultExpandedModularGroupId =
+                    directModularGroupIds.find((id) => selectedModularItems.some((line) => line.groupId === id)) ??
+                    directModularGroupIds[0] ??
+                    null;
+                  const expandedModularGroupId = expandedModularGroupByTemplate[template.id] !== undefined
+                    ? expandedModularGroupByTemplate[template.id]
+                    : defaultExpandedModularGroupId;
+                  const activeModularGroupIdByFamily = new Map<string, string>();
+                  if (usesDirectModularPricing) {
+                    for (const group of modularGroups) {
+                      if (!isDirectModularPricingGroup(group)) continue;
+                      const family = modularSelectionFamily(group);
+                      if (!family || activeModularGroupIdByFamily.has(family)) continue;
+                      if (selectedModularItems.some((line) => line.groupId === group.id && line.qty > 0)) {
+                        activeModularGroupIdByFamily.set(family, group.id);
+                      }
+                    }
+                  }
+                  const modularSelectionFamilyNotice = modularSelectionFamilyNoticeByTemplate[template.id] ?? null;
+                  const setDirectModularRowQuantity = (groupId: string, rowId: string, nextQty: number) => {
+                    const group = modularGroups.find((candidate) => candidate.id === groupId) ?? null;
+                    const family = group ? modularSelectionFamily(group) : null;
+                    if (nextQty > 0 && family) {
+                      const activeGroupId = activeModularGroupIdByFamily.get(family);
+                      if (activeGroupId && activeGroupId !== groupId) {
+                        setModularSelectionFamilyNoticeByTemplate((current) => ({
+                          ...current,
+                          [template.id]: "Choose one configuration family. Clear the current selection before selecting another.",
+                        }));
+                        return;
+                      }
+                    }
+                    if (modularSelectionFamilyNotice) {
+                      setModularSelectionFamilyNoticeByTemplate((current) => ({ ...current, [template.id]: null }));
+                    }
+                    setSelectedModularQuantities((current) => ({
+                      ...current,
+                      [template.id]: { ...(current[template.id] ?? {}), [rowId]: nextQty },
+                    }));
+                  };
+                  const groupSelectionSummaryForAi = usesDirectModularPricing
+                    ? modularGroups
+                        .filter((group) => isDirectModularPricingGroup(group) && selectedModularItems.some((line) => line.groupId === group.id))
+                        .map((group) => group.group_name || "Modular Items")
+                        .join(", ") || null
+                    : null;
                   const groupedOptions = new Map<string, ProductLibraryComponent[]>();
                   const templateSelections = selectedOptions[template.id] ?? {};
                   const additionalClusterQty = Math.max(
@@ -2288,6 +2362,8 @@ export function ProductLibrarySelector({
                     : null;
                   const companyStyleSpecification = buildCompanyStyleProductSpecification({
                     accessorySnapshots: usesDirectModularPricing ? [] : accessorySnapshots,
+                    brand: brandNameById.get(template.brand_id) ?? null,
+                    origin: originSnapshot,
                     linkedProductSnapshots,
                     primarySpecification:
                       (usesWorkstationFlow ? configuredSpecification : null) ??
@@ -2723,6 +2799,14 @@ export function ProductLibrarySelector({
                       ...selectedLinkedProducts.flatMap((line) => line.qty > 0
                         ? [line.childCategoryRow?.specification, line.childVariantRow?.specification]
                         : []),
+                      usesDirectModularPricing && groupSelectionSummaryForAi
+                        ? `Selected Direct Modular group: ${groupSelectionSummaryForAi}`
+                        : null,
+                      usesModularPricing ? modularDefaults.defaultSpecification : null,
+                      brandNameById.get(template.brand_id)
+                        ? `Brand: ${brandNameById.get(template.brand_id)}`
+                        : null,
+                      originSnapshot ? `Origin: ${originSnapshot}` : null,
                     ],
                   });
                   const sourceTotalsList = Array.from(originalCurrencyTotals.entries())
@@ -3141,24 +3225,50 @@ export function ProductLibrarySelector({
                               />
                             </label> : null}
                             <div className="space-y-2">
-                              {modularGroups.map((group) => (
+                              {modularGroups.map((group) => {
+                                const directModularGroupCard = isDirectModularPricingGroup(group);
+                                const groupSelections = selectedModularItems.filter((line) => line.groupId === group.id);
+                                const starterSelection = groupSelections.find((line) => line.role === "starter");
+                                const addOnQty = groupSelections
+                                  .filter((line) => line.role && line.role !== "starter")
+                                  .reduce((total, line) => total + line.qty, 0);
+                                const groupSelectionSummary = !groupSelections.length
+                                  ? "Not selected"
+                                  : [
+                                      starterSelection ? `Starter ${pricingDisplayName(starterSelection.row) || starterSelection.row.variant_name || starterSelection.id}` : null,
+                                      addOnQty > 0 ? `Add-ons ×${addOnQty}` : null,
+                                    ].filter(Boolean).join(" · ") || `${groupSelections.reduce((total, line) => total + line.qty, 0)} selected`;
+                                const groupExpanded = directModularGroupCard ? expandedModularGroupId === group.id : true;
+                                return (
                                 <div key={group.id} className="rounded-xl border border-zinc-200 bg-white p-3">
-                                  <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
-                                    {group.group_name || "Modular Items"}
-                                  </p>
-                                  {isDirectModularPricingGroup(group) ? (
+                                  {directModularGroupCard ? (
+                                    <ModularGroupHeader
+                                      expanded={groupExpanded}
+                                      groupName={group.group_name || "Modular Items"}
+                                      selectionSummary={groupSelectionSummary}
+                                      onToggle={() => setExpandedModularGroupByTemplate((current) => ({
+                                        ...current,
+                                        [template.id]: expandedModularGroupId === group.id ? null : group.id,
+                                      }))}
+                                    />
+                                  ) : (
+                                    <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
+                                      {group.group_name || "Modular Items"}
+                                    </p>
+                                  )}
+                                  {directModularGroupCard && groupExpanded ? (
                                     <p className="mt-1 text-[11px] text-zinc-600">
-                                      {selectedModularItems.filter((line) => line.groupId === group.id).length
-                                        ? selectedModularItems.filter((line) => line.groupId === group.id).map((line) => `${line.role ? `${line.role[0].toUpperCase()}${line.role.slice(1)} ` : ""}${pricingDisplayName(line.row) || line.row.variant_name || line.id} × ${line.qty}`).join(" + ")
+                                      {groupSelections.length
+                                        ? groupSelections.map((line) => `${line.role ? `${line.role[0].toUpperCase()}${line.role.slice(1)} ` : ""}${pricingDisplayName(line.row) || line.row.variant_name || line.id} × ${line.qty}`).join(" + ")
                                         : "Select a starter module, then add intermediate modules."}
                                     </p>
                                   ) : null}
-                                  {isDirectModularPricingGroup(group) ? <div className="mt-3 space-y-3">
+                                  {directModularGroupCard && groupExpanded ? <div className="mt-3 space-y-3">
                                     {(["starter", "intermediate", "terminal", "none"] as const).map((role) => {
                                       const rows = group.items.filter((row) => (modularRowRole(row) ?? "none") === role);
                                       if (!rows.length) return null;
                                       const heading = role === "none" ? "Modules" : `${role[0].toUpperCase()}${role.slice(1)}${role === "intermediate" ? " Modules" : "s"}`;
-                                      return <section key={role}><p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">{heading}</p><div className="overflow-x-auto rounded-md border border-zinc-200"><table className="w-full min-w-[680px] text-left text-xs"><thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500"><tr><th className="px-2 py-1.5">Module</th><th className="px-2 py-1.5">Supplier Code</th><th className="px-2 py-1.5">Dimension</th><th className="px-2 py-1.5">Price</th><th className="w-20 px-2 py-1.5">Qty</th><th className="w-16 px-2 py-1.5" /></tr></thead><tbody>{rows.map((row) => { const modularRowId = row.id ?? row.variant_name ?? row.display_name ?? ""; const expanded = expandedDirectModularRow === `${template.id}:${modularRowId}`; return <><tr key={modularRowId} className="border-t border-zinc-100"><td className="px-2 py-1.5 font-medium text-zinc-950">{pricingDisplayName(row) || row.variant_name || "Modular item"}</td><td className="px-2 py-1.5 text-zinc-600">{row.supplier_price_list_code || "—"}</td><td className="px-2 py-1.5 text-zinc-600">{row.dimension || "—"}</td><td className="px-2 py-1.5 font-semibold">{formatMoney(row.currency ?? template.currency, numberValue(row.price))}</td><td className="px-2 py-1.5"><input aria-label={`Quantity for ${pricingDisplayName(row) || row.variant_name || modularRowId}`} type="number" min={0} step={1} value={templateModularQuantities[modularRowId] ?? 0} onChange={(event) => setSelectedModularQuantities((current) => ({ ...current, [template.id]: { ...(current[template.id] ?? {}), [modularRowId]: Math.max(0, Math.trunc(Number(event.target.value) || 0)) } }))} className="h-7 w-16 border border-zinc-300 bg-white px-1 text-right outline-none focus:border-emerald-800" /></td><td className="px-2 py-1.5"><button type="button" onClick={() => setExpandedDirectModularRow(expanded ? null : `${template.id}:${modularRowId}`)} className="text-[11px] font-semibold text-emerald-900">Details</button></td></tr>{expanded ? <tr key={`${modularRowId}-details`} className="border-t border-zinc-100 bg-zinc-50"><td colSpan={6} className="px-2 py-2 text-xs text-zinc-700">{row.specification ? <p>{row.specification}</p> : null}<ImportantRequirementsBlock requirements={row.importantRequirements} /></td></tr> : null}</>; })}</tbody></table></div></section>;
+                                      return <section key={role}><p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">{heading}</p><div className="overflow-x-auto rounded-md border border-zinc-200"><table className="w-full min-w-[680px] text-left text-xs"><thead className="bg-zinc-50 text-[10px] font-bold uppercase text-zinc-500"><tr><th className="w-16 px-2 py-1.5"><span className="sr-only">Image</span></th><th className="px-2 py-1.5">Module</th><th className="px-2 py-1.5">Supplier Code</th><th className="px-2 py-1.5">Dimension</th><th className="px-2 py-1.5">Price</th><th className="w-20 px-2 py-1.5">Qty</th><th className="w-16 px-2 py-1.5" /></tr></thead><tbody>{rows.map((row) => { const modularRowId = row.id ?? row.variant_name ?? row.display_name ?? ""; const expanded = expandedDirectModularRow === `${template.id}:${modularRowId}`; const rowLabel = pricingDisplayName(row) || row.variant_name || "Modular item"; const rowReference = rowReferenceImages[productTemplateRowReferenceKey("modular", group.id ?? "", modularRowId)]; return <><tr key={modularRowId} className="border-t border-zinc-100"><td className="px-2 py-1.5">{rowReference?.previewUrl ? <button type="button" onClick={() => setDiagramPreview({ label: "Module diagram", templateId: template.id, title: rowLabel, url: rowReference.previewUrl! })} className="block h-12 w-12 overflow-hidden rounded-md border border-zinc-200 bg-white transition hover:opacity-80" aria-label={`View larger diagram for ${rowLabel}`}><img src={rowReference.previewUrl} alt="" className="h-full w-full object-contain" loading="lazy" /></button> : <span className="flex h-12 w-12 items-center justify-center rounded-md border border-dashed border-zinc-200 bg-zinc-50 text-center text-[9px] leading-tight text-zinc-400" aria-hidden="true">No image</span>}</td><td className="px-2 py-1.5 font-medium text-zinc-950">{rowLabel}</td><td className="px-2 py-1.5 text-zinc-600">{row.supplier_price_list_code || "—"}</td><td className="px-2 py-1.5 text-zinc-600">{row.dimension || "—"}</td><td className="px-2 py-1.5 font-semibold">{formatMoney(row.currency ?? template.currency, numberValue(row.price))}</td><td className="px-2 py-1.5"><input aria-label={`Quantity for ${rowLabel}`} type="number" min={0} step={1} value={templateModularQuantities[modularRowId] ?? 0} onChange={(event) => setDirectModularRowQuantity(group.id ?? "", modularRowId, Math.max(0, Math.trunc(Number(event.target.value) || 0)))} className="h-7 w-16 border border-zinc-300 bg-white px-1 text-right outline-none focus:border-emerald-800" /></td><td className="px-2 py-1.5"><button type="button" onClick={() => setExpandedDirectModularRow(expanded ? null : `${template.id}:${modularRowId}`)} className="text-[11px] font-semibold text-emerald-900">Details</button></td></tr>{expanded ? <tr key={`${modularRowId}-details`} className="border-t border-zinc-100 bg-zinc-50"><td colSpan={7} className="px-2 py-2 text-xs text-zinc-700">{row.specification ? <p>{row.specification}</p> : null}<ImportantRequirementsBlock requirements={row.importantRequirements} /></td></tr> : null}</>; })}</tbody></table></div></section>;
                                     })}
                                   </div> : null}
                                   {!isDirectModularPricingGroup(group) ? <div className="mt-2 space-y-2">
@@ -3210,8 +3320,12 @@ export function ProductLibrarySelector({
                                     })}
                                   </div> : null}
                                 </div>
-                              ))}
+                                );
+                              })}
                             </div>
+                            {modularSelectionFamilyNotice ? (
+                              <p className="text-xs leading-5 text-amber-700">{modularSelectionFamilyNotice}</p>
+                            ) : null}
                           </div>
                         ) : null}
                         {usesVariantPricing ? (
@@ -4266,7 +4380,7 @@ export function ProductLibrarySelector({
                         {usesModularPricing ? (
                           <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600">
                             <p className="font-semibold text-zinc-950">Modular configuration</p>
-                            <p>Fabric / Category: {selectedFabricCategory}</p>
+                            {!usesDirectModularPricing ? <p>Fabric / Category: {selectedFabricCategory}</p> : null}
                             {localDimension ? <p>Configured Dimension: {localDimension}</p> : null}
                             {configuredSpecification ? (
                               <p className="whitespace-pre-wrap">Specification: {configuredSpecification}</p>

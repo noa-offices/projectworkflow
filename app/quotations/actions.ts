@@ -1372,6 +1372,8 @@ type CategoryPricingRow = {
   modular_pricing_mode?: string | null;
   modular_composition?: { min_starters?: number | null; max_starters?: number | null } | null;
   modular_role?: string | null;
+  /** Optional cross-group exclusivity marker: only one Direct Modular group sharing this value may hold a selection. */
+  modular_selection_family?: string | null;
   is_active?: boolean;
   sort_order?: number;
 };

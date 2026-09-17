@@ -3,9 +3,10 @@ import test from "node:test";
 import { normalizeProductTemplateDraft, isDirectModularGroup, draftModularRows, draftModularColumns } from "./product-template-draft.js";
 import { analyzeDraftModularCompatibility } from "./draft-modular-compatibility.js";
 import { mapDraftModularPricing } from "./product-template-draft-modular-adapter.js";
-import { evaluateModularComposition, validateModularCompositionGroups } from "./modular-composition.js";
-import { isDirectModularPricingGroup, modularCompositionRule, modularRowRole } from "./modular-pricing.js";
+import { activeModularSelectionFamilyGroupId, evaluateModularComposition, validateModularCompositionGroups, validateModularSelectionFamilyConflicts } from "./modular-composition.js";
+import { isDirectModularPricingGroup, modularCompositionRule, modularRowRole, modularSelectionFamily } from "./modular-pricing.js";
 import { evaluateAccessoryConfigurationForModel, accessoryApplicabilityTargetKey } from "./accessory-conditional-configuration.js";
+import { categoryPricingValue } from "./category-pricing-value.js";
 
 /** Runtime modular items are a union of matrix-priced and direct-priced shapes. */
 function directPrice(row: unknown) {
@@ -36,6 +37,21 @@ function oxiDirectGroup(composition: unknown = { minStarters: 1, maxStarters: 1 
       { id: "oxi-p-intermediate-140", label: "Intermediate bench 140", price: 421, currency: "EUR", supplierCodes: ["111 069"], role: "intermediate" },
     ],
     ...(composition === undefined ? {} : { composition }),
+  };
+}
+
+/** A minimal generic direct-priced group, used only to test cross-group selectionFamily exclusivity. Never named after any real manufacturer family. */
+function directGroup(id: string, selectionFamily?: string) {
+  return {
+    id,
+    label: `Configuration ${id}`,
+    defaultDimensions: null,
+    defaultSpecification: null,
+    pricingMode: "direct",
+    ...(selectionFamily ? { selectionFamily } : {}),
+    directRows: [
+      { id: `${id}-starter`, label: `${id} starter`, price: 100, currency: "EUR", supplierCodes: [`${id}-CODE`], role: "starter" },
+    ],
   };
 }
 
@@ -301,4 +317,149 @@ test("21: composition identity survives a snapshot round trip without SQL", () =
   // The terminal instruction stays an instruction: no terminal SKU or price was invented.
   assert.equal(group.items.length, 2);
   assert.ok(!group.items.some((row) => modularRowRole(row) === "terminal"));
+});
+
+test("selectionFamily: parses and normalizes an optional non-empty trimmed string, and omits when absent", () => {
+  const withFamily = baseDraft();
+  withFamily.pricing.modularGroups.push({ ...directGroup("group-a", "  shared-family  ") });
+  const normalized = normalizeProductTemplateDraft(withFamily);
+  assert.equal(normalized.valid, true, JSON.stringify(normalized.errors));
+  assert.equal(normalized.draft!.pricing.modularGroups[0].selectionFamily, "shared-family");
+
+  const withoutFamily = baseDraft();
+  withoutFamily.pricing.modularGroups.push(directGroup("group-b"));
+  const normalizedWithout = normalizeProductTemplateDraft(withoutFamily);
+  assert.equal(normalizedWithout.valid, true);
+  assert.equal("selectionFamily" in normalizedWithout.draft!.pricing.modularGroups[0], false, "Expected the key to be fully omitted, not set to null/undefined");
+});
+
+test("selectionFamily: an empty/blank string normalizes away (absent field remains backward-compatible)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push({ ...directGroup("group-a"), selectionFamily: "   " });
+  const normalized = normalizeProductTemplateDraft(draft);
+  assert.equal(normalized.valid, true);
+  assert.equal("selectionFamily" in normalized.draft!.pricing.modularGroups[0], false);
+});
+
+test("selectionFamily: existing OXI_P-style templates without the field behave exactly as before (backward compatibility)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(oxiDirectGroup());
+  const group = normalizeProductTemplateDraft(draft).draft!.pricing.modularGroups[0];
+  assert.equal("selectionFamily" in group, false);
+  const mapped = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!).groups[0];
+  assert.equal(modularSelectionFamily(mapped), null);
+});
+
+test("selectionFamily: persists through draft normalize -> Apply -> Product Template editor save -> reopen", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(directGroup("group-a", "shared-family"), directGroup("group-b", "shared-family"));
+  const normalized = normalizeProductTemplateDraft(draft);
+  assert.equal(normalized.valid, true, JSON.stringify(normalized.errors));
+
+  // Apply: draft -> runtime category_pricing rows.
+  const mapped = mapDraftModularPricing(normalized.draft!);
+  assert.equal(mapped.compatible, true);
+  assert.equal(modularSelectionFamily(mapped.groups.find((group) => group.id === "group-a")!), "shared-family");
+  assert.equal(modularSelectionFamily(mapped.groups.find((group) => group.id === "group-b")!), "shared-family");
+
+  // Product Template editor save: the editor's raw JSON payload round-trips through the same
+  // server-side normalizer used by the template save action.
+  const saved = categoryPricingValue(
+    "[]",
+    JSON.stringify(mapped.groups),
+    "{}",
+  );
+  const savedGroupA = saved.find((row) => row.id === "group-a") as { modular_selection_family?: string | null } | undefined;
+  const savedGroupB = saved.find((row) => row.id === "group-b") as { modular_selection_family?: string | null } | undefined;
+  assert.equal(savedGroupA?.modular_selection_family, "shared-family");
+  assert.equal(savedGroupB?.modular_selection_family, "shared-family");
+
+  // Reopen: Product Library reads the same persisted runtime shape via the generic reader.
+  assert.equal(modularSelectionFamily(savedGroupA!), "shared-family");
+  assert.equal(modularSelectionFamily(savedGroupB!), "shared-family");
+});
+
+test("selectionFamily: Product Library detects the active group within a family from selected quantities", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(directGroup("group-a", "shared-family"), directGroup("group-b", "shared-family"));
+  const groups = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!).groups;
+
+  assert.equal(activeModularSelectionFamilyGroupId(groups, "shared-family", () => 0), null, "No group active before any selection");
+  assert.equal(
+    activeModularSelectionFamilyGroupId(groups, "shared-family", (groupId, rowId) => (groupId === "group-a" && rowId === "group-a-starter" ? 1 : 0)),
+    "group-a",
+  );
+});
+
+test("selectionFamily: selecting a second group in the same family is blocked (server-authoritative)", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(directGroup("group-a", "shared-family"), directGroup("group-b", "shared-family"));
+  const groups = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!).groups;
+  const quantities: Record<string, number> = { "group-a-starter": 1, "group-b-starter": 1 };
+  const issue = validateModularSelectionFamilyConflicts(groups, (_groupId, rowId) => quantities[rowId] ?? 0);
+  assert.equal(issue?.code, "conflicting_modular_selection_family");
+  assert.equal(issue?.message, "More than one alternative modular configuration has been selected. Keep only one configuration from this family.");
+  // The shared validator used by both the Product Library and the quotation submit action surfaces the same issue.
+  assert.equal(validateModularCompositionGroups(groups, (_groupId, rowId) => quantities[rowId] ?? 0)?.code, "conflicting_modular_selection_family");
+});
+
+test("selectionFamily: clearing the first group's quantities allows a second group to become active", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(directGroup("group-a", "shared-family"), directGroup("group-b", "shared-family"));
+  const groups = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!).groups;
+  const clearedThenSecond: Record<string, number> = { "group-a-starter": 0, "group-b-starter": 1 };
+  assert.equal(validateModularSelectionFamilyConflicts(groups, (_groupId, rowId) => clearedThenSecond[rowId] ?? 0), null);
+  assert.equal(
+    activeModularSelectionFamilyGroupId(groups, "shared-family", (groupId, rowId) => clearedThenSecond[rowId] ?? 0),
+    "group-b",
+  );
+});
+
+test("selectionFamily: two groups with different family ids may coexist", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(directGroup("group-a", "family-one"), directGroup("group-b", "family-two"));
+  const groups = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!).groups;
+  const bothSelected: Record<string, number> = { "group-a-starter": 1, "group-b-starter": 1 };
+  assert.equal(validateModularSelectionFamilyConflicts(groups, (_groupId, rowId) => bothSelected[rowId] ?? 0), null, "Different families never conflict");
+});
+
+test("selectionFamily: groups with no selectionFamily remain unchanged and never conflict with each other", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(directGroup("group-a"), directGroup("group-b"));
+  const groups = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!).groups;
+  const bothSelected: Record<string, number> = { "group-a-starter": 1, "group-b-starter": 1 };
+  assert.equal(validateModularSelectionFamilyConflicts(groups, (_groupId, rowId) => bothSelected[rowId] ?? 0), null);
+  assert.equal(activeModularSelectionFamilyGroupId(groups, "shared-family", () => 1), null, "No family means no active-group tracking");
+});
+
+test("selectionFamily: server accepts exactly one selected group in a family, and different families independently", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(directGroup("group-a", "shared-family"), directGroup("group-b", "shared-family"), directGroup("group-c", "another-family"));
+  const groups = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!).groups;
+  const oneSelected: Record<string, number> = { "group-a-starter": 1, "group-c-starter": 1 };
+  assert.equal(validateModularSelectionFamilyConflicts(groups, (_groupId, rowId) => oneSelected[rowId] ?? 0), null);
+});
+
+test("selectionFamily: Matrix Modular groups are never constrained by selectionFamily conflicts", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(matrixGroup("matrix-a"), matrixGroup("matrix-b"));
+  const groups = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!).groups;
+  // Even if a matrix group somehow carried a selectionFamily-shaped value, the family check only
+  // ever looks at Direct Modular groups; matrix rows keep behaving exactly as before.
+  (groups[0] as { modular_selection_family?: string }).modular_selection_family = "shared-family";
+  (groups[1] as { modular_selection_family?: string }).modular_selection_family = "shared-family";
+  const bothSelected: Record<string, number> = { corner: 1 };
+  assert.equal(validateModularSelectionFamilyConflicts(groups, () => bothSelected.corner ?? 0), null);
+});
+
+test("selectionFamily: OXI_P Direct Modular composition and ART.058 companion scaling are unaffected", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(oxiDirectGroup());
+  const mapped = mapDraftModularPricing(normalizeProductTemplateDraft(draft).draft!);
+  const group = mapped.groups[0];
+  const quantities: Record<string, number> = { "oxi-p-starter-140": 1, "oxi-p-intermediate-140": 2 };
+  assert.equal(validateModularCompositionGroups([group], (_groupId, rowId) => quantities[rowId] ?? 0), null);
+  const evaluation = evaluateOxiCompanion([{ rowId: "oxi-p-starter-140", qty: 1 }, { rowId: "oxi-p-intermediate-140", qty: 2 }], 6);
+  assert.equal(evaluation.groups[0].fixedQuantity, 6);
+  assert.equal(evaluation.valid, true);
 });

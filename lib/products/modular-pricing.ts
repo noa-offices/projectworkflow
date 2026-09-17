@@ -24,8 +24,15 @@ export type ModularCategoryPricingShape = {
   modular_pricing_mode?: string | null;
   modular_composition?: ModularCompositionShape | null;
   modular_role?: string | null;
+  modular_selection_family?: string | null;
   price?: number | null;
 };
+
+/** Normalized cross-group exclusivity marker: a non-empty trimmed string, or null when absent. */
+export function modularSelectionFamily(group: ModularCategoryPricingShape | null | undefined) {
+  const family = typeof group?.modular_selection_family === "string" ? group.modular_selection_family.trim() : "";
+  return family || null;
+}
 
 /** Direct-priced modular groups are opt-in; every legacy group stays matrix-priced. */
 export function isDirectModularPricingGroup(group: ModularCategoryPricingShape | null | undefined) {

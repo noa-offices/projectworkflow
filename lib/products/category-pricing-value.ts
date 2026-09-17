@@ -147,6 +147,9 @@ export function categoryPricingValue(rawValue: string, modularRawValue: string, 
         const composition = isDirect && group.modular_composition && typeof group.modular_composition === "object" && !Array.isArray(group.modular_composition)
           ? normalizeModularComposition(group.modular_composition as Record<string, unknown>)
           : null;
+        const selectionFamily = typeof group.modular_selection_family === "string" && group.modular_selection_family.trim()
+          ? group.modular_selection_family.trim()
+          : null;
         const items = isDirect
           ? (Array.isArray(group.items) ? group.items : [])
               .map((item, itemIndex) => normalizeDirectModularRow(item as Record<string, unknown>, itemIndex))
@@ -165,6 +168,7 @@ export function categoryPricingValue(rawValue: string, modularRawValue: string, 
           is_active: group.is_active !== false,
           price_categories: priceCategories,
           ...(isDirect ? { modular_pricing_mode: "direct" as const, ...(composition ? { modular_composition: composition } : {}) } : {}),
+          ...(selectionFamily ? { modular_selection_family: selectionFamily } : {}),
           items,
         };
       })
