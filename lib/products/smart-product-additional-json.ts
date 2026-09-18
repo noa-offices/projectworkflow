@@ -47,7 +47,8 @@ function comparedDifferences(current: ReviewRow, incoming: ReviewRow) {
   ].filter(([, existingValue, incomingValue]) => JSON.stringify(existingValue) !== JSON.stringify(incomingValue)).map(([field]) => field as string);
 }
 
-function compatible(currentDraft: ProductTemplateDraft, incomingDraft: ProductTemplateDraft, current: SmartReviewRoute, incoming: SmartReviewRoute) {
+/** Deterministic wrong-target gate: same sourceKind, and for matrix/modular, identical category column shape. Exported for targeted (group-level) import UI to validate an incoming route against one explicitly selected target route. */
+export function compatible(currentDraft: ProductTemplateDraft, incomingDraft: ProductTemplateDraft, current: SmartReviewRoute, incoming: SmartReviewRoute) {
   if (current.sourceKind !== incoming.sourceKind) return false;
   if (current.sourceKind !== "matrix" && current.sourceKind !== "modular") return true;
   const columns = (draft: ProductTemplateDraft, route: SmartReviewRoute) => route.sourceKind === "matrix"
@@ -102,14 +103,32 @@ export function smartAdditionalDuplicateRows(currentDraft: ProductTemplateDraft,
   });
 }
 
+/**
+ * Smart Setup applicability-review metadata (optionGroups[].items only) must
+ * never be silently dropped by duplicate consolidation: if either side of a
+ * kept-existing duplicate carries reviewStatus "needs_review", the merged row
+ * keeps that status and the clearest non-empty reviewReason. Rows without
+ * these fields (workstation/base-model/matrix/modular rows) are unaffected.
+ */
+function mergedAccessoryReviewMetadata<T extends ReviewRow>(existing: T, incoming: T): T {
+  const existingReview = existing as unknown as { reviewStatus?: "confirmed" | "needs_review"; reviewReason?: string };
+  const incomingReview = incoming as unknown as { reviewStatus?: "confirmed" | "needs_review"; reviewReason?: string };
+  if (existingReview.reviewStatus !== "needs_review" && incomingReview.reviewStatus !== "needs_review") return existing;
+  const reason = existingReview.reviewReason?.trim() || incomingReview.reviewReason?.trim() || undefined;
+  return { ...existing, reviewStatus: "needs_review", ...(reason ? { reviewReason: reason } : {}) } as T;
+}
+
+/** Returns the merged rows plus the ids of rows that were genuinely new (not a duplicate of any existing row). */
 function mergeRows<T extends ReviewRow>(existing: T[], incoming: T[], choices: Record<string, "existing" | "incoming">) {
   const result = [...existing];
+  const addedIds: string[] = [];
   incoming.forEach((row) => {
     const current = duplicateRow(result, row);
-    if (!current) result.push(row);
-    else if (choices[row.id] === "incoming") result[result.indexOf(current)] = { ...row, id: current.id } as T;
+    if (!current) { result.push(row); addedIds.push(row.id); }
+    else if (choices[row.id] === "incoming") result[result.indexOf(current)] = mergedAccessoryReviewMetadata({ ...row, id: current.id } as T, current);
+    else result[result.indexOf(current)] = mergedAccessoryReviewMetadata(current, row);
   });
-  return result;
+  return { rows: result, addedIds };
 }
 
 function uniqueGroupId(base: string, existing: Set<string>) {
@@ -135,6 +154,11 @@ export function applySmartAdditionalJson(currentDraft: ProductTemplateDraft, cur
   const preparedIncomingDraft = fillNullPricedRowCurrenciesFromDefault(incomingDraft);
   const incomingPlan = createSmartSetupReviewRouting(preparedIncomingDraft);
   const groupIds = new Set(plan.routes.map((route) => route.sourceId));
+  // Reports only genuinely new row ids (never duplicates/conflict-resolved existing rows), keyed
+  // by the final destination route key, so callers (e.g. targeted Base/Model subgroup import) can
+  // append exactly the newly inserted rows to review-only presentation metadata after a merge.
+  const addedRowsByTarget: Record<string, string[]> = {};
+  const recordAdded = (key: string, addedIds: string[]) => { if (addedIds.length) addedRowsByTarget[key] = [...(addedRowsByTarget[key] ?? []), ...addedIds]; };
 
   incomingPlan.routes.forEach((incomingRoute) => {
     const decision = decisions[incomingRoute.key];
@@ -142,37 +166,38 @@ export function applySmartAdditionalJson(currentDraft: ProductTemplateDraft, cur
     if (decision.action === "merge" && decision.targetKey) {
       const target = plan.routes.find((route) => route.key === decision.targetKey);
       if (!target || !compatible(draft, preparedIncomingDraft, target, incomingRoute)) return;
-      if (target.sourceKind === "workstation") draft.pricing.workstationRows = mergeRows(draft.pricing.workstationRows, preparedIncomingDraft.pricing.workstationRows, decision.duplicateChoices);
-      else if (target.sourceKind === "base_model") draft.pricing.baseModelRows = mergeRows(draft.pricing.baseModelRows, preparedIncomingDraft.pricing.baseModelRows, decision.duplicateChoices);
+      if (target.sourceKind === "workstation") { const merged = mergeRows(draft.pricing.workstationRows, preparedIncomingDraft.pricing.workstationRows, decision.duplicateChoices); draft.pricing.workstationRows = merged.rows; recordAdded(target.key, merged.addedIds); }
+      else if (target.sourceKind === "base_model") { const merged = mergeRows(draft.pricing.baseModelRows, preparedIncomingDraft.pricing.baseModelRows, decision.duplicateChoices); draft.pricing.baseModelRows = merged.rows; recordAdded(target.key, merged.addedIds); }
       else if (target.sourceKind === "matrix") {
         const existing = draft.pricing.priceMatrices.find((group) => group.id === target.sourceId);
         const incoming = preparedIncomingDraft.pricing.priceMatrices.find((group) => group.id === incomingRoute.sourceId);
-        if (existing && incoming) existing.rows = mergeRows(existing.rows, incoming.rows, decision.duplicateChoices);
+        if (existing && incoming) { const merged = mergeRows(existing.rows, incoming.rows, decision.duplicateChoices); existing.rows = merged.rows; recordAdded(target.key, merged.addedIds); }
       } else if (target.sourceKind === "modular") {
         const existing = draft.pricing.modularGroups.find((group) => group.id === target.sourceId);
         const incoming = preparedIncomingDraft.pricing.modularGroups.find((group) => group.id === incomingRoute.sourceId);
         if (existing && incoming && isDirectModularGroup(existing) && isDirectModularGroup(incoming)) {
-          existing.directRows = mergeRows(existing.directRows ?? [], incoming.directRows ?? [], decision.duplicateChoices);
+          const merged = mergeRows(existing.directRows ?? [], incoming.directRows ?? [], decision.duplicateChoices); existing.directRows = merged.rows; recordAdded(target.key, merged.addedIds);
         } else if (existing?.matrix && incoming?.matrix) {
-          existing.matrix.rows = mergeRows(existing.matrix.rows, incoming.matrix.rows, decision.duplicateChoices);
+          const merged = mergeRows(existing.matrix.rows, incoming.matrix.rows, decision.duplicateChoices); existing.matrix.rows = merged.rows; recordAdded(target.key, merged.addedIds);
         }
       } else {
         const existing = draft.optionGroups.find((group) => group.id === target.sourceId);
         const incoming = preparedIncomingDraft.optionGroups.find((group) => group.id === incomingRoute.sourceId);
-        if (existing && incoming) existing.items = mergeRows(existing.items, incoming.items, decision.duplicateChoices);
+        if (existing && incoming) { const merged = mergeRows(existing.items, incoming.items, decision.duplicateChoices); existing.items = merged.rows; recordAdded(target.key, merged.addedIds); }
       }
       target.rowCount = routeRows(draft, target).length;
       return;
     }
 
-    if (incomingRoute.sourceKind === "workstation") draft.pricing.workstationRows = mergeRows(draft.pricing.workstationRows, preparedIncomingDraft.pricing.workstationRows, decision.duplicateChoices);
-    else if (incomingRoute.sourceKind === "base_model") draft.pricing.baseModelRows = mergeRows(draft.pricing.baseModelRows, preparedIncomingDraft.pricing.baseModelRows, decision.duplicateChoices);
+    if (incomingRoute.sourceKind === "workstation") { const merged = mergeRows(draft.pricing.workstationRows, preparedIncomingDraft.pricing.workstationRows, decision.duplicateChoices); draft.pricing.workstationRows = merged.rows; recordAdded(incomingRoute.key, merged.addedIds); }
+    else if (incomingRoute.sourceKind === "base_model") { const merged = mergeRows(draft.pricing.baseModelRows, preparedIncomingDraft.pricing.baseModelRows, decision.duplicateChoices); draft.pricing.baseModelRows = merged.rows; recordAdded(incomingRoute.key, merged.addedIds); }
     else {
       const sourceId = uniqueGroupId(incomingRoute.sourceId, groupIds); groupIds.add(sourceId);
-      if (incomingRoute.sourceKind === "matrix") { const group = structuredClone(preparedIncomingDraft.pricing.priceMatrices.find((item) => item.id === incomingRoute.sourceId)!); group.id = sourceId; draft.pricing.priceMatrices.push(group); }
-      else if (incomingRoute.sourceKind === "modular") { const group = structuredClone(preparedIncomingDraft.pricing.modularGroups.find((item) => item.id === incomingRoute.sourceId)!); group.id = sourceId; draft.pricing.modularGroups.push(group); }
-      else { const group = structuredClone(preparedIncomingDraft.optionGroups.find((item) => item.id === incomingRoute.sourceId)!); group.id = sourceId; draft.optionGroups.push(group); }
-      const route = { ...structuredClone(incomingRoute), key: `${incomingRoute.sourceKind}:${sourceId}`, sourceId, destination: decision.destination };
+      const newRouteKey = `${incomingRoute.sourceKind}:${sourceId}`;
+      if (incomingRoute.sourceKind === "matrix") { const group = structuredClone(preparedIncomingDraft.pricing.priceMatrices.find((item) => item.id === incomingRoute.sourceId)!); group.id = sourceId; draft.pricing.priceMatrices.push(group); recordAdded(newRouteKey, group.rows.map((row) => row.id)); }
+      else if (incomingRoute.sourceKind === "modular") { const group = structuredClone(preparedIncomingDraft.pricing.modularGroups.find((item) => item.id === incomingRoute.sourceId)!); group.id = sourceId; draft.pricing.modularGroups.push(group); recordAdded(newRouteKey, draftModularRows(group).map((row) => row.id)); }
+      else { const group = structuredClone(preparedIncomingDraft.optionGroups.find((item) => item.id === incomingRoute.sourceId)!); group.id = sourceId; draft.optionGroups.push(group); recordAdded(newRouteKey, group.items.map((item) => item.id)); }
+      const route = { ...structuredClone(incomingRoute), key: newRouteKey, sourceId, destination: decision.destination };
       if (route.destination === "accessory" && !route.accessory) route.accessory = { role: "accessory", selection: "optional_multiple", rules: [] };
       plan.routes.push(route);
     }
@@ -185,5 +210,5 @@ export function applySmartAdditionalJson(currentDraft: ProductTemplateDraft, cur
   draft.linkedFamilySuggestions = mergeSupplemental(draft.linkedFamilySuggestions, preparedIncomingDraft.linkedFamilySuggestions);
   draft.extractionWarnings = [...new Set([...draft.extractionWarnings, ...preparedIncomingDraft.extractionWarnings])];
   draft.sources = mergeSupplemental(draft.sources, preparedIncomingDraft.sources);
-  return { draft, plan };
+  return { draft, plan, addedRowsByTarget };
 }

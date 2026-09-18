@@ -180,11 +180,22 @@ export type ProductTemplateDraftSelectionRule = {
 
 export type ProductTemplateDraftOptionItem = ProductTemplateDraftPricedRow;
 
+export const PRODUCT_TEMPLATE_DRAFT_REVIEW_STATUSES = ["confirmed", "needs_review"] as const;
+export type ProductTemplateDraftReviewStatus = typeof PRODUCT_TEMPLATE_DRAFT_REVIEW_STATUSES[number];
+
 export type ProductTemplateDraftOptionPriceCategory = { id: string; label: string };
 
+/**
+ * Smart Setup review-boundary metadata only: never affects pricing, applicability,
+ * or selection semantics, and is stripped before a draft is mapped to Product
+ * Template runtime JSON. Missing reviewStatus behaves as "confirmed"; only
+ * "needs_review" is ever persisted onto a normalized item.
+ */
 export type ProductTemplateDraftCategoryPricedOptionItem = ProductTemplateDraftOptionItem & {
   prices?: Record<string, ProductTemplateDraftPrice>;
   unavailablePriceCategoryIds?: string[];
+  reviewStatus?: ProductTemplateDraftReviewStatus;
+  reviewReason?: string;
 };
 
 /**
@@ -407,6 +418,31 @@ function pricedRow(value: unknown, path: string, issues: IssueCollector): Produc
     specification: nullableText(source.specification, `${path}.specification`, issues),
     ...(requirements?.length ? { importantRequirements: requirements } : {}),
     ...references(source, path, issues),
+  };
+}
+
+/**
+ * Normalizes the optional Smart Setup review-boundary fields on an
+ * optionGroups[].items entry only. "confirmed" (or absent) normalizes to
+ * omitted, since that is the default; only "needs_review" is ever persisted.
+ * An unsupported status is reported and dropped, matching the existing
+ * convention for other optional enum-like fields (for example Modular role).
+ */
+function reviewMetadata(source: Record<string, unknown>, path: string, issues: IssueCollector): { reviewStatus?: ProductTemplateDraftReviewStatus; reviewReason?: string } {
+  const rawStatus = source.reviewStatus;
+  let reviewStatus: ProductTemplateDraftReviewStatus | undefined;
+  if (rawStatus !== undefined && rawStatus !== null) {
+    const text = nullableText(rawStatus, `${path}.reviewStatus`, issues);
+    if (text && (PRODUCT_TEMPLATE_DRAFT_REVIEW_STATUSES as readonly string[]).includes(text)) {
+      if (text === "needs_review") reviewStatus = "needs_review";
+    } else if (text) {
+      error(issues, `${path}.reviewStatus`, 'Review status must be "confirmed" or "needs_review".');
+    }
+  }
+  const reviewReason = nullableText(source.reviewReason, `${path}.reviewReason`, issues);
+  return {
+    ...(reviewStatus ? { reviewStatus } : {}),
+    ...(reviewReason ? { reviewReason } : {}),
   };
 }
 
@@ -645,7 +681,6 @@ export function normalizeProductTemplateDraft(input: unknown): ProductTemplateDr
       label: nullableText(item.label, `${path}.label`, issues),
       defaultDimensions: dimensions(item.defaultDimensions, `${path}.defaultDimensions`, issues),
       defaultSpecification: nullableText(item.defaultSpecification, `${path}.defaultSpecification`, issues),
-      ...(selectionFamily ? { selectionFamily } : {}),
     };
     const declaredMode = nullableText(item.pricingMode, `${path}.pricingMode`, issues);
     if (declaredMode && declaredMode !== "matrix" && declaredMode !== "direct") {
@@ -685,6 +720,7 @@ export function normalizeProductTemplateDraft(input: unknown): ProductTemplateDr
     if (!directRows.length) error(issues, `${path}.directRows`, "A direct-priced modular group needs at least one row.");
     return {
       ...base,
+      ...(selectionFamily ? { selectionFamily } : {}),
       pricingMode: "direct" as const,
       directRows,
       ...(item.composition === undefined ? {} : { composition: modularComposition(item.composition, `${path}.composition`, issues, directRows) }),
@@ -697,7 +733,7 @@ export function normalizeProductTemplateDraft(input: unknown): ProductTemplateDr
     uniqueIds(priceCategories.map((category) => category.id), `draft.optionGroups[${index}].priceCategories`, issues);
     const categoryIds = new Set(priceCategories.map((category) => category.id));
     const items = array(item.items, `draft.optionGroups[${index}].items`, issues)
-      .map((row, rowIndex) => { const source = object(row, `draft.optionGroups[${index}].items[${rowIndex}]`, issues); const base = pricedRow(source, `draft.optionGroups[${index}].items[${rowIndex}]`, issues); const values = object(source.prices, `draft.optionGroups[${index}].items[${rowIndex}].prices`, issues); const prices = Object.fromEntries(Object.entries(values).map(([id, value]) => [id, price(value, `draft.optionGroups[${index}].items[${rowIndex}].prices.${id}`, issues)])); Object.keys(prices).forEach((id) => { if (!categoryIds.has(id)) error(issues, `draft.optionGroups[${index}].items[${rowIndex}].prices.${id}`, "Unknown accessory price category."); }); return { ...base, ...(priceCategories.length ? { prices } : {}) }; });
+      .map((row, rowIndex) => { const source = object(row, `draft.optionGroups[${index}].items[${rowIndex}]`, issues); const base = pricedRow(source, `draft.optionGroups[${index}].items[${rowIndex}]`, issues); const values = object(source.prices, `draft.optionGroups[${index}].items[${rowIndex}].prices`, issues); const prices = Object.fromEntries(Object.entries(values).map(([id, value]) => [id, price(value, `draft.optionGroups[${index}].items[${rowIndex}].prices.${id}`, issues)])); Object.keys(prices).forEach((id) => { if (!categoryIds.has(id)) error(issues, `draft.optionGroups[${index}].items[${rowIndex}].prices.${id}`, "Unknown accessory price category."); }); return { ...base, ...(priceCategories.length ? { prices } : {}), ...reviewMetadata(source, `draft.optionGroups[${index}].items[${rowIndex}]`, issues) }; });
     uniqueIds(items.map((option) => option.id), `draft.optionGroups[${index}].items`, issues);
     const itemIds = new Set(items.map((option) => option.id));
     const configuration = conditionalConfiguration(item.conditionalConfiguration, `draft.optionGroups[${index}].conditionalConfiguration`, issues, itemIds);

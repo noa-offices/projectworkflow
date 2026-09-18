@@ -97,6 +97,35 @@ test("review routing accepts and persists stable Modular row targets", () => {
   assert.equal(validateSmartSetupReviewRouting(modularDraft, plan).valid, false);
 });
 
+test("Sigma M43 remains scoped to its supplied target row and never gains an unrelated M33 companion rule", () => {
+  const sigmaDraft: ProductTemplateDraft = structuredClone(draft);
+  sigmaDraft.pricing.priceMatrices = [];
+  sigmaDraft.pricing.baseModelRows = [
+    { id: "sigma-m33", label: "COMBY M33", displayName: null, dimensions: null, currency: "EUR", price: 100, specification: null, supplierCodes: ["M33"], referenceCodes: [] },
+    { id: "sigma-locker", label: "Locker", displayName: null, dimensions: null, currency: "EUR", price: 200, specification: null, supplierCodes: ["M41"], referenceCodes: [] },
+  ];
+  sigmaDraft.optionGroups = [{ id: "m43-kit", label: "M43 kit", selection: { mode: "required_choose_at_least_one", minSelections: 1, maxSelections: null, defaultItemIds: [] }, items: [{ id: "m43", label: "M43", displayName: null, dimensions: null, currency: "EUR", price: 20, specification: null, supplierCodes: ["M43"], referenceCodes: [] }], conditionalConfiguration: { role: "companion", selection: "exactly_one", applicability: [{ target: { kind: "base_model", group_id: "legacy-base-model-main", row_id: "sigma-locker" }, required: true, visible: true, allowed_item_ids: ["m43"], fixed_quantity: 1 }] } }];
+  const plan = createSmartSetupReviewRouting(sigmaDraft);
+  assert.equal(validateSmartSetupReviewRouting(sigmaDraft, plan).valid, true);
+  const mapped = mapDraftOptionGroupsToAccessories(draftForSmartSetupReviewApply(sigmaDraft, plan), plan).groups[0];
+  assert.deepEqual(mapped.conditional_configuration?.applicability.map((rule) => rule.target?.row_id), ["sigma-locker"]);
+  assert.equal(mapped.conditional_configuration?.applicability.some((rule) => rule.target?.row_id === "sigma-m33"), false);
+});
+
+test("separately priced Sigma P58 furniture remains a distinct reviewed family and is never price-merged with desk rows", () => {
+  const deskDraft: ProductTemplateDraft = structuredClone(draft);
+  deskDraft.pricing.priceMatrices = [];
+  deskDraft.pricing.baseModelRows = [{ id: "sigma-desk", label: "Desk", displayName: null, dimensions: null, currency: "EUR", price: 500, specification: null, supplierCodes: ["P77"], referenceCodes: [] }];
+  deskDraft.linkedFamilySuggestions = [{ id: "p58-service-cabinet", templateName: "Service cabinet P58", templateCode: "P58", defaultQuantity: null, notes: "Separately priced companion furniture; relationship requires review.", supplierCodes: ["P58"], referenceCodes: [] }];
+  const cabinetDraft: ProductTemplateDraft = structuredClone(deskDraft);
+  cabinetDraft.pricing.baseModelRows = [{ id: "sigma-p58", label: "Service cabinet P58", displayName: null, dimensions: null, currency: "EUR", price: 300, specification: null, supplierCodes: ["P58"], referenceCodes: [] }];
+  cabinetDraft.linkedFamilySuggestions = [];
+  assert.equal(mapDraftBaseModelPricing(deskDraft).rows[0].price, 500);
+  assert.equal(mapDraftBaseModelPricing(deskDraft).rows.some((item) => item.supplier_price_list_code === "P58"), false);
+  assert.equal(mapDraftBaseModelPricing(cabinetDraft).rows[0].price, 300);
+  assert.equal(cabinetDraft.pricing.baseModelRows[0].supplierCodes[0], "P58");
+});
+
 test("explicit optional category-priced accessories override service-unit name heuristics", () => {
   const categoryIds = ["B", "C", "D", "E", "F", "G", "SUPREME"];
   const optionalDraft: ProductTemplateDraft = structuredClone(draft);

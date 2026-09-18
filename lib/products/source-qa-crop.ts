@@ -12,6 +12,10 @@ export type SourceCropTarget = { id: string; sourceKey: string; rowId: string; l
 export function normalizeSourceCrop(rect: SourceCropRect): SourceCropRect { const x2 = rect.x + rect.width; const y2 = rect.y + rect.height; return { x: Math.min(rect.x, x2), y: Math.min(rect.y, y2), width: Math.abs(rect.width), height: Math.abs(rect.height) }; }
 export function cropForZoom(rect: SourceCropRect, zoom: number) { return { x: rect.x * zoom, y: rect.y * zoom, width: rect.width * zoom, height: rect.height * zoom }; }
 export function validSourceCrop(rect: SourceCropRect | null) { return !!rect && rect.width >= 12 && rect.height >= 12; }
+/** Scale used to re-render the PDF page for crop export only, so the exported image is sharper than the on-screen preview canvas without slowing down normal viewing/zooming. */
+export function exportRenderScale(zoom: number, multiplier = 2, maxScale = 4) { return Math.min(maxScale, Math.max(zoom, zoom * multiplier)); }
+/** "Fit width" zoom: the scale that makes the PDF page's native width match the available viewer width, clamped to a sane zoom range. */
+export function fitWidthZoom(containerWidth: number, pageWidth: number, min = 0.5, max = 4) { return !containerWidth || !pageWidth ? 1 : Math.min(max, Math.max(min, containerWidth / pageWidth)); }
 export function sourceCropSearchPages(pages: SourceQaPage[], query: string) { const code = normalizeSourceQaCode(query); if (!code) return []; return pages.filter((page) => normalizeSourceQaCode(page.text).includes(code)).map((page) => page.pageNumber); }
 function rowLabel(row: { id: string; label: string | null; displayName: string | null; supplierCodes: string[] }) { return (row.supplierCodes[0] ?? "No code") + " — " + (row.displayName ?? row.label ?? row.id); }
 function rowCodes(row: { supplierCodes: string[]; referenceCodes: string[] }) { return [...row.supplierCodes, ...row.referenceCodes]; }

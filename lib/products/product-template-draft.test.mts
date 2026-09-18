@@ -107,6 +107,20 @@ test("valid workstation, upholstery matrix, modular group, and option group draf
   assert.equal(result.draft?.pricing.modularGroups[0].matrix!.rows[0].prices["cat-a"], null);
 });
 
+test("selectionFamily is retained only by Direct Modular groups", () => {
+  const draft = baseDraft();
+  draft.pricing.modularGroups.push(
+    { id: "matrix", label: "Matrix", selectionFamily: "must-strip", matrix: matrix("matrix-prices"), composition: { minStarters: 0, maxStarters: null } },
+    { id: "direct", label: "Direct", pricingMode: "direct", selectionFamily: "direct-only", directRows: [{ id: "starter", label: "Starter", price: 100, role: "starter" }], composition: { minStarters: 1, maxStarters: 1 } },
+  );
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, true);
+  assert.equal(result.draft?.pricing.modularGroups[0].selectionFamily, undefined);
+  assert.equal(result.draft?.pricing.modularGroups[0].pricingMode, undefined);
+  assert.equal(result.draft?.pricing.modularGroups[1].selectionFamily, "direct-only");
+  assert.equal(result.draft?.pricing.modularGroups[1].pricingMode, "direct");
+});
+
 test("optionGroups.conditionalConfiguration preserves a fixed-quantity workstation-targeted required companion (OXI ART.058)", () => {
   const draft = baseDraft();
   draft.pricing.workstationRows.push({ id: "111-623", label: "111 623", price: 1200, supplierCodes: ["111 623"] });
@@ -220,4 +234,111 @@ test("conditionalConfiguration preserves modular quantity scaling and rejects un
   configuration.applicability[0].target = { kind: "modular", group_id: "oxi", row_id: "starter" };
   configuration.selection = "exactly_one";
   assert.equal(normalizeProductTemplateDraft(draft).valid, false);
+});
+
+test("Sigma M33 keeps its separately priced M34 companion at quantity one on the exact Base / Model row", () => {
+  const draft = baseDraft();
+  draft.pricing.baseModelRows.push({ id: "sigma-m33", label: "COMBY M33", price: 1000, supplierCodes: ["M33"] });
+  draft.optionGroups.push({
+    id: "sigma-m34", label: "Required M34 companion", selection: { mode: "required_choose_at_least_one", minSelections: 1, maxSelections: null, defaultItemIds: [] },
+    items: [{ id: "sigma-m34-item", label: "M34", price: 125, supplierCodes: ["M34"] }],
+    conditionalConfiguration: { role: "companion", selection: "exactly_one", applicability: [{ target: { kind: "base_model", group_id: "legacy-base-model-main", row_id: "sigma-m33" }, required: true, visible: true, allowed_item_ids: ["sigma-m34-item"], fixed_quantity: 1 }] },
+  });
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, true);
+  assert.equal(result.draft?.pricing.baseModelRows[0].supplierCodes[0], "M33");
+  assert.equal(result.draft?.optionGroups[0].items[0].price, 125);
+  assert.deepEqual(result.draft?.optionGroups[0].conditionalConfiguration?.applicability[0].target, { kind: "base_model", group_id: "legacy-base-model-main", row_id: "sigma-m33" });
+  assert.equal(result.draft?.optionGroups[0].conditionalConfiguration?.applicability[0].fixed_quantity, 1);
+});
+
+test("1: an old optionGroups item with no reviewStatus normalizes cleanly and stays backward compatible", () => {
+  const draft = baseDraft();
+  draft.optionGroups.push({
+    id: "cable-tray", label: "Cable Tray",
+    selection: { mode: "optional", minSelections: 0, maxSelections: 1, defaultItemIds: [] },
+    items: [{ id: "cable-tray-item", label: "Cable Tray", price: 25, supplierCodes: ["ART.010"] }],
+  });
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, true);
+  const item = result.draft?.optionGroups[0].items[0];
+  assert.equal(item?.reviewStatus, undefined, "Expected a missing reviewStatus to remain absent (behaves as confirmed)");
+  assert.equal(item?.reviewReason, undefined);
+});
+
+test("2: a needs_review item normalizes and preserves its reviewStatus and reviewReason", () => {
+  const draft = baseDraft();
+  draft.optionGroups.push({
+    id: "electrification", label: "Electrification",
+    selection: { mode: "optional", minSelections: 0, maxSelections: 1, defaultItemIds: [] },
+    items: [{ id: "electrification-item", label: "Electrification Unit", price: 40, reviewStatus: "needs_review", reviewReason: "Exact target-family applicability is not proven by the supplied source." }],
+  });
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, true);
+  const item = result.draft?.optionGroups[0].items[0];
+  assert.equal(item?.reviewStatus, "needs_review");
+  assert.equal(item?.reviewReason, "Exact target-family applicability is not proven by the supplied source.");
+});
+
+test("3: reviewReason trims correctly and an all-whitespace reason is omitted", () => {
+  const draft = baseDraft();
+  draft.optionGroups.push({
+    id: "g", label: "G",
+    selection: { mode: "optional", minSelections: 0, maxSelections: 1, defaultItemIds: [] },
+    items: [
+      { id: "trimmed", label: "Trimmed", price: 10, reviewStatus: "needs_review", reviewReason: "  Needs review.  " },
+      { id: "blank", label: "Blank", price: 10, reviewStatus: "needs_review", reviewReason: "   " },
+    ],
+  });
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, true);
+  assert.equal(result.draft?.optionGroups[0].items[0].reviewReason, "Needs review.");
+  assert.equal(result.draft?.optionGroups[0].items[1].reviewReason, undefined, "Expected a blank reviewReason to be omitted, not stored as empty/whitespace");
+});
+
+test("4: an invalid reviewStatus is rejected as an error and dropped from the normalized item, matching the Modular role convention", () => {
+  const draft = baseDraft();
+  draft.optionGroups.push({
+    id: "g", label: "G",
+    selection: { mode: "optional", minSelections: 0, maxSelections: 1, defaultItemIds: [] },
+    items: [{ id: "bogus", label: "Bogus", price: 10, reviewStatus: "pending" }],
+  });
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.errors.some((issue) => issue.path.endsWith(".reviewStatus")), true, "Expected an unsupported reviewStatus to be reported as a validation error");
+});
+
+test("confirmed reviewStatus normalizes the same as an absent reviewStatus (missing behaves as confirmed)", () => {
+  const draft = baseDraft();
+  draft.optionGroups.push({
+    id: "g", label: "G",
+    selection: { mode: "optional", minSelections: 0, maxSelections: 1, defaultItemIds: [] },
+    items: [{ id: "confirmed-item", label: "Confirmed", price: 10, reviewStatus: "confirmed" }],
+  });
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, true);
+  assert.equal(result.draft?.optionGroups[0].items[0].reviewStatus, undefined);
+});
+
+test("reviewStatus/reviewReason never affect price, dimensions, supplier codes, conditionalConfiguration, role, or selection mode on the same item/group", () => {
+  const draft = baseDraft();
+  draft.pricing.workstationRows.push({ id: "111-623", label: "111 623", price: 1200, supplierCodes: ["111 623"] });
+  draft.optionGroups.push({
+    id: "art-058", label: "ART.058",
+    selection: { mode: "required_choose_one", minSelections: 1, maxSelections: 1, defaultItemIds: [] },
+    items: [{ id: "art-058-item", label: "ART.058", price: 69, supplierCodes: ["111 058"], dimensions: { width: 5, depth: 5, height: 5, unit: "cm" }, reviewStatus: "needs_review", reviewReason: "Unproven applicability." }],
+    conditionalConfiguration: {
+      role: "companion", selection: "exactly_one",
+      applicability: [{ target: { kind: "workstation", group_id: "workstation-rows", row_id: "111-623" }, required: true, visible: true, fixed_quantity: 2 }],
+    },
+  });
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, true);
+  const item = result.draft?.optionGroups[0].items[0];
+  assert.equal(item?.price, 69);
+  assert.equal(item?.dimensions?.width, 5);
+  assert.deepEqual(item?.supplierCodes, ["111 058"]);
+  const rule = result.draft?.optionGroups[0].conditionalConfiguration?.applicability[0];
+  assert.equal(rule?.fixed_quantity, 2);
+  assert.equal(rule?.target?.row_id, "111-623");
+  assert.equal(result.draft?.optionGroups[0].selection.mode, "required_choose_one");
 });

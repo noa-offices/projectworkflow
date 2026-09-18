@@ -184,3 +184,189 @@ test("the modular section still branches to DirectModularRowsEditor only when a 
   assert.ok(source.includes("group.matrix ? <MatrixEditor"));
   assert.ok(source.includes(": <DirectModularRowsEditor rows={group.directRows ?? []} composition={group.composition ?? null}"));
 });
+
+const legacyRenderer = source.slice(source.indexOf("function LegacyPricedRowsEditor"), source.indexOf("type PricedRowsEditorProps"));
+const denseRowRenderer = legacyRenderer.slice(legacyRenderer.indexOf('dense ? <div className="overflow-x-auto"><table'), legacyRenderer.indexOf(': <div className="space-y-2">'));
+const denseTableHeadRegion = denseRowRenderer.slice(0, denseRowRenderer.indexOf("<tbody>"));
+const denseCompactRowRegion = denseRowRenderer.slice(denseRowRenderer.indexOf("<tbody>"), denseRowRenderer.indexOf('{expanded ? <tr id={`priced-row-'));
+const denseDetailsRegion = denseRowRenderer.slice(denseRowRenderer.indexOf('{expanded ? <tr id={`priced-row-'));
+
+test("1: Base/Model dense review rows render compact primary fields", () => {
+  [">Image<", ">Model<", ">Supplier Code<", ">Dimension<", ">Price<", ">Currency<", ">Details<"].forEach((expected) => assert.ok(denseTableHeadRegion.includes(expected), `Expected compact Base/Model table column: ${expected}`));
+  [
+    "StagedPricingRowReferenceImage",
+    "row.displayName || row.label || row.id",
+    "row.dimensions ? formatDraftDimensions(row.dimensions) : \"-\"",
+    'row.currency ?? "No currency"',
+    'type="number"',
+    "Edit / Details",
+  ].forEach((expected) => assert.ok(denseCompactRowRegion.includes(expected), `Expected compact Base/Model field: ${expected}`));
+});
+
+test("2: specification is hidden from the compact Base/Model row until Edit / Details is expanded", () => {
+  assert.equal(denseCompactRowRegion.includes("row.specification"), false, "Specification must not render in the always-visible compact row");
+  assert.ok(denseDetailsRegion.includes('multiline label="Product Specification" value={row.specification}'), "Specification must still be editable inside Details");
+});
+
+test("3: importantRequirements are hidden from the compact Base/Model row until Edit / Details is expanded", () => {
+  assert.equal(denseCompactRowRegion.includes("importantRequirements"), false, "Important requirements must not render in the always-visible compact row");
+  assert.ok(denseDetailsRegion.includes("ImportantRequirementsField"), "Important requirements must still be editable inside Details");
+});
+
+test("4: price remains directly editable in the compact Base/Model row", () => {
+  assert.ok(denseCompactRowRegion.includes("price: nullableReviewNumber(event.target.value)"));
+  assert.ok(denseCompactRowRegion.includes('value={row.price ?? ""}'));
+});
+
+test("5: image controls remain available in the compact Base/Model row", () => {
+  assert.ok(denseCompactRowRegion.includes("StagedPricingRowReferenceImage sourceKey={imageScope} rowId={row.id}"));
+});
+
+test("6: the Base/Model Details toggle only flips local expand state and never mutates row data", () => {
+  assert.ok(denseRowRenderer.includes("setDenseExpandedRowId((current) => current === row.id ? null : row.id)"));
+  const toggleHandler = denseRowRenderer.slice(denseRowRenderer.indexOf("onClick={() => setDenseExpandedRowId"), denseRowRenderer.indexOf("onClick={() => setDenseExpandedRowId") + 80);
+  assert.equal(toggleHandler.includes("setRow("), false, "Toggling Details must never call setRow");
+  assert.equal(toggleHandler.includes("onChange("), false, "Toggling Details must never call onChange");
+});
+
+test("only one Base/Model row's Details can be expanded at a time", () => {
+  assert.ok(source.includes("const [denseExpandedRowId, setDenseExpandedRowId] = useState<string | null>(null);"));
+  assert.equal(denseRowRenderer.includes("expandedRows[row.id]"), false, "Dense rows must use the single-expanded-row id, not the multi-row expandedRows map");
+});
+
+test("7: existing explicit visual subgroup assignments remain authoritative and are never overwritten by inference", () => {
+  assert.ok(source.includes('setReviewedSubgroups(nextDraft ? { "base_model:rows": inferBaseModelVisualSubgroups(nextDraft.pricing.baseModelRows) } : {});'), "Auto-inference must only run for a fresh validate(), which starts with no explicit subgroups");
+  assert.ok(source.includes("setReviewedSubgroups(workspace.subgroups ?? {});"), "Loading an existing workspace must reuse its already-explicit subgroup assignments, not re-infer them");
+});
+
+test("13: manual visual subgroup controls remain available for Base/Model rows", () => {
+  ["+ Add Subgroup", "Assign {itemLabel}", "Remove", "Ungrouped: {rows.filter((row) => !assigned.has(row.id)).length}"].forEach((expected) => assert.ok(source.includes(expected), `Expected manual subgroup control: ${expected}`));
+});
+
+test("14: auto visual-subgroup inference is wired only into the Base/Model route and never touches Accessories/Companion review", () => {
+  const inferenceCallSites = [...source.matchAll(/inferBaseModelVisualSubgroups\(/g)];
+  assert.equal(inferenceCallSites.length, 1, "inferBaseModelVisualSubgroups must be called exactly once (Base/Model only)");
+  const accessoryRenderer = source.slice(source.indexOf("function SmartAccessoryRowsEditor"), source.indexOf("function PricedRowsEditor"));
+  assert.equal(accessoryRenderer.includes("inferBaseModelVisualSubgroups"), false, "Accessory/Companion rendering must never call the Base/Model auto-grouping helper");
+});
+
+// ---------------------------------------------------------------------------
+// UI parity correction: Base/Model must render as compact single-expand
+// accordions (matching Modular/Workstation), and the large subgroup
+// management block must be hidden by default behind "Manage groups" instead
+// of duplicating subgroup membership information above the pricing rows.
+// ---------------------------------------------------------------------------
+
+const baseModelSectionRegion = source.slice(source.indexOf('{draft.pricing.baseModelRows.length'), source.indexOf('{draft.pricing.priceMatrices.length'));
+
+test("UI parity 1: normal Base/Model review does not unconditionally render the large subgroup-management block", () => {
+  assert.ok(baseModelSectionRegion.includes("baseModelManageGroupsOpen ? <SmartSubgroupEditor"), "SmartSubgroupEditor must be gated behind the Manage groups toggle, not rendered unconditionally");
+  assert.equal(/routeItems\(draft, baseModelRoute\)\.length \? <SmartSubgroupEditor/.test(baseModelSectionRegion), false, "SmartSubgroupEditor must no longer render directly whenever there are route items");
+});
+
+test("UI parity 2 & 3: each Base/Model subgroup renders as a single compact accordion with label + item count in its header", () => {
+  assert.ok(source.includes('singleExpand?: boolean'));
+  assert.ok(source.includes('itemLabel={dense ? "model" : "item"} rows={rows} subgroups={subgroups} renderRows={renderRows} singleExpand={dense}'), "Base/Model must request accordion (single-expand) VisualSubgroupCards behavior");
+  assert.ok(source.includes('<p className="text-sm font-semibold text-zinc-900">{label}</p><p className="mt-1 text-xs text-zinc-500">{section.rows.length} {itemLabel}'), "Subgroup header must show only the label and item count, no full member list");
+});
+
+test("UI parity 4 & 5: expanded subgroup renders the compact pricing table, collapsed subgroup hides it", () => {
+  assert.ok(source.includes('{expanded ? <div className="border-t border-zinc-200">{renderRows(section.rows)}</div> : null}'), "Rows must only render while the accordion section is expanded");
+});
+
+test("UI parity 8: Manage groups exposes rename/Assign/Remove controls only once opened", () => {
+  assert.ok(baseModelSectionRegion.includes('{baseModelManageGroupsOpen ? "Hide group management" : "Manage groups"}'));
+  const manageGroupsBlock = baseModelSectionRegion.slice(baseModelSectionRegion.indexOf("Manage groups"), baseModelSectionRegion.indexOf("<PricedRowsEditor"));
+  assert.ok(manageGroupsBlock.includes("<SmartSubgroupEditor"), "The rename/Assign/Remove controls (SmartSubgroupEditor) must live inside the Manage groups toggle region");
+});
+
+test("UI parity 9: manual subgroup functionality (SmartSubgroupEditor itself) is unchanged", () => {
+  ["+ Add Subgroup", "Assign {itemLabel}", "Remove", "rename", "openAssignment", "assignVisualSubgroupRows"].forEach((expected) => assert.ok(source.includes(expected) || source.toLowerCase().includes(expected.toLowerCase()), `Expected unchanged manual subgroup control reference: ${expected}`));
+});
+
+test("UI parity 10: inferred subgroup membership computation is unchanged by this presentation-only task", () => {
+  assert.ok(source.includes('setReviewedSubgroups(nextDraft ? { "base_model:rows": inferBaseModelVisualSubgroups(nextDraft.pricing.baseModelRows) } : {});'), "Inference wiring must be byte-identical to the prior task's implementation");
+});
+
+test("UI parity 11: Ungrouped rows use exactly the same accordion/table pattern as named subgroups (no special-case UI)", () => {
+  assert.equal(source.includes("Ungrouped UI"), false);
+  assert.ok(source.includes('const label = section.subgroup?.subgroup_name ?? "Ungrouped";'), "The Ungrouped section must flow through the same VisualSubgroupCards section rendering as every named subgroup");
+});
+
+test("UI parity 12: Accessories UI is unaffected by the Base/Model accordion change", () => {
+  const accessoryRenderer = source.slice(source.indexOf("function SmartAccessoryRowsEditor"), source.indexOf("function PricedRowsEditor"));
+  assert.equal(accessoryRenderer.includes("singleExpand"), false, "Accessory rendering must not opt into the new single-expand accordion behavior");
+  assert.equal(accessoryRenderer.includes("baseModelManageGroupsOpen"), false);
+});
+
+// ---------------------------------------------------------------------------
+// GLOBAL group-level "+ Import More JSON": reuses AdditionalJsonDialog (no
+// second modal), reuses the existing "smart-product-add-more-json" event with
+// an added target payload, and reuses compatible()/duplicate-review helpers.
+// ---------------------------------------------------------------------------
+
+const additionalJsonDialogRenderer = source.slice(source.indexOf("function AdditionalJsonDialog"), source.indexOf("function routeItems"));
+const reviewDestinationSectionRenderer = source.slice(source.indexOf("function ReviewDestinationSection"), source.indexOf("function SmartSubgroupEditor"));
+
+test("1: '+ Import More JSON' triggers exist only on supported group headers (Workstation, Base/Model main, Base/Model subgroup, Matrix, Matrix Modular, Direct Modular, Accessory)", () => {
+  assert.ok(source.includes("function openGroupImportMoreJson(targetRouteKey: string, targetSubgroupId?: string)"));
+  assert.ok(source.includes('window.dispatchEvent(new CustomEvent("smart-product-add-more-json", { detail: { targetRouteKey, targetSubgroupId } }));'));
+  const workstationImportTrigger = "onImportMore={workstationRoute ? () => openGroupImportMoreJson(workstationRoute.key) : undefined}";
+  const baseModelImportTrigger = "onImportMore={baseModelRoute ? () => openGroupImportMoreJson(baseModelRoute.key) : undefined}";
+  const matrixModularAccessoryImportTrigger = "onImportMore={route ? () => openGroupImportMoreJson(route.key) : undefined}";
+  [workstationImportTrigger, baseModelImportTrigger].forEach((expected) => assert.ok(source.includes(expected), `Expected trigger: ${expected}`));
+  const matrixModularAccessoryOccurrences = source.split(matrixModularAccessoryImportTrigger).length - 1;
+  assert.equal(matrixModularAccessoryOccurrences, 3, "Expected exactly 3 generic per-route triggers: Matrix, Modular (Direct + Matrix Modular share one loop), and Accessory/Option");
+  assert.ok(source.includes("onImportMoreForSubgroup={baseModelRoute ? (subgroupId) => openGroupImportMoreJson(baseModelRoute.key, subgroupId) : undefined}"), "Base/Model visual subgroup must launch a targeted import scoped to that subgroup");
+});
+
+test("2: no second import modal exists - the button reuses AdditionalJsonDialog via the existing event", () => {
+  assert.equal((source.match(/function \w*Dialog\b/g) ?? []).filter((name) => /Json|Import/i.test(name)).length, 1, "Expected exactly one JSON import dialog component to exist");
+  assert.ok(source.includes('window.addEventListener("smart-product-add-more-json", openAdditionalJson)'));
+});
+
+test("2b: the button is not added to material suggestions, linked family suggestions, Source QA, or warnings panels", () => {
+  const materialsSection = source.slice(source.indexOf('{draft.materialSuggestions.length'), source.indexOf('{draft.linkedFamilySuggestions.length'));
+  const linkedSection = source.slice(source.indexOf('{draft.linkedFamilySuggestions.length'), source.indexOf('<BatchSpecificationEnrichmentControl'));
+  assert.equal(materialsSection.includes("openGroupImportMoreJson"), false);
+  assert.equal(linkedSection.includes("openGroupImportMoreJson"), false);
+});
+
+test("3 & 4: targeted mode shows the selected target, runs the same classification, and constrains merge to only the compatible target route (reusing compatible())", () => {
+  assert.ok(additionalJsonDialogRenderer.includes("const targeted = Boolean(targetRouteKey);"));
+  assert.ok(additionalJsonDialogRenderer.includes("const isCompatible = compatible(currentDraft, preparedIncoming, targetRoute, route);"));
+  assert.ok(additionalJsonDialogRenderer.includes('action: isCompatible ? "merge" : "skip"'));
+  assert.ok(additionalJsonDialogRenderer.includes("Target: {targetLabel ?? targetRoute?.groupName"));
+  assert.ok(additionalJsonDialogRenderer.includes("This JSON does not contain rows compatible with the selected target group."));
+});
+
+test("5: targeted route selection merges into the explicitly selected target even when the incoming group id differs, using compatibility + explicit target, not id equality", () => {
+  assert.ok(additionalJsonDialogRenderer.includes("targetKey: isCompatible ? targetRouteKey! : null"), "A compatible incoming route (any generated id) must merge into the user-selected target, not require id equality");
+});
+
+test("6: duplicate/conflict UI (Keep Existing / Use Incoming) is reused unchanged in targeted mode", () => {
+  assert.ok(additionalJsonDialogRenderer.includes('smartAdditionalDuplicateRows(currentDraft, incomingDraft, route, target)'));
+  assert.ok(additionalJsonDialogRenderer.includes('<option value="existing">Keep Existing</option><option value="incoming">Use Incoming</option>'));
+});
+
+test("7: applySmartAdditionalJson's addedRowsByTarget is threaded through onAdd for Base/Model subgroup row_id assignment", () => {
+  assert.ok(additionalJsonDialogRenderer.includes("onAdd(merged.draft, merged.plan, rawJson, partialExtractionStatus(enrichedIncoming.extractionWarnings), merged.addedRowsByTarget);"));
+  assert.ok(source.includes('const newRowIds = addedRowsByTarget["base_model:rows"] ?? [];'));
+  assert.ok(source.includes("row_ids: [...new Set([...subgroup.row_ids, ...newRowIds])]"), "New row ids must be appended without duplicating existing row_ids");
+});
+
+test("13: top-level '+ Add More JSON' dispatches with no target payload, keeping its full unconstrained Add/Merge/Skip UI", () => {
+  assert.ok(source.includes('window.dispatchEvent(new Event("smart-product-add-more-json"))'), "Top-level triggers must not pass a targetRouteKey");
+  assert.ok(additionalJsonDialogRenderer.includes('setDecisions(Object.fromEntries(incomingGroups.map(({ route, compatibleTargets, match }) => [route.key, { action: (["workstation", "base_model"].includes(route.sourceKind)'), "Untargeted validate() must retain its original full classification logic unchanged");
+  assert.ok(additionalJsonDialogRenderer.includes('<option value="add" disabled={flatAlreadyExists}>Add as New Group</option>'), "Untargeted mode must still offer Add as New Group / Merge / Skip");
+});
+
+test("14 & 15: wrong-target rejection is visible in the UI as a per-route status, not a silent success", () => {
+  assert.ok(additionalJsonDialogRenderer.includes('"Rejected - not compatible with the selected target group"'));
+  assert.ok(additionalJsonDialogRenderer.includes("Compatible - will merge into ${targetLabel"));
+});
+
+test("ReviewDestinationSection renders the '+ Import More JSON' button next to Show/Hide only when onImportMore is provided", () => {
+  assert.ok(reviewDestinationSectionRenderer.includes("onImportMore?: () => void"));
+  assert.ok(reviewDestinationSectionRenderer.includes('{onImportMore ? <button type="button" onClick={onImportMore}'));
+});

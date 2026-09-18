@@ -32,3 +32,20 @@ test("incompatible modular columns produce no replacement groups", () => {
   assert.equal(result.compatible, false);
   assert.deepEqual(result.groups, []);
 });
+
+test("Matrix Modular never maps selectionFamily while retaining its role and composition", () => {
+  const draft = draftWith([[{ id: "b", label: "Cat B" }]]);
+  draft.pricing.modularGroups[0] = {
+    ...draft.pricing.modularGroups[0],
+    selectionFamily: "invalid-matrix-family",
+    composition: { minStarters: 1, maxStarters: 1 },
+    matrix: { ...draft.pricing.modularGroups[0].matrix!, rows: [{ ...draft.pricing.modularGroups[0].matrix!.rows[0], role: "starter" }] },
+  };
+  const result = mapDraftModularPricing(draft);
+  assert.equal(result.compatible, true);
+  const group = result.groups[0] as { modular_selection_family?: string; modular_composition?: unknown; modular_pricing_mode?: string; items: Array<{ modular_role?: string }> };
+  assert.equal(group.modular_selection_family, undefined);
+  assert.deepEqual(group.modular_composition, { min_starters: 1, max_starters: 1 });
+  assert.equal(group.items[0].modular_role, "starter");
+  assert.equal(group.modular_pricing_mode, undefined);
+});

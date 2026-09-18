@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cropForZoom, existingSourceCropTargets, mergeSourceCropTargetIds, nextSourceCropTarget, normalizeSourceCrop, removeSourceCropTargetIds, selectedSourceCropTargets, sourceCropSearchPages, sourceQaTextGeometry, sourceQaTextGeometryMatch, sourceQaTextGeometryViewport, uniqueSourceCropTarget, validSourceCrop, type SourceCropTarget } from "./source-qa-crop.js";
+import { cropForZoom, existingSourceCropTargets, exportRenderScale, fitWidthZoom, mergeSourceCropTargetIds, nextSourceCropTarget, normalizeSourceCrop, removeSourceCropTargetIds, selectedSourceCropTargets, sourceCropSearchPages, sourceQaTextGeometry, sourceQaTextGeometryMatch, sourceQaTextGeometryViewport, uniqueSourceCropTarget, validSourceCrop, type SourceCropTarget } from "./source-qa-crop.js";
 const targets: SourceCropTarget[] = [
   { id: "one", sourceKey: "base_model:rows", rowId: "one", label: "IN120 — Table", codes: ["IN120"], kind: "Base / Model" },
   { id: "two", sourceKey: "base_model:rows", rowId: "two", label: "IN120E — Electrified", codes: ["IN120E"], kind: "Base / Model" },
@@ -34,4 +34,20 @@ test("resolves exact and split PDF text geometry at the active viewport scale", 
 test("merges and clears one displayed target group without affecting other selections", () => {
   assert.deepEqual(mergeSourceCropTargetIds(["one", "three"], ["one", "two"]), ["one", "three", "two"]);
   assert.deepEqual(removeSourceCropTargetIds(["one", "two", "three"], ["one", "two"]), ["three"]);
+});
+test("export render scale doubles the on-screen zoom for crop export, clamped to a sane maximum", () => {
+  assert.equal(exportRenderScale(1), 2);
+  assert.equal(exportRenderScale(0.5), 1);
+  assert.equal(exportRenderScale(2), 4);
+  assert.equal(exportRenderScale(3), 4, "Must never exceed the maximum export scale even at high on-screen zoom");
+  assert.equal(exportRenderScale(2.5, 2, 4), 4);
+  assert.ok(exportRenderScale(1) >= 1, "Export scale must never be lower than the current on-screen zoom");
+});
+test("fit-width zoom matches the container to the PDF page's native width within a safe zoom range", () => {
+  assert.equal(fitWidthZoom(1000, 500), 2);
+  assert.equal(fitWidthZoom(500, 1000), 0.5);
+  assert.equal(fitWidthZoom(0, 500), 1, "Missing measurements must fall back to 100% rather than dividing by zero");
+  assert.equal(fitWidthZoom(500, 0), 1);
+  assert.equal(fitWidthZoom(10000, 500), 4, "Must clamp to the maximum zoom even for a very wide container");
+  assert.equal(fitWidthZoom(50, 500), 0.5, "Must clamp to the minimum zoom even for a very narrow container");
 });

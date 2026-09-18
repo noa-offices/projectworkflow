@@ -12,6 +12,10 @@ const currencies = new Set(["AED", "USD", "EUR", "GBP", "SAR", "QAR", "KWD", "BH
 const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : null;
 const currency = (value: unknown) => currencies.has(String(value)) ? String(value) as ProductTemplateDraftCurrency : null;
 const price = (value: unknown) => value === null || value === "" || value === undefined ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+const modularRole = (value: unknown): "starter" | "intermediate" | "terminal" | undefined => {
+  const role = text(value);
+  return role === "starter" || role === "intermediate" || role === "terminal" ? role : undefined;
+};
 const dimension = (value: unknown): ProductTemplateDraftDimension | null => text(value) ? { width: null, depth: null, height: null, diameter: null, unit: null, rawText: text(value) } : null;
 const code = (value: unknown) => text(value) ? [text(value)!] : [];
 const parse = (value: string) => { try { const parsed: unknown = JSON.parse(value || "[]"); return Array.isArray(parsed) ? parsed.filter((item): item is JsonRow => Boolean(item) && typeof item === "object" && !Array.isArray(item)) : []; } catch { return []; } };
@@ -56,12 +60,14 @@ export function productTemplateFormSmartWorkspace(snapshot: FormSnapshot): { dra
       const composition = group.modular_composition && typeof group.modular_composition === "object" && !Array.isArray(group.modular_composition) ? group.modular_composition as JsonRow : null;
       return {
         ...base,
+        ...(text(group.modular_selection_family) ? { selectionFamily: text(group.modular_selection_family)! } : {}),
         pricingMode: "direct" as const,
-        directRows: (Array.isArray(group.items) ? group.items as JsonRow[] : []).map((item) => ({ ...row(item), ...(text(item.modular_role) === "starter" || text(item.modular_role) === "intermediate" || text(item.modular_role) === "terminal" ? { role: text(item.modular_role) as "starter" | "intermediate" | "terminal" } : {}) })),
+        directRows: (Array.isArray(group.items) ? group.items as JsonRow[] : []).map((item) => ({ ...row(item), ...(modularRole(item.modular_role) ? { role: modularRole(item.modular_role) } : {}) })),
         ...(composition ? { composition: { minStarters: price(composition.min_starters) ?? 0, maxStarters: price(composition.max_starters) } } : {}),
       };
     }
-    return { ...base, matrix: { id: `${id}-matrix`, label: text(group.group_name), columns: columns.map((label) => ({ id: label, label })), rows: (Array.isArray(group.items) ? group.items as JsonRow[] : []).map((item) => matrixRow(item, columns)) } };
+    const composition = group.modular_composition && typeof group.modular_composition === "object" && !Array.isArray(group.modular_composition) ? group.modular_composition as JsonRow : null;
+    return { ...base, matrix: { id: `${id}-matrix`, label: text(group.group_name), columns: columns.map((label) => ({ id: label, label })), rows: (Array.isArray(group.items) ? group.items as JsonRow[] : []).map((item) => ({ ...matrixRow(item, columns), ...(modularRole(item.modular_role) ? { role: modularRole(item.modular_role) } : {}) })) }, ...(composition ? { composition: { minStarters: price(composition.min_starters) ?? 0, maxStarters: price(composition.max_starters) } } : {}) };
   });
   const optionGroups = accessoryGroups.map((group, index) => { const priceCategories = Array.isArray(group.price_categories) ? group.price_categories.flatMap((value) => { const category = value as JsonRow; const id = text(category?.id); const label = text(category?.label); return id && label ? [{ id, label }] : []; }) : []; return { id: text(group.id) ?? `accessory-${index}`, label: text(group.group_name), selection: { mode: "optional" as const, minSelections: 0, maxSelections: null, defaultItemIds: [] }, ...(priceCategories.length ? { priceCategories } : {}), items: (Array.isArray(group.items) ? group.items as JsonRow[] : [group]).map((item) => { const prices = item.prices && typeof item.prices === "object" && !Array.isArray(item.prices) ? item.prices as JsonRow : {}; return { ...row(item), ...(priceCategories.length ? { prices: Object.fromEntries(priceCategories.map((category) => [category.id, price(prices[category.id])])) } : {}) }; }) }; });
   const draft: ProductTemplateDraft = { version: 1, template: { templateName: text(snapshot.template_name), templateCode: text(snapshot.template_code), itemCode: text(snapshot.item_code), internalSelectionName: text(snapshot.internal_selection_name), description: text(snapshot.description), specification: text(snapshot.default_specification), origin: text(snapshot.origin), supplierName: text(snapshot.supplier_name), dimensions: null, supplierCodes: [], referenceCodes: [] }, defaultCurrency: currency(snapshot.currency), pricing: { workstationRows: workstationGroups.flatMap((group) => group.items.map((item, index) => { const layout = text(item.layout_type)?.toLowerCase(); return { ...row(item, `${group.id}-size-${index}`), additionalPrice: price(item.additional_price), layoutType: layout === "linear" || layout === "cluster" || layout === "both" ? layout : null }; })), baseModelRows: baseRows, priceMatrices: [...matrices, ...standardCategories], modularGroups }, optionGroups, materialSuggestions: [], linkedFamilySuggestions: [], extractionWarnings: [], confidence: null, sources: [] };

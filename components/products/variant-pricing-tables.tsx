@@ -1314,10 +1314,12 @@ export function ModularItemPricingTable({
   templateIsPersisted: boolean;
   templateCurrency?: string | null;
 }) {
-  const initialGroups = useMemo(() => normalizeModularGroups(rows), [rows]);
+  // Incoming/saved category columns are authoritative: never auto-create generic Cat A-D defaults
+  // when initializing the review/editor state, only when a user explicitly adds a new column.
+  const initialGroups = useMemo(() => normalizeModularGroups(rows, false), [rows]);
   const modularDefaults = useMemo(() => modularPricingDefaultsFromRows(rows), [rows]);
   const [groups, setGroups] = useState<CategoryPricingRow[]>(() => initialGroups);
-  const [priceCategories, setPriceCategories] = useState<string[]>(() => modularPriceCategories(initialGroups));
+  const [priceCategories, setPriceCategories] = useState<string[]>(() => modularPriceCategories(initialGroups, false));
   const appliedReplacementVersion = useRef<number | undefined>(undefined);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [showCategoryCreator, setShowCategoryCreator] = useState(false);
@@ -1343,7 +1345,11 @@ export function ModularItemPricingTable({
           group_name: (group as CategoryPricingRow).group_name?.trim() || "Modular Items",
           is_active: (group as CategoryPricingRow).is_active !== false,
           pricing_type: MODULAR_GROUP_PRICING_TYPE,
-          ...(isDirectModularPricingGroup(group) ? { modular_pricing_mode: "direct", price_categories: [] } : {}),
+          // Matrix Modular groups must submit their authoritative column set explicitly. Omitting
+          // price_categories here made the server fall back to the generic Cat A-D defaults and merge
+          // them into every row's saved prices (lib/products/category-pricing-value.ts), which is how
+          // stale/default columns survived a Smart Setup replace/import.
+          ...(isDirectModularPricingGroup(group) ? { modular_pricing_mode: "direct", price_categories: [] } : { price_categories: priceCategories }),
           // Composition (starter/intermediate cardinality) applies to both Direct and Matrix Modular groups.
           ...(group.modular_composition ? { modular_composition: group.modular_composition } : {}),
           ...(group.modular_selection_family?.trim() ? { modular_selection_family: group.modular_selection_family.trim() } : {}),
@@ -1472,7 +1478,7 @@ export function ModularItemPricingTable({
         items: (group.items ?? []).map((row) => ({
           ...row,
           prices: {
-            ...normalizedPriceMap(row.prices),
+            ...normalizedPriceMap(row.prices, false),
             [normalizedCategory]: parseNullablePricingNumber(row.prices?.[normalizedCategory]),
           },
         })),
@@ -1646,7 +1652,7 @@ export function ModularItemPricingTable({
                           {directGroup ? <th className="px-2 py-2">Direct Price</th> : priceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
                           <th className="px-2 py-2">Role</th>
                           <th className="px-2 py-2">Currency</th>
-                          <th className="px-2 py-2">{directGroup ? "Details" : "Specification note"}</th>
+                          <th className="px-2 py-2">Details</th>
                           <th className="px-2 py-2">Active</th>
                           <th className="px-2 py-2">Actions</th>
                         </tr>
@@ -1668,11 +1674,11 @@ export function ModularItemPricingTable({
                                 userEditedCurrencyRowIds.current.add(normalizedRow.id ?? `${groupIndex}-${rowIndex}`);
                                 updateRow(groupIndex, rowIndex, { currency });
                               }} /></div></td>
-                              <td className="px-2 py-2 align-top">{directGroup ? <button type="button" aria-expanded={expanded} onClick={() => setExpandedRowByGroup((current) => ({ ...current, [groupId]: expanded ? null : normalizedRow.id ?? null }))} className="rounded border border-zinc-300 px-2 py-1 text-xs font-semibold text-emerald-900">{expanded ? "Hide details" : "Edit / Details"}</button> : <><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => updateRow(groupIndex, rowIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-[360px]" /><ImportantRequirementsTextarea value={normalizedRow.importantRequirements} onChange={(importantRequirements) => updateRow(groupIndex, rowIndex, { importantRequirements })} /></>}</td>
+                              <td className="px-2 py-2 align-top"><button type="button" aria-expanded={expanded} onClick={() => setExpandedRowByGroup((current) => ({ ...current, [groupId]: expanded ? null : normalizedRow.id ?? null }))} className="rounded border border-zinc-300 px-2 py-1 text-xs font-semibold text-emerald-900">{expanded ? "Hide details" : "Edit / Details"}</button></td>
                               <td className="px-2 py-2 align-top"><input type="checkbox" checked={normalizedRow.is_active !== false} onChange={(e) => updateRow(groupIndex, rowIndex, { is_active: e.target.checked })} /></td>
                               <td className="px-2 py-2 align-top"><div className="min-w-[100px]"><button type="button" onClick={() => setGroups((current) => current.map((currentGroup, currentGroupIndex) => currentGroupIndex === groupIndex ? { ...currentGroup, items: (currentGroup.items ?? []).filter((_, index) => index !== rowIndex) } : currentGroup))} className="text-xs font-semibold text-red-700">Remove</button></div></td>
                             </tr>
-                            {directGroup && expanded ? <tr key={`${normalizedRow.id}-details`} className="border-t border-zinc-200 bg-zinc-50"><td colSpan={directGroup ? 12 : priceCategories.length + 10} className="p-3"><div className="grid gap-3 md:grid-cols-2"><div className="md:col-span-2"><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => updateRow(groupIndex, rowIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-0 w-full" /></div><ImportantRequirementsTextarea value={normalizedRow.importantRequirements} onChange={(importantRequirements) => updateRow(groupIndex, rowIndex, { importantRequirements })} /></div></td></tr> : null}
+                            {expanded ? <tr key={`${normalizedRow.id}-details`} className="border-t border-zinc-200 bg-zinc-50"><td colSpan={directGroup ? 12 : priceCategories.length + 10} className="p-3"><div className="grid gap-3 md:grid-cols-2"><div className="md:col-span-2"><AutoGrowTextarea value={normalizedRow.specification ?? ""} onChange={(value) => updateRow(groupIndex, rowIndex, { specification: value })} minHeightClass="min-h-[64px]" rows={3} widthClass="min-w-0 w-full" /></div><ImportantRequirementsTextarea value={normalizedRow.importantRequirements} onChange={(importantRequirements) => updateRow(groupIndex, rowIndex, { importantRequirements })} /></div></td></tr> : null}
                           </>);
                         })}
                       </tbody>

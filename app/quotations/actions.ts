@@ -34,6 +34,7 @@ import {
   modularRowRole,
 } from "@/lib/products/modular-pricing";
 import { validateModularCompositionGroups } from "@/lib/products/modular-composition";
+import { resolvedMatrixModularPricingCategory } from "@/lib/quotations/modular-pricing-category";
 import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-conditional-configuration";
 import { findWorkstationPricingRow, flattenWorkstationPricingRows, workstationPricingGroups } from "@/lib/products/workstation-pricing-groups";
 import {
@@ -6109,14 +6110,22 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const modularDefaults = modularPricingDefaultsFromRows(template.category_pricing);
   const usesModularPricing = modularRows.length > 0;
   const usesDirectModularPricing = usesModularPricing && modularGroups.some((group) => isDirectModularPricingGroup(group));
+  const usesMatrixModularPricing = usesModularPricing && modularGroups.some((group) => !isDirectModularPricingGroup(group));
   const configuredDimensionInput = optionalTextValue(formData, "configured_dimension");
   const configuredSpecificationInput = optionalTextValue(formData, "configured_specification");
   const finalSpecificationWasEdited = optionalTextValue(formData, "final_specification_was_edited") === "true";
   const finalSpecificationOverrideInput = optionalTextValue(formData, "final_specification_override");
   const workstationLayoutTypeInput = optionalTextValue(formData, "workstation_layout_type");
-  const selectedCategory = usesDirectModularPricing
-    ? ""
-    : textValue(formData, usesModularPricing ? "modular_pricing_category" : "category_pricing_category") ||
+  const submittedModularCategory = textValue(formData, "modular_pricing_category");
+  const selectedMatrixModularCategory = resolvedMatrixModularPricingCategory(modularGroups, submittedModularCategory);
+  if (usesMatrixModularPricing && !selectedMatrixModularCategory) {
+    redirectWithMessage(redirectPath, "Select a valid pricing category before saving this modular configuration.");
+  }
+  const selectedCategory: string = usesMatrixModularPricing
+    ? selectedMatrixModularCategory!
+    : usesDirectModularPricing
+      ? ""
+      : textValue(formData, "category_pricing_category") ||
       categoryPriceColumns(template.category_pricing)[0] ||
       "Cat A";
   const configuredDimension = configuredDimensionInput ??

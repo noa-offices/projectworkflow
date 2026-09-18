@@ -65,7 +65,6 @@ export function mapDraftModularPricing(draft: ProductTemplateDraft) {
     price_categories: priceCategories,
     pricing_type: MODULAR_GROUP_PRICING_TYPE,
     ...(group.composition ? { modular_composition: { min_starters: group.composition.minStarters, max_starters: group.composition.maxStarters } } : {}),
-    ...(group.selectionFamily ? { modular_selection_family: group.selectionFamily } : {}),
     is_active: true,
     sort_order: groupIndex,
     items: (group.matrix?.rows ?? []).map((row, rowIndex) => {

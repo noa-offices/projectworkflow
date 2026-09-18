@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseSourceQaAiReport } from "./source-qa-ai-contract.js";
-import { SourceQaAiProviderError, verifySourceQaWithProvider } from "./source-qa-ai-provider.server.js";
+import { SOURCE_QA_AI_INPUT_TOKEN_BUDGET, SourceQaAiProviderError, buildSourceQaTextPayload, estimateSourceQaTokens, verifySourceQaWithProvider } from "./source-qa-ai-provider.server.js";
 
 const report = { version: 1, summary: { issueCount: 1, highSeverityCount: 1, reviewRequired: true }, issues: [{ id: "issue-1", type: "price_value_mismatch", severity: "critical", confidence: "high", supplierModelCode: "A-1", sourcePage: 1, sourceEvidence: "A-1 100", sourceValue: 100, jsonLocation: "pricing.baseModelRows[0].price", jsonValue: 120, explanation: "Source price differs." }] };
 const coverageDraft = {
@@ -61,6 +61,16 @@ test("sanitizes provider HTTP errors and timeouts", async () => {
   await withProvider(async () => { const error = new Error("timeout"); error.name = "AbortError"; throw error; }, async () => await assert.rejects(verifySourceQaWithProvider(input()), /request timed out/));
 });
 
+test("logs safe HTTP and exception diagnostics while retaining friendly 429 and failure messages", async () => {
+  const previousError = console.error; const diagnostics: unknown[][] = []; console.error = (...args: unknown[]) => { diagnostics.push(args); };
+  try {
+    await withProvider(async () => new Response("busy", { status: 429, statusText: "Too Many Requests", headers: { "Retry-After": "30" } }), async () => await assert.rejects(verifySourceQaWithProvider(input()), /temporarily unavailable/));
+    await withProvider(async () => { throw new Error("network offline"); }, async () => await assert.rejects(verifySourceQaWithProvider(input()), /provider request failed/));
+  } finally { console.error = previousError; }
+  assert.deepEqual(diagnostics[0], ["Source QA AI provider HTTP error", { status: 429, statusText: "Too Many Requests", retryAfter: "30", body: "busy" }]);
+  assert.deepEqual(diagnostics[1], ["Source QA AI provider exception", { name: "Error", message: "network offline" }]);
+});
+
 test("sends each original source separately and rejects invalid source collections", async () => {
   let body: Record<string, unknown> | null = null;
   const sources = [{ id: "one", rawJson: '{"code":"IN120E"}' }, { id: "two", rawJson: '{"code":"IN127E"}' }];
@@ -76,4 +86,119 @@ test("sends each original source separately and rejects invalid source collectio
     await assert.rejects(verifySourceQaWithProvider(input(undefined, {}, Array.from({ length: 11 }, (_, index) => ({ id: String(index), rawJson: "{}" })))), /At most 10/);
     await assert.rejects(verifySourceQaWithProvider(input(undefined, {}, [{ id: "large", rawJson: "x".repeat(2 * 1024 * 1024 + 1) }])), /2 MB/);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Payload-budget helper: keeps the AI Source QA text payload safely below the
+// provider's TPM ceiling using compaction, then dropping the redundant
+// secondary draft copy, before ever touching the primary source text.
+// ---------------------------------------------------------------------------
+
+/** A dense, pretty-printed, Sigma-scale ProductTemplateDraft-shaped batch of real commercial rows. */
+function sigmaBatch(batchIndex: number, rowCount = 90) {
+  const rows = Array.from({ length: rowCount }, (_, index) => ({
+    id: `row-${batchIndex}-${index}`,
+    supplierCodes: [`1AJ P${75 + batchIndex * 100 + index}`],
+    dimensions: { rawText: `${1000 + index}x${600 + index}x${750 + index} mm` },
+    price: 100 + index,
+    currency: "EUR",
+    specification: "Panel-base module with soft-close hardware and adjustable levellers.",
+    importantRequirements: [`Always complete with 2 Art.0${index % 90} fixing kits.`],
+  }));
+  const sources = Array.from({ length: 3 }, (_, index) => ({ id: `page-${28 + batchIndex + index}`, documentName: "Sigma.pdf", pageNumber: 28 + batchIndex + index, region: null, rawText: `Section heading for printed page ${28 + batchIndex + index}` }));
+  return JSON.stringify({ version: 1, pricing: { baseModelRows: rows }, sources }, null, 2);
+}
+
+/** Four ~7,000-token batches whose combined size mirrors the confirmed real-world 36,236-token overage. */
+function sigmaBatches() {
+  return [sigmaBatch(0), sigmaBatch(1), sigmaBatch(2), sigmaBatch(3)];
+}
+
+test("1: a large multi-batch Sigma-style Source QA payload is reduced below the new safe input-token budget", () => {
+  const batches = sigmaBatches();
+  const fixedInstructionsText = "x".repeat(4_100);
+  const compactedSize = batches.reduce((sum, text) => sum + JSON.stringify(JSON.parse(text)).length, 0);
+  const unbudgeted = fixedInstructionsText.length / 3.5 + (compactedSize / 3.5) * 2;
+  assert.ok(unbudgeted > SOURCE_QA_AI_INPUT_TOKEN_BUDGET, "Expected the unbudgeted fixture (original batches + duplicate draft) to exceed the safe budget, proving this test actually exercises trimming");
+  const result = buildSourceQaTextPayload({ fixedInstructionsText, sources: batches, draftJson: batches[0] });
+  assert.ok(result.estimatedTokens <= SOURCE_QA_AI_INPUT_TOKEN_BUDGET, `Expected estimatedTokens (${result.estimatedTokens}) to be within budget (${SOURCE_QA_AI_INPUT_TOKEN_BUDGET})`);
+  assert.equal(result.trimmed, true);
+});
+
+test("2: supplier codes in the retained batches survive Source QA payload compaction", () => {
+  const batches = sigmaBatches();
+  const result = buildSourceQaTextPayload({ fixedInstructionsText: "x".repeat(4_100), sources: batches, draftJson: batches[0] });
+  ["1AJ P75", "1AJ P91"].forEach((code) => assert.ok(result.originalJsonText.includes(code), `Expected supplier code ${code} to survive compaction`));
+});
+
+test("3: page numbers/page identities in the retained batches survive Source QA payload compaction", () => {
+  const batches = sigmaBatches();
+  const result = buildSourceQaTextPayload({ fixedInstructionsText: "x".repeat(4_100), sources: batches, draftJson: batches[0] });
+  ['"pageNumber":28', '"documentName":"Sigma.pdf"'].forEach((fragment) => assert.ok(result.originalJsonText.includes(fragment), `Expected page identity ${fragment} to survive compaction`));
+});
+
+test("4: importantRequirements in the retained batches survive Source QA payload compaction", () => {
+  const batches = sigmaBatches();
+  const result = buildSourceQaTextPayload({ fixedInstructionsText: "x".repeat(4_100), sources: batches, draftJson: batches[0] });
+  assert.ok(result.originalJsonText.includes("Always complete with 2 Art.0"), "Expected importantRequirements text to survive compaction");
+});
+
+test("5: every compacted Source QA JSON batch remains valid JSON", () => {
+  const batches = sigmaBatches();
+  const result = buildSourceQaTextPayload({ fixedInstructionsText: "x".repeat(4_100), sources: batches, draftJson: batches[0] });
+  const chunks = result.originalJsonText.split(/Original Imported JSON Source \d+:\n/).filter(Boolean);
+  assert.ok(chunks.length >= 1, "Expected at least one retained batch");
+  chunks.forEach((chunk) => assert.doesNotThrow(() => JSON.parse(chunk.trim()), "Expected each compacted original JSON batch to remain valid, parseable JSON"));
+});
+
+test("6: an already-small Source QA payload is effectively unchanged", () => {
+  const small = '{"supplierCodes":["BASE-100"],"price":10}';
+  const result = buildSourceQaTextPayload({ fixedInstructionsText: "x".repeat(4_100), sources: [small], draftJson: small });
+  assert.equal(result.trimmed, false);
+  assert.equal(result.droppedDraft, false);
+  assert.equal(result.droppedSourceCount, 0);
+  assert.ok(result.originalJsonText.includes(small));
+  assert.equal(result.draftJson, small);
+});
+
+test("estimateSourceQaTokens is a conservative, monotonic character-based estimate", () => {
+  assert.equal(estimateSourceQaTokens(""), 0);
+  assert.ok(estimateSourceQaTokens("x".repeat(3500)) >= 1000);
+  assert.ok(estimateSourceQaTokens("aaaa") <= estimateSourceQaTokens("aaaaaaaa"));
+});
+
+test("de-duplication drops the secondary reviewed-draft copy, then only the lowest-priority batches, before ever touching the earliest/highest-priority source text", () => {
+  const batches = sigmaBatches();
+  const result = buildSourceQaTextPayload({ fixedInstructionsText: "x".repeat(4_100), sources: batches, draftJson: batches[0] });
+  assert.equal(result.droppedDraft, true, "Expected the redundant secondary draft copy to be dropped first");
+  assert.equal(result.draftJson, "");
+  assert.ok(result.droppedSourceCount > 0 && result.droppedSourceCount < batches.length, "Expected only the lowest-priority trailing batches to be dropped, not all of them");
+  assert.ok(result.originalJsonText.includes("Original Imported JSON Source 1:"), "Expected the first (highest-priority) batch to remain intact");
+});
+
+test("7: the AI Source QA request actually sent to the provider is compacted and stays under budget for a large multi-batch Sigma-style fixture, while the friendly 429 mapping is unchanged", async () => {
+  const batches = sigmaBatches();
+  let body: Record<string, unknown> | null = null;
+  await withProvider(async (_url, init) => { body = JSON.parse(String(init?.body)); return response(completed(report)); }, async () => {
+    await verifySourceQaWithProvider(input(undefined, JSON.parse(batches[0]), batches.map((rawJson, index) => ({ id: `sigma-${index}`, rawJson }))));
+  });
+  const request = body as unknown as Record<string, unknown>;
+  const content = (request.input as Array<{ content: Array<{ text?: string }> }>)[0]?.content ?? [];
+  const totalOriginalBytes = batches.reduce((sum, text) => sum + text.length, 0);
+  const sentBytes = JSON.stringify(request).length;
+  assert.ok(sentBytes < totalOriginalBytes * 2, "Expected the actually-sent request to be meaningfully smaller than sending both copies of every batch uncompacted");
+  assert.ok(content[1]?.text?.includes("1AJ P75"), "Expected the sent request to still contain a real supplier code");
+  // The 429 mapping itself is unrelated to payload size and must remain exactly as before.
+  await withProvider(async () => new Response("busy", { status: 429, statusText: "Too Many Requests", headers: { "Retry-After": "30" } }), async () => await assert.rejects(verifySourceQaWithProvider(input()), /temporarily unavailable/));
+});
+
+test("8: diagnostic logging path remains unchanged when the payload is trimmed", async () => {
+  const batches = sigmaBatches();
+  const previousError = console.error; const diagnostics: unknown[][] = []; console.error = (...args: unknown[]) => { diagnostics.push(args); };
+  try {
+    await withProvider(async () => response({}, 500), async () => await assert.rejects(verifySourceQaWithProvider(input(undefined, JSON.parse(batches[0]), batches.map((rawJson, index) => ({ id: `sigma-${index}`, rawJson })))), /provider request failed/));
+  } finally { console.error = previousError; }
+  assert.equal(diagnostics[0]?.[0], "Source QA AI provider HTTP error");
+  const details = diagnostics[0]?.[1] as Record<string, unknown>;
+  assert.equal(details.status, 500);
 });

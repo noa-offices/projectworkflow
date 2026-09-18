@@ -53,14 +53,25 @@ test("live modular hidden JSON remains available to manufacturer comparison", ()
 });
 
 test("saved direct Modular and scaled applicability reopen without matrix conversion", () => {
-  const workspace = productTemplateFormSmartWorkspace({ desking_size_pricing: "[]", variant_pricing: "[]", category_pricing: "[]", modular_item_pricing: JSON.stringify([{ id: "oxi", pricing_type: "modular_group", modular_pricing_mode: "direct", modular_composition: { min_starters: 1, max_starters: 1 }, items: [{ id: "starter", display_name: "Starter", supplier_price_list_code: "111 065", price: 500, currency: "EUR", modular_role: "starter" }, { id: "add", display_name: "Add-on", supplier_price_list_code: "111 069", price: 300, currency: "EUR", modular_role: "intermediate" }] }]), accessory_pricing: JSON.stringify([{ id: "art-058", group_name: "ART.058", conditional_configuration: { role: "companion", selection: "choose_multiple", applicability: [{ target: { kind: "modular", group_id: "oxi", row_id: "starter" }, required: true, visible: true, fixed_quantity: 2, scale_with_target_quantity: true }] }, items: [{ id: "058", item_name: "ART.058", price: 69, currency: "EUR" }] }]) });
+  const workspace = productTemplateFormSmartWorkspace({ desking_size_pricing: "[]", variant_pricing: "[]", category_pricing: "[]", modular_item_pricing: JSON.stringify([{ id: "oxi", pricing_type: "modular_group", modular_pricing_mode: "direct", modular_selection_family: "oxi-alternatives", modular_composition: { min_starters: 1, max_starters: 1 }, items: [{ id: "starter", display_name: "Starter", supplier_price_list_code: "111 065", price: 500, currency: "EUR", modular_role: "starter" }, { id: "add", display_name: "Add-on", supplier_price_list_code: "111 069", price: 300, currency: "EUR", modular_role: "intermediate" }] }]), accessory_pricing: JSON.stringify([{ id: "art-058", group_name: "ART.058", conditional_configuration: { role: "companion", selection: "choose_multiple", applicability: [{ target: { kind: "modular", group_id: "oxi", row_id: "starter" }, required: true, visible: true, fixed_quantity: 2, scale_with_target_quantity: true }] }, items: [{ id: "058", item_name: "ART.058", price: 69, currency: "EUR" }] }]) });
   const group = workspace.draft.pricing.modularGroups[0];
   assert.equal(group.pricingMode, "direct");
   assert.equal(group.matrix, undefined);
   assert.equal(group.directRows?.[0].price, 500);
   assert.equal(group.directRows?.[1].role, "intermediate");
   assert.deepEqual(group.composition, { minStarters: 1, maxStarters: 1 });
+  assert.equal(group.selectionFamily, "oxi-alternatives");
   assert.equal(workspace.plan.routes.find((route) => route.key === "option:art-058")?.accessory?.rules[0].scaleWithTargetQuantity, true);
+});
+
+test("saved Matrix Modular retains roles and composition but strips invalid selectionFamily", () => {
+  const workspace = productTemplateFormSmartWorkspace({ desking_size_pricing: "[]", variant_pricing: "[]", category_pricing: "[]", accessory_pricing: "[]", modular_item_pricing: JSON.stringify([{ id: "terra", pricing_type: "modular_group", modular_selection_family: "invalid-matrix-family", modular_composition: { min_starters: 1, max_starters: 1 }, price_categories: ["BL/AN", "Designs"], items: [{ id: "bench", display_name: "Bench", supplier_price_list_code: "M85", prices: { "BL/AN": 100, Designs: 120 }, modular_role: "starter" }, { id: "extension", display_name: "Extension", supplier_price_list_code: "M86", prices: { "BL/AN": 70, Designs: 80 }, modular_role: "intermediate" }] }]) });
+  const group = workspace.draft.pricing.modularGroups[0];
+  assert.equal(group.pricingMode, undefined);
+  assert.equal(group.matrix?.rows[0].role, "starter");
+  assert.equal(group.matrix?.rows[1].role, "intermediate");
+  assert.deepEqual(group.composition, { minStarters: 1, maxStarters: 1 });
+  assert.equal(group.selectionFamily, undefined);
 });
 
 test("live category-priced accessories preserve group categories and independent item price maps", () => {

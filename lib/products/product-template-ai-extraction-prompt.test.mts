@@ -59,9 +59,9 @@ test("every planning focus requires a family extraction roadmap before product d
 test("global extraction architecture contract enforces safe routing and supplemental family behavior", () => {
   const required = [
     "Extract one clean selected family at a time",
-    "When each SKU has only one direct price, use pricing.baseModelRows",
+    "When each SKU has only one direct price and there is no Modular composition, use pricing.baseModelRows",
     "one column labelled \"Standard Price\" is an invalid one-column fake Matrix and is explicitly forbidden",
-    "When each PRIMARY product SKU has category-dependent prices, use pricing.priceMatrices",
+    "When each PRIMARY product SKU has category-dependent prices and there is NO source-proven Modular composition, use pricing.priceMatrices",
     "Ordinary size, finish, LH/RH, open/closed, accessory, and catalogue-layout variation must not trigger pricing.modularGroups",
     "Preserve authoritative terminal/intermediate or other genuine module rows",
     "Every directly priced source SKU remains a separate authoritative row",
@@ -92,6 +92,11 @@ test("global extraction architecture contract enforces safe routing and suppleme
     required.forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} extraction prompt to contain: ${expected}`));
     assert.ok(prompt.indexOf("GLOBAL EXTRACTION ARCHITECTURE DECISION CONTRACT") < prompt.indexOf("EXTRACTION FOCUS:"), `Expected global extraction contract before ${focus} focus`);
   });
+});
+
+test("workstation extraction keeps unsupported alternative bench completions reviewable instead of flattening them", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  ["ALTERNATIVE BENCH COMPLETIONS", "without flattening the alternatives into cumulative AND-required companions", "extractionWarning/manual-review note", "do not invent global companion rules, a generic OR rule, or a combined price"].forEach((expected) => assert.ok(prompt.includes(expected), expected));
 });
 
 test("global extraction contract routes component-only SKUs through accessories without overcorrecting primary products", () => {
@@ -918,6 +923,10 @@ test("global workstation routing principle applies before any furniture focus an
       "GLOBAL WORKSTATION ROUTING PRINCIPLE",
       "The words \"workstation\", \"bench\", \"cluster\", and \"operative\" do not automatically mean pricing.workstationRows",
       "never move a direct-priced workstation/bench SKU into pricing.workstationRows merely because the source uses one of those words",
+      // category pricing without composition -> pricing.priceMatrices
+      "genuine manufacturer-proven row-by-category or finish-price-class pricing with NO source-proven structural composition belongs in pricing.priceMatrices",
+      // scalar Modular composition -> Direct Modular; category-priced Modular composition -> Matrix Modular
+      "source-proven component/module composition such as starter/add-on or structure-plus-top-plus-finish pricing belongs in pricing.modularGroups: use Direct Modular when module rows have scalar prices, and Matrix Modular when those same composable module rows have category/finish-dependent price maps",
     ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain global workstation routing rule: ${expected}`));
     const globalIndex = prompt.indexOf("GLOBAL WORKSTATION ROUTING PRINCIPLE");
     const focusIndex = prompt.indexOf("EXTRACTION FOCUS:");
@@ -962,8 +971,8 @@ test("workstation extraction focus keeps compatibility from becoming a required 
     "OPTIONAL WORKSTATION ACCESSORIES",
     "Ordinary compatibility wording alone (for example \"compatible with\", \"suitable for\") does not make such an item required",
     "MODEL-DEFINING VARIANTS",
-    "TE160 and TE160E",
-    "Do not automatically convert TE160E into TE160 plus an electrification option when the manufacturer prices both as distinct SKU rows",
+    "If the manufacturer gives separate priced codes for with/without electrification preparation, E/non-E, LH/RH, or with/without cable access, preserve those as separate authoritative priced rows.",
+    "Do not automatically convert an E-suffix SKU into the corresponding non-E SKU plus an electrification option when the manufacturer prices both as distinct SKU rows.",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
 });
 
@@ -1161,14 +1170,24 @@ test("the prompt documents selectionFamily as an optional, source-proven cross-g
   });
 });
 
-test("FINAL CHECK item 15 confirms no undocumented ProductTemplateDraft fields were added and selectionFamily follows its documented contract", () => {
+test("FINAL CHECK item 15 confirms no undocumented ProductTemplateDraft fields were added and selectionFamily/reviewStatus follow their documented contracts", () => {
   extractionPromptFocuses.forEach((focus) => {
     const prompt = getProductTemplateAiExtractionPrompt(focus);
     assert.ok(
-      prompt.includes("15. No undocumented ProductTemplateDraft fields were added; selectionFamily is used only according to the documented Direct Modular Selection Family contract."),
-      `Expected ${focus} prompt's FINAL CHECK item 15 to use the new selectionFamily-aware wording`,
+      prompt.includes('15. No undocumented ProductTemplateDraft fields were added; selectionFamily is used only according to the documented Direct Modular Selection Family contract, and reviewStatus/reviewReason are used only according to the documented optionGroups item review contract.'),
+      `Expected ${focus} prompt's FINAL CHECK item 15 to use the new selectionFamily/reviewStatus-aware wording`,
     );
     assert.ok(!prompt.includes("15. The ProductTemplateDraft v1 schema has not been extended."), `Expected ${focus} prompt to no longer show the old FINAL CHECK item 15 wording`);
+  });
+});
+
+test("FINAL CHECK item 28 confirms accessory applicability review discipline: needs_review preserved, confirmed items not over-marked, incompatible items excluded", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(
+      prompt.includes('28. Every commercially relevant accessory with uncertain target-family applicability was preserved as reviewStatus: "needs_review" with a concise reviewReason; confirmed accessories were not unnecessarily review-marked; and accessories explicitly proven to belong to another product type were excluded rather than preserved for review.'),
+      `Expected ${focus} prompt's FINAL CHECK item 28 to document the accessory review discipline`,
+    );
   });
 });
 
@@ -1252,24 +1271,32 @@ test("workstation extraction focus routes a composing Bench/Extension pair to th
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
 });
 
-test("workstation extraction focus adds the Terra Office regression: one Matrix Modular group, starter/intermediate roles, Standard/Designs categories, separate E-suffix SKUs, no Designs surcharge, no selectionFamily", () => {
+test("workstation extraction focus adds the Terra Office regression: one Matrix Modular group, starter/intermediate roles, min1/max1 composition, Standard/Designs matrix columns, separate E-suffix SKUs, no Designs surcharge, no selectionFamily, no pricingMode direct", () => {
   const prompt = getProductTemplateAiExtractionPrompt("workstation");
   [
     "For Terra Office-style Bench pricing where the source proves Bench and Bench Extension rows compose together (the Extension extends the Bench run rather than being an alternative product)",
     "normal and E-suffix rows are real manufacturer SKUs, and one SKU carries separate full prices for standard finishes (for example BL/AN) versus special finishes (for example designs)",
-    'route as Matrix Modular: ONE Modular group containing Bench rows with role "starter", Bench Extension rows with role "intermediate", separate price categories for Standard (BL/AN) and Designs, E-suffix rows preserved as separate rows/SKUs, no synthetic Designs surcharge optionGroup, and no selectionFamily between the starter and extension rows',
+    'route as Matrix Modular: exactly ONE Matrix Modular group containing Bench rows with role "starter" and Bench Extension rows with role "intermediate", group composition { "minStarters": 1, "maxStarters": 1 }, Standard (BL/AN) and Designs as matrix columns/price categories on those same rows, normal and E-suffix rows preserved as separate manufacturer rows, no synthetic Designs surcharge optionGroup, no selectionFamily between the starter and extension rows, and no pricingMode: "direct" on this group.',
     "The E suffix remains a manufacturer SKU variant representing the machined/electrification-ready version and must not be converted into a surcharge",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("Terra regression composition is exactly min 1 / max 1 starter and Standard/Designs remain matrix columns rather than a direct-priced group", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('group composition { "minStarters": 1, "maxStarters": 1 }, Standard (BL/AN) and Designs as matrix columns/price categories on those same rows'));
+  assert.ok(prompt.includes('and no pricingMode: "direct" on this group.'));
 });
 
 test("workstation extraction focus warns on uncertain accessory applicability instead of blindly attaching every technical-page accessory", () => {
   const prompt = getProductTemplateAiExtractionPrompt("workstation");
   [
     "ACCESSORY PAGE COVERAGE",
-    "Do not blindly attach every accessory shown on a technical accessories page merely because it appears there",
-    "Preserve a clearly compatible item as an option only when the source proves its applicability to the selected family/rows",
-    "When applicability is uncertain, preserve the item as a linkedFamilySuggestion or add an extractionWarning describing the uncertainty",
-    "never silently drop a relevant supplied accessory page without warning, and never invent applicability to force an item into optionGroups",
+    "Do not blindly attach every accessory shown on a manufacturer accessories page merely because that page is part of the supplied extraction batch.",
+    "A general collection-level accessory page does NOT prove that every listed accessory applies to the current target ProductTemplateDraft.",
+    "include an accessory in optionGroups when the supplied source directly proves applicability to that family or its exact rows",
+    "exclude an accessory when the source explicitly ties it to another family/product type",
+    'when a general accessory is commercially relevant but exact target-family applicability is not proven, PRESERVE the item in optionGroups with reviewStatus: "needs_review" and a concise reviewReason instead of omitting it or making it unconditionally globally selectable.',
+    "Never silently drop a relevant supplied accessory page without warning, and never invent applicability to force an item into optionGroups.",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
 });
 
@@ -1280,7 +1307,7 @@ test("workstation final safety check adds Terra-specific verifications: no finis
     "that starter and extension rows meant to compose together were not split apart by selectionFamily",
     "that Matrix Modular price categories were used when one SKU has finish-dependent alternative prices",
     "that E-suffix manufacturer SKUs remain separate rows rather than being converted into surcharges",
-    "that uncertain accessory applicability produced an extractionWarning or linkedFamilySuggestion rather than invented applicability",
+    'that uncertain accessory applicability produced a reviewStatus: "needs_review" optionGroups item with a concise reviewReason rather than invented applicability, a silent omission, or a mere extractionWarning/linkedFamilySuggestion substitute',
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
 });
 
@@ -1298,14 +1325,15 @@ test("Terra fixes leave the X3 selectionFamily regression, OXI_P, and OXI_Q guid
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected unchanged regression text: ${expected}`));
 
   // Matrix Modular contract remains valid (item 13) — for every focus, the embedded shape still
-  // shows a Matrix Modular group with columns/rows/prices ahead of the Direct Modular group.
+  // shows a Matrix Modular group with columns/rows/prices ahead of the Direct Modular group, now
+  // also demonstrating the optional row.role and group.composition field shape.
   extractionPromptFocuses.forEach((focus) => {
     const focusPrompt = getProductTemplateAiExtractionPrompt(focus);
     assert.ok(
       focusPrompt.includes(
-        '"modularGroups": [{ "id": "", "label": null, "defaultDimensions": null, "defaultSpecification": null, "matrix": { "id": "", "label": null, "columns": [{ "id": "", "label": null }], "rows": [{ "id": "", "label": null, "displayName": null, "dimensions": null, "currency": null, "specification": null, "importantRequirements": [], "supplierCodes": [], "referenceCodes": [], "prices": { "column-id": null } }] } }',
+        '"modularGroups": [{ "id": "", "label": null, "defaultDimensions": null, "defaultSpecification": null, "matrix": { "id": "", "label": null, "columns": [{ "id": "", "label": null }], "rows": [{ "id": "", "label": null, "displayName": null, "dimensions": null, "currency": null, "role": "starter", "specification": null, "importantRequirements": [], "supplierCodes": [], "referenceCodes": [], "prices": { "column-id": null } }] }, "composition": { "minStarters": 1, "maxStarters": 1 } }',
       ),
-      `Expected ${focus} prompt's Matrix Modular contract shape to remain valid`,
+      `Expected ${focus} prompt's Matrix Modular contract shape to remain valid and show optional role/composition`,
     );
   });
 });
@@ -1558,7 +1586,7 @@ test("visible ProductTemplateDraft v1 contract exposes the actual conditionalCon
       "OMIT the field entirely when no fixed quantity applies; never emit \"fixed_quantity\": null",
       "never fabricate a \"N x <code>\" item to represent it",
       "Emit conditionalConfiguration IN ADDITION TO, never instead of, the informational importantRequirements text",
-      "do not add fields beyond documented contract fields such as unavailableCategoryIds or conditionalConfiguration",
+      "do not add fields beyond documented contract fields such as unavailableCategoryIds, conditionalConfiguration, or reviewStatus/reviewReason",
       "TARGET GROUP_ID CONVENTION",
       "row_id always equals the exact stable id already assigned to that row/item in that structure",
       "never a supplierCodes entry such as \"111 623\", and never invented from a code, label, or family name",
@@ -1767,5 +1795,687 @@ test.skip("target-identity audit 8: existing Matrix/Modular target representabil
   extractionPromptFocuses.forEach((focus) => {
     const prompt = getProductTemplateAiExtractionPrompt(focus);
     assert.ok(prompt.includes("for target.kind \"price_matrix\" or \"modular\", group_id is the exact pricing.priceMatrices[].id or pricing.modularGroups[].id that this draft already assigns to that matrix/group — both are already representable today, so reuse them exactly"), `Expected ${focus} prompt to keep Matrix/Modular group_id guidance unchanged`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Matrix Modular role/composition contract (source-proven starter/add-on
+// composition on top of category-dependent matrix pricing, e.g. Terra Office).
+// ---------------------------------------------------------------------------
+
+test("1: Matrix Modular contract shape exposes row.role for every focus", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(
+      prompt.includes('"currency": null, "role": "starter", "specification": null, "importantRequirements": [], "supplierCodes": [], "referenceCodes": [], "prices": { "column-id": null } }] }, "composition"'),
+      `Expected ${focus} prompt's Matrix Modular contract row to show role ahead of the group's composition field`,
+    );
+  });
+});
+
+test("2: Matrix Modular contract shape exposes group.composition for every focus", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(
+      prompt.includes('"prices": { "column-id": null } }] }, "composition": { "minStarters": 1, "maxStarters": 1 } }, { "id": "", "label": null, "defaultDimensions": null, "defaultSpecification": null, "pricingMode": "direct"'),
+      `Expected ${focus} prompt's Matrix Modular group to show composition, immediately followed by the separate Direct Modular group`,
+    );
+  });
+});
+
+test("3: Matrix Modular contract example never pairs pricingMode: direct with the matrix shape", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(!prompt.includes('"matrix": { "id": "", "label": null, "columns": [{ "id": "", "label": null }], "rows": [{ "id": "", "label": null, "displayName": null, "dimensions": null, "currency": null, "role": "starter", "specification": null, "importantRequirements": [], "supplierCodes": [], "referenceCodes": [], "prices": { "column-id": null } }] }, "pricingMode"'));
+    assert.ok(
+      prompt.includes('Never add pricingMode: "direct" to a Matrix Modular group merely because it carries role/composition; pricingMode: "direct" remains exclusive to Direct Modular groups that use directRows.'),
+      `Expected ${focus} prompt to explicitly forbid pricingMode: "direct" on Matrix Modular`,
+    );
+  });
+});
+
+test("4: Matrix Modular role and composition are documented as optional, source-proven-only fields", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "MATRIX MODULAR COMPOSITION",
+      "Matrix Modular may carry the same optional structural role/composition semantics as Direct Modular when the manufacturer proves genuine composition.",
+      "Matrix Modular row.role may use the existing supported Modular roles such as starter, intermediate, and terminal.",
+      'Matrix Modular group.composition may use { "minStarters": ..., "maxStarters": ... }, the same shape as Direct Modular composition.',
+      "Do not add role or composition merely because a product uses matrix pricing.",
+      "A Matrix Modular family with no source-proven starter/add-on structure must omit role and composition entirely and behave exactly as ordinary Matrix Modular.",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain: ${expected}`));
+  });
+});
+
+test("5: source-proven Modular composition plus category-dependent module prices routes to Matrix Modular, not top-level priceMatrices", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "MATRIX MODULAR VERSUS TOP-LEVEL PRICEMATRICES — ROUTING PRECEDENCE",
+    "When BOTH (A) the family has genuine source-proven Modular composition such as starter plus extension/add-on rows, AND (B) those same module rows have manufacturer-proven finish/material/category-dependent prices, use Matrix Modular (pricing.modularGroups with a matrix).",
+    "Do NOT route such a family to top-level pricing.priceMatrices merely because category-dependent pricing exists.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("6: ordinary non-Modular category-dependent pricing still routes to top-level pricing.priceMatrices", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "Top-level pricing.priceMatrices is for non-Modular primary row-by-category pricing, where no source-proven starter/add-on structural composition exists.",
+    "Matrix Modular is for Modular composition whose module rows themselves carry category-dependent price maps.",
+    "CATEGORY / MATRIX requires a genuine manufacturer-proven commercial category dimension",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("7: an ordinary Matrix Modular group without role/composition still normalizes as a valid draft", () => {
+  const draft = {
+    version: 1,
+    template: { templateName: "Plain Matrix Modular", templateCode: null, itemCode: null, internalSelectionName: null, description: null, specification: null, origin: null, supplierName: null, dimensions: null, supplierCodes: [], referenceCodes: [] },
+    defaultCurrency: "EUR",
+    pricing: {
+      workstationRows: [], baseModelRows: [], priceMatrices: [],
+      modularGroups: [{
+        id: "plain-matrix-modular",
+        label: "Plain Modular Family",
+        defaultDimensions: null,
+        defaultSpecification: null,
+        matrix: {
+          id: "plain-matrix",
+          label: null,
+          columns: [{ id: "std", label: "Standard" }],
+          rows: [{ id: "row-1", label: null, displayName: "Module A", dimensions: null, currency: "EUR", specification: null, importantRequirements: [], supplierCodes: [], referenceCodes: [], prices: { std: 100 } }],
+        },
+      }],
+    },
+    optionGroups: [], materialSuggestions: [], linkedFamilySuggestions: [], extractionWarnings: [], confidence: 0.9, sources: [],
+  };
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, true, `Expected an ordinary Matrix Modular group with no role/composition to remain valid: ${JSON.stringify(result.errors)}`);
+  const group = result.draft?.pricing.modularGroups[0];
+  assert.equal(group?.composition, undefined);
+  assert.equal(group?.matrix?.rows[0].role, undefined);
+});
+
+test("8: Terra regression requires exactly one Matrix Modular group for the Bench/Bench Extension family", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('route as Matrix Modular: exactly ONE Matrix Modular group containing Bench rows with role "starter" and Bench Extension rows with role "intermediate"'));
+});
+
+test("9: Terra regression assigns Bench rows role starter", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('Bench rows with role "starter"'));
+});
+
+test("10: Terra regression assigns Bench Extension rows role intermediate", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('Bench Extension rows with role "intermediate"'));
+});
+
+test("11: Terra regression composition is exactly minStarters 1 / maxStarters 1", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('group composition { "minStarters": 1, "maxStarters": 1 }'));
+});
+
+test("12: Terra regression keeps Standard/BL-AN and Designs as matrix columns on the module rows", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("Standard (BL/AN) and Designs as matrix columns/price categories on those same rows"));
+});
+
+test("13: Terra regression keeps normal and E-suffix rows as separate manufacturer rows", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("normal and E-suffix rows preserved as separate manufacturer rows"));
+  assert.ok(prompt.includes("The E suffix remains a manufacturer SKU variant representing the machined/electrification-ready version and must not be converted into a surcharge"));
+});
+
+test("14: Terra regression forbids a synthetic Designs surcharge optionGroup", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("no synthetic Designs surcharge optionGroup"));
+});
+
+test("15: Terra regression forbids selectionFamily between starter/extension rows and forbids pricingMode direct on this group", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("no selectionFamily between the starter and extension rows, and no pricingMode: \"direct\" on this group."));
+});
+
+test("16: OXI_P Direct Modular regression is unchanged by the Matrix Modular role/composition additions", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("OXI_P starter rows 111 065, 111 066, 111 067, and 111 068 plus intermediate rows 111 069, 111 070, 111 071, and 111 072 are a direct Modular composition when pages 14–15 prove that structure: use directRows with the respective starter/intermediate roles and composition minStarters: 1, maxStarters: 1"));
+});
+
+test("17: X3 Direct Modular + selectionFamily regression is unchanged by the Matrix Modular role/composition additions", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "partition into four separate direct Modular groups instead of one mixed group: A/38 mm/60 cm tops, A/38 mm/80 cm tops, B/215 mm/60 cm tops, and B/215 mm/80 cm tops, each with pricingMode: \"direct\"",
+    "Because these four X3-style groups represent alternative structural bench configurations that must not be combined within one quotation item, emit the SAME selectionFamily value on all four Direct Modular groups",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected unchanged X3 regression text: ${expected}`));
+});
+
+test("18: OXI_Q Base/Model + Required Companion regression is unchanged by the Matrix Modular role/composition additions", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("OXI extracted id \"oxi-q-ws-dx\" with supplierCodes [\"111 623\"], always complete with either ART.175 or ART.129"));
+  assert.ok(prompt.includes("OXI 111 623 / 111 624 with ART.175 or ART.129"));
+});
+
+test("final safety check confirms Matrix Modular routing precedence and role/composition discipline", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(
+      prompt.includes('that a family with source-proven Modular composition plus manufacturer-proven category-dependent module prices was routed to Matrix Modular rather than top-level pricing.priceMatrices; that Matrix Modular row.role/group.composition were emitted only when composition is source-proven and never given pricingMode: "direct";'),
+      `Expected ${focus} prompt's global self-check to include the Matrix Modular routing/role/composition verification`,
+    );
+  });
+  const workstationPrompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "that a family with both source-proven Modular composition and manufacturer-proven category-dependent module prices was routed to Matrix Modular rather than top-level pricing.priceMatrices",
+    'that Matrix Modular row.role and group.composition were emitted only when the source proves starter/add-on composition, and were never invented for an ordinary Matrix Modular family with no proven composition',
+    'that Matrix Modular was never given pricingMode: "direct"',
+  ].forEach((expected) => assert.ok(workstationPrompt.includes(expected), `Expected workstation final safety check to contain: ${expected}`));
+});
+
+// ---------------------------------------------------------------------------
+// Global routing text: category pricing without Modular composition stays
+// top-level, but the same rows under proven Modular composition route to
+// Matrix Modular (scalar module prices still use Direct Modular instead).
+// ---------------------------------------------------------------------------
+
+test("1: category-dependent pricing without Modular composition routes to top-level pricing.priceMatrices", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("full");
+  assert.ok(prompt.includes('When each PRIMARY product SKU has category-dependent prices and there is NO source-proven Modular composition, use pricing.priceMatrices.'));
+  assert.ok(prompt.includes('When each SKU has only one direct price and there is no Modular composition, use pricing.baseModelRows.'));
+});
+
+test("2: scalar-priced Modular composition routes to Direct Modular", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('(4) source-proven component/module composition, including starter/add-on systems, routes to pricing.modularGroups: scalar module prices use Direct Modular, while category/finish-dependent module prices use Matrix Modular.'));
+});
+
+test("3: category/finish-dependent Modular composition routes to Matrix Modular", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("full");
+  assert.ok(prompt.includes('When the SAME category-priced rows also participate in source-proven Modular composition such as starter + extension/add-on, do NOT stop at top-level pricing.priceMatrices; route the family to Matrix Modular under pricing.modularGroups so both the category-dependent price map and the structural role/composition are preserved.'));
+  const workstationPrompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(workstationPrompt.includes('(3) genuine manufacturer-proven row-by-category or finish-price-class pricing with NO source-proven structural composition routes to pricing.priceMatrices;'));
+});
+
+test("4: Terra regression remains unchanged by the routing-text replacements", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('route as Matrix Modular: exactly ONE Matrix Modular group containing Bench rows with role "starter" and Bench Extension rows with role "intermediate", group composition { "minStarters": 1, "maxStarters": 1 }, Standard (BL/AN) and Designs as matrix columns/price categories on those same rows, normal and E-suffix rows preserved as separate manufacturer rows, no synthetic Designs surcharge optionGroup, no selectionFamily between the starter and extension rows, and no pricingMode: "direct" on this group.'));
+});
+
+test("5: OXI_P regression remains unchanged by the routing-text replacements", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("OXI_P starter rows 111 065, 111 066, 111 067, and 111 068 plus intermediate rows 111 069, 111 070, 111 071, and 111 072 are a direct Modular composition when pages 14–15 prove that structure: use directRows with the respective starter/intermediate roles and composition minStarters: 1, maxStarters: 1"));
+});
+
+test("6: X3 regression remains unchanged by the routing-text replacements", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "partition into four separate direct Modular groups instead of one mixed group: A/38 mm/60 cm tops, A/38 mm/80 cm tops, B/215 mm/60 cm tops, and B/215 mm/80 cm tops, each with pricingMode: \"direct\"",
+    "Because these four X3-style groups represent alternative structural bench configurations that must not be combined within one quotation item, emit the SAME selectionFamily value on all four Direct Modular groups",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected unchanged X3 regression text: ${expected}`));
+});
+
+test("7: OXI_Q regression remains unchanged by the routing-text replacements", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("OXI extracted id \"oxi-q-ws-dx\" with supplierCodes [\"111 623\"], always complete with either ART.175 or ART.129"));
+  assert.ok(prompt.includes("OXI 111 623 / 111 624 with ART.175 or ART.129"));
+});
+
+// ---------------------------------------------------------------------------
+// Accessory target-scope tightening (general collection pages vs. proven
+// Bench applicability) and E-suffix "machined/prepared for electrification"
+// wording, plus the Bench/Workstation row-specification quality rule.
+// ---------------------------------------------------------------------------
+
+test("1: a general collection accessory page alone does NOT prove target-family applicability", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "Do not blindly attach every accessory shown on a manufacturer accessories page merely because that page is part of the supplied extraction batch.",
+    "A general collection-level accessory page does NOT prove that every listed accessory applies to the current target ProductTemplateDraft.",
+    "general electrification, cable tray, cable, and ancillary items shown only on a collection-wide accessory page must not automatically become confirmed Bench optionGroups unless the supplied source proves Bench applicability",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test('2: "drilled for bench" is valid Bench applicability evidence', () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('Explicit wording such as "drilled for bench", "for bench", "for meeting tables", "for operative desks", "for extension", or an accessory printed directly inside the selected family\'s own pricing block is strong applicability evidence and must be respected literally.'));
+  assert.ok(prompt.includes('a cable grommet item explicitly marked "drilled for bench" may be included for the Bench target'));
+});
+
+test('3: "for meeting tables" is excluded from the Bench target', () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('an item explicitly marked "center drill for meeting tables" must NOT be included as a selectable Bench option'));
+  assert.ok(prompt.includes("exclude items explicitly assigned to other product types such as meeting tables"));
+});
+
+test("4: unresolved general accessory applicability becomes a needs_review optionGroups item, never a silently omitted warning-only item or an unconditional global optionGroup", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    'when a general accessory is commercially relevant but exact target-family applicability is not proven, PRESERVE the item in optionGroups with reviewStatus: "needs_review" and a concise reviewReason instead of omitting it or making it unconditionally globally selectable.',
+    'If such general accessories appear commercially relevant but exact Bench applicability is unresolved, PRESERVE them in optionGroups with reviewStatus: "needs_review" and a concise reviewReason instead of omitting them or making them freely selectable as confirmed items.',
+    'preserve unresolved general accessory applicability as optionGroups items with reviewStatus: "needs_review" and a concise reviewReason, rather than omitting them, silently attaching them as confirmed, or downgrading them to an extractionWarning alone.',
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("5: Terra E-suffix wording describes machined/prepared for electrification", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    'When the source defines the E suffix as a top machined/prepared for electrification, describe that row as "Machined for Electrification" or equivalent source-faithful wording.',
+    "For Terra Office-style target scope, an E-suffix row means the top is machined/prepared for electrification when that is what the supplied technical source states",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test('6: Terra E-suffix is not described as fully "Electrified" unless the source explicitly says so', () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('Do NOT call the complete product "Electrified" unless the source explicitly proves that electrical hardware is included in that SKU.'));
+  assert.ok(prompt.includes('do not label the complete Bench "Electrified" unless electrical hardware is explicitly included'));
+});
+
+test("7: separate electrification accessories are not assumed included/required for E-suffix rows", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("Do not infer that separate electrification accessories are included with, required by, or automatically compatible with an E-suffix row unless the supplied source explicitly proves that relationship."));
+});
+
+test("8: Terra Matrix Modular routing remains unchanged", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('route as Matrix Modular: exactly ONE Matrix Modular group containing Bench rows with role "starter" and Bench Extension rows with role "intermediate"'));
+});
+
+test("9: Terra Standard/Designs matrix columns remain unchanged", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("Standard (BL/AN) and Designs as matrix columns/price categories on those same rows"));
+});
+
+test("10: Terra starter/intermediate roles remain unchanged", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('Bench rows with role "starter"'));
+  assert.ok(prompt.includes('Bench Extension rows with role "intermediate"'));
+});
+
+test("11: Terra composition remains unchanged", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('group composition { "minStarters": 1, "maxStarters": 1 }'));
+});
+
+test("12: OXI_P regression remains unchanged", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("OXI_P starter rows 111 065, 111 066, 111 067, and 111 068 plus intermediate rows 111 069, 111 070, 111 071, and 111 072 are a direct Modular composition when pages 14–15 prove that structure: use directRows with the respective starter/intermediate roles and composition minStarters: 1, maxStarters: 1"));
+});
+
+test("13: OXI_Q regression remains unchanged", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("OXI extracted id \"oxi-q-ws-dx\" with supplierCodes [\"111 623\"], always complete with either ART.175 or ART.129"));
+  assert.ok(prompt.includes("OXI 111 623 / 111 624 with ART.175 or ART.129"));
+});
+
+test("14: X3 regression remains unchanged", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "partition into four separate direct Modular groups instead of one mixed group: A/38 mm/60 cm tops, A/38 mm/80 cm tops, B/215 mm/60 cm tops, and B/215 mm/80 cm tops, each with pricingMode: \"direct\"",
+    "Because these four X3-style groups represent alternative structural bench configurations that must not be combined within one quotation item, emit the SAME selectionFamily value on all four Direct Modular groups",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected unchanged X3 regression text: ${expected}`));
+});
+
+test("15: row specification quality rule exists for technical-page-supported Bench/Workstation rows", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "WORKSTATION / BENCH ROW SPECIFICATION QUALITY",
+    'When a supplied technical page clearly provides family-wide construction for the same priced Bench/Workstation family, row.specification should normally combine that supported shared construction with the row-specific configuration/dimensions instead of using only a minimal phrase such as "Bench starter unit."',
+    "if the source proves a 25 mm MDP top, tubular steel legs, levellers, and the row's exact dimensions, a Bench row specification may combine those supported facts concisely with whether the row is a starter, extension, or machined-for-electrification variant",
+    "Do not duplicate long family text mechanically. Keep row specifications concise, model-specific, and source-faithful.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("workstation final safety check adds E-suffix, general accessory page, and target-type exclusion verifications", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "that an E-suffix row defined only as machined/prepared for electrification was not mislabeled as fully electrified",
+    "that a general collection accessory page was not treated as proof that every accessory applies to the selected Bench family",
+    "that accessories explicitly assigned to another product type were excluded from the target template entirely rather than marked needs_review",
+    "that unresolved general accessory applicability was preserved as a needs_review optionGroups item rather than omitted or made globally selectable as confirmed",
+    "that reviewStatus/reviewReason were never invented for an accessory whose applicability the source already proves or already excludes",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation final safety check to contain: ${expected}`));
+});
+
+// ---------------------------------------------------------------------------
+// Smart Setup applicability-review layer: optionGroups[].items may carry an
+// optional reviewStatus/reviewReason so a commercially relevant, uncertain
+// accessory is PRESERVED for human review instead of silently omitted.
+// ---------------------------------------------------------------------------
+
+test("the embedded ProductTemplateDraft v1 contract shows the optional reviewStatus/reviewReason field shape on optionGroups items for every focus", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(
+      prompt.includes('"referenceCodes": [], "reviewStatus": "needs_review", "reviewReason": "Exact target-family applicability is not proven by the supplied source." }] }, { "id": "", "label": null, "selection": { "mode": "required_choose_at_least_one"'),
+      `Expected ${focus} prompt's optionGroups contract to show reviewStatus/reviewReason field shape`,
+    );
+  });
+});
+
+test("OPTIONGROUPS.ITEMS REVIEW STATUS documents reviewStatus/reviewReason as optional, review-boundary-only, and never invented for proven or excluded items", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "OPTIONGROUPS.ITEMS REVIEW STATUS",
+      'Every optionGroups[].items entry may optionally carry reviewStatus: "confirmed" | "needs_review" and a short reviewReason string.',
+      "it never affects price, prices, dimensions, supplier codes, conditionalConfiguration, role, quantity, or selection mode",
+      "it never persists into saved Product Template pricing JSON, Product Library, or quotation data",
+      'OMIT reviewStatus/reviewReason entirely, or use reviewStatus: "confirmed", for an ordinary accessory whose applicability the supplied source proves or that needs no review. Missing reviewStatus behaves as confirmed; never invent reviewReason for a confirmed item.',
+      'Use reviewStatus: "needs_review" plus a concise, trimmed, non-empty reviewReason only for the PRESERVE + NEEDS REVIEW case',
+      "Do NOT invent conditionalConfiguration/applicability for a needs_review item merely to justify including it.",
+      'Do NOT use reviewStatus: "needs_review" for an item the source explicitly assigns to another product type; that item is excluded from the target template entirely, not preserved with any reviewStatus.',
+      'Never emit any reviewStatus value other than "confirmed" or "needs_review", and never emit an empty reviewReason string',
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain: ${expected}`));
+  });
+});
+
+test("ACCESSORY PAGE COVERAGE requires PRESERVE + NEEDS REVIEW for uncertain applicability instead of OMIT + WARNING ONLY", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "UNCERTAIN case: PRESERVE + NEEDS REVIEW, never OMIT + WARNING ONLY.",
+    'A commercially relevant, plausibly related accessory whose exact applicability is unproven must reach optionGroups as a reviewStatus: "needs_review" item so a human can confirm or exclude it in Smart Setup; it must not be silently dropped and replaced with only an extractionWarning or a linkedFamilySuggestion.',
+    'when a general accessory is commercially relevant but exact target-family applicability is not proven, PRESERVE the item in optionGroups with reviewStatus: "needs_review" and a concise reviewReason instead of omitting it or making it unconditionally globally selectable.',
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("14: an explicitly incompatible accessory (another product type) remains excluded entirely, never marked needs_review", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    'exclude an accessory when the source explicitly ties it to another family/product type; do NOT use reviewStatus: "needs_review" as a way to bypass that clear incompatibility;',
+    'an item explicitly marked "center drill for meeting tables" must NOT be included as a selectable Bench option, and must NOT be preserved as needs_review either — it is excluded entirely;',
+    'exclude items explicitly assigned to other product types such as meeting tables entirely, never as needs_review;',
+    "When the source explicitly assigns the item to another product type:\n- exclude it from the selected target template\n- do NOT use needs_review as a way to bypass clear incompatibility",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+// ---------------------------------------------------------------------------
+// Companion furniture family preservation: a separately priced cabinet,
+// pedestal, service unit, return, support storage, bridge, or similar
+// component must never be silently dropped merely because it sits beside the
+// selected primary family, and it must never distort that family's pricing
+// architecture unless genuine Modular composition is proven.
+// ---------------------------------------------------------------------------
+
+test("1/5: COMPANION FURNITURE FAMILY PRESERVATION requires every separately priced companion (cabinet, pedestal, service unit, return, etc.) to be preserved, never omitted, and never merged into the primary row price", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "COMPANION FURNITURE FAMILY PRESERVATION",
+      "When the selected primary family is commercially defined by another separately priced furniture component shown in the same supplied source block, do not silently omit that companion merely because it has its own supplier codes, dimensions, images, and prices.",
+      "- cabinet",
+      "- pedestal",
+      "- service unit",
+      "- under-top storage",
+      "- return",
+      "- bridge",
+      "- support storage",
+      "- support cabinet",
+      "- extension furniture",
+      "- separately priced structural support component",
+      "Preserve the primary family and companion family as separate commercial entities.",
+      "Never flatten a separately priced furniture companion into a normal small accessory merely because it appears beside the primary family.",
+      "Never add the companion price to the primary row price unless the source explicitly defines one complete combined price.",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain: ${expected}`));
+  });
+});
+
+test("2: a required companion relationship is emitted only when the source proves requiredness", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(prompt.includes("If the supplied source explicitly proves the companion is REQUIRED for the selected primary family:"), `Expected ${focus} prompt to gate required companion preservation on explicit source proof`);
+    assert.ok(prompt.includes("preserve the companion relationship as required/companion configuration using the existing supported linked/companion mechanisms;"));
+    assert.ok(prompt.includes("do not merge the companion price into the primary SKU unless the manufacturer explicitly prices them as one complete SKU."));
+  });
+});
+
+test("3: an optional companion relationship is emitted only when the source proves optionality", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(prompt.includes("If the supplied source explicitly proves the companion is OPTIONAL:"), `Expected ${focus} prompt to gate optional companion preservation on explicit source proof`);
+    assert.ok(prompt.includes("preserve it as an optional linked/companion family using the existing supported mechanisms."));
+  });
+});
+
+test("4: an unresolved companion relationship is preserved for review / as a linked suggestion, never omitted or invented", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "If the commercial relationship is clear from the supplied source, but exact requiredness, compatibility, or row-level applicability is not fully proven:",
+      "- do NOT omit the companion;",
+      "- preserve it as a linkedFamilySuggestion or other existing reviewable companion representation;",
+      "- if available within the current draft contract, mark the unresolved applicability for user review rather than inventing a required rule.",
+      "If the source explicitly proves the separately priced item belongs to another unrelated product type:\n- exclude it from the selected target family.",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain: ${expected}`));
+  });
+});
+
+test("6/7: a complete primary SKU is not routed to Modular solely because a companion family exists, but genuine starter/add-on systems still route to Modular", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "PRIMARY FAMILY VS COMPANION ROUTING",
+      "A separately priced companion furniture family must not change the pricing architecture of the primary family unless the source proves genuine modular composition.",
+      "- complete category-priced desk/bench rows + separately priced cabinet companion\n  -> primary rows remain complete category-priced primary SKUs;\n  -> cabinet remains a separate linked/companion family.",
+      "- complete direct-priced desk + separately priced pedestal/service unit\n  -> desk remains Base/Model or the correct complete-SKU architecture;\n  -> pedestal/service unit remains a separate linked/companion family.",
+      "- genuine starter/add-on/module system\n  -> use Modular pricing only when the source proves true structural composition between those rows.",
+      "Do not route a complete primary SKU family to Modular merely because a separately priced companion cabinet, pedestal, return, or service unit is shown nearby.",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain: ${expected}`));
+  });
+});
+
+test("8: SAME-PAGE UNRELATED PRIMARY PRODUCT ISOLATION does not incorrectly exclude a commercially linked companion furniture item", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("A separately priced furniture item that is commercially part of the selected system as a cabinet, pedestal, service unit, return, support storage, bridge, or other companion must NOT be treated as an unrelated same-page primary product merely because it has separate supplier codes and prices; apply COMPANION FURNITURE FAMILY PRESERVATION instead."));
+  // Still part of the SAME-PAGE UNRELATED PRIMARY PRODUCT ISOLATION section, right after its existing closing sentence.
+  assert.ok(prompt.includes("This rule is mandatory whenever TARGET TEMPLATE SCOPE identifies one selected family. Same-page proximity never overrides target-template scope. A separately priced furniture item"));
+});
+
+test("9/10/11: Terra Bench-for-Cabinet regression preserves complete primary Bench rows and a separate, review-safe cabinet companion", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    'For a Terra Office-style "Bench for Cabinet" source block, complete Bench-for-Cabinet rows such as normal and E-suffix Bench SKUs remain complete primary priced rows with their manufacturer-proven category/finish price columns.',
+    "They must not be forced into starter/intermediate Modular composition merely because a separately priced cabinet family is shown in the same commercial block.",
+    "A separately priced cabinet family shown directly under the Bench-for-Cabinet commercial section must not be silently omitted.",
+    'If that same supplied source visibly provides the cabinet family\'s own SKU codes, dimensions, and prices, those authoritative cabinet rows must also be preserved as reviewable companion commercial rows; a linkedFamilySuggestion alone is insufficient because it loses the cabinet\'s commercial pricing data.',
+    "Preserve each supplied cabinet SKU separately using an optionGroup or the safest currently supported companion structure.",
+    'If exact Bench-row compatibility or requiredness is not fully proven, mark the cabinet items reviewStatus: "needs_review" with a concise reviewReason instead of inventing conditionalConfiguration.',
+    "Do not merge cabinet price into the Bench price. Preserve that cabinet family separately as a linked/companion furniture candidate.",
+    "If the supplied source explicitly proves the cabinet is required, preserve it as a required companion; if exact requiredness or row compatibility is not fully proven, preserve it for user review rather than inventing the rule.",
+    "The cabinet price must never be merged into the Bench price unless the manufacturer explicitly provides one combined complete price.",
+    "This Terra example is regression guidance only. Codes, labels, dimensions, prices, and compatibility must still come from the supplied source.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("12: Terra standard Bench starter/intermediate Matrix Modular regression remains unchanged by the companion-family rules", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('route as Matrix Modular: exactly ONE Matrix Modular group containing Bench rows with role "starter" and Bench Extension rows with role "intermediate", group composition { "minStarters": 1, "maxStarters": 1 }, Standard (BL/AN) and Designs as matrix columns/price categories on those same rows, normal and E-suffix rows preserved as separate manufacturer rows, no synthetic Designs surcharge optionGroup, no selectionFamily between the starter and extension rows, and no pricingMode: "direct" on this group.'));
+});
+
+test("13: X3 regression remains unchanged by the companion-family rules", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "partition into four separate direct Modular groups instead of one mixed group: A/38 mm/60 cm tops, A/38 mm/80 cm tops, B/215 mm/60 cm tops, and B/215 mm/80 cm tops, each with pricingMode: \"direct\"",
+    "Because these four X3-style groups represent alternative structural bench configurations that must not be combined within one quotation item, emit the SAME selectionFamily value on all four Direct Modular groups",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected unchanged X3 regression text: ${expected}`));
+});
+
+test("14: OXI_P regression remains unchanged by the companion-family rules", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("OXI_P starter rows 111 065, 111 066, 111 067, and 111 068 plus intermediate rows 111 069, 111 070, 111 071, and 111 072 are a direct Modular composition when pages 14–15 prove that structure: use directRows with the respective starter/intermediate roles and composition minStarters: 1, maxStarters: 1"));
+});
+
+test("15: OXI_Q regression remains unchanged by the companion-family rules", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("OXI extracted id \"oxi-q-ws-dx\" with supplierCodes [\"111 623\"], always complete with either ART.175 or ART.129"));
+  assert.ok(prompt.includes("OXI 111 623 / 111 624 with ART.175 or ART.129"));
+});
+
+test("16: accessory needs_review rules remain unchanged by the companion-family rules", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(prompt.includes('Every optionGroups[].items entry may optionally carry reviewStatus: "confirmed" | "needs_review" and a short reviewReason string.'));
+  });
+  const workstationPrompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(workstationPrompt.includes('preserve unresolved general accessory applicability as optionGroups items with reviewStatus: "needs_review" and a concise reviewReason'));
+});
+
+test("workstation final safety check adds companion-family preservation verifications", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "that a separately priced cabinet, pedestal, service unit, return, support storage, bridge, or other companion furniture family shown as part of the selected commercial system was not silently omitted",
+    "that complete primary SKUs were not incorrectly routed to Modular merely because a companion family was present",
+    "that companion prices were not merged into primary SKU prices without explicit manufacturer proof",
+    "and that unresolved companion applicability or requiredness was preserved for review rather than invented",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation final safety check to contain: ${expected}`));
+});
+
+test("FINAL CHECK item 29 documents companion furniture family preservation", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(
+      prompt.includes('29. Every separately priced companion furniture family that is commercially part of the selected target system was preserved separately rather than silently omitted or flattened into a normal accessory; exact required/optional relationships were emitted only when proven by the source, unresolved relationships were preserved for review, and companion prices were not merged into primary SKU prices unless explicitly combined by the manufacturer.'),
+      `Expected ${focus} prompt's FINAL CHECK to include item 29 on companion furniture family preservation`,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Companion commercial row preservation: a linkedFamilySuggestion alone is
+// insufficient when the companion family has its own authoritative SKU
+// rows — those rows (code, dimensions, price, spec) must be preserved too,
+// as reviewable optionGroup items when requiredness/applicability is not
+// yet proven, or as a Required Companion when it explicitly is proven.
+// ---------------------------------------------------------------------------
+
+test("1: a linkedFamilySuggestion alone is documented as insufficient when the companion has authoritative priced rows", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "When the companion family itself has authoritative commercial rows in the supplied source — for example its own supplier codes, dimensions, prices, specifications, images, or finish/category prices — preserving only a linkedFamilySuggestion is NOT sufficient because that would discard the companion's commercial data.",
+      "COMPANION COMMERCIAL ROW PRESERVATION",
+      "A linkedFamilySuggestion preserves relationship/context only. It does NOT replace extraction of authoritative companion commercial rows when those rows are visibly supplied.",
+      "linkedFamilySuggestions are relationship metadata only. They must not be used as the sole representation of a separately priced companion family when the supplied source includes authoritative companion SKU rows with prices/dimensions/codes. In that case preserve the linked-family relationship if useful, but also preserve the actual commercial companion rows according to COMPANION COMMERCIAL ROW PRESERVATION.",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain: ${expected}`));
+  });
+});
+
+test("2/3/4: companion supplier code, dimensions, and price are all named as fields that must be preserved on each companion row", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "1. Preserve each distinct companion SKU row separately.",
+      "2. Preserve its:\n   - supplier code\n   - display name / label\n   - dimensions\n   - currency\n   - authoritative price or price map\n   - specification\n   - importantRequirements\n   - source-supported image/reference information where the current contract permits it.",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain: ${expected}`));
+  });
+});
+
+test("5: multiple companion SKUs must remain separate rows, never collapsed into one generic suggestion", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(prompt.includes("3. Never collapse several companion SKUs into one generic linked-family suggestion if doing so would lose prices, dimensions, or row identity."), `Expected ${focus} prompt to contain the multi-SKU preservation rule`);
+  });
+});
+
+test("6/7: unresolved companion rows use reviewStatus: needs_review and must not invent conditionalConfiguration", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      'when the companion rows are reviewable separately priced furniture and exact requiredness/applicability is not yet proven, preserve them in an optionGroup using the ordinary priced-item fields;',
+      'mark each unresolved companion item reviewStatus: "needs_review";',
+      "use a concise reviewReason explaining that the commercial relationship is clear but exact requiredness and/or row applicability is not fully proven;",
+      "do NOT invent conditionalConfiguration while the relationship remains unresolved;",
+      "allow the user to confirm or exclude the companion in Smart Setup.",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain: ${expected}`));
+  });
+});
+
+test("8: explicitly proven required companions may use the supported Required Companion / conditionalConfiguration structure instead of needs_review", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "If the source explicitly proves exact requiredness and row applicability and the current supported companion structure can safely encode it:",
+      "- use the supported Required Companion / conditionalConfiguration structure instead of needs_review;",
+      "- preserve fixed quantity only when explicitly proven.",
+      "If the companion is explicitly unrelated to the target family:\n- exclude it entirely.",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain: ${expected}`));
+  });
+});
+
+test("9: companion price is never merged into the primary SKU price unless the manufacturer publishes one combined price", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "4. Never merge the companion price into the primary SKU price unless the manufacturer explicitly publishes one combined complete price.",
+      "5. Never move a substantial separately priced furniture companion into primary pricing simply because it has a price.",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to contain: ${expected}`));
+  });
+  const workstationPrompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(workstationPrompt.includes("Do not merge cabinet price into the Bench price."));
+  assert.ok(workstationPrompt.includes("  -> when cabinet SKU rows and prices are supplied, preserve those cabinet commercial rows separately as well; do not reduce them to relationship metadata only."));
+});
+
+test("10: Terra Bench-for-Cabinet cabinet rows are preserved commercially (code, dimensions, price), not just as a linkedFamilySuggestion", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    'If that same supplied source visibly provides the cabinet family\'s own SKU codes, dimensions, and prices, those authoritative cabinet rows must also be preserved as reviewable companion commercial rows; a linkedFamilySuggestion alone is insufficient because it loses the cabinet\'s commercial pricing data.',
+    "Preserve each supplied cabinet SKU separately using an optionGroup or the safest currently supported companion structure.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation prompt to contain: ${expected}`));
+});
+
+test("11: Terra cabinet linkedFamilySuggestion may coexist with priced reviewable rows, and unresolved cabinet rows use needs_review, never invented conditionalConfiguration", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('If exact Bench-row compatibility or requiredness is not fully proven, mark the cabinet items reviewStatus: "needs_review" with a concise reviewReason instead of inventing conditionalConfiguration.'));
+  assert.ok(prompt.includes("preserve linkedFamilySuggestions when useful for family-level relationship/context;"));
+  assert.ok(prompt.includes("ALSO preserve the actual supplied companion commercial rows using an existing ProductTemplateDraft structure that can retain their code, dimensions, price, currency, specification, and review state;"));
+});
+
+test("12: Terra standard Bench starter/intermediate Matrix Modular regression remains unchanged by the companion commercial-row rules", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes('route as Matrix Modular: exactly ONE Matrix Modular group containing Bench rows with role "starter" and Bench Extension rows with role "intermediate", group composition { "minStarters": 1, "maxStarters": 1 }, Standard (BL/AN) and Designs as matrix columns/price categories on those same rows, normal and E-suffix rows preserved as separate manufacturer rows, no synthetic Designs surcharge optionGroup, no selectionFamily between the starter and extension rows, and no pricingMode: "direct" on this group.'));
+});
+
+test("13: X3 regression remains unchanged by the companion commercial-row rules", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "partition into four separate direct Modular groups instead of one mixed group: A/38 mm/60 cm tops, A/38 mm/80 cm tops, B/215 mm/60 cm tops, and B/215 mm/80 cm tops, each with pricingMode: \"direct\"",
+    "Because these four X3-style groups represent alternative structural bench configurations that must not be combined within one quotation item, emit the SAME selectionFamily value on all four Direct Modular groups",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected unchanged X3 regression text: ${expected}`));
+});
+
+test("14: OXI_P regression remains unchanged by the companion commercial-row rules", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("OXI_P starter rows 111 065, 111 066, 111 067, and 111 068 plus intermediate rows 111 069, 111 070, 111 071, and 111 072 are a direct Modular composition when pages 14–15 prove that structure: use directRows with the respective starter/intermediate roles and composition minStarters: 1, maxStarters: 1"));
+});
+
+test("15: OXI_Q regression remains unchanged by the companion commercial-row rules", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  assert.ok(prompt.includes("OXI extracted id \"oxi-q-ws-dx\" with supplierCodes [\"111 623\"], always complete with either ART.175 or ART.129"));
+  assert.ok(prompt.includes("OXI 111 623 / 111 624 with ART.175 or ART.129"));
+});
+
+test("16: accessory needs_review contract rules remain unchanged by the companion commercial-row rules", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(prompt.includes('Every optionGroups[].items entry may optionally carry reviewStatus: "confirmed" | "needs_review" and a short reviewReason string.'));
+    assert.ok(prompt.includes('Do NOT use reviewStatus: "needs_review" for an item the source explicitly assigns to another product type; that item is excluded from the target template entirely, not preserved with any reviewStatus.'));
+  });
+});
+
+test("workstation final safety check adds companion commercial-row preservation verifications", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "that a supplied companion furniture family with authoritative priced SKU rows was not represented only as a linkedFamilySuggestion while its prices/dimensions/codes were lost",
+    "that each supplied companion SKU row was preserved separately",
+    "that unresolved companion rows were surfaced for user review without invented applicability",
+    "and that no companion commercial price was merged into the primary SKU price without explicit manufacturer proof",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected workstation final safety check to contain: ${expected}`));
+});
+
+test("FINAL CHECK item 30 documents companion commercial-row preservation", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(
+      prompt.includes('30. Every supplied separately priced companion furniture SKU retained its authoritative commercial row data — including code, dimensions, currency, price or price map, and supported specification — rather than being reduced only to linkedFamilySuggestions; unresolved companion applicability/requiredness was preserved for user review, and no companion price was merged into the primary SKU unless the manufacturer explicitly publishes a combined price.'),
+      `Expected ${focus} prompt's FINAL CHECK to include item 30 on companion commercial-row preservation`,
+    );
   });
 });

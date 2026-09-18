@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { normalizeProductTemplateDraft, type ProductTemplateDraft } from "./product-template-draft.js";
 import {
+  accessoryNeedsReviewCount,
+  ACCESSORY_REVIEW_REQUIRED_MESSAGE,
   applySmartProductReviewCurrencyOverride,
   collectPricedRowCurrencies,
   collectSourcePageNumbers,
@@ -12,11 +14,13 @@ import {
   fillNullPricedRowCurrenciesFromDefault,
   formatDraftPrice,
   getSmartProductReviewSections,
+  hasUnresolvedAccessoryReview,
   partialExtractionStatus,
   reviewImportantRequirements,
   reviewedProductTemplateDraftForApply,
   smartProductWarningSummary,
   smartProductExtractionCoverage,
+  stripAccessoryReviewMetadata,
   updateReviewedMaterialSuggestion,
   updateReviewedMatrix,
   updateReviewedMatrixPrice,
@@ -34,6 +38,57 @@ test("Smart Setup keeps imported requirements in a dedicated expanded-row textar
   const source = readFileSync("components/products/smart-product-json-import.tsx", "utf8");
   ["Important Requirements", "One requirement per line", "reviewImportantRequirements", "value={row.importantRequirements}"].forEach((expected) => assert.ok(source.includes(expected)));
   assert.ok((source.match(/ImportantRequirementsField/g) ?? []).length >= 4);
+});
+
+test("1: Source QA has a Show / Hide control following the existing expanded/collapsed button pattern", () => {
+  const source = readFileSync("components/products/source-qa-panel.tsx", "utf8");
+  assert.ok(source.includes('aria-expanded={expanded} onClick={toggleExpanded} className="rounded border border-zinc-300 bg-white px-2 py-1 text-xs font-semibold text-emerald-900">{expanded ? "Hide" : "Show"}'), "Expected a Show/Hide toggle button reusing the existing button styling convention");
+});
+
+test("2: collapsing Source QA hides the missing-from-JSON list and AI report, gating them behind expanded", () => {
+  const source = readFileSync("components/products/source-qa-panel.tsx", "utf8");
+  assert.ok(source.includes("{expanded ? <>{aiError ?"), "Expected the AI error/report block to only render while expanded");
+  assert.ok(source.includes("Missing from supplied pages ({missing.length})"), "Expected the full missing-from-JSON list to still exist in the expanded branch");
+  const expandedBranch = source.slice(source.indexOf("{expanded ? <>{aiError ?"), source.indexOf("{source && cropPage ?"));
+  assert.ok(expandedBranch.includes("Missing from supplied pages ({missing.length})"), "Expected the missing-item list to be nested inside the expanded-only branch");
+});
+
+test("3: a compact PDF/status/missing summary remains visible while Source QA is collapsed", () => {
+  const source = readFileSync("components/products/source-qa-panel.tsx", "utf8");
+  assert.ok(source.includes("const compactSummary = source ? `PDF: ${source.pageCount} pages · Status: ${sourceQaReviewStatus(findings) === \"pass\" ? \"PASS\" : \"REVIEW NEEDED\"} · Missing: ${missing.length}` : status;"), "Expected a compact summary reusing the existing pageCount/status/missing values");
+  assert.ok(source.includes("{!expanded ? compactSummary : status}"), "Expected the collapsed header to show the compact summary instead of the raw status message");
+});
+
+test("4: expanding Source QA restores Run Source QA, Crop Images, and Upload / Replace PDF exactly as before", () => {
+  const source = readFileSync("components/products/source-qa-panel.tsx", "utf8");
+  ["Run Source QA", "Crop Images", "Upload / Replace PDF", "Running Source QA…"].forEach((expected) => assert.ok(source.includes(expected), `Expected Source QA to still contain: ${expected}`));
+  assert.ok(source.includes("{expanded ? <><button disabled={!source || aiPending} onClick={() => void runAiQa()}"), "Expected Run Source QA/Crop Images/Upload PDF controls to be gated behind expanded, not removed");
+});
+
+test("5: toggling Show/Hide only changes local expand state and never touches QA data", () => {
+  const source = readFileSync("components/products/source-qa-panel.tsx", "utf8");
+  assert.ok(source.includes("const toggleExpanded = () => { setExpanded((current) => !current); autoCollapsed.current = true; };"), "Expected the toggle handler to only update expanded/autoCollapsed state");
+  ["setSource", "setPages", "setIgnored", "setAiReport", "setAiError", "setStatus"].forEach((setter) => {
+    const toggleLine = source.slice(source.indexOf("const toggleExpanded ="), source.indexOf("const toggleExpanded =") + 120);
+    assert.ok(!toggleLine.includes(setter), `Expected toggleExpanded to never call ${setter}`);
+  });
+});
+
+test("6: existing Source QA wiring (Run Source QA, Crop Image, Ignore, crop event, upload) is unchanged", () => {
+  const source = readFileSync("components/products/source-qa-panel.tsx", "utf8");
+  [
+    "const runAiQa = async () => { if (!source || aiPending) return;",
+    "window.addEventListener(\"source-qa-crop\", open)",
+    "onClick={() => { setFixedTarget(null); setCropSearch(finding.sourceCode); setCropPage(finding.pageNumber); }}>Crop Image<",
+    "onClick={() => setIgnored((current) => new Set([...current, finding.normalizedCode]))}>Ignore<",
+    "<SourceQaCropViewer storagePath={source.storagePath} pageCount={source.pageCount} pages={pages} initialSearch={cropSearch} initialPage={cropPage} targets={targets} initialFixedTargetId={fixedTarget?.id} existingTargetIds={targetImageIds} onAssign={assign} onClose={() => { setCropPage(null); setFixedTarget(null); }} />",
+  ].forEach((expected) => assert.ok(source.includes(expected), `Expected unchanged Source QA wiring: ${expected}`));
+});
+
+test("Source QA defaults to expanded before a PDF is uploaded and auto-collapses once, without re-collapsing on later toggles", () => {
+  const source = readFileSync("components/products/source-qa-panel.tsx", "utf8");
+  assert.ok(source.includes("const [expanded, setExpanded] = useState(true); const autoCollapsed = useRef(false);"));
+  assert.ok(source.includes('if (!autoCollapsed.current) { autoCollapsed.current = true; setExpanded(false); } } catch (error)'), "Expected upload success to collapse the panel exactly once (guarded by the autoCollapsed ref)");
 });
 
 test("partial extraction status detects explicit continuation warnings only", () => {
@@ -63,9 +118,79 @@ test("extraction coverage compacts all imported source pages and uses only expli
   draft.sources = [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 54].map((pageNumber) => ({ id: `page-${pageNumber}`, documentName: null, pageNumber, region: null, rawText: null }));
   draft.extractionWarnings = ["Unreadable price.", "Extraction complete through printed page 44. Printed pages 45-54 remain and must be extracted in the next supplemental batch."];
   assert.deepEqual(collectSourcePageNumbers(draft), [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54]);
-  assert.deepEqual(smartProductExtractionCoverage(draft, 2), { extractedPages: "38–54", pendingPages: "45-54", status: "PARTIAL", sourceBatchCount: 2 });
+  assert.deepEqual(smartProductExtractionCoverage(draft, 2), { extractedPages: "38–54", pendingPages: "45-54", missingSuppliedPages: null, status: "PARTIAL", sourceBatchCount: 2 });
   draft.extractionWarnings = ["Finishing top reference pending review."];
-  assert.deepEqual(smartProductExtractionCoverage(draft, 2), { extractedPages: "38–54", pendingPages: null, status: "COMPLETE", sourceBatchCount: 2 });
+  assert.deepEqual(smartProductExtractionCoverage(draft, 2), { extractedPages: "38–54", pendingPages: null, missingSuppliedPages: null, status: "COMPLETE", sourceBatchCount: 2 });
+});
+
+function draftWithExtractedPages(pageNumbers: number[]) {
+  const draft = structuredClone(reviewedSource);
+  draft.sources = pageNumbers.map((pageNumber) => ({ id: `page-${pageNumber}`, documentName: null, pageNumber, region: null, rawText: null }));
+  draft.extractionWarnings = [];
+  return draft;
+}
+
+const physicalPages10 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+test("1: physical PDF pages 1-10 (mapped to printed 28-37) with only printed 28-32,35-36 extracted reports pending 33-34,37, NOT pending 1-10", () => {
+  const draft = draftWithExtractedPages([28, 29, 30, 31, 32, 35, 36]);
+  const coverage = smartProductExtractionCoverage(draft, 1, physicalPages10);
+  assert.equal(coverage.missingSuppliedPages, "33–34, 37");
+  assert.equal(coverage.pendingPages, "33–34, 37");
+  assert.notEqual(coverage.status, "COMPLETE");
+  assert.equal(coverage.status, "PARTIAL");
+  assert.ok(!(coverage.pendingPages ?? "").includes("1–10"), "Physical PDF indices 1-10 must never leak into the printed-page pending list");
+});
+
+test("1b: Sigma example — physical PDF pages 1-10 mapped to printed 28-37, extracted printed 28-36, pending is exactly 37 and PARTIAL", () => {
+  const draft = draftWithExtractedPages([28, 29, 30, 31, 32, 33, 34, 35, 36]);
+  const coverage = smartProductExtractionCoverage(draft, 1, physicalPages10);
+  assert.equal(coverage.missingSuppliedPages, "37");
+  assert.equal(coverage.status, "PARTIAL");
+});
+
+test("2: physical PDF pages 1-10 mapped to printed 28-37 with every printed page 28-37 extracted reports no pending pages and COMPLETE", () => {
+  const draft = draftWithExtractedPages([28, 29, 30, 31, 32, 33, 34, 35, 36, 37]);
+  const coverage = smartProductExtractionCoverage(draft, 1, physicalPages10);
+  assert.equal(coverage.missingSuppliedPages, null);
+  assert.equal(coverage.pendingPages, null);
+  assert.equal(coverage.status, "COMPLETE");
+});
+
+test("3: a page referenced in source text but outside the supplied printed 28-37 batch is a separate classification, never a missing supplied page", () => {
+  const draft = draftWithExtractedPages([28, 29, 30, 31, 32, 33, 34, 35, 36, 37]);
+  const coverage = smartProductExtractionCoverage(draft, 1, physicalPages10);
+  assert.equal(coverage.missingSuppliedPages, null);
+  assert.equal(coverage.status, "COMPLETE");
+  assert.ok(!(coverage.missingSuppliedPages ?? "").includes("40"), "Page 40, referenced but never supplied, must never appear as a missing supplied page");
+});
+
+test("4: missing supplied pages are computed even when extractionWarnings incorrectly claim completion", () => {
+  const draft = draftWithExtractedPages([28, 29, 30, 31, 32, 35, 36]);
+  draft.extractionWarnings = ["Extraction complete."];
+  const coverage = smartProductExtractionCoverage(draft, 1, physicalPages10);
+  assert.equal(coverage.missingSuppliedPages, "33–34, 37");
+  assert.notEqual(coverage.status, "COMPLETE");
+});
+
+test("5: non-contiguous missing supplied page ranges render as exact compressed ranges", () => {
+  const draft = draftWithExtractedPages([28, 30, 32, 34, 36]);
+  const coverage = smartProductExtractionCoverage(draft, 1, physicalPages10);
+  assert.equal(coverage.missingSuppliedPages, "29, 31, 33, 35, 37");
+});
+
+test("6: null/unknown supplied page metadata never fabricates missing-page ranges", () => {
+  const draft = draftWithExtractedPages([28, 29, 30]);
+  assert.deepEqual(smartProductExtractionCoverage(draft, 1, null).missingSuppliedPages, null);
+  assert.deepEqual(smartProductExtractionCoverage(draft, 1, undefined).missingSuppliedPages, null);
+  assert.deepEqual(smartProductExtractionCoverage(draft, 1, []).missingSuppliedPages, null);
+});
+
+test("7: without a resolvable printed-page anchor (no pages extracted yet), physical page indices are never cross-domain compared against a printed range", () => {
+  const draft = draftWithExtractedPages([]);
+  const coverage = smartProductExtractionCoverage(draft, 1, physicalPages10);
+  assert.equal(coverage.missingSuppliedPages, null);
+  assert.equal(coverage.status, "COMPLETE");
 });
 
 test("review helpers preserve explicit zero and omit empty pricing sections", () => {
@@ -206,4 +331,52 @@ test("global currency override covers every pricing structure without changing a
   assert.equal(overridden.pricing.priceMatrices[1].rows[0].prices["cat-a"], 900);
   assert.equal(overridden.pricing.modularGroups[0].matrix!.rows[0].prices.cat, 0);
   assert.equal(overridden.optionGroups[0].items[0].price, 32);
+});
+
+function draftWithNeedsReviewAccessory() {
+  const draft = currencyDraft();
+  draft.optionGroups[0].items.push({ id: "electrification", label: "Electrification Unit", displayName: "Electrification Unit", dimensions: null, currency: "EUR", price: 40, specification: null, supplierCodes: [], referenceCodes: [], reviewStatus: "needs_review", reviewReason: "Exact target-family applicability is not proven by the supplied source." });
+  return draft;
+}
+
+test("7: accessoryNeedsReviewCount / hasUnresolvedAccessoryReview detect an unresolved needs_review item, and reviewedProductTemplateDraftForApply refuses to apply it", () => {
+  const draft = draftWithNeedsReviewAccessory();
+  assert.equal(accessoryNeedsReviewCount(draft), 1);
+  assert.equal(hasUnresolvedAccessoryReview(draft), true);
+  assert.throws(() => reviewedProductTemplateDraftForApply(draft), new RegExp(ACCESSORY_REVIEW_REQUIRED_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("8: once every accessory is confirmed or excluded, Apply proceeds and returns the resolved draft", () => {
+  const confirmed = draftWithNeedsReviewAccessory();
+  confirmed.optionGroups[0].items[1].reviewStatus = "confirmed";
+  assert.equal(hasUnresolvedAccessoryReview(confirmed), false);
+  assert.doesNotThrow(() => reviewedProductTemplateDraftForApply(confirmed));
+
+  const excluded = draftWithNeedsReviewAccessory();
+  excluded.optionGroups[0].items = excluded.optionGroups[0].items.filter((item) => item.id !== "electrification");
+  assert.equal(hasUnresolvedAccessoryReview(excluded), false);
+  assert.doesNotThrow(() => reviewedProductTemplateDraftForApply(excluded));
+});
+
+test("9/10/11: reviewStatus/reviewReason are stripped before the draft reaches Product Template mapping, and never appear in the applied result", () => {
+  const confirmed = draftWithNeedsReviewAccessory();
+  confirmed.optionGroups[0].items[1].reviewStatus = "confirmed";
+  const applied = reviewedProductTemplateDraftForApply(confirmed);
+  applied.optionGroups.forEach((group) => group.items.forEach((item) => {
+    assert.equal("reviewStatus" in item, false, "Expected reviewStatus to be stripped before Product Template mapping");
+    assert.equal("reviewReason" in item, false, "Expected reviewReason to be stripped before Product Template mapping");
+  }));
+  assert.ok(!JSON.stringify(applied).includes("reviewStatus"), "Expected the applied draft JSON to never contain reviewStatus");
+});
+
+test("stripAccessoryReviewMetadata removes reviewStatus/reviewReason from every optionGroups item without touching other fields", () => {
+  const draft = draftWithNeedsReviewAccessory();
+  const stripped = stripAccessoryReviewMetadata(draft);
+  const item = stripped.optionGroups[0].items[1];
+  assert.equal("reviewStatus" in item, false);
+  assert.equal("reviewReason" in item, false);
+  assert.equal(item.price, 40);
+  assert.equal(item.id, "electrification");
+  // Original draft is untouched.
+  assert.equal(draft.optionGroups[0].items[1].reviewStatus, "needs_review");
 });

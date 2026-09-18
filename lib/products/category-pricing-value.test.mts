@@ -151,6 +151,108 @@ test("Matrix Modular without role/composition remains backward compatible after 
   assert.deepEqual(group.items[0].prices, { "Cat A": 500 });
 });
 
+/** Submitted "modular_item_pricing" FormData shape: an intentional Smart Setup replace/import carrying
+ * exactly 2 matrix columns, with a role, composition, image-bearing row, unavailable category, and
+ * specification/requirements — generic labels only, never a hardcoded brand name. */
+function replacedMatrixModularSubmission(options: { extraStaleRowKeys?: boolean } = {}) {
+  return JSON.stringify([{
+    id: "mod-bench",
+    group_name: "Bench Modules",
+    pricing_type: "modular_group",
+    modular_composition: { min_starters: 1, max_starters: 1 },
+    is_active: true,
+    sort_order: 0,
+    price_categories: ["Column One", "Column Two"],
+    items: [
+      {
+        id: "row-starter", display_name: "Starter Row", supplier_price_list_code: "ART.001", dimension: "120 cm",
+        prices: { "Column One": 1310, "Column Two": 1874, ...(options.extraStaleRowKeys ? { "Cat A": null, "Cat B": null, "Cat C": null, "Cat D": null } : {}) },
+        unavailable_categories: [], modular_role: "starter", specification: "Starter module note.", importantRequirements: ["Always complete with the extension row."],
+        is_active: true, sort_order: 0,
+      },
+      {
+        id: "row-intermediate", display_name: "Extension Row", supplier_price_list_code: "ART.002", dimension: "80 cm",
+        prices: { "Column One": 1454, "Column Two": 2148, ...(options.extraStaleRowKeys ? { "Cat A": null, "Cat B": null, "Cat C": null, "Cat D": null } : {}) },
+        unavailable_categories: ["Column Two"], modular_role: "intermediate", is_active: true, sort_order: 1,
+      },
+    ],
+  }]);
+}
+
+test("1: an intentional Matrix Modular replacement with 2 incoming columns produces exactly 2 saved columns", () => {
+  const groups = categoryPricingValue("", replacedMatrixModularSubmission(), "");
+  const group = findGroup(groups, "mod-bench");
+  assert.deepEqual(group.price_categories, ["Column One", "Column Two"]);
+});
+
+test("2: stale/default unrelated category columns baked into a row's own prices object are dropped on intentional replacement, never merged in", () => {
+  const groups = categoryPricingValue("", replacedMatrixModularSubmission({ extraStaleRowKeys: true }), "");
+  const group = findGroup(groups, "mod-bench");
+  assert.deepEqual(group.price_categories, ["Column One", "Column Two"], "Expected the group's saved column set to stay exactly the incoming 2 columns");
+  const starter = group.items.find((item) => item.id === "row-starter")!;
+  assert.deepEqual(Object.keys(starter.prices as Record<string, unknown>).sort(), ["Column One", "Column Two"], "Expected stale Cat A-D keys present on the raw row to never survive into the saved prices map");
+  assert.ok(!("Cat A" in (starter.prices as Record<string, unknown>)), "Expected no default Cat A-D column to leak in");
+});
+
+test("3: replaced column labels are whatever the source provides — no Terra or Cat A-D hardcoding in the normalizer", () => {
+  const groups = categoryPricingValue("", replacedMatrixModularSubmission(), "");
+  const group = findGroup(groups, "mod-bench");
+  assert.ok(!group.price_categories!.some((label) => label.startsWith("Cat ")), "Expected no generic Cat A-D default label to appear for a fully-specified replacement");
+  assert.ok(!group.price_categories!.some((label) => /terra/i.test(label)), "Expected no Terra-specific literal in generic normalization");
+});
+
+test("4: row prices remain bound to the correct incoming columns after replacement", () => {
+  const groups = categoryPricingValue("", replacedMatrixModularSubmission(), "");
+  const group = findGroup(groups, "mod-bench");
+  const starter = group.items.find((item) => item.id === "row-starter")!;
+  const intermediate = group.items.find((item) => item.id === "row-intermediate")!;
+  assert.deepEqual(starter.prices, { "Column One": 1310, "Column Two": 1874 });
+  assert.deepEqual(intermediate.prices, { "Column One": 1454, "Column Two": 2148 });
+});
+
+test("5: unavailable-category data remains correct after replacement", () => {
+  const groups = categoryPricingValue("", replacedMatrixModularSubmission(), "");
+  const group = findGroup(groups, "mod-bench");
+  const starter = group.items.find((item) => item.id === "row-starter")!;
+  const intermediate = group.items.find((item) => item.id === "row-intermediate")!;
+  assert.deepEqual(starter.unavailable_categories, []);
+  assert.deepEqual(intermediate.unavailable_categories, ["Column Two"]);
+});
+
+test("6: role and composition survive an intentional Matrix Modular replacement", () => {
+  const groups = categoryPricingValue("", replacedMatrixModularSubmission(), "");
+  const group = findGroup(groups, "mod-bench");
+  assert.deepEqual(group.modular_composition, { min_starters: 1, max_starters: 1 });
+  const starter = group.items.find((item) => item.id === "row-starter")!;
+  const intermediate = group.items.find((item) => item.id === "row-intermediate")!;
+  assert.equal(starter.modular_role, "starter");
+  assert.equal(intermediate.modular_role, "intermediate");
+});
+
+test("7: reopening/saving an existing Matrix template with explicit price_categories does not drop valid columns (no Smart Setup replacement involved)", () => {
+  // Simulates a manually-edited template being saved again: the same explicit columns submitted back
+  // unchanged must survive, proving ordinary open/save is not treated as a lossy replacement.
+  const groups = categoryPricingValue("", replacedMatrixModularSubmission(), "");
+  const reopened = categoryPricingValue("", JSON.stringify(groups.filter((group) => (group as unknown as { pricing_type?: string }).pricing_type === "modular_group")), "");
+  const group = findGroup(reopened, "mod-bench");
+  assert.deepEqual(group.price_categories, ["Column One", "Column Two"]);
+  assert.equal(group.items.length, 2);
+});
+
+test("regression documentation: omitting price_categories from the submission (the bug this fix prevents) is what previously let stale Cat A-D defaults merge into row prices", () => {
+  const submissionWithoutPriceCategories = JSON.stringify([{
+    id: "mod-bug-repro", group_name: "Bug Repro Modules", pricing_type: "modular_group", is_active: true, sort_order: 0,
+    // price_categories intentionally omitted, reproducing the pre-fix client serialization bug.
+    items: [{ id: "row-1", display_name: "Row", prices: { "Column One": 1310, "Column Two": 1874 }, is_active: true, sort_order: 0 }],
+  }]);
+  const groups = categoryPricingValue("", submissionWithoutPriceCategories, "");
+  const group = findGroup(groups, "mod-bug-repro");
+  // Documents the exact failure mode: with no explicit price_categories, the server falls back to the
+  // generic Cat A-D defaults AND merges the row's real columns on top of them.
+  assert.deepEqual((group.items[0].prices as Record<string, unknown>)["Cat A"], null);
+  assert.deepEqual((group.items[0].prices as Record<string, unknown>)["Column One"], 1310);
+});
+
 test("empty submissions return an empty array without throwing", () => {
   assert.deepEqual(categoryPricingValue("", "", ""), []);
 });

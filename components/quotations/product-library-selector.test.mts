@@ -8,6 +8,27 @@ import {
   nextImagePreviewZoomIn,
   nextImagePreviewZoomOut,
 } from "../../lib/quotations/image-preview-zoom.js";
+import { standardCategoryPriceColumns } from "../../lib/products/category-pricing-groups.js";
+import { modularItemPricingRows } from "../../lib/products/modular-pricing.js";
+
+type TestPricingRow = {
+  id?: string;
+  group_name?: string;
+  items?: TestPricingRow[];
+  price_categories?: string[];
+  pricing_type?: string | null;
+  prices?: Record<string, number | null>;
+  price?: number | null;
+  is_active?: boolean;
+};
+
+/** Mirrors the component's private categoryPriceColumns() helper for direct behavioral proof. */
+function categoryPriceColumnsForTest(rows: TestPricingRow[]) {
+  return Array.from(new Set([
+    ...standardCategoryPriceColumns(rows),
+    ...modularItemPricingRows(rows).flatMap((row) => Object.keys(row.prices ?? {})),
+  ]));
+}
 
 test("accessory Product Library controls show dimensions and reuse existing diagram previews safely", () => {
   const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
@@ -45,7 +66,7 @@ test("workstation selection emits a stable applicability target and snapshots ro
 
 test("direct Modular uses scalar prices and suppresses category UI", () => {
   const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
-  ["const usesDirectModularPricing", "usesModularPricing && !usesDirectModularPricing", "modularDirect ? numberValue(row.price)", "!usesDirectModularPricing ? <label", "<p>Module: {row.variant_name}</p>"].forEach((expected) => assert.ok(source.includes(expected), `Expected Direct Modular library behavior: ${expected}`));
+  ["const usesDirectModularPricing", "usesModularPricing && !usesDirectModularPricing", "directModularGroupCard ? numberValue(row.price)", "!usesDirectModularPricing ? <div className=\"grid gap-3 md:grid-cols-2\">"].forEach((expected) => assert.ok(source.includes(expected), `Expected Direct Modular library behavior: ${expected}`));
 });
 
 test("derived required companions are selected and locked, while modular avoids CL2 and Base/Model copy", () => {
@@ -60,11 +81,10 @@ test("Direct Modular rows render a compact role-grouped table with expandable de
     'role === "intermediate" ? " Modules"',
     "<table className=\"w-full min-w-[680px] text-left text-xs\">",
     "Supplier Code",
-    "formatMoney(row.currency ?? template.currency, numberValue(row.price))",
+    "rowUnavailable ? \"N/A\" : formatMoney(row.currency ?? template.currency, rowUnitPrice)",
     "Quantity for ${rowLabel}",
     "setExpandedDirectModularRow",
     "<ImportantRequirementsBlock requirements={row.importantRequirements} />",
-    "!isDirectModularPricingGroup(group) ? <div className=\"mt-2 space-y-2\">",
   ].forEach((expected) => assert.ok(source.includes(expected), `Expected compact Direct Modular UI: ${expected}`));
 });
 
@@ -103,31 +123,38 @@ test("Direct Modular quantity input and Details button remain present alongside 
   ].forEach((expected) => assert.ok(source.includes(expected), `Expected Direct Modular controls to remain: ${expected}`));
 });
 
-test("Matrix Modular row rendering is untouched by the Direct Modular IMAGE column addition", () => {
+test("6/7/8: Matrix Modular reuses the exact same compact role-grouped table as Direct Modular, resolving price from the selected matrix column instead of a scalar price", () => {
   const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
-  // The matrix branch's row cards (module/variant name, supplier code, dimension, price, unavailable-category
-  // handling) keep their existing layout untouched.
   [
-    "const modularUnavailable = !modularDirect && row.unavailable_categories?.includes(selectedFabricCategory);",
-    "Price: {modularUnavailable ? \"N/A\" : formatMoney(row.currency ?? template.currency, modularUnitPrice)}",
-  ].forEach((expected) => assert.ok(source.includes(expected), `Expected Matrix Modular row rendering to remain: ${expected}`));
-  // The new row-image lookup is scoped only to the Direct Modular compact table, not duplicated into the matrix branch.
+    // One shared table implementation serves both pricing modes; price/unavailability are computed per-row.
+    "const rowUnitPrice = directModularGroupCard ? numberValue(row.price) : numberValue(row.prices?.[selectedFabricCategory]);",
+    "const rowUnavailable = !directModularGroupCard && Boolean(row.unavailable_categories?.includes(selectedFabricCategory));",
+    "rowUnavailable ? \"N/A\" : formatMoney(row.currency ?? template.currency, rowUnitPrice)",
+  ].forEach((expected) => assert.ok(source.includes(expected), `Expected the shared compact table to resolve Matrix Modular price from the selected column: ${expected}`));
+  // The row-image lookup, role-grouped headings, and Details wiring are not duplicated for Matrix Modular:
+  // there is exactly one compact table implementation reused by both pricing modes.
   const occurrences = source.split('rowReferenceImages[productTemplateRowReferenceKey("modular", group.id ?? "", modularRowId)]').length - 1;
-  assert.equal(occurrences, 1, "Expected the Direct Modular row-image lookup to appear exactly once, not inside the Matrix Modular branch");
+  assert.equal(occurrences, 1, "Expected exactly one shared row-image lookup reused by both Direct and Matrix Modular");
+  // No separate large Matrix Modular card layout remains.
+  assert.ok(!source.includes('grid gap-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 md:grid-cols-[minmax(0,1fr)_100px]'), "Expected the old large Matrix Modular card layout to be removed");
 });
 
-test("Direct Modular hides the redundant modular specification field and keeps quotation overrides beside Final Specification", () => {
+test("1/2: neither Direct nor Matrix Modular renders the top Modular Specification textarea; Final Specification remains available in Final Details", () => {
   const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
+  assert.ok(!source.includes("Modular Specification"), "Expected the redundant top Modular Specification textarea to be removed for every Modular pricing mode");
+  assert.ok(!source.includes("placeholder=\"Enter modular item specification for this quotation item\""), "Expected the removed textarea's placeholder to no longer exist");
   [
-    "!usesDirectModularPricing ? <label className=\"block\">",
-    "Modular Specification",
     "Final Details",
     "Configured Dimension",
     "Final Specification",
     "setConfiguredDimensions((current) => ({ ...current, [template.id]: event.target.value }))",
     'name="configured_dimension" value={configuredDimension}',
     'name="final_specification_override"',
-  ].forEach((expected) => assert.ok(source.includes(expected), `Expected Direct Modular final-detail behavior: ${expected}`));
+  ].forEach((expected) => assert.ok(source.includes(expected), `Expected Final Details/Final Specification behavior to remain: ${expected}`));
+  // configuredSpecification state is preserved for generation/submission compatibility even though its
+  // dedicated top-level textarea was removed.
+  assert.ok(source.includes('const [configuredSpecifications, setConfiguredSpecifications] = useState<Record<string, string>>({});'));
+  assert.ok(source.includes('<input type="hidden" name="configured_specification" value={configuredSpecification} />'));
 });
 
 test("Direct Modular uses resolved configuration text and refreshable dimension suggestions without overwriting an override", () => {
@@ -146,34 +173,42 @@ test("Direct Modular uses resolved configuration text and refreshable dimension 
   ].forEach((expected) => assert.ok(source.includes(expected), `Expected Direct Modular generation behavior: ${expected}`));
 });
 
-test("multiple Direct Modular groups render as a single-open accordion with compact selection headers without clearing quantities", () => {
+test("multiple Modular groups (Direct or Matrix) render as a single-open accordion with compact selection headers without clearing quantities", () => {
   const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
   [
     "function ModularGroupHeader",
     'aria-expanded={expanded}',
     "const [expandedModularGroupByTemplate, setExpandedModularGroupByTemplate] = useState<Record<string, string | null>>({});",
-    "const directModularGroupIds = usesDirectModularPricing",
+    "const allModularGroupIds = usesModularPricing ? modularGroups.map((group) => group.id) : [];",
     "const defaultExpandedModularGroupId =",
     "const expandedModularGroupId = expandedModularGroupByTemplate[template.id] !== undefined",
-    "const groupExpanded = directModularGroupCard ? expandedModularGroupId === group.id : true;",
+    "const groupExpanded = expandedModularGroupId === group.id;",
     "[template.id]: expandedModularGroupId === group.id ? null : group.id,",
     "starterSelection ? `Starter ${pricingDisplayName(starterSelection.row) || starterSelection.row.variant_name || starterSelection.id}` : null",
     "addOnQty > 0 ? `Add-ons ×${addOnQty}` : null",
     '"Not selected"',
-  ].forEach((expected) => assert.ok(source.includes(expected), `Expected Direct Modular accordion behavior: ${expected}`));
+  ].forEach((expected) => assert.ok(source.includes(expected), `Expected shared Modular accordion behavior: ${expected}`));
+  // For an all-Direct template, allModularGroupIds is exactly the set of direct group ids (nothing else
+  // qualifies), so the default-expand behavior X3 relied on is unchanged.
+  assert.ok(source.includes("allModularGroupIds.find((id) => selectedModularItems.some((line) => line.groupId === id)) ??"));
+  assert.ok(source.includes("allModularGroupIds[0] ??"));
   // The row quantity state map is keyed independently of the group-expansion state, so collapsing a
   // group never touches selectedModularQuantities.
   assert.ok(!source.includes("setSelectedModularQuantities") || source.includes("setExpandedModularGroupByTemplate"));
 });
 
-test("Matrix Modular groups keep their original always-expanded rendering, untouched by the Direct Modular accordion", () => {
+test("3/6: Matrix Modular groups now render the same compact accordion header (ModularGroupHeader) as Direct Modular, at X3 parity", () => {
   const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
   [
-    "directModularGroupCard ? (",
     "<ModularGroupHeader",
     "groupName={group.group_name || \"Modular Items\"}",
-    "{!isDirectModularPricingGroup(group) ? <div className=\"mt-2 space-y-2\">",
-  ].forEach((expected) => assert.ok(source.includes(expected), `Expected Matrix Modular to remain unaffected: ${expected}`));
+    "selectionSummary={groupSelectionSummary}",
+  ].forEach((expected) => assert.ok(source.includes(expected), `Expected Matrix Modular to reuse the compact group header: ${expected}`));
+  // ModularGroupHeader is used unconditionally now: exactly one JSX usage of the group-name fallback
+  // (inside groupName={...}), with no separate plain-text <p> fallback left for non-Direct groups.
+  const groupNameFallbackOccurrences = source.split('group.group_name || "Modular Items"').length - 1;
+  assert.equal(groupNameFallbackOccurrences, 2, "Expected exactly two occurrences: the helper default and the single ModularGroupHeader groupName prop");
+  assert.ok(source.includes("groupName={group.group_name || \"Modular Items\"}"));
 });
 
 test("Direct Modular right-summary hides the empty legacy Fabric / Category line while Matrix Modular keeps it", () => {
@@ -283,7 +318,7 @@ test("Module Diagram modal close behavior, backdrop dismissal, and navigation re
   ].forEach((expected) => assert.ok(source.includes(expected), `Expected Module Diagram modal behavior to remain: ${expected}`));
 });
 
-test("Product Library composition blocking (modularCompositionIssue) is wired generically for both Matrix and Direct Modular, and Matrix Modular keeps its Fabric/Category selector without Direct Modular accordion assumptions", () => {
+test("14: Product Library composition blocking (modularCompositionIssue) is wired generically for both Matrix and Direct Modular, and Matrix Modular keeps its Fabric/Category selector", () => {
   const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
   [
     // The shared validator runs over every modular group regardless of pricing mode.
@@ -294,8 +329,102 @@ test("Product Library composition blocking (modularCompositionIssue) is wired ge
     // Matrix Modular keeps its Fabric/Category selector, gated only by !usesDirectModularPricing (unaffected by role/composition support).
     "{!usesDirectModularPricing ? <div className=\"grid gap-3 md:grid-cols-2\">",
     "<span className=\"text-[10px] font-bold uppercase text-zinc-500\">Fabric / Category</span>",
-    // The Direct Modular accordion/selectionFamily machinery stays scoped to isDirectModularPricingGroup and is never applied to matrix groups.
+    // isDirectModularPricingGroup still distinguishes pricing mode per group (for price resolution), even
+    // though both pricing modes now share the same compact accordion/table presentation.
     "const directModularGroupCard = isDirectModularPricingGroup(group);",
-    "const groupExpanded = directModularGroupCard ? expandedModularGroupId === group.id : true;",
+    "const groupExpanded = expandedModularGroupId === group.id;",
   ].forEach((expected) => assert.ok(source.includes(expected), `Expected Product Library composition wiring: ${expected}`));
+});
+
+// ---------------------------------------------------------------------------
+// Terra parity: Matrix Modular category source fix, compact UI, role grouping,
+// role-less backward compatibility, and X3 regression coverage.
+// ---------------------------------------------------------------------------
+
+test("3: availableCategoryColumns scopes Matrix Modular category choices to the modular rows only, never falling back to the template-wide category list merely because another group in the template is Direct-priced", () => {
+  const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
+  assert.ok(source.includes("const availableCategoryColumns = usesModularPricing"), "Expected the ternary to key off usesModularPricing alone, not usesModularPricing && !usesDirectModularPricing");
+  assert.ok(!source.includes("const availableCategoryColumns = usesModularPricing && !usesDirectModularPricing"), "Expected the old buggy condition to be removed");
+  assert.ok(source.includes("? categoryPriceColumns(modularRows)"));
+});
+
+test("4: unrelated Cat A-D categories from a separate Category/Matrix group cannot leak into a BL/AN + Designs Matrix Modular selector", () => {
+  // What the component actually passes: modularGroups.flatMap((group) => group.items) — modular rows only,
+  // already excluding any sibling Category/Matrix group entirely.
+  const modularRows: TestPricingRow[] = [
+    { pricing_type: "modular_item", id: "bench-1", prices: { "BL / AN": 1310, Designs: 1874 } },
+    { pricing_type: "modular_item", id: "bench-ext-1", prices: { "BL / AN": 1454, Designs: 2148 } },
+  ];
+  const columns = categoryPriceColumnsForTest(modularRows).sort();
+  assert.deepEqual(columns, ["BL / AN", "Designs"].sort());
+  assert.ok(!columns.some((category) => category.startsWith("Cat ")), "Expected no Cat A-D leakage");
+});
+
+test("regression documentation: the old template-wide fallback this fix removes would have included an unrelated Category/Matrix group's Cat A-D columns", () => {
+  // This is what categoryPriceColumns(template.category_pricing) would still correctly compute for the
+  // ordinary (non-modular) Category/Matrix path; it proves why that template-wide source must never be
+  // used for Matrix Modular's own category selector.
+  const templateWideCategoryPricing: TestPricingRow[] = [
+    { id: "finish", group_name: "Finish", price_categories: ["Cat A", "Cat B", "Cat C", "Cat D"], items: [{ id: "row-1", prices: { "Cat A": 100, "Cat B": 120, "Cat C": 140, "Cat D": 160 } }] },
+    { id: "terra-bench", group_name: "Terra Bench", pricing_type: "modular_group", items: [{ pricing_type: "modular_item", id: "bench-1", prices: { "BL / AN": 1310, Designs: 1874 } }] },
+  ];
+  const templateWideColumns = categoryPriceColumnsForTest(templateWideCategoryPricing);
+  assert.ok(templateWideColumns.includes("Cat A"), "Confirms the template-wide source legitimately mixes in unrelated categories, which is exactly what Matrix Modular must never read from");
+});
+
+test("5/16: Matrix Modular price resolution still reads the selected Fabric/Category column, unaffected by the compact-UI and category-source changes", () => {
+  const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
+  [
+    "const rowUnitPrice = directModularGroupCard ? numberValue(row.price) : numberValue(row.prices?.[selectedFabricCategory]);",
+    "const selectedModularItems = modularGroups",
+    "const price = isDirectModularPricingGroup(group)",
+    "? numberValue(row.price)",
+    ": numberValue(row.prices?.[selectedFabricCategory]);",
+  ].forEach((expected) => assert.ok(source.includes(expected), `Expected unchanged Matrix Modular price resolution: ${expected}`));
+});
+
+test("9: a role-less Matrix Modular group (no modular_role on any row) still renders under a neutral Modules heading instead of assuming Starter", () => {
+  const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
+  assert.ok(source.includes('const rows = group.items.filter((row) => (modularRowRole(row) ?? "none") === role);'), "Expected rows with no role to fall back to the neutral \"none\" bucket");
+  assert.ok(source.includes('const heading = role === "none" ? "Modules" : `${role[0].toUpperCase()}${role.slice(1)}${role === "intermediate" ? " Modules" : "s"}`;'), "Expected the \"none\" role to render a neutral Modules heading, never Starters");
+});
+
+test("7/8: role-grouped headings produce exactly \"Starters\" and \"Intermediate Modules\" for starter/intermediate rows shared by both Direct and Matrix Modular", () => {
+  const heading = (role: "starter" | "intermediate" | "terminal" | "none") =>
+    role === "none" ? "Modules" : `${role[0].toUpperCase()}${role.slice(1)}${role === "intermediate" ? " Modules" : "s"}`;
+  assert.equal(heading("starter"), "Starters");
+  assert.equal(heading("intermediate"), "Intermediate Modules");
+  assert.equal(heading("terminal"), "Terminals");
+  assert.equal(heading("none"), "Modules");
+});
+
+test("6: Matrix Modular composition (roles + minStarters/maxStarters) stays wired to the same shared validator and quantity state used by the compact table", () => {
+  const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
+  [
+    "const modularCompositionIssue = validateModularCompositionGroups(",
+    "modularGroups,",
+    "onChange={(event) => setDirectModularRowQuantity(group.id ?? \"\", modularRowId, Math.max(0, Math.trunc(Number(event.target.value) || 0)))}",
+    "value={templateModularQuantities[modularRowId] ?? 0}",
+  ].forEach((expected) => assert.ok(source.includes(expected), `Expected composition/quantity wiring: ${expected}`));
+});
+
+test("15: Direct Modular / X3 price resolution, selectionFamily guard, and companion wiring remain byte-identical", () => {
+  const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
+  [
+    "const usesDirectModularPricing = usesModularPricing && modularGroups.some((group) => isDirectModularPricingGroup(group));",
+    "const setDirectModularRowQuantity = (groupId: string, rowId: string, nextQty: number) => {",
+    "const activeGroupId = activeModularGroupIdByFamily.get(family);",
+    '"Choose one configuration family. Clear the current selection before selecting another."',
+    "const groupSelectionSummaryForAi = usesDirectModularPricing",
+  ].forEach((expected) => assert.ok(source.includes(expected), `Expected unchanged X3/Direct Modular wiring: ${expected}`));
+});
+
+test("17: configured dimension and generated Final Specification wiring for Modular pricing are unaffected by the Matrix Modular UI/category changes", () => {
+  const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
+  [
+    "const configuredSpecification = usesWorkstationFlow || usesModularPricing",
+    "modularDefaultSpecification: configuredSpecification || modularDefaults.defaultSpecification,",
+    "(usesWorkstationFlow || usesModularPricing ? configuredSpecification : null) ??",
+    'name="final_specification_override"',
+  ].forEach((expected) => assert.ok(source.includes(expected), `Expected unchanged configured-dimension/final-specification wiring: ${expected}`));
 });
