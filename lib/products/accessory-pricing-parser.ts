@@ -95,6 +95,7 @@ const targetKindLabels: Record<AccessoryApplicabilityTargetKind, string> = {
   price_matrix: "Price Matrix",
   modular: "Modular",
   workstation: "Workstation",
+  option_item: "Option Item",
 };
 
 const targetKindIssueCodes: Record<AccessoryApplicabilityTargetKind, string> = {
@@ -102,6 +103,7 @@ const targetKindIssueCodes: Record<AccessoryApplicabilityTargetKind, string> = {
   price_matrix: "unknown_price_matrix_reference",
   modular: "unknown_modular_reference",
   workstation: "unknown_workstation_reference",
+  option_item: "unknown_option_item_reference",
 };
 
 function pricingTargetReferenceIssues(groups: AccessoryConfigurationGroup[], baseModelPricing: unknown, categoryPricing: unknown, workstationPricing: unknown) {
@@ -114,6 +116,7 @@ function pricingTargetReferenceIssues(groups: AccessoryConfigurationGroup[], bas
     price_matrix: identitySet(groupedStandardCategoryPricingRows(normalizedCategoryPricing)),
     modular: identitySet(modularItemPricingGroups(normalizedCategoryPricing)),
     workstation: identitySet(workstationPricingGroups(Array.isArray(workstationPricing) ? workstationPricing : [])),
+    option_item: identitySet(groups),
   };
 
   const issues: AccessoryConfigurationIssue[] = [];

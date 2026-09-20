@@ -86,3 +86,12 @@ test("reviewed accessory mapping preserves modular quantity scaling", () => {
   assert.equal(mapped.groups[0].conditional_configuration?.applicability[0].scale_with_target_quantity, true);
   assert.equal(mapDraftOptionGroupsToAccessories(source).groups[0].conditional_configuration?.applicability[0].scale_with_target_quantity, true);
 });
+
+test("structural option roles and option-item companion targets survive adapter mapping", () => {
+  const source = draft("choose_multiple", 0, null);
+  source.optionGroups[0].items[0] = { ...source.optionGroups[0].items[0], role: "structural_support" };
+  source.optionGroups[0].conditionalConfiguration = { role: "companion", selection: "choose_multiple", applicability: [{ target: { kind: "option_item", group_id: "supports", row_id: "support-1" }, required: true, visible: true, fixed_quantity: 2 }] };
+  const mapped = mapDraftOptionGroupsToAccessories(source).groups[0];
+  assert.equal(mapped.items[0].role, "structural_support");
+  assert.deepEqual(mapped.conditional_configuration?.applicability[0].target, { kind: "option_item", group_id: "supports", row_id: "support-1" });
+});

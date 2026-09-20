@@ -428,3 +428,24 @@ test("17: configured dimension and generated Final Specification wiring for Modu
     'name="final_specification_override"',
   ].forEach((expected) => assert.ok(source.includes(expected), `Expected unchanged configured-dimension/final-specification wiring: ${expected}`));
 });
+
+test("Base/Model dropdown prepends only the primary supplier code and keeps label/selection behavior unchanged", () => {
+  const source = readFileSync(new URL("./product-library-selector.tsx", import.meta.url), "utf8");
+  const helper = source.slice(source.indexOf("function pricingOptionLabel"), source.indexOf("function InternalMetaLine"));
+  assert.ok(helper.includes("supplierCode?.split(/[,;\\n]/)[0]?.trim()"), "uses only the first supplier code");
+  assert.ok(helper.includes("`${primarySupplierCode} — ${label}`"), "prepends the code when present");
+  assert.ok(helper.includes("primarySupplierCode ?") && helper.includes(": label"), "missing code keeps the existing label");
+  assert.ok(helper.includes("displayName,") && helper.includes("dimension?.trim()") && helper.includes("formatMoney(currency, price)"), "name, dimension and price text remain");
+  assert.ok(source.includes("supplierCode: row.supplier_price_list_code })}</option>)}</select></label><details>"), "Base/Model dropdown passes the row supplier code");
+  assert.ok(source.includes("<option key={row.id} value={row.id}>{pricingOptionLabel({"), "option value/key remain the row id");
+  assert.ok(source.includes("onChange={(event) => onSelect(event.target.value)}"), "selection handler unchanged");
+});
+
+test("structural support is separated ahead of main selection and option-item companions are not normal accessories", () => {
+  const source = readFileSync(new URL("./product-library-selector.tsx", import.meta.url), "utf8");
+  assert.ok(source.includes('item.role === "structural_support"'));
+  assert.ok(source.includes('kind: "option_item" as const'));
+  assert.ok(source.includes("Required With Selected Support"));
+  assert.ok(source.indexOf("<StructuralSupportFields") < source.indexOf("{usesVariantPricing ?"));
+  assert.ok(source.includes('item.role !== "structural_support" && item.role !== "companion"'));
+});

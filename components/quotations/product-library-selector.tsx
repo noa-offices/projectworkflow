@@ -245,6 +245,7 @@ type AccessoryPricingItem = {
   importantRequirements?: string[];
   is_active?: boolean;
   sort_order?: number;
+  role?: "normal" | "companion" | "structural_support";
 };
 
 type LinkedProductInstance = {
@@ -500,7 +501,7 @@ function BaseModelHierarchySelector({ currency, groups, onSelect, rowReferences,
   const [groupId, setGroupId] = useState(groups[0]?.id ?? "");
   const [subgroupId, setSubgroupId] = useState("");
   const { group, rows, subgroups, ungrouped, resolvedSubgroupId: fixedSubgroup } = guidedBaseModelSelection(groups, groupId, subgroupId);
-  return <div className="mt-2 grid gap-3"><div className="grid gap-3 sm:grid-cols-2">{groups.length > 1 ? <label><span className="text-[10px] font-bold uppercase text-zinc-500">Choose Product Family</span><select value={group?.id ?? ""} onChange={(event) => { setGroupId(event.target.value); setSubgroupId(""); onSelect(""); }} className="mt-1 h-9 w-full border border-zinc-300 bg-white px-2 text-xs">{groups.map((item) => <option key={item.id} value={item.id}>{item.group_name}</option>)}</select></label> : null}{subgroups.length ? <label><span className="text-[10px] font-bold uppercase text-zinc-500">Choose Configuration</span>{subgroups.length === 1 && !ungrouped.length ? <p className="mt-1 h-9 rounded border border-zinc-200 bg-zinc-50 px-2 py-2 text-xs">{subgroups[0].subgroup_name}</p> : <select value={fixedSubgroup} onChange={(event) => { setSubgroupId(event.target.value); onSelect(""); }} className="mt-1 h-9 w-full border border-zinc-300 bg-white px-2 text-xs"><option value="">Choose configuration</option>{subgroups.map((item) => <option key={item.id} value={item.id}>{item.subgroup_name}</option>)}{ungrouped.length ? <option value="__ungrouped__">Other Models</option> : null}</select>}</label> : null}</div><label><span className="text-[10px] font-bold uppercase text-zinc-500">Choose Model / Size</span><select value={selectedRowId ?? ""} disabled={!rows.length} onChange={(event) => onSelect(event.target.value)} className="mt-1 h-9 w-full border border-zinc-300 bg-white px-2 text-xs"><option value="">{rows.length ? "Choose model" : subgroups.length ? "Choose configuration first" : "No models available"}</option>{rows.map((row) => <option key={row.id} value={row.id}>{pricingOptionLabel({ currency: row.currency ?? currency, dimension: row.dimension, displayName: pricingDisplayName(row), price: numberValue(row.price) })}</option>)}</select></label><details><summary className="cursor-pointer text-xs font-semibold text-emerald-900">Browse all models</summary><BaseModelBrowseAll currency={currency} groups={groups} onSelect={onSelect} rowReferences={rowReferences} selectedRowId={selectedRowId} subgroupReferences={subgroupReferences} /></details></div>;
+  return <div className="mt-2 grid gap-3"><div className="grid gap-3 sm:grid-cols-2">{groups.length > 1 ? <label><span className="text-[10px] font-bold uppercase text-zinc-500">Choose Product Family</span><select value={group?.id ?? ""} onChange={(event) => { setGroupId(event.target.value); setSubgroupId(""); onSelect(""); }} className="mt-1 h-9 w-full border border-zinc-300 bg-white px-2 text-xs">{groups.map((item) => <option key={item.id} value={item.id}>{item.group_name}</option>)}</select></label> : null}{subgroups.length ? <label><span className="text-[10px] font-bold uppercase text-zinc-500">Choose Configuration</span>{subgroups.length === 1 && !ungrouped.length ? <p className="mt-1 h-9 rounded border border-zinc-200 bg-zinc-50 px-2 py-2 text-xs">{subgroups[0].subgroup_name}</p> : <select value={fixedSubgroup} onChange={(event) => { setSubgroupId(event.target.value); onSelect(""); }} className="mt-1 h-9 w-full border border-zinc-300 bg-white px-2 text-xs"><option value="">Choose configuration</option>{subgroups.map((item) => <option key={item.id} value={item.id}>{item.subgroup_name}</option>)}{ungrouped.length ? <option value="__ungrouped__">Other Models</option> : null}</select>}</label> : null}</div><label><span className="text-[10px] font-bold uppercase text-zinc-500">Choose Model / Size</span><select value={selectedRowId ?? ""} disabled={!rows.length} onChange={(event) => onSelect(event.target.value)} className="mt-1 h-9 w-full border border-zinc-300 bg-white px-2 text-xs"><option value="">{rows.length ? "Choose model" : subgroups.length ? "Choose configuration first" : "No models available"}</option>{rows.map((row) => <option key={row.id} value={row.id}>{pricingOptionLabel({ currency: row.currency ?? currency, dimension: row.dimension, displayName: pricingDisplayName(row), price: numberValue(row.price), supplierCode: row.supplier_price_list_code })}</option>)}</select></label><details><summary className="cursor-pointer text-xs font-semibold text-emerald-900">Browse all models</summary><BaseModelBrowseAll currency={currency} groups={groups} onSelect={onSelect} rowReferences={rowReferences} selectedRowId={selectedRowId} subgroupReferences={subgroupReferences} /></details></div>;
 }
 
 function activeModularRows(rows?: CategoryPricingRow[] | null) {
@@ -543,18 +544,22 @@ function pricingOptionLabel({
   dimension,
   displayName,
   price,
+  supplierCode,
 }: {
   currency: string;
   dimension?: string | null;
   displayName: string;
   price?: number;
+  supplierCode?: string | null;
 }) {
+  const primarySupplierCode = supplierCode?.split(/[,;\n]/)[0]?.trim() || "";
   const parts = [
     displayName,
     dimension?.trim() || "",
     typeof price === "number" ? formatMoney(currency, price) : "",
   ].filter(Boolean);
-  return parts.join(" - ");
+  const label = parts.join(" - ");
+  return primarySupplierCode ? `${primarySupplierCode} — ${label}` : label;
 }
 
 function InternalMetaLine({
@@ -708,6 +713,25 @@ function AccessoryConfigurationFields({
       </div>
     );
   });
+}
+
+function StructuralSupportFields({ groups, evaluations, quantities, rowCurrency, onQuantityChange }: {
+  groups: ReturnType<typeof activeAccessoryRows>;
+  evaluations: AccessoryGroupEvaluation[];
+  quantities: Record<string, number>;
+  rowCurrency: string;
+  onQuantityChange: (groupId: string, itemId: string, quantity: number) => void;
+}) {
+  const supports = groups.flatMap((group) => group.items.filter((item) => item.role === "structural_support").map((item) => ({ group, item })));
+  const companionGroups = evaluations.flatMap((evaluation) => {
+    if (!evaluation.visible || evaluation.role !== "companion" || !evaluation.required) return [];
+    const group = groups.find((candidate) => candidate.id === evaluation.groupId);
+    if (!group?.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item")) return [];
+    const allowed = new Set(evaluation.allowedItemIds);
+    return [{ evaluation, group, items: group.items.filter((item) => allowed.has(item.id ?? "")) }];
+  });
+  if (!supports.length) return null;
+  return <div className="mt-3 space-y-3"><div><p className="text-xs font-bold uppercase tracking-wide text-zinc-700">Structural Support</p><div className="mt-2 space-y-2">{supports.map(({ group, item }) => { const id = item.id ?? ""; const quantity = quantities[id] ?? 0; return <label key={`${group.id}:${id}`} className="grid gap-2 rounded border border-zinc-200 bg-zinc-50 p-2 text-xs sm:grid-cols-[1fr_auto] sm:items-center"><span><input type="checkbox" checked={quantity > 0} onChange={(event) => onQuantityChange(group.id, id, event.target.checked ? Math.max(1, quantity || 1) : 0)} className="mr-2 h-4 w-4 rounded border-zinc-300 align-middle" /><span className="font-medium text-zinc-900">{item.item_name}</span>{item.supplier_price_list_code ? <span className="mt-1 block text-[11px] text-zinc-500">Supplier Code: {item.supplier_price_list_code}</span> : null}{item.dimension ? <span className="mt-1 block text-[11px] text-zinc-500">{item.dimension}</span> : null}</span><span className="font-semibold">{formatMoney(item.currency ?? rowCurrency, numberValue(item.price))}</span></label>; })}</div></div>{companionGroups.length ? <div><p className="text-xs font-bold uppercase tracking-wide text-zinc-700">Required With Selected Support</p><div className="mt-2 space-y-2">{companionGroups.flatMap(({ evaluation, group, items }) => items.map((item) => <div key={`${group.id}:${item.id}`} className="grid gap-2 rounded border border-zinc-200 bg-zinc-50 p-2 text-xs sm:grid-cols-[1fr_auto] sm:items-center"><span><span className="font-medium text-zinc-900">✓ {item.item_name}</span>{item.supplier_price_list_code ? <span className="mt-1 block text-[11px] text-zinc-500">Supplier Code: {item.supplier_price_list_code}</span> : null}<span className="mt-1 block text-[11px] font-semibold text-zinc-700">Qty: {evaluation.fixedQuantity ?? quantities[item.id ?? ""] ?? 0} · Required</span></span><span className="font-semibold">{formatMoney(item.currency ?? rowCurrency, numberValue(item.price))}</span></div>))}</div></div> : null}</div>;
 }
 
 function categoryPriceColumns(rows?: CategoryPricingRow[] | null) {
@@ -1676,7 +1700,10 @@ export function ProductLibrarySelector({
                   const modularRows = modularGroups.flatMap((group) => group.items);
                   const modularDefaults = modularPricingDefaultsFromRows(template.category_pricing);
                   const allAccessoryGroups = activeAccessoryRows(template.accessory_pricing);
-                  const accessoryGroups = allAccessoryGroups.filter((group) => !group.conditional_configuration);
+                  const accessoryGroups = allAccessoryGroups
+                    .filter((group) => !group.conditional_configuration)
+                    .map((group) => ({ ...group, items: group.items.filter((item) => item.role !== "structural_support" && item.role !== "companion") }))
+                    .filter((group) => group.items.length);
                   const templateLinkedFamilies = linkedFamiliesByParent.get(template.id) ?? [];
                   const usesWorkstationFlow = sizePricingRows.length > 0;
                   const usesVariantPricing = !usesWorkstationFlow && variantRows.length > 0;
@@ -1848,7 +1875,7 @@ export function ProductLibrarySelector({
                   const hasMixedWorkstationCurrencies = usesWorkstationFlow && workstationCurrencies.length > 1;
                   const missingRequiredWorkstationSelection = usesWorkstationFlow && !selectedSizeRow;
                   const missingRequiredModularSelection = usesModularPricing && (selectedModularItems.length === 0 || Boolean(modularCompositionIssue));
-                  const selectedAccessoryModelTargets = usesWorkstationFlow && selectedWorkstationGroup?.id && selectedSizeRow?.id
+                  const selectedMainAccessoryTargets = usesWorkstationFlow && selectedWorkstationGroup?.id && selectedSizeRow?.id
                     ? [{ kind: "workstation" as const, group_id: selectedWorkstationGroup.id, row_id: selectedSizeRow.id }]
                     : usesModularPricing
                     ? selectedModularItems.map((item) => ({ kind: "modular" as const, group_id: item.groupId, row_id: item.id }))
@@ -1857,6 +1884,12 @@ export function ProductLibrarySelector({
                       : usesCategoryPricing && selectedCategoryGroup?.id && selectedCategoryRow?.id
                         ? [{ kind: "price_matrix" as const, group_id: selectedCategoryGroup.id, row_id: selectedCategoryRow.id }]
                         : [];
+                  const selectedStructuralSupportTargets = allAccessoryGroups.flatMap((group) =>
+                    group.items
+                      .filter((item) => item.role === "structural_support" && Number(templatePricingAccessoryQuantities[item.id ?? ""]) > 0)
+                      .flatMap((item) => item.id ? [{ kind: "option_item" as const, group_id: group.id, row_id: item.id }] : []),
+                  );
+                  const selectedAccessoryModelTargets = [...selectedMainAccessoryTargets, ...selectedStructuralSupportTargets];
                   const selectedAccessoryModelTarget = selectedAccessoryModelTargets[0] ?? null;
                   const accessoryConfiguration = evaluateProductAccessorySelection({
                     accessoryGroups: allAccessoryGroups,
@@ -1864,11 +1897,25 @@ export function ProductLibrarySelector({
                     baseModelRowId: usesVariantPricing ? selectedVariantRow?.id : null,
                     selectedModelTarget: selectedAccessoryModelTarget,
                     selectedModelTargets: selectedAccessoryModelTargets,
-                    selectedModelTargetQuantities: Object.fromEntries(selectedModularItems.map((item) => [
-                      accessoryApplicabilityTargetKey({ kind: "modular", group_id: item.groupId, row_id: item.id }),
-                      item.qty,
-                    ])),
+                    selectedModelTargetQuantities: Object.fromEntries([
+                      ...selectedModularItems.map((item) => [accessoryApplicabilityTargetKey({ kind: "modular" as const, group_id: item.groupId, row_id: item.id }), item.qty]),
+                      ...selectedStructuralSupportTargets.map((target) => [accessoryApplicabilityTargetKey(target), templatePricingAccessoryQuantities[target.row_id] ?? 1]),
+                    ]),
                     selectedQuantities: templatePricingAccessoryQuantities,
+                  });
+                  const updateStructuralSupportQuantity = (groupId: string, itemId: string, quantity: number) => setPricingAccessoryQuantities((current) => {
+                    const next = { ...(current[template.id] ?? {}) };
+                    if (quantity > 0) next[itemId] = quantity;
+                    else delete next[itemId];
+                    const targets = allAccessoryGroups.flatMap((group) => group.items.filter((item) => item.role === "structural_support" && Number(next[item.id ?? ""]) > 0).flatMap((item) => item.id ? [{ kind: "option_item" as const, group_id: group.id, row_id: item.id }] : []));
+                    const structuralCompanionGroupIds = new Set(allAccessoryGroups.filter((group) => group.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item")).map((group) => group.id));
+                    allAccessoryGroups.filter((group) => structuralCompanionGroupIds.has(group.id)).flatMap((group) => group.items).forEach((item) => { if (item.id) delete next[item.id]; });
+                    const evaluation = evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, selectedModelTargets: [...selectedMainAccessoryTargets, ...targets], selectedQuantities: next });
+                    evaluation.groups.filter((group) => structuralCompanionGroupIds.has(group.groupId) && group.visible && group.required && group.fixedQuantity !== null).forEach((group) => {
+                      const requiredItemId = group.allowedItemIds.length === 1 ? group.allowedItemIds[0] : null;
+                      if (requiredItemId) next[requiredItemId] = group.fixedQuantity!;
+                    });
+                    return { ...current, [template.id]: next };
                   });
                   const missingConditionalModelSelection = accessoryConfiguration.hasConditionalConfiguration && selectedAccessoryModelTargets.length === 0;
                   const missingRequiredAccessorySelection = !accessoryConfiguration.valid || missingConditionalModelSelection;
@@ -3269,6 +3316,7 @@ export function ProductLibrarySelector({
                             ) : null}
                           </div>
                         ) : null}
+                        <StructuralSupportFields groups={allAccessoryGroups} evaluations={accessoryConfiguration.groups} quantities={templatePricingAccessoryQuantities} rowCurrency={rowCurrency} onQuantityChange={updateStructuralSupportQuantity} />
                         {usesVariantPricing ? (
                           <div className="mt-3 space-y-2">
                             <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
@@ -3306,7 +3354,7 @@ export function ProductLibrarySelector({
                         ) : null}
                         <AccessoryConfigurationFields
                           evaluations={accessoryConfiguration.groups.filter((evaluation) =>
-                            allAccessoryGroups.some((group) => group.id === evaluation.groupId && Boolean(group.conditional_configuration)),
+                            allAccessoryGroups.some((group) => group.id === evaluation.groupId && Boolean(group.conditional_configuration) && !group.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item")),
                           )}
                           groups={allAccessoryGroups}
                           quantities={templatePricingAccessoryQuantities}

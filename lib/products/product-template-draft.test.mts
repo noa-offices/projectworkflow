@@ -252,6 +252,18 @@ test("Sigma M33 keeps its separately priced M34 companion at quantity one on the
   assert.equal(result.draft?.optionGroups[0].conditionalConfiguration?.applicability[0].fixed_quantity, 1);
 });
 
+test("option-item targets and structural-support item roles normalize without naming assumptions", () => {
+  const draft = baseDraft();
+  draft.optionGroups.push(
+    { id: "support-group", label: "Support", selection: { mode: "optional", minSelections: 0, maxSelections: null, defaultItemIds: [] }, items: [{ id: "support-1", label: "Support", price: 100, role: "structural_support" }] },
+    { id: "companion-group", label: "Companion", selection: { mode: "optional", minSelections: 0, maxSelections: null, defaultItemIds: [] }, items: [{ id: "companion-1", label: "Companion", price: 25, role: "companion" }], conditionalConfiguration: { role: "companion", selection: "choose_multiple", applicability: [{ target: { kind: "option_item", group_id: "support-group", row_id: "support-1" }, required: true, visible: true, fixed_quantity: 2 }] } },
+  );
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, true);
+  assert.equal(result.draft?.optionGroups[0].items[0].role, "structural_support");
+  assert.deepEqual(result.draft?.optionGroups[1].conditionalConfiguration?.applicability[0].target, { kind: "option_item", group_id: "support-group", row_id: "support-1" });
+});
+
 test("1: an old optionGroups item with no reviewStatus normalizes cleanly and stays backward compatible", () => {
   const draft = baseDraft();
   draft.optionGroups.push({

@@ -4,13 +4,16 @@ export const ACCESSORY_SELECTION_MODES = ["unrestricted", "exactly_one", "at_lea
 export type AccessoryConfigurationRole = typeof ACCESSORY_CONFIGURATION_ROLES[number];
 export type AccessorySelectionMode = typeof ACCESSORY_SELECTION_MODES[number];
 
-export const ACCESSORY_APPLICABILITY_TARGET_KINDS = ["base_model", "price_matrix", "modular", "workstation"] as const;
+export const ACCESSORY_APPLICABILITY_TARGET_KINDS = ["base_model", "price_matrix", "modular", "workstation", "option_item"] as const;
 export type AccessoryApplicabilityTargetKind = typeof ACCESSORY_APPLICABILITY_TARGET_KINDS[number];
 export type AccessoryApplicabilityTarget = {
   kind: AccessoryApplicabilityTargetKind;
   group_id: string;
   row_id: string;
 };
+
+export const ACCESSORY_ITEM_ROLES = ["normal", "companion", "structural_support"] as const;
+export type AccessoryItemRole = typeof ACCESSORY_ITEM_ROLES[number];
 
 export type AccessoryModelApplicabilityRule = {
   base_model_group_id?: string;
@@ -48,6 +51,7 @@ export type AccessoryConfigurationItem = Record<string, unknown> & {
   importantRequirements?: string[];
   is_active?: boolean;
   sort_order?: number;
+  role?: AccessoryItemRole;
 };
 
 export type AccessoryConfigurationGroup = Record<string, unknown> & {
@@ -196,6 +200,9 @@ export function parseAccessoryConfigurationGroups(value: unknown): ParsedAccesso
       } else {
         itemIds.add(itemId);
       }
+      if (item.role !== undefined && (!ACCESSORY_ITEM_ROLES.includes(item.role as AccessoryItemRole))) {
+        addIssue(issues, "unknown_item_role", `${path}.items[${itemIndex}].role`, "Unknown accessory item role.");
+      }
     });
 
     const rawRules = rawConfiguration.applicability;
@@ -222,7 +229,7 @@ export function parseAccessoryConfigurationGroups(value: unknown): ParsedAccesso
           const kind = rawTarget.kind;
           const groupId = typeof rawTarget.group_id === "string" ? rawTarget.group_id.trim() : "";
           const rowId = typeof rawTarget.row_id === "string" ? rawTarget.row_id.trim() : "";
-          if (typeof kind !== "string" || !ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(kind as AccessoryApplicabilityTargetKind)) addIssue(issues, "invalid_applicability_target_kind", `${rulePath}.target.kind`, "Applicability target kind must be Base/Model, Price Matrix, Modular, or Workstation.");
+          if (typeof kind !== "string" || !ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(kind as AccessoryApplicabilityTargetKind)) addIssue(issues, "invalid_applicability_target_kind", `${rulePath}.target.kind`, "Applicability target kind must be Base/Model, Price Matrix, Modular, Workstation, or Option Item.");
           if (!groupId) addIssue(issues, "missing_applicability_target_group_id", `${rulePath}.target.group_id`, "Applicability target group ID is required.");
           if (!rowId) addIssue(issues, "missing_applicability_target_row_id", `${rulePath}.target.row_id`, "Applicability target row ID is required.");
           if (typeof kind === "string" && ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(kind as AccessoryApplicabilityTargetKind) && groupId && rowId) target = { kind: kind as AccessoryApplicabilityTargetKind, group_id: groupId, row_id: rowId };
@@ -265,8 +272,8 @@ export function parseAccessoryConfigurationGroups(value: unknown): ParsedAccesso
       if (scaled && rawRule.fixed_quantity === undefined) {
         addIssue(issues, "invalid_quantity_scaling", `${rulePath}.scale_with_target_quantity`, "Quantity scaling requires a fixed quantity.");
       }
-      if (scaled && target && target.kind !== "modular") {
-        addIssue(issues, "invalid_quantity_scaling", `${rulePath}.scale_with_target_quantity`, "Quantity scaling is only supported for modular targets.");
+      if (scaled && target && target.kind !== "modular" && target.kind !== "option_item") {
+        addIssue(issues, "invalid_quantity_scaling", `${rulePath}.scale_with_target_quantity`, "Quantity scaling is only supported for modular or option item targets.");
       }
       if (scaled && selection === "exactly_one") {
         addIssue(issues, "invalid_cardinality", `${rulePath}.scale_with_target_quantity`, "Quantity scaling cannot be combined with exactly-one selection.");

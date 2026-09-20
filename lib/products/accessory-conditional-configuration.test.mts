@@ -196,6 +196,19 @@ test("workstation targets enforce companions, compatibility, and fixed quantity"
   assert.deepEqual(incompatible.groups[0].staleItemIds, ["standard"]);
 });
 
+test("structural option items activate and release their required companion generically", () => {
+  const support = { kind: "option_item", group_id: "supports", row_id: "support-1" } as const;
+  const supports = { id: "supports", group_name: "Supports", group_is_required: false, is_active: true, sort_order: 0, items: [{ id: "support-1", item_name: "Support", role: "structural_support" }] };
+  const tops = { id: "tops", group_name: "Tops", group_is_required: false, is_active: true, sort_order: 1, items: [{ id: "top-1", item_name: "Required top", role: "companion" }], conditional_configuration: { role: "companion", selection: "choose_multiple", applicability: [{ target: support, required: true, visible: true, fixed_quantity: 3 }] } };
+  assert.equal(parseAccessoryConfigurationGroups([supports, tops]).valid, true);
+  const absent = evaluateAccessoryConfigurationForModel({ accessoryGroups: [supports, tops], baseModelGroupId: null, baseModelRowId: null, selectedModelTargets: [] });
+  assert.equal(absent.groups[1].visible, false);
+  const active = evaluateAccessoryConfigurationForModel({ accessoryGroups: [supports, tops], baseModelGroupId: null, baseModelRowId: null, selectedModelTargets: [support], selectedQuantitiesByGroupId: { tops: { "top-1": 3 } } });
+  assert.equal(active.groups[1].required, true);
+  assert.equal(active.groups[1].fixedQuantity, 3);
+  assert.equal(active.valid, true);
+});
+
 test("invalid price-matrix targets fail safely", () => {
   const invalid = group("coat-hanger", "conditional_option", [{ target: { kind: "price_matrix", group_id: "everyis1", row_id: "" }, required: false, visible: true }]);
   const parsed = parseAccessoryConfigurationGroups([invalid]);

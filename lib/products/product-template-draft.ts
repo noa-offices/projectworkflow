@@ -12,6 +12,7 @@ import {
   type AccessoryApplicabilityTarget,
   type AccessoryApplicabilityTargetKind,
   type AccessoryConditionalConfiguration,
+  type AccessoryItemRole,
   type AccessoryConfigurationRole,
   type AccessoryModelApplicabilityRule,
   type AccessorySelectionMode,
@@ -178,7 +179,10 @@ export type ProductTemplateDraftSelectionRule = {
   defaultItemIds: string[];
 };
 
-export type ProductTemplateDraftOptionItem = ProductTemplateDraftPricedRow;
+export type ProductTemplateDraftOptionItem = ProductTemplateDraftPricedRow & {
+  /** Omitted is the legacy/default normal option item. */
+  role?: AccessoryItemRole;
+};
 
 export const PRODUCT_TEMPLATE_DRAFT_REVIEW_STATUSES = ["confirmed", "needs_review"] as const;
 export type ProductTemplateDraftReviewStatus = typeof PRODUCT_TEMPLATE_DRAFT_REVIEW_STATUSES[number];
@@ -201,7 +205,7 @@ export type ProductTemplateDraftCategoryPricedOptionItem = ProductTemplateDraftO
 /**
  * Optional row-specific enforcement metadata, reusing the exact runtime
  * AccessoryConditionalConfiguration shape (role/selection/applicability, with
- * target.kind of base_model | price_matrix | modular | workstation,
+ * target.kind of base_model | price_matrix | modular | workstation | option_item,
  * allowed_item_ids, fixed_quantity, and scale_with_target_quantity) so extraction can legally represent a
  * Required Companion, its exact target rows, and any fixed quantity without
  * inventing new field names. Ordinary option groups may omit this field.
@@ -548,7 +552,7 @@ function applicabilityTarget(value: unknown, path: string, issues: IssueCollecto
   const source = requiredObject(value, path, issues);
   const kind = nullableText(source.kind, `${path}.kind`, issues);
   if (!kind || !ACCESSORY_APPLICABILITY_TARGET_KINDS.includes(kind as AccessoryApplicabilityTargetKind)) {
-    error(issues, `${path}.kind`, "Applicability target kind must be base_model, price_matrix, modular, or workstation.");
+    error(issues, `${path}.kind`, "Applicability target kind must be base_model, price_matrix, modular, workstation, or option_item.");
     return null;
   }
   const groupId = requiredId(source.group_id, `${path}.group_id`, issues);
@@ -585,8 +589,8 @@ function applicabilityRule(value: unknown, path: string, issues: IssueCollector,
   if (scaleWithTargetQuantity === true && (fixedQuantity === undefined || fixedQuantity === null)) {
     error(issues, `${path}.scale_with_target_quantity`, "Quantity scaling requires a fixed quantity.");
   }
-  if (scaleWithTargetQuantity === true && target.kind !== "modular") {
-    error(issues, `${path}.scale_with_target_quantity`, "Quantity scaling is only supported for modular targets.");
+  if (scaleWithTargetQuantity === true && target.kind !== "modular" && target.kind !== "option_item") {
+    error(issues, `${path}.scale_with_target_quantity`, "Quantity scaling is only supported for modular or option item targets.");
   }
   if (scaleWithTargetQuantity === true && selectionMode === "exactly_one") {
     error(issues, `${path}.scale_with_target_quantity`, "Quantity scaling cannot be combined with exactly-one selection.");
@@ -733,7 +737,7 @@ export function normalizeProductTemplateDraft(input: unknown): ProductTemplateDr
     uniqueIds(priceCategories.map((category) => category.id), `draft.optionGroups[${index}].priceCategories`, issues);
     const categoryIds = new Set(priceCategories.map((category) => category.id));
     const items = array(item.items, `draft.optionGroups[${index}].items`, issues)
-      .map((row, rowIndex) => { const source = object(row, `draft.optionGroups[${index}].items[${rowIndex}]`, issues); const base = pricedRow(source, `draft.optionGroups[${index}].items[${rowIndex}]`, issues); const values = object(source.prices, `draft.optionGroups[${index}].items[${rowIndex}].prices`, issues); const prices = Object.fromEntries(Object.entries(values).map(([id, value]) => [id, price(value, `draft.optionGroups[${index}].items[${rowIndex}].prices.${id}`, issues)])); Object.keys(prices).forEach((id) => { if (!categoryIds.has(id)) error(issues, `draft.optionGroups[${index}].items[${rowIndex}].prices.${id}`, "Unknown accessory price category."); }); return { ...base, ...(priceCategories.length ? { prices } : {}), ...reviewMetadata(source, `draft.optionGroups[${index}].items[${rowIndex}]`, issues) }; });
+      .map((row, rowIndex) => { const path = `draft.optionGroups[${index}].items[${rowIndex}]`; const source = object(row, path, issues); const base = pricedRow(source, path, issues); const values = object(source.prices, `${path}.prices`, issues); const prices = Object.fromEntries(Object.entries(values).map(([id, value]) => [id, price(value, `${path}.prices.${id}`, issues)])); Object.keys(prices).forEach((id) => { if (!categoryIds.has(id)) error(issues, `${path}.prices.${id}`, "Unknown accessory price category."); }); const role = nullableText(source.role, `${path}.role`, issues); if (role && !["normal", "companion", "structural_support"].includes(role)) error(issues, `${path}.role`, 'Option item role must be "normal", "companion", or "structural_support".'); return { ...base, ...(priceCategories.length ? { prices } : {}), ...(role && role !== "normal" && ["companion", "structural_support"].includes(role) ? { role: role as AccessoryItemRole } : {}), ...reviewMetadata(source, path, issues) }; });
     uniqueIds(items.map((option) => option.id), `draft.optionGroups[${index}].items`, issues);
     const itemIds = new Set(items.map((option) => option.id));
     const configuration = conditionalConfiguration(item.conditionalConfiguration, `draft.optionGroups[${index}].conditionalConfiguration`, issues, itemIds);

@@ -10,7 +10,7 @@ type AccessoryGroup = {
   is_active: boolean;
   sort_order: number;
   price_categories?: Array<{ id: string; label: string }>;
-  items: Array<{ id: string; item_name: string; supplier_price_list_code: string; price: number | null; prices?: Record<string, number | null>; currency?: string; dimension?: string; specification: string; is_active: boolean; sort_order: number }>;
+  items: Array<{ id: string; item_name: string; supplier_price_list_code: string; price: number | null; prices?: Record<string, number | null>; currency?: string; dimension?: string; specification: string; is_active: boolean; sort_order: number; role?: "companion" | "structural_support" }>;
   conditional_configuration?: { role: "accessory" | "conditional_option" | "companion"; selection: "unrestricted" | "exactly_one" | "at_least_one" | "choose_multiple"; applicability: AccessoryModelApplicabilityRule[] };
 };
 
@@ -34,7 +34,8 @@ function primaryCode(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMa
 
 function mapItem(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMatrixRow, price: number | null, index: number, warnings: string[], itemKind: string) {
   const dimension = row.dimensions?.rawText?.trim();
-  return { id: row.id, item_name: row.displayName ?? row.label ?? row.id, supplier_price_list_code: primaryCode(row, warnings, itemKind), price, ...("prices" in row && row.prices ? { prices: row.prices } : {}), currency: row.currency ?? undefined, ...(dimension ? { dimension } : {}), specification: row.specification ?? "", ...(row.importantRequirements?.length ? { importantRequirements: row.importantRequirements } : {}), is_active: true, sort_order: index };
+  const optionRole = (row as { role?: unknown }).role;
+  return { id: row.id, item_name: row.displayName ?? row.label ?? row.id, supplier_price_list_code: primaryCode(row, warnings, itemKind), price, ...("prices" in row && row.prices ? { prices: row.prices } : {}), currency: row.currency ?? undefined, ...(dimension ? { dimension } : {}), specification: row.specification ?? "", ...(optionRole === "companion" || optionRole === "structural_support" ? { role: optionRole } : {}), ...(row.importantRequirements?.length ? { importantRequirements: row.importantRequirements } : {}), is_active: true, sort_order: index };
 }
 
 function topAccessContext(value: string) {

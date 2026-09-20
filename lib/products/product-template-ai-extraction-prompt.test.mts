@@ -1580,7 +1580,7 @@ test("visible ProductTemplateDraft v1 contract exposes the actual conditionalCon
       "Omit it entirely for an ordinary, independently selectable accessory with no row-specific requirement",
       "role: \"accessory\" | \"conditional_option\" | \"companion\"",
       "selection: \"unrestricted\" | \"exactly_one\" | \"at_least_one\" | \"choose_multiple\"",
-      "target: { kind: \"base_model\" | \"price_matrix\" | \"modular\" | \"workstation\", group_id, row_id }",
+      "target: { kind: \"base_model\" | \"price_matrix\" | \"modular\" | \"workstation\" | \"option_item\", group_id, row_id }",
       "allowed_item_ids: optional array restricting which of this group's items apply under that rule",
       "fixed_quantity: a positive integer for an explicit manufacturer-required quantity",
       "OMIT the field entirely when no fixed quantity applies; never emit \"fixed_quantity\": null",
@@ -1675,7 +1675,7 @@ test("Copy Prompt regression: the exact UI-facing builder function generates the
     // B. exact runtime applicability field names.
     "role: \"accessory\" | \"conditional_option\" | \"companion\"",
     "selection: \"unrestricted\" | \"exactly_one\" | \"at_least_one\" | \"choose_multiple\"",
-    "target: { kind: \"base_model\" | \"price_matrix\" | \"modular\" | \"workstation\", group_id, row_id }",
+    "target: { kind: \"base_model\" | \"price_matrix\" | \"modular\" | \"workstation\" | \"option_item\", group_id, row_id }",
     "allowed_item_ids: optional array restricting which of this group's items apply under that rule",
     "required and visible: booleans",
     "fixed_quantity: a positive integer for an explicit manufacturer-required quantity",
@@ -1736,7 +1736,7 @@ test("target-identity audit 4: the workstation target example always includes gr
   assert.ok(workstationPrompt.includes('target: { kind: "workstation", group_id: "legacy-workstation-main", row_id: "oxi-q-ws-dx" }'), "Expected the OXI companion example target to include group_id");
   assert.ok(!workstationPrompt.includes('target: { kind: "workstation", row_id:'), "Expected no workstation target example to omit group_id");
   extractionPromptFocuses.forEach((focus) => {
-    assert.ok(getProductTemplateAiExtractionPrompt(focus).includes('target: { kind: "base_model" | "price_matrix" | "modular" | "workstation", group_id, row_id }'), `Expected ${focus} prompt's generic target shape to require group_id`);
+    assert.ok(getProductTemplateAiExtractionPrompt(focus).includes('target: { kind: "base_model" | "price_matrix" | "modular" | "workstation" | "option_item", group_id, row_id }'), `Expected ${focus} prompt's generic target shape to require group_id`);
   });
 });
 
@@ -2478,4 +2478,37 @@ test("FINAL CHECK item 30 documents companion commercial-row preservation", () =
       `Expected ${focus} prompt's FINAL CHECK to include item 30 on companion commercial-row preservation`,
     );
   });
+});
+
+test("structural-support and option-item dependency contract is documented without changing existing routing examples", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    '"structural_support"',
+    '"base_model" | "price_matrix" | "modular" | "workstation" | "option_item"',
+    '"kind": "option_item"',
+    "<exact optionGroups[].id containing the trigger item>",
+    "not as a normal optional accessory",
+    "Do NOT infer structural support from cabinet/storage/support words alone",
+    "fixed_quantity only when explicitly proven",
+    "Arbitrary recursive/deeper dependency graphs remain unsupported",
+    "WORKSTATION FINAL SAFETY CHECK",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected structural-support prompt guidance: ${expected}`));
+  ["base_model", "price_matrix", "modular", "workstation", "OXI_P starter rows", "Terra Office-style"].forEach((expected) => assert.ok(prompt.includes(expected), `Expected existing regression/routing guidance: ${expected}`));
+});
+
+test("source-proven structural support precedes Base/Model fallback and keeps scaling safe", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "SOURCE-PROVEN STRUCTURAL SUPPORT PRECEDENCE",
+    'route it as an optionGroups item with role "structural_support" even if it has a direct price',
+    "takes precedence over the ordinary direct-priced primary SKU -> Base/Model fallback",
+    "Do not put it in pricing.baseModelRows",
+    'dependent companion uses target.kind "option_item"',
+    "scale_with_target_quantity: true is supported only for modular or option_item targets",
+    "Never emit it for base_model, price_matrix, or workstation",
+    "35. A source-proven structural-support item was routed to optionGroups",
+    "36. No structural-support item was duplicated",
+    "37. scale_with_target_quantity is used only for supported target kinds",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected structural routing precedence: ${expected}`));
+  ["direct-priced primary SKU", "OXI_P starter rows", "Terra Office-style", "X3-style"].forEach((expected) => assert.ok(prompt.includes(expected), `Expected existing routing regression: ${expected}`));
 });
