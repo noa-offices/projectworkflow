@@ -155,10 +155,14 @@ export function validateSmartSetupReviewRouting(draft: ProductTemplateDraft, pla
       if (!target) errors.push(`${route.sourceName} has an incomplete applicable model target.`);
       if (ruleKeys.has(key)) errors.push(`${route.sourceName} has a duplicate applicable model rule.`);
       if (key) ruleKeys.add(key);
-      if (target && !modelTargets.has(key)) errors.push(`${route.sourceName} references a row not routed to Base / Model, Category / Matrix, or Modular Pricing.`);
+      if (target?.kind === "option_item") {
+        const optionRoute = plan.routes.find((item) => item.sourceKind === "option" && item.sourceId === target.group_id);
+        const optionGroup = draft.optionGroups.find((group) => group.id === target.group_id);
+        if (!optionRoute || optionRoute.destination === "skip" || !optionGroup?.items.some((item) => item.id === target.row_id)) errors.push(`${route.sourceName} references an option item that does not exist in its Accessory / Configuration group.`);
+      } else if (target && !modelTargets.has(key)) errors.push(`${route.sourceName} references a row not routed to Base / Model, Category / Matrix, or Modular Pricing.`);
       if (rule.fixedQuantity !== undefined && (!Number.isInteger(rule.fixedQuantity) || rule.fixedQuantity <= 0)) errors.push(`${route.sourceName} has an invalid fixed quantity.`);
       if (rule.scaleWithTargetQuantity === true && rule.fixedQuantity === undefined) errors.push(`${route.sourceName} quantity scaling requires a fixed quantity.`);
-      if (rule.scaleWithTargetQuantity === true && target?.kind !== "modular") errors.push(`${route.sourceName} quantity scaling is only supported for Modular targets.`);
+      if (rule.scaleWithTargetQuantity === true && target?.kind !== "modular" && target?.kind !== "option_item") errors.push(`${route.sourceName} quantity scaling is only supported for Modular or option item targets.`);
       if (route.accessory?.selection === "required_exactly_one" && rule.scaleWithTargetQuantity !== true && rule.fixedQuantity !== undefined && rule.fixedQuantity !== 1) errors.push(`${route.sourceName} must use fixed quantity 1 for Required / Exactly One.`);
       if (route.accessory?.selection === "required_exactly_one" && rule.scaleWithTargetQuantity === true) errors.push(`${route.sourceName} quantity scaling cannot use Required / Exactly One.`);
       if (rule.allowedItemIds?.length === 0) errors.push(`${route.sourceName} requires at least one allowed item when Specific Items is selected.`);

@@ -1,5 +1,5 @@
 import type { ProductTemplateDraft, ProductTemplateDraftMatrixRow, ProductTemplateDraftOptionGroup, ProductTemplateDraftPricedRow } from "./product-template-draft";
-import type { AccessoryModelApplicabilityRule } from "./accessory-conditional-configuration";
+import type { AccessoryItemRole, AccessoryModelApplicabilityRule } from "./accessory-conditional-configuration";
 import { directMatrixRowPrice, routeDraftPriceMatrices } from "./product-template-draft-pricing-routing";
 import { smartReviewMatrixOverrides, smartReviewRuleTarget, smartReviewSelectionContract, type SmartReviewRule, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
 
@@ -34,7 +34,7 @@ function primaryCode(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMa
 
 function mapItem(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMatrixRow, price: number | null, index: number, warnings: string[], itemKind: string) {
   const dimension = row.dimensions?.rawText?.trim();
-  const optionRole = (row as { role?: unknown }).role;
+  const optionRole = (row as { role?: AccessoryItemRole }).role;
   return { id: row.id, item_name: row.displayName ?? row.label ?? row.id, supplier_price_list_code: primaryCode(row, warnings, itemKind), price, ...("prices" in row && row.prices ? { prices: row.prices } : {}), currency: row.currency ?? undefined, ...(dimension ? { dimension } : {}), specification: row.specification ?? "", ...(optionRole === "companion" || optionRole === "structural_support" ? { role: optionRole } : {}), ...(row.importantRequirements?.length ? { importantRequirements: row.importantRequirements } : {}), is_active: true, sort_order: index };
 }
 

@@ -171,3 +171,43 @@ test("service-unit name heuristic is used only when source selection is absent",
   const route = createSmartSetupReviewRouting(ambiguousDraft).routes.find((item) => item.sourceId === "legacy-service")!;
   assert.deepEqual(route.accessory, { role: "companion", selection: "required_exactly_one", rules: [] });
 });
+
+const optionItem = (id: string) => ({ id, label: id, displayName: null, dimensions: null, currency: "EUR" as const, price: 0, specification: null, supplierCodes: [`SKU-${id}`], referenceCodes: [] });
+const optionDraft = (): ProductTemplateDraft => {
+  const next: ProductTemplateDraft = structuredClone(draft);
+  next.pricing.modularGroups = [{ id: "mod", label: "Mod", defaultDimensions: null, defaultSpecification: null, matrix: matrix("mod", [{ id: "cat", label: "Cat" }], { cat: 1 }) }];
+  next.optionGroups = [
+    { id: "structural", label: "Structural", selection: { mode: "optional", minSelections: 0, maxSelections: null, defaultItemIds: [] }, items: [optionItem("support-a")] },
+    { id: "other", label: "Other", selection: { mode: "optional", minSelections: 0, maxSelections: null, defaultItemIds: [] }, items: [optionItem("other-x")] },
+    { id: "finishing-top", label: "Finishing Top", selection: { mode: "optional", minSelections: 0, maxSelections: null, defaultItemIds: [] }, items: [optionItem("top-b")] },
+  ];
+  return next;
+};
+const validateRule = (target: unknown, extra: Record<string, unknown> = {}, mutate?: (d: ProductTemplateDraft) => void) => {
+  const d = optionDraft();
+  mutate?.(d);
+  const plan = createSmartSetupReviewRouting(d);
+  plan.routes.find((route) => route.sourceId === "finishing-top")!.accessory = { role: "companion", selection: "optional_multiple", rules: [{ target: target as never, required: true, fixedQuantity: 1, ...extra }] };
+  return validateSmartSetupReviewRouting(d, plan);
+};
+const optionTarget = (group_id: string, row_id: string) => ({ kind: "option_item", group_id, row_id });
+
+test("option_item targets resolve against optionGroups ids and item ids", () => {
+  assert.equal(validateRule(optionTarget("structural", "support-a")).valid, true);
+  assert.match(validateRule(optionTarget("missing-group", "support-a")).errors.join(" "), /option item that does not exist/);
+  assert.match(validateRule(optionTarget("structural", "missing-item")).errors.join(" "), /option item that does not exist/);
+  assert.match(validateRule(optionTarget("structural", "other-x")).errors.join(" "), /option item that does not exist/, "row from another optionGroup");
+  assert.match(validateRule(optionTarget("structural", "SKU-support-a")).errors.join(" "), /option item that does not exist/, "supplier code is not an item id");
+  assert.match(validateRule(optionTarget("structural", "support-a"), {}, (d) => { d.optionGroups = d.optionGroups.filter((g) => g.id !== "structural"); d.optionGroups.push({ ...optionDraft().optionGroups[0], id: "structural", items: [] }); }).errors.join(" "), /option item that does not exist/);
+});
+
+test("quantity scaling is valid for modular and option_item targets only", () => {
+  const scaled = { scaleWithTargetQuantity: true };
+  assert.equal(validateRule(optionTarget("structural", "support-a"), scaled).valid, true);
+  assert.equal(validateRule({ kind: "modular", group_id: "mod", row_id: "mod-row" }, scaled).valid, true);
+  const baseDraftRows = (d: ProductTemplateDraft) => { d.pricing.baseModelRows = [{ id: "bm", label: "bm", displayName: null, dimensions: null, currency: "EUR", price: 1, specification: null, supplierCodes: [], referenceCodes: [] }]; };
+  const fail = /quantity scaling is only supported for Modular or option item targets/;
+  assert.match(validateRule({ kind: "base_model", group_id: "legacy-base-model-main", row_id: "bm" }, scaled, baseDraftRows).errors.join(" "), fail);
+  assert.match(validateRule({ kind: "price_matrix", group_id: "ARCA", row_id: "ARCA-row" }, scaled).errors.join(" "), fail);
+  assert.match(validateRule({ kind: "workstation", group_id: "w", row_id: "w1" }, scaled).errors.join(" "), fail);
+});
