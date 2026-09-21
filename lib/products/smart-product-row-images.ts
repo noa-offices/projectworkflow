@@ -3,6 +3,7 @@ import { draftModularRows, type ProductTemplateDraft } from "./product-template-
 import type { SmartReviewDestination, SmartReviewRoute, SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
 import type { BaseModelPricingSubgroup } from "./base-model-pricing-groups";
 import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups";
+import { draftBaseModelGroupRows, draftUngroupedBaseModelRows } from "./base-model-draft-groups";
 import { LEGACY_WORKSTATION_GROUP_ID } from "./workstation-pricing-groups";
 
 export type StagedReviewedRowImage<TFile = File> = { file: TFile; previewUrl: string; sourceKey: string; sourceRowId: string };
@@ -33,7 +34,8 @@ function destinationPricingType(destination: SmartReviewDestination): ProductTem
 
 function routeRowIds(draft: ProductTemplateDraft, route: SmartReviewRoute) {
   if (route.sourceKind === "workstation") return draft.pricing.workstationRows.map((row) => row.id);
-  if (route.sourceKind === "base_model") return draft.pricing.baseModelRows.map((row) => row.id);
+  if (route.sourceKind === "base_model") return draftUngroupedBaseModelRows(draft.pricing).map((row) => row.id);
+  if (route.sourceKind === "base_model_group") return draftBaseModelGroupRows(draft.pricing, route.sourceId).map((row) => row.id);
   if (route.sourceKind === "matrix") return draft.pricing.priceMatrices.find((matrix) => matrix.id === route.sourceId)?.rows.map((row) => row.id) ?? [];
   if (route.sourceKind === "modular") return draft.pricing.modularGroups.filter((group) => group.id === route.sourceId).flatMap((group) => draftModularRows(group).map((row) => row.id));
   return draft.optionGroups.find((group) => group.id === route.sourceId)?.items.map((row) => row.id) ?? [];
@@ -60,7 +62,10 @@ export function canonicalSubgroupsForSmartSetupApply(draft: ProductTemplateDraft
   return plan.routes.flatMap((route) => {
     const pricingType = destinationPricingType(route.destination);
     if (!pricingType) return [];
-    const availableRows = new Set(routeRowIds(draft, route));
+    // system_base rows are never Main Product subgroup members; drop them here without reassigning.
+    const isBaseModelRoute = route.sourceKind === "base_model" || route.sourceKind === "base_model_group";
+    const systemRowIds = new Set(isBaseModelRoute ? draft.pricing.baseModelRows.flatMap((row) => row.role === "system_base" ? [row.id] : []) : []);
+    const availableRows = new Set(routeRowIds(draft, route).filter((rowId) => !systemRowIds.has(rowId)));
     const assigned = new Set<string>();
     const subgroups = (reviewed[route.key] ?? []).map((subgroup) => ({
       ...subgroup,

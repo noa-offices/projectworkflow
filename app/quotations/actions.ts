@@ -26,6 +26,7 @@ import {
 } from "@/lib/products/base-model-pricing-groups";
 import type { AccessoryConditionalConfiguration } from "@/lib/products/accessory-conditional-configuration";
 import { evaluateProductAccessorySelection, parseSubmittedAccessoryQuantities } from "@/lib/quotations/product-accessory-configuration";
+import { composeSystemAndMainSpecification, currentSystemPricing, isSystemBaseRow, nativeBaseModelTargets, nativeSystemState, systemPriceContribution, systemPricingSnapshot, systemSelectedOptionSnapshot } from "@/lib/quotations/native-system-base";
 import {
   isDirectModularPricingGroup,
   modularItemPricingGroups,
@@ -1339,6 +1340,8 @@ type DeskingSizePricingRow = {
 
 type VariantPricingRow = {
   id?: string;
+  /** Native System / Base row (Phase B); omitted for Main Product rows. */
+  role?: "system_base";
   variant_name?: string;
   display_name?: string;
   supplier_price_list_code?: string;
@@ -1523,7 +1526,7 @@ function currentComponentSourceTotal({
     if (
       !optionId ||
       isAccessorySnapshot ||
-      ["variant_pricing", "category_pricing", "desking_size"].includes(String(option.item_type))
+      ["variant_pricing", "category_pricing", "desking_size", "system_pricing"].includes(String(option.item_type))
     ) {
       continue;
     }
@@ -1613,9 +1616,18 @@ function currentSourcePriceFromSnapshot({
     : 0;
   if (accessoryTotal === null) return null;
 
+  // Native System / Base is its own priced row (system_pricing); old snapshots without it are unchanged.
+  const systemPricing = currentSystemPricing(data, flattenBaseModelPricingRows(template.variant_pricing ?? []));
+  if (systemPricing.kind === "missing") return null;
+  let systemTotal = 0;
+  if (systemPricing.kind === "ok") {
+    if (normalizeCurrency(systemPricing.currency ?? template.currency) !== sourceCurrency) return null;
+    systemTotal = quotationMoneyValue(systemPricing.price);
+  }
+
   return {
     currency: sourceCurrency,
-    price: quotationMoneyValue(sourcePrice + componentTotal + accessoryTotal),
+    price: quotationMoneyValue(sourcePrice + systemTotal + componentTotal + accessoryTotal),
   };
 }
 
@@ -6065,6 +6077,26 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   if (selectedVariantPricingRow && submittedVariantGroupId && !selectedVariantGroup) {
     redirectWithMessage(redirectPath, "The selected Base/Model group and model do not match.");
   }
+  // Native System / Base (Phase B): an independent priced Base/Model selection whose group owns the Main Product.
+  const submittedSystemRowId = textValue(formData, "system_base_row_id");
+  const nativeSystemOption = submittedSystemRowId
+    ? nativeSystemState(activeBaseModelGroups).options.find((option) => option.row.id === submittedSystemRowId) ?? null
+    : null;
+  if (submittedSystemRowId && !nativeSystemOption) {
+    redirectWithMessage(redirectPath, "The selected System / Base is no longer available.");
+  }
+  if (selectedVariantPricingRow && isSystemBaseRow(selectedVariantPricingRow)) {
+    redirectWithMessage(redirectPath, "A System / Base row cannot be used as the Main Product.");
+  }
+  if (nativeSystemOption && selectedVariantPricingRow && selectedVariantGroup?.id !== nativeSystemOption.group.id) {
+    redirectWithMessage(redirectPath, "The selected System / Base and Main Product do not belong to the same System group.");
+  }
+  if (nativeSystemOption && !selectedVariantPricingRow && nativeSystemOption.group.items.some((row) => !isSystemBaseRow(row))) {
+    redirectWithMessage(redirectPath, "Select a Main Product model for the chosen System / Base.");
+  }
+  if (!nativeSystemOption && selectedVariantGroup?.items.some(isSystemBaseRow)) {
+    redirectWithMessage(redirectPath, "Select a System / Base before adding this product.");
+  }
   const selectedCategoryPricingRow = selectedVariantPricingRow
     ? null
     : selectedCategoryPricing(formData, template.category_pricing);
@@ -6185,7 +6217,12 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const selectedAccessoryModelTargets = selectedSizePricing?.id && selectedWorkstationGroup
     ? [{ kind: "workstation" as const, group_id: selectedWorkstationGroup.id, row_id: selectedSizePricing.id }]
     : selectedVariantPricingRow && selectedVariantGroup
-    ? [{ kind: "base_model" as const, group_id: selectedVariantGroup.id, row_id: selectedVariantPricingRow.id ?? "" }]
+    ? nativeBaseModelTargets({
+        mainGroupId: selectedVariantGroup.id,
+        mainRowId: selectedVariantPricingRow.id ?? "",
+        systemGroupId: nativeSystemOption?.group.id,
+        systemRowId: nativeSystemOption?.row.id,
+      })
     : selectedCategoryPricingRow && selectedCategoryGroup
       ? [{ kind: "price_matrix" as const, group_id: selectedCategoryGroup.id ?? "", row_id: selectedCategoryPricingRow.id ?? "" }]
       : selectedModularItems.map((item) => ({ kind: "modular" as const, group_id: item.group_id, row_id: item.id }));
@@ -6221,6 +6258,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const selectedWorkstationVariantPrice = selectedWorkstationVariantPricingRow
     ? money(calculationNumber(selectedWorkstationVariantPricingRow.price))
     : 0;
+  // Native System / Base price: its own priced selection, never routed through accessory totals.
+  const selectedSystemPrice = nativeSystemOption ? money(calculationNumber(nativeSystemOption.row.price)) : 0;
   const isDesking =
     (!selectedVariantPricingRow && !selectedCategoryPricingRow && /workstation|desking/.test(categoryName.toLowerCase())) ||
     Boolean(selectedSizePricing) ||
@@ -6449,7 +6488,11 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     );
   };
 
+  const systemContribution = systemPriceContribution({ price: selectedSystemPrice, currency: nativeSystemOption?.row.currency }, normalizeCurrency(rowCurrency));
+  const systemCurrency = normalizeCurrency(systemContribution.currency);
+  const matchingSystemTotal = nativeSystemOption ? systemContribution.matching : 0;
   addCurrencyTotal(rowCurrency, baseUnitPrice);
+  if (nativeSystemOption) addCurrencyTotal(systemCurrency, selectedSystemPrice);
   if (selectedWorkstationVariantPricingRow) {
     addCurrencyTotal(
       selectedWorkstationVariantPricingRow.currency ?? rowCurrency,
@@ -6487,7 +6530,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   );
   const rawUnitPrice = nonAedCurrencies.length
     ? convertedUnitPrice
-    : money(baseUnitPrice + matchingAccessoryTotal + matchingLinkedProductsTotal);
+    : money(baseUnitPrice + matchingSystemTotal + matchingAccessoryTotal + matchingLinkedProductsTotal);
   const unitPrice = quotationMoneyValue(rawUnitPrice);
   const rowOutputCurrency = nonAedCurrencies.length ? "AED" : rowCurrency;
   const currencyConversionData = nonAedCurrencies.length
@@ -6523,6 +6566,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     selectedAccessoryPricing.length ||
     selectedLinkedProducts.length ||
     currencyConversionData ||
+    nativeSystemOption ||
     selectedWorkstationVariantPricingRow
       ? unitPrice
       : baseUnitPrice;
@@ -6591,6 +6635,10 @@ export async function addProductTemplateToQuotation(formData: FormData) {
         templateDescription: template.description,
       })
     : null;
+  // System / Base specification precedes (never replaces) the Main Product specification.
+  const variantSpecification = nativeSystemOption
+    ? composeSystemAndMainSpecification(nativeSystemOption.row.specification, selectedVariantPricingRow?.specification)
+    : selectedVariantPricingRow?.specification;
   const companyStyleSpecification = buildCompanyStyleProductSpecification({
     accessorySnapshots: usesDirectModularPricing ? [] : selectedAccessoryPricing,
     linkedProductSnapshots: selectedLinkedProducts,
@@ -6598,7 +6646,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       (derivedDesking ? configuredWorkstationSpecification : null) ??
       modularCompositionSpecification ??
       selectedCategoryPricingRow?.specification ??
-      selectedVariantPricingRow?.specification ??
+      variantSpecification ??
       null,
     selectedOptionSnapshots,
     selectedWorkstationVariant: selectedWorkstationVariantPricingRow,
@@ -6616,7 +6664,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       modularCompositionSpecification ??
       selectedCategoryPricingRow?.specification ??
       null,
-    selectedVariantSpecification: selectedVariantPricingRow?.specification ?? null,
+    selectedVariantSpecification: variantSpecification ?? null,
     selectedWorkstationVariantSpecification: selectedWorkstationVariantPricingRow?.specification ?? null,
     template: usesModularPricing
       ? {
@@ -6724,9 +6772,12 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     : selectedAccessoryPricing.length
       ? [...finalSelectedOptions, ...selectedAccessoryPricing]
       : finalSelectedOptions;
-  const finalSelectedOptionsWithLinkedProducts = selectedLinkedProducts.length
-    ? [...finalSelectedOptionsWithAccessories, ...selectedLinkedProducts]
+  const finalSelectedOptionsWithSystem = nativeSystemOption
+    ? [systemSelectedOptionSnapshot(nativeSystemOption.group.id, nativeSystemOption.row), ...finalSelectedOptionsWithAccessories]
     : finalSelectedOptionsWithAccessories;
+  const finalSelectedOptionsWithLinkedProducts = selectedLinkedProducts.length
+    ? [...finalSelectedOptionsWithSystem, ...selectedLinkedProducts]
+    : finalSelectedOptionsWithSystem;
   const deskingSourceData = derivedDesking
     ? {
         workstation_row_id: selectedSizePricing?.id ?? null,
@@ -6878,6 +6929,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       source_price_reference: sourcePriceReference,
       ...(deskingSourceData ? { desking: deskingSourceData } : {}),
       ...(selectedVariantPricingRow ? { variant_pricing: selectedVariantPricingRow } : {}),
+      ...(nativeSystemOption ? { system_pricing: systemPricingSnapshot(nativeSystemOption.group.id, nativeSystemOption.row) } : {}),
       ...(selectedCategoryPricingRow
         ? {
             category_pricing: {

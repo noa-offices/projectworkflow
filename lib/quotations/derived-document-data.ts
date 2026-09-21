@@ -296,6 +296,19 @@ export function collectSupplierCodeSummary(sourceData: unknown): SupplierCodeEnt
     );
   }
 
+  // Native System / Base: its own supplier code, labelled "System". The selected_options mirror entry is skipped below.
+  const systemPricing = isRecord(sourceRecord.system_pricing) ? sourceRecord.system_pricing : null;
+  const systemRow = systemPricing && isRecord(systemPricing.row) ? systemPricing.row : null;
+  if (systemRow) {
+    addSupplierCodeEntries(
+      entries,
+      seenEntries,
+      seenCodes,
+      stringFromRecord(systemRow, ["supplier_price_list_code"]),
+      "System",
+    );
+  }
+
   const modularPricing = isRecord(sourceRecord.modular_pricing) ? sourceRecord.modular_pricing : null;
   const modularItems = modularPricing && Array.isArray(modularPricing.items) ? modularPricing.items : [];
   for (const item of modularItems) {
@@ -369,6 +382,7 @@ export function collectSupplierCodeSummary(sourceData: unknown): SupplierCodeEnt
     ...arrayRecords(itemRecord?.selected_options_snapshot),
   ];
   for (const option of selectedOptions) {
+    if (option.item_type === "system_pricing") continue;
     addSupplierCodeEntries(
       entries,
       seenEntries,

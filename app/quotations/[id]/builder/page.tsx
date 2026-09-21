@@ -35,6 +35,7 @@ import {
 } from "@/lib/product-price-check";
 import { findWorkstationPricingRow } from "@/lib/products/workstation-pricing-groups";
 import { flattenBaseModelPricingRows } from "@/lib/products/base-model-pricing-groups";
+import { currentSystemPricing } from "@/lib/quotations/native-system-base";
 import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
 import {
   FinishImagePreview,
@@ -679,7 +680,7 @@ function currentComponentOptionsTotal({
     if (
       !optionId ||
       isAccessorySnapshot ||
-      ["variant_pricing", "category_pricing", "desking_size"].includes(String(option.item_type))
+      ["variant_pricing", "category_pricing", "desking_size", "system_pricing"].includes(String(option.item_type))
     ) {
       continue;
     }
@@ -773,11 +774,20 @@ function currentSourcePriceForItem({
     : 0;
   if (accessoryTotal === null) return null;
 
+  // Native System / Base (system_pricing) is its own priced row; old snapshots without it are unchanged.
+  const systemPricing = currentSystemPricing(sourceData, flattenBaseModelPricingRows(template.variant_pricing ?? []));
+  if (systemPricing.kind === "missing") return null;
+  let systemTotal = 0;
+  if (systemPricing.kind === "ok") {
+    if (normalizeCurrency(systemPricing.currency ?? template.currency) !== sourceCurrency) return null;
+    systemTotal = quotationMoneyValue(systemPricing.price);
+  }
+
   return {
     canApplyCurrentSourcePrice: true,
     sourceCurrency,
     sourceKind,
-    sourcePrice: quotationMoneyValue(sourcePrice + componentOptionsTotal + accessoryTotal),
+    sourcePrice: quotationMoneyValue(sourcePrice + systemTotal + componentOptionsTotal + accessoryTotal),
   };
 }
 
@@ -920,8 +930,12 @@ function sourcePriceReferenceForItem({
   if (reference.originalPrice === null && variantData) {
     const price = optionalNumericValue(variantData.price);
     if (price !== null) {
-      reference.originalPrice = quotationMoneyValue(price);
-      reference.originalCurrency = normalizeCurrency(stringValue(variantData.currency) ?? template?.currency ?? quotationCurrency);
+      const variantCurrency = normalizeCurrency(stringValue(variantData.currency) ?? template?.currency ?? quotationCurrency);
+      // Native System / Base adds its own priced row to the reference (same currency only; mixed currency is covered by conversion totals).
+      const systemRow = recordValue(recordValue(sourceData?.system_pricing)?.row);
+      const systemPrice = systemRow && normalizeCurrency(stringValue(systemRow.currency) ?? variantCurrency) === variantCurrency ? optionalNumericValue(systemRow.price) ?? 0 : 0;
+      reference.originalPrice = quotationMoneyValue(price + systemPrice);
+      reference.originalCurrency = variantCurrency;
       reference.sourceType = reference.sourceType ?? sourceTypeLabel("variant_pricing");
       reference.sourceLabel = reference.sourceLabel ?? [
         stringValue(variantData.variant_name),

@@ -22,20 +22,56 @@ test("live form pricing becomes an authoritative reviewed workspace without losi
   });
 
   assert.equal(workspace.draft.template.templateName, "Edited MONOLITH");
-  assert.equal(workspace.draft.pricing.priceMatrices[0].rows[0].prices.price, 987);
-  assert.equal(workspace.draft.pricing.priceMatrices[1].rows[0].prices.A, 0);
-  assert.equal(workspace.draft.pricing.priceMatrices[1].rows[0].prices.B, null);
+  // Persisted native Base/Model groups reopen as grouped baseModelRows, never as fake one-column matrices.
+  assert.equal(workspace.draft.pricing.baseModelRows[0].price, 987);
+  assert.equal(workspace.draft.pricing.baseModelRows[0].groupId, "executive");
+  assert.equal(workspace.draft.pricing.baseModelRows[0].groupLabel, "Executive Desks");
+  assert.equal(workspace.draft.pricing.priceMatrices.length, 1);
+  assert.equal(workspace.draft.pricing.priceMatrices[0].rows[0].prices.A, 0);
+  assert.equal(workspace.draft.pricing.priceMatrices[0].rows[0].prices.B, null);
   assert.equal(workspace.draft.optionGroups[0].items[0].displayName, "Service Unit W123.6 - Right");
   assert.deepEqual(workspace.draft.optionGroups[0].items[0].supplierCodes, ["1AF 090"]);
-  assert.deepEqual(workspace.subgroups["matrix:executive"], [subgroup]);
+  assert.deepEqual(workspace.subgroups["base_model_group:executive"], [subgroup]);
   assert.deepEqual(workspace.subgroups["option:service"]?.[0].row_ids, ["service-right"]);
-  assert.equal(workspace.plan.routes.find((route) => route.key === "matrix:executive")?.destination, "base_model");
+  assert.equal(workspace.plan.routes.find((route) => route.key === "base_model_group:executive")?.destination, "base_model");
+  assert.equal(workspace.plan.routes.find((route) => route.key === "matrix:executive"), undefined);
   assert.equal(workspace.plan.routes.find((route) => route.key === "matrix:finishes")?.destination, "category_matrix");
 
   const accessory = workspace.plan.routes.find((route) => route.key === "option:service")?.accessory;
   assert.equal(accessory?.role, "companion");
   assert.equal(accessory?.selection, "required_exactly_one");
   assert.deepEqual(accessory?.rules[0], { baseModelGroupId: "executive", baseModelRowId: "model-a", required: true, visible: true, allowedItemIds: ["service-right"], fixedQuantity: 1 });
+});
+
+test("reopening a saved template restores structural-support role and compatibleTargets", () => {
+  const workspace = productTemplateFormSmartWorkspace({
+    desking_size_pricing: "[]",
+    variant_pricing: "[]",
+    category_pricing: "[]",
+    modular_item_pricing: "[]",
+    accessory_pricing: JSON.stringify([{
+      id: "supports",
+      group_name: "Structural Supports",
+      items: [{
+        id: "support-a",
+        item_name: "Support A",
+        supplier_price_list_code: "SUP-A",
+        price: 250,
+        role: "structural_support",
+        compatible_targets: [
+          { kind: "base_model_subgroup", group_id: "grp-1", row_id: "sub-desk" },
+          { kind: "base_model", group_id: "grp-2", row_id: "row-1" },
+        ],
+      }],
+    }]),
+  });
+
+  const item = workspace.draft.optionGroups[0].items[0];
+  assert.equal(item.role, "structural_support");
+  assert.deepEqual(item.compatibleTargets, [
+    { kind: "base_model_subgroup", group_id: "grp-1", row_id: "sub-desk" },
+    { kind: "base_model", group_id: "grp-2", row_id: "row-1" },
+  ]);
 });
 
 test("malformed or absent pricing JSON is isolated to empty sections", () => {

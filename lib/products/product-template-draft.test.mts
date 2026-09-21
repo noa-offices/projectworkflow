@@ -252,6 +252,72 @@ test("Sigma M33 keeps its separately priced M34 companion at quantity one on the
   assert.equal(result.draft?.optionGroups[0].conditionalConfiguration?.applicability[0].fixed_quantity, 1);
 });
 
+test("compatibleTargets survives draft normalization on a structural-support item, deduplicated", () => {
+  const draft = baseDraft();
+  draft.optionGroups.push({
+    id: "support", label: "Structural Support", selection: { mode: "optional", minSelections: 0, maxSelections: null, defaultItemIds: [] },
+    items: [{
+      id: "support-a", label: "Support A", price: 50, role: "structural_support",
+      compatibleTargets: [
+        { kind: "base_model_subgroup", group_id: "grp-1", row_id: "sub-desk" },
+        { kind: "base_model", group_id: "grp-2", row_id: "row-1" },
+        { kind: "base_model", group_id: "grp-2", row_id: "row-1" },
+      ],
+    }],
+  });
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.draft?.optionGroups[0].items[0].compatibleTargets, [
+    { kind: "base_model_subgroup", group_id: "grp-1", row_id: "sub-desk" },
+    { kind: "base_model", group_id: "grp-2", row_id: "row-1" },
+  ]);
+});
+
+test("compatibleTargets with an unsupported kind is rejected as an error and dropped", () => {
+  const draft = baseDraft();
+  draft.optionGroups.push({
+    id: "support", label: "Structural Support", selection: { mode: "optional", minSelections: 0, maxSelections: null, defaultItemIds: [] },
+    items: [{ id: "support-a", label: "Support A", price: 50, role: "structural_support", compatibleTargets: [{ kind: "modular", group_id: "grp-1", row_id: "row-1" }] }],
+  });
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((issue) => issue.path.includes("compatibleTargets[0].kind")));
+});
+
+test("compatibleTargets with an empty group_id is rejected", () => {
+  const draft = baseDraft();
+  draft.optionGroups.push({
+    id: "support", label: "Structural Support", selection: { mode: "optional", minSelections: 0, maxSelections: null, defaultItemIds: [] },
+    items: [{ id: "support-a", label: "Support A", price: 50, role: "structural_support", compatibleTargets: [{ kind: "base_model", group_id: "", row_id: "row-1" }] }],
+  });
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((issue) => issue.path.includes("compatibleTargets[0].group_id")));
+});
+
+test("compatibleTargets with an empty row_id is rejected", () => {
+  const draft = baseDraft();
+  draft.optionGroups.push({
+    id: "support", label: "Structural Support", selection: { mode: "optional", minSelections: 0, maxSelections: null, defaultItemIds: [] },
+    items: [{ id: "support-a", label: "Support A", price: 50, role: "structural_support", compatibleTargets: [{ kind: "base_model", group_id: "grp-1", row_id: "" }] }],
+  });
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((issue) => issue.path.includes("compatibleTargets[0].row_id")));
+});
+
+test("an old option item with no compatibleTargets field normalizes unchanged", () => {
+  const draft = baseDraft();
+  draft.optionGroups.push({
+    id: "support", label: "Structural Support", selection: { mode: "optional", minSelections: 0, maxSelections: null, defaultItemIds: [] },
+    items: [{ id: "support-a", label: "Support A", price: 50, role: "structural_support" }],
+  });
+  const result = normalizeProductTemplateDraft(draft);
+  assert.equal(result.valid, true);
+  assert.equal(result.draft?.optionGroups[0].items[0].compatibleTargets, undefined);
+  assert.equal(result.draft?.optionGroups[0].items[0].role, "structural_support");
+});
+
 test("option-item targets and structural-support item roles normalize without naming assumptions", () => {
   const draft = baseDraft();
   draft.optionGroups.push(

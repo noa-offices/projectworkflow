@@ -4,8 +4,12 @@ export const BASE_MODEL_GROUP_PRICING_TYPE = "base_model_group" as const;
 export const LEGACY_BASE_MODEL_GROUP_ID = "legacy-base-model-main";
 export const LEGACY_BASE_MODEL_GROUP_NAME = "Base / Model Pricing";
 
+/** Primary first-stage priced System / Base row. Missing role is an ordinary Main Product row. */
+export const BASE_MODEL_SYSTEM_ROLE = "system_base" as const;
+
 export type BaseModelPricingRow = Record<string, unknown> & {
   id?: string;
+  role?: typeof BASE_MODEL_SYSTEM_ROLE;
   variant_name?: string;
   display_name?: string;
   supplier_price_list_code?: string;
@@ -49,6 +53,7 @@ export type BaseModelPricingContractIssue = {
     | "duplicate_subgroup_id"
     | "duplicate_subgroup_membership"
     | "unknown_subgroup_row"
+    | "system_row_in_subgroup"
     | "invalid_row_value"
     | "invalid_root"
     | "invalid_root_record"
@@ -97,7 +102,7 @@ function rowValueIssue(row: Record<string, unknown>) {
   return false;
 }
 
-function normalizedSubgroups(value: unknown, rowIds: ReadonlySet<string>, path: string, issues: BaseModelPricingContractIssue[]) {
+function normalizedSubgroups(value: unknown, rowIds: ReadonlySet<string>, path: string, issues: BaseModelPricingContractIssue[], systemRowIds: ReadonlySet<string> = new Set()) {
   if (value === undefined) return [];
   if (!Array.isArray(value)) { issues.push({ code: "invalid_subgroup", message: "Base / Model pricing subgroups must use an array.", path }); return []; }
   const subgroupIds = new Set<string>(); const assignedRows = new Set<string>();
@@ -113,6 +118,7 @@ function normalizedSubgroups(value: unknown, rowIds: ReadonlySet<string>, path: 
     const rowIdsForSubgroup: string[] = [];
     for (const rowId of entry.row_ids as string[]) {
       if (!rowIds.has(rowId)) { issues.push({ code: "unknown_subgroup_row", message: `Base / Model subgroup '${entry.subgroup_name}' references a row that does not exist in its parent group.`, path: `${subgroupPath}.row_ids` }); continue; }
+      if (systemRowIds.has(rowId)) { issues.push({ code: "system_row_in_subgroup", message: `Base / Model System / Base row '${rowId}' cannot belong to a Main Product subgroup.`, path: `${subgroupPath}.row_ids` }); continue; }
       if (assignedRows.has(rowId)) { issues.push({ code: "duplicate_subgroup_membership", message: `Base / Model row '${rowId}' belongs to more than one subgroup.`, path: `${subgroupPath}.row_ids` }); continue; }
       assignedRows.add(rowId); rowIdsForSubgroup.push(rowId);
     }
@@ -190,7 +196,8 @@ export function normalizeBaseModelPricing<TRow extends BaseModelPricingRow = Bas
     const items: TRow[] = [];
     if (Array.isArray(entry.items)) entry.items.forEach((item, itemIndex) => addRow(item, `${path}.items[${itemIndex}]`, items));
     const rowIds = new Set(items.flatMap((item) => typeof item.id === "string" && item.id ? [item.id] : []));
-    const subgroups = normalizedSubgroups(entry.subgroups, rowIds, `${path}.subgroups`, issues);
+    const systemRowIds = new Set(items.flatMap((item) => item.role === BASE_MODEL_SYSTEM_ROLE && typeof item.id === "string" && item.id ? [item.id] : []));
+    const subgroups = normalizedSubgroups(entry.subgroups, rowIds, `${path}.subgroups`, issues, systemRowIds);
     explicitGroups.push({
       id: groupId,
       pricing_type: BASE_MODEL_GROUP_PRICING_TYPE,

@@ -92,6 +92,8 @@ import {
 } from "@/components/products/template-import-controls";
 
 export type VariantPricingRow = {
+  /** Primary priced System / Base row; omitted for ordinary Main Product rows. */
+  role?: "system_base";
   id?: string;
   variant_name?: string;
   display_name?: string;
@@ -838,7 +840,7 @@ export function VariantPricingTable({
               return <>
               <tr key={rowId} hidden={Boolean(subgroup && collapsedSubgroups[subgroup.id])} className="border-t border-zinc-100 align-top">
                 <td className="px-2 py-2 align-top">{row.id ? <PricingRowReferenceImage templateId={templateId} templateIsPersisted={templateIsPersisted} pricingType="base_model" groupId={group.id} rowId={row.id} /> : <span className="text-[10px] text-zinc-400">Save row first</span>}</td>
-                <td className="px-2 py-2 align-top">{row.id ? <select value={subgroup?.id ?? ""} onChange={(event) => setGroups((current) => current.map((entry) => entry.id === group.id ? assignBaseModelRowToSubgroup(entry, row.id!, event.target.value || null) : entry))} className="h-10 min-w-[170px] border border-zinc-200 bg-white px-2"><option value="">Ungrouped</option>{(group.subgroups ?? []).map((entry) => <option key={entry.id} value={entry.id}>{entry.subgroup_name}</option>)}</select> : null}</td>
+                <td className="px-2 py-2 align-top">{row.role === "system_base" ? <span className="text-xs font-semibold text-emerald-900">System / Base</span> : row.id ? <select value={subgroup?.id ?? ""} onChange={(event) => setGroups((current) => current.map((entry) => entry.id === group.id ? assignBaseModelRowToSubgroup(entry, row.id!, event.target.value || null) : entry))} className="h-10 min-w-[170px] border border-zinc-200 bg-white px-2"><option value="">Ungrouped</option>{(group.subgroups ?? []).map((entry) => <option key={entry.id} value={entry.id}>{entry.subgroup_name}</option>)}</select> : null}</td>
                 <td className="px-2 py-2 align-top"><input value={row.variant_name ?? ""} onChange={(e) => update(group.id, index, { variant_name: e.target.value })} className="h-10 min-w-[160px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>
                 <td className="px-2 py-2 align-top"><AutoGrowTextarea value={row.display_name ?? ""} onChange={(value) => update(group.id, index, { display_name: value })} minHeightClass="min-h-[44px]" rows={2} widthClass="min-w-[300px]" /></td>
                 <td className="px-2 py-2 align-top"><input value={row.supplier_price_list_code ?? ""} onChange={(e) => update(group.id, index, { supplier_price_list_code: e.target.value })} className="h-10 min-w-[190px] border border-zinc-200 px-3 outline-none focus:border-emerald-800" /></td>

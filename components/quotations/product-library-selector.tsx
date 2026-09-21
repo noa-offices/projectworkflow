@@ -50,11 +50,14 @@ import { accessoryApplicabilityTargetKey } from "@/lib/products/accessory-condit
 import { baseModelPricingGroups, flattenBaseModelPricingRows, type BaseModelPricingGroup } from "@/lib/products/base-model-pricing-groups";
 import { baseModelPricingSubgroupForRow, baseModelSubgroupReferenceKey } from "@/lib/products/base-model-pricing-subgroups";
 import { guidedBaseModelSelection } from "@/lib/quotations/guided-base-model-selection";
+import { composeSystemAndMainSpecification, isSystemBaseRow, nativeBaseModelTargets, nativeSystemState, systemPriceContribution, systemPricingSnapshot, systemSelectedOptionSnapshot } from "@/lib/quotations/native-system-base";
 import type { ProductTemplateSubgroupReferencePreview } from "@/lib/products/product-template-subgroup-references";
 import {
   type AccessoryConditionalConfiguration,
   type AccessoryGroupEvaluation,
+  type StructuralSupportCompatibleTarget,
 } from "@/lib/products/accessory-conditional-configuration";
+import { filterCompatibleBaseModelGroups, unionStructuralSupportCompatibleTargets } from "@/lib/products/structural-support-compatibility";
 import { evaluateProductAccessorySelection } from "@/lib/quotations/product-accessory-configuration";
 import { accessoryOptionLabel } from "@/lib/quotations/accessory-option-label";
 import { flattenWorkstationPricingRows, workstationPricingGroups } from "@/lib/products/workstation-pricing-groups";
@@ -173,6 +176,8 @@ type DeskingSizePricingRow = {
 
 type VariantPricingRow = {
   id?: string;
+  /** Native System / Base row (Phase B); omitted for Main Product rows. */
+  role?: "system_base";
   variant_name?: string;
   display_name?: string;
   supplier_price_list_code?: string;
@@ -246,6 +251,7 @@ type AccessoryPricingItem = {
   is_active?: boolean;
   sort_order?: number;
   role?: "normal" | "companion" | "structural_support";
+  compatible_targets?: StructuralSupportCompatibleTarget[];
 };
 
 type LinkedProductInstance = {
@@ -496,6 +502,10 @@ function BaseModelBrowseAll({ currency, groups, onSelect, rowReferences, selecte
   return <div className="mt-2 space-y-3">{groups.map((group) => { const subgroups = [...(group.subgroups ?? [])].filter((subgroup) => subgroup.is_active).sort((a, b) => a.sort_order - b.sort_order); const ungrouped = group.items.filter((row) => row.id && !baseModelPricingSubgroupForRow(group, row.id)); return <section key={group.id} className="rounded-lg border border-zinc-200 bg-zinc-50 p-2"><p className="text-[10px] font-bold uppercase tracking-wide text-zinc-600">{group.group_name}</p><div className="mt-2 space-y-3">{subgroups.map((subgroup) => { const reference = subgroupReferences[baseModelSubgroupReferenceKey("base_model", group.id, subgroup.id)]; const rows = group.items.filter((row) => row.id && subgroup.row_ids.includes(row.id)); return <div key={subgroup.id} className="rounded-md border border-zinc-200 bg-white p-2"><div className="flex items-center gap-2">{reference?.previewUrl ? <img src={reference.previewUrl} alt={`${subgroup.subgroup_name} reference`} className="h-14 w-14 shrink-0 rounded border border-zinc-200 object-contain" loading="lazy" /> : null}<div><p className="text-xs font-semibold text-zinc-900">{subgroup.subgroup_name}</p><p className="text-[10px] text-zinc-500">{rows.length} models</p></div></div><div className="mt-2 grid gap-1 sm:grid-cols-2">{rows.map((row) => rowButton(group, row))}</div></div>; })}{ungrouped.length ? <div><p className="text-[10px] font-semibold uppercase text-zinc-500">{subgroups.length ? "Other Models" : "Models"}</p><div className="mt-1 grid gap-1 sm:grid-cols-2">{ungrouped.map((row) => rowButton(group, row))}</div></div> : null}</div></section>; })}</div>;
 }
 /* eslint-enable @next/next/no-img-element */
+
+function systemBaseOptionLabel(row: VariantPricingRow, fallbackCurrency: string) {
+  return pricingOptionLabel({ currency: row.currency ?? fallbackCurrency, dimension: row.dimension, displayName: pricingDisplayName(row) || row.variant_name || "", price: numberValue(row.price), supplierCode: row.supplier_price_list_code });
+}
 
 function BaseModelHierarchySelector({ currency, groups, onSelect, rowReferences, selectedRowId, subgroupReferences }: { currency: string; groups: BaseModelPricingGroup<VariantPricingRow>[]; onSelect: (rowId: string) => void; rowReferences: Readonly<Record<string, ProductTemplateRowReferencePreview>>; selectedRowId: string | null; subgroupReferences: Readonly<Record<string, ProductTemplateSubgroupReferencePreview>> }) {
   const [groupId, setGroupId] = useState(groups[0]?.id ?? "");
@@ -1199,6 +1209,8 @@ export function ProductLibrarySelector({
   const [accessoryQuantities, setAccessoryQuantities] = useState<Record<string, Record<string, number>>>({});
   const [selectedDeskingSizes, setSelectedDeskingSizes] = useState<Record<string, string>>({});
   const [selectedVariantRows, setSelectedVariantRows] = useState<Record<string, string>>({});
+  // Native System / Base row per template: an independent priced Base/Model selection (Main Product stays in selectedVariantRows).
+  const [selectedSystemRows, setSelectedSystemRows] = useState<Record<string, string>>({});
   const [loadedRowReferences, setLoadedRowReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateRowReferencePreview> }>({ templateId: "", images: {} });
   const [loadedSubgroupReferences, setLoadedSubgroupReferences] = useState<{ templateId: string; images: Record<string, ProductTemplateSubgroupReferencePreview> }>({ templateId: "", images: {} });
   const [selectedCategoryGroups, setSelectedCategoryGroups] = useState<Record<string, string>>({});
@@ -1712,9 +1724,11 @@ export function ProductLibrarySelector({
                   const usesCategoryPricing = !usesVariantPricing && !usesModularPricing && categoryRows.length > 0;
                   const templatePricingAccessoryQuantities = pricingAccessoryQuantities[template.id] ?? {};
                   const templateModularQuantities = selectedModularQuantities[template.id] ?? {};
+                  // Native System / Base: inactive (no role="system_base" rows) => everything below is unchanged.
+                  const nativeSystem = nativeSystemState(variantGroups, selectedSystemRows[template.id]);
                   const selectedVariantRow =
                     usesVariantPricing
-                      ? variantRows.find((row) => row.id === selectedVariantRows[template.id]) ?? null
+                      ? variantRows.find((row) => row.id === selectedVariantRows[template.id] && !isSystemBaseRow(row) && (!nativeSystem.active || nativeSystem.eligibleGroups.some((group) => group.items.some((item) => item.id === row.id)))) ?? null
                       : null;
                   const selectedWorkstationVariantRow =
                     usesWorkstationFlow
@@ -1875,12 +1889,20 @@ export function ProductLibrarySelector({
                   const hasMixedWorkstationCurrencies = usesWorkstationFlow && workstationCurrencies.length > 1;
                   const missingRequiredWorkstationSelection = usesWorkstationFlow && !selectedSizeRow;
                   const missingRequiredModularSelection = usesModularPricing && (selectedModularItems.length === 0 || Boolean(modularCompositionIssue));
+                  // Main Product target, plus the selected System / Base target when native System pricing is active.
+                  const variantModelTargets = nativeBaseModelTargets({
+                    mainGroupId: selectedVariantGroup?.id,
+                    mainRowId: selectedVariantRow?.id,
+                    systemGroupId: nativeSystem.selected?.group.id,
+                    systemRowId: nativeSystem.selected?.row.id,
+                  });
+                  const missingRequiredSystemSelection = usesVariantPricing && nativeSystem.requiresSystem && (!nativeSystem.selected || !selectedVariantRow);
                   const selectedMainAccessoryTargets = usesWorkstationFlow && selectedWorkstationGroup?.id && selectedSizeRow?.id
                     ? [{ kind: "workstation" as const, group_id: selectedWorkstationGroup.id, row_id: selectedSizeRow.id }]
                     : usesModularPricing
                     ? selectedModularItems.map((item) => ({ kind: "modular" as const, group_id: item.groupId, row_id: item.id }))
-                    : usesVariantPricing && selectedVariantGroup?.id && selectedVariantRow?.id
-                      ? [{ kind: "base_model" as const, group_id: selectedVariantGroup.id, row_id: selectedVariantRow.id }]
+                    : usesVariantPricing && variantModelTargets.length
+                      ? variantModelTargets
                       : usesCategoryPricing && selectedCategoryGroup?.id && selectedCategoryRow?.id
                         ? [{ kind: "price_matrix" as const, group_id: selectedCategoryGroup.id, row_id: selectedCategoryRow.id }]
                         : [];
@@ -1891,6 +1913,16 @@ export function ProductLibrarySelector({
                   );
                   const selectedAccessoryModelTargets = [...selectedMainAccessoryTargets, ...selectedStructuralSupportTargets];
                   const selectedAccessoryModelTarget = selectedAccessoryModelTargets[0] ?? null;
+                  // Structural Support -> Compatible Main Product filtering: no selected support, or a selected
+                  // support with no compatibleTargets, leaves variantGroups unchanged (filterCompatibleBaseModelGroups
+                  // is a no-op for both). Multiple selected supports use the UNION of their valid targets.
+                  const selectedStructuralSupportItems = allAccessoryGroups.flatMap((group) =>
+                    group.items.filter((item) => item.role === "structural_support" && Number(templatePricingAccessoryQuantities[item.id ?? ""]) > 0),
+                  );
+                  const structuralSupportCompatibleTargets = unionStructuralSupportCompatibleTargets(
+                    selectedStructuralSupportItems.map((item) => ({ compatibleTargets: item.compatible_targets })),
+                  );
+                  const filteredVariantGroups = filterCompatibleBaseModelGroups(nativeSystem.eligibleGroups, structuralSupportCompatibleTargets);
                   const accessoryConfiguration = evaluateProductAccessorySelection({
                     accessoryGroups: allAccessoryGroups,
                     baseModelGroupId: usesVariantPricing ? selectedVariantGroup?.id : null,
@@ -1903,20 +1935,33 @@ export function ProductLibrarySelector({
                     ]),
                     selectedQuantities: templatePricingAccessoryQuantities,
                   });
-                  const updateStructuralSupportQuantity = (groupId: string, itemId: string, quantity: number) => setPricingAccessoryQuantities((current) => {
-                    const next = { ...(current[template.id] ?? {}) };
-                    if (quantity > 0) next[itemId] = quantity;
-                    else delete next[itemId];
-                    const targets = allAccessoryGroups.flatMap((group) => group.items.filter((item) => item.role === "structural_support" && Number(next[item.id ?? ""]) > 0).flatMap((item) => item.id ? [{ kind: "option_item" as const, group_id: group.id, row_id: item.id }] : []));
-                    const structuralCompanionGroupIds = new Set(allAccessoryGroups.filter((group) => group.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item")).map((group) => group.id));
-                    allAccessoryGroups.filter((group) => structuralCompanionGroupIds.has(group.id)).flatMap((group) => group.items).forEach((item) => { if (item.id) delete next[item.id]; });
-                    const evaluation = evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, selectedModelTargets: [...selectedMainAccessoryTargets, ...targets], selectedQuantities: next });
-                    evaluation.groups.filter((group) => structuralCompanionGroupIds.has(group.groupId) && group.visible && group.required && group.fixedQuantity !== null).forEach((group) => {
-                      const requiredItemId = group.allowedItemIds.length === 1 ? group.allowedItemIds[0] : null;
-                      if (requiredItemId) next[requiredItemId] = group.fixedQuantity!;
+                  const updateStructuralSupportQuantity = (groupId: string, itemId: string, quantity: number) => {
+                    // Switching structural support can make the currently selected Base/Model row
+                    // incompatible; clear it here (never leave an invisible incompatible row selected)
+                    // instead of altering any saved pricing data.
+                    const nextAccessoryQuantities = { ...templatePricingAccessoryQuantities };
+                    if (quantity > 0) nextAccessoryQuantities[itemId] = quantity;
+                    else delete nextAccessoryQuantities[itemId];
+                    const nextStructuralSupportItems = allAccessoryGroups.flatMap((group) => group.items.filter((item) => item.role === "structural_support" && Number(nextAccessoryQuantities[item.id ?? ""]) > 0));
+                    const nextCompatibleTargets = unionStructuralSupportCompatibleTargets(nextStructuralSupportItems.map((item) => ({ compatibleTargets: item.compatible_targets })));
+                    const nextFilteredVariantGroups = filterCompatibleBaseModelGroups(nativeSystem.eligibleGroups, nextCompatibleTargets);
+                    const stillCompatible = !selectedVariantRow || nextFilteredVariantGroups.some((group) => group.items.some((row) => row.id === selectedVariantRow.id));
+                    if (!stillCompatible) setSelectedVariantRows((current) => { const next = { ...current }; delete next[template.id]; return next; });
+                    setPricingAccessoryQuantities((current) => {
+                      const next = { ...(current[template.id] ?? {}) };
+                      if (quantity > 0) next[itemId] = quantity;
+                      else delete next[itemId];
+                      const targets = allAccessoryGroups.flatMap((group) => group.items.filter((item) => item.role === "structural_support" && Number(next[item.id ?? ""]) > 0).flatMap((item) => item.id ? [{ kind: "option_item" as const, group_id: group.id, row_id: item.id }] : []));
+                      const structuralCompanionGroupIds = new Set(allAccessoryGroups.filter((group) => group.conditional_configuration?.applicability.some((rule) => rule.target?.kind === "option_item")).map((group) => group.id));
+                      allAccessoryGroups.filter((group) => structuralCompanionGroupIds.has(group.id)).flatMap((group) => group.items).forEach((item) => { if (item.id) delete next[item.id]; });
+                      const evaluation = evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, selectedModelTargets: [...selectedMainAccessoryTargets, ...targets], selectedQuantities: next });
+                      evaluation.groups.filter((group) => structuralCompanionGroupIds.has(group.groupId) && group.visible && group.required && group.fixedQuantity !== null).forEach((group) => {
+                        const requiredItemId = group.allowedItemIds.length === 1 ? group.allowedItemIds[0] : null;
+                        if (requiredItemId) next[requiredItemId] = group.fixedQuantity!;
+                      });
+                      return { ...current, [template.id]: next };
                     });
-                    return { ...current, [template.id]: next };
-                  });
+                  };
                   const missingConditionalModelSelection = accessoryConfiguration.hasConditionalConfiguration && selectedAccessoryModelTargets.length === 0;
                   const missingRequiredAccessorySelection = !accessoryConfiguration.valid || missingConditionalModelSelection;
                   const derivedDesking = isDesking && selectedSizeRow
@@ -1964,6 +2009,10 @@ export function ProductLibrarySelector({
                   const hasMixedAccessoryCurrencies = selectedPricingAccessories.some(
                     (line) => normalizeCurrency(line.accessory.currency ?? rowCurrency) !== normalizeCurrency(rowCurrency),
                   );
+                  // Native System / Base: its own priced selection, added once (never through accessory totals).
+                  const systemContribution = systemPriceContribution(nativeSystem.selected?.row, normalizeCurrency(rowCurrency));
+                  const selectedSystemPrice = systemContribution.amount;
+                  const matchingSystemTotal = systemContribution.matching;
                   const previewUnitPrice =
                     (usesModularPricing
                       ? selectedModularItems.reduce((total, line) => total + line.total, 0)
@@ -1972,6 +2021,7 @@ export function ProductLibrarySelector({
                       selectedVariantRow?.price ??
                       template.default_unit_price) +
                     selectedWorkstationVariantPrice +
+                    matchingSystemTotal +
                     matchingAccessoryTotal;
                   const selectedLinkedProducts = templateLinkedFamilies
                     .flatMap((link) => {
@@ -2098,6 +2148,7 @@ export function ProductLibrarySelector({
                   };
 
                   addCurrencyTotal(rowCurrency, baseProductPrice);
+                  if (nativeSystem.selected) addCurrencyTotal(nativeSystem.selected.row.currency ?? rowCurrency, selectedSystemPrice);
                   if (selectedWorkstationVariantRow) {
                     addCurrencyTotal(
                       selectedWorkstationVariantRow.currency ?? rowCurrency,
@@ -2411,6 +2462,13 @@ export function ProductLibrarySelector({
                         templateDescription: template.description,
                       })
                     : null;
+                  // System / Base specification precedes (never replaces) the Main Product specification.
+                  const variantSpecification = nativeSystem.selected
+                    ? composeSystemAndMainSpecification(nativeSystem.selected.row.specification, selectedVariantRow?.specification)
+                    : selectedVariantRow?.specification;
+                  const systemOptionSnapshot = nativeSystem.selected
+                    ? systemSelectedOptionSnapshot(nativeSystem.selected.group.id, nativeSystem.selected.row)
+                    : null;
                   const companyStyleSpecification = buildCompanyStyleProductSpecification({
                     accessorySnapshots: usesDirectModularPricing ? [] : accessorySnapshots,
                     brand: brandNameById.get(template.brand_id) ?? null,
@@ -2420,7 +2478,7 @@ export function ProductLibrarySelector({
                       (usesWorkstationFlow ? configuredSpecification : null) ??
                       modularCompositionSpecification ??
                       selectedCategoryRow?.specification ??
-                      selectedVariantRow?.specification ??
+                      variantSpecification ??
                       null,
                     selectedOptionSnapshots,
                     selectedWorkstationVariant: selectedWorkstationVariantRow,
@@ -2439,7 +2497,7 @@ export function ProductLibrarySelector({
                       modularCompositionSpecification ??
                       selectedCategoryRow?.specification ??
                       null,
-                    selectedVariantSpecification: selectedVariantRow?.specification ?? null,
+                    selectedVariantSpecification: variantSpecification ?? null,
                     selectedWorkstationVariantSpecification: selectedWorkstationVariantRow?.specification,
                     template: usesModularPricing
                       ? {
@@ -2560,7 +2618,7 @@ export function ProductLibrarySelector({
                       selected_options: effectiveSelectedNames,
                       selected_options_snapshot: usesModularPricing
                         ? modularItemSnapshots
-                        : selectedOptionSnapshots,
+                        : systemOptionSnapshot ? [systemOptionSnapshot, ...selectedOptionSnapshots] : selectedOptionSnapshots,
                       source_price_reference: sourcePriceReference,
                       ...(derivedDesking
                         ? {
@@ -2591,6 +2649,7 @@ export function ProductLibrarySelector({
                           }
                         : {}),
                       ...(selectedVariantRow ? { variant_pricing: selectedVariantRow } : {}),
+                      ...(nativeSystem.selected ? { system_pricing: systemPricingSnapshot(nativeSystem.selected.group.id, nativeSystem.selected.row) } : {}),
                       ...(selectedCategoryRow
                         ? {
                             category_pricing: {
@@ -2655,6 +2714,7 @@ export function ProductLibrarySelector({
                     specification_snapshot: savedFinalSpecification,
                     finish_selections_snapshot: selectedFinishes,
                     selected_options_snapshot: [
+                      ...(systemOptionSnapshot ? [systemOptionSnapshot] : []),
                       ...(usesModularPricing ? modularItemSnapshots : selectedOptionSnapshots),
                       ...accessorySnapshots,
                       ...linkedProductSnapshots,
@@ -2841,6 +2901,7 @@ export function ProductLibrarySelector({
                     selectedRowFacts: [
                       usesWorkstationFlow || usesModularPricing ? configuredSpecification : null,
                       selectedCategoryRow?.specification,
+                      nativeSystem.selected?.row.specification,
                       selectedVariantRow?.specification,
                       selectedSizeRow?.specification,
                       selectedWorkstationVariantRow?.specification,
@@ -3319,10 +3380,42 @@ export function ProductLibrarySelector({
                         <StructuralSupportFields groups={allAccessoryGroups} evaluations={accessoryConfiguration.groups} quantities={templatePricingAccessoryQuantities} rowCurrency={rowCurrency} onQuantityChange={updateStructuralSupportQuantity} />
                         {usesVariantPricing ? (
                           <div className="mt-3 space-y-2">
+                            {nativeSystem.active ? (
+                              <div className="space-y-1 rounded-md border border-emerald-200 bg-emerald-50/50 p-2">
+                                <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">System / Base</p>
+                                {nativeSystem.options.length === 1 ? (
+                                  <p className="rounded border border-zinc-200 bg-white px-2 py-2 text-xs">
+                                    {systemBaseOptionLabel(nativeSystem.options[0].row, template.currency)}
+                                  </p>
+                                ) : (
+                                  <select
+                                    aria-label="System / Base"
+                                    value={nativeSystem.selected?.row.id ?? ""}
+                                    onChange={(event) => {
+                                      const nextOption = nativeSystem.options.find((option) => option.row.id === event.target.value) ?? null;
+                                      // A Main Product row from another System group is incompatible; clear it (never leave it hidden but selected).
+                                      const keepMain = Boolean(nextOption && selectedVariantRow && nextOption.group.items.some((item) => item.id === selectedVariantRow.id));
+                                      setSelectedSystemRows((current) => { const next = { ...current }; if (nextOption?.row.id) next[template.id] = nextOption.row.id; else delete next[template.id]; return next; });
+                                      if (!keepMain) setSelectedVariantRows((current) => { const next = { ...current }; delete next[template.id]; return next; });
+                                      setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, baseModelGroupId: keepMain ? selectedVariantGroup?.id ?? null : null, baseModelRowId: keepMain ? selectedVariantRow?.id ?? null : null, selectedModelTargets: nativeBaseModelTargets({ mainGroupId: keepMain ? selectedVariantGroup?.id : null, mainRowId: keepMain ? selectedVariantRow?.id : null, systemGroupId: nextOption?.group.id, systemRowId: nextOption?.row.id }), selectedQuantities: current[template.id] ?? {} }).activeQuantities }));
+                                    }}
+                                    className="h-9 w-full border border-zinc-300 bg-white px-2 text-xs"
+                                  >
+                                    <option value="">Choose System / Base</option>
+                                    {nativeSystem.options.map((option) => (
+                                      <option key={option.row.id} value={option.row.id}>
+                                        {nativeSystem.options.some((other) => other.group.id !== option.group.id) ? `${option.group.group_name} - ` : ""}
+                                        {systemBaseOptionLabel(option.row, template.currency)}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+                              </div>
+                            ) : null}
                             <p className="text-xs font-bold uppercase tracking-wide text-zinc-700">
-                              Base Size / Main Price
+                              {nativeSystem.active ? "Main Product" : "Base Size / Main Price"}
                             </p>
-                            <BaseModelHierarchySelector currency={template.currency} groups={variantGroups} rowReferences={rowReferenceImages} subgroupReferences={subgroupReferenceImages} selectedRowId={selectedVariantRow?.id ?? null} onSelect={(nextRowId) => { const nextGroupId = variantGroups.find((group) => group.items.some((row) => row.id === nextRowId))?.id ?? null; setSelectedVariantRows((current) => ({ ...current, [template.id]: nextRowId })); setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, baseModelGroupId: nextGroupId, baseModelRowId: nextRowId, selectedQuantities: current[template.id] ?? {} }).activeQuantities })); }} />
+                            <BaseModelHierarchySelector key={nativeSystem.selected?.row.id ?? "no-system"} currency={template.currency} groups={filteredVariantGroups} rowReferences={rowReferenceImages} subgroupReferences={subgroupReferenceImages} selectedRowId={selectedVariantRow?.id ?? null} onSelect={(nextRowId) => { const nextGroupId = variantGroups.find((group) => group.items.some((row) => row.id === nextRowId))?.id ?? null; setSelectedVariantRows((current) => ({ ...current, [template.id]: nextRowId })); setPricingAccessoryQuantities((current) => ({ ...current, [template.id]: evaluateProductAccessorySelection({ accessoryGroups: allAccessoryGroups, baseModelGroupId: nextGroupId, baseModelRowId: nextRowId, ...(nativeSystem.selected ? { selectedModelTargets: nativeBaseModelTargets({ mainGroupId: nextGroupId, mainRowId: nextRowId, systemGroupId: nativeSystem.selected.group.id, systemRowId: nativeSystem.selected.row.id }) } : {}), selectedQuantities: current[template.id] ?? {} }).activeQuantities })); }} />
                             <div>
                               {selectedVariantRow ? (
                                 <div className="mt-2 flex gap-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
@@ -4693,7 +4786,7 @@ export function ProductLibrarySelector({
                                   onAddLocalItem?.(localProductItem);
                                   setIsOpen(false);
                                 }}
-                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice}
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredSystemSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice}
                                   className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                                 >
                                   Add to Local Workspace
@@ -4701,7 +4794,7 @@ export function ProductLibrarySelector({
                               ) : (
                                 <button
                                   type="submit"
-                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice}
+                                  disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredSystemSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice}
                                   className="h-10 w-full bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                                 >
                                   Add
@@ -4786,6 +4879,9 @@ export function ProductLibrarySelector({
                                 />
                               ))}
                             </>
+                          ) : null}
+                          {usesVariantPricing && nativeSystem.selected ? (
+                            <input type="hidden" name="system_base_row_id" value={nativeSystem.selected.row.id ?? ""} />
                           ) : null}
                           {usesVariantPricing && selectedVariantRow ? (
                             <>

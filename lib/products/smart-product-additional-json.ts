@@ -1,4 +1,5 @@
-import { draftModularColumns, draftModularRows, isDirectModularGroup, type ProductTemplateDraft, type ProductTemplateDraftMatrixRow, type ProductTemplateDraftPricedRow } from "./product-template-draft";
+import { draftModularColumns, draftModularRows, isDirectModularGroup, type ProductTemplateDraft, type ProductTemplateDraftBaseModelRow, type ProductTemplateDraftMatrixRow, type ProductTemplateDraftPricedRow } from "./product-template-draft";
+import { baseModelGroupRouteKey, draftBaseModelGroupLabel, draftBaseModelGroupRows, draftUngroupedBaseModelRows, replaceDraftBaseModelScopeRows } from "./base-model-draft-groups";
 import { fillNullPricedRowCurrenciesFromDefault } from "./smart-product-review";
 import { createSmartSetupReviewRouting, type SmartReviewDestination, type SmartReviewRoute, type SmartSetupReviewRoutingPlan } from "./smart-product-review-routing";
 
@@ -23,7 +24,8 @@ function duplicateRow<T extends ReviewRow>(existing: T[], incoming: T) {
 
 function routeRows(draft: ProductTemplateDraft, route: SmartReviewRoute): ReviewRow[] {
   if (route.sourceKind === "workstation") return draft.pricing.workstationRows;
-  if (route.sourceKind === "base_model") return draft.pricing.baseModelRows;
+  if (route.sourceKind === "base_model") return draftUngroupedBaseModelRows(draft.pricing);
+  if (route.sourceKind === "base_model_group") return draftBaseModelGroupRows(draft.pricing, route.sourceId);
   if (route.sourceKind === "matrix") return draft.pricing.priceMatrices.find((group) => group.id === route.sourceId)?.rows ?? [];
   if (route.sourceKind === "modular") return draft.pricing.modularGroups.filter((group) => group.id === route.sourceId).flatMap((group) => draftModularRows(group));
   return draft.optionGroups.find((group) => group.id === route.sourceId)?.items ?? [];
@@ -79,12 +81,14 @@ export function classifySmartAdditionalGroup(currentDraft: ProductTemplateDraft,
     const similarName = exactName || (incomingName.length > 2 && normalizedText(target.groupName).includes(incomingName)) || (normalizedText(target.groupName).length > 2 && incomingName.includes(normalizedText(target.groupName)));
     return { target, matchingItems, differences, exactName, similarName, index };
   }).sort((left, right) => right.matchingItems - left.matchingItems || Number(right.exactName) - Number(left.exactName) || Number(right.similarName) - Number(left.similarName) || Math.abs(incomingRows.length - routeRows(currentDraft, left.target).length) - Math.abs(incomingRows.length - routeRows(currentDraft, right.target).length) || left.index - right.index);
-  const best = candidates[0];
+  // Native Base/Model groups match by exact group id, never by label alone.
+  const sameGroupCandidate = incomingRoute.sourceKind === "base_model_group" ? candidates.find((candidate) => candidate.target.sourceId === incomingRoute.sourceId) : undefined;
+  const best = sameGroupCandidate ?? candidates[0];
   if (!best) return { classification: "NEW_GROUP", recommendedAction: "add", bestMatch: null, evidence: { matchingItems: 0, incomingItems: incomingRows.length, newItems: incomingRows.length, differences: 0, text: "No strong existing-group match found." } };
   const newItems = incomingRows.length - best.matchingItems;
   const sufficientlyStrongExact = incomingRows.length > 0 && best.matchingItems === incomingRows.length && best.differences === 0 && (best.exactName || incomingRows.length > 1 || normalizedCodes(incomingRows[0]).size > 1);
   if (sufficientlyStrongExact) return { classification: "EXACT_DUPLICATE", recommendedAction: "skip", bestMatch: best.target, evidence: { matchingItems: best.matchingItems, incomingItems: incomingRows.length, newItems, differences: 0, text: `${best.matchingItems}/${incomingRows.length} incoming items already exist in '${best.target.groupName}'. No commercial differences detected.` } };
-  const matrixWithNewRows = (incomingRoute.sourceKind === "matrix" || incomingRoute.sourceKind === "modular") && incomingRows.length > 0 && newItems > 0;
+  const matrixWithNewRows = (incomingRoute.sourceKind === "matrix" || incomingRoute.sourceKind === "modular" || Boolean(sameGroupCandidate)) && incomingRows.length > 0 && newItems > 0;
   if (best.matchingItems > 0 || matrixWithNewRows) {
     const differenceText = best.differences ? `; ${best.differences} commercial difference${best.differences === 1 ? "" : "s"} detected` : "";
     const newText = newItems ? `${best.matchingItems} existing item${best.matchingItems === 1 ? "" : "s"} + ${newItems} new item${newItems === 1 ? "" : "s"} detected` : `${best.matchingItems}/${incomingRows.length} incoming items already exist`;
@@ -131,6 +135,32 @@ function mergeRows<T extends ReviewRow>(existing: T[], incoming: T[], choices: R
   return { rows: result, addedIds };
 }
 
+/**
+ * Merges incoming Base/Model rows into ONE target scope (a native group, or the ungrouped flat rows when
+ * targetGroupId is null) and splices the result back, leaving every other group's rows untouched.
+ * Incoming rows are always retagged to the target scope, so a duplicate can never silently move groups,
+ * and rows whose id already exists in another scope are skipped (row ids are unique across baseModelRows).
+ */
+function mergeBaseModelScope(draft: ProductTemplateDraft, incomingRows: ProductTemplateDraftBaseModelRow[], targetGroupId: string | null, choices: Record<string, "existing" | "incoming">) {
+  const inScope = (row: ProductTemplateDraftBaseModelRow) => targetGroupId ? row.groupId === targetGroupId : !row.groupId;
+  const all = draft.pricing.baseModelRows;
+  const existing = all.filter(inScope);
+  const outsideIds = new Set(all.filter((row) => !inScope(row)).map((row) => row.id));
+  const label = targetGroupId ? draftBaseModelGroupLabel(draft.pricing, targetGroupId) : undefined;
+  const retagged = incomingRows.filter((row) => !outsideIds.has(row.id)).map((row) => {
+    const next: ProductTemplateDraftBaseModelRow = { ...row };
+    delete next.groupId;
+    delete next.groupLabel;
+    if (targetGroupId && label) { next.groupId = targetGroupId; next.groupLabel = label; }
+    return next;
+  });
+  const skipped = incomingRows.length - retagged.length;
+  if (skipped) draft.extractionWarnings = [...draft.extractionWarnings, `${skipped} incoming Base / Model row${skipped === 1 ? " was" : "s were"} skipped because the row id already exists in another Base / Model group.`];
+  const merged = mergeRows(existing, retagged, choices);
+  draft.pricing.baseModelRows = replaceDraftBaseModelScopeRows(all, targetGroupId, merged.rows);
+  return merged;
+}
+
 function uniqueGroupId(base: string, existing: Set<string>) {
   if (!existing.has(base)) return base;
   let index = 2;
@@ -167,7 +197,8 @@ export function applySmartAdditionalJson(currentDraft: ProductTemplateDraft, cur
       const target = plan.routes.find((route) => route.key === decision.targetKey);
       if (!target || !compatible(draft, preparedIncomingDraft, target, incomingRoute)) return;
       if (target.sourceKind === "workstation") { const merged = mergeRows(draft.pricing.workstationRows, preparedIncomingDraft.pricing.workstationRows, decision.duplicateChoices); draft.pricing.workstationRows = merged.rows; recordAdded(target.key, merged.addedIds); }
-      else if (target.sourceKind === "base_model") { const merged = mergeRows(draft.pricing.baseModelRows, preparedIncomingDraft.pricing.baseModelRows, decision.duplicateChoices); draft.pricing.baseModelRows = merged.rows; recordAdded(target.key, merged.addedIds); }
+      else if (target.sourceKind === "base_model") { const merged = mergeBaseModelScope(draft, routeRows(preparedIncomingDraft, incomingRoute) as ProductTemplateDraftBaseModelRow[], null, decision.duplicateChoices); recordAdded(target.key, merged.addedIds); }
+      else if (target.sourceKind === "base_model_group") { const merged = mergeBaseModelScope(draft, routeRows(preparedIncomingDraft, incomingRoute) as ProductTemplateDraftBaseModelRow[], target.sourceId, decision.duplicateChoices); recordAdded(target.key, merged.addedIds); }
       else if (target.sourceKind === "matrix") {
         const existing = draft.pricing.priceMatrices.find((group) => group.id === target.sourceId);
         const incoming = preparedIncomingDraft.pricing.priceMatrices.find((group) => group.id === incomingRoute.sourceId);
@@ -190,7 +221,21 @@ export function applySmartAdditionalJson(currentDraft: ProductTemplateDraft, cur
     }
 
     if (incomingRoute.sourceKind === "workstation") { const merged = mergeRows(draft.pricing.workstationRows, preparedIncomingDraft.pricing.workstationRows, decision.duplicateChoices); draft.pricing.workstationRows = merged.rows; recordAdded(incomingRoute.key, merged.addedIds); }
-    else if (incomingRoute.sourceKind === "base_model") { const merged = mergeRows(draft.pricing.baseModelRows, preparedIncomingDraft.pricing.baseModelRows, decision.duplicateChoices); draft.pricing.baseModelRows = merged.rows; recordAdded(incomingRoute.key, merged.addedIds); }
+    else if (incomingRoute.sourceKind === "base_model") { const merged = mergeBaseModelScope(draft, routeRows(preparedIncomingDraft, incomingRoute) as ProductTemplateDraftBaseModelRow[], null, decision.duplicateChoices); recordAdded(incomingRoute.key, merged.addedIds); }
+    else if (incomingRoute.sourceKind === "base_model_group") {
+      // New native group: append its rows under a unique group id, never touching other groups or flat rows.
+      const sourceId = uniqueGroupId(incomingRoute.sourceId, groupIds); groupIds.add(sourceId);
+      const existingRowIds = new Set(draft.pricing.baseModelRows.map((row) => row.id));
+      const label = draftBaseModelGroupLabel(preparedIncomingDraft.pricing, incomingRoute.sourceId);
+      const rows = routeRows(preparedIncomingDraft, incomingRoute).filter((row) => !existingRowIds.has(row.id)).map((row) => ({ ...row, groupId: sourceId, groupLabel: label }) as ProductTemplateDraftBaseModelRow);
+      const skipped = incomingRoute.rowCount - rows.length;
+      if (skipped > 0) draft.extractionWarnings = [...draft.extractionWarnings, `${skipped} incoming Base / Model row${skipped === 1 ? " was" : "s were"} skipped because the row id already exists in another Base / Model group.`];
+      draft.pricing.baseModelRows = [...draft.pricing.baseModelRows, ...rows];
+      const newRouteKey = baseModelGroupRouteKey(sourceId);
+      recordAdded(newRouteKey, rows.map((row) => row.id));
+      plan.routes.push({ ...structuredClone(incomingRoute), key: newRouteKey, sourceId, rowCount: rows.length, destination: decision.destination });
+      return;
+    }
     else {
       const sourceId = uniqueGroupId(incomingRoute.sourceId, groupIds); groupIds.add(sourceId);
       const newRouteKey = `${incomingRoute.sourceKind}:${sourceId}`;

@@ -261,8 +261,8 @@ test("AI extraction prompt preserves the approved ProductTemplateDraft v1 extrac
     "workstationRows",
     "baseModelRows",
     "simple single product family",
-    "do not create a fake one-column priceMatrix merely to preserve them",
-    "separate Base / Model Pricing groups",
+    "Do NOT create a fake one-column priceMatrix to preserve these groups",
+    "NATIVE BASE / MODEL SYSTEM GROUPING",
     "required companions",
     "priceMatrices",
     "For Matrix Modular preserve Modular Group -> Module Rows -> matrix columns -> row price maps",
@@ -1499,7 +1499,7 @@ test("global rule requires explicit pricing-routing-compatible targeting via con
   [
     "This is a CHOOSE-ONE COMPANION (see COMPANION SELECTION MODE below): set the outer optionGroup.selection to { \"mode\": \"required_choose_at_least_one\", \"minSelections\": 1, \"maxSelections\": null, \"defaultItemIds\": [] }",
     "and set conditionalConfiguration on that optionGroup (role \"companion\", selection \"exactly_one\") with one applicability rule per exact target row",
-    "If \"oxi-q-ws-dx\" was emitted in pricing.baseModelRows, use target: { kind: \"base_model\", group_id: \"legacy-base-model-main\", row_id: \"oxi-q-ws-dx\" }",
+    "If \"oxi-q-ws-dx\" was emitted in pricing.baseModelRows as an ordinary ungrouped Base/Model row, use target: { kind: \"base_model\", group_id: \"legacy-base-model-main\", row_id: \"oxi-q-ws-dx\" }",
     "If and only if it was legitimately emitted in pricing.workstationRows, use target: { kind: \"workstation\", group_id: \"legacy-workstation-main\", row_id: \"oxi-q-ws-dx\" }",
     "row_id is the row's own draft id, never its supplierCodes entry (\"111 623\")",
     "each required true and allowed_item_ids naming ART.175 and ART.129",
@@ -1511,7 +1511,7 @@ test("applicability target kind is selected after the authoritative pricing rout
   const prompt = getProductTemplateAiExtractionPrompt("workstation");
   [
     "APPLICABILITY TARGETS FOLLOW ACTUAL PRICING ROUTING",
-    'If the row is in pricing.baseModelRows, use target.kind "base_model" and group_id "legacy-base-model-main".',
+    'If the row is in pricing.baseModelRows, use target.kind "base_model"; when the row has a native groupId use group_id equal to that exact row.groupId, otherwise use group_id "legacy-base-model-main".',
     'If it is in pricing.workstationRows, use target.kind "workstation" and group_id "legacy-workstation-main".',
     'If it is in pricing.priceMatrices[n].rows, use target.kind "price_matrix" and that pricing.priceMatrices[n].id.',
     'If it is in either pricing.modularGroups[n].matrix.rows or pricing.modularGroups[n].directRows, use target.kind "modular" and that pricing.modularGroups[n].id.',
@@ -1590,7 +1590,8 @@ test("visible ProductTemplateDraft v1 contract exposes the actual conditionalCon
       "TARGET GROUP_ID CONVENTION",
       "row_id always equals the exact stable id already assigned to that row/item in that structure",
       "never a supplierCodes entry such as \"111 623\", and never invented from a code, label, or family name",
-      "use group_id: \"legacy-base-model-main\" only for an actual base_model target and group_id: \"legacy-workstation-main\" only for an actual workstation target",
+      "For target.kind \"base_model\": (A) when the row has a native groupId, group_id is that exact row.groupId; (B) when the row has no groupId, group_id is \"legacy-base-model-main\"",
+      "use group_id: \"legacy-workstation-main\" only for an actual workstation target",
     ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to expose conditionalConfiguration schema: ${expected}`));
   });
 });
@@ -1653,11 +1654,10 @@ test("one-column Matrix contradiction is removed: multiple direct-price families
   const prompt = getProductTemplateAiExtractionPrompt("base_model");
   assert.ok(!prompt.includes("Preserve each family as a separate priceMatrix with its source family label and one clearly labelled direct Price column"), "Expected the old one-column-Matrix workaround wording to be removed");
   [
-    "do not create a fake one-column priceMatrix merely to preserve them",
+    "Do NOT create a fake one-column priceMatrix to preserve these groups",
     "a one-column \"Price\" matrix remains a forbidden fake Matrix no matter how many families exist",
-    "keep every row in pricing.baseModelRows",
-    "add an extractionWarning naming the distinct families present",
-    "Never restore a fake Matrix to represent that grouping",
+    "pricing.baseModelRows remains one flat JSON array, but rows may now carry native grouping metadata: groupId and groupLabel",
+    "Do NOT create an extractionWarning merely because multiple native Base/Model groups exist",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected corrected Base/Model text to contain: ${expected}`));
   extractionPromptFocuses.forEach((focus) => {
     assert.ok(getProductTemplateAiExtractionPrompt(focus).includes("no one-column \"Standard Price\" Matrix was created, including as a workaround to preserve multiple Base/Model families"), `Expected ${focus} self-check to forbid the fake-Matrix workaround`);
@@ -1743,7 +1743,7 @@ test("target-identity audit 4: the workstation target example always includes gr
 test("target-identity audit 5-6: Base/Model and Workstation group_id guidance matches the actual Apply-time adapter constants", () => {
   extractionPromptFocuses.forEach((focus) => {
     const prompt = getProductTemplateAiExtractionPrompt(focus);
-    assert.ok(prompt.includes(`use group_id: "${LEGACY_BASE_MODEL_GROUP_ID}" only for an actual base_model target and group_id: "${LEGACY_WORKSTATION_GROUP_ID}" only for an actual workstation target`), `Expected ${focus} prompt to cite the real runtime sentinel group ids by import, not a hardcoded guess`);
+    assert.ok(prompt.includes(`(B) when the row has no groupId, group_id is "${LEGACY_BASE_MODEL_GROUP_ID}"`) && prompt.includes(`use group_id: "${LEGACY_WORKSTATION_GROUP_ID}" only for an actual workstation target`), `Expected ${focus} prompt to cite the real runtime sentinel group ids by import, not a hardcoded guess`);
   });
   // Prove the cited sentinels are exactly what the Apply-time normalizers synthesize for a flat, group-less row list —
   // the same shape pricing.baseModelRows[] / pricing.workstationRows[] always are in ProductTemplateDraft v1.
@@ -2511,4 +2511,303 @@ test("source-proven structural support precedes Base/Model fallback and keeps sc
     "37. scale_with_target_quantity is used only for supported target kinds",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected structural routing precedence: ${expected}`));
   ["direct-priced primary SKU", "OXI_P starter rows", "Terra Office-style", "X3-style"].forEach((expected) => assert.ok(prompt.includes(expected), `Expected existing routing regression: ${expected}`));
+});
+
+test("ProductTemplateDraft v1 contract visibly documents compatibleTargets on optionGroups[].items[], only for structural_support", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      `"role": "structural_support", "compatibleTargets": [{ "kind": "base_model", "group_id": "${LEGACY_BASE_MODEL_GROUP_ID}", "row_id": "example-main-row-id" }] }] }],`,
+      "optionGroups[].items[].compatibleTargets is OPTIONAL and meaningful only for an option item with role \"structural_support\"",
+      "omit it for every other item, including a normal or companion item",
+      "Do not imply every structural support requires compatibleTargets",
+      "compatibleTargets belongs on optionGroups[].items[] only; do not add it to baseModelRows, workstationRows, priceMatrices rows, modular rows, or conditionalConfiguration",
+      "do not add fields beyond documented contract fields such as unavailableCategoryIds, conditionalConfiguration, or reviewStatus/reviewReason",
+      "Documented optional optionGroups[].items[] fields also include role and compatibleTargets",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} contract to document compatibleTargets: ${expected}`));
+  });
+});
+
+test("extraction emits row-level base_model compatibility only, with the exact group_id, and forbids base_model_subgroup / non-row ids", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "AI extraction emits row-level base_model compatibility targets only: { \"kind\": \"base_model\", \"group_id\": \"<exact Base/Model row groupId, or " + LEGACY_BASE_MODEL_GROUP_ID + " for an ordinary ungrouped row>\", \"row_id\": \"<exact already-emitted pricing.baseModelRows[].id>\" }",
+      "group_id is exactly the target row's native groupId when it has one, and exactly \"" + LEGACY_BASE_MODEL_GROUP_ID + "\" for an ordinary ungrouped Base/Model row",
+      "row_id is the exact already-emitted pricing.baseModelRows[].id; never use supplierCodes as row_id; never invent subgroup IDs during extraction",
+      "base_model_subgroup is runtime/Smart Setup metadata only and must not be emitted by the extractor",
+      "EXTRACTION-TIME COMPATIBILITY TARGETS",
+      "DO NOT EMIT: base_model_subgroup; Smart Setup visual subgroup ids; generated auto subgroup ids; labels as row_id; supplier codes as row_id; name-based compatibility references",
+      "Smart Setup may later collapse multiple compatible Base/Model row targets into subgroup targets",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to limit extraction-time targets: ${expected}`));
+  });
+});
+
+test("structural support -> compatible main products is documented as a distinct relationship from required companion, and both may coexist", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "STRUCTURAL SUPPORT / COMPATIBLE MAIN PRODUCTS",
+      "When manufacturer evidence proves that a structural-support item is intended for specific complete Base/Model products in the selected system, preserve that compatibility on the structural-support option item using compatibleTargets",
+      "Emit one target per exact supported main row",
+      "Do NOT emit manufacturer codes from this prompt example",
+      "Emit compatibleTargets only when manufacturer evidence proves that the main product belongs to / integrates with / is designed for / fixes to / uses that exact structural-support system",
+      "Do NOT infer compatibility from: same catalogue chapter; nearby page placement; matching finish; dimensions; visual similarity; code sequence; naming coincidence; generic cabinet/support wording alone",
+      "preserve the structural-support item, do NOT invent compatibleTargets, and add extractionWarning/manual-review wording when useful",
+      "(A) Structural support -> required companion uses conditionalConfiguration with target.kind \"option_item\"",
+      "(B) Structural support -> compatible main products uses item.compatibleTargets",
+      "Do NOT encode main-product compatibility using conditionalConfiguration",
+      "Do NOT use option_item for support -> main-product compatibility",
+      "Do NOT use compatibleTargets for required companion enforcement",
+      "Both relationships may coexist on the same structural-support item",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to document compatible-main-products guidance: ${expected}`));
+  });
+});
+
+test("structural support routing precedence extends to compatibleTargets without moving compatible main rows out of Base/Model", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "After routing the structural-support item to optionGroups, if the supplied source also proves which Base/Model products use that structural support, emit compatibleTargets on that support item pointing to those exact already-emitted Base/Model row IDs",
+      "The primary products themselves remain normal pricing.baseModelRows",
+      "Do not move compatible main desk/bench rows into optionGroups",
+      "Do not move the structural-support item back into Base/Model merely to express compatibility",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to extend structural-support precedence: ${expected}`));
+  });
+  // SOURCE-PROVEN STRUCTURAL SUPPORT PRECEDENCE itself remains intact.
+  assert.ok(getProductTemplateAiExtractionPrompt("workstation").includes("SOURCE-PROVEN STRUCTURAL SUPPORT PRECEDENCE"));
+});
+
+test("Base / Model rows and Service Cabinet / Storage sections document compatibleTargets without changing routing", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "When complete direct-priced Base/Model rows are explicitly designed for a separately priced structural-support option item, the rows remain authoritative pricing.baseModelRows",
+      "Their compatibility with the structural support is represented from the structural-support item's compatibleTargets",
+      "Do not duplicate that relationship by changing the main row's pricing type",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt Base/Model compatibility guidance: ${expected}`));
+  });
+  const workstationPrompt = getProductTemplateAiExtractionPrompt("workstation");
+  [
+    "When manufacturer evidence proves that a genuine structural_support service cabinet/support item (not a native system_base row) is structural support for specific Base/Model workstation rows, emit compatibleTargets on that structural-support item for those exact rows",
+    "Do NOT infer compatibility with every desk in the template",
+    "Do NOT filter by product names in extraction",
+    "Do NOT use a generic global compatibility flag",
+  ].forEach((expected) => assert.ok(workstationPrompt.includes(expected), `Expected workstation prompt Service Cabinet compatibility guidance: ${expected}`));
+});
+
+test("companion furniture family preservation documents compatibleTargets as stronger than linkedFamilySuggestion, and main rows stay non-Modular", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "preserve BOTH role: \"structural_support\" and compatibleTargets pointing to those exact Base/Model rows",
+      "This relationship is stronger than a linkedFamilySuggestion and must not be reduced to relationship metadata only when exact supported main rows are known",
+      "Complete desk/bench rows that depend on a structural support remain complete primary pricing rows",
+      "This compatibility relationship does NOT make the desk/bench Modular",
+      "It does NOT merge support price into the main row price",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt companion-family compatibility guidance: ${expected}`));
+  });
+});
+
+test("self-check and final checks 38-42 verify compatibleTargets usage without name/proximity inference", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "a source-proven structural-support item with proven exact main-product compatibility was not returned without compatibleTargets",
+      "that compatibleTargets points only to exact already-emitted Base/Model row ids, never a supplier code or an invented Smart Setup subgroup id",
+      "that support -> main compatibility was not incorrectly encoded as option_item conditionalConfiguration",
+      "that support -> required companion and support -> compatible main products were kept as separate relationships",
+      "that a main desk/bench row remained in Base/Model rather than being moved into optionGroups merely because it uses structural support",
+      "38. When exact structural-support -> Base/Model compatibility is source-proven, the structural-support item carries compatibleTargets for those exact main rows.",
+      "39. Every extraction-time compatibleTargets entry uses kind \"base_model\", group_id \"" + LEGACY_BASE_MODEL_GROUP_ID + "\", and the exact already-emitted Base/Model row id.",
+      "40. No extraction-time compatibleTargets entry uses a Smart Setup subgroup id, generated auto subgroup id, supplier code, label, or invented row id.",
+      "41. Structural-support -> required companion remains encoded with option_item conditionalConfiguration, while structural-support -> compatible main products remains encoded with compatibleTargets; the two relationships were not conflated.",
+      "42. Base/Model rows compatible with structural support remained authoritative Base/Model rows and were not moved into optionGroups or Modular pricing merely because of that dependency.",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} self-check/final-check guidance: ${expected}`));
+  });
+  assert.ok(getProductTemplateAiExtractionPrompt("workstation").includes("Verify that when the supplied source proves a workstation/desk/bench is designed for a particular structural-support item, that support item carries row-level compatibleTargets for the exact Base/Model rows"));
+});
+
+test("scale_with_target_quantity guidance consistently says modular or option_item, never base_model/price_matrix/workstation", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "scale_with_target_quantity: true is supported only for modular or option_item targets. Never emit it for base_model, price_matrix, or workstation; those targets may use fixed_quantity only.",
+      "scale_with_target_quantity: optional boolean, allowed only for a modular or option_item target with fixed_quantity and selection other than exactly_one",
+      "Do NOT permit it for base_model, price_matrix, or workstation targets",
+      "For option_item, use it only with an explicit fixed_quantity and a supported non-exactly-one selection mode",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt to consistently scope scale_with_target_quantity: ${expected}`));
+    assert.ok(!prompt.includes("optional boolean, only for a Modular target with fixed_quantity"), `Expected ${focus} prompt to no longer carry the stale Modular-only wording`);
+  });
+});
+
+test("allowed_item_ids self-reference warning exists for a required-companion group triggered by option_item", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    [
+      "do NOT emit allowed_item_ids merely to name the companion item itself when that group already contains the dependent item",
+      "allowed_item_ids is only for restricting which items in a multi-item companion/option group are valid for a given applicability rule",
+      "Do NOT add \"allowed_item_ids\": [\"top-b\"] merely to repeat that Top B is the sole item in its group",
+      "This prevents the malformed pattern previously seen where the validator reports that allowed_item_ids references an invalid/current-group item",
+    ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} prompt allowed_item_ids self-reference warning: ${expected}`));
+  });
+});
+
+// ---- Native System / Base architecture (Phase A + B runtime) ----
+const nativeSystemPrompts = () => extractionPromptFocuses.map((focus) => [focus, getProductTemplateAiExtractionPrompt(focus)] as const);
+const expectAll = (expected: string[]) => nativeSystemPrompts().forEach(([focus, prompt]) => expected.forEach((text) => assert.ok(prompt.includes(text), `Expected ${focus} prompt to include: ${text}`)));
+
+test("Base/Model contract documents optional groupId, groupLabel and role system_base on baseModelRows only", () => {
+  expectAll([
+    "\"baseModelRows\": [{ \"id\": \"\", \"groupId\": \"system-family-id\", \"groupLabel\": \"System Family\", \"role\": \"system_base\", \"label\": null",
+    "pricing.baseModelRows[].groupId, pricing.baseModelRows[].groupLabel and pricing.baseModelRows[].role are OPTIONAL native Base/Model fields",
+    "the only supported Base/Model row role is \"system_base\", and ordinary Main Product rows OMIT role (never emit \"main_product\")",
+    "do NOT add Base/Model group fields to workstationRows, priceMatrices rows, modular rows, or optionGroups items",
+    "demonstrates field shape only, not default content",
+    "never conflate the two role systems",
+  ]);
+  nativeSystemPrompts().forEach(([focus, prompt]) => {
+    assert.ok(prompt.includes("\"normal\" | \"companion\" | \"structural_support\""), `Expected ${focus} optionGroups role namespace to stay independent`);
+    assert.ok(prompt.includes("do NOT emit \"role\": \"main_product\""), `Expected ${focus} prompt to forbid a main_product role`);
+  });
+});
+
+test("native System/Base precedence exists before the structural_support fallback and requires source proof", () => {
+  nativeSystemPrompts().forEach(([focus, prompt]) => {
+    const native = prompt.indexOf("NATIVE SYSTEM / BASE PRECEDENCE");
+    const fallback = prompt.indexOf("SOURCE-PROVEN STRUCTURAL SUPPORT PRECEDENCE");
+    assert.ok(native >= 0 && fallback > native, `Expected ${focus} native precedence before structural_support precedence`);
+  });
+  expectAll([
+    "route that item into pricing.baseModelRows with role \"system_base\", and assign it a native groupId/groupLabel together with its compatible Main Product Base/Model rows",
+    "takes precedence over the structural_support option-item workaround",
+    "Do NOT infer system_base merely from words such as cabinet, storage, service unit, support, base, pedestal, return, or bridge",
+    "Do NOT emit the same item as BOTH a role \"system_base\" Base/Model row AND a role \"structural_support\" option item",
+    "This section applies only when the item is NOT a native first-stage System/Base",
+    "Use optionGroups item role \"structural_support\" only when the item is instead genuinely a supporting/companion item",
+  ]);
+});
+
+test("native System group membership, structural compatibility, and independent prices", () => {
+  expectAll([
+    "NATIVE SYSTEM GROUP MEMBERSHIP",
+    "Every System/Base row and every Main Product row belonging to that System uses the same groupId",
+    "\"groupId\": \"system-a\" and \"groupLabel\": \"System A\"",
+    "Ordinary Main Product rows omit role; never emit \"main_product\"",
+    "Do NOT invent subgroup IDs during extraction",
+    "A native System group may contain multiple role \"system_base\" rows",
+    "if their downstream Main Product families differ, use separate groupIds",
+    "For native System/Base groups, compatibility is expressed by group membership",
+    "Do NOT emit compatibleTargets for a native system_base row",
+    "do NOT use option_item for it",
+    "compatibleTargets remains only for the older/genuine structural_support option-item architecture",
+    "the System/Base price and the Main Product price are TWO independent authoritative prices",
+    "do NOT emit a synthetic combined SKU",
+    "Do NOT create a fake one-column priceMatrix to preserve these groups",
+  ]);
+});
+
+test("grouped base_model targets use the exact groupId while ungrouped rows keep the legacy id; system_base companions target base_model", () => {
+  expectAll([
+    "use group_id equal to that exact row.groupId, otherwise use group_id \"" + LEGACY_BASE_MODEL_GROUP_ID + "\"",
+    "(A) when the row has a native groupId, group_id is that exact row.groupId; (B) when the row has no groupId, group_id is \"" + LEGACY_BASE_MODEL_GROUP_ID + "\"",
+    "target: { \"kind\": \"base_model\", \"group_id\": \"<exact native System groupId>\", \"row_id\": \"<exact system_base row.id>\" }",
+    "Do NOT use target.kind \"option_item\" for a native system_base row",
+    "do NOT use group_id \"" + LEGACY_BASE_MODEL_GROUP_ID + "\" when the target row has a native groupId",
+  ]);
+  assert.ok(getProductTemplateAiExtractionPrompt("workstation").includes("as an ordinary ungrouped Base/Model row, use target: { kind: \"base_model\", group_id: \"" + LEGACY_BASE_MODEL_GROUP_ID + "\", row_id: \"oxi-q-ws-dx\" }"));
+});
+
+test("structural_support / compatibleTargets remain a fallback and stale grouping-unsupported text is gone", () => {
+  expectAll([
+    "This section applies ONLY to genuine option-item structural_support architecture. It does NOT apply to native Base/Model system_base rows",
+    "compatibleTargets remains valid in the contract for genuine structural_support items",
+    "\"<exact Base/Model row group id or legacy id>\"",
+    "if compatibleTargets point to a native grouped Base/Model row, group_id must be that exact row.groupId",
+    "DO NOT EMIT: base_model_subgroup; Smart Setup visual subgroup ids; generated auto subgroup ids; labels as row_id; supplier codes as row_id",
+  ]);
+  nativeSystemPrompts().forEach(([focus, prompt]) => {
+    ["when ProjectWorkflow supports it", "ProductTemplateDraft v1 baseModelRows is flat", "Review & Route can split them", "have no group wrapper in this draft"].forEach((stale) => {
+      assert.ok(!prompt.includes(stale), `Expected ${focus} prompt to drop stale grouping guidance: ${stale}`);
+    });
+  });
+});
+
+test("service cabinet guidance prefers system_base when first-stage semantics are proven; same-page scope preserves the relationship", () => {
+  [
+    "First determine whether the cabinet/storage/service unit is a native primary System/Base selection",
+    "route it to pricing.baseModelRows with role \"system_base\" and a native groupId/groupLabel shared by its Main Product rows",
+    "Do not infer either role from name alone",
+    "the System/Base was emitted as a native grouped Base/Model row with role \"system_base\"",
+    "is NOT an unrelated sibling when the source proves those Main Products are explicitly designed for that System",
+    "preserve them together inside one native Base/Model System group",
+    "Same-page proximity alone is still insufficient",
+  ].forEach((expected) => assert.ok(getProductTemplateAiExtractionPrompt("workstation").includes(expected), `Expected workstation prompt to include: ${expected}`));
+  expectAll([
+    "is actually the primary first-stage System/Base is NOT a companion merely because it sits beside the desk/bench pages",
+    "Do NOT use Modular merely because System + Main are both required to complete the configured product",
+  ]);
+});
+
+test("self-check and final checklist 43-50 cover native System/Base", () => {
+  expectAll([
+    "Native System/Base self-check: verify that a source-proven PRIMARY first-stage priced System/Base was not incorrectly routed to optionGroups structural_support",
+    "that structural_support remains used only for genuine support/companion architecture",
+    "43. A source-proven primary first-stage priced System/Base was emitted as a Base/Model row with role \"system_base\", not as a structural_support accessory.",
+    "44. Every native System/Base row and its compatible Main Product Base/Model rows share the same exact groupId and groupLabel.",
+    "45. Ordinary Main Product rows in a native System group omit role; \"main_product\" was not invented.",
+    "46. Native System -> Main Product compatibility is represented by Base/Model group membership",
+    "47. A required companion triggered by a native System/Base uses target.kind \"base_model\"",
+    "48. System/Base price and Main Product price remain separate authoritative source prices",
+    "49. No fake one-column Matrix or invented Smart Setup subgroup ID was created to preserve native System grouping.",
+    "50. structural_support / compatibleTargets remains reserved for genuine option-item support/companion architecture",
+  ]);
+});
+
+test("native system_base required companion (base_model target, fixed_quantity 1) never emits or recommends scale_with_target_quantity", () => {
+  expectAll([
+    "For target.kind \"base_model\": NEVER emit scale_with_target_quantity (the runtime permits it only for modular or option_item targets)",
+    "use fixed_quantity when the source proves a fixed required quantity",
+    "quotation-item quantity already multiplies the configured complete product later",
+    "omit scale_with_target_quantity entirely and do not emit false",
+    "A required companion targeting a native system_base/base_model row does not contain scale_with_target_quantity.",
+    "51. A required companion targeting a native system_base/base_model row does not contain scale_with_target_quantity.",
+  ]);
+  nativeSystemPrompts().forEach(([focus, prompt]) => {
+    const section = prompt.slice(prompt.indexOf("SYSTEM_BASE REQUIRED COMPANIONS"), prompt.indexOf("NATIVE SYSTEM PRICES ARE INDEPENDENT"));
+    assert.ok(section.includes("\"kind\": \"base_model\"") && section.includes("fixed_quantity"), `Expected ${focus} system_base companion section to use base_model + fixed_quantity`);
+    assert.ok(!/scale_with_target_quantity"?\s*[:=]\s*true/i.test(section), `Expected ${focus} system_base companion section not to recommend scale_with_target_quantity: true`);
+  });
+});
+
+test("supplier code cleaning: adjacent finish/footnote markers such as (*) never stay inside supplierCodes", () => {
+  expectAll([
+    "SUPPLIER CODE CLEANING / ADJACENT MARKERS",
+    "store only the actual commercial code",
+    "Do NOT include adjacent finish-reference markers, typography markers, footnote markers, or decorative symbols that are not part of the article code",
+    "(*), ( ), *, †, ‡",
+    "source \"1AJ M45 (*)\" must emit \"supplierCodes\": [\"1AJ M45\"], NOT \"supplierCodes\": [\"1AJ M45 (*)\"]",
+    "source \"1AJ M33 (*)\" must emit \"supplierCodes\": [\"1AJ M33\"]",
+    "Preserve the supplier prefix and article token exactly; do not remove letters/numbers that are actually part of the code, and do not normalize away legitimate suffix letters/numbers",
+    "only strip adjacent non-code finish/footnote markers",
+    "Finish-reference symbols belong in finish/material guidance if relevant, not supplierCodes",
+    "This rule is generic (not specific to any manufacturer) and applies globally to Base/Model, Workstation, Matrix, Modular, Option/Accessory, and linked/companion supplier codes",
+    "Supplier codes contain only the commercial article code and do not include adjacent finish/footnote markers such as (*).",
+  ]);
+});
+
+test("existing OXI, OXI_P, X3, Terra/Piem, structural_support and scale_with_target_quantity regressions are preserved", () => {
+  [
+    "oxi-q-ws-dx",
+    "OXI_P starter rows 111 065, 111 066, 111 067, and 111 068",
+    "OXI, X3, TERRA/PIEM, AND COLAN REGRESSION PATTERNS",
+  ].forEach((expected) => assert.ok(getProductTemplateAiExtractionPrompt("workstation").includes(expected), `Expected workstation prompt to keep regression: ${expected}`));
+  expectAll([
+    "selectionFamily",
+    "Matrix Modular",
+    "scale_with_target_quantity is used only for supported target kinds (modular or option_item)",
+    "role \"structural_support\"",
+    "STRUCTURAL SUPPORT / COMPATIBLE MAIN PRODUCTS",
+    "EXTRACTION-TIME COMPATIBILITY TARGETS",
+  ]);
 });

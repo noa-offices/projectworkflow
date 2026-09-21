@@ -8,7 +8,9 @@ import {
   ACCESSORY_APPLICABILITY_TARGET_KINDS,
   ACCESSORY_CONFIGURATION_ROLES,
   ACCESSORY_SELECTION_MODES,
+  STRUCTURAL_SUPPORT_COMPATIBLE_TARGET_KINDS,
   accessoryApplicabilityTargetKey,
+  structuralSupportCompatibleTargetKey,
   type AccessoryApplicabilityTarget,
   type AccessoryApplicabilityTargetKind,
   type AccessoryConditionalConfiguration,
@@ -16,7 +18,10 @@ import {
   type AccessoryConfigurationRole,
   type AccessoryModelApplicabilityRule,
   type AccessorySelectionMode,
+  type StructuralSupportCompatibleTarget,
+  type StructuralSupportCompatibleTargetKind,
 } from "./accessory-conditional-configuration";
+import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups";
 
 export const PRODUCT_TEMPLATE_DRAFT_VERSION = 1 as const;
 
@@ -70,6 +75,9 @@ export type ProductTemplateDraftIdentity = ProductTemplateDraftReferences & {
   dimensions: ProductTemplateDraftDimension | null;
 };
 
+export const PRODUCT_TEMPLATE_DRAFT_BASE_MODEL_ROLES = ["system_base"] as const;
+export type ProductTemplateDraftBaseModelRole = typeof PRODUCT_TEMPLATE_DRAFT_BASE_MODEL_ROLES[number];
+
 export type ProductTemplateDraftPricedRow = ProductTemplateDraftReferences & {
   id: string;
   label: string | null;
@@ -79,6 +87,17 @@ export type ProductTemplateDraftPricedRow = ProductTemplateDraftReferences & {
   price: ProductTemplateDraftPrice;
   specification: string | null;
   importantRequirements?: string[];
+};
+
+/**
+ * Base/Model draft row. Rows with a groupId belong to that native BaseModelPricingGroup;
+ * rows without one stay in the legacy flat Base/Model group. Missing role is an ordinary
+ * main-product row. Kept off the generic priced row because option items own a different role.
+ */
+export type ProductTemplateDraftBaseModelRow = ProductTemplateDraftPricedRow & {
+  groupId?: string;
+  groupLabel?: string;
+  role?: ProductTemplateDraftBaseModelRole;
 };
 
 export type ProductTemplateDraftWorkstationRow = ProductTemplateDraftPricedRow & {
@@ -200,6 +219,15 @@ export type ProductTemplateDraftCategoryPricedOptionItem = ProductTemplateDraftO
   unavailablePriceCategoryIds?: string[];
   reviewStatus?: ProductTemplateDraftReviewStatus;
   reviewReason?: string;
+  /**
+   * Structural Support -> Compatible Main Product targeting. Only meaningful when
+   * role === "structural_support"; normalization preserves it on any item for
+   * backward safety, but runtime filtering must only read it from selected
+   * structural-support items. Row-level targets may arrive from initial AI
+   * extraction (subgroup ids are not known yet); Smart Setup may later collapse
+   * a fully-selected subgroup's rows into a single base_model_subgroup target.
+   */
+  compatibleTargets?: StructuralSupportCompatibleTarget[];
 };
 
 /**
@@ -239,7 +267,7 @@ export type ProductTemplateDraft = {
   defaultCurrency: ProductTemplateDraftCurrency | null;
   pricing: {
     workstationRows: ProductTemplateDraftWorkstationRow[];
-    baseModelRows: ProductTemplateDraftPricedRow[];
+    baseModelRows: ProductTemplateDraftBaseModelRow[];
     priceMatrices: ProductTemplateDraftPriceMatrix[];
     modularGroups: ProductTemplateDraftModularGroup[];
   };
@@ -561,6 +589,35 @@ function applicabilityTarget(value: unknown, path: string, issues: IssueCollecto
   return { kind: kind as AccessoryApplicabilityTargetKind, group_id: groupId, row_id: rowId };
 }
 
+/**
+ * Drops (with a reported error) any individual target with an unsupported kind
+ * or missing group_id/row_id, rather than rejecting the whole item; duplicate
+ * identical targets are deduplicated. Resolution against actual Base/Model
+ * data happens later (Smart Setup / Product Library), not here.
+ */
+function structuralSupportCompatibleTargets(value: unknown, path: string, issues: IssueCollector): StructuralSupportCompatibleTarget[] | undefined {
+  if (value === undefined) return undefined;
+  const seen = new Set<string>();
+  const targets = array(value, path, issues).flatMap((raw, index): StructuralSupportCompatibleTarget[] => {
+    const itemPath = `${path}[${index}]`;
+    const source = requiredObject(raw, itemPath, issues);
+    const kind = nullableText(source.kind, `${itemPath}.kind`, issues);
+    if (!kind || !STRUCTURAL_SUPPORT_COMPATIBLE_TARGET_KINDS.includes(kind as StructuralSupportCompatibleTargetKind)) {
+      error(issues, `${itemPath}.kind`, "Compatibility target kind must be base_model or base_model_subgroup.");
+      return [];
+    }
+    const groupId = requiredId(source.group_id, `${itemPath}.group_id`, issues);
+    const rowId = requiredId(source.row_id, `${itemPath}.row_id`, issues);
+    if (!groupId || !rowId) return [];
+    const target: StructuralSupportCompatibleTarget = { kind: kind as StructuralSupportCompatibleTargetKind, group_id: groupId, row_id: rowId };
+    const key = structuralSupportCompatibleTargetKey(target);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [target];
+  });
+  return targets.length ? targets : undefined;
+}
+
 function applicabilityRule(value: unknown, path: string, issues: IssueCollector, itemIds: Set<string>, seenTargetKeys: Set<string>, selectionMode: string | null): AccessoryModelApplicabilityRule | null {
   const source = requiredObject(value, path, issues);
   const target = applicabilityTarget(source.target, `${path}.target`, issues);
@@ -670,8 +727,31 @@ export function normalizeProductTemplateDraft(input: unknown): ProductTemplateDr
     return { ...base, additionalPrice: price(item.additionalPrice, `draft.pricing.workstationRows[${index}].additionalPrice`, issues), layoutType: layout as ProductTemplateDraftWorkstationRow["layoutType"] };
   });
   uniqueIds(workstationRows.map((row) => row.id), "draft.pricing.workstationRows", issues);
+  const canonicalGroupLabels = new Map<string, string>();
   const baseModelRows = array(pricingInput.baseModelRows, "draft.pricing.baseModelRows", issues)
-    .map((row, index) => pricedRow(row, `draft.pricing.baseModelRows[${index}]`, issues));
+    .map((row, index): ProductTemplateDraftBaseModelRow => {
+      const path = `draft.pricing.baseModelRows[${index}]`;
+      const item = object(row, path, issues);
+      const base = pricedRow(item, path, issues);
+      let groupId = nullableText(item.groupId, `${path}.groupId`, issues) ?? undefined;
+      if (groupId === LEGACY_BASE_MODEL_GROUP_ID) {
+        error(issues, `${path}.groupId`, "groupId cannot use the reserved legacy Base/Model group id; omit groupId for ungrouped rows.");
+        groupId = undefined;
+      }
+      let groupLabel = groupId ? nullableText(item.groupLabel, `${path}.groupLabel`, issues) ?? undefined : undefined;
+      if (groupId && groupLabel) {
+        const canonical = canonicalGroupLabels.get(groupId);
+        if (canonical === undefined) canonicalGroupLabels.set(groupId, groupLabel);
+        else if (canonical !== groupLabel) {
+          error(issues, `${path}.groupLabel`, `Base/Model group '${groupId}' has conflicting labels ('${canonical}' and '${groupLabel}').`);
+          groupLabel = undefined;
+        }
+      }
+      const role = nullableText(item.role, `${path}.role`, issues);
+      const validRole = role && PRODUCT_TEMPLATE_DRAFT_BASE_MODEL_ROLES.includes(role as ProductTemplateDraftBaseModelRole) ? role as ProductTemplateDraftBaseModelRole : undefined;
+      if (role && !validRole) error(issues, `${path}.role`, 'Base/Model row role must be "system_base" or omitted.');
+      return { ...base, ...(groupId ? { groupId } : {}), ...(groupLabel ? { groupLabel } : {}), ...(validRole ? { role: validRole } : {}) };
+    });
   uniqueIds(baseModelRows.map((row) => row.id), "draft.pricing.baseModelRows", issues);
   const priceMatrices = array(pricingInput.priceMatrices, "draft.pricing.priceMatrices", issues)
     .map((value, index) => matrix(value, `draft.pricing.priceMatrices[${index}]`, issues));
@@ -737,7 +817,7 @@ export function normalizeProductTemplateDraft(input: unknown): ProductTemplateDr
     uniqueIds(priceCategories.map((category) => category.id), `draft.optionGroups[${index}].priceCategories`, issues);
     const categoryIds = new Set(priceCategories.map((category) => category.id));
     const items = array(item.items, `draft.optionGroups[${index}].items`, issues)
-      .map((row, rowIndex) => { const path = `draft.optionGroups[${index}].items[${rowIndex}]`; const source = object(row, path, issues); const base = pricedRow(source, path, issues); const values = object(source.prices, `${path}.prices`, issues); const prices = Object.fromEntries(Object.entries(values).map(([id, value]) => [id, price(value, `${path}.prices.${id}`, issues)])); Object.keys(prices).forEach((id) => { if (!categoryIds.has(id)) error(issues, `${path}.prices.${id}`, "Unknown accessory price category."); }); const role = nullableText(source.role, `${path}.role`, issues); if (role && !["normal", "companion", "structural_support"].includes(role)) error(issues, `${path}.role`, 'Option item role must be "normal", "companion", or "structural_support".'); return { ...base, ...(priceCategories.length ? { prices } : {}), ...(role && role !== "normal" && ["companion", "structural_support"].includes(role) ? { role: role as AccessoryItemRole } : {}), ...reviewMetadata(source, path, issues) }; });
+      .map((row, rowIndex) => { const path = `draft.optionGroups[${index}].items[${rowIndex}]`; const source = object(row, path, issues); const base = pricedRow(source, path, issues); const values = object(source.prices, `${path}.prices`, issues); const prices = Object.fromEntries(Object.entries(values).map(([id, value]) => [id, price(value, `${path}.prices.${id}`, issues)])); Object.keys(prices).forEach((id) => { if (!categoryIds.has(id)) error(issues, `${path}.prices.${id}`, "Unknown accessory price category."); }); const role = nullableText(source.role, `${path}.role`, issues); if (role && !["normal", "companion", "structural_support"].includes(role)) error(issues, `${path}.role`, 'Option item role must be "normal", "companion", or "structural_support".'); const compatibleTargets = structuralSupportCompatibleTargets(source.compatibleTargets, `${path}.compatibleTargets`, issues); return { ...base, ...(priceCategories.length ? { prices } : {}), ...(role && role !== "normal" && ["companion", "structural_support"].includes(role) ? { role: role as AccessoryItemRole } : {}), ...(compatibleTargets ? { compatibleTargets } : {}), ...reviewMetadata(source, path, issues) }; });
     uniqueIds(items.map((option) => option.id), `draft.optionGroups[${index}].items`, issues);
     const itemIds = new Set(items.map((option) => option.id));
     const configuration = conditionalConfiguration(item.conditionalConfiguration, `draft.optionGroups[${index}].conditionalConfiguration`, issues, itemIds);

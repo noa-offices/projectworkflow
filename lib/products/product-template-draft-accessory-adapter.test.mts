@@ -95,3 +95,18 @@ test("structural option roles and option-item companion targets survive adapter 
   assert.equal(mapped.items[0].role, "structural_support");
   assert.deepEqual(mapped.conditional_configuration?.applicability[0].target, { kind: "option_item", group_id: "supports", row_id: "support-1" });
 });
+
+test("compatibleTargets maps to persisted accessory item only for structural-support items", () => {
+  const source = draft("choose_multiple", 0, null);
+  source.optionGroups[0].items[0] = {
+    ...source.optionGroups[0].items[0],
+    role: "structural_support",
+    compatibleTargets: [{ kind: "base_model_subgroup", group_id: "grp-1", row_id: "sub-desk" }],
+  };
+  const mapped = mapDraftOptionGroupsToAccessories(source).groups[0];
+  assert.equal(mapped.items[0].role, "structural_support");
+  assert.deepEqual(mapped.items[0].compatible_targets, [{ kind: "base_model_subgroup", group_id: "grp-1", row_id: "sub-desk" }]);
+  assert.equal("compatible_targets" in mapped.items[1], false);
+  assert.equal(mapped.items[0].price, source.optionGroups[0].items[0].price);
+  assert.equal(mapped.items[0].supplier_price_list_code, "STD");
+});

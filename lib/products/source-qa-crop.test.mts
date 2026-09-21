@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cropForZoom, existingSourceCropTargets, exportRenderScale, fitWidthZoom, mergeSourceCropTargetIds, nextSourceCropTarget, normalizeSourceCrop, removeSourceCropTargetIds, selectedSourceCropTargets, sourceCropSearchPages, sourceQaTextGeometry, sourceQaTextGeometryMatch, sourceQaTextGeometryViewport, uniqueSourceCropTarget, validSourceCrop, type SourceCropTarget } from "./source-qa-crop.js";
+import { normalizeProductTemplateDraft, type ProductTemplateDraft } from "./product-template-draft.js";
+import { createSmartSetupReviewRouting } from "./smart-product-review-routing.js";
+import { pendingRowImagesForSmartSetupApply, reviewedRowImageKey } from "./smart-product-row-images.js";
+import { cropForZoom, existingSourceCropTargets, exportRenderScale, fitWidthZoom, mergeSourceCropTargetIds, nextSourceCropTarget, normalizeSourceCrop, removeSourceCropTargetIds, selectedSourceCropTargets, sourceCropSearchPages, sourceCropTargets, sourceQaTextGeometry, sourceQaTextGeometryMatch, sourceQaTextGeometryViewport, uniqueSourceCropTarget, validSourceCrop, type SourceCropTarget } from "./source-qa-crop.js";
 const targets: SourceCropTarget[] = [
   { id: "one", sourceKey: "base_model:rows", rowId: "one", label: "IN120 — Table", codes: ["IN120"], kind: "Base / Model" },
   { id: "two", sourceKey: "base_model:rows", rowId: "two", label: "IN120E — Electrified", codes: ["IN120E"], kind: "Base / Model" },
@@ -50,4 +53,73 @@ test("fit-width zoom matches the container to the PDF page's native width within
   assert.equal(fitWidthZoom(500, 0), 1);
   assert.equal(fitWidthZoom(10000, 500), 4, "Must clamp to the maximum zoom even for a very wide container");
   assert.equal(fitWidthZoom(50, 500), 0.5, "Must clamp to the minimum zoom even for a very narrow container");
+});
+
+// ---- native Base/Model groups (route key must match the review editor / Apply image key) ----
+const nativeRow = (id: string, extra: Record<string, unknown> = {}) => ({ id, displayName: "Desk D70 W120 SIGMA_Q for Comby", label: null, price: 100, currency: "AED", supplierCodes: ["1AJ " + id], referenceCodes: [], ...extra });
+const nativeDraft = () => {
+  const result = normalizeProductTemplateDraft({
+    version: 1, template: { templateName: "T" }, defaultCurrency: "AED",
+    pricing: {
+      workstationRows: [],
+      baseModelRows: [
+        nativeRow("sys-a", { groupId: "comby-system", groupLabel: "COMBY", role: "system_base" }),
+        nativeRow("a1", { groupId: "comby-system", groupLabel: "COMBY" }),
+        nativeRow("a2", { groupId: "comby-system", groupLabel: "COMBY" }),
+        nativeRow("b1", { groupId: "p58-system", groupLabel: "P58" }),
+        nativeRow("flat-1"),
+      ],
+      priceMatrices: [{ id: "mx", label: "Matrix", columns: [{ id: "c", label: "C" }], rows: [{ id: "mrow", label: "m", displayName: "m", supplierCodes: ["M1"], referenceCodes: [], prices: { c: 1 } }] }],
+      modularGroups: [],
+    },
+    optionGroups: [], materialSuggestions: [], linkedFamilySuggestions: [], extractionWarnings: [], confidence: 1, sources: [],
+  });
+  assert.ok(result.draft, JSON.stringify(result.errors));
+  return result.draft as ProductTemplateDraft;
+};
+
+test("crop targets: ordinary Base/Model rows keep base_model:rows; native rows use their group route key; matrix unchanged", () => {
+  const found = sourceCropTargets(nativeDraft());
+  const byRow = (rowId: string) => found.find((target) => target.rowId === rowId);
+  assert.equal(byRow("flat-1")?.sourceKey, "base_model:rows");
+  assert.equal(byRow("a1")?.sourceKey, "base_model_group:comby-system");
+  assert.equal(byRow("sys-a")?.sourceKey, "base_model_group:comby-system");
+  assert.equal(byRow("b1")?.sourceKey, "base_model_group:p58-system");
+  assert.equal(byRow("mrow")?.sourceKey, "matrix:mx");
+  assert.equal(byRow("a1")?.kind, "Base / Model");
+});
+
+test("crop image keys cannot collide across groups and match the Apply-time route key", () => {
+  const draft = nativeDraft();
+  const found = sourceCropTargets(draft);
+  const a1 = found.find((target) => target.rowId === "a1")!;
+  const b1 = found.find((target) => target.rowId === "b1")!;
+  assert.notEqual(a1.sourceKey + "\u0000" + a1.rowId, b1.sourceKey + "\u0000" + b1.rowId);
+  // The panel writes the crop under target.sourceKey/rowId; Apply reads route.key/rowId for the same row.
+  const staged = { [reviewedRowImageKey(a1.sourceKey, a1.rowId)]: { file: {}, previewUrl: "blob:a1", sourceKey: a1.sourceKey, sourceRowId: a1.rowId } };
+  const applied = pendingRowImagesForSmartSetupApply(draft, createSmartSetupReviewRouting(draft), staged);
+  assert.deepEqual(applied.map((image) => [image.pricingType, image.rowId, image.previewUrl]), [["base_model", "a1", "blob:a1"]]);
+  // Assigning a crop is image-state only: the reviewed row keeps its group, label, role, price, code and dimensions.
+  const row = draft.pricing.baseModelRows.find((entry) => entry.id === "sys-a")!;
+  assert.deepEqual([row.groupId, row.groupLabel, row.role, row.price, row.supplierCodes[0]], ["comby-system", "COMBY", "system_base", 100, "1AJ sys-a"]);
+});
+
+test("next crop target progresses through native grouped rows before moving to another source", () => {
+  const found = sourceCropTargets(nativeDraft());
+  const ids = (list: SourceCropTarget[]) => list.map((target) => target.id);
+  assert.deepEqual(ids(found.filter((target) => target.sourceKey === "base_model_group:comby-system")), ["base:sys-a", "base:a1", "base:a2"]);
+  assert.equal(nextSourceCropTarget(found, "base:a1", new Set(), [])?.id, "base:a2");
+  // Use Crop & Next: assign a1, then a2 becomes next; after a2 the flow leaves the group.
+  assert.equal(nextSourceCropTarget(found, "base:sys-a", new Set(), ["base:sys-a"])?.id, "base:a1");
+  assert.equal(nextSourceCropTarget(found, "base:a2", new Set(), ["base:a1", "base:a2"])?.sourceKey === "base_model_group:comby-system", false);
+  // an existing image on the next row makes it ineligible, so the flow skips to the following row in the same group
+  assert.equal(nextSourceCropTarget(found, "base:sys-a", new Set(["base:a1"]), [])?.id, "base:a2");
+});
+
+test("existing-image conflict detection sees native group rows through their scoped image key", () => {
+  const found = sourceCropTargets(nativeDraft());
+  const images: Record<string, unknown> = { "base_model_group:comby-system\u0000a1": {} };
+  const existing = new Set(found.filter((target) => images[target.sourceKey + "\u0000" + target.rowId]).map((target) => target.id));
+  assert.deepEqual([...existing], ["base:a1"]);
+  assert.deepEqual(existingSourceCropTargets(found, ["base:a1", "base:a2"], existing).map((target) => target.id), ["base:a1"]);
 });

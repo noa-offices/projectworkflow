@@ -3,6 +3,7 @@ import { draftModularColumns, draftModularRows, type ProductTemplateDraft } from
 import { classifyDraftPriceMatrix } from "./product-template-draft-pricing-routing";
 import type { DraftPriceMatrixRoute } from "./product-template-draft-pricing-routing";
 import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups";
+import { baseModelGroupRouteKey, draftBaseModelGroupIds, draftBaseModelGroupLabel, draftBaseModelGroupRows, draftUngroupedBaseModelRows } from "./base-model-draft-groups";
 
 export const SMART_REVIEW_DESTINATIONS = ["base_model", "workstation", "category_matrix", "modular", "accessory", "skip"] as const;
 export type SmartReviewDestination = typeof SMART_REVIEW_DESTINATIONS[number];
@@ -12,7 +13,7 @@ export type SmartReviewAccessoryConfiguration = { role: AccessoryConfigurationRo
 export type SmartReviewRoute = {
   key: string;
   sourceId: string;
-  sourceKind: "matrix" | "option" | "workstation" | "base_model" | "modular";
+  sourceKind: "matrix" | "option" | "workstation" | "base_model" | "base_model_group" | "modular";
   sourceName: string;
   groupName: string;
   rowCount: number;
@@ -87,15 +88,18 @@ export function createSmartSetupReviewRouting(draft: ProductTemplateDraft): Smar
     return { key: `matrix:${matrix.id}`, sourceId: matrix.id, sourceKind: "matrix", sourceName: matrix.label ?? matrix.id, groupName: matrix.label ?? matrix.id, rowCount: matrix.rows.length, columnCount: matrix.columns.length, recommendedDestination, destination: recommendedDestination, supportedDestinations: [...(oneColumn ? ["base_model", "category_matrix", "accessory"] as SmartReviewDestination[] : ["category_matrix"] as SmartReviewDestination[]), "skip"], ...(recommendedDestination === "accessory" ? { accessory: accessoryDefaults(matrix.label ?? matrix.id) } : {}) };
   });
   const optionRoutes: SmartReviewRoute[] = draft.optionGroups.map((group) => ({ key: `option:${group.id}`, sourceId: group.id, sourceKind: "option", sourceName: group.label ?? group.id, groupName: group.label ?? group.id, rowCount: group.items.length, columnCount: null, recommendedDestination: "accessory", destination: "accessory", supportedDestinations: ["accessory", "skip"], accessory: reviewedAccessoryConfiguration(group) ?? accessoryDefaults(group.label ?? group.id, group.selection) }));
+  const ungroupedBaseModelRows = draftUngroupedBaseModelRows(draft.pricing);
   const routes: SmartReviewRoute[] = [
     ...(draft.pricing.workstationRows.length ? [{ key: "workstation:rows", sourceId: "workstationRows", sourceKind: "workstation" as const, sourceName: "Workstation Pricing", groupName: "Workstation Pricing", rowCount: draft.pricing.workstationRows.length, columnCount: null, recommendedDestination: "workstation" as const, destination: "workstation" as const, supportedDestinations: ["workstation", "skip"] as SmartReviewDestination[] }] : []),
-    ...(draft.pricing.baseModelRows.length ? [{ key: "base_model:rows", sourceId: "baseModelRows", sourceKind: "base_model" as const, sourceName: "Base / Model Pricing", groupName: "Base / Model Pricing", rowCount: draft.pricing.baseModelRows.length, columnCount: null, recommendedDestination: "base_model" as const, destination: "base_model" as const, supportedDestinations: ["base_model", "skip"] as SmartReviewDestination[] }] : []),
+    ...(ungroupedBaseModelRows.length ? [{ key: "base_model:rows", sourceId: "baseModelRows", sourceKind: "base_model" as const, sourceName: "Base / Model Pricing", groupName: "Base / Model Pricing", rowCount: ungroupedBaseModelRows.length, columnCount: null, recommendedDestination: "base_model" as const, destination: "base_model" as const, supportedDestinations: ["base_model", "skip"] as SmartReviewDestination[] }] : []),
+    ...draftBaseModelGroupIds(draft.pricing).map((groupId) => { const label = draftBaseModelGroupLabel(draft.pricing, groupId); return { key: baseModelGroupRouteKey(groupId), sourceId: groupId, sourceKind: "base_model_group" as const, sourceName: label, groupName: label, rowCount: draftBaseModelGroupRows(draft.pricing, groupId).length, columnCount: null, recommendedDestination: "base_model" as const, destination: "base_model" as const, supportedDestinations: ["base_model", "skip"] as SmartReviewDestination[] }; }),
     ...matrixRoutes,
     ...draft.pricing.modularGroups.map((group) => ({ key: `modular:${group.id}`, sourceId: group.id, sourceKind: "modular" as const, sourceName: group.label ?? group.id, groupName: group.label ?? group.id, rowCount: draftModularRows(group).length, columnCount: draftModularColumns(group).length, recommendedDestination: "modular" as const, destination: "modular" as const, supportedDestinations: ["modular", "skip"] as SmartReviewDestination[] })),
     ...optionRoutes,
   ];
   const baseModels = [
-    ...draft.pricing.baseModelRows.map((row) => ({ groupId: LEGACY_BASE_MODEL_GROUP_ID, rowId: row.id, specification: row.specification })),
+    ...ungroupedBaseModelRows.map((row) => ({ groupId: LEGACY_BASE_MODEL_GROUP_ID, rowId: row.id, specification: row.specification })),
+    ...draft.pricing.baseModelRows.flatMap((row) => row.groupId ? [{ groupId: row.groupId, rowId: row.id, specification: row.specification }] : []),
     ...draft.pricing.priceMatrices.flatMap((matrix) => matrixRoutes.find((route) => route.sourceId === matrix.id)?.destination === "base_model" ? matrix.rows.map((row) => ({ groupId: matrix.id, rowId: row.id, specification: row.specification })) : []),
   ];
   routes.forEach((route) => {
@@ -129,8 +133,13 @@ export function validateSmartSetupReviewRouting(draft: ProductTemplateDraft, pla
   const errors: string[] = [];
   const routeKeys = new Set(plan.routes.map((route) => route.key));
   if (routeKeys.size !== plan.routes.length) errors.push("Duplicate reviewed routing groups were found.");
+  const nativeGroupIds = new Set(draftBaseModelGroupIds(draft.pricing));
+  draft.pricing.priceMatrices.forEach((matrix) => {
+    if (nativeGroupIds.has(matrix.id) && plan.routes.find((route) => route.key === `matrix:${matrix.id}`)?.destination === "base_model") errors.push(`${matrix.label ?? matrix.id} uses the same group id as a native Base / Model group.`);
+  });
   const modelTargets = new Set([
-    ...(plan.routes.find((route) => route.key === "base_model:rows")?.destination === "base_model" ? draft.pricing.baseModelRows.map((row) => accessoryApplicabilityTargetKey({ kind: "base_model", group_id: LEGACY_BASE_MODEL_GROUP_ID, row_id: row.id })) : []),
+    ...(plan.routes.find((route) => route.key === "base_model:rows")?.destination === "base_model" ? draftUngroupedBaseModelRows(draft.pricing).map((row) => accessoryApplicabilityTargetKey({ kind: "base_model", group_id: LEGACY_BASE_MODEL_GROUP_ID, row_id: row.id })) : []),
+    ...draft.pricing.baseModelRows.flatMap((row) => row.groupId && plan.routes.find((route) => route.key === baseModelGroupRouteKey(row.groupId!))?.destination === "base_model" ? [accessoryApplicabilityTargetKey({ kind: "base_model", group_id: row.groupId, row_id: row.id })] : []),
     ...draft.pricing.priceMatrices.flatMap((matrix) => {
       const destination = plan.routes.find((route) => route.key === `matrix:${matrix.id}`)?.destination;
       const kind = destination === "base_model" ? "base_model" : destination === "category_matrix" ? "price_matrix" : null;
@@ -188,7 +197,11 @@ export function draftForSmartSetupReviewApply(draft: ProductTemplateDraft, plan:
     pricing: {
       ...draft.pricing,
       workstationRows: route("workstation:rows")?.destination === "workstation" ? draft.pricing.workstationRows : [],
-      baseModelRows: route("base_model:rows")?.destination === "base_model" ? draft.pricing.baseModelRows : [],
+      baseModelRows: draft.pricing.baseModelRows.flatMap((row) => {
+        if (!row.groupId) return route("base_model:rows")?.destination === "base_model" ? [row] : [];
+        const groupRoute = route(baseModelGroupRouteKey(row.groupId));
+        return groupRoute?.destination === "base_model" ? [{ ...row, groupLabel: groupRoute.groupName.trim() || row.groupLabel || row.groupId }] : [];
+      }),
       priceMatrices: ordered(draft.pricing.priceMatrices, "matrix").map((matrix) => ({ ...matrix, label: route(`matrix:${matrix.id}`)?.groupName ?? matrix.label })),
       modularGroups: ordered(draft.pricing.modularGroups, "modular").filter((group) => route(`modular:${group.id}`)?.destination === "modular").map((group) => ({ ...group, label: route(`modular:${group.id}`)?.groupName ?? group.label })),
     },

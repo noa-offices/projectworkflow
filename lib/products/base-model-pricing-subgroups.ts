@@ -1,4 +1,4 @@
-import type { BaseModelPricingGroup, BaseModelPricingRow, BaseModelPricingSubgroup } from "./base-model-pricing-groups";
+import { BASE_MODEL_SYSTEM_ROLE, type BaseModelPricingGroup, type BaseModelPricingRow, type BaseModelPricingSubgroup } from "./base-model-pricing-groups";
 
 export function createBaseModelPricingSubgroup(id: string, subgroupName: string, sortOrder: number): BaseModelPricingSubgroup {
   if (!id.trim()) throw new Error("Subgroup requires a stable id.");
@@ -6,7 +6,10 @@ export function createBaseModelPricingSubgroup(id: string, subgroupName: string,
 }
 
 export function assignBaseModelRowToSubgroup<TRow extends BaseModelPricingRow>(group: BaseModelPricingGroup<TRow>, rowId: string, subgroupId: string | null) {
-  if (!group.items.some((row) => row.id === rowId)) return group;
+  const row = group.items.find((item) => item.id === rowId);
+  if (!row) return group;
+  // System / Base rows are never Main Product subgroup members.
+  if (row.role === BASE_MODEL_SYSTEM_ROLE) return removeRowFromBaseModelSubgroups(group, rowId);
   return { ...group, subgroups: (group.subgroups ?? []).map((subgroup) => ({ ...subgroup, row_ids: subgroup.id === subgroupId ? [...subgroup.row_ids.filter((id) => id !== rowId), rowId] : subgroup.row_ids.filter((id) => id !== rowId) })) };
 }
 
@@ -39,5 +42,5 @@ export function persistedBaseModelSubgroupKeys(groups: readonly Pick<BaseModelPr
 
 export function baseModelPricingSubgroupSections<TRow extends BaseModelPricingRow>(group: BaseModelPricingGroup<TRow>) {
   const subgroups = [...(group.subgroups ?? [])].sort((a, b) => a.sort_order - b.sort_order).map((subgroup) => ({ subgroup, rows: group.items.filter((row) => typeof row.id === "string" && subgroup.row_ids.includes(row.id)) }));
-  return { subgroups, ungroupedRows: group.items.filter((row) => typeof row.id !== "string" || !baseModelPricingSubgroupForRow(group, row.id)) };
+  return { subgroups, systemRows: group.items.filter((row) => row.role === BASE_MODEL_SYSTEM_ROLE), ungroupedRows: group.items.filter((row) => row.role !== BASE_MODEL_SYSTEM_ROLE && (typeof row.id !== "string" || !baseModelPricingSubgroupForRow(group, row.id))) };
 }
