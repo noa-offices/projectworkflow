@@ -25,7 +25,8 @@ import { baseModelPricingGroups, flattenBaseModelPricingRows, type BaseModelPric
 import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
 import { getDraftPricingSectionPresence, getSmartSetupOverwriteConflicts, type SmartSetupPricingSection, type SmartSetupSectionPresence } from "@/lib/products/smart-product-apply-state";
 import type { ProductTemplateDraft } from "@/lib/products/product-template-draft";
-import { mapDraftWorkstationRows } from "@/lib/products/product-template-draft-workstation-adapter";
+import { mapDraftWorkstationPricing } from "@/lib/products/product-template-draft-workstation-adapter";
+import { createSmartSaveTracker, smartSetupSectionActions, type SmartSetupApplySection } from "@/lib/products/smart-setup-section-apply";
 import { mapDraftBaseModelPricing } from "@/lib/products/product-template-draft-base-model-adapter";
 import { mapDraftPriceMatricesToCategoryGroups } from "@/lib/products/product-template-draft-category-adapter";
 import { mapDraftModularPricing } from "@/lib/products/product-template-draft-modular-adapter";
@@ -458,7 +459,7 @@ export function ProductTemplateForm({
   const showExistingImportBanner = Boolean(template && existingImportDraft);
   const submitMode = mode ?? (template ? "update" : "create");
   const [expandedSections, setExpandedSections] = useState({
-    smartSetup: false,
+    smartSetup: Boolean(template?.id) && submitMode === "update",
     details: !compactAccordionMode,
     advanced: false,
     gallery: false,
@@ -502,10 +503,13 @@ export function ProductTemplateForm({
   const replacePendingSubgroupImage = (pricingType: ProductTemplateGroupReferenceType, groupId: string, subgroupId: string, file: File, previewUrl: string) => setPendingSubgroupImages((current) => { const key = pendingSubgroupImageKey(pricingType, groupId, subgroupId); const previous = current[key]; if (previous && previous.previewUrl !== previewUrl) URL.revokeObjectURL(previous.previewUrl); const next = { ...current, [key]: { file, previewUrl, pricingType, groupId, subgroupId } }; pendingSubgroupImagesRef.current = next; return next; });
   const removePendingSubgroupImage = (pricingType: ProductTemplateGroupReferenceType, groupId: string, subgroupId: string) => setPendingSubgroupImages((current) => { const key = pendingSubgroupImageKey(pricingType, groupId, subgroupId); const previous = current[key]; if (previous) URL.revokeObjectURL(previous.previewUrl); const next = { ...current }; delete next[key]; pendingSubgroupImagesRef.current = next; return next; });
   useEffect(() => () => Object.values(pendingSubgroupImagesRef.current).forEach((image) => URL.revokeObjectURL(image.previewUrl)), []);
+  const replacementVersionRef = useRef<Partial<Record<SmartSetupApplySection, number>>>({});
+  const lastApplyVersionsRef = useRef<Partial<Record<SmartSetupApplySection, number>>>({});
   function requestSmartDraftApply(draft: ProductTemplateDraft, routingPlan?: SmartSetupReviewRoutingPlan, confirmed = false, images: PendingProductTemplateRowImage[] = [], subgroupAssignments: SmartAppliedPricingSubgroups[] = [], subgroupImages: PendingProductTemplateSubgroupImage[] = [], sourcePdfMeta?: { sourcePdfStoragePath?: string; sourcePdfFileName?: string }, incremental = false, incrementalSections: SmartSetupPricingSection[] = []) {
+    lastApplyVersionsRef.current = {};
     const applyDraft = routingPlan ? draftForSmartSetupReviewApply(draft, routingPlan) : draft;
     const matrixRouting = routingPlan ? smartReviewMatrixOverrides(routingPlan) : undefined;
-    const workstation = mapDraftWorkstationRows(applyDraft);
+    const workstation = mapDraftWorkstationPricing(applyDraft, subgroupAssignments.find((entry) => entry.pricingType === "workstation")?.subgroups);
     const baseModel = mapDraftBaseModelPricing(applyDraft, matrixRouting);
     const subgroupFor = (pricingType: ProductTemplateGroupReferenceType, groupId: string) => subgroupAssignments.find((entry) => entry.pricingType === pricingType && entry.groupId === groupId)?.subgroups;
     const flatSubgroups = subgroupAssignments.find((entry) => entry.sourceKey === "base_model:rows" && entry.pricingType === "base_model")?.subgroups;
@@ -532,11 +536,21 @@ export function ProductTemplateForm({
       replacePendingImages(images);
       replacePendingSubgroupImages(subgroupImages);
     }
-    if ((!incremental || incrementalSections.includes("workstation")) && workstation.rows.length) setWorkstationReplacement((current) => ({ rows: workstation.rows, subgroups: subgroupAssignments.find((entry) => entry.pricingType === "workstation")?.subgroups, version: (current?.version ?? 0) + 1 }));
-    if ((!incremental || incrementalSections.includes("baseModel")) && (baseModel.rows.length || baseModel.groups.length)) setBaseModelReplacement((current) => ({ groups: baseModelGroups, rows: baseModel.rows, flatSubgroups, version: (current?.version ?? 0) + 1 }));
-    if ((!incremental || incrementalSections.includes("category")) && category.groups.length) setCategoryReplacement((current) => ({ groups: category.groups, version: (current?.version ?? 0) + 1 }));
-    if ((!incremental || incrementalSections.includes("modular")) && applyDraft.pricing.modularGroups.length && modular.compatible) setModularReplacement((current) => ({ groups: modular.groups, version: (current?.version ?? 0) + 1 }));
-    if ((!incremental || incrementalSections.includes("accessory")) && accessories.groups.length) setAccessoryReplacement((current) => ({ groups: accessories.groups, version: (current?.version ?? 0) + 1 }));
+    // Existing-template edit: a reviewed section that was intentionally emptied is cleared; untouched sections are never touched.
+    const sectionActions = smartSetupSectionActions({ incremental, changedSections: incrementalSections, hasContent: { workstation: workstation.rows.length > 0, baseModel: baseModel.rows.length > 0 || baseModel.groups.length > 0, category: category.groups.length > 0, modular: applyDraft.pricing.modularGroups.length > 0 && modular.compatible, accessory: accessories.groups.length > 0 }, blocked: { modular: applyDraft.pricing.modularGroups.length > 0 && !modular.compatible } });
+    const appliedVersions: Partial<Record<SmartSetupApplySection, number>> = {};
+    const nextReplacementVersion = (section: SmartSetupApplySection, current?: { version: number } | null) => { const version = Math.max(replacementVersionRef.current[section] ?? 0, current?.version ?? 0) + 1; replacementVersionRef.current[section] = version; appliedVersions[section] = version; return version; };
+    if (sectionActions.workstation === "apply") setWorkstationReplacement({ rows: workstation.rows, ...(workstation.pricing ? { pricing: workstation.pricing } : {}), subgroups: workstation.pricing ? undefined : subgroupAssignments.find((entry) => entry.pricingType === "workstation")?.subgroups, version: nextReplacementVersion("workstation", workstationReplacement) });
+    else if (sectionActions.workstation === "clear") setWorkstationReplacement({ pricing: [], rows: [], version: nextReplacementVersion("workstation", workstationReplacement) });
+    if (sectionActions.baseModel === "apply") setBaseModelReplacement({ groups: baseModelGroups, rows: baseModel.rows, flatSubgroups, version: nextReplacementVersion("baseModel", baseModelReplacement) });
+    else if (sectionActions.baseModel === "clear") setBaseModelReplacement({ groups: [], rows: [], flatSubgroups: undefined, version: nextReplacementVersion("baseModel", baseModelReplacement) });
+    if (sectionActions.category === "apply") setCategoryReplacement({ groups: category.groups, version: nextReplacementVersion("category", categoryReplacement) });
+    else if (sectionActions.category === "clear") setCategoryReplacement({ groups: [], version: nextReplacementVersion("category", categoryReplacement) });
+    if (sectionActions.modular === "apply") setModularReplacement({ groups: modular.groups, version: nextReplacementVersion("modular", modularReplacement) });
+    else if (sectionActions.modular === "clear") setModularReplacement({ groups: [], version: nextReplacementVersion("modular", modularReplacement) });
+    if (sectionActions.accessory === "apply") setAccessoryReplacement({ groups: accessories.groups, version: nextReplacementVersion("accessory", accessoryReplacement) });
+    else if (sectionActions.accessory === "clear") setAccessoryReplacement({ groups: [], version: nextReplacementVersion("accessory", accessoryReplacement) });
+    lastApplyVersionsRef.current = appliedVersions;
     const modularMessage = applyDraft.pricing.modularGroups.length && !modular.compatible
       ? ` Modular Pricing was not applied because the detected modular groups use incompatible price-category columns. ${modular.errors.join(" ")}`
       : "";
@@ -594,19 +608,46 @@ export function ProductTemplateForm({
     const count = patches.length + actions.length; setSmartSetupNotice(`${count} manufacturer change${count === 1 ? "" : "s"} applied locally. Save the Product Template to persist.`);
     return { ok: true as const };
   }
+  // Edit-in-Smart-Setup "Save Changes": the form is submitted (once) only after EVERY replaced section has reported its replacement
+  // version as committed to its own form inputs (see useReplacementCommitSignal). No timers, frame counts, or polling.
+  const smartSaveRef = useRef<{ id: number; tracker: ReturnType<typeof createSmartSaveTracker> } | null>(null);
+  const smartSaveSeq = useRef(0);
+  const [smartSaveReady, setSmartSaveReady] = useState(0);
+  const notifyReplacementCommitted = useCallback((section: string, version: number) => {
+    const pending = smartSaveRef.current;
+    if (pending?.tracker.committed(section, version)) setSmartSaveReady(pending.id);
+  }, []);
+  useEffect(() => {
+    if (!smartSaveReady) return;
+    const pending = smartSaveRef.current;
+    if (!pending || pending.id !== smartSaveReady) return;
+    smartSaveRef.current = null;
+    pricingRef.current?.closest("form")?.requestSubmit();
+  }, [smartSaveReady]);
   const requestIncrementalSmartDraftApply = (draft: ProductTemplateDraft, routingPlan?: SmartSetupReviewRoutingPlan, confirmed = false, images: PendingProductTemplateRowImage[] = [], subgroupAssignments: SmartAppliedPricingSubgroups[] = [], subgroupImages: PendingProductTemplateSubgroupImage[] = [], sourcePdfMeta?: { sourcePdfStoragePath?: string; sourcePdfFileName?: string }) => {
     void confirmed;
     const current = currentSmartWorkspace();
     const currentDraft = current ? draftForSmartSetupReviewApply(current.draft, current.plan) : null;
     const nextDraft = routingPlan ? draftForSmartSetupReviewApply(draft, routingPlan) : draft;
     const changed: SmartSetupPricingSection[] = currentDraft ? [
-      JSON.stringify(mapDraftWorkstationRows(currentDraft).rows) !== JSON.stringify(mapDraftWorkstationRows(nextDraft).rows) ? "workstation" : null,
+      JSON.stringify(mapDraftWorkstationPricing(currentDraft)) !== JSON.stringify(mapDraftWorkstationPricing(nextDraft)) ? "workstation" : null,
       JSON.stringify(mapDraftBaseModelPricing(currentDraft, smartReviewMatrixOverrides(current!.plan))) !== JSON.stringify(mapDraftBaseModelPricing(nextDraft, routingPlan ? smartReviewMatrixOverrides(routingPlan) : undefined)) ? "baseModel" : null,
       JSON.stringify(mapDraftPriceMatricesToCategoryGroups(currentDraft, smartReviewMatrixOverrides(current!.plan))) !== JSON.stringify(mapDraftPriceMatricesToCategoryGroups(nextDraft, routingPlan ? smartReviewMatrixOverrides(routingPlan) : undefined)) ? "category" : null,
       JSON.stringify(mapDraftModularPricing(currentDraft)) !== JSON.stringify(mapDraftModularPricing(nextDraft)) ? "modular" : null,
       JSON.stringify(mapDraftOptionGroupsToAccessories(currentDraft, current!.plan)) !== JSON.stringify(mapDraftOptionGroupsToAccessories(nextDraft, routingPlan)) ? "accessory" : null,
     ].filter((section): section is SmartSetupPricingSection => section !== null) : ["workstation", "baseModel", "category", "modular", "accessory"];
     return requestSmartDraftApply(draft, routingPlan, true, images, subgroupAssignments, subgroupImages, sourcePdfMeta, true, changed);
+  };
+  const requestSaveSmartChanges = (draft: ProductTemplateDraft, routingPlan?: SmartSetupReviewRoutingPlan, confirmed = false, images: PendingProductTemplateRowImage[] = [], subgroupAssignments: SmartAppliedPricingSubgroups[] = [], subgroupImages: PendingProductTemplateSubgroupImage[] = [], sourcePdfMeta?: { sourcePdfStoragePath?: string; sourcePdfFileName?: string }) => {
+    smartSaveRef.current = null; // a retry discards a stale handoff; the incremental diff makes re-applying idempotent
+    const response = requestIncrementalSmartDraftApply(draft, routingPlan, confirmed, images, subgroupAssignments, subgroupImages, sourcePdfMeta);
+    if (Array.isArray(response)) return response;
+    const id = smartSaveSeq.current + 1;
+    smartSaveSeq.current = id;
+    const tracker = createSmartSaveTracker(lastApplyVersionsRef.current);
+    smartSaveRef.current = { id, tracker };
+    if (tracker.readyNow()) setSmartSaveReady(id);
+    return "pending" as const; // Smart Setup stays open until the submit hands off to the update action
   };
   const updatePricingData = useCallback((section: keyof SmartSetupSectionPresence, hasData: boolean) => {
     setCurrentPricingData((current) => current[section] === hasData ? current : { ...current, [section]: hasData });
@@ -723,6 +764,7 @@ export function ProductTemplateForm({
         summary={!expandedSections.smartSetup ? "AI planning, extraction, import & update tools. 4 AI tools available." : undefined}
       >
         <div className="space-y-3 md:col-span-2 xl:col-span-3">
+          {template?.id && submitMode === "update" ? <section className="rounded-lg border-2 border-emerald-600 bg-white p-3"><h3 className="text-xs font-bold tracking-wide text-emerald-950">EDIT IN SMART SETUP</h3><p className="mt-1 text-xs text-zinc-700">Open this saved Product Template in Smart Setup to review pricing groups, accessories, and add more JSON. No PDF required.</p><div className="mt-3"><SmartProductJsonImport mode="edit_existing" templateName={template.template_name} buttonLabel="Edit in Smart Setup" loadInitialWorkspace={currentSmartWorkspace} onRequestApply={requestSaveSmartChanges} /></div></section> : null}
           <section className="rounded-lg border border-zinc-200 bg-white/80 p-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2"><div><h3 className="text-xs font-bold tracking-wide text-zinc-900">AI PROMPT TOOLS</h3><p className="mt-1 text-xs text-zinc-600">Prepare instructions to use with ChatGPT, Gemini, Claude, or another LLM.</p></div><span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-600">External AI</span></div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -918,6 +960,7 @@ export function ProductTemplateForm({
               templateIsPersisted={Boolean(template)}
               variantPricingRows={template?.variant_pricing}
               onSectionDataChange={updatePricingData}
+              onReplacementCommitted={notifyReplacementCommitted}
               workstationReplacement={workstationReplacement}
               baseModelReplacement={baseModelReplacement}
               categoryReplacement={categoryReplacement}

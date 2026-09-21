@@ -33,6 +33,38 @@ export function reorderSmartSetupReviewRoutes(plan: SmartSetupReviewRoutingPlan,
   return { ...plan, routes };
 }
 
+/**
+ * Ordering among top-level review groups of the same kind (native System groups, Category/Matrix, Modular, Accessory ...).
+ * Only the review/apply order changes: route identity, group ids, row ids, subgroup ids, pricing and images are untouched.
+ */
+export function smartRouteMoveState(plan: SmartSetupReviewRoutingPlan, key: string) {
+  const route = plan.routes.find((item) => item.key === key);
+  const peers = route ? plan.routes.filter((item) => item.sourceKind === route.sourceKind) : [];
+  const index = peers.findIndex((item) => item.key === key);
+  return { canMoveUp: index > 0, canMoveDown: index >= 0 && index < peers.length - 1 };
+}
+
+export function reorderSmartSetupReviewRoutesWithinKind(plan: SmartSetupReviewRoutingPlan, key: string, direction: "up" | "down") {
+  const route = plan.routes.find((item) => item.key === key);
+  if (!route) return plan;
+  const peers = plan.routes.filter((item) => item.sourceKind === route.sourceKind);
+  const peerIndex = peers.findIndex((item) => item.key === key);
+  const other = peers[direction === "up" ? peerIndex - 1 : peerIndex + 1];
+  if (!other) return plan;
+  const routes = [...plan.routes];
+  const from = routes.findIndex((item) => item.key === key); const to = routes.findIndex((item) => item.key === other.key);
+  [routes[from], routes[to]] = [routes[to], routes[from]];
+  return { ...plan, routes };
+}
+
+/** Items in reviewed route order (stable for items without a route); each entry keeps its original index for edits. */
+export function orderItemsByRoute<T>(items: readonly T[], keyOf: (item: T) => string, plan?: SmartSetupReviewRoutingPlan | null): Array<{ item: T; index: number }> {
+  const entries = items.map((item, index) => ({ item, index }));
+  if (!plan) return entries;
+  const position = (entry: { item: T }) => { const at = plan.routes.findIndex((route) => route.key === keyOf(entry.item)); return at < 0 ? Number.MAX_SAFE_INTEGER : at; };
+  return [...entries].sort((left, right) => position(left) - position(right) || left.index - right.index);
+}
+
 function explicitRequirement(specification: string | null, kind: "top" | "service") {
   if (!specification || !/\balways complete with\b/i.test(specification)) return false;
   return kind === "top" ? /\b1\s+top[- ]?access\b/i.test(specification) : /\b1\s+(?:support\s+)?service unit\b/i.test(specification);
@@ -171,7 +203,7 @@ export function validateSmartSetupReviewRouting(draft: ProductTemplateDraft, pla
       } else if (target && !modelTargets.has(key)) errors.push(`${route.sourceName} references a row not routed to Base / Model, Category / Matrix, or Modular Pricing.`);
       if (rule.fixedQuantity !== undefined && (!Number.isInteger(rule.fixedQuantity) || rule.fixedQuantity <= 0)) errors.push(`${route.sourceName} has an invalid fixed quantity.`);
       if (rule.scaleWithTargetQuantity === true && rule.fixedQuantity === undefined) errors.push(`${route.sourceName} quantity scaling requires a fixed quantity.`);
-      if (rule.scaleWithTargetQuantity === true && target?.kind !== "modular" && target?.kind !== "option_item") errors.push(`${route.sourceName} quantity scaling is only supported for Modular or option item targets.`);
+      if (rule.scaleWithTargetQuantity === true && target?.kind !== "modular" && target?.kind !== "option_item" && target?.kind !== "base_model") errors.push(`${route.sourceName} quantity scaling is only supported for Modular, option item or Base/Model targets.`);
       if (route.accessory?.selection === "required_exactly_one" && rule.scaleWithTargetQuantity !== true && rule.fixedQuantity !== undefined && rule.fixedQuantity !== 1) errors.push(`${route.sourceName} must use fixed quantity 1 for Required / Exactly One.`);
       if (route.accessory?.selection === "required_exactly_one" && rule.scaleWithTargetQuantity === true) errors.push(`${route.sourceName} quantity scaling cannot use Required / Exactly One.`);
       if (rule.allowedItemIds?.length === 0) errors.push(`${route.sourceName} requires at least one allowed item when Specific Items is selected.`);
@@ -189,6 +221,15 @@ export function smartReviewMatrixOverrides(plan: SmartSetupReviewRoutingPlan) {
   return Object.fromEntries(plan.routes.filter((route) => route.sourceKind === "matrix").map((route) => [route.sourceId, route.destination === "base_model" ? "base_model" : route.destination === "category_matrix" ? "category_matrix" : route.destination === "accessory" ? "companion" : "skip"])) as Record<string, DraftPriceMatrixRoute["kind"]>;
 }
 
+/** Grouped rows are re-laid out group by group in reviewed route order (row order inside a group unchanged); ungrouped rows keep their positions. */
+function orderedNativeGroupRows<T extends { groupId?: string }>(rows: T[], plan: SmartSetupReviewRoutingPlan): T[] {
+  const groupOrder = plan.routes.filter((route) => route.sourceKind === "base_model_group").map((route) => route.sourceId);
+  const rank = (row: T) => { const at = groupOrder.indexOf(row.groupId ?? ""); return at < 0 ? groupOrder.length : at; };
+  const grouped = rows.map((row, index) => ({ row, index })).filter((entry) => entry.row.groupId).sort((left, right) => rank(left.row) - rank(right.row) || left.index - right.index).map((entry) => entry.row);
+  let next = 0;
+  return rows.map((row) => (row.groupId ? grouped[next++] : row));
+}
+
 export function draftForSmartSetupReviewApply(draft: ProductTemplateDraft, plan: SmartSetupReviewRoutingPlan): ProductTemplateDraft {
   const route = (key: string) => plan.routes.find((item) => item.key === key);
   const ordered = <T extends { id: string }>(items: T[], sourceKind: SmartReviewRoute["sourceKind"]) => plan.routes.filter((item) => item.sourceKind === sourceKind).flatMap((item) => items.find((entry) => entry.id === item.sourceId) ?? []);
@@ -197,11 +238,11 @@ export function draftForSmartSetupReviewApply(draft: ProductTemplateDraft, plan:
     pricing: {
       ...draft.pricing,
       workstationRows: route("workstation:rows")?.destination === "workstation" ? draft.pricing.workstationRows : [],
-      baseModelRows: draft.pricing.baseModelRows.flatMap((row) => {
+      baseModelRows: orderedNativeGroupRows(draft.pricing.baseModelRows.flatMap((row) => {
         if (!row.groupId) return route("base_model:rows")?.destination === "base_model" ? [row] : [];
         const groupRoute = route(baseModelGroupRouteKey(row.groupId));
         return groupRoute?.destination === "base_model" ? [{ ...row, groupLabel: groupRoute.groupName.trim() || row.groupLabel || row.groupId }] : [];
-      }),
+      }), plan),
       priceMatrices: ordered(draft.pricing.priceMatrices, "matrix").map((matrix) => ({ ...matrix, label: route(`matrix:${matrix.id}`)?.groupName ?? matrix.label })),
       modularGroups: ordered(draft.pricing.modularGroups, "modular").filter((group) => route(`modular:${group.id}`)?.destination === "modular").map((group) => ({ ...group, label: route(`modular:${group.id}`)?.groupName ?? group.label })),
     },

@@ -230,7 +230,7 @@ test("conditionalConfiguration preserves modular quantity scaling and rejects un
   assert.equal(valid.draft?.optionGroups[0].conditionalConfiguration?.applicability[0].scale_with_target_quantity, true);
   const configuration = draft.optionGroups[0].conditionalConfiguration as { selection: string; applicability: Array<{ target: { kind: "base_model" | "modular"; group_id: string; row_id: string } }> };
   configuration.applicability[0].target = { kind: "base_model", group_id: "base", row_id: "row" };
-  assert.equal(normalizeProductTemplateDraft(draft).valid, false);
+  assert.equal(normalizeProductTemplateDraft(draft).valid, true, "Base/Model targets may follow the selected System/Base quantity");
   configuration.applicability[0].target = { kind: "modular", group_id: "oxi", row_id: "starter" };
   configuration.selection = "exactly_one";
   assert.equal(normalizeProductTemplateDraft(draft).valid, false);

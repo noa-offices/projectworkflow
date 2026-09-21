@@ -84,3 +84,31 @@ export function inferBaseModelVisualSubgroups<TRow extends AutoGroupableRow>(row
 export function inferNativeMainProductFamilies<TRow extends AutoGroupableRow>(rows: readonly TRow[]): BaseModelPricingSubgroup[] {
   return inferBaseModelVisualSubgroups(rows, deriveProductFamilyLabel);
 }
+
+/**
+ * Add More JSON into a reopened native System group: new Main Product rows join an existing family whose name matches
+ * their normalized family label, or start a new family when at least two new rows share one. system_base rows and
+ * unmatched single rows are left alone (they stay in "Other models"). Existing assignments are never changed.
+ */
+export function assignNewRowsToNativeFamilies<TRow extends AutoGroupableRow>(subgroups: readonly BaseModelPricingSubgroup[], groupRows: readonly TRow[], newRowIds: readonly string[]): BaseModelPricingSubgroup[] {
+  const already = new Set(subgroups.flatMap((subgroup) => subgroup.row_ids));
+  const fresh = new Set(newRowIds);
+  const familyOf = (row: TRow) => { const name = (row.displayName ?? row.label ?? "").trim(); return name ? deriveProductFamilyLabel(name) : ""; };
+  const candidates = groupRows.filter((row) => fresh.has(row.id) && !already.has(row.id) && row.role !== "system_base" && familyOf(row));
+  const next = subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] }));
+  const unmatched = new Map<string, string[]>();
+  candidates.forEach((row) => {
+    const family = familyOf(row);
+    const existing = next.find((subgroup) => subgroup.subgroup_name.trim().toLowerCase() === family.toLowerCase());
+    if (existing) existing.row_ids.push(row.id);
+    else unmatched.set(family, [...(unmatched.get(family) ?? []), row.id]);
+  });
+  unmatched.forEach((ids, family) => {
+    if (ids.length < 2) return;
+    const base = `auto-${familySlug(family)}`;
+    let id = base; let suffix = 2;
+    while (next.some((subgroup) => subgroup.id === id)) { id = `${base}-${suffix}`; suffix += 1; }
+    next.push({ id, subgroup_name: family, sort_order: next.length, is_active: true, row_ids: ids });
+  });
+  return next;
+}

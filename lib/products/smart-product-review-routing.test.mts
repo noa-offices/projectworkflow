@@ -201,13 +201,13 @@ test("option_item targets resolve against optionGroups ids and item ids", () => 
   assert.match(validateRule(optionTarget("structural", "support-a"), {}, (d) => { d.optionGroups = d.optionGroups.filter((g) => g.id !== "structural"); d.optionGroups.push({ ...optionDraft().optionGroups[0], id: "structural", items: [] }); }).errors.join(" "), /option item that does not exist/);
 });
 
-test("quantity scaling is valid for modular and option_item targets only", () => {
+test("quantity scaling is valid for modular, option_item and Base/Model targets only", () => {
   const scaled = { scaleWithTargetQuantity: true };
   assert.equal(validateRule(optionTarget("structural", "support-a"), scaled).valid, true);
   assert.equal(validateRule({ kind: "modular", group_id: "mod", row_id: "mod-row" }, scaled).valid, true);
   const baseDraftRows = (d: ProductTemplateDraft) => { d.pricing.baseModelRows = [{ id: "bm", label: "bm", displayName: null, dimensions: null, currency: "EUR", price: 1, specification: null, supplierCodes: [], referenceCodes: [] }]; };
-  const fail = /quantity scaling is only supported for Modular or option item targets/;
-  assert.match(validateRule({ kind: "base_model", group_id: "legacy-base-model-main", row_id: "bm" }, scaled, baseDraftRows).errors.join(" "), fail);
+  const fail = /quantity scaling is only supported for Modular, option item or Base.Model targets/;
+  assert.equal(validateRule({ kind: "base_model", group_id: "legacy-base-model-main", row_id: "bm" }, scaled, baseDraftRows).valid, true);
   assert.match(validateRule({ kind: "price_matrix", group_id: "ARCA", row_id: "ARCA-row" }, scaled).errors.join(" "), fail);
   assert.match(validateRule({ kind: "workstation", group_id: "w", row_id: "w1" }, scaled).errors.join(" "), fail);
 });

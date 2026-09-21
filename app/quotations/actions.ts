@@ -26,7 +26,9 @@ import {
 } from "@/lib/products/base-model-pricing-groups";
 import type { AccessoryConditionalConfiguration } from "@/lib/products/accessory-conditional-configuration";
 import { evaluateProductAccessorySelection, parseSubmittedAccessoryQuantities } from "@/lib/quotations/product-accessory-configuration";
-import { composeSystemAndMainSpecification, currentSystemPricing, isSystemBaseRow, nativeBaseModelTargets, nativeSystemState, systemPriceContribution, systemPricingSnapshot, systemSelectedOptionSnapshot } from "@/lib/quotations/native-system-base";
+import { baseModelPriceOrDefault, sameCurrencyUnitSum } from "@/lib/quotations/source-price-components";
+import { requiredComponentOverrideReport } from "@/lib/quotations/required-component-overrides";
+import { activeBaseModelPricingGroups, composeSystemAndMainSpecification, currentSystemPricing, isSystemBaseRow, nativeBaseModelTargets, nativeSystemState, remapBaseModelTargetsToOwnerGroups, strictSystemQuantity, systemPriceContribution, systemPricingSnapshot, systemSelectedOptionSnapshot } from "@/lib/quotations/native-system-base";
 import {
   isDirectModularPricingGroup,
   modularItemPricingGroups,
@@ -1622,7 +1624,7 @@ function currentSourcePriceFromSnapshot({
   let systemTotal = 0;
   if (systemPricing.kind === "ok") {
     if (normalizeCurrency(systemPricing.currency ?? template.currency) !== sourceCurrency) return null;
-    systemTotal = quotationMoneyValue(systemPricing.price);
+    systemTotal = quotationMoneyValue(systemPricing.total);
   }
 
   return {
@@ -6062,9 +6064,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const originSnapshot = resolveProductOriginSnapshot(template.origin, brand?.origin ?? null);
   const supplierNameSnapshot = template.supplier_name ?? brand?.name ?? null;
   const selectedVariantPricingRow = selectedVariantPricing(formData, template.variant_pricing);
-  const activeBaseModelGroups = baseModelPricingGroups<VariantPricingRow>(template.variant_pricing)
-    .filter((group) => group.is_active)
-    .map((group) => ({ ...group, items: group.items.filter((row) => row.is_active !== false) }));
+  const activeBaseModelGroups = activeBaseModelPricingGroups<VariantPricingRow>(template.variant_pricing);
   const submittedVariantGroupId = textValue(formData, "variant_pricing_group_id");
   const matchingVariantGroups = selectedVariantPricingRow
     ? activeBaseModelGroups.filter((group) => group.items.some((row) => row.id === selectedVariantPricingRow.id))
@@ -6072,7 +6072,10 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const selectedVariantGroup = submittedVariantGroupId
     ? matchingVariantGroups.find((group) => group.id === submittedVariantGroupId) ?? null
     : matchingVariantGroups.length === 1 ? matchingVariantGroups[0] : null;
-  const authoritativeAccessoryGroups = activeAccessoryRows(template.accessory_pricing);
+  // Native System templates: stale Base/Model rule targets (older extractions) are re-pointed to the group that owns the row.
+  const authoritativeAccessoryGroups = nativeSystemState(activeBaseModelGroups).active
+    ? remapBaseModelTargetsToOwnerGroups(activeAccessoryRows(template.accessory_pricing), activeBaseModelGroups)
+    : activeAccessoryRows(template.accessory_pricing);
   const hasConditionalAccessoryConfiguration = authoritativeAccessoryGroups.some((group) => Boolean(group.conditional_configuration));
   if (selectedVariantPricingRow && submittedVariantGroupId && !selectedVariantGroup) {
     redirectWithMessage(redirectPath, "The selected Base/Model group and model do not match.");
@@ -6088,6 +6091,12 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   if (selectedVariantPricingRow && isSystemBaseRow(selectedVariantPricingRow)) {
     redirectWithMessage(redirectPath, "A System / Base row cannot be used as the Main Product.");
   }
+  // System / Base units per item: whole number >= 1 (server-validated; the client price is never trusted).
+  const submittedSystemQuantity = strictSystemQuantity(textValue(formData, "system_base_quantity"));
+  if (nativeSystemOption && submittedSystemQuantity === null) {
+    redirectWithMessage(redirectPath, "System / Base quantity must be a whole number of at least 1.");
+  }
+  const systemQuantity = submittedSystemQuantity ?? 1;
   if (nativeSystemOption && selectedVariantPricingRow && selectedVariantGroup?.id !== nativeSystemOption.group.id) {
     redirectWithMessage(redirectPath, "The selected System / Base and Main Product do not belong to the same System group.");
   }
@@ -6235,12 +6244,14 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     baseModelRowId: selectedVariantPricingRow?.id ?? null,
     selectedModelTarget: selectedAccessoryModelTargets[0] ?? null,
     selectedModelTargets: selectedAccessoryModelTargets,
-    selectedModelTargetQuantities: Object.fromEntries(selectedModularItems.map((item) => [
+    selectedModelTargetQuantities: Object.fromEntries([...selectedModularItems.map((item) => [
       accessoryApplicabilityTargetKey({ kind: "modular", group_id: item.group_id, row_id: item.id }),
       item.qty,
-    ])),
+    ]), ...(nativeSystemOption ? [[accessoryApplicabilityTargetKey({ kind: "base_model", group_id: nativeSystemOption.group.id, row_id: String(nativeSystemOption.row.id) }), systemQuantity]] : [])]),
     selectedQuantities: Object.fromEntries(submittedAccessoryPricingQtyById),
+    allowRequiredCompanionOverrides: true,
   });
+  const requiredComponentOverrides = requiredComponentOverrideReport(accessoryConfiguration.groups);
   if (!accessoryConfiguration.valid) {
     const invalidGroup = accessoryConfiguration.groups.find((group) => !group.valid);
     const groupName = authoritativeAccessoryGroups.find((group) => group.id === invalidGroup?.groupId)?.group_name;
@@ -6259,7 +6270,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     ? money(calculationNumber(selectedWorkstationVariantPricingRow.price))
     : 0;
   // Native System / Base price: its own priced selection, never routed through accessory totals.
-  const selectedSystemPrice = nativeSystemOption ? money(calculationNumber(nativeSystemOption.row.price)) : 0;
+  const selectedSystemPrice = nativeSystemOption ? money(calculationNumber(nativeSystemOption.row.price) * systemQuantity) : 0;
   const isDesking =
     (!selectedVariantPricingRow && !selectedCategoryPricingRow && /workstation|desking/.test(categoryName.toLowerCase())) ||
     Boolean(selectedSizePricing) ||
@@ -6477,7 +6488,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
     : selectedCategoryPricingRow
       ? selectedCategoryPrice
       : selectedVariantPricingRow
-        ? money(calculationNumber(selectedVariantPricingRow.price))
+        ? money(baseModelPriceOrDefault(selectedVariantPricingRow.price ?? null, template.default_unit_price))
         : money((template.default_unit_price ?? 0) + selectedOptionPrice);
   const originalCurrencyTotals = new Map<string, number>();
   const addCurrencyTotal = (currency: string, amount: number) => {
@@ -6491,6 +6502,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   const systemContribution = systemPriceContribution({ price: selectedSystemPrice, currency: nativeSystemOption?.row.currency }, normalizeCurrency(rowCurrency));
   const systemCurrency = normalizeCurrency(systemContribution.currency);
   const matchingSystemTotal = nativeSystemOption ? systemContribution.matching : 0;
+  // Workstation variant row is additive (as on the client); AED-only sums include it exactly once.
+  const matchingWorkstationVariantTotal = selectedWorkstationVariantPricingRow && normalizeCurrency(selectedWorkstationVariantPricingRow.currency ?? rowCurrency) === normalizeCurrency(rowCurrency) ? selectedWorkstationVariantPrice : 0;
   addCurrencyTotal(rowCurrency, baseUnitPrice);
   if (nativeSystemOption) addCurrencyTotal(systemCurrency, selectedSystemPrice);
   if (selectedWorkstationVariantPricingRow) {
@@ -6530,7 +6543,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
   );
   const rawUnitPrice = nonAedCurrencies.length
     ? convertedUnitPrice
-    : money(baseUnitPrice + matchingSystemTotal + matchingAccessoryTotal + matchingLinkedProductsTotal);
+    : sameCurrencyUnitSum({ base: baseUnitPrice, system: matchingSystemTotal, workstationVariant: matchingWorkstationVariantTotal, accessories: matchingAccessoryTotal, linked: matchingLinkedProductsTotal });
   const unitPrice = quotationMoneyValue(rawUnitPrice);
   const rowOutputCurrency = nonAedCurrencies.length ? "AED" : rowCurrency;
   const currencyConversionData = nonAedCurrencies.length
@@ -6773,7 +6786,7 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       ? [...finalSelectedOptions, ...selectedAccessoryPricing]
       : finalSelectedOptions;
   const finalSelectedOptionsWithSystem = nativeSystemOption
-    ? [systemSelectedOptionSnapshot(nativeSystemOption.group.id, nativeSystemOption.row), ...finalSelectedOptionsWithAccessories]
+    ? [systemSelectedOptionSnapshot(nativeSystemOption.group.id, nativeSystemOption.row, systemQuantity), ...finalSelectedOptionsWithAccessories]
     : finalSelectedOptionsWithAccessories;
   const finalSelectedOptionsWithLinkedProducts = selectedLinkedProducts.length
     ? [...finalSelectedOptionsWithSystem, ...selectedLinkedProducts]
@@ -6929,7 +6942,8 @@ export async function addProductTemplateToQuotation(formData: FormData) {
       source_price_reference: sourcePriceReference,
       ...(deskingSourceData ? { desking: deskingSourceData } : {}),
       ...(selectedVariantPricingRow ? { variant_pricing: selectedVariantPricingRow } : {}),
-      ...(nativeSystemOption ? { system_pricing: systemPricingSnapshot(nativeSystemOption.group.id, nativeSystemOption.row) } : {}),
+      ...(nativeSystemOption ? { system_pricing: systemPricingSnapshot(nativeSystemOption.group.id, nativeSystemOption.row, systemQuantity) } : {}),
+      ...(requiredComponentOverrides.length ? { required_component_overrides: requiredComponentOverrides } : {}),
       ...(selectedCategoryPricingRow
         ? {
             category_pricing: {

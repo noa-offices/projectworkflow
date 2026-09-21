@@ -39,7 +39,9 @@ export function evaluateProductAccessorySelection({
   selectedModelTargets,
   selectedModelTargetQuantities,
   selectedQuantities = {},
+  allowRequiredCompanionOverrides = false,
 }: {
+  allowRequiredCompanionOverrides?: boolean;
   accessoryGroups: unknown;
   baseModelGroupId?: string | null;
   baseModelRowId?: string | null;
@@ -80,6 +82,7 @@ export function evaluateProductAccessorySelection({
     selectedModelTargets,
     selectedModelTargetQuantities,
     selectedQuantitiesByGroupId,
+    allowRequiredCompanionOverrides,
   });
   const activeQuantities = Object.fromEntries(
     evaluation.groups.flatMap((group) => group.visible

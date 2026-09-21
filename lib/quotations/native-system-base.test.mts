@@ -148,7 +148,7 @@ test("quantity and discount apply to the aggregated unit price, not per componen
 // ---- snapshot ----
 test("system_pricing snapshot keeps identity, supplier code, spec and role; Main stays in variant_pricing", () => {
   const snapshot = systemPricingSnapshot("system-a", { id: "sa1", variant_name: "Base A1", display_name: "Base A1 Display", supplier_price_list_code: "SYS-A1", dimension: "W80", price: 500, currency: "AED", specification: "System A1 spec" });
-  assert.deepEqual(snapshot, { group_id: "system-a", row: { id: "sa1", variant_name: "Base A1", display_name: "Base A1 Display", supplier_price_list_code: "SYS-A1", dimension: "W80", price: 500, currency: "AED", specification: "System A1 spec", role: "system_base" } });
+  assert.deepEqual(snapshot, { group_id: "system-a", quantity: 1, row: { id: "sa1", variant_name: "Base A1", display_name: "Base A1 Display", supplier_price_list_code: "SYS-A1", dimension: "W80", price: 500, currency: "AED", specification: "System A1 spec", role: "system_base" } });
   const source = { variant_pricing: { id: "a1-1", price: 100 }, system_pricing: snapshot };
   assert.equal((source.variant_pricing as { id: string }).id, "a1-1");
   assert.equal(systemPricingRowId(source), "sa1");
@@ -174,7 +174,7 @@ test("repricing includes the current System price; a deleted System row is never
   const rows = [{ id: "sa1", price: 550, currency: "AED" }, { id: "a1-1", price: 100, currency: "AED" }];
   const saved = { variant_pricing: { id: "a1-1" }, system_pricing: { group_id: "system-a", row: { id: "sa1" } } };
   const system = currentSystemPricing(saved, rows);
-  assert.deepEqual(system, { kind: "ok", price: 550, currency: "AED" });
+  assert.deepEqual(system, { kind: "ok", price: 550, quantity: 1, total: 550, currency: "AED" });
   const main = 100; const accessories = 20;
   assert.equal(main + (system.kind === "ok" ? system.price : 0) + accessories, 670);
   assert.deepEqual(currentSystemPricing(saved, [{ id: "a1-1", price: 100 }]), { kind: "missing" });

@@ -6,6 +6,7 @@ import { buildProductTemplateSetupPlanningPrompt, getProductTemplateAiExtraction
 const choices: Array<{ focus: ExtractionPromptFocus; label: string; description: string }> = [
   { focus: "base_model", label: "Desks / Executive Desks", description: "Extract desk models, sizes, returns, service units, top-access and related desk configuration." },
   { focus: "workstation", label: "Workstations / Bench Systems", description: "Plan and extract workstation desks, benches, clusters, screens, required structural companions, cable management, and related storage." },
+  { focus: "screens", label: "Screens / Dividers", description: "Extract desk, bench, side, freestanding and floor screens, acoustic/fabric variants, mounting requirements, finish pricing and screen accessories." },
   { focus: "chair_seating", label: "Chair & Seating", description: "Chair-specific extraction for models, upholstery matrices, mechanisms, bases, arms, castors/glides, and seating options." },
   { focus: "sofa_lounge", label: "Sofas / Lounge / Armchairs", description: "Extract sofas, lounge armchairs, modular seating, upholstery pricing and related lounge configuration." },
   { focus: "meeting_conference", label: "Meeting / Conference Tables", description: "Extract complete meeting tables, terminal/intermediate systems, top-access and related cable management." },

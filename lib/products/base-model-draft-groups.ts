@@ -47,6 +47,11 @@ export function withDraftBaseModelRole(row: ProductTemplateDraftBaseModelRow, ro
   return next;
 }
 
+/** Native group activity: only an explicit `groupIsActive: false` (set on reopen of a saved inactive group) makes it inactive; absent means active. */
+export function draftBaseModelGroupIsActive(pricing: DraftBaseModelRows, groupId: string) {
+  return draftBaseModelGroupRows(pricing, groupId).find((row) => row.groupIsActive !== undefined)?.groupIsActive !== false;
+}
+
 /** First non-empty label wins; falls back to the group id. */
 export function draftBaseModelGroupLabel(pricing: DraftBaseModelRows, groupId: string) {
   return draftBaseModelGroupRows(pricing, groupId).find((row) => row.groupLabel)?.groupLabel ?? groupId;
@@ -70,4 +75,9 @@ export function nativeSystemGroupSummary(rows: readonly { id: string; role?: str
 /** A row that becomes System / Base can never stay in a Main Product family: drop it from every subgroup, touching nothing else. */
 export function removeRowFromReviewSubgroups<TSubgroup extends { row_ids: string[] }>(subgroups: readonly TSubgroup[], rowId: string): TSubgroup[] {
   return subgroups.map((subgroup) => ({ ...subgroup, row_ids: subgroup.row_ids.filter((id) => id !== rowId) }));
+}
+
+/** Compact summary shown while the Main Product Families section is collapsed, e.g. "8 families · 64 models". */
+export function nativeFamiliesSummaryLabel(counts: { familyCount: number; mainCount: number }) {
+  return `${counts.familyCount} ${counts.familyCount === 1 ? "family" : "families"} · ${counts.mainCount} ${counts.mainCount === 1 ? "model" : "models"}`;
 }

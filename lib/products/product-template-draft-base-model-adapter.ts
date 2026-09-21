@@ -1,5 +1,5 @@
 import { BASE_MODEL_GROUP_PRICING_TYPE } from "./base-model-pricing-groups";
-import { draftBaseModelGroupIds, draftBaseModelGroupLabel, draftBaseModelGroupRows, draftUngroupedBaseModelRows } from "./base-model-draft-groups";
+import { draftBaseModelGroupIds, draftBaseModelGroupIsActive, draftBaseModelGroupLabel, draftBaseModelGroupRows, draftUngroupedBaseModelRows } from "./base-model-draft-groups";
 import type { ProductTemplateDraft, ProductTemplateDraftBaseModelRole, ProductTemplateDraftBaseModelRow, ProductTemplateDraftMatrixRow, ProductTemplateDraftPricedRow } from "./product-template-draft";
 import { directMatrixRowPrice, routeDraftPriceMatrices, type DraftPriceMatrixRoute } from "./product-template-draft-pricing-routing";
 
@@ -9,7 +9,7 @@ function dimensionText(dimension: ProductTemplateDraftPricedRow["dimensions"]) {
 
 function mapRow(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMatrixRow, price: number | null, index: number, role?: ProductTemplateDraftBaseModelRole) {
   const codes = [...row.supplierCodes, ...row.referenceCodes];
-  return { id: row.id, variant_name: row.label ?? row.id, display_name: row.displayName ?? row.label ?? "", supplier_price_list_code: codes[0] ?? "", dimension: dimensionText(row.dimensions), price, currency: row.currency ?? undefined, specification: row.specification ?? "", ...(row.importantRequirements?.length ? { importantRequirements: row.importantRequirements } : {}), ...(role ? { role } : {}), is_active: true, sort_order: index };
+  return { id: row.id, variant_name: row.label ?? row.id, display_name: row.displayName ?? row.label ?? "", supplier_price_list_code: codes[0] ?? "", dimension: dimensionText(row.dimensions), price, currency: row.currency ?? undefined, specification: row.specification ?? "", ...(row.importantRequirements?.length ? { importantRequirements: row.importantRequirements } : {}), ...(role ? { role } : {}), is_active: row.isActive !== false, sort_order: index };
 }
 
 function mapBaseModelDraftRow(row: ProductTemplateDraftBaseModelRow, index: number, warnings: string[]) {
@@ -31,7 +31,7 @@ export function mapDraftNativeBaseModelGroups(draft: ProductTemplateDraft, warni
     id: groupId,
     pricing_type: BASE_MODEL_GROUP_PRICING_TYPE,
     group_name: draftBaseModelGroupLabel(draft.pricing, groupId),
-    is_active: true,
+    is_active: draftBaseModelGroupIsActive(draft.pricing, groupId),
     sort_order: groupIndex,
     items: draftBaseModelGroupRows(draft.pricing, groupId).map((row, index) => mapBaseModelDraftRow(row, index, warnings)),
   }));

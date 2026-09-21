@@ -1,10 +1,113 @@
 import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups";
 import { LEGACY_WORKSTATION_GROUP_ID } from "./workstation-pricing-groups";
 
-export const extractionPromptFocuses = ["full", "base_model", "workstation", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"] as const;
+export const extractionPromptFocuses = ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"] as const;
 export type ExtractionPromptFocus = typeof extractionPromptFocuses[number];
 
 const relatedAccessoriesRule = "Also extract any clearly related accessories, options, companion components, required add-ons, optional add-ons, selection constraints, and applicability information found in the supplied source into optionGroups. Do not ignore them merely because the selected extraction focus is pricing.";
+
+const screenExtractionContract = `SCREEN CATALOGUE EXTRACTION
+Preserve manufacturer-defined screen family/type identity in group/family naming (for example front, lateral/side, desk-mounted, bench, freestanding/desktop, floor, modesty, acoustic, upholstered, felt, glass, framed/frameless, or mixed-material). Do not automatically split Product Templates, merge commercially distinct front/lateral/floor forms, or let similar material/finish erase distinct codes, dimensions, prices, mounting requirements, or compatibility.
+
+SCREEN PRICING
+Each authoritative direct-priced screen SKU (one code per width, width/height, material, or construction) belongs in pricing.baseModelRows. Several widths, materials, finishes, or adjacent similar rows do not make a Matrix. Use pricing.priceMatrices only for a real source-proven screen row × price-category dimension, such as upholstery categories B/C/D/E/F/G/I with different prices. Keep source category labels exactly. Finish colours/material choices sharing the same row price are Manufacturer Finish Guidance/material selections, not Matrix columns. When one supplied screen catalogue contains direct-priced families and genuine category-priced families, preserve each family in its correct pricing destination; do not manufacture fake matrices merely to make the catalogue uniform.
+
+MOUNTING AND COMPONENT COMMERCIAL STATUS
+If a screen row explicitly requires multiple separately priced components, every source-proven component relationship that the current schema can represent MUST be emitted structurally.
+
+Example architecture only:
+
+Angular felt screen
+-> required Art.880
+PLUS
+-> required exactly one of Art.881 / Art.882
+
+This MUST produce TWO separate Required Companion optionGroups/rules:
+
+A. Art.880 group:
+- outer mode = required_choose_at_least_one
+- conditionalConfiguration.role = companion
+- conditionalConfiguration.selection = exactly_one
+- target exact angular screen row
+- allowed_item_ids contains only art-880
+- required true
+- visible true
+
+B. Art.881 / Art.882 group:
+- outer mode = required_choose_at_least_one
+- conditionalConfiguration.role = companion
+- conditionalConfiguration.selection = exactly_one
+- target exact same angular screen row
+- allowed_item_ids = [art-881, art-882]
+- required true
+- visible true
+
+Do not leave either relationship only in importantRequirements.
+
+"Supplied with brackets", "brackets/clamps/support included", or equivalent is INCLUDED: preserve it as specification/source evidence and never add a Required Companion, synthetic mounting charge, or duplicate price. "Brackets not included", "order separately", "always complete with stirrups/mounting kit", or equivalent is a REQUIRED SEPARATE ITEM only for the exact source-supported screen rows. When separately priced required hardware and its exact target screen rows are both supplied and already extracted, importantRequirements alone is insufficient: MUST emit row-specific conditionalConfiguration whenever the current schema safely represents it. Use role "companion", required true, visible true, and one applicability rule per exact target row. For one required alternative set such as Art.881 OR Art.882, use a companion group with outer selection "required_choose_at_least_one", conditionalConfiguration.selection "exactly_one", and source-supported allowed_item_ids ["art-881", "art-882"]; do not auto-choose without a deterministic source rule. A separately required single item (for example Art.462 for an exact S7b row, or Art.886 where an exact freestanding row says "complete always with") needs its own required companion group/rule targeted only to those exact rows. For Art.880 PLUS one of Art.881/Art.882, emit TWO independent Required Companion groups: one for Art.880 and one exactly-one alternatives group for Art.881/Art.882; never collapse this into one global mounting group or artificial combined accessory row. Direct-priced variants such as screen with one/two accessory rails, or a single screen-and-modesty SKU, remain their own authoritative rows; do not additionally charge included rails or synthesize separate products.
+
+REQUIRED SCREEN COVER QUANTITIES
+When supplied source evidence explicitly requires a matching cover for an exact screen/modesty row and the cover SKUs are supplied in the extraction batch, preserve each real cover SKU and its unit price as a Required Companion, not an ordinary optional accessory. Target each exact compatible row with conditionalConfiguration. Use fixed_quantity: 1 for a one-bar row and fixed_quantity: 2 for a two-bar row only when the source proves that count. The manufacturer cover remains one unit-priced item: never multiply its source price, synthesize a multi-cover SKU, or leave a source-required cover optional. When one required cover companion group contains multiple cover SKUs for different screen widths or configurations, every applicability rule MUST use allowed_item_ids to restrict that target row to the exact source-supported matching cover SKU or SKUs. A different-width cover must never remain selectable merely because it belongs to the same cover group.
+
+Example architecture only:
+- W100 one-bar screen -> allowed_item_ids contains only the W100 cover; fixed_quantity: 1
+- W100 two-bar screen -> allowed_item_ids contains only the W100 cover; fixed_quantity: 2
+
+For a single required mounting or cover item targeting a base_model or price_matrix row:
+- outer optionGroup.selection.mode = "required_choose_at_least_one"
+- minSelections = 1
+- maxSelections = null
+- defaultItemIds = []
+- conditionalConfiguration.role = "companion"
+- conditionalConfiguration.selection = "exactly_one"
+- applicability.required = true
+- applicability.visible = true
+- fixed_quantity only when explicitly source-proven
+- NEVER emit scale_with_target_quantity for base_model or price_matrix targets
+
+SCREEN CONTEXT, COMPATIBILITY, AND FLOOR COMPOSITIONS
+When the source explicitly proves a screen/modesty row requires one specific mounting kit, or one mounting kit plus an additional alignment/central stirrup, emit each required component structurally whenever the supplied component SKU and exact target row are both available.
+
+Example architecture only:
+
+W100 felt modesty
+-> Art.880 required
+
+W120-W180 felt modesty
+-> Art.880 required
+PLUS
+-> Art.888 required
+
+Use separate Required Companion groups for independent required items. Do not leave Art.880 or Art.888 as prose-only requirements.
+
+When a screen row explicitly requires mounting hardware, but the exact hardware choice depends on external configuration such as desk system, bench system, central bar, crossbeam, fixed top, sliding top, or other context the current ProductTemplateDraft cannot express, do NOT invent an unconditional companion. Instead: keep the requirement in importantRequirements; preserve the supplied compatible hardware items; and add extractionWarnings entry containing exactly "CONFIGURATION-DEPENDENT - MANUAL DECISION". This warning is mandatory whenever at least one supplied screen mounting requirement remains unresolved because the current schema cannot express the deciding context. Do not omit the warning merely because other screen rows have valid conditionalConfiguration.
+
+Requirements depending on desk versus bench, desktop thickness, centre gap, cable tray/flap, desk system, connected screen count, height, fixed/sliding desktop, rail/crossbeam, or freestanding stability must not become unconditional companions. If the exact condition cannot be represented in the current draft schema, preserve requirement text, supplier/reference codes, applicability evidence, and source condition, then add the clear extraction warning "CONFIGURATION-DEPENDENT - MANUAL DECISION". For linked floor screens, preserve each hinge kit, kit quantity if stated, height condition, and "only when linked" condition; never make it universally required. For stabilizing legs/bases, preserve explicit end/middle/shared-leg, flat-base, spacing, and composition-threshold evidence, but do not infer fixed quantities from layout.
+
+Preserve explicit external desk/workstation compatibility or incompatibility (for example OXI, 5TH ELEMENT, SIGMA, UP, SEGUO, FIL ROUGE, X5, X4) as source evidence for later Planning/Linked Product decisions. Do not create cross-template conditionalConfiguration rules, duplicate the desk/workstation into the Screen template, or automatically persist a linked product. If the Screen is independently configurable and intended to accompany another family, preserve a planning/source note that it is a reusable Linked Product candidate; linking is not an extraction-time decision.
+
+SCREEN FINISHES, CODES, DIMENSIONS, AND STATUS
+Keep finish/material colour, commercial price category, and supplier/order-code suffix separate. When the manufacturer explicitly states base article + finish code = complete order code, retain the base article as the row supplier code unless that exact row prints a complete code; retain the finish code in finish/material source data and preserve the manufacturer composition instruction. Do not duplicate pricing rows per finish, synthesize/concatenate a code, or include finish/footnote/superscript markers such as (*) in supplier codes. The extraction MUST include "COMPOSED SUPPLIER CODE - RUNTIME SUPPORT REQUIRED" in extractionWarnings whenever that commercial-code composition is source-proven; this warning is mandatory, not optional.
+
+Bind actual screen dimensions to their exact row/code. Preserve nominal desk-size relationships as guidance (for example actual 1725 mm screen for an 1800 mm desk), never overwrite the actual screen dimension with the nominal desk dimension. Preserve source-backed screen-type/height/material finish restrictions without treating them as price differences unless prices differ. Ordinary hooks, holders, trays, panels, covers, and similar screen accessories remain optional unless source explicitly makes them mandatory. Preserve discontinued/obsolete/while-stocks-last status as row/source warning rather than silently removing an authoritative row.
+
+SCREEN SOURCE-BATCH PAGE FIREWALL
+If the user supplies a declared page range or selected page batch, sources[] MUST be a subset of that supplied batch.
+
+A page outside the supplied batch must never appear in sources[] even when:
+- it belongs to the same uploaded PDF
+- it was visible in earlier conversation context
+- it is adjacent to the supplied range
+- it contains commercially relevant continuation content
+
+If such a page is needed, add an extractionWarning requesting supplemental extraction instead of using it.
+
+Final self-check: For every sources[].pageNumber, verify that page number was explicitly included in the current extraction batch.
+
+sources[] may contain only supplied pages that materially contributed data to this extraction call. Never include a TOC, preceding page, remembered catalogue page, prompt example, prior-context page, or any other unsupplied page. A page referenced by a supplied page is not itself supplied evidence. If a needed companion page is unsupplied, preserve only its reference, add a supplemental-extraction warning, and do not extract its code or price. Before returning JSON self-check: Every sources[].pageNumber is from the actual source batch supplied for this extraction call.
+
+SCREEN FINAL CHECK
+Before returning JSON verify: direct-priced screens stayed Base/Model; real upholstery columns stayed Matrix; included hardware was not charged; supplied separately required hardware has row-specific conditionalConfiguration whenever exact target rows are expressible; required cover quantities use fixed_quantity without multiplied price; alternatives were not auto-selected; configuration-dependent hinges/bases were not made unconditional; source-proven commercial article-plus-finish composition has the mandatory runtime-support warning; sources[] contains no unsupplied pages; article and finish codes remain separate; actual versus nominal dimensions remain distinct; and no external compatibility or cross-template relationship was invented.`;
 
 const globalExtractionArchitectureContract = `GLOBAL EXTRACTION ARCHITECTURE DECISION CONTRACT - APPLY BEFORE THE SELECTED FURNITURE FOCUS
 First identify the manufacturer-defined commercial/product family and its source boundaries. Extract one clean selected family at a time. Do not absorb nearby unrelated families into the same ProductTemplateDraft unless the user explicitly included them in this extraction batch. For example, a Universal Cabinets batch must not absorb Pedestals, Smart Cabinets, Lockers, or Shared-side Bookcases merely because they are nearby in a Storage chapter.
@@ -295,6 +398,8 @@ WORKSTATION FINAL SAFETY CHECK
 Verify that a source-proven separately priced structural support item was not rendered as an ordinary optional accessory; any explicitly required support-triggered companion uses exact option_item option-group/item IDs; no relationship was invented from naming or proximity; and no unsupported deeper dependency graph was fabricated. Verify that when the supplied source proves a workstation/desk/bench is designed for a particular structural-support item, that support item carries row-level compatibleTargets for the exact Base/Model rows; that compatibility was not inferred from names/proximity; that no unsupported subgroup id was invented during extraction; and that support-to-main compatibility was not confused with option_item required-companion enforcement.
 When the supplied workstation/desk source proves a separately priced first-stage System/Base plus downstream Main Product rows designed for that System, verify that the System/Base was emitted as a native grouped Base/Model row with role "system_base", that downstream Main rows share its groupId, that prices remain separate, and that the relationship was not downgraded to structural_support/compatibleTargets merely because the System is a cabinet/service/storage item.
 Before returning JSON for this focus, verify that no incompatible Direct Modular structural families were merged into one group merely because all rows are starter/add-on rows; that same-family width variants were not unnecessarily split; that separate top-depth/gap systems were partitioned into distinct pricing.modularGroups where the current runtime cannot prevent invalid mixing; that when multiple Direct Modular groups are source-proven mutually exclusive alternative configurations of the same selected commercial family, they share one selectionFamily value; that selectionFamily was not added to groups that may validly coexist; and that no incompatible alternative groups requiring cross-group exclusivity were returned without selectionFamily merely because they had already been partitioned into separate modularGroups; that when the selected target is a Bench family, no separately sold same-page inset return, desk return, pedestal, service unit, or sibling primary product appears anywhere in the returned pricing arrays or optionGroups, and the template name/description/specification were not broadened to include that excluded sibling family; that a row-specific surcharge visible only beside starter rows was not made globally applicable to add-on rows; and that PTS or other non-currency commercial units were not relabelled as a supported currency; that a full alternative finish/category price for one SKU was not converted into a surcharge, accessory, conditional option, or synthetic add-on SKU; that starter and extension rows meant to compose together were not split apart by selectionFamily; that Matrix Modular price categories were used when one SKU has finish-dependent alternative prices; that E-suffix manufacturer SKUs remain separate rows rather than being converted into surcharges; that a family with both source-proven Modular composition and manufacturer-proven category-dependent module prices was routed to Matrix Modular rather than top-level pricing.priceMatrices; that Matrix Modular row.role and group.composition were emitted only when the source proves starter/add-on composition, and were never invented for an ordinary Matrix Modular family with no proven composition; that Matrix Modular was never given pricingMode: "direct"; and that uncertain accessory applicability produced a reviewStatus: "needs_review" optionGroups item with a concise reviewReason rather than invented applicability, a silent omission, or a mere extractionWarning/linkedFamilySuggestion substitute; that an E-suffix row defined only as machined/prepared for electrification was not mislabeled as fully electrified; that a general collection accessory page was not treated as proof that every accessory applies to the selected Bench family; that accessories explicitly assigned to another product type were excluded from the target template entirely rather than marked needs_review; that unresolved general accessory applicability was preserved as a needs_review optionGroups item rather than omitted or made globally selectable as confirmed; and that reviewStatus/reviewReason were never invented for an accessory whose applicability the source already proves or already excludes; that a separately priced cabinet, pedestal, service unit, return, support storage, bridge, or other companion furniture family shown as part of the selected commercial system was not silently omitted; that complete primary SKUs were not incorrectly routed to Modular merely because a companion family was present; that companion prices were not merged into primary SKU prices without explicit manufacturer proof; and that unresolved companion applicability or requiredness was preserved for review rather than invented; that a supplied companion furniture family with authoritative priced SKU rows was not represented only as a linkedFamilySuggestion while its prices/dimensions/codes were lost; that each supplied companion SKU row was preserved separately; that unresolved companion rows were surfaced for user review without invented applicability; and that no companion commercial price was merged into the primary SKU price without explicit manufacturer proof.`,
+  screens: `EXTRACTION FOCUS: Screens / Dividers
+Prioritize front, lateral/side, desk-mounted, bench, freestanding/desktop, and floor screens/dividers; acoustic, fabric, felt, glass, and melamine variants; direct-priced SKUs; genuine upholstery category matrices; mounting brackets/stirrups; included versus separately required hardware; screen accessories; exact dimensions including nominal-versus-actual widths; manufacturer compatibility evidence; and finish-code/composed supplier-code evidence. Apply the global Screen Catalogue Extraction rules; do not duplicate them here. ${relatedAccessoriesRule}`,
   category_matrix: `EXTRACTION FOCUS: Category / Matrix Pricing\nFocus on genuine row-by-category pricing in pricing.priceMatrices. Preserve exact matrix names, source column labels and order, row order, prices, and codes. Never invent generic Cat A/Cat B/Cat C/Cat D labels unless printed in the source. ${relatedAccessoriesRule}`,
   modular: `EXTRACTION FOCUS: Modular Pricing\nFocus on pricing.modularGroups: preserve manufacturer family, subgroup, module, shared price-category hierarchy, dimensions, codes, specifications, and related configuration. Never flatten modular hierarchy. ${relatedAccessoriesRule}`,
   accessories: `EXTRACTION FOCUS: Accessories / Configuration Only\nFocus only on optionGroups for accessories, options, companion/service components, add-ons, prices, codes, dimensions, specifications, explicit selection semantics, defaults, quantities, and applicability clues. Preserve explicit applicability in specification or warnings when v1 cannot encode it. Do not invent conditional rules or require main-product pricing extraction.`,
@@ -453,6 +558,8 @@ Your task is to return exactly one valid ProductTemplateDraft v1 JSON object.
 IMPORTANT: Codes, prices, dimensions, page numbers, and manufacturer examples appearing inside this prompt (including its regression examples) are architectural examples only. They are NEVER extraction evidence. Every commercial value returned in JSON must be visibly verified in the manufacturer source files supplied for THIS extraction call. Do not extract a row merely because its code/value appears in this prompt, planning output, previous extraction JSON, earlier conversation context, or remembered catalogue knowledge.
 
 ${globalExtractionArchitectureContract}
+
+${screenExtractionContract}
 
 ${focusInstructions[focus]}
 
@@ -1086,7 +1193,7 @@ Before returning the JSON, verify internally that:
 37. scale_with_target_quantity is used only for supported target kinds (modular or option_item).
 
 38. When exact structural-support -> Base/Model compatibility is source-proven, the structural-support item carries compatibleTargets for those exact main rows.
-39. Every extraction-time compatibleTargets entry uses kind "base_model", group_id "${LEGACY_BASE_MODEL_GROUP_ID}", and the exact already-emitted Base/Model row id.
+39. Every extraction-time compatibleTargets entry uses kind "base_model"; group_id is the exact target Base/Model row groupId when that row has a native groupId, otherwise group_id is exactly "${LEGACY_BASE_MODEL_GROUP_ID}" for an ungrouped Base/Model row; row_id is the exact already-emitted Base/Model row id.
 40. No extraction-time compatibleTargets entry uses a Smart Setup subgroup id, generated auto subgroup id, supplier code, label, or invented row id.
 41. Structural-support -> required companion remains encoded with option_item conditionalConfiguration, while structural-support -> compatible main products remains encoded with compatibleTargets; the two relationships were not conflated.
 42. Base/Model rows compatible with structural support remained authoritative Base/Model rows and were not moved into optionGroups or Modular pricing merely because of that dependency.
@@ -1124,21 +1231,77 @@ When those distinct manufacturer families are present, roadmap rows must keep Pe
 FEWEST SAFE PRODUCT TEMPLATES
 Prefer the FEWEST Product Templates that preserve authoritative pricing, configuration logic, commercial identity, and compatibility safety. A catalogue subsection or heading alone does not justify a Product Template. Do not split merely because dimensions, shelves, handedness, finish, headings, "without shelves", or "with doors" differ. Split only for a real architecture boundary: complete direct-priced product versus configurable carcass, genuinely different pricing mechanism, fundamentally different composition logic, different Product Library configuration workflow, or unrelated commercial family.
 
+Multiple native System/Base groups do NOT automatically require separate Product Templates. Keep several System/Base groups inside ONE Product Template when ALL are true: they belong to one coherent manufacturer commercial family; they use the same overall pricing/configuration architecture; Product Library should present the user with System/Base -> Main Product -> Model; their Main Product families are commercially related; and keeping them together remains understandable and safe. Example concept: one manufacturer family may contain System A and System B as separate native Base / Model groups inside one Product Template. Split into separate Product Templates when the systems are unrelated commercial families, Sales would never configure them together, pricing mechanisms differ materially, composition/configuration logic differs materially, or compatibility boundaries would become unsafe or confusing. Do NOT split merely because System/Base codes differ, System/Base dimensions differ, one System serves desks and another serves benches, or the catalogue gives them separate page headings.
+
 GLOBAL PRICING DECISION ORDER
 Always evaluate (1) BASE / MODEL, then (2) CATEGORY / MATRIX, then (3) MODULAR.
-- BASE / MODEL: default for authoritative commercial SKUs with their own supplier code, direct price, and dimensions/configuration. Multiple direct-priced rows do not justify Matrix.
-- CATEGORY / MATRIX: only for a genuine manufacturer-proven row-by-category price dimension, such as Model x Fabric Cat A / B / C / D or explicit finish-price classes. Many SKUs, many finishes, a visual grid, or one "Standard Price" column do not justify Matrix.
-- MODULAR: only for proven component-built composition such as terminal/intermediate/end units, sofa modules, workstation compositions, or shared-side bookcases. Normal size, finish, handed, open/closed, and accessory variation is not Modular.
+- BASE / MODEL: default for authoritative direct-priced commercial SKUs. It also supports native multi-stage System/Base families: a first-stage priced System/Base row and its compatible direct-priced Main Product rows may remain in the same Base / Model Product Template/group structure. System/Base and Main Product retain separate supplier codes, separate prices and separate commercial identity. Do not merge their prices, do not create synthetic combined SKUs, do not classify the relationship as Modular unless manufacturer evidence proves genuine component/module composition, and do not classify the System/Base as an accessory merely because it is a cabinet, service unit, base, support or storage element. A native System/Base configuration still counts as Base / Model pricing. Multiple direct-priced rows do not justify Matrix.
+- CATEGORY / MATRIX: only for a genuine manufacturer-proven row-by-category price dimension, such as Model x Fabric Cat A / B / C / D or explicit finish-price classes. Many SKUs, many finishes, a visual grid, or one "Standard Price" column do not justify Matrix. A System/Base with multiple direct-priced Main Product SKUs is NOT a Matrix merely because one System supports many Main rows, rows appear in a large catalogue grid, or there are multiple families/configurations; Matrix still requires genuine row x price-category semantics, and native System/Base groups remain Base / Model when every commercial row has its own direct price.
+- MODULAR: only for proven component-built composition such as terminal/intermediate/end units, sofa modules, workstation compositions, or shared-side bookcases. Normal size, finish, handed, open/closed, and accessory variation is not Modular. Do NOT use Modular merely because System/Base + Main Product + required companion must be selected together; that is not sufficient modular evidence. Use Modular only when manufacturer pricing/composition is genuinely built from modules/components whose quantities/composition form the sellable product.
 A row with its own supplier code and direct price is commercially authoritative; preserve it rather than replacing it with synthetic combinations.
+
+NATIVE SYSTEM / BASE ARCHITECTURE
+ProjectWorkflow supports native multi-stage Base / Model configuration. A Product Template may contain several native Base / Model groups. Within one native group, one or more rows are the first-stage System/Base selection, and the downstream Main Product rows are direct-priced rows of the same group. The Product Library flow is System / Base -> Main Product Family / Configuration -> Model / Size -> Required Components -> Optional Accessories. System/Base and Main Product prices are separate authoritative source prices summed at quotation time, and System/Base quantity is separately selectable. Compatibility is structural through native group membership. This is NOT Accessories / Configuration, and it is NOT Modular merely because both a System/Base and a Main Product are required.
+When manufacturer evidence proves that a separately priced item is the PRIMARY first-stage commercial System/Base selection and downstream desks, benches, tables, storage, worktops or other Main Products are explicitly designed for that System/Base, recommend native Base / Model System architecture. Planning output must identify: the System/Base commercial item(s); the compatible Main Product family/families; whether several System/Base variants share the same Main Product families; whether different System/Base selections require separate native groups; whether System/Base quantity can vary; required companions of the System/Base; optional accessories; and the source evidence proving the relationship.
+Do NOT infer System/Base status from words alone such as cabinet, storage, support, service unit, pedestal, base, return, or bridge. The source must show that the item is the first-stage commercial selection controlling downstream Main Product choice. If it is merely a support/companion item attached to an independently selected Main Product, keep using Accessories / Configuration / companion logic instead. Genuine structural/support furniture that is not the primary first-stage System may still use accessory/companion architecture.
+
+SOURCE-PROVEN PRIMARY SYSTEM PRECEDENCE
+If an item is separately priced, commercially selected first, has its own authoritative supplier code/SKU, and determines which downstream Main Products may be chosen, plan it as native Base / Model System/Base. Do NOT plan that same item as a Normal Accessory, Conditional Option, or Required Companion unless the source shows it is actually a supporting item rather than the primary System/Base. A System/Base may itself have Required Companions and optional accessories. A primary native System/Base is NOT classified under the accessory/component commercial statuses relative to its Main Product; it is a first-stage Base / Model commercial selection.
+
+NATIVE SYSTEM GROUP BOUNDARIES
+When several System/Base variants exist: if they share the same downstream Main Product families, they may belong to one native System group; if their downstream Main Product families differ, plan separate native Base / Model groups. Planning does NOT output internal group identifiers; it only identifies the commercial grouping that extraction should preserve. Do not invent Smart Setup subgroup identifiers during planning.
+
+SYSTEM / BASE QUANTITY
+For a native System/Base family, always inspect whether the selected Main Product requires one System/Base unit, multiple System/Base units, a source-dependent quantity, a user-selected quantity, or whether the source is unclear. Do NOT infer Bench = 2, Desk = 1, or any other furniture-domain rule. Only state an automatic required System/Base quantity when manufacturer evidence explicitly supports it. Otherwise write: MANUAL DECISION - System/Base quantity relationship not explicit. The current Product Library supports manual System/Base quantity selection.
+
+REQUIRED COMPONENT QUANTITY BEHAVIOR
+For a REQUIRED SEPARATE ITEM, distinguish: (A) fixed configured quantity, for example "always complete with 1 Art.X"; (B) quantity follows the selected target quantity, for example "1 Art.X for each selected System/Base"; (C) manually adjustable or unclear quantity. State the Quantity behavior as Fixed, Follows target quantity, or User-adjustable / MANUAL DECISION. Do not collapse all required companions into one fixed-quantity concept, and do not infer follow-target behavior unless the source language explicitly supports it. ProjectWorkflow may auto-select source-proven Required Companions and calculate their recommended quantity, but users can intentionally override or unselect them. Planning output should therefore preserve the source-required status, the source-required/recommended quantity, and whether the quantity follows another selected target. Do NOT downgrade the commercial status merely because the UI allows manual override: Required still means manufacturer-required, and a manual override is a Sales/user action, not evidence that the component is optional.
+
+SHARED ACCESSORIES IN NATIVE SYSTEM FAMILIES
+For native System/Base families, a shared accessory may apply to the System/Base itself, one Main Product family, selected Main Product rows, or the whole native System family. Planning must identify which level the manufacturer evidence supports. Do NOT automatically propagate a System-compatible accessory to every Main Product row unless the source supports that.
+
+NEW TEMPLATE VS UPDATE EXISTING TEMPLATE
+When planning additional manufacturer pages that belong to an already-created coherent Product Template, recommend updating the existing Product Template via Edit in Smart Setup / + Add More JSON. Do NOT recommend creating a duplicate template merely because new pages or missing SKUs were discovered later. Create a new Product Template only when the normal Product Template splitting rules justify it.
+Smart Setup workflow. For NEW templates: create template -> copy planning/extraction prompt -> extract Batch 1 -> Import & Review JSON in Smart Setup -> + Add More JSON for later batches -> review System/Base groups, Main Product families, required components and accessories -> Apply to Product Template -> save. For EXISTING saved templates: Product Template -> Edit in Smart Setup (no PDF required, no original extraction JSON required) -> + Add More JSON when extending the template -> review -> Save Changes to the same template. Do not imply every update requires a fresh Product Template.
+
+NATIVE SYSTEM EXTRACTION BATCHING
+For native System/Base templates keep commercial relationships together. Prefer Batch 1 = System/Base + directly related Main Product core pages, and a later batch = verified required companions / accessories / supporting pages, when token/page limits require splitting. Do NOT extract the System/Base in one isolated template/batch and its Main Product family into another Product Template when they belong to one native configuration; use + Add More JSON to extend the same template.
+
+NATIVE SYSTEM PLANNING ROADMAP WORDING
+In the FAMILY / EXTRACTION ROADMAP the Recommended setup value stays Base / Model; do not invent a new destination name and do not write System/Base in the destination column as if it were a separate ProjectWorkflow pricing destination. Explain it in the PRODUCT section as: Native System/Base -> Main Product configuration. Keep planning output human-readable: never emit ProductTemplateDraft JSON, group identifiers, role fields, conditional configuration or target JSON.
 
 CONFIGURATION AND FINISH EVIDENCE
 Keep INCLUDED, REQUIRED SEPARATE, OPTIONAL SEPARATE, COMPATIBLE ONLY, ADVISORY / INSTALLATION REQUIREMENT, and UNCONFIRMED distinct. "Compatible with", "suitable for", "for use with", "for X only", "for whole blind doors only", "for split blind doors", "for glass doors", "can be completed with", and "available with" establish compatibility / allowed applicability only, never a requirement or exactly-one rule. Required status needs explicit mandatory evidence such as "must be completed with" or "always complete with"; otherwise use Manual Decision / Warning. "Without shelves", "without doors", "without armrests", "without top-access", and "open cabinet" are valid sold configurations and never imply that the omitted component must be purchased. Treat "must be fixed to wall" or "wall fixing required to prevent overturning" as an installation/safety requirement in specification or warning, not a separately priced Required Companion; retain depth/height applicability where supported. "Wall fixing kit included" is INCLUDED in the base SKU and must not be duplicated. Only an explicit separate commercial kit, such as "complete with fixing kit Art. XXX", "fixing kit must be ordered separately", or "required kit Art. XXX", can be Required Companion. A fixing-kit page reference or compatibility wording alone is not required. Multiple finish codes at the same price belong in Finish Guidance/options; only explicit finish/category price differences justify Matrix.
+
+SCOPE OF A MANDATORY RULE
+A mandatory statement proved on one manufacturer family/page applies ONLY to the rows/family explicitly covered by that evidence. Do NOT propagate "always complete with", a fixed quantity, Required Companion, INCLUDED, or PREPARED FOR to another family merely because both products have a similar feature, both are desks or benches, both show top-access, both use the same accessory elsewhere, their drawings look similar, the accessory is listed on a shared page, or another family explicitly requires it. A directly priced row labelled "with X" may already include X in that commercial SKU/price. If Family A says "always complete with 2 Art.X" but Family B has separately priced rows "with X" and does NOT repeat the mandatory instruction, do NOT infer that Family B also needs 2 Art.X: treat the Family B commercial row as pricing-authoritative, and use MANUAL DECISION only if inclusion remains genuinely unclear.
+
+DIRECT-PRICED FEATURE SAFETY CHECK
+When a commercial SKU/row is explicitly sold as with top-access, with doors, with cable management, with screen, with extension, or with another named component/feature, and has its own direct price, first determine whether that feature is already represented in the row's commercial price. Do NOT add the same feature again as a Required Companion merely because the component also has an independent article number elsewhere. Only add it separately when the source explicitly says the direct-priced row must ALSO be completed with that separately priced article. If unclear: MANUAL DECISION - possible double charge.
+
+PLAN CONSISTENCY ACROSS SECTIONS
+If a family is declared as a separate PRODUCT section, or its roadmap row says "Extract separately? Yes", do NOT later place that family's pages into another Product Template's + Add More JSON batch. Example: if Panel Base System is PRODUCT 2 and is marked Extract separately = Yes, its pages must never appear in an Add More JSON batch for PRODUCT 1. Before returning, cross-check the FAMILY / EXTRACTION ROADMAP, the PRODUCT sections, SOURCE / EXTRACTION BATCHES, and the extraction-order steps when present: they must describe the same Product Template boundaries.
+
+PAGE NUMBERING VERIFICATION
+Do NOT infer that PDF and printed numbering remain 1:1 throughout the document because early pages match. Verify numbering at the beginning, the middle, and the end / last available pages before declaring a global offset or 1:1 relationship. Never output a PDF page number greater than the actual PDF page count. If printed pages continue beyond the PDF viewer page count, report the actual mapping instead of copying the printed number into the PDF column.
+
+SHARED SUPPORTING PAGES AND BATCHES
+Do NOT create one catch-all "Shared Elements / Technical Info" extraction batch covering many common pages merely because they are in one catalogue section. For each Product Template, supporting extraction pages must be limited to items whose applicability to that template is verified. Split supporting work by purpose: required companion pages, verified optional accessory pages, Manufacturer Finish Guidance, and manual-inspection-only pages. Technical descriptions, generic diagrams, unrelated shared accessories and unconfirmed common elements must not automatically be included in an extraction batch. A broad range such as "pages 42-67 shared elements" is invalid unless every included page has a verified reason to be extracted for that same Product Template.
+
+ROADMAP PRIORITY VALUES
+The Priority column may contain ONLY: BEST FIRST TEST, Current, Next, or Later. Never output Separate catalogue, Future, Excluded, N/A, or any other value. A family handled from another catalogue should normally use Later, and the catalogue separation is explained in Extract separately?, SEPARATE LATER, or WARNINGS.
+
+MANUFACTURER FAMILY VERSUS PROJECTWORKFLOW CONSOLIDATION
+When several manufacturer-defined families are intentionally combined into one Product Template for ProjectWorkflow usability, say so explicitly. Distinguish "Manufacturer families: [A, B, C]" from "ProjectWorkflow consolidation: ONE Product Template because they share the same pricing and configuration flow." Do not rewrite several manufacturer-defined families as though the manufacturer itself defines them as one family. In the FAMILY / EXTRACTION ROADMAP keep one row per true manufacturer family even when several rows later combine into one Product Template.
+
+FINAL CROSS-SECTION CONSISTENCY CHECK
+Immediately before returning the plan, reconcile every family across: (1) roadmap family, (2) assigned Product Template, (3) source pages, (4) supporting pages, (5) extraction batch, and (6) extraction-order destination. All six must agree. No family marked separate may silently enter another template later. No required accessory may appear without family-specific evidence. No PDF page may exceed the supplied PDF page count.
 
 UNRELATED FAMILIES
 Actively identify nearby manufacturer families that must be handled separately. Put them under SEPARATE LATER with their printed/PDF page ranges when known and a short reason; do not mix them into the current extraction batch.
 
 GLOBAL PLANNING SELF-CHECK - CORRECT THE PLAN BEFORE RETURNING
-Check: Did I create Matrix where Base / Model is sufficient? Did I create Modular without real composition? Did headings alone split templates? Did compatibility become requirement? Did "without" create a missing required component? Did I mix unrelated families? Did I provide usable source page ranges and batches? Could fewer templates preserve the same commercial truth? Did I include FAMILY / EXTRACTION ROADMAP before PRODUCT sections, represent every detected commercial family, provide printed/PDF page columns, recommended setup, extract-separately guidance, and priority, choose at most one BEST FIRST TEST, and avoid a broad range covering unrelated families?
+Check: Did I create Matrix where Base / Model is sufficient? Did I create Modular without real composition? Did headings alone split templates? Did compatibility become requirement? Did "without" create a missing required component? Did I mix unrelated families? Did I provide usable source page ranges and batches? Could fewer templates preserve the same commercial truth? Did I misclassify a primary first-stage System/Base as an accessory? Did I split one coherent native System family into unnecessary Product Templates? Did I merge unrelated System families merely because they share a chapter? Did I incorrectly choose Modular just because System/Base + Main Product must both be selected? Did I incorrectly choose Workstation Pricing where native Base / Model System architecture fits better? Did I preserve separate System/Base and Main Product prices? Did I identify source-supported System/Base quantity behavior without guessing? Did I distinguish fixed required-component quantity from quantity-follow-target behavior? Did I plan new pages as Add More JSON to an existing template where appropriate? Does every extraction batch and every Extraction Order step preserve the Product Template boundaries declared earlier in the plan? Did I copy a Required Companion rule from one family onto another family without explicit/cross-referenced evidence? Did I add a separately priced component to a direct-priced "with feature" row that may already include it? Does every stated PDF page actually exist in the supplied PDF? Did I include FAMILY / EXTRACTION ROADMAP before PRODUCT sections, represent every detected commercial family, provide printed/PDF page columns, recommended setup, extract-separately guidance, and priority, choose at most one BEST FIRST TEST, and avoid a broad range covering unrelated families?
 
 GLOBAL PLANNING OUTPUT CONTRACT
 Return direct, practical output without catalogue prose. This global structure takes precedence over any narrower category output wording when they conflict:
@@ -1153,10 +1316,18 @@ FAMILY / EXTRACTION ROADMAP
 | --- | ---: | ---: | --- | --- | --- |
 PRODUCT 1 - [Template Name]
 - Primary setup: [Base / Model | Category / Matrix | Modular]
-- Configuration: [one sentence]
-- Required Components: [summary or None]
+- Configuration: [one sentence; for native System/Base architecture: Native System/Base -> Main Product Family -> Model / Size]
+- System/Base: [commercial System/Base family/items; only for native System/Base architecture]
+- Main Product families: [family list; only for native System/Base architecture]
+- System/Base quantity: [Fixed | user-selectable | source-defined | MANUAL DECISION; only for native System/Base architecture]
+- Required Components: [summary or None; for each Required Companion state Quantity behavior: Fixed | Follows target quantity | User-adjustable / MANUAL DECISION | Not applicable, and give the Quantity only if explicitly supported]
 - Optional Components: [summary or None]
 - Finish Guidance: [summary or None]
+- Native System/Base structure (only when native System/Base architecture applies; omit for ordinary products):
+  - System/Base selection: [...]
+  - Main Product families: [...]
+  - System quantity behavior: [...]
+  - Native group boundary: [...]
 - Extraction pages: [core family pages and supporting pages as separate compact dual-numbered references; never one broad range spanning unrelated families]
 - Manual Decision: [issue or None]
 Repeat PRODUCT sections only for genuinely separate templates.
@@ -1172,7 +1343,8 @@ WARNINGS
 const planningFocusInstructions: Record<ProductTemplateSetupPlanningFocus, string> = {
   general: "",
   workstation: `WORKSTATION / BENCH SYSTEMS PLANNING FOCUS
-Plan workstation and bench families using the PROJECTWORKFLOW DESTINATIONS Workstation Pricing routing guidance below: a complete direct-priced workstation/bench SKU is Base / Model, a simple complete-price workstation/bench family fits Workstation Pricing, genuine finish/category pricing is Category / Matrix, and a proven starter/add-on or component-built composition is Modular. For every workstation family state the recommended architecture and why, and note whether the source shows complete SKU pricing, required companions, fixed quantities, starter/add-on composition, finish-dependent pricing, or separately priced screens/accessories/storage integration. Ignore unrelated desks, seating, tables, and storage families unless the source explicitly ties them to the workstation/bench system.`,
+Plan workstation and bench families using the PROJECTWORKFLOW DESTINATIONS Workstation Pricing routing guidance below: a complete direct-priced workstation/bench SKU is Base / Model, a simple complete-price workstation/bench family fits Workstation Pricing, genuine finish/category pricing is Category / Matrix, and a proven starter/add-on or component-built composition is Modular. For every workstation family state the recommended architecture and why, and note whether the source shows complete SKU pricing, required companions, fixed quantities, starter/add-on composition, finish-dependent pricing, or separately priced screens/accessories/storage integration. Ignore unrelated desks, seating, tables, and storage families unless the source explicitly ties them to the workstation/bench system.
+A workstation/bench catalogue may contain a priced System/Base plus priced desk/bench Main Product rows. If the System/Base is a first-stage commercial choice and the desk/bench rows are complete direct-priced Main Products designed for it, recommend native Base / Model System architecture. Do NOT automatically choose Workstation Pricing, Modular, or Accessories / Configuration merely because the source describes a workstation, bench or support system. Workstation Pricing remains only for the existing narrow simple complete-price workstation/bench use case, and Modular remains only for proven starter/add-on/component composition.`,
   storage_cabinets: `STORAGE / CABINETS / CREDENZAS PLANNING FOCUS
 Plan cabinets, credenzas, pedestals, service units, lateral storage, lockers, doors, tops, internals, and related configuration from manufacturer evidence only. Ignore unrelated desks, workstations, seating, tables, and other furniture unless explicitly required by the storage system.
 
@@ -1515,6 +1687,12 @@ Recommended ProjectWorkflow setup:
 - Accessories / Configuration:
 - Manufacturer Finish Guidance:
 
+Native System/Base structure (only when native System/Base architecture applies; omit for ordinary products):
+- System/Base selection: [...]
+- Main Product families: [...]
+- System quantity behavior: [...]
+- Native group boundary: [...]
+
 Recommended visual subgroups and images:
 
 Accessory / Required Companion strategy:
@@ -1527,6 +1705,7 @@ Applicability evidence: EXPLICIT / CROSS-REFERENCED / VISUALLY CONFIRMED / UNCON
 Source: PDF page X / printed catalogue page Y
 Evidence: short manufacturer-supported explanation
 ProjectWorkflow treatment: No separate item / Information only / Required Companion / Conditional Option / Normal Accessory / Manual Decision
+Quantity behavior: Fixed / Follows target quantity / User-adjustable / Manual Decision / Not applicable
 Quantity: only if explicitly supported
 
 Extraction batches:
@@ -1558,7 +1737,9 @@ List items that exist in a manufacturer shared section but whose family compatib
 ==================================================
 EXTRACTION ORDER
 ==================================================
-Provide numbered steps using the real workflow: create template, copy the appropriate extraction prompt, extract Batch 1 using dual PDF/printed page references, import to Smart Setup, use + Add More JSON for later batches, review destinations/rules, apply locally, and save.
+Every step must keep the Product Template boundaries declared in the roadmap and PRODUCT sections.
+Provide numbered steps using the real workflow. templates: create template -> copy planning/extraction prompt -> extract Batch 1 using dual PDF/printed page references -> Import & Review JSON in Smart Setup -> + Add More JSON for later batches -> review System/Base groups, Main Product families, required components and accessories -> Apply to Product Template -> save.
+For EXISTING saved templates: Product Template -> Edit in Smart Setup (no PDF required, no original extraction JSON required) -> + Add More JSON when extending the template -> review -> Save Changes to the same template. Do not imply every update requires a fresh Product Template.
 
 ==================================================
 WARNINGS / MANUAL DECISIONS
@@ -1620,16 +1801,17 @@ Never translate, modify, or replace supplier codes, article numbers, reference c
 When quoting manufacturer instructions, first state the plain-language meaning, then include Source wording only if useful for verification. For component evidence, explain what the manufacturer shows/states in the user's language first and place any original-language wording secondarily. Always use ProjectWorkflow labels consistently in English exactly as follows: Base / Model; Workstation; Category / Matrix; Modular; Accessories / Configuration; Manufacturer Finish Guidance; Normal Accessory; Conditional Option; Required Companion; Include Locally; Standalone Product; Both; Manual Decision; INCLUDED; PREPARED FOR; REQUIRED SEPARATE ITEM; OPTIONAL SEPARATE ITEM; UNCONFIRMED.
 
 PAGE NUMBERING
+Do NOT infer that PDF and printed numbering remain 1:1 throughout the document because early pages match. Verify numbering at the beginning, the middle, and the end / last available pages before declaring a global offset or 1:1 relationship. Never output a PDF page number greater than the actual PDF page count. If printed pages continue beyond the PDF viewer page count, report the actual mapping instead of copying the printed number into the PDF column.
 First determine whether the document contains printed catalogue page numbers. When both PDF viewer and printed catalogue numbering can be identified, ALWAYS provide both in every page reference using this exact form: “PDF page 3 / printed catalogue page 12”; for ranges, “PDF pages 3–5 / printed catalogue pages 12–14”. Never provide only “Page 12” when PDF and printed numbering differ. If only one numbering system is genuinely available, state that explicitly: “PDF page 12 / printed catalogue page not shown” or “PDF page unavailable / printed catalogue page 42”. Do not guess either number. If PDF page 1 does not correspond to printed catalogue page 1, detect the offset and place a PAGE NUMBERING NOTE near the top of the plan explaining the relationship and confirming that all references below use both numbering systems. Use the same dual-number format in Main source pages, Shared/supporting pages, extraction batches, Shared / Common Element Strategy, and Extraction Order.
 
 PRODUCT TEMPLATE SPLITTING
 Prefer one commercially understandable product family per Product Template. Do not create one template per SKU, a giant template for unrelated families, or arbitrary page-count splits. A coherent family may contain many sizes/models. Consider separate templates for distinct typologies, structures, configuration logic, pricing structures, or very large independent ranges. Keep quotation configuration understandable.
 
 PROJECTWORKFLOW DESTINATIONS
-- Base / Model Pricing: direct-priced model/SKU/size variants and normal model tables. Supports groups, rows/models, price/currency, dimensions, specifications, visual subgroups, and images. Quotation flow is Family → Configuration/Subgroup → Model.
+- Base / Model Pricing: direct-priced model/SKU/size variants and normal model tables, including native System/Base -> Main Product configurations (System/Base rows and Main Product rows keep separate prices and supplier codes). Supports groups, rows/models, price/currency, dimensions, specifications, visual subgroups, and images. Quotation flow is Family → Configuration/Subgroup → Model; for native System/Base groups it is System / Base → Main Product Family → Model / Size.
 - Workstation Pricing: only simple, complete-price workstation/bench size/layout/orientation rows with base and, where explicitly supported, one repeatable additional/cluster price. The words workstation, bench, cluster, and operative do not by themselves justify this destination: first check whether the family is actually a complete direct-priced SKU (Base / Model), a genuine finish/category price dimension (Category / Matrix), or a proven starter/add-on or component-built composition (Modular) before recommending Workstation Pricing. For every Workstation family, state the recommended architecture and why, whether the source shows complete SKU pricing, required companions, fixed quantities, starter/add-on composition, finish-dependent pricing, or separately priced screens/accessories.
 - Category / Matrix Pricing: only a genuine row × category/finish/fabric pricing matrix with meaningful ordered rows and columns; a visual table alone is insufficient.
-- Modular Pricing: only genuine modular families with hierarchy/modules and shared price columns. Do not flatten modular structure.
+- Modular Pricing: only genuine modular families with hierarchy/modules and shared price columns. Do not flatten modular structure. Not for a System/Base + Main Product + required companion selection on its own.
 - Accessories / Configuration: optional accessories, required components, conditional options, and companion parts. Supports Normal Accessory, Conditional Option, Required Companion, selection rules, applicable Base/Model rows, allowed items, fixed quantity, subgroups, and images.
 
 ACCESSORY RULES AND TEMPLATE-LOCAL LIMITATION
@@ -1649,6 +1831,7 @@ Overview pages listing modesty panels, cable trays, central covers, tops, partit
 Before completing each Product Template section, ask: “For every accessory I am recommending inside this Product Template, what source evidence proves that it belongs to this family?” If no defensible evidence exists, remove the recommendation or mark MANUAL DECISION — compatibility not established by supplied source. It is better to omit an uncertain accessory than to incorrectly attach it to a Product Template.
 
 COMPONENT COMMERCIAL STATUS
+A mandatory statement proved on one manufacturer family/page applies ONLY to the rows/family explicitly covered by that evidence; never propagate REQUIRED SEPARATE ITEM, fixed quantity, INCLUDED, or PREPARED FOR to another family by similarity, shared listing or visual resemblance. A directly priced row labelled "with X" may already include X: do not add X again unless the source says the row must ALSO be completed with that article; otherwise MANUAL DECISION - possible double charge.
 For every accessory/component relationship, classify exactly one commercial status. Do not collapse these into a generic “accessory”:
 - INCLUDED: the component is explicitly included in the listed product price/package.
 - PREPARED FOR: the product has holes, cut-outs, brackets, wiring/mounting provision, recesses, or similar provision for the component, but the source does not state that the component itself is included.
@@ -1673,11 +1856,15 @@ For each shared accessory, choose a configuration strategy rather than automatic
 ${sharedAccessoryStrategyInstructions}
 
 VISUAL SUBGROUPS, IMAGES, AND FINISH GUIDANCE
+For native System/Base groups, System/Base rows are NOT Main Product visual subgroups. Main Product visual families should normally organize downstream direct-priced rows by commercial family, for example Desk, Desk + Top Access, Bench, Bench + Top Access, left/right structure families, or other manufacturer-proven configurations. Do NOT make visual subgroups merely from width, depth, individual SKU, or code sequence unless that is the true manufacturer commercial family distinction. System/Base remains the first-stage selection; Main Product subgroups are selection/display organization only.
 Hierarchy: Pricing Type → Group → Subgroup → Row/Item. Rows/items remain pricing-authoritative; subgroups are visual/organizational only. Recommend subgroups only for source-supported shared diagrams, shapes/configurations, size families, or orientations. State the appropriate image level: Group image, Subgroup image, Row image; do not duplicate images unnecessarily.
 
 Actual selectable materials/finishes remain controlled by ProjectWorkflow Material Library linkage. Manufacturer materialSuggestions are informational Manufacturer Finish Guidance only. Recommend “Extract as Manufacturer Finish Guidance” for finish-code tables, allowable top/leg finishes, or colour guidance unless the pages directly form pricing/category configuration. Do not create another material-selection system.
 
 MULTIPLE BATCHES AND SHARED PAGES
+Do NOT create one catch-all "Shared Elements / Technical Info" extraction batch covering many common pages merely because they are in one catalogue section. For each Product Template, supporting extraction pages must be limited to items whose applicability to that template is verified. Split supporting work by purpose: required companion pages, verified optional accessory pages, Manufacturer Finish Guidance, and manual-inspection-only pages. Technical descriptions, generic diagrams, unrelated shared accessories and unconfirmed common elements must not automatically be included in an extraction batch. A broad range such as "pages 42-67 shared elements" is invalid unless every included page has a verified reason to be extracted for that same Product Template.
+A family declared as a separate PRODUCT or marked Extract separately = Yes must never appear in another Product Template's + Add More JSON batch.
+For a template that already exists, additional pages are added through Edit in Smart Setup and + Add More JSON rather than a new Product Template. For native System/Base templates keep the System/Base and its directly related Main Product pages together in Batch 1 and verified required companions/accessories in a later batch.
 External LLM limits may require multiple coherent batches for one template using + Add More JSON. Batch by commercial source structure, never equal page counts. INCLUDED components do not need a separate accessory extraction unless independently sold. Include REQUIRED SEPARATE ITEM pages in the relevant product extraction/Add More batch. Include OPTIONAL SEPARATE ITEM pages only when verified compatible and useful in the configurator. PREPARED FOR wording alone is not reason to extract the accessory page. UNCONFIRMED remains under Pages to inspect manually. Include a shared accessory page in a Product Template extraction batch only if at least one relevant item on that page has verified applicability. ${batchOutputInstructions} Good boundaries must also support future Prices Only, Selected Sections, New Item, and Not Found updates.
 
 ${focus === "storage_cabinets" ? storageOutputInstructions : outputInstructions}`;

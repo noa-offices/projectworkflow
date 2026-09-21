@@ -7,7 +7,46 @@ export type SourceCropRect = { x: number; y: number; width: number; height: numb
 export type SourceQaTextGeometry = { text: string; normalizedText: string; x: number; y: number; width: number; height: number };
 export type SourceQaPdfTextItem = { str: string; transform: number[]; width: number; height: number };
 export function sourceQaTextGeometry(items: SourceQaPdfTextItem[]) { return items.filter((item) => item.str.trim() && item.transform.length >= 6).map((item) => ({ text: item.str, normalizedText: normalizeSourceQaCode(item.str), x: item.transform[4], y: item.transform[5], width: item.width, height: item.height })); }
-export function sourceQaTextGeometryMatch(items: SourceQaTextGeometry[], query: string) { const normalized = normalizeSourceQaCode(query); if (!normalized) return null; for (let index = 0; index < items.length; index += 1) { const item = items[index]; if (item.normalizedText === normalized) return item; const next = items[index + 1]; if (next && normalizeSourceQaCode(item.text + next.text) === normalized) return { text: item.text + next.text, normalizedText: normalized, x: item.x, y: Math.max(item.y, next.y), width: next.x + next.width - item.x, height: Math.max(item.height, next.height) }; } return null; }
+function exactSourceQaTextGeometryMatch(items: SourceQaTextGeometry[], query: string) { const normalized = normalizeSourceQaCode(query); if (!normalized) return null; for (let index = 0; index < items.length; index += 1) { const item = items[index]; if (item.normalizedText === normalized) return item; const next = items[index + 1]; if (next && normalizeSourceQaCode(item.text + next.text) === normalized) return { text: item.text + next.text, normalizedText: normalized, x: item.x, y: Math.max(item.y, next.y), width: next.x + next.width - item.x, height: Math.max(item.height, next.height) }; } return null; }
+/** Index of `query` inside `text` only when it is not glued to more code characters (so "M45" never matches inside "M450"). */
+function boundedCodeIndex(text: string, query: string) {
+  for (let from = 0; ;) {
+    const index = text.indexOf(query, from);
+    if (index < 0) return -1;
+    if (!/[A-Z0-9]/.test(text[index - 1] ?? "") && !/[A-Z0-9]/.test(text[index + query.length] ?? "")) return index;
+    from = index + 1;
+  }
+}
+
+/**
+ * Finds the text to highlight for a search. Exact item / adjacent-item equality still wins (unchanged); when the
+ * printed code shares its text item with an adjacent marker or neighbouring words (for example "1AJ M45 (*)" while
+ * the searched code is "1AJ M45"), the match is found by bounded containment and only the matched part of the item
+ * is highlighted. Two/three adjacent items are also tried joined with and without a space.
+ */
+export function sourceQaTextGeometryMatch(items: SourceQaTextGeometry[], query: string) {
+  const exact = exactSourceQaTextGeometryMatch(items, query);
+  if (exact) return exact;
+  const normalized = normalizeSourceQaCode(query);
+  if (!normalized) return null;
+  for (const item of items) {
+    const index = boundedCodeIndex(item.normalizedText, normalized);
+    if (index < 0 || !item.normalizedText.length) continue;
+    const ratio = item.width / item.normalizedText.length;
+    return { text: item.text.slice(index, index + normalized.length), normalizedText: normalized, x: item.x + index * ratio, y: item.y, width: Math.max(ratio * normalized.length, 1), height: item.height };
+  }
+  for (let index = 0; index < items.length; index += 1) {
+    for (let size = 2; size <= 3 && index + size <= items.length; size += 1) {
+      const group = items.slice(index, index + size);
+      const last = group[group.length - 1];
+      for (const joiner of [" ", ""]) {
+        if (boundedCodeIndex(normalizeSourceQaCode(group.map((item) => item.text).join(joiner)), normalized) < 0) continue;
+        return { text: group.map((item) => item.text).join(joiner), normalizedText: normalized, x: group[0].x, y: Math.max(...group.map((item) => item.y)), width: last.x + last.width - group[0].x, height: Math.max(...group.map((item) => item.height)) };
+      }
+    }
+  }
+  return null;
+}
 export function sourceQaTextGeometryViewport(geometry: SourceQaTextGeometry, pageHeight: number, scale: number) { return { x: geometry.x * scale, y: (pageHeight - geometry.y - geometry.height) * scale, width: geometry.width * scale, height: geometry.height * scale }; }
 export type SourceCropTarget = { id: string; sourceKey: string; rowId: string; label: string; codes: string[]; kind: "Base / Model" | "Category / Matrix" | "Modular" | "Accessory" | "Visual subgroup" };
 export function normalizeSourceCrop(rect: SourceCropRect): SourceCropRect { const x2 = rect.x + rect.width; const y2 = rect.y + rect.height; return { x: Math.min(rect.x, x2), y: Math.min(rect.y, y2), width: Math.abs(rect.width), height: Math.abs(rect.height) }; }

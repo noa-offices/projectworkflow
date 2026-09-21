@@ -87,6 +87,8 @@ export type ProductTemplateDraftPricedRow = ProductTemplateDraftReferences & {
   price: ProductTemplateDraftPrice;
   specification: string | null;
   importantRequirements?: string[];
+  /** Saved-template round trip only: an explicitly inactive saved row stays inactive. Omitted means active (default). */
+  isActive?: boolean;
 };
 
 /**
@@ -97,10 +99,15 @@ export type ProductTemplateDraftPricedRow = ProductTemplateDraftReferences & {
 export type ProductTemplateDraftBaseModelRow = ProductTemplateDraftPricedRow & {
   groupId?: string;
   groupLabel?: string;
+  /** Saved-template round trip only: an explicitly inactive native group (set on its rows). Never inferred from row activity. */
+  groupIsActive?: boolean;
   role?: ProductTemplateDraftBaseModelRole;
 };
 
 export type ProductTemplateDraftWorkstationRow = ProductTemplateDraftPricedRow & {
+  /** Saved-template round trip only: keeps separate saved Workstation groups separate. Ungrouped rows use the legacy group. */
+  groupId?: string;
+  groupLabel?: string;
   additionalPrice: ProductTemplateDraftPrice;
   layoutType: "linear" | "cluster" | "both" | null;
 };
@@ -119,6 +126,8 @@ export type ProductTemplateDraftMatrixRow = Omit<ProductTemplateDraftPricedRow, 
 
 export type ProductTemplateDraftPriceMatrix = {
   id: string;
+  /** Saved-template round trip only (see ProductTemplateDraftPricedRow.isActive). */
+  isActive?: boolean;
   label: string | null;
   columns: ProductTemplateDraftMatrixColumn[];
   rows: ProductTemplateDraftMatrixRow[];
@@ -147,6 +156,7 @@ export type ProductTemplateDraftModularPricingMode = "matrix" | "direct";
 
 export type ProductTemplateDraftModularGroup = {
   id: string;
+  isActive?: boolean;
   label: string | null;
   defaultDimensions: ProductTemplateDraftDimension | null;
   defaultSpecification: string | null;
@@ -240,6 +250,7 @@ export type ProductTemplateDraftCategoryPricedOptionItem = ProductTemplateDraftO
  */
 export type ProductTemplateDraftOptionGroup = {
   id: string;
+  isActive?: boolean;
   label: string | null;
   selection: ProductTemplateDraftSelectionRule;
   priceCategories?: ProductTemplateDraftOptionPriceCategory[];
@@ -646,8 +657,8 @@ function applicabilityRule(value: unknown, path: string, issues: IssueCollector,
   if (scaleWithTargetQuantity === true && (fixedQuantity === undefined || fixedQuantity === null)) {
     error(issues, `${path}.scale_with_target_quantity`, "Quantity scaling requires a fixed quantity.");
   }
-  if (scaleWithTargetQuantity === true && target.kind !== "modular" && target.kind !== "option_item") {
-    error(issues, `${path}.scale_with_target_quantity`, "Quantity scaling is only supported for modular or option item targets.");
+  if (scaleWithTargetQuantity === true && target.kind !== "modular" && target.kind !== "option_item" && target.kind !== "base_model") {
+    error(issues, `${path}.scale_with_target_quantity`, "Quantity scaling is only supported for modular, option item or Base/Model targets.");
   }
   if (scaleWithTargetQuantity === true && selectionMode === "exactly_one") {
     error(issues, `${path}.scale_with_target_quantity`, "Quantity scaling cannot be combined with exactly-one selection.");

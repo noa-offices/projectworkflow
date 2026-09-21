@@ -1,5 +1,7 @@
 "use client";
 
+import { useReplacementCommitSignal } from "@/components/products/use-replacement-commit";
+import { normalizeBaseModelEditorRow } from "@/lib/products/base-model-editor-row";
 import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import {
@@ -222,19 +224,7 @@ function resolveDefaultModularPricingCurrency({
 }
 
 function normalizeVariant(row: VariantPricingRow, index: number): VariantPricingRow {
-  return {
-    id: row.id || `variant-${index}`,
-    variant_name: row.variant_name?.trim() ?? "",
-    display_name: row.display_name?.trim() ?? "",
-    supplier_price_list_code: row.supplier_price_list_code?.trim() ?? "",
-    dimension: row.dimension?.trim() ?? "",
-    price: parseNullablePricingNumber(row.price),
-    currency: normalizeCurrency(row.currency ?? defaultCurrency),
-    specification: row.specification?.trim() ?? "",
-    ...(row.importantRequirements?.length ? { importantRequirements: reviewImportantRequirements(row.importantRequirements.join("\n")) } : {}),
-    is_active: row.is_active !== false,
-    sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
-  };
+  return normalizeBaseModelEditorRow(row, index);
 }
 
 function normalizeCategory(row: CategoryPricingRow, index: number, priceCategories?: string[]): CategoryPricingRow {
@@ -587,6 +577,7 @@ export function VariantPricingTable({
   replacementFlatSubgroups,
   replacementRows,
   replacementVersion,
+  onReplacementCommitted,
   rows,
   templateIsPersisted,
   templateId,
@@ -599,6 +590,7 @@ export function VariantPricingTable({
   replacementFlatSubgroups?: BaseModelPricingSubgroup[] | null;
   replacementRows?: VariantPricingRow[] | null;
   replacementVersion?: number;
+  onReplacementCommitted?: (version: number) => void;
   rows?: unknown;
   templateIsPersisted: boolean;
   templateId: string;
@@ -622,6 +614,7 @@ export function VariantPricingTable({
   const [referenceTargetGroupId, setReferenceTargetGroupId] = useState<string | null>(null);
   const persistedGroupIds = useMemo(() => persistedBaseModelPricingGroupIds(rows), [rows]);
   const appliedReplacementVersion = useRef<number | undefined>(undefined);
+  const markReplacementApplied = useReplacementCommitSignal(onReplacementCommitted);
   const userEditedCurrencyRowIds = useRef<Set<string>>(new Set());
   const previousDefaultCurrencyRef = useRef(
     resolveDefaultPricingCurrency({
@@ -638,6 +631,7 @@ export function VariantPricingTable({
   useEffect(() => {
     if (!shouldApplyBaseModelReplacement(replacementVersion, appliedReplacementVersion.current)) return;
     appliedReplacementVersion.current = replacementVersion;
+    markReplacementApplied(replacementVersion);
     setGroups((current) => {
       const convertedGroups = (replacementGroups ?? []).map((group) => ({ ...group, items: group.items.map(normalizeVariant) }));
       const rows = (replacementRows ?? []).map(normalizeVariant);
@@ -646,7 +640,7 @@ export function VariantPricingTable({
       return next.map((group) => replacementFlatSubgroups?.length && group.items.some((row) => row.id && flatRowIds.has(row.id)) ? { ...group, subgroups: replacementFlatSubgroups } : group);
     });
     setCollapsedGroups((current) => ({ ...current, ...(replacementGroups ?? []).reduce<Record<string, boolean>>((next, group) => ({ ...next, [group.id]: true }), {}) }));
-  }, [replacementFlatSubgroups, replacementGroups, replacementRows, replacementVersion]);
+  }, [replacementFlatSubgroups, replacementGroups, replacementRows, replacementVersion, markReplacementApplied]);
 
   useEffect(() => {
     onHasDataChange?.(hasMeaningfulBaseModelPricing(flattenBaseModelPricingRows(groups)));
@@ -878,6 +872,7 @@ export function CategoryPricingTable({
   onHasDataChange,
   replacementGroups,
   replacementVersion,
+  onReplacementCommitted,
   rows,
   templateIsPersisted,
   templateId,
@@ -888,6 +883,7 @@ export function CategoryPricingTable({
   onHasDataChange?: (hasCategoryPricingData: boolean) => void;
   replacementGroups?: CategoryPricingRow[] | null;
   replacementVersion?: number;
+  onReplacementCommitted?: (version: number) => void;
   rows?: CategoryPricingRow[] | null;
   templateIsPersisted: boolean;
   templateId: string;
@@ -900,6 +896,7 @@ export function CategoryPricingTable({
   const importedIdsRef = useRef<Set<string>>(new Set());
   const [groups, setGroups] = useState<CategoryPricingRow[]>(() => initialGroups);
   const appliedReplacementVersion = useRef<number | undefined>(undefined);
+  const markReplacementApplied = useReplacementCommitSignal(onReplacementCommitted);
   const [newCategoryNames, setNewCategoryNames] = useState<Record<string, string>>({});
   const [showCategoryCreators, setShowCategoryCreators] = useState<Record<string, boolean>>({});
   const [groupActionNotices, setGroupActionNotices] = useState<Record<string, string>>({});
@@ -938,12 +935,13 @@ export function CategoryPricingTable({
   useEffect(() => {
     if (replacementVersion === undefined || replacementVersion === appliedReplacementVersion.current) return;
     appliedReplacementVersion.current = replacementVersion;
+    markReplacementApplied(replacementVersion);
     setGroups((replacementGroups ?? []).map((group, index) => normalizeCategoryGroup(group, index, false)));
     setNewCategoryNames({});
     setShowCategoryCreators({});
     setGroupActionNotices({});
     setReferenceTargetGroupId(null);
-  }, [replacementGroups, replacementVersion]);
+  }, [replacementGroups, replacementVersion, markReplacementApplied]);
 
   useEffect(() => {
     onHasDataChange?.(hasMeaningfulCategoryPricing(groups));
@@ -1301,6 +1299,7 @@ export function ModularItemPricingTable({
   onHasDataChange,
   replacementGroups,
   replacementVersion,
+  onReplacementCommitted,
   rows,
   templateId,
   templateIsPersisted,
@@ -1311,6 +1310,7 @@ export function ModularItemPricingTable({
   onHasDataChange?: (hasModularPricingData: boolean) => void;
   replacementGroups?: CategoryPricingRow[] | null;
   replacementVersion?: number;
+  onReplacementCommitted?: (version: number) => void;
   rows?: CategoryPricingRow[] | null;
   templateId: string;
   templateIsPersisted: boolean;
@@ -1323,6 +1323,7 @@ export function ModularItemPricingTable({
   const [groups, setGroups] = useState<CategoryPricingRow[]>(() => initialGroups);
   const [priceCategories, setPriceCategories] = useState<string[]>(() => modularPriceCategories(initialGroups, false));
   const appliedReplacementVersion = useRef<number | undefined>(undefined);
+  const markReplacementApplied = useReplacementCommitSignal(onReplacementCommitted);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [showCategoryCreator, setShowCategoryCreator] = useState(false);
   const [defaultSpecification, setDefaultSpecification] = useState(modularDefaults.defaultSpecification ?? "");
@@ -1380,6 +1381,7 @@ export function ModularItemPricingTable({
   useEffect(() => {
     if (replacementVersion === undefined || replacementVersion === appliedReplacementVersion.current) return;
     appliedReplacementVersion.current = replacementVersion;
+    markReplacementApplied(replacementVersion);
     const nextGroups = normalizeModularGroups(replacementGroups, false);
     setGroups(nextGroups);
     setPriceCategories(modularPriceCategories(nextGroups, false));
@@ -1387,7 +1389,7 @@ export function ModularItemPricingTable({
     setShowCategoryCreator(false);
     setGroupActionNotices({});
     setReferenceTargetGroupId(null);
-  }, [replacementGroups, replacementVersion]);
+  }, [replacementGroups, replacementVersion, markReplacementApplied]);
 
   useEffect(() => {
     onHasDataChange?.(hasMeaningfulModularPricing(groups, priceCategories));
@@ -1906,6 +1908,7 @@ export function AccessoryPricingTable({
   onHasDataChange,
   replacementGroups,
   replacementVersion,
+  onReplacementCommitted,
   rows,
   templateId,
   templateIsPersisted,
@@ -1919,6 +1922,7 @@ export function AccessoryPricingTable({
   onHasDataChange?: (hasAccessoryPricingData: boolean) => void;
   replacementGroups?: AccessoryPricingRow[] | null;
   replacementVersion?: number;
+  onReplacementCommitted?: (version: number) => void;
   rows?: AccessoryPricingRow[] | null;
   templateId: string;
   templateIsPersisted: boolean;
@@ -1933,6 +1937,7 @@ export function AccessoryPricingTable({
   const [referenceTargetGroupId, setReferenceTargetGroupId] = useState<string | null>(null);
   const persistedGroupIds = useMemo(() => persistedPricingGroupIds(rows, "accessory"), [rows]);
   const appliedReplacementVersion = useRef<number | undefined>(undefined);
+  const markReplacementApplied = useReplacementCommitSignal(onReplacementCommitted);
   const userEditedCurrencyItemIds = useRef<Set<string>>(new Set());
   const previousDefaultCurrencyRef = useRef(
     resolveDefaultPricingCurrency({
@@ -1950,6 +1955,7 @@ export function AccessoryPricingTable({
   useEffect(() => {
     if (replacementVersion === undefined || replacementVersion === appliedReplacementVersion.current) return;
     appliedReplacementVersion.current = replacementVersion;
+    markReplacementApplied(replacementVersion);
     setGroups(normalizeAccessoryGroups(replacementGroups));
     setCollapsedGroups(Object.fromEntries(normalizeAccessoryGroups(replacementGroups).map((group, index) => [group.id ?? `add-on-group-${index}`, true])));
     setCollapsedAccessorySubgroups(Object.fromEntries(normalizeAccessoryGroups(replacementGroups).flatMap((group) => (group.subgroups ?? []).map((subgroup) => [subgroup.id, true]))));
@@ -1957,7 +1963,7 @@ export function AccessoryPricingTable({
     setReferenceTargetGroupId(null);
     importedIdsRef.current = new Set();
     userEditedCurrencyItemIds.current = new Set();
-  }, [replacementGroups, replacementVersion]);
+  }, [replacementGroups, replacementVersion, markReplacementApplied]);
 
   useEffect(() => {
     onHasDataChange?.(hasMeaningfulAccessoryPricing(groups));

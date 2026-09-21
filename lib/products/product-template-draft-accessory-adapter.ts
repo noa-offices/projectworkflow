@@ -36,7 +36,7 @@ function mapItem(row: ProductTemplateDraftPricedRow | ProductTemplateDraftMatrix
   const dimension = row.dimensions?.rawText?.trim();
   const optionRole = (row as { role?: AccessoryItemRole }).role;
   const compatibleTargets = (row as { compatibleTargets?: StructuralSupportCompatibleTarget[] }).compatibleTargets;
-  return { id: row.id, item_name: row.displayName ?? row.label ?? row.id, supplier_price_list_code: primaryCode(row, warnings, itemKind), price, ...("prices" in row && row.prices ? { prices: row.prices } : {}), currency: row.currency ?? undefined, ...(dimension ? { dimension } : {}), specification: row.specification ?? "", ...(optionRole === "companion" || optionRole === "structural_support" ? { role: optionRole } : {}), ...(optionRole === "structural_support" && compatibleTargets?.length ? { compatible_targets: compatibleTargets } : {}), ...(row.importantRequirements?.length ? { importantRequirements: row.importantRequirements } : {}), is_active: true, sort_order: index };
+  return { id: row.id, item_name: row.displayName ?? row.label ?? row.id, supplier_price_list_code: primaryCode(row, warnings, itemKind), price, ...("prices" in row && row.prices ? { prices: row.prices } : {}), currency: row.currency ?? undefined, ...(dimension ? { dimension } : {}), specification: row.specification ?? "", ...(optionRole === "companion" || optionRole === "structural_support" ? { role: optionRole } : {}), ...(optionRole === "structural_support" && compatibleTargets?.length ? { compatible_targets: compatibleTargets } : {}), ...(row.importantRequirements?.length ? { importantRequirements: row.importantRequirements } : {}), ...((row as { unavailablePriceCategoryIds?: string[] }).unavailablePriceCategoryIds?.length ? { unavailable_price_categories: (row as { unavailablePriceCategoryIds?: string[] }).unavailablePriceCategoryIds } : {}), is_active: row.isActive !== false, sort_order: index };
 }
 
 function topAccessContext(value: string) {
@@ -68,7 +68,8 @@ function selectionIsSafe(group: ProductTemplateDraftOptionGroup) {
 function reviewedConfiguration(route: SmartSetupReviewRoutingPlan["routes"][number] | undefined) {
   const accessory = route?.accessory;
   if (!accessory) return undefined;
-  if (accessory.role === "accessory" && accessory.selection === "optional_multiple" && !accessory.rules.length) {
+  // A plain group (role accessory, no rules) needs no conditional configuration; "required_at_least_one" only carries group_is_required.
+  if (accessory.role === "accessory" && (accessory.selection === "optional_multiple" || accessory.selection === "required_at_least_one") && !accessory.rules.length) {
     return undefined;
   }
   const reviewedContract = smartReviewSelectionContract(accessory.selection);
@@ -96,7 +97,7 @@ export function mapDraftOptionGroupsToAccessories(draft: ProductTemplateDraft, r
       group_name: reviewedRoute?.groupName ?? group.label ?? group.id,
       ...(group.priceCategories?.length ? { price_categories: group.priceCategories } : {}),
       group_is_required: reviewedContract?.required ?? group.selection.mode === "required_choose_at_least_one",
-      is_active: true,
+      is_active: group.isActive !== false,
       sort_order: groupIndex,
       ...(configuration ? { conditional_configuration: configuration } : {}),
       items: group.items.map((item, itemIndex) => mapItem(item, item.price, itemIndex, warnings, "Accessory item")),
@@ -113,7 +114,7 @@ export function mapDraftOptionGroupsToAccessories(draft: ProductTemplateDraft, r
       id: route.matrix.id,
       group_name: reviewedRoute?.groupName ?? route.matrix.label ?? route.matrix.id,
       group_is_required: reviewedRoute?.accessory ? smartReviewSelectionContract(reviewedRoute.accessory.selection).required : false,
-      is_active: true,
+      is_active: route.matrix.isActive !== false,
       sort_order: optionGroups.length + routeIndex,
       conditional_configuration: reviewedRoute?.accessory ? { role: reviewedRoute.accessory.role, selection: smartReviewSelectionContract(reviewedRoute.accessory.selection).selection, applicability: reviewedRoute.accessory.rules.map(mapReviewedRule) } : { role: "companion", selection: "exactly_one", applicability: [] },
       items: route.matrix.rows.map((item, itemIndex) => mapItem(item, directMatrixRowPrice(item, column) ?? null, itemIndex, warnings, "Companion item")),

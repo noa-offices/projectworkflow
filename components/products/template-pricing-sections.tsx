@@ -41,6 +41,8 @@ type TemplatePricingSectionsProps = {
   templateCurrency?: string | null;
   variantPricingRows?: unknown;
   onSectionDataChange?: (section: SmartSetupPricingSection, hasData: boolean) => void;
+  /** Reports (section, version) once a Smart Setup section replacement has committed to that section form inputs. */
+  onReplacementCommitted?: (section: string, version: number) => void;
   workstationReplacement?: { pricing?: unknown; rows: DeskingSizePricingRow[]; subgroups?: BaseModelPricingSubgroup[]; version: number } | null;
   baseModelReplacement?: { groups: BaseModelPricingGroup<VariantPricingRow>[]; rows: VariantPricingRow[]; flatSubgroups?: BaseModelPricingSubgroup[]; version: number } | null;
   categoryReplacement?: { groups: CategoryPricingRow[]; version: number } | null;
@@ -145,6 +147,7 @@ export function TemplatePricingSections({
   variantPricingRows,
   onSectionDataChange,
   workstationReplacement,
+  onReplacementCommitted,
   baseModelReplacement,
   categoryReplacement,
   modularReplacement,
@@ -244,7 +247,7 @@ export function TemplatePricingSections({
         replacementPricing={workstationReplacement?.pricing}
         replacementRows={workstationReplacement?.rows}
         replacementSubgroups={workstationReplacement?.subgroups}
-        replacementVersion={workstationReplacement?.version}
+        replacementVersion={workstationReplacement?.version} onReplacementCommitted={(version) => onReplacementCommitted?.("workstation", version)}
         onHasDataChange={reportWorkstationData}
         onGroupsChange={setCurrentWorkstationPricingGroups}
       />
@@ -269,7 +272,7 @@ export function TemplatePricingSections({
         templateCurrency={templateCurrency}
         templateId={templateId}
         templateIsPersisted={templateIsPersisted}
-        replacementVersion={baseModelReplacement?.version}
+        replacementVersion={baseModelReplacement?.version} onReplacementCommitted={(version) => onReplacementCommitted?.("baseModel", version)}
         replacementRows={baseModelReplacement?.rows}
         replacementGroups={baseModelReplacement?.groups}
         replacementFlatSubgroups={baseModelReplacement?.flatSubgroups}
@@ -300,7 +303,7 @@ export function TemplatePricingSections({
         rows={accessoryPricingRows}
         templateCurrency={templateCurrency}
         replacementGroups={accessoryReplacement?.groups}
-        replacementVersion={accessoryReplacement?.version}
+        replacementVersion={accessoryReplacement?.version} onReplacementCommitted={(version) => onReplacementCommitted?.("accessory", version)}
         onHasDataChange={reportAccessoryData}
         templateId={templateId}
         templateIsPersisted={templateIsPersisted}
@@ -326,7 +329,7 @@ export function TemplatePricingSections({
         rows={categoryPricingRows}
         templateCurrency={templateCurrency}
         replacementGroups={categoryReplacement?.groups}
-        replacementVersion={categoryReplacement?.version}
+        replacementVersion={categoryReplacement?.version} onReplacementCommitted={(version) => onReplacementCommitted?.("category", version)}
         onHasDataChange={reportCategoryData}
         templateId={templateId}
         templateIsPersisted={templateIsPersisted}
@@ -340,7 +343,7 @@ export function TemplatePricingSections({
       rows={categoryPricingRows}
       templateCurrency={templateCurrency}
       replacementGroups={modularReplacement?.groups}
-      replacementVersion={modularReplacement?.version}
+      replacementVersion={modularReplacement?.version} onReplacementCommitted={(version) => onReplacementCommitted?.("modular", version)}
       onHasDataChange={reportModularData}
       onGroupsChange={setCurrentModularPricingGroups}
       templateId={templateId}

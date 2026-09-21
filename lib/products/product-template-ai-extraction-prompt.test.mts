@@ -324,8 +324,8 @@ test("AI extraction prompt preserves the approved ProductTemplateDraft v1 extrac
 });
 
 test("focused prompts retain the v1 contract, price safety, source fidelity, and relevant target", () => {
-  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
-  const targets = { full: "Full Product / Complete Extraction", base_model: "pricing.baseModelRows", workstation: "pricing.workstationRows", category_matrix: "pricing.priceMatrices", modular: "pricing.modularGroups", accessories: "optionGroups", product_details: "Product Details / Specifications", materials: "materialSuggestions", chair_seating: "EXTRACTION FOCUS: Chair & Seating", sofa_lounge: "EXTRACTION FOCUS: Sofas / Lounge / Armchairs", meeting_conference: "EXTRACTION FOCUS: Meeting / Conference Tables", storage_cabinets: "EXTRACTION FOCUS: Storage / Cabinets / Credenzas" } as const;
+  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  const targets = { full: "Full Product / Complete Extraction", base_model: "pricing.baseModelRows", workstation: "pricing.workstationRows", screens: "EXTRACTION FOCUS: Screens / Dividers", category_matrix: "pricing.priceMatrices", modular: "pricing.modularGroups", accessories: "optionGroups", product_details: "Product Details / Specifications", materials: "materialSuggestions", chair_seating: "EXTRACTION FOCUS: Chair & Seating", sofa_lounge: "EXTRACTION FOCUS: Sofas / Lounge / Armchairs", meeting_conference: "EXTRACTION FOCUS: Meeting / Conference Tables", storage_cabinets: "EXTRACTION FOCUS: Storage / Cabinets / Credenzas" } as const;
   extractionPromptFocuses.forEach((focus) => {
     const prompt = getProductTemplateAiExtractionPrompt(focus);
     assert.ok(prompt.includes("ProductTemplateDraft v1"));
@@ -340,8 +340,24 @@ test("focused prompts retain the v1 contract, price safety, source fidelity, and
   assert.ok(getProductTemplateAiExtractionPrompt("accessories").includes("Do not invent conditional rules"));
 });
 
+test("Screens / Dividers focus prioritizes screen-specific source evidence without duplicating the global contract", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "EXTRACTION FOCUS: Screens / Dividers",
+    "front, lateral/side, desk-mounted, bench, freestanding/desktop, and floor screens/dividers",
+    "acoustic, fabric, felt, glass, and melamine variants",
+    "direct-priced SKUs; genuine upholstery category matrices",
+    "mounting brackets/stirrups; included versus separately required hardware",
+    "exact dimensions including nominal-versus-actual widths",
+    "manufacturer compatibility evidence; and finish-code/composed supplier-code evidence",
+    "Apply the global Screen Catalogue Extraction rules; do not duplicate them here.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens focus to include: ${expected}`));
+  assert.ok(prompt.includes("ProductTemplateDraft v1"));
+  assert.ok(prompt.includes("SCREEN CATALOGUE EXTRACTION"));
+});
+
 test("base model focus adds desk safeguards without changing focus registration or generic behavior", () => {
-  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
   const prompt = getProductTemplateAiExtractionPrompt("base_model");
   [
     "Focus on directly priced models, variants, configurations, dimensions",
@@ -835,7 +851,7 @@ test("Meeting extraction classifies mixed Bench and Meeting pages by rendered se
     "add extractionWarning/manual review when the apparent same SKU has different price or dimensions",
     "Extensions for Meeting Tables",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected mixed-page rule: ${expected}`));
-  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
 });
 
 test("matrix availability contract keeps proven N/A distinct from missing, zero, and sibling prices", () => {
@@ -847,20 +863,22 @@ test("matrix availability contract keeps proven N/A distinct from missing, zero,
     "Never infer N/A from every blank, poor scan/OCR, or uncertain extraction",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected matrix availability rule: ${expected}`));
   assert.ok(prompt.includes("An explicit printed 0 or clearly stated zero-cost/included option -> JSON number 0."));
-  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
 });
 
 test("prompt choosers expose only refined extraction focuses and preserve planning focuses", () => {
   const source = readFileSync("components/products/copy-ai-extraction-prompt.tsx", "utf8");
   const [extractionChoices, planningSection] = source.split("const planningChoices");
   const visibleExtractionFocuses = [...extractionChoices.matchAll(/\{ focus: "([^"]+)", label:/g)].map((match) => match[1]);
-  assert.deepEqual(visibleExtractionFocuses, ["base_model", "workstation", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
-  ["Desks / Executive Desks", "Workstations / Bench Systems", "Chair & Seating", "Sofas / Lounge / Armchairs", "Meeting / Conference Tables", "Storage / Cabinets / Credenzas"].forEach((label) => assert.ok(extractionChoices.includes(`label: "${label}"`)));
+  assert.deepEqual(visibleExtractionFocuses, ["base_model", "workstation", "screens", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  ["Desks / Executive Desks", "Workstations / Bench Systems", "Screens / Dividers", "Chair & Seating", "Sofas / Lounge / Armchairs", "Meeting / Conference Tables", "Storage / Cabinets / Credenzas"].forEach((label) => assert.ok(extractionChoices.includes(`label: "${label}"`)));
   ["Base / Model Pricing", "Category / Matrix Pricing", "Full Product / Complete Extraction", "Workstation Pricing", "Modular Pricing", "Accessories / Configuration Only", "Product Details / Specifications", "Materials / Finishes"].forEach((label) => assert.ok(!extractionChoices.includes(`label: "${label}"`)));
   assert.ok(extractionChoices.includes("Extract sofas, lounge armchairs, modular seating, upholstery pricing and related lounge configuration."));
   assert.ok(extractionChoices.includes("Extract complete meeting tables, terminal/intermediate systems, top-access and related cable management."));
   assert.ok(extractionChoices.includes('{ focus: "workstation", label: "Workstations / Bench Systems"'));
   assert.ok(extractionChoices.includes("Plan and extract workstation desks, benches, clusters, screens, required structural companions, cable management, and related storage."));
+  assert.ok(extractionChoices.includes('{ focus: "screens", label: "Screens / Dividers"'));
+  assert.ok(extractionChoices.includes("Extract desk, bench, side, freestanding and floor screens, acoustic/fabric variants, mounting requirements, finish pricing and screen accessories."));
   assert.ok(planningSection.includes('{ focus: "desk_executive", label: "Desks / Executive Desks"'));
   assert.ok(planningSection.includes("Plan desk models, sizes, returns, service units, top-access and related desk configuration."));
   assert.ok(planningSection.includes('{ focus: "workstation", label: "Workstations / Bench Systems"'));
@@ -2619,7 +2637,7 @@ test("self-check and final checks 38-42 verify compatibleTargets usage without n
       "that support -> required companion and support -> compatible main products were kept as separate relationships",
       "that a main desk/bench row remained in Base/Model rather than being moved into optionGroups merely because it uses structural support",
       "38. When exact structural-support -> Base/Model compatibility is source-proven, the structural-support item carries compatibleTargets for those exact main rows.",
-      "39. Every extraction-time compatibleTargets entry uses kind \"base_model\", group_id \"" + LEGACY_BASE_MODEL_GROUP_ID + "\", and the exact already-emitted Base/Model row id.",
+      "39. Every extraction-time compatibleTargets entry uses kind \"base_model\"; group_id is the exact target Base/Model row groupId when that row has a native groupId, otherwise group_id is exactly \"" + LEGACY_BASE_MODEL_GROUP_ID + "\" for an ungrouped Base/Model row; row_id is the exact already-emitted Base/Model row id.",
       "40. No extraction-time compatibleTargets entry uses a Smart Setup subgroup id, generated auto subgroup id, supplier code, label, or invented row id.",
       "41. Structural-support -> required companion remains encoded with option_item conditionalConfiguration, while structural-support -> compatible main products remains encoded with compatibleTargets; the two relationships were not conflated.",
       "42. Base/Model rows compatible with structural support remained authoritative Base/Model rows and were not moved into optionGroups or Modular pricing merely because of that dependency.",
@@ -2810,4 +2828,79 @@ test("existing OXI, OXI_P, X3, Terra/Piem, structural_support and scale_with_tar
     "STRUCTURAL SUPPORT / COMPATIBLE MAIN PRODUCTS",
     "EXTRACTION-TIME COMPATIBILITY TARGETS",
   ]);
+});
+
+test("screen catalogue contract preserves source truth without inventing unsupported runtime relationships", () => {
+  const required = [
+    "SCREEN CATALOGUE EXTRACTION",
+    "front, lateral/side, desk-mounted, bench, freestanding/desktop, floor, modesty",
+    "Each authoritative direct-priced screen SKU",
+    "Use pricing.priceMatrices only for a real source-proven screen row × price-category dimension",
+    "upholstery categories B/C/D/E/F/G/I",
+    "preserve each family in its correct pricing destination",
+    "INCLUDED: preserve it as specification/source evidence and never add a Required Companion",
+    "Art.881 OR Art.882",
+    "Art.880 PLUS one of Art.881/Art.882, emit TWO independent Required Companion groups",
+    "CONFIGURATION-DEPENDENT - MANUAL DECISION",
+    "only when linked",
+    "Do not create cross-template conditionalConfiguration rules",
+    "reusable Linked Product candidate; linking is not an extraction-time decision",
+    "COMPOSED SUPPLIER CODE - RUNTIME SUPPORT REQUIRED",
+    "actual 1725 mm screen for an 1800 mm desk",
+    "direct-priced screens stayed Base/Model; real upholstery columns stayed Matrix",
+  ];
+
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    required.forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} screen contract to include: ${expected}`));
+    assert.ok(prompt.indexOf("SCREEN CATALOGUE EXTRACTION") < prompt.indexOf("EXTRACTION FOCUS:"), `Expected screen contract before ${focus} focus`);
+  });
+});
+
+test("screen catalogue contract structurally enforces supplied hardware, cover quantities, code warnings, and source-page scope", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "importantRequirements alone is insufficient: MUST emit row-specific conditionalConfiguration",
+    "Use role \"companion\", required true, visible true, and one applicability rule per exact target row.",
+    "outer selection \"required_choose_at_least_one\", conditionalConfiguration.selection \"exactly_one\", and source-supported allowed_item_ids [\"art-881\", \"art-882\"]",
+    "TWO independent Required Companion groups: one for Art.880 and one exactly-one alternatives group for Art.881/Art.882",
+    "Use fixed_quantity: 1 for a one-bar row and fixed_quantity: 2 for a two-bar row only when the source proves that count.",
+    "every applicability rule MUST use allowed_item_ids to restrict that target row to the exact source-supported matching cover SKU or SKUs.",
+    "W100 one-bar screen -> allowed_item_ids contains only the W100 cover; fixed_quantity: 1",
+    "W100 two-bar screen -> allowed_item_ids contains only the W100 cover; fixed_quantity: 2",
+    "conditionalConfiguration.selection = \"exactly_one\"",
+    "NEVER emit scale_with_target_quantity for base_model or price_matrix targets",
+    "never multiply its source price, synthesize a multi-cover SKU, or leave a source-required cover optional.",
+    "The extraction MUST include",
+    "this warning is mandatory, not optional.",
+    "sources[] may contain only supplied pages that materially contributed data to this extraction call.",
+    "A page referenced by a supplied page is not itself supplied evidence.",
+    "Every sources[].pageNumber is from the actual source batch supplied for this extraction call.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+  assert.ok(!prompt.includes("CONFIGURATION-DEPENDENT â€” MANUAL DECISION"));
+  assert.ok(!prompt.includes("COMPOSED SUPPLIER CODE â€” RUNTIME SUPPORT REQUIRED"));
+});
+
+test("screen catalogue contract preserves multiple required companions, unresolved mounting warnings, and supplied-page boundaries", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "If a screen row explicitly requires multiple separately priced components, every source-proven component relationship that the current schema can represent MUST be emitted structurally.",
+    "Angular felt screen",
+    "This MUST produce TWO separate Required Companion optionGroups/rules:",
+    "A. Art.880 group:",
+    "allowed_item_ids contains only art-880",
+    "B. Art.881 / Art.882 group:",
+    "allowed_item_ids = [art-881, art-882]",
+    "Do not leave either relationship only in importantRequirements.",
+    "W100 felt modesty",
+    "W120-W180 felt modesty",
+    "-> Art.888 required",
+    "Use separate Required Companion groups for independent required items. Do not leave Art.880 or Art.888 as prose-only requirements.",
+    "This warning is mandatory whenever at least one supplied screen mounting requirement remains unresolved because the current schema cannot express the deciding context.",
+    "Do not omit the warning merely because other screen rows have valid conditionalConfiguration.",
+    "sources[] MUST be a subset of that supplied batch.",
+    "A page outside the supplied batch must never appear in sources[]",
+    "For every sources[].pageNumber, verify that page number was explicitly included in the current extraction batch.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+  assert.ok(prompt.includes("CONFIGURATION-DEPENDENT - MANUAL DECISION"));
 });

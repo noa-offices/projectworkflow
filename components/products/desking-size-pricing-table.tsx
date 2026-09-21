@@ -1,5 +1,6 @@
 "use client";
 
+import { useReplacementCommitSignal } from "@/components/products/use-replacement-commit";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 import { resolveDefaultPricingCurrency } from "@/components/products/pricing-default-currency";
@@ -142,6 +143,7 @@ export function DeskingSizePricingTable({
   replacementRows,
   replacementSubgroups,
   replacementVersion,
+  onReplacementCommitted,
   templateCurrency,
   templateId,
   templateIsPersisted,
@@ -154,6 +156,7 @@ export function DeskingSizePricingTable({
   replacementRows?: DeskingSizePricingRow[] | null;
   replacementSubgroups?: WorkstationPricingGroup["subgroups"];
   replacementVersion?: number;
+  onReplacementCommitted?: (version: number) => void;
   templateCurrency?: string | null;
   templateId: string;
   templateIsPersisted: boolean;
@@ -178,6 +181,7 @@ export function DeskingSizePricingTable({
   const [referenceTargetGroupId, setReferenceTargetGroupId] = useState<string | null>(null);
   const persistedGroupIds = useMemo(() => persistedWorkstationPricingGroupIds(rows ?? []), [rows]);
   const appliedReplacementVersion = useRef<number | undefined>(undefined);
+  const markReplacementApplied = useReplacementCommitSignal(onReplacementCommitted);
   const userEditedCurrencyRowIds = useRef<Set<string>>(new Set());
   const previousDefaultCurrencyRef = useRef(
     resolveDefaultPricingCurrency({
@@ -207,13 +211,14 @@ export function DeskingSizePricingTable({
   useEffect(() => {
     if (!shouldApplyWorkstationReplacement(replacementVersion, appliedReplacementVersion.current)) return;
     appliedReplacementVersion.current = replacementVersion;
+    markReplacementApplied(replacementVersion);
     const nextRows = (replacementRows ?? []).map(normalizedRow);
     setGroups((current) => Array.isArray(replacementPricing)
       ? workstationPricingGroups<DeskingSizePricingRow>(replacementPricing).map((group) => ({ ...group, items: group.items.map((row, index) => normalizedRow({ ...row, id: row.id || `${group.id}-size-${index}` }, index)), ...(group.subgroups ? { subgroups: group.subgroups.map((subgroup) => ({ ...subgroup, row_ids: [...subgroup.row_ids] })) } : {}) }))
       : replaceWholeTemplateWorkstationRows(current, nextRows, LEGACY_WORKSTATION_GROUP_ID).map((group) => ({ ...group, ...(replacementSubgroups ? { subgroups: replacementSubgroups } : {}) })));
     setDraftRows({});
     setEditingRows({});
-  }, [replacementPricing, replacementRows, replacementSubgroups, replacementVersion]);
+  }, [replacementPricing, replacementRows, replacementSubgroups, replacementVersion, markReplacementApplied]);
 
   useEffect(() => {
     onHasDataChange?.(hasMeaningfulWorkstationPricing(flattenWorkstationPricingRows(effectiveGroups)));

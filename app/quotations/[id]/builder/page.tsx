@@ -35,7 +35,7 @@ import {
 } from "@/lib/product-price-check";
 import { findWorkstationPricingRow } from "@/lib/products/workstation-pricing-groups";
 import { flattenBaseModelPricingRows } from "@/lib/products/base-model-pricing-groups";
-import { currentSystemPricing } from "@/lib/quotations/native-system-base";
+import { currentSystemPricing, systemPricingQuantity } from "@/lib/quotations/native-system-base";
 import { QuotationSheetTable } from "@/components/quotations/quotation-sheet-table";
 import {
   FinishImagePreview,
@@ -780,7 +780,7 @@ function currentSourcePriceForItem({
   let systemTotal = 0;
   if (systemPricing.kind === "ok") {
     if (normalizeCurrency(systemPricing.currency ?? template.currency) !== sourceCurrency) return null;
-    systemTotal = quotationMoneyValue(systemPricing.price);
+    systemTotal = quotationMoneyValue(systemPricing.total);
   }
 
   return {
@@ -933,7 +933,7 @@ function sourcePriceReferenceForItem({
       const variantCurrency = normalizeCurrency(stringValue(variantData.currency) ?? template?.currency ?? quotationCurrency);
       // Native System / Base adds its own priced row to the reference (same currency only; mixed currency is covered by conversion totals).
       const systemRow = recordValue(recordValue(sourceData?.system_pricing)?.row);
-      const systemPrice = systemRow && normalizeCurrency(stringValue(systemRow.currency) ?? variantCurrency) === variantCurrency ? optionalNumericValue(systemRow.price) ?? 0 : 0;
+      const systemPrice = systemRow && normalizeCurrency(stringValue(systemRow.currency) ?? variantCurrency) === variantCurrency ? (optionalNumericValue(systemRow.price) ?? 0) * systemPricingQuantity(sourceData) : 0;
       reference.originalPrice = quotationMoneyValue(price + systemPrice);
       reference.originalCurrency = variantCurrency;
       reference.sourceType = reference.sourceType ?? sourceTypeLabel("variant_pricing");
