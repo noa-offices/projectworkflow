@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AccessoryPricingContractError, parseAccessoryPricingJson } from "./accessory-pricing-parser.js";
+import { AccessoryPricingContractError, accessoryPricingReferenceIssues, parseAccessoryPricingJson } from "./accessory-pricing-parser.js";
+import { parseAccessoryConfigurationGroups, serializeAccessoryConfigurationGroups } from "./accessory-conditional-configuration.js";
 import { BASE_MODEL_GROUP_PRICING_TYPE } from "./base-model-pricing-groups.js";
 import { LEGACY_WORKSTATION_GROUP_ID } from "./workstation-pricing-groups.js";
 
@@ -161,4 +162,45 @@ test("OXI ART.058 regression: fixed_quantity and scale_with_target_quantity surv
   assert.equal(rule?.fixed_quantity, 2);
   assert.equal(rule?.scale_with_target_quantity, true);
   assert.equal(parsed[0].items?.[0].price, 69, "Expected the real ART.058 unit price to be preserved, never a multiplied EUR 138 price");
+});
+
+// Final-state option_item reference regression: validates the exact FINAL AccessoryPricingTable groups
+// shape (Group A "og-custom-modules" / item "ogi-pcmpc004", Group B's Required Companion target pointing
+// at it) - never the Smart Setup draft - matching the client's finalAccessoryGroups check.
+function optionItemGroupA() {
+  return { id: "og-custom-modules", group_name: "Custom Modules", group_is_required: false, is_active: true, sort_order: 0, items: [{ id: "ogi-pcmpc004", item_name: "PC MPC 004", supplier_price_list_code: "PCMPC004", price: 150, currency: "EUR", specification: "Module", is_active: true, sort_order: 0 }] };
+}
+function optionItemGroupB(target: { kind: "option_item"; group_id: string; row_id: string }) {
+  return { id: "og-required-module-covers", group_name: "Required Module Covers", group_is_required: false, is_active: true, sort_order: 1, items: [{ id: "ogi-cover-001", item_name: "Cover", supplier_price_list_code: "COVER001", price: 20, currency: "EUR", specification: "Cover", is_active: true, sort_order: 0 }], conditional_configuration: { role: "companion" as const, selection: "at_least_one" as const, applicability: [{ target, required: true, visible: true }] } };
+}
+const optionItemTarget = { kind: "option_item", group_id: "og-custom-modules", row_id: "ogi-pcmpc004" } as const;
+
+test("CASE A: option_item reference resolves when both Group A and its referenced item are present", () => {
+  const groups = [optionItemGroupA(), optionItemGroupB(optionItemTarget)];
+  assert.deepEqual(accessoryPricingReferenceIssues(groups), []);
+});
+
+test("CASE B: option_item reference is blocked when Group A is absent from the final groups", () => {
+  const groups = [optionItemGroupB(optionItemTarget)];
+  const issues = accessoryPricingReferenceIssues(groups);
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].code, "unknown_option_item_reference");
+  assert.equal(issues[0].message, "Option Item reference 'og-custom-modules / ogi-pcmpc004' does not exist in the submitted pricing data.");
+});
+
+test("CASE C: option_item reference is blocked when the referenced item is absent from Group A", () => {
+  const groupAWithoutItem = { ...optionItemGroupA(), items: [] };
+  const groups = [groupAWithoutItem, optionItemGroupB(optionItemTarget)];
+  const issues = accessoryPricingReferenceIssues(groups);
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].code, "unknown_option_item_reference");
+  assert.equal(issues[0].message, "Option Item reference 'og-custom-modules / ogi-pcmpc004' does not exist in the submitted pricing data.");
+});
+
+test("CASE D: option_item reference stays valid through normalize/serialize round trip, matching AccessoryPricingTable's finalAccessoryGroups", () => {
+  const groups = [optionItemGroupA(), optionItemGroupB(optionItemTarget)];
+  const parsed = parseAccessoryConfigurationGroups(groups);
+  assert.equal(parsed.valid, true);
+  const roundTripped = parsed.valid ? serializeAccessoryConfigurationGroups(parsed.groups) : groups;
+  assert.deepEqual(accessoryPricingReferenceIssues(roundTripped), []);
 });

@@ -324,8 +324,8 @@ test("AI extraction prompt preserves the approved ProductTemplateDraft v1 extrac
 });
 
 test("focused prompts retain the v1 contract, price safety, source fidelity, and relevant target", () => {
-  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
-  const targets = { full: "Full Product / Complete Extraction", base_model: "pricing.baseModelRows", workstation: "pricing.workstationRows", screens: "EXTRACTION FOCUS: Screens / Dividers", category_matrix: "pricing.priceMatrices", modular: "pricing.modularGroups", accessories: "optionGroups", product_details: "Product Details / Specifications", materials: "materialSuggestions", chair_seating: "EXTRACTION FOCUS: Chair & Seating", sofa_lounge: "EXTRACTION FOCUS: Sofas / Lounge / Armchairs", meeting_conference: "EXTRACTION FOCUS: Meeting / Conference Tables", storage_cabinets: "EXTRACTION FOCUS: Storage / Cabinets / Credenzas" } as const;
+  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  const targets = { full: "Full Product / Complete Extraction", base_model: "pricing.baseModelRows", workstation: "pricing.workstationRows", screens: "EXTRACTION FOCUS: Screens / Dividers", category_matrix: "pricing.priceMatrices", modular: "pricing.modularGroups", accessories: "optionGroups", accessories_electrification: "EXTRACTION FOCUS: Accessories / Electrification", product_details: "Product Details / Specifications", materials: "materialSuggestions", chair_seating: "EXTRACTION FOCUS: Chair & Seating", sofa_lounge: "EXTRACTION FOCUS: Sofas / Lounge / Armchairs", meeting_conference: "EXTRACTION FOCUS: Meeting / Conference Tables", storage_cabinets: "EXTRACTION FOCUS: Storage / Cabinets / Credenzas" } as const;
   extractionPromptFocuses.forEach((focus) => {
     const prompt = getProductTemplateAiExtractionPrompt(focus);
     assert.ok(prompt.includes("ProductTemplateDraft v1"));
@@ -357,7 +357,7 @@ test("Screens / Dividers focus prioritizes screen-specific source evidence witho
 });
 
 test("base model focus adds desk safeguards without changing focus registration or generic behavior", () => {
-  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
   const prompt = getProductTemplateAiExtractionPrompt("base_model");
   [
     "Focus on directly priced models, variants, configurations, dimensions",
@@ -597,7 +597,7 @@ test("setup planning prompt is human-readable, source-faithful, and separate fro
 });
 
 test("planning focuses preserve general and chair planning and add desk-specific planning safely", () => {
-  assert.deepEqual(productTemplateSetupPlanningFocuses, ["general", "chair_seating", "desk_executive", "workstation", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  assert.deepEqual(productTemplateSetupPlanningFocuses, ["general", "chair_seating", "desk_executive", "workstation", "sofa_lounge", "meeting_conference", "storage_cabinets", "screens"]);
   const general = buildProductTemplateSetupPlanningPrompt();
   const chair = buildProductTemplateSetupPlanningPrompt("chair_seating");
   const desk = buildProductTemplateSetupPlanningPrompt("desk_executive");
@@ -851,7 +851,7 @@ test("Meeting extraction classifies mixed Bench and Meeting pages by rendered se
     "add extractionWarning/manual review when the apparent same SKU has different price or dimensions",
     "Extensions for Meeting Tables",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected mixed-page rule: ${expected}`));
-  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
 });
 
 test("matrix availability contract keeps proven N/A distinct from missing, zero, and sibling prices", () => {
@@ -863,15 +863,15 @@ test("matrix availability contract keeps proven N/A distinct from missing, zero,
     "Never infer N/A from every blank, poor scan/OCR, or uncertain extraction",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected matrix availability rule: ${expected}`));
   assert.ok(prompt.includes("An explicit printed 0 or clearly stated zero-cost/included option -> JSON number 0."));
-  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  assert.deepEqual(extractionPromptFocuses, ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
 });
 
 test("prompt choosers expose only refined extraction focuses and preserve planning focuses", () => {
   const source = readFileSync("components/products/copy-ai-extraction-prompt.tsx", "utf8");
   const [extractionChoices, planningSection] = source.split("const planningChoices");
   const visibleExtractionFocuses = [...extractionChoices.matchAll(/\{ focus: "([^"]+)", label:/g)].map((match) => match[1]);
-  assert.deepEqual(visibleExtractionFocuses, ["base_model", "workstation", "screens", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
-  ["Desks / Executive Desks", "Workstations / Bench Systems", "Screens / Dividers", "Chair & Seating", "Sofas / Lounge / Armchairs", "Meeting / Conference Tables", "Storage / Cabinets / Credenzas"].forEach((label) => assert.ok(extractionChoices.includes(`label: "${label}"`)));
+  assert.deepEqual(visibleExtractionFocuses, ["base_model", "workstation", "screens", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets", "accessories_electrification"]);
+  ["Desks / Executive Desks", "Workstations / Bench Systems", "Screens / Dividers", "Chair & Seating", "Sofas / Lounge / Armchairs", "Meeting / Conference Tables", "Storage / Cabinets / Credenzas", "Accessories / Electrification"].forEach((label) => assert.ok(extractionChoices.includes(`label: "${label}"`)));
   ["Base / Model Pricing", "Category / Matrix Pricing", "Full Product / Complete Extraction", "Workstation Pricing", "Modular Pricing", "Accessories / Configuration Only", "Product Details / Specifications", "Materials / Finishes"].forEach((label) => assert.ok(!extractionChoices.includes(`label: "${label}"`)));
   assert.ok(extractionChoices.includes("Extract sofas, lounge armchairs, modular seating, upholstery pricing and related lounge configuration."));
   assert.ok(extractionChoices.includes("Extract complete meeting tables, terminal/intermediate systems, top-access and related cable management."));
@@ -879,6 +879,8 @@ test("prompt choosers expose only refined extraction focuses and preserve planni
   assert.ok(extractionChoices.includes("Plan and extract workstation desks, benches, clusters, screens, required structural companions, cable management, and related storage."));
   assert.ok(extractionChoices.includes('{ focus: "screens", label: "Screens / Dividers"'));
   assert.ok(extractionChoices.includes("Extract desk, bench, side, freestanding and floor screens, acoustic/fabric variants, mounting requirements, finish pricing and screen accessories."));
+  assert.ok(extractionChoices.includes('{ focus: "accessories_electrification", label: "Accessories / Electrification"'));
+  assert.ok(extractionChoices.includes("Extract standalone and product-local accessories, cable management, electrification, modules, mounting requirements, compatibility and finish codes."));
   assert.ok(planningSection.includes('{ focus: "desk_executive", label: "Desks / Executive Desks"'));
   assert.ok(planningSection.includes("Plan desk models, sizes, returns, service units, top-access and related desk configuration."));
   assert.ok(planningSection.includes('{ focus: "workstation", label: "Workstations / Bench Systems"'));
@@ -887,8 +889,10 @@ test("prompt choosers expose only refined extraction focuses and preserve planni
   assert.ok(planningSection.includes("Plan sofas, lounge armchairs, modular seating, upholstery pricing and related lounge configuration."));
   assert.ok(planningSection.includes('{ focus: "meeting_conference", label: "Meeting / Conference Tables"'));
   assert.ok(planningSection.includes("Plan complete meeting tables, terminal/intermediate systems, top-access and related cable management."));
-  ["general", "chair_seating", "desk_executive", "workstation", "sofa_lounge", "meeting_conference", "storage_cabinets"].forEach((focus) => assert.ok(planningSection.includes(`focus: "${focus}"`)));
-  assert.deepEqual([...planningSection.matchAll(/\{ focus: "([^"]+)", label:/g)].map((match) => match[1]), ["general", "chair_seating", "desk_executive", "workstation", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
+  assert.ok(planningSection.includes('{ focus: "screens", label: "Screens / Dividers"'));
+  assert.ok(planningSection.includes("Plan desk, side, framed, acoustic, freestanding and floor screens, mounting systems, required companions and related accessories."));
+  ["general", "chair_seating", "desk_executive", "workstation", "screens", "sofa_lounge", "meeting_conference", "storage_cabinets"].forEach((focus) => assert.ok(planningSection.includes(`focus: "${focus}"`)));
+  assert.deepEqual([...planningSection.matchAll(/\{ focus: "([^"]+)", label:/g)].map((match) => match[1]), ["general", "chair_seating", "desk_executive", "workstation", "screens", "sofa_lounge", "meeting_conference", "storage_cabinets"]);
 });
 
 test("Storage/Cabinets extraction is conservative, row-authoritative, and isolated", () => {
@@ -2850,11 +2854,9 @@ test("screen catalogue contract preserves source truth without inventing unsuppo
     "direct-priced screens stayed Base/Model; real upholstery columns stayed Matrix",
   ];
 
-  extractionPromptFocuses.forEach((focus) => {
-    const prompt = getProductTemplateAiExtractionPrompt(focus);
-    required.forEach((expected) => assert.ok(prompt.includes(expected), `Expected ${focus} screen contract to include: ${expected}`));
-    assert.ok(prompt.indexOf("SCREEN CATALOGUE EXTRACTION") < prompt.indexOf("EXTRACTION FOCUS:"), `Expected screen contract before ${focus} focus`);
-  });
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  required.forEach((expected) => assert.ok(prompt.includes(expected), `Expected screens screen contract to include: ${expected}`));
+  assert.ok(prompt.indexOf("SCREEN CATALOGUE EXTRACTION") < prompt.indexOf("EXTRACTION FOCUS:"), "Expected screen contract before the screens focus");
 });
 
 test("screen catalogue contract structurally enforces supplied hardware, cover quantities, code warnings, and source-page scope", () => {
@@ -2903,4 +2905,1185 @@ test("screen catalogue contract preserves multiple required companions, unresolv
     "For every sources[].pageNumber, verify that page number was explicitly included in the current extraction batch.",
   ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
   assert.ok(prompt.includes("CONFIGURATION-DEPENDENT - MANUAL DECISION"));
+});
+
+test("screen mounting rule requires independent Required Companion groups for simultaneous requirements", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "Do not place all mounting hardware into one universal Required Companion optionGroup when the same screen row can require more than one independent mounting component simultaneously.",
+    "If selecting one screen row requires Component family A PLUS Component family B, then A and B MUST be separate optionGroups so both groups can become active for the same target row.",
+    "A single optionGroup with conditionalConfiguration.selection = \"exactly_one\" can never represent A PLUS B.",
+    "A. Front-stirrup group - items may include Art.880 and Art.462; use exact allowed_item_ids per target row.",
+    "B. Lateral-stirrup group - items Art.881 and Art.882; use conditionalConfiguration.selection = \"exactly_one\".",
+    "C. Felt alignment / central-stirrup group - item Art.888.",
+    "D. Freestanding-support group - item Art.886.",
+    "Do NOT create one global \"Mounting Stirrups & Brackets\" Required Companion group when doing so prevents simultaneous independent requirements.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("angular felt screen activates both front-stirrup and lateral-stirrup companion groups simultaneously", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "For a source-proven angular screen requiring front mounting PLUS a lateral mount choice: activate the Front-stirrup companion group for the exact angular row, restricted to Art.880; independently activate the Lateral-stirrup companion group for that same row, restricted to Art.881 and Art.882; both rules required = true and visible = true.",
+    "The same target row appearing in two different Required Companion groups is correct and necessary. Never reduce this to importantRequirements only.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("felt modesty pattern activates Art.880 group plus Art.888 group as separate row-specific rules", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "W100 felt modesty",
+    "-> Art.880 required",
+    "W120-W180 felt modesty",
+    "-> Art.888 required",
+    "Each requirement must have its own row-specific applicability rule. Do not merge Art.880 and Art.888 into one exactly-one group.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("unresolved screen mounting context mandates the exact CONFIGURATION-DEPENDENT warning and explicit page-range allow-list", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "If at least one extracted screen row has an explicit mounting requirement but its exact hardware choice cannot be structurally resolved because the decision depends on external desk/bench/system context, extractionWarnings MUST contain exactly \"CONFIGURATION-DEPENDENT - MANUAL DECISION\".",
+    "This warning is required even when other screen rows have successfully resolved conditionalConfiguration rules.",
+    "When the extraction call declares an explicit supplied page range, such as pages 9-31, treat that range as a hard allow-list for sources[].",
+    "No source entry may have pageNumber < first supplied page or pageNumber > last supplied page.",
+    "Do not use an adjacent continuation page such as page 32 merely because it is present in the same uploaded PDF or earlier conversation context.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("screen contract requires accounting for every authoritative priced row in a supplied commercial batch and caps confidence when incomplete", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "When supplied commercial pages contain multiple authoritative priced rows, the extractor MUST account for every materially distinct row/family in the supplied batch unless it explicitly explains why a row is excluded.",
+    "when the source provides separate authoritative supplier codes and prices.",
+    "verify each authoritative priced supplier code is either:",
+    "A. emitted in pricing/optionGroups, or",
+    "B. intentionally excluded with an extraction warning/reason",
+    "If many authoritative priced rows are omitted, do not claim high confidence.",
+    "Do not set confidence above 0.90 when authoritative priced rows from the supplied batch are knowingly incomplete or unresolved.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("screen contract routes installation rails and cable-tray mounting systems away from primary Base/Model", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "Do not route desk rails, cable-management rails, flap assemblies, screen-support rails, mounting assemblies, or cable-tray mounting systems to pricing.baseModelRows merely because they have their own supplier codes and prices.",
+    "then preserve them as configuration/support/accessory structures rather than primary Screen products.",
+    "Primary Base/Model should be used for the independently sold screen/divider SKU itself.",
+    "Only treat a rail/support assembly as a main Base/Model product if the source clearly presents it as the primary commercial product rather than an installation/support component.",
+    "an \"SCBD...\" style desk rail -> installation/support configuration",
+    "an \"SCBV...\" style cable-tray rail -> installation/support configuration",
+    "an \"SCSS...\" / \"SCSB...\" style flap + cable tray -> installation/support configuration",
+    "an \"SCRS...\" / \"SCBS...\" / \"SCRB...\" style framed-screen mounting/cable system -> installation/support configuration",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("screen requiring separately ordered mounting hardware cannot be downgraded to ordinary optional accessories", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "When a primary screen row explicitly states \"mounting brackets not included\" or \"must be ordered separately\", the extraction MUST NOT leave all compatible mounting hardware as ordinary optional accessories if the source proves the screen cannot be installed without separate mounting hardware.",
+    "preserve the mounting-system items; keep the main screen as the primary Base/Model row; preserve the \"mounting required separately\" requirement; emit \"CONFIGURATION-DEPENDENT - MANUAL DECISION\"; do NOT invent one universal mounting SKU; and do NOT downgrade the relationship to a normal optional accessory.",
+    "If exact applicability can be expressed safely with current schema and supplied evidence, use row-specific Required Companion rules instead.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("included mounting hardware rows must remain distinct from required-separate rows without a duplicate charge", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "INCLUDED MOUNTING HARDWARE MUST SURVIVE EXTRACTION",
+    "that status MUST be preserved on the exact authoritative SKU row.",
+    "Do not omit such rows merely because a visually similar non-included family exists.",
+    "Do not add any separate required mounting charge to those included-hardware rows.",
+    "the extractor MUST preserve both commercial families independently.",
+    "verify that at least one INCLUDED-hardware row remains structurally distinct from otherwise-similar REQUIRED-SEPARATE-hardware rows when both are present in the supplied source.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("explicit discontinued and shortly-discontinued status must survive screen extraction", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "If the source explicitly labels a row/family THIS ITEM WILL SHORTLY BE DISCONTINUED, discontinued, obsolete, while stocks last, or no longer replenished, preserve that status on the affected row/family.",
+    "Do not silently drop the status.",
+    "preserve it in importantRequirements and/or extractionWarnings without removing the authoritative row.",
+    "Final check: every source-marked discontinued/shortly-discontinued SKU remains present with its status preserved.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("composed supplier-code warning requires explicit source proof of code composition, not finish/RAL/material codes alone", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "Emit \"COMPOSED SUPPLIER CODE - RUNTIME SUPPORT REQUIRED\" ONLY when the supplied source explicitly proves that the final commercial order code is formed by combining multiple code parts, for example base article code + finish/material suffix = complete order code.",
+    "Finish codes, RAL codes, colour codes, or material codes by themselves are NOT sufficient evidence of supplier-code composition.",
+    "Do not emit the composed-code warning merely because a row has a supplier code, finishes have their own codes, frame finishes use A/I/R, or RAL/NCS references exist.",
+    "The manufacturer must explicitly state or demonstrate the composition rule.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("PTS / non-currency screen pricing stays raw with currency null and requires a conversion warning", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "SCREEN PTS / NON-CURRENCY PRICING",
+    "preserve the raw numeric values exactly; keep currency null; do not assume EUR/AED/USD; and add an extraction warning explaining that a point-to-price conversion rule is required before treating the values as monetary prices.",
+    "Do not multiply or convert PTS during extraction.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("one screen extraction batch uses one consistent source page-numbering convention without weakening the supplied-page firewall", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "For sources[].pageNumber, use the page numbering system actually supplied for the current extraction batch consistently.",
+    "Do not mix PDF page index, printed catalogue page number, and earlier-conversation page numbering within one extraction.",
+    "If the supplied split PDF preserves printed catalogue numbers and the model uses those, use printed catalogue numbers consistently for every source in that batch.",
+    "This does not change the existing hard supplied-page firewall.",
+    "sources[] MUST be a subset of that supplied batch.",
+    "No source entry may have pageNumber < first supplied page or pageNumber > last supplied page.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("a discontinued marker between two families binds to the preceding family's visual table block, not parsed-text adjacency", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "When a discontinued / shortly-discontinued / obsolete / while-stocks-last notice appears between commercial families, bind the notice to the exact visual table/family block supported by its placement.",
+    "A status printed directly after the final rows of one family and before the heading/rows of the next family belongs to the preceding family unless the source explicitly indicates otherwise.",
+    "Do NOT attach a discontinued notice to the following family merely because PDF text extraction places the notice immediately before that family's text.",
+    "Use page layout, headings, row boundaries, spacing, and table grouping as evidence.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("discontinued status must never propagate into an adjacent family, and the binding self-check is mandatory", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "Never propagate one family's discontinued status into an adjacent family.",
+    "Final self-check: every discontinued status is attached to the exact visual family/table that the source marks, not merely the nearest row in parsed-text reading order.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("included mounting hardware cannot be inherited from an adjacent family", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "Mounting commercial status is family/row-specific source evidence.",
+    "Do NOT inherit mounting clamps included, brackets included, brackets not included, or mounting required separately from a preceding or following visually similar family.",
+    "If Family A explicitly says \"includes pair of mounting clamps\" and adjacent Family B does not state an included/separate mounting status, do not assume Family B has the same status.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("required-separate mounting hardware cannot be inherited from an adjacent family", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "Likewise, if another adjacent family says \"mounting brackets not included\", do not apply that requirement to Family B without exact source evidence.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("source-silent mounting status remains un-invented and is marked for review when necessary", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "When the exact family is silent: preserve the authoritative SKU/price normally; do not invent included hardware; do not invent a separately-required mounting component; preserve any broader installation guidance that is genuinely source-backed; mark the mounting relationship for review/manual decision if necessary.",
+    "Final self-check: every INCLUDED or REQUIRED-SEPARATE mounting statement must be supported by the exact target family/row source block.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("source-silent mounting status is explicitly declared UNKNOWN / UNSPECIFIED", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "SOURCE-SILENT MOUNTING STATUS IS NEUTRAL",
+    "If the exact visual commercial row/family block does NOT explicitly state an included or separately-required mounting status, mounting commercial status for that row/family is UNKNOWN / UNSPECIFIED.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("exact source-silent families must not receive included or required-separate mounting phrases without explicit block-level evidence", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "For an exact source-silent row/family, NEVER emit phrases such as:",
+    "- \"Includes mounting clamps\"",
+    "- \"Mounting brackets not included\"",
+    "- \"Mounting hardware required separately\"",
+    "unless that exact commercial row/family block visibly supports the statement.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("general installation diagrams and neighbouring families cannot establish row-level INCLUDED or REQUIRED-SEPARATE status", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "Do NOT derive row-level mounting commercial status from:",
+    "- a general installation diagram",
+    "- a family-wide installation page",
+    "- the previous commercial family",
+    "- the following commercial family",
+    "- page layout proximity",
+    "General installation guidance may still be preserved as configuration context, compatibility evidence, or extractionWarnings when genuinely supported, but it MUST NOT be rewritten as INCLUDED or REQUIRED-SEPARATE commercial status for a source-silent SKU family.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("page completeness requires exact authoritative supplier-code accounting, not merely appearing in sources[]", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "EXACT SUPPLIER-CODE ACCOUNTING BEFORE PAGE COMPLETENESS",
+    "A commercial page is complete only when EVERY authoritative priced supplier code visible on that page has been accounted for.",
+    "1. Read every commercial table on that supplied page.",
+    "2. Build an internal checklist of every authoritative priced supplier code.",
+    "A. emitted exactly once in the correct structure,",
+    "B. explicitly identified in extractionWarnings as not yet extracted.",
+    "A page appearing in sources[] does NOT prove that page is commercially complete.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("missing earlier supplier codes prevent claiming extraction complete through a later printed page", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "Never emit wording such as \"Extraction complete through printed page X\" unless every authoritative priced supplier code on every supplied commercial page up to X has been accounted for.",
+    "If any earlier supplied page still contains unextracted supplier codes: do NOT claim completion through a later page; identify the earliest incomplete printed page or commercial family; state that supplemental extraction is still required from that point.",
+    "Do not use family-level wording such as \"SCBD family extracted\" when only some supplier codes from that family were emitted. Completeness is evaluated at authoritative supplier-code row level, not merely family-name level.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("installation sibling families sharing the same mounting role may not be sampled for brevity", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "INSTALLATION FAMILY EXTRACTION MUST ALSO BE EXHAUSTIVE",
+    "When one supplied installation-options page contains several separately priced supplier-code families, preserve every authoritative priced family and every row.",
+    "- one-flap versus two-flap systems",
+    "- framed-screen mounting/cable assemblies",
+    "when other separately priced sibling families are visibly present.",
+    "Different supplier-code families with different commercial conditions remain separate option/configuration rows even when they perform a similar mounting function.",
+    "Do not sample sibling installation families for brevity.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("screen final check requires per-page code-by-code verification and exactly-once supplier-code emission", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "a source-silent mounting family did not inherit commercial mounting status from a neighbouring family or general installation diagram",
+    "every supplied commercial page was checked code-by-code, not merely listed in sources[]",
+    "every authoritative priced supplier code is emitted exactly once or named explicitly as still unextracted",
+    "no \"complete through page X\" warning is emitted while an earlier supplied page still has unaccounted authoritative supplier codes",
+    "separately priced sibling installation families were not sampled or collapsed merely because they share the same mounting role.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens contract to include: ${expected}`));
+});
+
+test("planning focus registry adds a dedicated Screens / Dividers focus", () => {
+  assert.ok(productTemplateSetupPlanningFocuses.includes("screens"), "Expected planning focus registry to include screens");
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  ["SCREENS / DIVIDERS PLANNING FOCUS", "SCREEN PRODUCT SETUP PLAN"].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning routes direct-priced SKUs to Base/Model and real upholstery categories to Matrix", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "Recommend Base / Model when the manufacturer publishes an authoritative direct price for each screen SKU/configuration",
+    "Do NOT recommend Matrix merely because several materials, widths, heights, finishes, or screen forms exist.",
+    "Recommend Category / Matrix only when the source contains a real commercial price-category dimension, typically screen model/size x fabric/upholstery category (B/C/D/E/F/G/I) with different prices.",
+    "Finish colours with the same price are NOT Matrix columns.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning forbids artificial template splitting for the mixed Base/Model + Matrix runtime gap", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "Do NOT split templates solely because today's Product Library cannot yet mix two supported pricing destinations",
+    "preserve that intended template structure in the plan and flag the runtime gap instead of splitting.",
+    "do NOT recommend artificial template splitting merely to avoid this limitation.",
+    "MIXED PRIMARY PRICING FAMILY SELECTION REQUIRED",
+    "Identify this as a generic runtime improvement, not a manufacturer-specific hack.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning keeps installation/mounting systems out of primary Base/Model", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "Desk rails, cable-management rails, flap assemblies, cable trays, mounting brackets, clamps, and similar installation systems are normally NOT primary Screen products.",
+    "Do not recommend Base/Model for installation systems merely because they have direct supplier codes and prices.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning distinguishes included versus required-separate mounting hardware", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "INCLUDED (for example \"supplied with mounting brackets\") stays included in the primary SKU with no extra Required Companion and no duplicate price",
+    "REQUIRED SEPARATELY (for example \"mounting brackets not included; order separately\") becomes a Required Companion when exact applicability can be represented safely, otherwise configuration-dependent/manual decision",
+    "Do not downgrade REQUIRED-SEPARATE hardware to an ordinary optional accessory.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning covers required alternative mounting rules and simultaneous required-component separation", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "For a pattern such as screen -> exactly one of Mount A / Mount B, recommend a Required Companion group with exactly_one selection and allowed compatible mounting items",
+    "For screen -> Mount A REQUIRED PLUS exactly one of Mount B / Mount C REQUIRED, recommend separate Required Companion groups",
+    "never recommend one global mounting group if doing so prevents independent requirements from being active simultaneously.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning routes unresolved configuration-dependent mounting to manual decision", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "If current ProjectWorkflow cannot express the condition exactly, planning must say MANUAL DECISION / CONFIGURATION-CONTEXT GAP rather than manufacture a universal Required Companion",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning preserves floor-screen linking and stabilizing-support context without inventing fixed rules", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "Treat floor screens as independently configurable Screen products.",
+    "linked screens -> hinge kit required",
+    "freestanding compositions -> stabilizing legs/flat bases",
+    "Do not recommend unconditional companion rules when those conditions are not represented by current runtime; use MANUAL DECISION / CONFIGURATION-CONTEXT GAP where necessary.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning flags dynamic supplier-code composition only when source-proven", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "DYNAMIC SUPPLIER CODE COMPOSITION REQUIRED",
+    "Do NOT recommend duplicate pricing rows for every finish, synthetic pre-composed SKUs, or manual price duplication by finish",
+    "Only flag this when manufacturer source explicitly proves code composition.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning handles PTS/point pricing without assuming currency", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "If source pricing is in PTS/points rather than currency, planning must explicitly state the source price basis is PTS, that no currency should be assumed, and that point-to-monetary conversion must be configured before quotation use.",
+    "Do not recommend treating PTS directly as EUR/AED/USD.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning identifies reusable Linked Product candidacy without duplicating pricing into desks", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "Identify when Screens is a good reusable Linked Product candidate.",
+    "Do NOT duplicate Screen SKUs/pricing into a desk template, make every Screen a desk-local accessory, create synthetic desk+screen SKUs, or automatically persist cross-template links during Planning.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning flags the linked-child full-configurator limitation as a later runtime improvement", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "Current known linked-product limitation: linked Product Templates can currently expose only a narrowed child configuration and do not reuse the full child Product Library configuration.",
+    "LINKED CHILD FULL CONFIGURATOR EXTENSION REQUIRED",
+    "do not block standalone Screen Product Setup because of this.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning output stays compact with the SCREEN PRODUCT SETUP PLAN structure", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "SCREEN PRODUCT SETUP PLAN",
+    "1. PRODUCT TEMPLATES",
+    "2. FAMILY / EXTRACTION ROADMAP",
+    "3. TEMPLATE STRUCTURE",
+    "4. SOURCE / EXTRACTION BATCHES",
+    "5. MANUAL DECISIONS",
+    "6. ARCHITECTURE GAPS",
+    "7. SEPARATE LATER",
+    "8. EXTRACTION / SOURCE WARNINGS",
+    "9. PLANNING RESULT",
+    "READY AFTER ARCHITECTURE GAP",
+    "NEED MORE SOURCE",
+    "Do NOT output long essays, implementation code, database schema, speculative redesign, or duplicated extraction JSON.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning output includes the dual page-numbering note before the compact plan", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "PAGE NUMBERING NOTE",
+    "[PDF / printed-page relationship, or \"Unavailable\" where not known]",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+  assert.ok(prompt.indexOf("PAGE NUMBERING NOTE") < prompt.indexOf("SCREEN PRODUCT SETUP PLAN"), "Expected the page numbering note before the compact plan");
+});
+
+test("screens planning output includes FAMILY / EXTRACTION ROADMAP and SOURCE / EXTRACTION BATCHES tables", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "| Family | Printed pages | PDF pages | Recommended setup | Extract separately? | Priority |",
+    "Use one row per true manufacturer Screen family.",
+    "Use only the existing Priority values: BEST FIRST TEST, Current, Next, Later.",
+    "| Batch | Section | Printed pages | PDF pages | Purpose |",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning output states manufacturer families and ProjectWorkflow consolidation separately", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "Manufacturer families:",
+    "- <source-defined family>",
+    "ProjectWorkflow consolidation:",
+    "- <why these manufacturer families belong in this Product Template>",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning output includes SEPARATE LATER and does not emit the generic PRODUCT 1 / PRODUCT 2 prose structure", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "7. SEPARATE LATER",
+    "nearby manufacturer families that should not enter the current Product Template, or None",
+    "Do not emit the separate generic PRODUCT 1 / PRODUCT 2 prose structure for Screens when this dedicated compact Screens structure is active.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning describes ordinary Base/Model organization as commercial family / visual subgroup, not Native System/Base", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "Where manufacturer commercial families are meaningful, recommend Base/Model commercial families / visual subgroups to keep the selector understandable.",
+    "These are ordinary Base/Model family/subgroup organization unless the source independently proves a genuine first-stage System/Base architecture.",
+    "Do NOT call an ordinary Screen family a native System/Base group.",
+    "Reserve Native System/Base only for the existing source-proven System/Base -> Main Product architecture",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+  assert.ok(!prompt.includes("recommend native Base/Model groups to keep the selector understandable"), "Expected the old native Base/Model group wording to be removed from Screens planning");
+});
+
+test("screens planning defines Planning Result precedence: NEED MORE SOURCE over architecture-gap readiness, READY requires complete-enough source", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "SCREEN PLANNING RESULT PRECEDENCE",
+    "1. NEED MORE SOURCE",
+    "Source incompleteness takes precedence over architecture-gap readiness.",
+    "2. READY AFTER ARCHITECTURE GAP",
+    "Use only when source coverage is sufficiently complete to define the intended Product Setup, but one or more real generic ProjectWorkflow runtime gaps must be implemented before that intended setup can work safely.",
+    "3. READY",
+    "Use when source coverage is sufficiently complete and the intended Product Setup can be represented safely with current ProjectWorkflow architecture.",
+    "A future optional enhancement such as richer Linked Product UX does not by itself force READY AFTER ARCHITECTURE GAP when the standalone Screens template is already usable.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning final source gate enforces cross-section consistency between roadmap, templates, and batches", () => {
+  const prompt = buildProductTemplateSetupPlanningPrompt("screens");
+  [
+    "every manufacturer family in FAMILY / EXTRACTION ROADMAP appears in exactly the intended Product Template, Separate Later, or an explicit source warning",
+    "no family marked Extract separately = Yes appears in another template's Add More batch",
+    "SOURCE / EXTRACTION BATCHES matches the template boundaries stated in PRODUCT TEMPLATES and TEMPLATE STRUCTURE",
+    "Base/Model visual family/subgroup organization was not confused with Native System/Base architecture",
+    "NEED MORE SOURCE takes precedence when commercial source coverage is still incomplete",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens planning prompt to include: ${expected}`));
+});
+
+test("screens planning preserves existing planning focuses for other product families", () => {
+  [
+    ["chair_seating", "CHAIR & SEATING PLANNING FOCUS"],
+    ["desk_executive", "DESKS / EXECUTIVE DESKS PLANNING FOCUS"],
+    ["workstation", "WORKSTATION / BENCH SYSTEMS PLANNING FOCUS"],
+    ["sofa_lounge", "SOFAS / LOUNGE / ARMCHAIRS PLANNING FOCUS"],
+    ["meeting_conference", "MEETING / CONFERENCE TABLES PLANNING FOCUS"],
+    ["storage_cabinets", "STORAGE / CABINETS / CREDENZAS PLANNING FOCUS"],
+  ].forEach(([focus, expected]) => assert.ok(buildProductTemplateSetupPlanningPrompt(focus as typeof productTemplateSetupPlanningFocuses[number]).includes(expected), `Expected ${focus} planning prompt to still include: ${expected}`));
+});
+
+test("1: Accessories / Electrification extraction focus exists", () => {
+  assert.ok(extractionPromptFocuses.includes("accessories_electrification"), "Expected extractionPromptFocuses to include accessories_electrification");
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  ["EXTRACTION FOCUS: Accessories / Electrification", "ACCESSORIES / ELECTRIFICATION CATALOGUE EXTRACTION"].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("2: standalone direct-priced accessories route to Base/Model", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "When an accessory is independently sold, directly priced, and commercially usable as its own quotation item, extract it as Base / Model.",
+    "monitor arms, desk lamps, CPU holders, footrests, waste bins, coat stands",
+    "Do NOT force independently sold accessories into optionGroups merely because the manufacturer catalogue calls them \"Accessories\".",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("3: product-local optional items route to optionGroups with the correct commercial role, only when a local parent/trigger exists", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "When an accessory exists specifically to be selected while configuring another product, route it to optionGroups ONLY when its parent/trigger can be represented inside the CURRENT ProductTemplateDraft, using the correct commercial role: Normal Accessory, Conditional Option, or Required Companion.",
+    "Do not convert every accessory catalogue item into a local option.",
+    "Examples of valid local triggers: an already-emitted Base/Model row; an already-emitted Matrix row; an already-emitted Modular row; an already-emitted Workstation row; an already-emitted optionGroups item.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("4: accessory -> required accessory via option_item targeting", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "ProjectWorkflow supports option_item targeting.",
+    "Monitor Arm -> Through-Desk Clamp required, or Data Module -> compatible Cover required, emit the required dependent item using target.kind = option_item.",
+    "Do not duplicate the parent accessory as a synthetic combined SKU.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("5: power unit -> module -> required cover chain stays authoritative, not flattened", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "A supported generic pattern is: Main Power Unit -> selectable connector/data module(s) -> required compatible cover/adapter for the selected module.",
+    "A. Independently sold Main Power Unit -> Base/Model direct-priced row.",
+    "B. Independently selectable USB / HDMI / RJ45 / Audio module -> optionGroups item.",
+    "C. Cover or adapter explicitly required because that exact module was selected -> Required Companion using target.kind = 'option_item' targeting that exact already-emitted module item.",
+    "This is one option_item-triggered required-companion relationship.",
+    "Do NOT flatten all possible combinations into synthetic SKU rows.",
+    "Do NOT pre-compose Power Unit + HDMI + Cover as one fake commercial SKU unless the manufacturer itself publishes that combination as an authoritative priced SKU.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("7b: no artificial priced 'slot' item is created from configuration capacity alone", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Do NOT manufacture an additional artificial \"Custom Module Slot\" priced item when the source only shows the slot/capacity as part of the Power Unit construction.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("8b: unsupported recursive electrification dependency chains remain forbidden", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Recognize configurable electrification without inventing arbitrary recursive dependency graphs.",
+    "Do NOT invent recursive chains such as Power Unit -> Slot -> Module -> Adapter -> Cover unless every independently priced commercial item and every dependency is explicitly source-proven AND supported by the current draft contract.",
+    "When deeper dependency behavior cannot be represented safely: preserve all authoritative commercial rows; preserve their source relationship; add \"CONFIGURATION-DEPENDENT - MANUAL DECISION\"; do not synthesize combined SKUs.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("6: multi-select accessories/modules preserve individual quantities and source-supported maximums", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "When source allows multiple distinct modules/components, use a multi-selection architecture.",
+    "Preserve multiple different items, individual quantity per item, and source-supported maximums where explicitly stated.",
+    "Do not force exactly_one unless source requires exactly one.",
+    "If source says \"up to 3 modules\", preserve that maximum.",
+    "Do not infer a maximum from a drawing alone.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("7: included hardware is preserved without a duplicate accessory charge", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "INCLUDED: explicitly supplied as part of the selected commercial item (for example mounting brackets included, clamp included, cables included, power lead included).",
+    "Do NOT create another priced accessory charge for an INCLUDED component.",
+    "PREPARED FOR: holes provided, cutout provided, pre-drilled, or provision for module — preserve preparation status and do NOT assume the accessory itself is included.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("1b: INCLUDED accessory facts belong in specification, never importantRequirements", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Preserve INCLUDED facts in specification.",
+    "Do NOT place a purely included fact in importantRequirements; importantRequirements is only for a separate actionable obligation or restriction.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("2b: 'Mounting brackets included' example does not create an obligation in importantRequirements", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Source: \"Mounting brackets included\"",
+    "Correct: specification = \"... Mounting brackets included.\" ; importantRequirements = []",
+    "Incorrect: importantRequirements = [\"Mounting brackets included\"]",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("4: an external desk/chair/product family cannot become an unscoped local optionGroup target", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "If the accessory belongs to an EXTERNAL Product Template or named external product family that is not represented in the current draft: do NOT invent an unscoped optionGroup applicability rule; do NOT create cross-template conditionalConfiguration;",
+    "Extraction must not pretend an external parent is a local target.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("5b: direct-priced external-compatible accessory commercial rows are preserved, not discarded, merely because the parent template is external", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "preserve the authoritative accessory SKU/code/price as commercial data when the supplied source directly prices it and it is commercially relevant to the Accessories catalogue;",
+    "preserve the external family compatibility/restriction in specification, planning evidence, linkedFamilySuggestions, or extractionWarnings as the existing contract permits;",
+    "add \"CONFIGURATION-DEPENDENT - MANUAL DECISION\" when configuration depends on that external context and cannot be safely represented.",
+    "Planning later decides Standalone Product, Include Locally in the parent template, Both, or Manual Decision.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("final accessories validation now also verifies local optionGroup parent/trigger scoping", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "product-local optionGroups were created only when their parent/trigger exists inside the current ProductTemplateDraft",
+    "external-product compatibility did not create an unscoped local option group.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("8: explicit required-separate items remain Required Companion, not downgraded", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "REQUIRED SEPARATE ITEM: explicit source wording such as must be ordered separately, always complete with, requires, or add Art.X — use Required Companion when exact applicability is safely representable.",
+    "If a module explicitly requires one cover, one of two compatible covers, an adapter, a clamp, or a fixing kit, extract the dependency structurally when supported.",
+    "Use separate Required Companion groups when independent components are simultaneously required.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("9: free-form attribute/external-context compatibility routes to MANUAL DECISION, never invented rules", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "If compatibility depends on a condition that is NOT represented by an exact current row/item identity, do not invent conditionalConfiguration.",
+    "desktop thickness = 18 mm, glass vs melamine top, external desk range X1/X3/X5, desk vs bench in another Product Template, mounting position, or external cable-tray state",
+    "flag \"CONFIGURATION-DEPENDENT - MANUAL DECISION\" unless the condition maps to a discrete extracted row/item in the current template",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("10: cross-template product-range compatibility stays evidence/planning guidance, never a local rule", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Accessories may explicitly support or exclude named product ranges.",
+    "Do NOT create cross-template conditional rules and do NOT duplicate external parent products into the Accessories template; preserve this as compatibility evidence / planning guidance.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("11: cutout/drilling services may be extracted as separate commercial items", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Some catalogues separately price factory cutout, drilling, routing, or hole preparation. Preserve these as commercial items when they have authoritative codes/prices.",
+    "Do NOT classify the cutout as INCLUDED when the source says \"cutout not included\".",
+    "If a specific accessory explicitly requires the cutout, use Required Companion / option_item dependency when safely representable.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("12: electrical market variants (Schuko/UNEL/UK/US) remain authoritative variants, not finishes", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Preserve market-specific variants such as Schuko, UNEL, UK, and US as authoritative separately priced variants when source gives different codes/prices.",
+    "Do not merge them into finishes.",
+    "Do not convert them into Category/Matrix unless the manufacturer genuinely uses a row × market-category price matrix.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("13: an authoritative zero price is preserved, never treated as missing", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "A source value of 0 is not null.",
+    "If an authoritative accessory row explicitly has 0 / 0.00 / 0 PTS, preserve zero.",
+    "Do not remove the row or convert zero to missing price.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("14: PTS/point pricing stays raw with currency null", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "If source prices are PTS / points, preserve numeric values exactly, keep currency null, do not assume EUR/AED/USD, and add a warning that point-to-price conversion is required.",
+    "Do not convert during extraction.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("15: composed supplier-code warning requires explicit source proof of composition", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Some accessory catalogues explicitly require base article code + finish code = complete commercial order code.",
+    "do NOT duplicate pricing rows per finish, do NOT invent concatenated codes, and add \"COMPOSED SUPPLIER CODE - RUNTIME SUPPORT REQUIRED\"",
+    "This warning is mandatory when explicit source evidence proves composition.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("16: finish codes alone do not trigger the composed supplier-code warning", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Finish codes by themselves are NOT sufficient evidence.",
+    "Distinguish finish/material code, supplier article code, and complete commercial order code.",
+    "Finish code alone does not justify a separate pricing row when price is the same.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("17: source-silent accessory commercial status cannot be inherited from an adjacent family", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Never inherit accessory commercial status from an adjacent family.",
+    "If Family A says \"brackets included\" and Family B is silent, do not mark Family B as included.",
+    "do not inherit required separately, optional, prepared for, discontinued, or compatible status from neighbouring rows/families",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("18: discontinued accessory rows remain present with status preserved", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Preserve source-marked discontinued, shortly discontinued, obsolete, or while stocks last status.",
+    "Do not remove authoritative commercial rows solely because they are discontinued; preserve the status/warning.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("19: every supplied priced accessory code must be accounted for exactly once or named unextracted", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "For every supplied commercial page, account for every authoritative priced supplier code.",
+    "Each must be emitted exactly once in pricing/optionGroups, or explicitly named as still unextracted in extractionWarnings.",
+    "Do not sample representative accessory rows.",
+    "Do not claim \"complete through page X\" while earlier supplied pages still contain unaccounted commercial codes.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("20: sources[] obeys the supplied-page firewall for Accessories / Electrification", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "sources[] must contain only pages supplied in the current extraction call.",
+    "Do not use adjacent PDF pages, previous conversation pages, or remembered catalogue pages.",
+    "If required context is outside the supplied batch, add a supplemental-extraction warning.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories / Electrification final validation checklist is present", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "standalone accessory SKUs were not forced into optionGroups",
+    "product-local accessories were not incorrectly made standalone rows",
+    "INCLUDED items are not double charged",
+    "PREPARED FOR is not treated as INCLUDED",
+    "required separate items remain required",
+    "option_item dependencies preserve accessory -> accessory relationships",
+    "configurable electrification was not flattened into fake SKU combinations",
+    "multi-select modules remain multi-select where source supports them",
+    "attribute/external conditions were not invented as row rules",
+    "cross-template compatibility remains evidence/manual guidance only",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories/Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories / Electrification preserves existing extraction focuses unchanged", () => {
+  [
+    ["screens", "SCREEN CATALOGUE EXTRACTION"],
+    ["base_model", "EXTRACTION FOCUS: Base / Model Pricing"],
+    ["workstation", "EXTRACTION FOCUS: Workstation Pricing"],
+    ["chair_seating", "EXTRACTION FOCUS: Chair & Seating"],
+    ["sofa_lounge", "EXTRACTION FOCUS: Sofas / Lounge / Armchairs"],
+    ["meeting_conference", "EXTRACTION FOCUS: Meeting / Conference Tables"],
+    ["storage_cabinets", "EXTRACTION FOCUS: Storage / Cabinets / Credenzas"],
+    ["accessories", "EXTRACTION FOCUS: Accessories / Configuration Only"],
+  ].forEach(([focus, expected]) => assert.ok(getProductTemplateAiExtractionPrompt(focus as typeof extractionPromptFocuses[number]).includes(expected), `Expected ${focus} extraction prompt to still include: ${expected}`));
+});
+
+test("prompt composition: Accessories / Electrification focus contains only its own dedicated contract, not the Screens contract", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "EXTRACTION FOCUS: Accessories / Electrification",
+    "ACCESSORIES / ELECTRIFICATION CATALOGUE EXTRACTION",
+    "STANDALONE VS PRODUCT-LOCAL ACCESSORIES",
+    "ACCESSORY COMMERCIAL STATUS",
+    "ACCESSORY -> REQUIRED ACCESSORY",
+    "CONFIGURABLE ELECTRIFICATION",
+    "FINAL ACCESSORIES VALIDATION",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+  [
+    "SCREEN CATALOGUE EXTRACTION",
+    "SCREEN PRICING",
+    "REQUIRED SCREEN COVER QUANTITIES",
+    "SCREEN CONTEXT, COMPATIBILITY, AND FLOOR COMPOSITIONS",
+    "SCREEN FINAL CHECK",
+  ].forEach((forbidden) => assert.ok(!prompt.includes(forbidden), `Expected Accessories / Electrification prompt to NOT include: ${forbidden}`));
+});
+
+test("prompt composition: Screens focus keeps the complete Screens contract and does not gain the Accessories contract", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("screens");
+  [
+    "SCREEN CATALOGUE EXTRACTION",
+    "SCREEN PRICING",
+    "SCREEN COMMERCIAL ROW COMPLETENESS",
+    "SCREEN INSTALLATION / MOUNTING SYSTEMS ARE NOT AUTOMATICALLY PRIMARY PRODUCTS",
+    "MOUNTING AND COMPONENT COMMERCIAL STATUS",
+    "REQUIRED SCREEN COVER QUANTITIES",
+    "SCREEN CONTEXT, COMPATIBILITY, AND FLOOR COMPOSITIONS",
+    "SCREEN FINISHES, CODES, DIMENSIONS, AND STATUS",
+    "SCREEN PTS / NON-CURRENCY PRICING",
+    "SCREEN SOURCE-BATCH PAGE FIREWALL",
+    "SCREEN FINAL CHECK",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Screens prompt to include: ${expected}`));
+  assert.ok(!prompt.includes("ACCESSORIES / ELECTRIFICATION CATALOGUE EXTRACTION"), "Expected Screens prompt to NOT include the Accessories / Electrification contract");
+});
+
+test("prompt composition: shared GLOBAL extraction contracts remain present in both the Screens and Accessories prompts", () => {
+  const shared = [
+    "GLOBAL EXTRACTION ARCHITECTURE DECISION CONTRACT",
+    "GLOBAL PRICING ROUTING ORDER",
+    "HARD FIELD SEPARATION",
+  ];
+  const screensPrompt = getProductTemplateAiExtractionPrompt("screens");
+  const accessoriesPrompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  shared.forEach((expected) => {
+    assert.ok(screensPrompt.includes(expected), `Expected Screens prompt to still include global contract: ${expected}`);
+    assert.ok(accessoriesPrompt.includes(expected), `Expected Accessories prompt to still include global contract: ${expected}`);
+  });
+});
+
+test("prompt composition: every other extraction focus still generates successfully and stays free of the Screens-specific contract", () => {
+  extractionPromptFocuses.forEach((focus) => {
+    const prompt = getProductTemplateAiExtractionPrompt(focus);
+    assert.ok(prompt.length > 0, `Expected ${focus} extraction prompt to generate non-empty output`);
+    if (focus === "screens") return;
+    assert.ok(!prompt.includes("SCREEN CATALOGUE EXTRACTION"), `Expected ${focus} extraction prompt to NOT include the Screens-specific contract`);
+  });
+});
+
+test("Accessories: accessory visual block binding prevents cross-assigning neighbouring technical facts", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "ACCESSORY VISUAL BLOCK BINDING",
+    "Do NOT transfer a technical fact from a preceding or following accessory row merely because parsed PDF text places the fact nearby.",
+    "A fact shown inside Product A's visual block belongs to Product A unless the source explicitly states that it applies more broadly.",
+    "Final check: Technical facts from neighbouring accessory rows were not cross-assigned.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: variable/range dimensions become null structured fields, never collapsed to a min/max scalar", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "VARIABLE / RANGE DIMENSIONS",
+    "NEVER convert that range to the minimum value, the maximum value, an average, or any arbitrary endpoint as though it were a fixed product dimension.",
+    "set the structured dimension field to null; preserve the complete exact range in dimensions.rawText;",
+    "Correct structured dimensions: width = null, depth = 24, height = null",
+    "Do NOT store width = 26.4 or height = 54 merely because they are the upper limits.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected extraction prompt to include: ${expected}`));
+});
+
+test("Accessories: source-supported sibling count/size distinctions remain visible in displayName/specification", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "ACCESSORY SIBLING DISTINCTIONS",
+    "When sibling accessory rows are differentiated by a clearly source-supported commercial count, width, size, capacity, hook count, tray width, or similar identity, preserve that distinction in displayName and specification.",
+    "\"Wall Clothes Hanger - 2 Hooks\"",
+    "\"Wall Clothes Hanger - 3 Hooks\"",
+    "\"Keyboard Tray - W56 cm\"",
+    "\"Keyboard Tray - W58 cm\"",
+    "Do NOT reduce a clearly differentiated sibling row to a generic name when doing so loses its source-supported commercial distinction.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected extraction prompt to include: ${expected}`));
+});
+
+test("Accessories: a collection/range name alone does not populate supplierName", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "COLLECTION / RANGE NAME VS SUPPLIER IDENTITY",
+    "Do NOT treat a collection name, catalogue range name, chapter name, or product-family heading as supplierName merely because it appears prominently on every supplied page.",
+    "preserve the collection/range in templateName, description, or other source-faithful family fields; set supplierName = null.",
+    "Only populate supplierName when the supplied source itself visibly identifies the manufacturer/supplier.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected extraction prompt to include: ${expected}`));
+});
+
+test("Accessories: different finish sets must not be merged and presented as universally available", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "ACCESSORY FINISH AVAILABILITY SCOPE",
+    "do NOT create one broad materialSuggestion whose wording implies that every listed finish applies to every accessory.",
+    "do not merge A + B and present the union as universally available.",
+    "Do NOT state or imply universal finish availability unless the supplied source proves it.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: final validation explicitly checks JSON escaping for inch marks and quoted product/model names", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "ACCESSORIES JSON ESCAPING CHECK",
+    "Manufacturer inch marks and quoted product/model names MUST be valid JSON string content.",
+    "Example source text: 15\" to 24\"",
+    "Valid JSON string content: 15\\\" to 24\\\"",
+    "Example source product name: PORTA-ABITO \"LOOP\"",
+    "Valid JSON: \"label\": \"PORTA-ABITO \\\"LOOP\\\"\"",
+    "Never return an otherwise-correct Accessories extraction that fails JSON.parse because an inch mark or quoted manufacturer/model name was copied without JSON escaping.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: an explicit JSON.parse hard gate is required immediately before returning the response", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "ACCESSORIES JSON.PARSE HARD GATE",
+    "Immediately before returning the final Accessories JSON, perform this final logical validation: (1) treat the complete response as the exact text that will be passed to standard JSON.parse;",
+    "if the response would fail JSON.parse, DO NOT return it until corrected.",
+    "THE EXACT RETURNED ACCESSORIES RESPONSE MUST BE ACCEPTED BY JSON.parse.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: raw embedded double quotes are stated as invalid final JSON, escaped quotes as valid final JSON", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Examples of INVALID final JSON:",
+    "\"specification\": \"Suitable for 15\" to 24\" screens.\"",
+    "\"label\": \"PORTA-ABITO \"LOOP\"\"",
+    "Examples of VALID final JSON:",
+    "\"specification\": \"Suitable for 15\\\" to 24\\\" screens.\"",
+    "The JSON escaping requirement applies to the FINAL SERIALIZED JSON, not merely to the internal meaning of the string.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: multi-product visual fact ownership is checked row-by-row, and parsed-text sequence alone is insufficient", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "SAME-PAGE FACT OWNERSHIP MUST BE VERIFIED ROW BY ROW",
+    "When a page contains Product A, Product B, and Product C vertically in separate commercial blocks, do not assign a technical fact to a product until its visual ownership is confirmed.",
+    "FACT -> identify the illustration/text block containing the fact -> identify the commercial supplier-code row belonging to that block -> attach the fact ONLY to that row.",
+    "Never use parsed-text sequence alone.",
+    "If one fact visually sits below Product A's commercial row but inside Product B's illustrated block, it belongs to Product B.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: uncertain fact ownership is omitted/warned rather than copied to both neighbouring products", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "If ownership cannot be established confidently: omit the uncertain fact from the row specification; add an extractionWarning if commercially important.",
+    "Do not copy the fact to both neighbouring products as a hedge.",
+    "Final mandatory check: For every multi-product source page, re-check each row's specification against its own visual block before returning JSON.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: every sibling row must preserve visible count/size/configuration distinctions", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "When two or more authoritative accessory rows share the same generic source product heading but the source visibly distinguishes them by hook count, number of positions, width, capacity, size, or configuration, the extraction MUST preserve those distinguishing facts for EVERY sibling row.",
+    "Before returning the family: (1) compare sibling displayNames; (2) compare sibling dimensions; (3) verify that each visible source distinction is retained;",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: a generic duplicate sibling name with missing dimensions is explicitly invalid when source distinctions are visible", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Row A: Wall Clothes Hanger - 2 Hooks, W35 cm",
+    "Row B: Wall Clothes Hanger - 3 Hooks, W52 cm",
+    "Returning Row B only as \"Wall Clothes Hanger\" with dimensions = null is INVALID when 3 hooks and W52 cm are visibly supplied.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: FINAL ACCESSORIES VALIDATION contains the hard-fail-before-return block", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "HARD FAIL BEFORE RETURN:",
+    "Do not return the Accessories JSON until all are true: the exact serialized response passes JSON.parse; no unescaped inch mark or quoted manufacturer/product name remains inside a JSON string;",
+    "every technical fact on a multi-product page has been bound to its own visual commercial block;",
+    "no VESA, clamp range, desktop-thickness range, load, cable, plug, or other technical fact leaked into an adjacent product;",
+    "every visibly supplied sibling count/size/configuration distinction is preserved in the relevant row.",
+    "If any one of these checks fails, correct the draft before output.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: ordinary standalone accessory families must omit groupId/groupLabel", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Ordinary standalone accessory commercial families remain ordinary pricing.baseModelRows.",
+    "Do NOT use pricing.baseModelRows[].groupId or groupLabel merely to organize Accessories into visual families such as Monitor Arms, CPU Holders, Cable Management, Waste Bins, Clothes Hangers, Desk Accessories, or Electrification.",
+    "For ordinary Accessories: emit normal Base/Model rows with NO groupId; emit NO groupLabel; emit NO role = 'system_base'; preserve manufacturer family identity through labels/specification/source evidence; Smart Setup / Planning may create visual commercial families/subgroups later.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: groupId/groupLabel remain reserved for genuine Native System/Base only", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "pricing.baseModelRows[].groupId and groupLabel are reserved for the existing Native System/Base architecture only, where the source proves a genuine first-stage priced System/Base selection with downstream Main Products.",
+    "Do not use Native System/Base metadata as a generic visual-grouping mechanism.",
+    "Also verify that ordinary Accessories Base/Model rows do NOT contain groupId or groupLabel merely for visual/commercial family grouping.",
+    "groupId/groupLabel are present only if the manufacturer source independently proves genuine Native System/Base architecture.",
+    "Examples such as Monitor Arms, CPU Holders, Waste Bins, Clothes Hangers, Cable Management, and Desk Accessories are ordinary commercial families, not System/Base groups by name alone.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: visual family organization is deferred to Smart Setup/Planning, not extraction-time grouping metadata", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Smart Setup / Planning may create visual commercial families/subgroups later.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: composed supplier-code warning requires the composition instruction to be visible in the CURRENT supplied batch", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "The explicit code-composition instruction itself must be visibly present in the CURRENT supplied extraction batch.",
+    "Do not emit \"COMPOSED SUPPLIER CODE - RUNTIME SUPPORT REQUIRED\" merely because current pages show article codes; current pages show finish codes; an earlier catalogue page or previous extraction batch proved composition.",
+    "If the current supplied batch does not contain the explicit composition instruction, omit the warning and request/support that rule only when the relevant page is supplied.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: earlier-batch composition evidence alone cannot trigger the composed supplier-code warning", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  assert.ok(prompt.includes("an earlier catalogue page or previous extraction batch proved composition."), "Expected the prompt to explicitly reject earlier-batch-only evidence as sufficient");
+});
+
+test("Accessories: templateCode and internalSelectionName must not be invented", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Do not invent template.templateCode or template.internalSelectionName.",
+    "If the current manufacturer source does not explicitly provide an authoritative template/product-family code suitable for templateCode, use null.",
+    "If internalSelectionName is not source-proven or supplied by ProjectWorkflow context for this extraction call, use null.",
+    "Generated convenience identifiers belong in row/group IDs, not authoritative templateCode/internalSelectionName fields.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: W/D/H/CODE/PTS strict column binding exists", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "ACCESSORY COMMERCIAL TABLE COLUMN BINDING",
+    "When the source presents a dense commercial table with columns such as W | D | H | CODE | PTS or equivalent translated headings, bind values strictly by the visible column headers and row alignment.",
+    "For every commercial row, read in this order: (1) W / width; (2) D / depth; (3) H / height; (4) CODE / supplier article code; (5) PTS / price.",
+    "Never shift a numeric value into an adjacent field.",
+    "using PTS as width, depth, or height; using width as price; using height as price; moving one row's price into the next row; reversing W/D/H merely because the product illustration is rotated; assuming the largest number is the price; assuming the final numeric value before CODE is price.",
+    "The visible table column boundaries are authoritative.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: zero PTS remains zero and a neighbouring row's price cannot replace it", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "ZERO PRICE COLUMN VERIFICATION",
+    "When the PTS/price column visibly contains 0, 0.0, or 0.00, preserve price = 0.",
+    "Do not: replace it with a neighbouring row's price; replace it with a width/height value; treat it as missing; skip the row.",
+    "For every zero-price row, explicitly re-check the same visual row across CODE -> PTS before returning JSON.",
+    "A visible zero price is a hard commercial value.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: O vs 0 supplier-code fidelity is explicitly required, and visible table wins over conflicting parsed text", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "SUPPLIER CODE CHARACTER FIDELITY",
+    "Supplier article codes must preserve every character exactly as printed.",
+    "letter O vs digit 0; letter I vs digit 1; letter S vs digit 5; letter B vs digit 8.",
+    "Never normalize or guess these characters.",
+    "If a source code visibly contains ...O..., do not emit ...0..., and vice versa.",
+    "When OCR/parsed text conflicts with the visible table image, use the visible commercial table as authority.",
+    "Do not silently repair a supplier code by pattern matching against neighbouring codes.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: a PTS value cannot be reused as a dimension, nor a dimension reused as PTS", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "NUMERIC CROSS-FIELD COLLISION CHECK",
+    "Before returning each row, verify that a numeric source value was not reused in two unrelated fields merely because of table-reading ambiguity.",
+    "Example: if source shows W 12.5, D 12.5, H blank, CODE ABC123, PTS 211, then: width = 12.5; depth = 12.5; height = null; price = 211.",
+    "Do NOT emit height = 211 or price = 211 as the same value unless the source independently prints 211 in both columns.",
+    "Likewise, do not use a PTS value as a dimension or a dimension as PTS.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: W/D/H direct-order mapping to width/depth/height exists, with no reordering by orientation or convention", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "ACCESSORY TABLE DIMENSION ORDER",
+    "For Accessories commercial tables whose visible headers are W / D / H, map them directly to width / depth / height in that exact order.",
+    "Do not reorder axes based on product orientation, illustration, English prose word order, or assumed furniture conventions.",
+    "If the source row is 27 | 27 | 48 under W | D | H, emit width = 27, depth = 27, height = 48, not any permutation of those values.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected extraction prompt to include: ${expected}`));
+});
+
+test("Accessories: every used source page must appear in sources[]", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "SOURCE PAGE ACCOUNTING MUST MATCH EMITTED ROWS",
+    "Every emitted commercial row must be backed by at least one page present in sources[] from the CURRENT supplied batch.",
+    "If rows from supplied PDF page 10 are extracted, sources[] must include that page.",
+    "extract rows from a page and omit that page from sources[]; claim a 9-page source list while emitting commercial data from page 10; use remembered/adjacent pages.",
+    "(1) identify the highest/lowest supplied page actually used; (2) verify every used page is represented in sources[]; (3) verify no sources[] page lies outside the supplied batch.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: a module stating 'does not require cover' must not receive the cover companion rule", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "If one module explicitly states \"does not require cover\", do NOT attach the required-cover companion rule to that module.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: cover-required sibling modules retain their exact option_item dependency without generalizing across siblings", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "If another module explicitly states \"Cover X or Cover Y not included, to be ordered separately\", preserve module -> exactly one compatible cover using option_item applicability when representable.",
+    "Never generalize one module's cover requirement across all sibling modules.",
+    "For independently priced data/media modules and covers: preserve exact supplier codes character-for-character; do not confuse the letter O with zero in module codes; verify every dependency against the exact source item.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: high confidence is prohibited when commercial ambiguity remains", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "ACCESSORIES CONFIDENCE DISCIPLINE",
+    "Do not return confidence above 0.90 if any of these remain unresolved: supplier-code character uncertainty; table-column ambiguity; unverified zero price; missing source-page accounting; uncertain commercial row ownership; incomplete accessory rows.",
+    "A confidence such as 0.95 or 0.98 is inappropriate when authoritative commercial values remain uncertain.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: final hard checks cover column binding, cross-field reuse, zero price, code fidelity, page accounting, and cover generalization", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "W/D/H/CODE/PTS were bound from their exact visible columns; no PTS value was reused as width/depth/height; no dimension value was reused as price; every visible 0 price remains exactly 0; supplier codes preserve O versus 0 exactly; every extracted page contributing commercial rows exists in sources[]; module-specific \"cover required\" versus \"no cover required\" behavior was not generalized across sibling modules.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: row-token ledger uses the exact W/D/H/CODE/PTS order", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "ACCESSORY ROW TOKEN LEDGER",
+    "For every dense commercial table row, build this internal row ledger BEFORE creating JSON: SOURCE ROW TOKENS: [W] [D] [H] [CODE] [PTS] [OPTIONS] [CBM] [KGS] [PARCELS]. Bind each visible cell exactly once.",
+    "Before returning each row, reconstruct: width | depth | height | supplierCode | price and compare it back to the same visible source line.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: 200/60/18/CODE/39 cannot become 60/18/39/200", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Example: 200 | 60 | 18 | ABCO001 | 39 | ... must become: width = 200; depth = 60; height = 18; supplierCode = \"ABCO001\"; price = 39.",
+    "It is INVALID to rotate or shift this into: width = 60; depth = 18; height = 39; price = 200.",
+    "Do not reinterpret a row based on product orientation or numeric magnitude.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: blank H stays null and PTS cannot fill the blank dimension cell", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "BLANK DIMENSION CELL PRESERVATION",
+    "If a visible commercial row contains fewer W/D/H numbers before CODE, preserve the missing axis as null.",
+    "Example: 12.5 | 12.5 | [blank] | ABCO123 | 211 must become: width = 12.5; depth = 12.5; height = null; price = 211.",
+    "Never move PTS into the blank H field.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: a zero price is locked against a following sibling's non-zero price", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "When a row has price = 0, lock that row's price before reading the next commercial row. A following sibling price must never overwrite or replace the zero.",
+    "Example source sequence: CODE-A -> 0; CODE-B -> 198; CODE-C -> 227 must remain: CODE-A price = 0; CODE-B price = 198; CODE-C price = 227.",
+    "Never propagate the first non-zero sibling price backward.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: O versus 0 supplier-code mutation is explicitly prohibited", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "For every code containing an O/0-like glyph, compare the character against the visible source image before final output.",
+    "Do not infer code characters from generated ID patterns.",
+    "Generated row/item IDs may normalize formatting for internal stability, but supplierCodes MUST preserve the manufacturer code exactly.",
+    "The following transformation pattern is explicitly prohibited: ABCO001 -> ABC0001, or: ABCO03 -> ABC003, unless the printed source itself contains zero.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: a price/height collision requires explicit independent source evidence in both columns", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Add a final suspicious-collision check: If price equals one of width/depth/height, verify the source independently prints the same numeric value in both columns.",
+    "If the source prints W55 D55 H174 CODE XYZ PRICE86, the extraction must be: width = 55; depth = 55; height = 174; price = 86. Not: price = 174.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: used multi-page batches require page-by-page sources[] coverage, not a collapsed null page entry", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "For every supplied page that contributes at least one emitted commercial row or option item, sources[] MUST contain a page entry for that exact page.",
+    "If a 10-page supplied batch contributes data from all 10 pages, sources[] must account for all 10 pages.",
+    "Do not collapse multi-page evidence into one source entry with pageNumber = null when page numbers are available from the supplied PDF.",
+    "Before output, build an internal page -> emitted supplier codes ledger and verify every used page is represented in sources[].",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: one-slot main units cannot inherit maxSelections=3 from a shared optionGroup", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "CUSTOM MODULE SLOT CAPACITY MUST MATCH THE SELECTED MAIN UNIT",
+    "If manufacturer Base/Model rows explicitly provide different module capacities, such as Main Unit A -> 1 custom module slot, Main Unit B -> 3 custom module slots, do NOT use one shared optionGroup with maxSelections = 3 for both units.",
+    "Do not let a 1-slot product select 2 or 3 modules.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: one-slot and three-slot units require capacity-safe separate configuration, or MANUAL DECISION when it cannot be expressed safely", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Use separate applicability/configuration groups where necessary so that: 1-slot units allow maximum 1 selected custom module; 3-slot units allow maximum 3 selected custom modules.",
+    "The same manufacturer module family may be represented in separate configuration groups only when required to enforce these source-proven, mutually exclusive slot capacities.",
+    "Do not invent a priced \"slot\" item.",
+    "If current draft structure cannot express different limits safely without duplicating configuration items, emit \"CONFIGURATION-DEPENDENT - MANUAL DECISION\" rather than applying the broader maxSelections to every unit.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: quoted model names are explicitly checked for JSON escaping in the hard gate", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Before returning, explicitly scan label and displayName for manufacturer names wrapped in quotation marks.",
+    "Example source name: \"Catch\" must serialize as: \\\"Catch\\\" inside the final JSON string.",
+    "The exact returned text must still pass JSON.parse.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
+});
+
+test("Accessories: confidence above 0.90 requires every listed commercial validation gate to pass", () => {
+  const prompt = getProductTemplateAiExtractionPrompt("accessories_electrification");
+  [
+    "Confidence above 0.90 is allowed only after ALL of these pass: exact W/D/H/CODE/PTS row reconstruction; zero-price verification; O/0 supplier-code verification; page-by-page source accounting; option-slot capacity verification; final JSON.parse validity.",
+    "If any one fails or remains uncertain, confidence must be <= 0.90.",
+  ].forEach((expected) => assert.ok(prompt.includes(expected), `Expected Accessories / Electrification prompt to include: ${expected}`));
 });

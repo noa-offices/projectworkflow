@@ -1244,8 +1244,16 @@ export async function createProductTemplate(formData: FormData) {
   });
 
   revalidatePath("/products/templates");
+  // Merge onto the validated return_to origin (Management vs Library, and its manage/panelBrand/etc.
+  // context) instead of hardcoding Management, so a template created from Product Library still returns
+  // to Product Library. Only the params needed to open the new template's materials section are set.
+  const createdTemplatePath = `${pathWithParams(returnPath(formData), {
+    addTemplate: null,
+    template: template.id,
+    editTemplate: template.id,
+  })}#template-${template.id}-materials`;
   redirectWithMessageToPath(
-    `/products/templates?manage=1&panelBrand=${template.brand_id}&template=${template.id}&editTemplate=${template.id}#template-${template.id}-materials`,
+    createdTemplatePath,
     templateSavedMessage("Product template created. Add material groups below.", pendingRowReferences.failed + pendingSubgroupReferences.failed),
   );
 }
@@ -1853,9 +1861,10 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
 export async function archiveProductTemplate(formData: FormData) {
   await requireProductLibraryManager();
   const id = textValue(formData, "id");
+  const redirectPath = returnPath(formData);
 
   if (!id) {
-    redirectWithMessage("Product template id is required.");
+    redirectWithMessageToPath(redirectPath, "Product template id is required.");
   }
 
   await updateProductTemplateLifecycle({
@@ -1866,15 +1875,16 @@ export async function archiveProductTemplate(formData: FormData) {
   });
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Product template moved to Archive.");
+  redirectWithMessageToPath(redirectPath, "Product template moved to Archive.");
 }
 
 export async function markProductTemplateDiscontinued(formData: FormData) {
   await requireProductLibraryManager();
   const id = textValue(formData, "id");
+  const redirectPath = returnPath(formData);
 
   if (!id) {
-    redirectWithMessage("Product template id is required.");
+    redirectWithMessageToPath(redirectPath, "Product template id is required.");
   }
 
   await updateProductTemplateLifecycle({
@@ -1885,15 +1895,16 @@ export async function markProductTemplateDiscontinued(formData: FormData) {
   });
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Product template marked as discontinued.");
+  redirectWithMessageToPath(redirectPath, "Product template marked as discontinued.");
 }
 
 export async function restoreProductTemplate(formData: FormData) {
   await requireProductLibraryManager();
   const id = textValue(formData, "id");
+  const redirectPath = returnPath(formData);
 
   if (!id) {
-    redirectWithMessage("Product template id is required.");
+    redirectWithMessageToPath(redirectPath, "Product template id is required.");
   }
 
   await updateProductTemplateLifecycle({
@@ -1904,15 +1915,16 @@ export async function restoreProductTemplate(formData: FormData) {
   });
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Product template restored.");
+  redirectWithMessageToPath(redirectPath, "Product template restored.");
 }
 
 export async function permanentlyDeleteProductTemplate(formData: FormData) {
   await requireProductLibraryManager();
   const id = textValue(formData, "id");
+  const redirectPath = returnPath(formData);
 
   if (!id) {
-    redirectWithMessage("Product template id is required.");
+    redirectWithMessageToPath(redirectPath, "Product template id is required.");
   }
 
   const supabase = await createClient();
@@ -1935,15 +1947,16 @@ export async function permanentlyDeleteProductTemplate(formData: FormData) {
       "PRODUCT TEMPLATE DEPENDENCY CHECK ERROR",
       templateError?.message ?? quotationItemError?.message ?? linkedFamilyError?.message,
     );
-    redirectWithMessage("Product template dependencies could not be checked.");
+    redirectWithMessageToPath(redirectPath, "Product template dependencies could not be checked.");
   }
 
   if (template.is_active || template.lifecycle_status === "active") {
-    redirectWithMessage("Archive or discontinue this product before deleting it permanently.");
+    redirectWithMessageToPath(redirectPath, "Archive or discontinue this product before deleting it permanently.");
   }
 
   if ((quotationItemCount ?? 0) > 0 || (linkedFamilyCount ?? 0) > 0) {
-    redirectWithMessage(
+    redirectWithMessageToPath(
+      redirectPath,
       "This product is used in existing quotations. It cannot be permanently deleted because quotation history must be preserved.",
     );
   }
@@ -1952,11 +1965,11 @@ export async function permanentlyDeleteProductTemplate(formData: FormData) {
 
   if (error) {
     console.error("PRODUCT TEMPLATE PERMANENT DELETE ERROR", error.message);
-    redirectWithMessage("Product template could not be permanently deleted.");
+    redirectWithMessageToPath(redirectPath, "Product template could not be permanently deleted.");
   }
 
   revalidatePath("/products/templates");
-  redirectWithMessage("Product template permanently deleted.");
+  redirectWithMessageToPath(redirectPath, "Product template permanently deleted.");
 }
 
 export async function deactivateProductTemplate(formData: FormData) {

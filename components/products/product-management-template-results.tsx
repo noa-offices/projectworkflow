@@ -36,6 +36,7 @@ export type ProductManagementTemplateResult = {
 type ProductManagementTemplateResultsProps = {
   emptyDescription: string;
   emptyTitle: string;
+  returnTo: string;
   searchPlaceholder?: string;
   showCount?: boolean;
   templates: ProductManagementTemplateResult[];
@@ -72,10 +73,12 @@ function TemplateLifecycleBadge({
 function TemplateRowActions({
   editHref,
   openHref,
+  returnTo,
   templateId,
 }: {
   editHref: string;
   openHref: string;
+  returnTo: string;
   templateId: string;
 }) {
   return (
@@ -102,6 +105,7 @@ function TemplateRowActions({
           </div>
           <form action={markTemplatePriceChecked} className="mb-1">
             <input type="hidden" name="id" value={templateId} />
+            <input type="hidden" name="return_to" value={returnTo} />
             <PendingSubmitButton
               className="flex w-full items-center justify-start rounded-md px-2 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
               pendingLabel="Marking checked..."
@@ -111,6 +115,7 @@ function TemplateRowActions({
           </form>
           <form action={archiveProductTemplate} className="mb-1">
             <input type="hidden" name="id" value={templateId} />
+            <input type="hidden" name="return_to" value={returnTo} />
             <ConfirmSubmitButton
               message="This will move the product template to Archive. You can restore it later."
               className="flex w-full items-center justify-start rounded-md px-2 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
@@ -121,6 +126,7 @@ function TemplateRowActions({
           </form>
           <form action={markProductTemplateDiscontinued}>
             <input type="hidden" name="id" value={templateId} />
+            <input type="hidden" name="return_to" value={returnTo} />
             <ConfirmSubmitButton
               message="This will hide the product from active Product Library and future quotations. Existing quotations will not be affected."
               className="flex w-full items-center justify-start rounded-md px-2 py-2 text-sm font-medium text-amber-700 transition hover:bg-amber-50"
@@ -165,6 +171,7 @@ function CompactPriceCheckStatus({
 export function ProductManagementTemplateResults({
   emptyDescription,
   emptyTitle,
+  returnTo,
   searchPlaceholder,
   showCount = true,
   templates,
@@ -252,6 +259,7 @@ export function ProductManagementTemplateResults({
                   <TemplateRowActions
                     editHref={template.editHref}
                     openHref={template.openHref}
+                    returnTo={returnTo}
                     templateId={template.id}
                   />
                 </div>

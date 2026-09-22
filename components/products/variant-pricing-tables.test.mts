@@ -44,6 +44,17 @@ test("accessory editor replacement state retains category definitions and price 
   ].forEach((expected) => assert.ok(source.includes(expected), `Expected category accessory editor handoff: ${expected}`));
 });
 
+test("accessory editor validates the final live groups for dangling option_item references before submit", () => {
+  const source = readFileSync("components/products/variant-pricing-tables.tsx", "utf8");
+  [
+    "const finalAccessoryGroups = useMemo(",
+    "const referenceIssues = useMemo(() => accessoryPricingReferenceIssues(finalAccessoryGroups), [finalAccessoryGroups]);",
+    'process.env.NODE_ENV === "production"',
+    "issue: issue.code, referencedGroupId, referencedItemId, submittedGroupIds, submittedItemsForReferencedGroup",
+    "{referenceIssues.length ? (",
+  ].forEach((expected) => assert.ok(source.includes(expected), `Expected final accessory_pricing reference validation wiring: ${expected}`));
+});
+
 test("conditional configuration editor includes workstation applicability choices", () => {
   const source = readFileSync("components/products/variant-pricing-tables.tsx", "utf8");
   assert.ok(source.includes("applicabilityTargetChoices(baseModelGroups, categoryPricingGroups, modularPricingGroups, workstationPricingGroups)"));

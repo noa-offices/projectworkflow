@@ -18,6 +18,7 @@ import {
 import { TemplateFormShell } from "@/components/products/template-form-shell";
 import { CopyAiExtractionPrompt, CopyAiSetupPlanningPrompt } from "@/components/products/copy-ai-extraction-prompt";
 import { SmartProductJsonImport } from "@/components/products/smart-product-json-import";
+import type { ExtractionPromptFocus } from "@/lib/products/product-template-ai-extraction-prompt";
 import { PendingRowReferenceProvider } from "@/components/products/pending-row-reference-context";
 import { PendingSubgroupReferenceProvider } from "@/components/products/pending-subgroup-reference-context";
 import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
@@ -43,6 +44,7 @@ import { applyManufacturerUpdateActions, type ManufacturerItemAction } from "@/l
 import { ManufacturerFinishGuidancePanel } from "@/components/products/manufacturer-finish-guidance";
 import { mergeManufacturerFinishGuidance, normalizeManufacturerFinishGuidance, type ManufacturerFinishGuidance } from "@/lib/products/manufacturer-finish-guidance";
 import { deleteTemporaryProductSource } from "@/lib/products/temporary-product-source";
+import { accessoryPricingReferenceIssues } from "@/lib/products/accessory-pricing-parser";
 
 type ProductTemplateImageField =
   | "proposed_image_url_1"
@@ -449,6 +451,10 @@ export function ProductTemplateForm({
 }: ProductTemplateFormProps) {
   const templateId = useMemo(() => template?.id ?? fallbackTemplateId(), [template?.id]);
   const pricingRef = useRef<HTMLDivElement | null>(null);
+  // Tracks which AI extraction focus the user last selected in "Copy AI Extraction Prompt", so
+  // Smart Product Setup can present a focus-appropriate review UI (for example a simplified
+  // Accessories / Electrification view) for the JSON extracted using that same focus.
+  const [selectedExtractionFocus, setSelectedExtractionFocus] = useState<ExtractionPromptFocus | null>(null);
   const [selectedBrandId, setSelectedBrandId] = useState(template?.brand_id ?? defaultBrandId ?? "");
   const selectedBrand = brands.find((brand) => brand.id === selectedBrandId) ?? null;
   const brandDefaultCurrency = selectedBrand?.default_currency ?? defaultCurrency;
@@ -725,6 +731,25 @@ export function ProductTemplateForm({
 
   const baseSubmitAction = onSubmitAction ?? (submitMode === "update" ? updateProductTemplate : createProductTemplate);
   const submitWithPendingImages = async (formData: FormData) => {
+    // Re-validate the exact final "accessory_pricing" payload the hidden input submitted - the same
+    // shared check the server parser uses - so a dangling option_item Required Companion reference is
+    // blocked here instead of round-tripping to the server. Never auto-fixed; nothing is stripped or
+    // restored, and createProductTemplate/updateProductTemplate is not called when issues remain.
+    const rawAccessoryPricing = formData.get("accessory_pricing");
+    if (typeof rawAccessoryPricing === "string" && rawAccessoryPricing) {
+      let parsedAccessoryGroups: unknown;
+      try {
+        parsedAccessoryGroups = JSON.parse(rawAccessoryPricing);
+      } catch {
+        parsedAccessoryGroups = [];
+      }
+      const finalAccessoryReferenceIssues = accessoryPricingReferenceIssues(Array.isArray(parsedAccessoryGroups) ? parsedAccessoryGroups : []);
+      if (finalAccessoryReferenceIssues.length) {
+        handleInvalidFieldName("accessory_pricing");
+        return;
+      }
+    }
+
     const metadata = Object.values(pendingRowImagesRef.current).map((image, index) => {
       const field = `pending_row_reference_file_${index}`;
       formData.append(field, image.file, image.file.name);
@@ -769,14 +794,14 @@ export function ProductTemplateForm({
             <div className="flex flex-wrap items-baseline justify-between gap-2"><div><h3 className="text-xs font-bold tracking-wide text-zinc-900">AI PROMPT TOOLS</h3><p className="mt-1 text-xs text-zinc-600">Prepare instructions to use with ChatGPT, Gemini, Claude, or another LLM.</p></div><span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-600">External AI</span></div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3"><div className="flex items-center gap-2"><span className="flex size-5 items-center justify-center rounded-full border border-zinc-300 bg-white text-[10px] font-bold text-zinc-700">1</span><p className="text-sm font-semibold text-zinc-900">Setup Planning</p></div><p className="mt-1 text-xs text-zinc-600">Plan product splits, pages &amp; batches.</p><p className="mt-1 text-[11px] text-zinc-500">Returns a setup plan — not JSON. Best for large or complicated price lists.</p><div className="mt-3"><CopyAiSetupPlanningPrompt /></div></div>
-              <div className="rounded-md border border-emerald-200 bg-emerald-50/60 p-3"><div className="flex items-center gap-2"><span className="flex size-5 items-center justify-center rounded-full bg-emerald-700 text-[10px] font-bold text-white">2</span><p className="text-sm font-semibold text-emerald-950">Extract Product Data</p></div><p className="mt-1 text-xs text-emerald-900">Generate ProductTemplateDraft JSON for selected product/pages.</p><p className="mt-1 text-[11px] text-emerald-800">Use after deciding which product/pages to extract.</p><div className="mt-3"><CopyAiExtractionPrompt /></div></div>
+              <div className="rounded-md border border-emerald-200 bg-emerald-50/60 p-3"><div className="flex items-center gap-2"><span className="flex size-5 items-center justify-center rounded-full bg-emerald-700 text-[10px] font-bold text-white">2</span><p className="text-sm font-semibold text-emerald-950">Extract Product Data</p></div><p className="mt-1 text-xs text-emerald-900">Generate ProductTemplateDraft JSON for selected product/pages.</p><p className="mt-1 text-[11px] text-emerald-800">Use after deciding which product/pages to extract.</p><div className="mt-3"><CopyAiExtractionPrompt onFocusChange={setSelectedExtractionFocus} /></div></div>
             </div>
           </section>
           <div className="flex justify-center text-sm font-semibold text-emerald-700" aria-hidden="true">↓</div>
           <section className="rounded-lg border border-emerald-200 bg-white/80 p-3">
             <div><h3 className="text-xs font-bold tracking-wide text-emerald-950">IMPORT &amp; UPDATE</h3><p className="mt-1 text-xs text-emerald-900">Review AI-generated JSON before applying it to this Product Template.</p></div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <div className="rounded-md border border-emerald-300 bg-emerald-50 p-3"><div className="flex items-center gap-2"><span className="flex size-5 items-center justify-center rounded-full bg-emerald-700 text-[10px] font-bold text-white">3</span><p className="text-sm font-semibold text-emerald-950">Import &amp; Review JSON</p></div><p className="mt-1 text-xs text-emerald-900">Paste new AI extraction.</p><div className="mt-3"><SmartProductJsonImport buttonLabel="Import & Review JSON" onRequestApply={requestSmartDraftApply} /></div></div>
+              <div className="rounded-md border border-emerald-300 bg-emerald-50 p-3"><div className="flex items-center gap-2"><span className="flex size-5 items-center justify-center rounded-full bg-emerald-700 text-[10px] font-bold text-white">3</span><p className="text-sm font-semibold text-emerald-950">Import &amp; Review JSON</p></div><p className="mt-1 text-xs text-emerald-900">Paste new AI extraction.</p><div className="mt-3"><SmartProductJsonImport buttonLabel="Import & Review JSON" focus={selectedExtractionFocus} onRequestApply={requestSmartDraftApply} /></div></div>
               {template || approvedSmartDraft ? <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3"><p className="text-sm font-semibold text-zinc-900">Update Existing Template</p><p className="mt-1 text-xs text-zinc-600">Add data or update saved content.</p><div className="mt-3"><SmartProductJsonImport buttonLabel="Update Existing Template" loadInitialWorkspace={currentSmartWorkspace} onApplyManufacturerFields={applyManufacturerFields} onApplyManufacturerPrices={applyManufacturerPrices} onRequestApply={requestIncrementalSmartDraftApply} /></div></div> : null}
             </div>
             <p className="mt-3 rounded-md border border-emerald-100 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-950"><span className="font-semibold">Information:</span> Nothing is saved until you apply the reviewed data and save the Product Template.</p>

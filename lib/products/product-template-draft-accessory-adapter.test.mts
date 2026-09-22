@@ -3,6 +3,7 @@ import test from "node:test";
 import { PRODUCT_TEMPLATE_DRAFT_VERSION, type ProductTemplateDraft, type ProductTemplateDraftSelectionMode } from "./product-template-draft.js";
 import { mapDraftOptionGroupsToAccessories } from "./product-template-draft-accessory-adapter.js";
 import { createSmartSetupReviewRouting } from "./smart-product-review-routing.js";
+import { accessoryPricingReferenceIssues } from "./accessory-pricing-parser.js";
 
 function draft(mode: ProductTemplateDraftSelectionMode, minSelections: number, maxSelections: number | null, defaultItemIds: string[] = []): ProductTemplateDraft {
   return {
@@ -109,4 +110,74 @@ test("compatibleTargets maps to persisted accessory item only for structural-sup
   assert.equal("compatible_targets" in mapped.items[1], false);
   assert.equal(mapped.items[0].price, source.optionGroups[0].items[0].price);
   assert.equal(mapped.items[0].supplier_price_list_code, "STD");
+});
+
+// og-custom-modules regression: a reviewed accessory-routed conditional_option source group whose raw
+// draft selection rule (choose several, minSelections > 0) is NOT one of selectionIsSafe's narrow raw
+// shapes must still survive mapping, because Smart Setup Review already explicitly approved it for
+// Accessory Pricing - and a different, dependent companion group's option_item Required Companion
+// target depends on that source group's item surviving too.
+function crossReferencedOptionGroupsDraft(): ProductTemplateDraft {
+  const base = draft("optional", 0, null);
+  base.optionGroups = [
+    {
+      id: "og-custom-modules",
+      label: "Custom Modules",
+      selection: { mode: "choose_multiple", minSelections: 1, maxSelections: null, defaultItemIds: [] },
+      conditionalConfiguration: {
+        role: "conditional_option",
+        selection: "choose_multiple",
+        applicability: [{ target: { kind: "base_model", group_id: "bm-power", row_id: "power-a" }, required: false, visible: true }],
+      },
+      items: [
+        { id: "ogi-pcmpc003", label: "PC MPC 003", displayName: null, dimensions: null, currency: "EUR", price: 120, specification: null, supplierCodes: ["PCMPC003"], referenceCodes: [] },
+        { id: "ogi-pcmpc004", label: "PC MPC 004", displayName: null, dimensions: null, currency: "EUR", price: 150, specification: null, supplierCodes: ["PCMPC004"], referenceCodes: [] },
+      ],
+    },
+    {
+      id: "og-required-module-covers",
+      label: "Required Module Covers",
+      selection: { mode: "optional", minSelections: 0, maxSelections: 1, defaultItemIds: [] },
+      conditionalConfiguration: {
+        role: "companion",
+        selection: "exactly_one",
+        applicability: [{ target: { kind: "option_item", group_id: "og-custom-modules", row_id: "ogi-pcmpc004" }, required: true, visible: true }],
+      },
+      items: [
+        { id: "cover-a", label: "Cover", displayName: null, dimensions: null, currency: "EUR", price: 20, specification: null, supplierCodes: ["COVERA"], referenceCodes: [] },
+      ],
+    },
+  ];
+  return base;
+}
+
+test("og-custom-modules regression: a reviewed conditional_option source group survives mapping alongside its dependent option_item companion", () => {
+  const source = crossReferencedOptionGroupsDraft();
+  const routingPlan = createSmartSetupReviewRouting(source);
+  assert.ok(routingPlan.routes.every((route) => route.sourceKind !== "option" || route.destination === "accessory"));
+  const mapped = mapDraftOptionGroupsToAccessories(source, routingPlan);
+
+  assert.equal(mapped.groups.length, 2);
+
+  const customModules = mapped.groups.find((group) => group.id === "og-custom-modules");
+  assert.ok(customModules, "Expected og-custom-modules to survive mapping");
+  assert.ok(customModules!.items.some((item) => item.id === "ogi-pcmpc004"));
+  assert.equal(customModules!.conditional_configuration?.role, "conditional_option");
+  assert.deepEqual(customModules!.conditional_configuration?.applicability[0].target, { kind: "base_model", group_id: "bm-power", row_id: "power-a" });
+
+  const requiredCovers = mapped.groups.find((group) => group.id === "og-required-module-covers");
+  assert.ok(requiredCovers, "Expected og-required-module-covers to survive mapping");
+  assert.deepEqual(requiredCovers!.conditional_configuration?.applicability[0].target, { kind: "option_item", group_id: "og-custom-modules", row_id: "ogi-pcmpc004" });
+
+  assert.deepEqual(accessoryPricingReferenceIssues(mapped.groups), []);
+});
+
+test("a reviewed accessory-routed conditional_option group with an unsafe raw selection survives mapping even without a dependent companion group", () => {
+  const source = crossReferencedOptionGroupsDraft();
+  source.optionGroups = [source.optionGroups[0]];
+  const routingPlan = createSmartSetupReviewRouting(source);
+  const mapped = mapDraftOptionGroupsToAccessories(source, routingPlan);
+  assert.equal(mapped.groups.length, 1);
+  assert.equal(mapped.groups[0].id, "og-custom-modules");
+  assert.ok(mapped.groups[0].items.some((item) => item.id === "ogi-pcmpc004"));
 });

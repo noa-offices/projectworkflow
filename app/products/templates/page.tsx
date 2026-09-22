@@ -574,8 +574,18 @@ function templatesHref(
     }
   }
 
+  // /products/manage is the canonical Product Management URL: once "manage" resolves to "1", route
+  // generated links there instead of /products/templates?manage=1, and drop the now-redundant manage=1
+  // query param since the route itself already implies management mode. Library links (manage absent)
+  // are untouched - same base path and query construction as before.
+  const isManagementHref = next.get("manage") === "1";
+  if (isManagementHref) {
+    next.delete("manage");
+  }
+
   const query = next.toString();
-  return `/products/templates${query ? `?${query}` : ""}`;
+  const basePath = isManagementHref ? "/products/manage" : "/products/templates";
+  return `${basePath}${query ? `?${query}` : ""}`;
 }
 
 function withHash(path: string, hash: string) {
@@ -1565,9 +1575,9 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
     editTemplate: null,
     addTemplate: null,
   });
-  const managementBackHref = managementListHref === "/products/templates?manage=1"
-    ? "/products/management"
-    : managementListHref;
+  // templatesHref already resolves the bare Management list back-link to the canonical /products/manage
+  // (no manage=1 in the query, no /products/templates prefix), so no separate alias detour is needed.
+  const managementBackHref = managementListHref;
   const quoteImportMode = stringParam(params.quoteImportMode);
   const quoteImportDraft = parseQuotationRowImportDraft(stringParam(params.quoteImportDraft));
   const supabase = await createClient();
@@ -2815,6 +2825,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                     <ProductManagementTemplateResults
                       emptyDescription="Try another name, code, brand, category, or supplier code."
                       emptyTitle="No products found."
+                      returnTo={managementListHref}
                       showCount={false}
                       templates={globalManagementResults}
                     />
@@ -2847,6 +2858,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                         key={`brand-local:${selectedBrand.id}`}
                         emptyDescription="No products found in this brand."
                         emptyTitle="No products found in this brand."
+                        returnTo={managementListHref}
                         searchPlaceholder={`Search within ${selectedBrand.name}...`}
                         templates={localBrandResults}
                       />
@@ -2932,6 +2944,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                       key={`category-local:${selectedBrand.id}:${selectedCategory.id}`}
                       emptyDescription="No products found in this category."
                       emptyTitle="No products found in this category."
+                      returnTo={managementListHref}
                       searchPlaceholder={selectedSubCategory
                         ? `Search within ${selectedSubCategory.name}...`
                         : selectedMainCategory

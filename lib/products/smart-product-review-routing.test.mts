@@ -211,3 +211,62 @@ test("quantity scaling is valid for modular, option_item and Base/Model targets 
   assert.match(validateRule({ kind: "price_matrix", group_id: "ARCA", row_id: "ARCA-row" }, scaled).errors.join(" "), fail);
   assert.match(validateRule({ kind: "workstation", group_id: "w", row_id: "w1" }, scaled).errors.join(" "), fail);
 });
+
+// Minimal two-group draft matching the reported bug: Group A ("og-a" / "Custom Modules") has one item
+// ("module-a"); Group B ("og-b" / "Required Module Covers") carries a source-extracted (not manually
+// reviewed) conditionalConfiguration Required Companion targeting that exact item via option_item.
+const dependencyDraft = (destinationA: "accessory" | "skip", destinationB: "accessory" | "skip", options: { dropRouteA?: boolean; reverseOrder?: boolean } = {}): { draft: ProductTemplateDraft; plan: ReturnType<typeof createSmartSetupReviewRouting> } => {
+  const groupA = { id: "og-a", label: "Custom Modules", selection: { mode: "optional" as const, minSelections: 0, maxSelections: null, defaultItemIds: [] }, items: [optionItem("module-a")] };
+  const groupB = {
+    id: "og-b", label: "Required Module Covers", selection: { mode: "required_choose_at_least_one" as const, minSelections: 1, maxSelections: null, defaultItemIds: [] }, items: [optionItem("cover-b")],
+    conditionalConfiguration: { role: "companion" as const, selection: "exactly_one" as const, applicability: [{ target: { kind: "option_item" as const, group_id: "og-a", row_id: "module-a" }, required: true, visible: true }] },
+  };
+  const next: ProductTemplateDraft = structuredClone(draft);
+  next.optionGroups = options.reverseOrder ? [groupB, groupA] : [groupA, groupB];
+  const plan = createSmartSetupReviewRouting(next);
+  plan.routes.find((route) => route.sourceId === "og-a")!.destination = destinationA;
+  plan.routes.find((route) => route.sourceId === "og-b")!.destination = destinationB;
+  if (options.dropRouteA) plan.routes = plan.routes.filter((route) => route.sourceId !== "og-a");
+  return { draft: next, plan };
+};
+const dependencyMessage = /Required option dependency "Custom Modules" is skipped or not routed to Accessories, but "Required Module Covers" still depends on it\. Restore the referenced option group or skip the dependent group before applying\./;
+
+test("1: Group A accessory + Group B accessory -> no dependency routing issue", () => {
+  const { draft: d, plan } = dependencyDraft("accessory", "accessory");
+  const result = validateSmartSetupReviewRouting(d, plan);
+  assert.equal(result.errors.some((message) => dependencyMessage.test(message)), false);
+  assert.equal(result.valid, true);
+});
+
+test("2: Group A skip + Group B accessory -> blocking dependency routing issue", () => {
+  const { draft: d, plan } = dependencyDraft("skip", "accessory");
+  const result = validateSmartSetupReviewRouting(d, plan);
+  assert.equal(result.errors.some((message) => dependencyMessage.test(message)), true);
+  assert.equal(result.valid, false);
+});
+
+test("3: Group A route missing + Group B accessory -> blocking dependency routing issue", () => {
+  const { draft: d, plan } = dependencyDraft("accessory", "accessory", { dropRouteA: true });
+  const result = validateSmartSetupReviewRouting(d, plan);
+  assert.equal(result.errors.some((message) => dependencyMessage.test(message)), true);
+  assert.equal(result.valid, false);
+});
+
+test("4: Group A skip + Group B skip -> no dependency routing issue (dependent group is not being submitted)", () => {
+  const { draft: d, plan } = dependencyDraft("skip", "skip");
+  const result = validateSmartSetupReviewRouting(d, plan);
+  assert.equal(result.errors.some((message) => dependencyMessage.test(message)), false);
+});
+
+test("5: Group A accessory + Group B skip -> no dependency routing issue (only outgoing dependencies from accessory-destined groups are checked)", () => {
+  const { draft: d, plan } = dependencyDraft("accessory", "skip");
+  const result = validateSmartSetupReviewRouting(d, plan);
+  assert.equal(result.errors.some((message) => dependencyMessage.test(message)), false);
+});
+
+test("6: array order reversed -> valid accessory/accessory dependency still passes", () => {
+  const { draft: d, plan } = dependencyDraft("accessory", "accessory", { reverseOrder: true });
+  const result = validateSmartSetupReviewRouting(d, plan);
+  assert.equal(result.errors.some((message) => dependencyMessage.test(message)), false);
+  assert.equal(result.valid, true);
+});

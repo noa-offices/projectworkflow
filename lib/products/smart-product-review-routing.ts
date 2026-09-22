@@ -210,6 +210,27 @@ export function validateSmartSetupReviewRouting(draft: ProductTemplateDraft, pla
       if (rule.allowedItemIds?.some((id) => !itemIds.has(id))) errors.push(`${route.sourceName} has an allowed item that is not part of the reviewed group.`);
     });
   });
+  // Cross-option-group option_item dependency: an active (destination "accessory") option group whose own
+  // conditionalConfiguration targets another option group via target.kind "option_item" requires that
+  // referenced group to also remain routed to Accessory / Configuration; otherwise Apply would submit this
+  // group while omitting the referenced one, leaving a dangling reference the server-side accessory pricing
+  // validator rejects. Only outgoing dependencies from groups still being submitted are checked; a group
+  // that does not exist at all is left to the existing applicable-model validation above.
+  draft.optionGroups.forEach((group) => {
+    const dependentRoute = plan.routes.find((item) => item.sourceKind === "option" && item.sourceId === group.id);
+    if (dependentRoute?.destination !== "accessory") return;
+    (group.conditionalConfiguration?.applicability ?? []).forEach((rule) => {
+      if (rule.target?.kind !== "option_item") return;
+      const referencedGroupId = rule.target.group_id;
+      const referencedGroup = draft.optionGroups.find((item) => item.id === referencedGroupId);
+      if (!referencedGroup) return;
+      const referencedRoute = plan.routes.find((item) => item.sourceKind === "option" && item.sourceId === referencedGroupId);
+      if (referencedRoute?.destination === "accessory") return;
+      const dependentLabel = group.label ?? group.id;
+      const referencedLabel = referencedGroup.label ?? referencedGroupId;
+      errors.push(`Required option dependency "${referencedLabel}" is skipped or not routed to Accessories, but "${dependentLabel}" still depends on it. Restore the referenced option group or skip the dependent group before applying.`);
+    });
+  });
   return { errors, valid: errors.length === 0 };
 }
 

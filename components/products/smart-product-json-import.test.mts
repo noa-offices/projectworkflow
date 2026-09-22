@@ -370,3 +370,157 @@ test("ReviewDestinationSection renders the '+ Import More JSON' button next to S
   assert.ok(reviewDestinationSectionRenderer.includes("onImportMore?: () => void"));
   assert.ok(reviewDestinationSectionRenderer.includes('{onImportMore ? <button type="button" onClick={onImportMore}'));
 });
+
+const parseFallbackWrapper = source.slice(source.indexOf("function parseSmartProductJsonWithFallback"), source.indexOf("type SmartSetupSourcePdfMeta ="));
+
+test("quote-repair fallback: original JSON.parse is tried first and no extraction/repair is invoked when it already succeeds", () => {
+  assert.ok(source.includes('import { repairLikelyUnescapedJsonQuotes } from "@/lib/products/repair-ai-json-quotes";'), "Must import the pure quote-repair helper");
+  assert.ok(source.includes('import { extractLikelyAiJsonPayload } from "@/lib/products/extract-ai-json-payload";'), "Must import the pure wrapped-JSON extraction helper");
+  assert.ok(source.includes("function parseSmartProductJsonWithFallback(rawJson: string)"), "Must define a single shared parse-with-fallback wrapper (no duplicated scanner/extraction logic)");
+  assert.ok(/try\s*\{\s*JSON\.parse\(rawJson\);\s*return \{ result: parseSmartProductJsonImport\(rawJson\), finalText: null, wrapperRemoved: false, quoteRepaired: false \};/.test(parseFallbackWrapper), "Original text must be parsed first; on success it must be used unchanged with no extraction or repair invoked");
+});
+
+test("quote-repair fallback: invalid quote-only JSON (no wrapper) is repaired and becomes parseable, then goes through normal ProductTemplateDraft validation", () => {
+  assert.ok(parseFallbackWrapper.includes("const payload = extractLikelyAiJsonPayload(rawJson);"), "Must attempt wrapped-payload extraction before falling back to quote repair on the original text");
+  assert.ok(parseFallbackWrapper.includes("const repair = repairLikelyUnescapedJsonQuotes(rawJson);"), "When no payload was extracted, quote repair runs on the original text exactly as before");
+  assert.ok(parseFallbackWrapper.includes("if (repair.repaired && repair.repairCount > 0) {"), "Repair is only used when it actually produced changes");
+  assert.ok(parseFallbackWrapper.includes("return { result: parseSmartProductJsonImport(repair.text), finalText: repair.text, wrapperRemoved: false, quoteRepaired: true };"), "A successfully repaired+parseable text is validated through the SAME parseSmartProductJsonImport path as any other JSON, never bypassing ProductTemplateDraft validation");
+});
+
+test("quote-repair fallback: unrepaired/unrepairable malformed JSON still shows the existing syntax error behavior unchanged", () => {
+  assert.ok(parseFallbackWrapper.includes("return { result: parseSmartProductJsonImport(rawJson), finalText: null, wrapperRemoved: false, quoteRepaired: false };"), "Falls back to validating the ORIGINAL text (preserving the existing JSON syntax error) whenever neither extraction nor repair produces parseable JSON");
+});
+
+test("quote-repair fallback: both the initial-import and Add More JSON flows use the shared wrapper, and a non-blocking notice is shown only when extraction and/or repair actually occurred", () => {
+  assert.ok(source.includes("function ParseFallbackNotice({ quoteRepaired, wrapperRemoved }: { quoteRepaired: boolean; wrapperRemoved: boolean })"), "A dedicated small non-blocking notice component must exist, covering both wrapper-removal and quote-repair");
+  assert.ok(source.includes("Minor JSON quote escaping was repaired automatically. Review the corrected JSON before applying."), "Quote-repair-only notice text must match exactly");
+  assert.ok(source.includes("AI response wrapper was removed automatically. Review the extracted JSON before applying."), "Wrapper-removal-only notice text must match exactly");
+  assert.ok(source.includes("AI response wrapper and minor JSON quote escaping were repaired automatically. Review the corrected JSON before applying."), "Combined wrapper-removal + quote-repair notice text must match exactly");
+  const noticeUses = [...source.matchAll(/<ParseFallbackNotice quoteRepaired=\{quoteRepaired\} wrapperRemoved=\{wrapperRemoved\} \/>/g)];
+  assert.equal(noticeUses.length, 2, "Both the initial AI JSON textarea flow and the Add More JSON dialog flow must render the notice");
+  const parseWithFallbackUses = [...source.matchAll(/const \{ result: (?:next|nextResult), finalText, wrapperRemoved: didExtractWrapper, quoteRepaired: didRepairQuotes \} = parseSmartProductJsonWithFallback\(rawJson\);/g)];
+  assert.equal(parseWithFallbackUses.length, 2, "Both validate() flows must go through the same shared parse-with-fallback wrapper, not a duplicated scanner/extraction");
+  assert.equal((source.match(/function repairLikelyUnescapedJsonQuotes/g) ?? []).length, 0, "The quote-repair scanner implementation itself must live only in the shared lib helper, never duplicated inside the component");
+  assert.equal((source.match(/function extractLikelyAiJsonPayload/g) ?? []).length, 0, "The wrapped-JSON extraction implementation itself must live only in the shared lib helper, never duplicated inside the component");
+});
+
+test("wrapped-JSON fallback: payload extraction is tried before quote repair, and extraction never bypasses ProductTemplateDraft validation", () => {
+  assert.ok(parseFallbackWrapper.includes("if (payload.extracted) {"), "Only an actually-extracted candidate (json_fence or version_object) is attempted before falling back to plain quote repair on the original text");
+  assert.ok(parseFallbackWrapper.includes("JSON.parse(payload.text);"), "The extracted candidate is parsed on its own first, before any quote repair is attempted on it");
+  assert.ok(parseFallbackWrapper.includes("return { result: parseSmartProductJsonImport(payload.text), finalText: payload.text, wrapperRemoved: true, quoteRepaired: false };"), "A cleanly parseable extracted payload is validated through the SAME parseSmartProductJsonImport path, never bypassing validation");
+  assert.ok(parseFallbackWrapper.includes("const repair = repairLikelyUnescapedJsonQuotes(payload.text);"), "If the extracted payload alone does not parse, quote repair is attempted on the extracted payload text");
+  assert.ok(parseFallbackWrapper.includes("return { result: parseSmartProductJsonImport(repair.text), finalText: repair.text, wrapperRemoved: true, quoteRepaired: true };"), "A payload that needed both wrapper extraction and quote repair still goes through the SAME parseSmartProductJsonImport validation path");
+});
+
+test("wrapped-JSON fallback: malformed content with no extractable candidate still shows the existing syntax error", () => {
+  assert.ok(parseFallbackWrapper.includes("return { result: parseSmartProductJsonImport(rawJson), finalText: null, wrapperRemoved: false, quoteRepaired: false };"), "When extraction finds no candidate (extracted: false) and repair does not help, the original text is validated as-is, preserving the existing syntax-error UI");
+});
+
+const localRouteControlsRenderer = source.slice(source.indexOf("function LocalRouteControls"), source.indexOf("/** Dispatches the same event"));
+
+test("Accessories Advanced Setup: focus is threaded from SmartProductJsonImport through SmartProductReview down to the route controls, using only the existing focus prop", () => {
+  assert.ok(source.includes('import type { ExtractionPromptFocus } from "@/lib/products/product-template-ai-extraction-prompt";'), "Must reuse the existing ExtractionPromptFocus type rather than inventing a new enum");
+  assert.ok(source.includes("focus = null,"), "focus must be optional and default to null, preserving current behavior for callers that omit it");
+  assert.ok(source.includes("focus?: ExtractionPromptFocus | null;"), "The focus prop type must be the existing ExtractionPromptFocus union, not a new type");
+  assert.ok(source.includes("<SmartProductReview editMode={editMode} focus={focus} draft={reviewedDraft}"), "focus must be threaded into SmartProductReview");
+  assert.ok(source.includes("const isAccessoriesFocus = focus === \"accessories\";"), "Must use the exact existing focus id 'accessories', never an invented value");
+});
+
+test("Accessories Advanced Setup: is derived from focus metadata only, never from product/template/supplier names or row content", () => {
+  const bodyStart = source.indexOf("function SmartProductReviewBody");
+  const isAccessoriesFocusLine = source.slice(bodyStart, bodyStart + 1200);
+  assert.ok(isAccessoriesFocusLine.includes("const isAccessoriesFocus = focus === \"accessories\";"));
+  const declarationOnly = source.slice(source.indexOf("const isAccessoriesFocus ="), source.indexOf("const isAccessoriesFocus =") + 52);
+  ["templateName", "supplierName", "item_name", "displayName", "electrification"].forEach((forbidden) => {
+    assert.ok(!declarationOnly.includes(forbidden), `isAccessoriesFocus must not reference ${forbidden}`);
+  });
+});
+
+test("Accessories Advanced Setup: starts collapsed by default and is local per-route UI state (not shared across route groups)", () => {
+  assert.ok(localRouteControlsRenderer.includes("const [advancedSetupOpen, setAdvancedSetupOpen] = useState(false);"), "Must start collapsed (false) and be a local hook inside LocalRouteControls, so every rendered route/group instance owns an independent state cell");
+});
+
+test("Option-group Advanced Setup: renders the compact 'Advanced Setup' / 'Hide Advanced Setup' button and gates its existing controls behind it", () => {
+  assert.ok(localRouteControlsRenderer.includes('{advancedSetupOpen ? "Hide Advanced Setup" : "Advanced Setup"}'), "Button label must toggle between the exact required collapsed/expanded text");
+  assert.ok(localRouteControlsRenderer.includes("if (!isAccessoriesFocus && !alwaysAdvancedSetup) return controls;"), "Only option groups can opt into the existing disclosure regardless of focus");
+  assert.ok(localRouteControlsRenderer.includes("{advancedSetupOpen ? <div className=\"mt-2\">{controls}{advancedContent}</div> : null}"), "Controls and the option-group Advanced Setup content only render when expanded");
+});
+
+test("option groups use the compact layout globally and place item rows before one shared Advanced Setup disclosure", () => {
+  const optionGroupSite = source.slice(source.indexOf("{draft.optionGroups.length"), source.indexOf("{draft.materialSuggestions.length"));
+  assert.equal(optionGroupSite.includes("isAccessoriesFocus ? orderItemsByRoute"), false, "Option groups must not require accessories focus");
+  ["compactConfigurationSummary", "roleLabels[route.accessory.role]", "selectionLabels[route.accessory.selection]", "route.accessory.rules.length", "alwaysAdvancedSetup", "{groupMarker}{structuralSupportStatus}{itemFindingsSummary}{itemRows}", "Subgroups: {groupSubgroups.length ? groupSubgroups.length : \"None\"}", "{subgroupEditor}", "{optionGroupLabelEditor}{extractedSelectionRule}"].forEach((expected) => assert.ok(optionGroupSite.includes(expected), `Expected global compact option-group UI: ${expected}`));
+  assert.ok(optionGroupSite.indexOf("const itemRows") < optionGroupSite.indexOf("<LocalRouteControls"), "Item rows must precede Advanced Setup");
+});
+
+test("option-group compact layout applies with null, Screens, Desk, and other focus values without changing data writers", () => {
+  const optionGroupSite = source.slice(source.indexOf("{draft.optionGroups.length"), source.indexOf("{draft.materialSuggestions.length"));
+  assert.equal(optionGroupSite.includes("focus === \"accessories\""), false);
+  assert.equal(optionGroupSite.includes("isAccessoriesFocus ?"), false);
+  assert.ok(optionGroupSite.includes("onChange={(items) => onChange({ ...draft, optionGroups: draft.optionGroups.map"));
+  assert.ok(optionGroupSite.includes("onChange={(next) => onSubgroupsChange({ ...subgroups, [route.key]: next })}"));
+});
+
+test("Accessories Advanced Setup: expanding it reveals Apply As, Destination Group, Skip, ordering, SYSTEM / BASE, and Manage row roles - all existing controls, none duplicated", () => {
+  assert.ok(localRouteControlsRenderer.includes(">Apply As<"));
+  assert.ok(localRouteControlsRenderer.includes(">Destination Group<"));
+  assert.ok(localRouteControlsRenderer.includes('{route.destination === "skip" ? "Restore" : "Skip"}'));
+  assert.ok(localRouteControlsRenderer.includes(`aria-label={\`Move \${route.sourceName} up\`}`));
+  assert.ok(localRouteControlsRenderer.includes(`aria-label={\`Move \${route.sourceName} down\`}`));
+  assert.ok(localRouteControlsRenderer.includes("{extra}"), "extra (SYSTEM / BASE + Manage row roles) must render inside the same controls block, sharing the one Advanced Setup panel");
+  assert.equal((localRouteControlsRenderer.match(/>Apply As</g) ?? []).length, 1, "Apply As must not be duplicated within LocalRouteControls when moved behind Advanced Setup");
+  assert.equal((source.match(/function LocalRouteControls/g) ?? []).length, 1, "LocalRouteControls itself must not be duplicated");
+  assert.equal((source.match(/function BaseModelRoleControls/g) ?? []).length, 1, "BaseModelRoleControls (SYSTEM / BASE, Manage row roles) must not be duplicated");
+  const systemGroupSite = source.slice(source.indexOf('title: `System Group:'), source.indexOf('title: `System Group:') + 2500);
+  assert.ok(systemGroupSite.includes("extra={<BaseModelRoleControls rows={groupRows} onChange={changeRole} />}"), "The System Group call site must pass BaseModelRoleControls as the shared extra content instead of rendering it as a separate always-visible sibling");
+});
+
+test("Accessories Advanced Setup: product rows, families, and model data stay visible outside the collapsible panel", () => {
+  ["PricedRowsEditor", "MatrixEditor", "DirectModularRowsEditor"].forEach((editor) => {
+    assert.ok(source.includes(`<${editor} `), `${editor} must still be rendered`);
+  });
+  const optionGroupSite = source.slice(source.indexOf("title: accessoriesTitle"), source.indexOf("title: accessoriesTitle") + 3200);
+  const localRouteControlsCallEnd = optionGroupSite.indexOf("isAccessoriesFocus={isAccessoriesFocus} /> : null}") + "isAccessoriesFocus={isAccessoriesFocus} /> : null}".length;
+  const pricedRowsEditorIndex = optionGroupSite.indexOf("<PricedRowsEditor");
+  assert.ok(pricedRowsEditorIndex > localRouteControlsCallEnd, "PricedRowsEditor (the actual product rows: model, supplier code, dimension, price, currency) must be a sibling after LocalRouteControls's call, never nested inside its collapsible content");
+  assert.ok(source.includes("MAIN PRODUCT FAMILIES"), "Native System/Base main product family cards must remain a separate, always-reachable element");
+});
+
+test("other pricing sections retain their existing focus behavior", () => {
+  assert.ok(localRouteControlsRenderer.includes("isAccessoriesFocus?: boolean;"), "isAccessoriesFocus must be optional so existing call sites without focus information keep working");
+  assert.ok(localRouteControlsRenderer.includes("if (!isAccessoriesFocus && !alwaysAdvancedSetup) return controls;"));
+  const workstationSection = source.slice(source.indexOf('title: "Workstation Pricing"'), source.indexOf('{draft.optionGroups.length'));
+  assert.ok(workstationSection.includes("isAccessoriesFocus={isAccessoriesFocus}"));
+  assert.equal(workstationSection.includes("alwaysAdvancedSetup"), false, "Only option groups opt into global Advanced Setup");
+});
+
+const optionGroupsSection = source.slice(source.indexOf('title: accessoriesTitle'), source.indexOf('title: "Material Suggestions"'));
+
+test("option_item dependency issue: uses the existing routing-validation error collection, not a parallel system", () => {
+  const reviewBody = source.slice(source.indexOf("function SmartProductReviewBody"), source.indexOf("export function SmartProductJsonImport"));
+  assert.ok(source.includes("const optionGroupRoutingIssues = plan ? validateSmartSetupReviewRouting(draft, plan).errors : [];"), "Must read from the SAME validateSmartSetupReviewRouting(...).errors used for blocking, never a duplicated/parallel validation call for this purpose");
+  assert.equal((reviewBody.match(/validateSmartSetupReviewRouting\(/g) ?? []).length, 1, "validateSmartSetupReviewRouting must be invoked only once inside SmartProductReviewBody itself (other components computing it independently for their own purposes is unrelated)");
+});
+
+test("7: the dependency issue is included in the same blocking-issue collection that disables Apply", () => {
+  // routingValidation.errors already feeds smartSetupBlockingIssues, and Apply/Save Changes is already
+  // disabled by !routingValidation.valid — both computed from validateSmartSetupReviewRouting(...), the
+  // exact function extended with the new cross-option-group check, so no separate wiring is required.
+  assert.ok(source.includes("routingErrors: [...routingValidation.errors, ...structuralSupportCompatibilityMessages]"));
+  assert.ok(source.includes("disabled={!routingValidation.valid || currencyState?.hasUnresolvedPricedRows || accessoryReviewBlocked}"));
+  assert.ok(source.includes("!reviewedDraft || !routingPlan || !validateSmartSetupReviewRouting(reviewedDraft, routingPlan).valid"), "requestApply's own guard must also block on the same routing validity, not only the disabled button");
+});
+
+test("8: the dependency warning is rendered for the dependent option group, outside/before the Advanced Setup panel so it stays visible while collapsed", () => {
+  assert.ok(optionGroupsSection.includes('const dependentLabel = group.label ?? group.id;'));
+  assert.ok(optionGroupsSection.includes('const dependencyWarnings = optionGroupRoutingIssues.filter((message) => message.includes(`but "${dependentLabel}" still depends on it.`));'));
+  assert.ok(optionGroupsSection.includes("role=\"alert\""), "The warning must be an explicit alert, not folded into a collapsible summary");
+  const returnStatement = optionGroupsSection.slice(optionGroupsSection.indexOf("return <ReviewDestinationSection"));
+  const dependencyWarningIndex = returnStatement.indexOf("{dependencyWarning}");
+  const localRouteControlsIndex = returnStatement.indexOf("<LocalRouteControls");
+  assert.ok(dependencyWarningIndex >= 0 && localRouteControlsIndex > dependencyWarningIndex, "{dependencyWarning} must render before (outside) the LocalRouteControls/Advanced Setup call, not nested inside its collapsible content");
+});
+
+test("9: no changes to the server-side accessory pricing parser/validator", () => {
+  assert.ok(!source.includes("accessory-pricing-parser"), "The component must not import or duplicate the server-side parser/validator");
+});

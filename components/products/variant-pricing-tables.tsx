@@ -63,6 +63,7 @@ import {
 import { hasMeaningfulCategoryPricing } from "@/lib/products/category-pricing-state";
 import { hasMeaningfulModularPricing } from "@/lib/products/modular-pricing-state";
 import { hasMeaningfulAccessoryPricing } from "@/lib/products/accessory-pricing-state";
+import { accessoryPricingReferenceIssues } from "@/lib/products/accessory-pricing-parser";
 import { reviewImportantRequirements } from "@/lib/products/smart-product-review";
 import {
   accessoryApplicabilityTargetKey,
@@ -1946,14 +1947,55 @@ export function AccessoryPricingTable({
       savedTemplateCurrency: templateCurrency,
     }),
   );
-  const serialized = useMemo(() => {
+  const finalAccessoryGroups = useMemo(() => {
     const normalized = groups.map(normalizeAccessoryGroup);
     const parsed = parseAccessoryConfigurationGroups(normalized);
-    return JSON.stringify(parsed.valid ? serializeAccessoryConfigurationGroups(parsed.groups) : normalized);
+    return parsed.valid ? serializeAccessoryConfigurationGroups(parsed.groups) : normalized;
   }, [groups]);
+  const serialized = useMemo(() => JSON.stringify(finalAccessoryGroups), [finalAccessoryGroups]);
+  // Validated against the EXACT final groups that produce the "accessory_pricing" hidden field directly
+  // above - never Smart Setup's draft or routing plan - so a dangling option_item Required Companion
+  // reference (for example a source group dropped/edited after Smart Setup Apply) is caught here, right
+  // before Add Template, using the same shared check the server parser uses. Never auto-fixed: the
+  // dependency/target is left exactly as-is for the user to resolve intentionally.
+  const referenceIssues = useMemo(() => accessoryPricingReferenceIssues(finalAccessoryGroups), [finalAccessoryGroups]);
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production" || !referenceIssues.length) return;
+    referenceIssues.forEach((issue) => {
+      const match = /^Option Item reference '([^']+) \/ ([^']+)' does not exist/.exec(issue.message);
+      if (!match) return;
+      const [, referencedGroupId, referencedItemId] = match;
+      const submittedGroupIds = finalAccessoryGroups.flatMap((group) => group.id ? [group.id] : []);
+      const submittedItemsForReferencedGroup = (finalAccessoryGroups.find((group) => group.id === referencedGroupId)?.items ?? []).flatMap((item) => item.id ? [item.id] : []);
+      console.warn({ issue: issue.code, referencedGroupId, referencedItemId, submittedGroupIds, submittedItemsForReferencedGroup });
+    });
+  }, [referenceIssues, finalAccessoryGroups]);
+
+  const liveAccessoryGroupIdsKey = groups.map((group) => group.id).join("\u0000");
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    console.warn("[Accessory Trace 4B] live accessory groups", {
+      groupIds: groups.map((group) => group.id),
+      groups: groups.map((group) => ({
+        id: group.id,
+        itemIds: (group.items ?? []).map((item) => item.id),
+      })),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: keyed on the stable ID-derived string, not `groups` itself, to avoid a re-log every render
+  }, [liveAccessoryGroupIdsKey]);
 
   useEffect(() => {
     if (replacementVersion === undefined || replacementVersion === appliedReplacementVersion.current) return;
+    if (process.env.NODE_ENV !== "production") {
+      console.warn("[Accessory Trace 4A] replacement groups", {
+        replacementVersion,
+        groupIds: replacementGroups?.map((group) => group.id) ?? [],
+        groups: replacementGroups?.map((group) => ({
+          id: group.id,
+          itemIds: (group.items ?? []).map((item) => item.id),
+        })) ?? [],
+      });
+    }
     appliedReplacementVersion.current = replacementVersion;
     markReplacementApplied(replacementVersion);
     setGroups(normalizeAccessoryGroups(replacementGroups));
@@ -2134,6 +2176,11 @@ export function AccessoryPricingTable({
   return (
     <div className="md:col-span-2 xl:col-span-3">
       <input type="hidden" name="accessory_pricing" value={serialized} />
+      {referenceIssues.length ? (
+        <div role="alert" className="mb-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-800">
+          {referenceIssues.map((issue, index) => <p key={index}>{issue.message}</p>)}
+        </div>
+      ) : null}
       <div className="space-y-4">
         {groups.map((group, groupIndex) => {
           const groupId = group.id ?? `add-on-group-${groupIndex}`;

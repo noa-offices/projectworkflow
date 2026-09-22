@@ -1,7 +1,7 @@
 import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups";
 import { LEGACY_WORKSTATION_GROUP_ID } from "./workstation-pricing-groups";
 
-export const extractionPromptFocuses = ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"] as const;
+export const extractionPromptFocuses = ["full", "base_model", "workstation", "screens", "category_matrix", "modular", "accessories", "accessories_electrification", "product_details", "materials", "chair_seating", "sofa_lounge", "meeting_conference", "storage_cabinets"] as const;
 export type ExtractionPromptFocus = typeof extractionPromptFocuses[number];
 
 const relatedAccessoriesRule = "Also extract any clearly related accessories, options, companion components, required add-ons, optional add-ons, selection constraints, and applicability information found in the supplied source into optionGroups. Do not ignore them merely because the selected extraction focus is pricing.";
@@ -11,6 +11,99 @@ Preserve manufacturer-defined screen family/type identity in group/family naming
 
 SCREEN PRICING
 Each authoritative direct-priced screen SKU (one code per width, width/height, material, or construction) belongs in pricing.baseModelRows. Several widths, materials, finishes, or adjacent similar rows do not make a Matrix. Use pricing.priceMatrices only for a real source-proven screen row × price-category dimension, such as upholstery categories B/C/D/E/F/G/I with different prices. Keep source category labels exactly. Finish colours/material choices sharing the same row price are Manufacturer Finish Guidance/material selections, not Matrix columns. When one supplied screen catalogue contains direct-priced families and genuine category-priced families, preserve each family in its correct pricing destination; do not manufacture fake matrices merely to make the catalogue uniform.
+
+SCREEN COMMERCIAL ROW COMPLETENESS
+When supplied commercial pages contain multiple authoritative priced rows, the extractor MUST account for every materially distinct row/family in the supplied batch unless it explicitly explains why a row is excluded.
+
+Do not emit only a representative subset of:
+- widths
+- heights
+- material variants
+- framed/frameless variants
+- side-screen variants
+- floor-screen variants
+- mounting-system rows
+- accessories
+
+when the source provides separate authoritative supplier codes and prices.
+
+Before final output:
+- scan every supplied commercial table page
+- verify each authoritative priced supplier code is either:
+  A. emitted in pricing/optionGroups, or
+  B. intentionally excluded with an extraction warning/reason
+
+If many authoritative priced rows are omitted, do not claim high confidence. Do not set confidence above 0.90 when authoritative priced rows from the supplied batch are knowingly incomplete or unresolved.
+
+EXACT SUPPLIER-CODE ACCOUNTING BEFORE PAGE COMPLETENESS
+
+A commercial page is complete only when EVERY authoritative priced supplier code visible on that page has been accounted for.
+
+Before claiming a page or page range complete:
+
+1. Read every commercial table on that supplied page.
+2. Build an internal checklist of every authoritative priced supplier code.
+3. Compare that checklist against all emitted:
+   - pricing.baseModelRows
+   - pricing.workstationRows
+   - pricing.priceMatrices rows
+   - pricing.modularGroups rows
+   - optionGroups items
+4. Every authoritative priced supplier code must be:
+   A. emitted exactly once in the correct structure,
+   OR
+   B. explicitly identified in extractionWarnings as not yet extracted.
+
+A page appearing in sources[] does NOT prove that page is commercially complete.
+
+Never emit wording such as "Extraction complete through printed page X" unless every authoritative priced supplier code on every supplied commercial page up to X has been accounted for.
+
+If any earlier supplied page still contains unextracted supplier codes: do NOT claim completion through a later page; identify the earliest incomplete printed page or commercial family; state that supplemental extraction is still required from that point.
+
+Do not use family-level wording such as "SCBD family extracted" when only some supplier codes from that family were emitted. Completeness is evaluated at authoritative supplier-code row level, not merely family-name level.
+
+SCREEN INSTALLATION / MOUNTING SYSTEMS ARE NOT AUTOMATICALLY PRIMARY PRODUCTS
+Do not route desk rails, cable-management rails, flap assemblies, screen-support rails, mounting assemblies, or cable-tray mounting systems to pricing.baseModelRows merely because they have their own supplier codes and prices.
+
+If the source presents them as:
+- installation options
+- support systems
+- mounting systems
+- desk rails
+- cable-tray assemblies used to mount screens
+
+then preserve them as configuration/support/accessory structures rather than primary Screen products.
+
+Primary Base/Model should be used for the independently sold screen/divider SKU itself.
+
+Only treat a rail/support assembly as a main Base/Model product if the source clearly presents it as the primary commercial product rather than an installation/support component.
+
+Architectural examples only, never extraction evidence:
+- an "SCBD..." style desk rail -> installation/support configuration
+- an "SCBV..." style cable-tray rail -> installation/support configuration
+- an "SCSS..." / "SCSB..." style flap + cable tray -> installation/support configuration
+- an "SCRS..." / "SCBS..." / "SCRB..." style framed-screen mounting/cable system -> installation/support configuration
+
+INSTALLATION FAMILY EXTRACTION MUST ALSO BE EXHAUSTIVE
+
+When one supplied installation-options page contains several separately priced supplier-code families, preserve every authoritative priced family and every row.
+
+Do NOT extract only one representative family for:
+- one desktop thickness
+- one desk type
+- one bench type
+- one middle-gap condition
+- rail-only
+- rail + cable tray
+- flap + cable tray
+- one-flap versus two-flap systems
+- framed-screen mounting/cable assemblies
+
+when other separately priced sibling families are visibly present.
+
+Different supplier-code families with different commercial conditions remain separate option/configuration rows even when they perform a similar mounting function.
+
+Do not sample sibling installation families for brevity.
 
 MOUNTING AND COMPONENT COMMERCIAL STATUS
 If a screen row explicitly requires multiple separately priced components, every source-proven component relationship that the current schema can represent MUST be emitted structurally.
@@ -44,7 +137,61 @@ B. Art.881 / Art.882 group:
 
 Do not leave either relationship only in importantRequirements.
 
+Do not place all mounting hardware into one universal Required Companion optionGroup when the same screen row can require more than one independent mounting component simultaneously. Before emitting conditionalConfiguration, partition mounting components by independent selection requirement. If selecting one screen row requires Component family A PLUS Component family B, then A and B MUST be separate optionGroups so both groups can become active for the same target row. A single optionGroup with conditionalConfiguration.selection = "exactly_one" can never represent A PLUS B.
+
+Architectural examples only:
+A. Front-stirrup group - items may include Art.880 and Art.462; use exact allowed_item_ids per target row.
+B. Lateral-stirrup group - items Art.881 and Art.882; use conditionalConfiguration.selection = "exactly_one".
+C. Felt alignment / central-stirrup group - item Art.888.
+D. Freestanding-support group - item Art.886.
+
+Do NOT create one global "Mounting Stirrups & Brackets" Required Companion group when doing so prevents simultaneous independent requirements.
+
+For a source-proven angular screen requiring front mounting PLUS a lateral mount choice: activate the Front-stirrup companion group for the exact angular row, restricted to Art.880; independently activate the Lateral-stirrup companion group for that same row, restricted to Art.881 and Art.882; both rules required = true and visible = true. The same target row appearing in two different Required Companion groups is correct and necessary. Never reduce this to importantRequirements only.
+
 "Supplied with brackets", "brackets/clamps/support included", or equivalent is INCLUDED: preserve it as specification/source evidence and never add a Required Companion, synthetic mounting charge, or duplicate price. "Brackets not included", "order separately", "always complete with stirrups/mounting kit", or equivalent is a REQUIRED SEPARATE ITEM only for the exact source-supported screen rows. When separately priced required hardware and its exact target screen rows are both supplied and already extracted, importantRequirements alone is insufficient: MUST emit row-specific conditionalConfiguration whenever the current schema safely represents it. Use role "companion", required true, visible true, and one applicability rule per exact target row. For one required alternative set such as Art.881 OR Art.882, use a companion group with outer selection "required_choose_at_least_one", conditionalConfiguration.selection "exactly_one", and source-supported allowed_item_ids ["art-881", "art-882"]; do not auto-choose without a deterministic source rule. A separately required single item (for example Art.462 for an exact S7b row, or Art.886 where an exact freestanding row says "complete always with") needs its own required companion group/rule targeted only to those exact rows. For Art.880 PLUS one of Art.881/Art.882, emit TWO independent Required Companion groups: one for Art.880 and one exactly-one alternatives group for Art.881/Art.882; never collapse this into one global mounting group or artificial combined accessory row. Direct-priced variants such as screen with one/two accessory rails, or a single screen-and-modesty SKU, remain their own authoritative rows; do not additionally charge included rails or synthesize separate products.
+
+INCLUDED MOUNTING HARDWARE MUST SURVIVE EXTRACTION
+When a source row explicitly says includes mounting clamps, supplied with mounting brackets, brackets included, or mounting hardware included, that status MUST be preserved on the exact authoritative SKU row. Do not omit such rows merely because a visually similar non-included family exists. Do not add any separate required mounting charge to those included-hardware rows. For mixed catalogues containing both screen rows with included hardware and screen rows requiring separate hardware, the extractor MUST preserve both commercial families independently.
+
+Final check: verify that at least one INCLUDED-hardware row remains structurally distinct from otherwise-similar REQUIRED-SEPARATE-hardware rows when both are present in the supplied source.
+
+Mounting commercial status is family/row-specific source evidence. Do NOT inherit mounting clamps included, brackets included, brackets not included, or mounting required separately from a preceding or following visually similar family. If Family A explicitly says "includes pair of mounting clamps" and adjacent Family B does not state an included/separate mounting status, do not assume Family B has the same status. Likewise, if another adjacent family says "mounting brackets not included", do not apply that requirement to Family B without exact source evidence. When the exact family is silent: preserve the authoritative SKU/price normally; do not invent included hardware; do not invent a separately-required mounting component; preserve any broader installation guidance that is genuinely source-backed; mark the mounting relationship for review/manual decision if necessary. Final self-check: every INCLUDED or REQUIRED-SEPARATE mounting statement must be supported by the exact target family/row source block.
+
+SOURCE-SILENT MOUNTING STATUS IS NEUTRAL
+
+If the exact visual commercial row/family block does NOT explicitly state an included or separately-required mounting status, mounting commercial status for that row/family is UNKNOWN / UNSPECIFIED.
+
+For an exact source-silent row/family, NEVER emit phrases such as:
+- "Includes mounting clamps"
+- "Includes mounting brackets"
+- "Mounting brackets not included"
+- "Mounting brackets must be ordered separately"
+- "Mounting hardware included"
+- "Mounting hardware required separately"
+
+in:
+- specification
+- importantRequirements
+- conditionalConfiguration
+- Required Companion rules
+
+unless that exact commercial row/family block visibly supports the statement.
+
+Do NOT derive row-level mounting commercial status from:
+- a general installation diagram
+- a family-wide installation page
+- the previous commercial family
+- the following commercial family
+- the same material at another height
+- the same height in another material
+- a neighbouring table
+- page layout proximity
+- a repeated chapter heading
+
+General installation guidance may still be preserved as configuration context, compatibility evidence, or extractionWarnings when genuinely supported, but it MUST NOT be rewritten as INCLUDED or REQUIRED-SEPARATE commercial status for a source-silent SKU family.
+
+Final self-check: For every row whose specification or importantRequirements contains an included-mounting or separately-required-mounting statement, verify that the same exact commercial family/table block contains explicit manufacturer evidence for that status. If not, remove that row-level status before returning JSON.
 
 REQUIRED SCREEN COVER QUANTITIES
 When supplied source evidence explicitly requires a matching cover for an exact screen/modesty row and the cover SKUs are supplied in the extraction batch, preserve each real cover SKU and its unit price as a Required Companion, not an ordinary optional accessory. Target each exact compatible row with conditionalConfiguration. Use fixed_quantity: 1 for a one-bar row and fixed_quantity: 2 for a two-bar row only when the source proves that count. The manufacturer cover remains one unit-priced item: never multiply its source price, synthesize a multi-cover SKU, or leave a source-required cover optional. When one required cover companion group contains multiple cover SKUs for different screen widths or configurations, every applicability rule MUST use allowed_item_ids to restrict that target row to the exact source-supported matching cover SKU or SKUs. A different-width cover must never remain selectable merely because it belongs to the same cover group.
@@ -78,21 +225,36 @@ W120-W180 felt modesty
 PLUS
 -> Art.888 required
 
-Use separate Required Companion groups for independent required items. Do not leave Art.880 or Art.888 as prose-only requirements.
+Use separate Required Companion groups for independent required items. Do not leave Art.880 or Art.888 as prose-only requirements. Each requirement must have its own row-specific applicability rule. Do not merge Art.880 and Art.888 into one exactly-one group.
 
-When a screen row explicitly requires mounting hardware, but the exact hardware choice depends on external configuration such as desk system, bench system, central bar, crossbeam, fixed top, sliding top, or other context the current ProductTemplateDraft cannot express, do NOT invent an unconditional companion. Instead: keep the requirement in importantRequirements; preserve the supplied compatible hardware items; and add extractionWarnings entry containing exactly "CONFIGURATION-DEPENDENT - MANUAL DECISION". This warning is mandatory whenever at least one supplied screen mounting requirement remains unresolved because the current schema cannot express the deciding context. Do not omit the warning merely because other screen rows have valid conditionalConfiguration.
+When a screen row explicitly requires mounting hardware, but the exact hardware choice depends on external configuration such as desk system, bench system, central bar, crossbeam, fixed top, sliding top, or other context the current ProductTemplateDraft cannot express, do NOT invent an unconditional companion. Instead: keep the requirement in importantRequirements; preserve the supplied compatible hardware items; and add extractionWarnings entry containing exactly "CONFIGURATION-DEPENDENT - MANUAL DECISION". This warning is mandatory whenever at least one supplied screen mounting requirement remains unresolved because the current schema cannot express the deciding context. Do not omit the warning merely because other screen rows have valid conditionalConfiguration. If at least one extracted screen row has an explicit mounting requirement but its exact hardware choice cannot be structurally resolved because the decision depends on external desk/bench/system context, extractionWarnings MUST contain exactly "CONFIGURATION-DEPENDENT - MANUAL DECISION". This warning is required even when other screen rows have successfully resolved conditionalConfiguration rules.
 
-Requirements depending on desk versus bench, desktop thickness, centre gap, cable tray/flap, desk system, connected screen count, height, fixed/sliding desktop, rail/crossbeam, or freestanding stability must not become unconditional companions. If the exact condition cannot be represented in the current draft schema, preserve requirement text, supplier/reference codes, applicability evidence, and source condition, then add the clear extraction warning "CONFIGURATION-DEPENDENT - MANUAL DECISION". For linked floor screens, preserve each hinge kit, kit quantity if stated, height condition, and "only when linked" condition; never make it universally required. For stabilizing legs/bases, preserve explicit end/middle/shared-leg, flat-base, spacing, and composition-threshold evidence, but do not infer fixed quantities from layout.
+Requirements depending on desk versus bench, desktop thickness, centre gap, cable tray/flap, desk system, connected screen count, height, fixed/sliding desktop, rail/crossbeam, or freestanding stability must not become unconditional companions. If the exact condition cannot be represented in the current draft schema, preserve requirement text, supplier/reference codes, applicability evidence, and source condition, then add the clear extraction warning "CONFIGURATION-DEPENDENT - MANUAL DECISION".
+
+When a primary screen row explicitly states "mounting brackets not included" or "must be ordered separately", the extraction MUST NOT leave all compatible mounting hardware as ordinary optional accessories if the source proves the screen cannot be installed without separate mounting hardware. If the exact mounting choice depends on external context such as desktop thickness, desk range, bench vs single desk, centre gap, or flap/cable-tray condition, then: preserve the mounting-system items; keep the main screen as the primary Base/Model row; preserve the "mounting required separately" requirement; emit "CONFIGURATION-DEPENDENT - MANUAL DECISION"; do NOT invent one universal mounting SKU; and do NOT downgrade the relationship to a normal optional accessory. If exact applicability can be expressed safely with current schema and supplied evidence, use row-specific Required Companion rules instead.
+
+For linked floor screens, preserve each hinge kit, kit quantity if stated, height condition, and "only when linked" condition; never make it universally required. For stabilizing legs/bases, preserve explicit end/middle/shared-leg, flat-base, spacing, and composition-threshold evidence, but do not infer fixed quantities from layout.
 
 Preserve explicit external desk/workstation compatibility or incompatibility (for example OXI, 5TH ELEMENT, SIGMA, UP, SEGUO, FIL ROUGE, X5, X4) as source evidence for later Planning/Linked Product decisions. Do not create cross-template conditionalConfiguration rules, duplicate the desk/workstation into the Screen template, or automatically persist a linked product. If the Screen is independently configurable and intended to accompany another family, preserve a planning/source note that it is a reusable Linked Product candidate; linking is not an extraction-time decision.
 
 SCREEN FINISHES, CODES, DIMENSIONS, AND STATUS
 Keep finish/material colour, commercial price category, and supplier/order-code suffix separate. When the manufacturer explicitly states base article + finish code = complete order code, retain the base article as the row supplier code unless that exact row prints a complete code; retain the finish code in finish/material source data and preserve the manufacturer composition instruction. Do not duplicate pricing rows per finish, synthesize/concatenate a code, or include finish/footnote/superscript markers such as (*) in supplier codes. The extraction MUST include "COMPOSED SUPPLIER CODE - RUNTIME SUPPORT REQUIRED" in extractionWarnings whenever that commercial-code composition is source-proven; this warning is mandatory, not optional.
 
+Emit "COMPOSED SUPPLIER CODE - RUNTIME SUPPORT REQUIRED" ONLY when the supplied source explicitly proves that the final commercial order code is formed by combining multiple code parts, for example base article code + finish/material suffix = complete order code. Finish codes, RAL codes, colour codes, or material codes by themselves are NOT sufficient evidence of supplier-code composition. Do not emit the composed-code warning merely because a row has a supplier code, finishes have their own codes, frame finishes use A/I/R, or RAL/NCS references exist. The manufacturer must explicitly state or demonstrate the composition rule.
+
 Bind actual screen dimensions to their exact row/code. Preserve nominal desk-size relationships as guidance (for example actual 1725 mm screen for an 1800 mm desk), never overwrite the actual screen dimension with the nominal desk dimension. Preserve source-backed screen-type/height/material finish restrictions without treating them as price differences unless prices differ. Ordinary hooks, holders, trays, panels, covers, and similar screen accessories remain optional unless source explicitly makes them mandatory. Preserve discontinued/obsolete/while-stocks-last status as row/source warning rather than silently removing an authoritative row.
+
+If the source explicitly labels a row/family THIS ITEM WILL SHORTLY BE DISCONTINUED, discontinued, obsolete, while stocks last, or no longer replenished, preserve that status on the affected row/family. Do not silently drop the status. If current ProductTemplateDraft has no exact dedicated discontinued field, preserve it in importantRequirements and/or extractionWarnings without removing the authoritative row. Final check: every source-marked discontinued/shortly-discontinued SKU remains present with its status preserved.
+
+When a discontinued / shortly-discontinued / obsolete / while-stocks-last notice appears between commercial families, bind the notice to the exact visual table/family block supported by its placement. A status printed directly after the final rows of one family and before the heading/rows of the next family belongs to the preceding family unless the source explicitly indicates otherwise. Do NOT attach a discontinued notice to the following family merely because PDF text extraction places the notice immediately before that family's text. Use page layout, headings, row boundaries, spacing, and table grouping as evidence. Never propagate one family's discontinued status into an adjacent family. Final self-check: every discontinued status is attached to the exact visual family/table that the source marks, not merely the nearest row in parsed-text reading order.
+
+SCREEN PTS / NON-CURRENCY PRICING
+When the manufacturer labels commercial values as PTS / points rather than a currency: preserve the raw numeric values exactly; keep currency null; do not assume EUR/AED/USD; and add an extraction warning explaining that a point-to-price conversion rule is required before treating the values as monetary prices. Do not multiply or convert PTS during extraction.
 
 SCREEN SOURCE-BATCH PAGE FIREWALL
 If the user supplies a declared page range or selected page batch, sources[] MUST be a subset of that supplied batch.
+
+When the extraction call declares an explicit supplied page range, such as pages 9-31, treat that range as a hard allow-list for sources[]. No source entry may have pageNumber < first supplied page or pageNumber > last supplied page. Do not use an adjacent continuation page such as page 32 merely because it is present in the same uploaded PDF or earlier conversation context. If useful data exists outside the range: omit that data from the extraction; add a supplemental extraction warning instead.
 
 A page outside the supplied batch must never appear in sources[] even when:
 - it belongs to the same uploaded PDF
@@ -106,8 +268,266 @@ Final self-check: For every sources[].pageNumber, verify that page number was ex
 
 sources[] may contain only supplied pages that materially contributed data to this extraction call. Never include a TOC, preceding page, remembered catalogue page, prompt example, prior-context page, or any other unsupplied page. A page referenced by a supplied page is not itself supplied evidence. If a needed companion page is unsupplied, preserve only its reference, add a supplemental-extraction warning, and do not extract its code or price. Before returning JSON self-check: Every sources[].pageNumber is from the actual source batch supplied for this extraction call.
 
+For sources[].pageNumber, use the page numbering system actually supplied for the current extraction batch consistently. Do not mix PDF page index, printed catalogue page number, and earlier-conversation page numbering within one extraction. If the supplied split PDF preserves printed catalogue numbers and the model uses those, use printed catalogue numbers consistently for every source in that batch. This does not change the existing hard supplied-page firewall.
+
 SCREEN FINAL CHECK
-Before returning JSON verify: direct-priced screens stayed Base/Model; real upholstery columns stayed Matrix; included hardware was not charged; supplied separately required hardware has row-specific conditionalConfiguration whenever exact target rows are expressible; required cover quantities use fixed_quantity without multiplied price; alternatives were not auto-selected; configuration-dependent hinges/bases were not made unconditional; source-proven commercial article-plus-finish composition has the mandatory runtime-support warning; sources[] contains no unsupplied pages; article and finish codes remain separate; actual versus nominal dimensions remain distinct; and no external compatibility or cross-template relationship was invented.`;
+Before returning JSON verify: direct-priced screens stayed Base/Model; real upholstery columns stayed Matrix; included hardware was not charged; supplied separately required hardware has row-specific conditionalConfiguration whenever exact target rows are expressible; required cover quantities use fixed_quantity without multiplied price; alternatives were not auto-selected; configuration-dependent hinges/bases were not made unconditional; source-proven commercial article-plus-finish composition has the mandatory runtime-support warning; sources[] contains no unsupplied pages; article and finish codes remain separate; actual versus nominal dimensions remain distinct; no external compatibility or cross-template relationship was invented; every authoritative priced row from the supplied batch was emitted or explicitly excluded with a reason and confidence was not overstated; installation/mounting rails and cable-tray assemblies were not routed as primary Base/Model products unless the source proves they are the primary commercial product; INCLUDED-hardware rows remain distinct from REQUIRED-SEPARATE-hardware rows; discontinued/shortly-discontinued status was preserved; the composed supplier-code warning was emitted only with explicit source proof of code composition; PTS/point values stayed raw and unconverted with currency null; sources[].pageNumber used one consistent numbering system for the batch; every discontinued status is bound to the exact visual family/table block the source marks, not parsed-text adjacency; every INCLUDED or REQUIRED-SEPARATE mounting statement is supported by its own exact target family/row source block, never inherited from an adjacent family; every row-level INCLUDED or REQUIRED-SEPARATE mounting statement has explicit evidence in that exact commercial row/family block; a source-silent mounting family did not inherit commercial mounting status from a neighbouring family or general installation diagram; every supplied commercial page was checked code-by-code, not merely listed in sources[]; every authoritative priced supplier code is emitted exactly once or named explicitly as still unextracted; no "complete through page X" warning is emitted while an earlier supplied page still has unaccounted authoritative supplier codes; and separately priced sibling installation families were not sampled or collapsed merely because they share the same mounting role.`;
+
+const accessoriesElectrificationExtractionContract = `ACCESSORIES / ELECTRIFICATION CATALOGUE EXTRACTION
+Accessories may be standalone direct-priced products, product-local optional accessories, required separate companions, conditional options, installation/support components, configurable electrification systems, accessories with their own required components, included parts, compatibility-restricted accessories, or manufacturer-finish-coded accessories. Preserve manufacturer truth; do not force every item into one commercial behavior.
+
+ACCESSORY COMMERCIAL TABLE COLUMN BINDING
+When the source presents a dense commercial table with columns such as W | D | H | CODE | PTS or equivalent translated headings, bind values strictly by the visible column headers and row alignment.
+
+For every commercial row, read in this order: (1) W / width; (2) D / depth; (3) H / height; (4) CODE / supplier article code; (5) PTS / price.
+
+Never shift a numeric value into an adjacent field.
+
+Examples of prohibited extraction errors: using PTS as width, depth, or height; using width as price; using height as price; moving one row's price into the next row; reversing W/D/H merely because the product illustration is rotated; assuming the largest number is the price; assuming the final numeric value before CODE is price.
+
+The visible table column boundaries are authoritative.
+
+Before emitting each Accessories commercial row, verify: source dimensions -> structured dimensions; source CODE -> supplierCodes; source PTS -> price. Do not derive one field from another.
+
+ACCESSORY ROW TOKEN LEDGER
+For every dense commercial table row, build this internal row ledger BEFORE creating JSON: SOURCE ROW TOKENS: [W] [D] [H] [CODE] [PTS] [OPTIONS] [CBM] [KGS] [PARCELS]. Bind each visible cell exactly once.
+
+Example: 200 | 60 | 18 | ABCO001 | 39 | ... must become: width = 200; depth = 60; height = 18; supplierCode = "ABCO001"; price = 39.
+
+It is INVALID to rotate or shift this into: width = 60; depth = 18; height = 39; price = 200. Do not reinterpret a row based on product orientation or numeric magnitude.
+
+Before returning each row, reconstruct: width | depth | height | supplierCode | price and compare it back to the same visible source line.
+
+BLANK DIMENSION CELL PRESERVATION
+If a visible commercial row contains fewer W/D/H numbers before CODE, preserve the missing axis as null.
+
+Example: 12.5 | 12.5 | [blank] | ABCO123 | 211 must become: width = 12.5; depth = 12.5; height = null; price = 211. Never move PTS into the blank H field.
+
+NUMERIC CROSS-FIELD COLLISION CHECK
+Before returning each row, verify that a numeric source value was not reused in two unrelated fields merely because of table-reading ambiguity.
+
+Example: if source shows W 12.5, D 12.5, H blank, CODE ABC123, PTS 211, then: width = 12.5; depth = 12.5; height = null; price = 211. Do NOT emit height = 211 or price = 211 as the same value unless the source independently prints 211 in both columns.
+
+Likewise, do not use a PTS value as a dimension or a dimension as PTS.
+
+Add a final suspicious-collision check: If price equals one of width/depth/height, verify the source independently prints the same numeric value in both columns.
+
+If the source prints W55 D55 H174 CODE XYZ PRICE86, the extraction must be: width = 55; depth = 55; height = 174; price = 86. Not: price = 174.
+
+SUPPLIER CODE CHARACTER FIDELITY
+Supplier article codes must preserve every character exactly as printed. Pay special attention to visually similar characters: letter O vs digit 0; letter I vs digit 1; letter S vs digit 5; letter B vs digit 8. Never normalize or guess these characters. If a source code visibly contains ...O..., do not emit ...0..., and vice versa.
+
+Before returning each supplier code: (1) compare the complete extracted code against the same visible source row; (2) verify every alphabetic/numeric character; (3) preserve original capitalization.
+
+When OCR/parsed text conflicts with the visible table image, use the visible commercial table as authority. Do not silently repair a supplier code by pattern matching against neighbouring codes.
+
+For every code containing an O/0-like glyph, compare the character against the visible source image before final output. Do not infer code characters from generated ID patterns. Generated row/item IDs may normalize formatting for internal stability, but supplierCodes MUST preserve the manufacturer code exactly.
+
+The following transformation pattern is explicitly prohibited: ABCO001 -> ABC0001, or: ABCO03 -> ABC003, unless the printed source itself contains zero.
+
+ACCESSORY VISUAL BLOCK BINDING
+When one supplied catalogue page contains several accessory products with adjacent diagrams, dimensions, capacities, clamp ranges, VESA references, cable lengths, technical callouts, or other annotations, bind every fact to the exact visual commercial product block that owns it.
+
+Determine ownership using: table-row boundaries; product-heading boundaries; illustration boundaries; leader lines; horizontal/vertical alignment; spacing; source grouping.
+
+Do NOT transfer a technical fact from a preceding or following accessory row merely because parsed PDF text places the fact nearby. A fact shown inside Product A's visual block belongs to Product A unless the source explicitly states that it applies more broadly.
+
+Before returning each accessory row, verify that every technical fact in specification, dimensions, and displayName belongs to that exact commercial row/family block.
+
+Final check: Technical facts from neighbouring accessory rows were not cross-assigned.
+
+SAME-PAGE FACT OWNERSHIP MUST BE VERIFIED ROW BY ROW
+When a page contains Product A, Product B, and Product C vertically in separate commercial blocks, do not assign a technical fact to a product until its visual ownership is confirmed.
+
+For EACH technical fact such as VESA size, screen-size range, maximum load, maximum desktop thickness, clamp opening range, cable length, wattage, colour temperature, plug type, or adjustment range, perform this check: FACT -> identify the illustration/text block containing the fact -> identify the commercial supplier-code row belonging to that block -> attach the fact ONLY to that row. Never use parsed-text sequence alone.
+
+If one fact visually sits below Product A's commercial row but inside Product B's illustrated block, it belongs to Product B.
+
+If ownership cannot be established confidently: omit the uncertain fact from the row specification; add an extractionWarning if commercially important. Do not copy the fact to both neighbouring products as a hedge.
+
+Final mandatory check: For every multi-product source page, re-check each row's specification against its own visual block before returning JSON.
+
+STANDALONE VS PRODUCT-LOCAL ACCESSORIES
+When an accessory is independently sold, directly priced, and commercially usable as its own quotation item, extract it as Base / Model. Typical examples: monitor arms, desk lamps, CPU holders, footrests, waste bins, coat stands, coat hooks, desktop organizers, standalone electrical units, and freestanding cable-management items. Do NOT force independently sold accessories into optionGroups merely because the manufacturer catalogue calls them "Accessories".
+
+Ordinary standalone accessory commercial families remain ordinary pricing.baseModelRows. Do NOT use pricing.baseModelRows[].groupId or groupLabel merely to organize Accessories into visual families such as Monitor Arms, CPU Holders, Cable Management, Waste Bins, Clothes Hangers, Desk Accessories, or Electrification. pricing.baseModelRows[].groupId and groupLabel are reserved for the existing Native System/Base architecture only, where the source proves a genuine first-stage priced System/Base selection with downstream Main Products. For ordinary Accessories: emit normal Base/Model rows with NO groupId; emit NO groupLabel; emit NO role = 'system_base'; preserve manufacturer family identity through labels/specification/source evidence; Smart Setup / Planning may create visual commercial families/subgroups later. Do not use Native System/Base metadata as a generic visual-grouping mechanism.
+
+When an accessory exists specifically to be selected while configuring another product, route it to optionGroups ONLY when its parent/trigger can be represented inside the CURRENT ProductTemplateDraft, using the correct commercial role: Normal Accessory, Conditional Option, or Required Companion. Do not convert every accessory catalogue item into a local option.
+
+Examples of valid local triggers: an already-emitted Base/Model row; an already-emitted Matrix row; an already-emitted Modular row; an already-emitted Workstation row; an already-emitted optionGroups item.
+
+If the accessory belongs to an EXTERNAL Product Template or named external product family that is not represented in the current draft: do NOT invent an unscoped optionGroup applicability rule; do NOT create cross-template conditionalConfiguration; preserve the authoritative accessory SKU/code/price as commercial data when the supplied source directly prices it and it is commercially relevant to the Accessories catalogue; preserve the external family compatibility/restriction in specification, planning evidence, linkedFamilySuggestions, or extractionWarnings as the existing contract permits; add "CONFIGURATION-DEPENDENT - MANUAL DECISION" when configuration depends on that external context and cannot be safely represented.
+
+Planning later decides Standalone Product, Include Locally in the parent template, Both, or Manual Decision. Extraction must not pretend an external parent is a local target. Extraction should preserve enough evidence for Planning to later decide Standalone Product, Include Locally, Both, or Manual Decision; extraction itself must not duplicate the same item automatically.
+
+ACCESSORY COMMERCIAL STATUS
+Classify accessory/component status exactly. INCLUDED: explicitly supplied as part of the selected commercial item (for example mounting brackets included, clamp included, cables included, power lead included). Preserve INCLUDED facts in specification. Do NOT place a purely included fact in importantRequirements; importantRequirements is only for a separate actionable obligation or restriction. Do NOT create another priced accessory charge for an INCLUDED component.
+
+Example:
+Source: "Mounting brackets included"
+Correct: specification = "... Mounting brackets included." ; importantRequirements = []
+Incorrect: importantRequirements = ["Mounting brackets included"]
+
+PREPARED FOR: holes provided, cutout provided, pre-drilled, or provision for module — preserve preparation status and do NOT assume the accessory itself is included. REQUIRED SEPARATE ITEM: explicit source wording such as must be ordered separately, always complete with, requires, or add Art.X — use Required Companion when exact applicability is safely representable. OPTIONAL SEPARATE ITEM: source-supported compatible/optional item — use Normal Accessory or Conditional Option as appropriate. UNCONFIRMED: if source evidence is unclear, do not guess; preserve warning/manual decision.
+
+ACCESSORY -> REQUIRED ACCESSORY
+ProjectWorkflow supports option_item targeting. When a selected accessory itself requires another component, for example Monitor Arm -> Through-Desk Clamp required, or Data Module -> compatible Cover required, emit the required dependent item using target.kind = option_item. Do not duplicate the parent accessory as a synthetic combined SKU.
+
+CONFIGURABLE ELECTRIFICATION
+Recognize configurable electrification without inventing arbitrary recursive dependency graphs. A supported generic pattern is: Main Power Unit -> selectable connector/data module(s) -> required compatible cover/adapter for the selected module.
+
+Recommended extraction shape:
+A. Independently sold Main Power Unit -> Base/Model direct-priced row.
+B. Independently selectable USB / HDMI / RJ45 / Audio module -> optionGroups item.
+C. Cover or adapter explicitly required because that exact module was selected -> Required Companion using target.kind = 'option_item' targeting that exact already-emitted module item.
+
+This is one option_item-triggered required-companion relationship. Do NOT manufacture an additional artificial "Custom Module Slot" priced item when the source only shows the slot/capacity as part of the Power Unit construction. Do NOT invent recursive chains such as Power Unit -> Slot -> Module -> Adapter -> Cover unless every independently priced commercial item and every dependency is explicitly source-proven AND supported by the current draft contract. When deeper dependency behavior cannot be represented safely: preserve all authoritative commercial rows; preserve their source relationship; add "CONFIGURATION-DEPENDENT - MANUAL DECISION"; do not synthesize combined SKUs.
+
+CUSTOM MODULE SLOT CAPACITY MUST MATCH THE SELECTED MAIN UNIT
+If manufacturer Base/Model rows explicitly provide different module capacities, such as Main Unit A -> 1 custom module slot, Main Unit B -> 3 custom module slots, do NOT use one shared optionGroup with maxSelections = 3 for both units. Preserve the capacity structurally.
+
+Use separate applicability/configuration groups where necessary so that: 1-slot units allow maximum 1 selected custom module; 3-slot units allow maximum 3 selected custom modules. The same manufacturer module family may be represented in separate configuration groups only when required to enforce these source-proven, mutually exclusive slot capacities.
+
+Do not let a 1-slot product select 2 or 3 modules. Do not invent a priced "slot" item. If current draft structure cannot express different limits safely without duplicating configuration items, emit "CONFIGURATION-DEPENDENT - MANUAL DECISION" rather than applying the broader maxSelections to every unit.
+
+Do NOT pre-compose Power Unit + HDMI + Cover as one fake commercial SKU unless the manufacturer itself publishes that combination as an authoritative priced SKU. Do NOT flatten all possible combinations into synthetic SKU rows.
+
+For independently priced data/media modules and covers: preserve exact supplier codes character-for-character; do not confuse the letter O with zero in module codes; verify every dependency against the exact source item.
+
+If one module explicitly states "does not require cover", do NOT attach the required-cover companion rule to that module. If another module explicitly states "Cover X or Cover Y not included, to be ordered separately", preserve module -> exactly one compatible cover using option_item applicability when representable. Never generalize one module's cover requirement across all sibling modules.
+
+MULTIPLE MODULE SELECTION
+When source allows multiple distinct modules/components, use a multi-selection architecture. Preserve multiple different items, individual quantity per item, and source-supported maximums where explicitly stated. Do not force exactly_one unless source requires exactly one. If source says "up to 3 modules", preserve that maximum. Do not infer a maximum from a drawing alone.
+
+REQUIRED COVER / ADAPTER RELATIONSHIPS
+If a module explicitly requires one cover, one of two compatible covers, an adapter, a clamp, or a fixing kit, extract the dependency structurally when supported. Example architecture only: Module A -> Cover X required; Module B -> exactly one of Cover X / Cover Y. Use separate Required Companion groups when independent components are simultaneously required.
+
+COMPATIBILITY BY DISCRETE ROW/ITEM
+If manufacturer compatibility maps to an actual extracted row or option item, use exact applicability: a specific accessory only for one Base/Model row, one clamp required when a particular option item is selected, or an accessory available only with one exact product variant. Do not broaden compatibility beyond source evidence.
+
+ATTRIBUTE / EXTERNAL-CONTEXT LIMITATION
+If compatibility depends on a condition that is NOT represented by an exact current row/item identity, do not invent conditionalConfiguration. Examples: desktop thickness = 18 mm, glass vs melamine top, external desk range X1/X3/X5, desk vs bench in another Product Template, mounting position, or external cable-tray state. Preserve the manufacturer condition, compatible item codes, and exclusions, and flag "CONFIGURATION-DEPENDENT - MANUAL DECISION" unless the condition maps to a discrete extracted row/item in the current template.
+
+EXTERNAL PRODUCT COMPATIBILITY
+Accessories may explicitly support or exclude named product ranges. Preserve statements such as for X1 / X3 / X5, not for X4, not for glass tops, only for bench, or only for meeting tables. Do NOT create cross-template conditional rules and do NOT duplicate external parent products into the Accessories template; preserve this as compatibility evidence / planning guidance.
+
+INSTALLATION / SUPPORT ITEMS
+Recognize support items such as clamps, brackets, cutouts, drilling services, cable trays, risers, cable spines, cable towers, desk rails, and fixing kits. Do not treat an installation/support item as the main product merely because it has its own code and price. However, if the item is genuinely independently sold and quoted, preserve its authoritative commercial row; Planning will decide Standalone vs Local strategy.
+
+CUTOUT / DRILLING SERVICES
+Some catalogues separately price factory cutout, drilling, routing, or hole preparation. Preserve these as commercial items when they have authoritative codes/prices. Do NOT classify the cutout as INCLUDED when the source says "cutout not included". If a specific accessory explicitly requires the cutout, use Required Companion / option_item dependency when safely representable. If installation position or parent-product geometry is external context, preserve as MANUAL DECISION.
+
+ELECTRICAL MARKET VARIANTS
+Preserve market-specific variants such as Schuko, UNEL, UK, and US as authoritative separately priced variants when source gives different codes/prices. Do not merge them into finishes. Do not convert them into Category/Matrix unless the manufacturer genuinely uses a row × market-category price matrix.
+
+ZERO PRICE
+A source value of 0 is not null. If an authoritative accessory row explicitly has 0 / 0.00 / 0 PTS, preserve zero. Do not remove the row or convert zero to missing price.
+
+ZERO PRICE COLUMN VERIFICATION
+When the PTS/price column visibly contains 0, 0.0, or 0.00, preserve price = 0. Do not: replace it with a neighbouring row's price; replace it with a width/height value; treat it as missing; skip the row. For every zero-price row, explicitly re-check the same visual row across CODE -> PTS before returning JSON. A visible zero price is a hard commercial value.
+
+When a row has price = 0, lock that row's price before reading the next commercial row. A following sibling price must never overwrite or replace the zero.
+
+Example source sequence: CODE-A -> 0; CODE-B -> 198; CODE-C -> 227 must remain: CODE-A price = 0; CODE-B price = 198; CODE-C price = 227. Never propagate the first non-zero sibling price backward.
+
+ACCESSORIES PTS / POINT PRICING
+If source prices are PTS / points, preserve numeric values exactly, keep currency null, do not assume EUR/AED/USD, and add a warning that point-to-price conversion is required. Do not convert during extraction.
+
+FINISH CODES
+Distinguish finish/material code, supplier article code, and complete commercial order code. Finish code alone does not justify a separate pricing row when price is the same. Preserve finish options as Manufacturer Finish Guidance / finish data.
+
+ACCESSORY FINISH AVAILABILITY SCOPE
+When different accessory rows/families visibly support different finish-code sets, do NOT create one broad materialSuggestion whose wording implies that every listed finish applies to every accessory. Preserve finish applicability only to the scope supported by the source. When Product A supports finish set A and Product B supports finish set B, do not merge A + B and present the union as universally available.
+
+Use one of these safe approaches:
+A. Create separate materialSuggestions for meaningful source-supported accessory families/finish sets.
+OR
+B. If a batch-level summary is genuinely useful, use neutral wording such as: "Finish codes observed across the supplied accessory batch; availability varies by accessory row/family."
+
+Do NOT state or imply universal finish availability unless the supplied source proves it.
+
+ACCESSORIES COMPOSED SUPPLIER CODE
+Some accessory catalogues explicitly require base article code + finish code = complete commercial order code. If and only if source explicitly proves this: preserve base article code, preserve finish code separately, do NOT duplicate pricing rows per finish, do NOT invent concatenated codes, and add "COMPOSED SUPPLIER CODE - RUNTIME SUPPORT REQUIRED". This warning is mandatory when explicit source evidence proves composition. Finish codes by themselves are NOT sufficient evidence.
+
+The explicit code-composition instruction itself must be visibly present in the CURRENT supplied extraction batch. Do not emit "COMPOSED SUPPLIER CODE - RUNTIME SUPPORT REQUIRED" merely because current pages show article codes; current pages show finish codes; an earlier catalogue page or previous extraction batch proved composition. If the current supplied batch does not contain the explicit composition instruction, omit the warning and request/support that rule only when the relevant page is supplied.
+
+ACCESSORY COMMERCIAL FAMILIES
+Preserve manufacturer-defined families such as Desk Accessories, Monitor Arms, CPU Holders, Cable Management, Cable Trays, Cable Risers, Electrification, Power/Data Modules, Storage Accessories, Coat Stands, Waste Bins, Locks / Keys, and Modesty Panels. Do not automatically create one Product Template per family: extraction preserves commercial identity, and Planning decides template consolidation.
+
+MODESTY PANELS / LARGE ACCESSORIES
+Some catalogues place substantial furniture-like products under Accessories, for example modesty panels, wall shelves, and desk-mounted panels. If they have authoritative direct SKU pricing, preserve them as direct commercial rows. Do not downgrade them to a small option merely because the chapter heading says Accessories. Preserve INCLUDED brackets exactly when stated.
+
+ACCESSORY SOURCE-SILENT STATUS
+Never inherit accessory commercial status from an adjacent family. If Family A says "brackets included" and Family B is silent, do not mark Family B as included. Likewise do not inherit required separately, optional, prepared for, discontinued, or compatible status from neighbouring rows/families. Exact visual family/table evidence controls.
+
+ACCESSORY DISCONTINUED ITEMS
+Preserve source-marked discontinued, shortly discontinued, obsolete, or while stocks last status. Do not remove authoritative commercial rows solely because they are discontinued; preserve the status/warning.
+
+ACCESSORY SOURCE COMPLETENESS
+For every supplied commercial page, account for every authoritative priced supplier code. Each must be emitted exactly once in pricing/optionGroups, or explicitly named as still unextracted in extractionWarnings. Do not sample representative accessory rows. Do not claim "complete through page X" while earlier supplied pages still contain unaccounted commercial codes.
+
+SOURCE PAGE ACCOUNTING MUST MATCH EMITTED ROWS
+For every supplied page that contributes at least one emitted commercial row or option item, sources[] MUST contain a page entry for that exact page. If a 10-page supplied batch contributes data from all 10 pages, sources[] must account for all 10 pages.
+
+Do not collapse multi-page evidence into one source entry with pageNumber = null when page numbers are available from the supplied PDF.
+
+Before output, build an internal page -> emitted supplier codes ledger and verify every used page is represented in sources[].
+
+Every emitted commercial row must be backed by at least one page present in sources[] from the CURRENT supplied batch. If rows from supplied PDF page 10 are extracted, sources[] must include that page.
+
+Do not: extract rows from a page and omit that page from sources[]; claim a 9-page source list while emitting commercial data from page 10; use remembered/adjacent pages.
+
+Before returning JSON: (1) identify the highest/lowest supplied page actually used; (2) verify every used page is represented in sources[]; (3) verify no sources[] page lies outside the supplied batch.
+
+ACCESSORIES SOURCE PAGE FIREWALL
+sources[] must contain only pages supplied in the current extraction call. Do not use adjacent PDF pages, previous conversation pages, or remembered catalogue pages. If required context is outside the supplied batch, add a supplemental-extraction warning.
+
+FINAL ACCESSORIES VALIDATION
+Before output verify: standalone accessory SKUs were not forced into optionGroups; product-local accessories were not incorrectly made standalone rows; INCLUDED items are not double charged; PREPARED FOR is not treated as INCLUDED; required separate items remain required; option_item dependencies preserve accessory -> accessory relationships; configurable electrification was not flattened into fake SKU combinations; multi-select modules remain multi-select where source supports them; attribute/external conditions were not invented as row rules; cross-template compatibility remains evidence/manual guidance only; cutout/drilling charges remain separate when source prices them separately; electrical market variants remain authoritative variants; zero price remains zero; PTS is not treated as currency; finish codes are not mistaken for price categories; the composed supplier-code warning appears only with explicit evidence; source-silent status was not inherited from adjacent families; discontinued rows remain present; every supplied priced code is accounted for; sources[] obeys the supplied-page firewall; product-local optionGroups were created only when their parent/trigger exists inside the current ProductTemplateDraft; and external-product compatibility did not create an unscoped local option group.
+
+ACCESSORIES JSON ESCAPING CHECK
+Before returning JSON, inspect every Accessories-generated label, displayName, specification, importantRequirements string, materialSuggestion text, linkedFamilySuggestion text, extractionWarning, and sources[].rawText for literal double quotes. Manufacturer inch marks and quoted product/model names MUST be valid JSON string content.
+
+Example source text: 15" to 24"
+Valid JSON string content: 15\\" to 24\\"
+
+Example source product name: PORTA-ABITO "LOOP"
+Valid JSON: "label": "PORTA-ABITO \\"LOOP\\""
+
+Never return an otherwise-correct Accessories extraction that fails JSON.parse because an inch mark or quoted manufacturer/model name was copied without JSON escaping. Do NOT change the existing global STRICT JSON STRING ESCAPING contract.
+
+ACCESSORIES JSON.PARSE HARD GATE
+Immediately before returning the final Accessories JSON, perform this final logical validation: (1) treat the complete response as the exact text that will be passed to standard JSON.parse; (2) inspect every JSON string for unescaped literal double quote characters; (3) correct every embedded manufacturer inch mark or quoted commercial name before returning the response; (4) if the response would fail JSON.parse, DO NOT return it until corrected.
+
+Examples of INVALID final JSON:
+"specification": "Suitable for 15" to 24" screens."
+"label": "PORTA-ABITO "LOOP""
+
+Examples of VALID final JSON:
+"specification": "Suitable for 15\\" to 24\\" screens."
+"label": "PORTA-ABITO \\"LOOP\\""
+
+The JSON escaping requirement applies to the FINAL SERIALIZED JSON, not merely to the internal meaning of the string.
+
+Final mandatory check: THE EXACT RETURNED ACCESSORIES RESPONSE MUST BE ACCEPTED BY JSON.parse.
+
+Before returning, explicitly scan label and displayName for manufacturer names wrapped in quotation marks. Example source name: "Catch" must serialize as: \\"Catch\\" inside the final JSON string. The exact returned text must still pass JSON.parse.
+
+Also verify: no technical fact from an adjacent accessory row was assigned to the wrong product; no variable/range dimension was collapsed into a single scalar minimum or maximum; all variable ranges remain preserved in dimensions.rawText and/or specification; source-supported sibling count/size distinctions remain visible; a collection/range heading was not used as supplierName without explicit manufacturer/supplier evidence; finish-code availability was not broadened beyond the exact source-supported row/family scope.
+
+HARD FAIL BEFORE RETURN:
+Do not return the Accessories JSON until all are true: the exact serialized response passes JSON.parse; no unescaped inch mark or quoted manufacturer/product name remains inside a JSON string; every technical fact on a multi-product page has been bound to its own visual commercial block; no VESA, clamp range, desktop-thickness range, load, cable, plug, or other technical fact leaked into an adjacent product; every visibly supplied sibling count/size/configuration distinction is preserved in the relevant row. If any one of these checks fails, correct the draft before output.
+
+Also verify that ordinary Accessories Base/Model rows do NOT contain groupId or groupLabel merely for visual/commercial family grouping. groupId/groupLabel are present only if the manufacturer source independently proves genuine Native System/Base architecture. Examples such as Monitor Arms, CPU Holders, Waste Bins, Clothes Hangers, Cable Management, and Desk Accessories are ordinary commercial families, not System/Base groups by name alone.
+
+Do not invent template.templateCode or template.internalSelectionName. If the current manufacturer source does not explicitly provide an authoritative template/product-family code suitable for templateCode, use null. If internalSelectionName is not source-proven or supplied by ProjectWorkflow context for this extraction call, use null. Generated convenience identifiers belong in row/group IDs, not authoritative templateCode/internalSelectionName fields.
+
+ACCESSORIES CONFIDENCE DISCIPLINE
+Do not return confidence above 0.90 if any of these remain unresolved: supplier-code character uncertainty; table-column ambiguity; unverified zero price; missing source-page accounting; uncertain commercial row ownership; incomplete accessory rows. A confidence such as 0.95 or 0.98 is inappropriate when authoritative commercial values remain uncertain.
+
+Confidence above 0.90 is allowed only after ALL of these pass: exact W/D/H/CODE/PTS row reconstruction; zero-price verification; O/0 supplier-code verification; page-by-page source accounting; option-slot capacity verification; final JSON.parse validity. If any one fails or remains uncertain, confidence must be <= 0.90.
+
+Also verify before return: W/D/H/CODE/PTS were bound from their exact visible columns; no PTS value was reused as width/depth/height; no dimension value was reused as price; every visible 0 price remains exactly 0; supplier codes preserve O versus 0 exactly; every extracted page contributing commercial rows exists in sources[]; module-specific "cover required" versus "no cover required" behavior was not generalized across sibling modules.`;
 
 const globalExtractionArchitectureContract = `GLOBAL EXTRACTION ARCHITECTURE DECISION CONTRACT - APPLY BEFORE THE SELECTED FURNITURE FOCUS
 First identify the manufacturer-defined commercial/product family and its source boundaries. Extract one clean selected family at a time. Do not absorb nearby unrelated families into the same ProductTemplateDraft unless the user explicitly included them in this extraction batch. For example, a Universal Cabinets batch must not absorb Pedestals, Smart Cabinets, Lockers, or Shared-side Bookcases merely because they are nearby in a Storage chapter.
@@ -403,6 +823,8 @@ Prioritize front, lateral/side, desk-mounted, bench, freestanding/desktop, and f
   category_matrix: `EXTRACTION FOCUS: Category / Matrix Pricing\nFocus on genuine row-by-category pricing in pricing.priceMatrices. Preserve exact matrix names, source column labels and order, row order, prices, and codes. Never invent generic Cat A/Cat B/Cat C/Cat D labels unless printed in the source. ${relatedAccessoriesRule}`,
   modular: `EXTRACTION FOCUS: Modular Pricing\nFocus on pricing.modularGroups: preserve manufacturer family, subgroup, module, shared price-category hierarchy, dimensions, codes, specifications, and related configuration. Never flatten modular hierarchy. ${relatedAccessoriesRule}`,
   accessories: `EXTRACTION FOCUS: Accessories / Configuration Only\nFocus only on optionGroups for accessories, options, companion/service components, add-ons, prices, codes, dimensions, specifications, explicit selection semantics, defaults, quantities, and applicability clues. Preserve explicit applicability in specification or warnings when v1 cannot encode it. Do not invent conditional rules or require main-product pricing extraction.`,
+  accessories_electrification: `EXTRACTION FOCUS: Accessories / Electrification
+Extract standalone and product-local accessories, cable management, electrification, modules, mounting requirements, compatibility, and finish codes. ${accessoriesElectrificationExtractionContract} ${relatedAccessoriesRule}`,
   product_details: `EXTRACTION FOCUS: Product Details / Specifications\nFocus on template identity, description, master and model specifications, dimensions, supplier/reference codes, origin, and manufacturer. Do not invent pricing; only preserve clearly visible, structurally safe prices.`,
   materials: `EXTRACTION FOCUS: Materials / Finishes\nFocus on materialSuggestions: finish/material names, codes, colours, combinations, top/base relationships, source-heading isolation, notes, and applicability. Do not merge neighbouring material sections or create Material Library records.`,
   storage_cabinets: `EXTRACTION FOCUS: Storage / Cabinets / Credenzas
@@ -559,7 +981,7 @@ IMPORTANT: Codes, prices, dimensions, page numbers, and manufacturer examples ap
 
 ${globalExtractionArchitectureContract}
 
-${screenExtractionContract}
+${focus === "screens" ? screenExtractionContract : ""}
 
 ${focusInstructions[focus]}
 
@@ -600,6 +1022,13 @@ PROJECTWORKFLOW CONTEXT
 ProjectWorkflow brand, category, and template context are non-authoritative supporting context only.
 
 Extract supplierName independently from the manufacturer source. Do not force source manufacturer identity to match the current ProjectWorkflow brand. Never overwrite or invent internal ProjectWorkflow brand/category IDs.
+
+COLLECTION / RANGE NAME VS SUPPLIER IDENTITY
+Do NOT treat a collection name, catalogue range name, chapter name, or product-family heading as supplierName merely because it appears prominently on every supplied page.
+
+If the supplied pages prove a collection/range name but do NOT visibly identify manufacturer, company, or supplier, then: preserve the collection/range in templateName, description, or other source-faithful family fields; set supplierName = null.
+
+Only populate supplierName when the supplied source itself visibly identifies the manufacturer/supplier. Do not infer supplier identity from product-range branding alone, file name, prior conversation context, or ProjectWorkflow brand context, unless that identity is visibly supported in the current extraction source.
 
 For example, if the manufacturer source identifies True Design, set:
 
@@ -681,6 +1110,27 @@ VISIBLE MODEL AND ACCESSORY NAMES
 displayName and accessory label must be human-readable and identifiable. Do not use a supplier/price-list code as the visible name when the source provides enough descriptive information; keep codes only in supplierCodes/referenceCodes. Include the minimum supported distinction between siblings, such as size, orientation, configuration, top-access condition, service-unit compatibility, or seat count. Example: label: "Service Unit W123.6 - Right", supplierCodes: ["1AF 090"], not label: "1AF 090".
 
 IMPORTANT: A configuration pictured or described on a technical page does NOT automatically become an optionGroup item or priced accessory.
+
+ACCESSORY SIBLING DISTINCTIONS
+When sibling accessory rows are differentiated by a clearly source-supported commercial count, width, size, capacity, hook count, tray width, or similar identity, preserve that distinction in displayName and specification.
+
+Examples of correct naming patterns:
+"Wall Clothes Hanger - 2 Hooks"
+"Wall Clothes Hanger - 3 Hooks"
+"Keyboard Tray - W56 cm"
+"Keyboard Tray - W58 cm"
+
+If the source visibly gives a meaningful size such as W35 cm versus W52 cm, preserve that size in dimensions where safely structured and/or in displayName/specification. Do NOT reduce a clearly differentiated sibling row to a generic name when doing so loses its source-supported commercial distinction.
+
+When two or more authoritative accessory rows share the same generic source product heading but the source visibly distinguishes them by hook count, number of positions, width, capacity, size, or configuration, the extraction MUST preserve those distinguishing facts for EVERY sibling row.
+
+Before returning the family: (1) compare sibling displayNames; (2) compare sibling dimensions; (3) verify that each visible source distinction is retained; (4) a sibling must not remain a generic duplicate name when the catalogue visibly identifies its count/size/configuration.
+
+Example architectural pattern:
+Row A: Wall Clothes Hanger - 2 Hooks, W35 cm
+Row B: Wall Clothes Hanger - 3 Hooks, W52 cm
+
+Returning Row B only as "Wall Clothes Hanger" with dimensions = null is INVALID when 3 hooks and W52 cm are visibly supplied.
 
 MODEL-DEFINING CONFIGURATION VS TRUE OPTION
 
@@ -886,6 +1336,25 @@ Extract visible currency. Use a clearly stated document/page currency as default
 DIMENSIONS
 
 Use dimensions only when supported. A dimension object contains width, depth, height, diameter, unit, and rawText. Use null for unavailable fields. Preserve exact readable rawText where useful. Do not invent missing dimensions. If a dimension is ambiguous, use null for uncertain structured fields and describe the ambiguity in extractionWarnings.
+
+VARIABLE / RANGE DIMENSIONS
+When the manufacturer gives a variable or adjustable dimension range and the current structured dimension field can store only one scalar value, NEVER convert that range to the minimum value, the maximum value, an average, or any arbitrary endpoint as though it were a fixed product dimension.
+
+Examples of source patterns: W 16.4-26.4 cm; H 34-54 cm; H 9-12 cm.
+
+For each ranged axis: set the structured dimension field to null; preserve the complete exact range in dimensions.rawText; preserve useful source-supported range information in specification. Fixed axes may still use numeric structured values normally.
+
+Example:
+Source: W 16.4-26.4 x D 24 x H 34-54 cm
+Correct structured dimensions: width = null, depth = 24, height = null
+Correct rawText: "W 16.4-26.4 x D 24 x H 34-54 cm"
+
+Do NOT store width = 26.4 or height = 54 merely because they are the upper limits.
+
+ACCESSORY TABLE DIMENSION ORDER
+For Accessories commercial tables whose visible headers are W / D / H, map them directly to width / depth / height in that exact order. Do not reorder axes based on product orientation, illustration, English prose word order, or assumed furniture conventions.
+
+If the source row is 27 | 27 | 48 under W | D | H, emit width = 27, depth = 27, height = 48, not any permutation of those values.
 
 WARNINGS
 
@@ -1210,7 +1679,7 @@ Before returning the JSON, verify internally that:
 Return only the final JSON object now.`;
 }
 
-export const productTemplateSetupPlanningFocuses = ["general", "chair_seating", "desk_executive", "workstation", "sofa_lounge", "meeting_conference", "storage_cabinets"] as const;
+export const productTemplateSetupPlanningFocuses = ["general", "chair_seating", "desk_executive", "workstation", "sofa_lounge", "meeting_conference", "storage_cabinets", "screens"] as const;
 export type ProductTemplateSetupPlanningFocus = typeof productTemplateSetupPlanningFocuses[number];
 
 const globalPlanningArchitectureContract = `GLOBAL PLANNING ARCHITECTURE DECISION CONTRACT - APPLY BEFORE THE FURNITURE-SPECIFIC FOCUS
@@ -1365,6 +1834,85 @@ Treat shared-side bookcases cautiously. State whether the source proves complete
 
 FINAL STORAGE SOURCE GATE
 Before returning PRODUCT SETUP PLAN, verify exact code, description, price, dimensions, handedness, component status, compatibility, and source page binding. Confirm the fewest coherent templates were chosen; without-shelves/internal-structure variants were not split without a real configuration boundary; direct-priced cabinets remain Base / Model; simple size variants were not made Modular; compatible doors were not made Required Companions without explicit mandatory evidence; complete open cabinets remain complete where supported; finish guidance was not converted to Matrix without commercial pricing evidence; and shared-side bookcases were not forced into Modular. Return only unresolved critical issues under Manual Decision or WARNINGS. Source fidelity is more important than completeness.`,
+  screens: `SCREENS / DIVIDERS PLANNING FOCUS
+Use this focus for front screens, lateral/side screens, desk-mounted screens, bench screens, frameless screens, framed screens, acoustic screens, felt screens, upholstered screens, glass/acrylic screens, freestanding desktop screens, floor screens/room dividers, modesty-screen combinations, and mixed-material floor screens. Transform reviewed manufacturer extraction JSON plus manufacturer source evidence into a concise Product Setup Plan: how many Product Templates are appropriate and why, which manufacturer screen families belong in each, the correct pricing destination for each family, Base/Model group structure, Matrix groups, installation/support systems, required companions, ordinary accessories, finish/material guidance, configuration-dependent/manual rules, reusable Linked Product candidacy, and architecture/runtime gaps that should be solved generically. Preserve manufacturer truth even when today's runtime has a gap.
+
+SCREEN TEMPLATE BOUNDARY PRINCIPLE
+Do NOT automatically create one Product Template per material, height, width, front vs lateral, acoustic variant, mounting style, or finish family. First identify the manufacturer's real commercial family structure. Prefer ONE reusable Screens Product Template when several screen families belong to one manufacturer screen collection, share one sales/product purpose, can reasonably be navigated through family/group selection, share finishes/accessories/mounting ecosystem, and remain independently understandable inside that template. Split into separate Product Templates only when the source proves genuinely separate commercial families or when the resulting configuration would become commercially misleading. Do NOT split templates solely because today's Product Library cannot yet mix two supported pricing destinations: if one manufacturer Screen template naturally requires both direct Base/Model families and genuine Category/Matrix families, preserve that intended template structure in the plan and flag the runtime gap instead of splitting.
+
+SCREEN COMMERCIAL FAMILY IDENTIFICATION
+Recognize useful manufacturer family boundaries such as front screens, lateral/side screens, desk-mounted screens, bench screens, frameless screens, framed screens, acoustic screens, felt screens, upholstered screens, glass/acrylic screens, freestanding desktop screens, floor screens/room dividers, modesty-screen combinations, and mixed-material floor screens. These may become Base/Model groups, Matrix groups, or Product Template family/subgroup structure depending on source pricing. Do not merge commercially distinct rows merely because they use the same material.
+
+BASE / MODEL PLANNING
+Recommend Base / Model when the manufacturer publishes an authoritative direct price for each screen SKU/configuration, typically material/construction -> width/height -> authoritative supplier code -> direct price (for example melamine screen by width, glass screen by width, framed screen by width, floor screen by width/height/material, or a side screen with its own authoritative SKU). Do NOT recommend Matrix merely because several materials, widths, heights, finishes, or screen forms exist. Where manufacturer commercial families are meaningful, recommend Base/Model commercial families / visual subgroups to keep the selector understandable.
+
+Examples may include:
+- Frameless Front Screens
+- Frameless Side Screens
+- Framed Desk Screens
+- Floor Screens
+
+These are ordinary Base/Model family/subgroup organization unless the source independently proves a genuine first-stage System/Base architecture. Do NOT call an ordinary Screen family a native System/Base group. Reserve Native System/Base only for the existing source-proven System/Base -> Main Product architecture; only use grouping when it helps preserve a real manufacturer family boundary.
+
+CATEGORY / MATRIX PLANNING
+Recommend Category / Matrix only when the source contains a real commercial price-category dimension, typically screen model/size x fabric/upholstery category (B/C/D/E/F/G/I) with different prices. Finish colours with the same price are NOT Matrix columns. If one Screens Product Template contains some Base/Model groups and some Category/Matrix groups, plan both correctly; do NOT force one pricing type across the entire template.
+
+MIXED BASE/MODEL + MATRIX RUNTIME GAP
+Current known ProjectWorkflow limitation: Product Template persistence can contain Base/Model and Category/Matrix structures together, but current Product Library primary pricing selection effectively chooses one route and cannot safely expose independent Base/Model and Matrix screen families side-by-side in one template. When the manufacturer source naturally requires both, do NOT recommend artificial template splitting merely to avoid this limitation. Instead include in Architecture Gaps: "MIXED PRIMARY PRICING FAMILY SELECTION REQUIRED", explaining concisely that Product Library should let the user choose the commercial screen family first, after which that family can use its native pricing mode (for example Family -> S1 Melamine -> Base/Model; S2 Fabric -> Matrix; S3 Acoustic -> Matrix; S5 Felt -> Base/Model). Identify this as a generic runtime improvement, not a manufacturer-specific hack.
+
+INSTALLATION / MOUNTING SYSTEMS
+Desk rails, cable-management rails, flap assemblies, cable trays, mounting brackets, clamps, and similar installation systems are normally NOT primary Screen products. Plan them under Accessories / Configuration / Required Companion as appropriate. Do not recommend Base/Model for installation systems merely because they have direct supplier codes and prices. Preserve meaningful installation families such as rail for 18mm top, rail for 25mm top, rail for 30mm top, bench rail, cable-tray rail, full-length flap, framed-screen bracket, or framed-screen clamp without collapsing distinct authoritative SKUs.
+
+INCLUDED VS REQUIRED SEPARATE HARDWARE
+Distinguish exactly: INCLUDED (for example "supplied with mounting brackets") stays included in the primary SKU with no extra Required Companion and no duplicate price; REQUIRED SEPARATELY (for example "mounting brackets not included; order separately") becomes a Required Companion when exact applicability can be represented safely, otherwise configuration-dependent/manual decision; OPTIONAL applies only when source genuinely says the hardware/accessory is optional. Do not downgrade REQUIRED-SEPARATE hardware to an ordinary optional accessory.
+
+REQUIRED COMPANION ALTERNATIVES AND SIMULTANEOUS REQUIREMENTS
+For a pattern such as screen -> exactly one of Mount A / Mount B, recommend a Required Companion group with exactly_one selection and allowed compatible mounting items; do not select one automatically unless source gives deterministic evidence. For screen -> Mount A REQUIRED PLUS exactly one of Mount B / Mount C REQUIRED, recommend separate Required Companion groups; never recommend one global mounting group if doing so prevents independent requirements from being active simultaneously.
+
+CONFIGURATION-DEPENDENT MOUNTING
+Some mounting requirements depend on information outside the Screen SKU, such as desk vs bench, desktop thickness, middle gap, cable tray, flap, desk range/system, central crossbeam, fixed/sliding top, or external workstation construction. If current ProjectWorkflow cannot express the condition exactly, planning must say MANUAL DECISION / CONFIGURATION-CONTEXT GAP rather than manufacture a universal Required Companion; preserve compatible mounting items, manufacturer conditions, exclusions, and screen-family applicability.
+
+FLOOR SCREEN COMPOSITIONS
+Treat floor screens as independently configurable Screen products. Recognize relationships such as linked screens -> hinge kit required, where hinge selection may depend on screen height or connection state, and freestanding compositions -> stabilizing legs/flat bases, where quantity or type may depend on number of linked screens, end position, middle/shared position, wall length, or composition geometry. Do not recommend unconditional companion rules when those conditions are not represented by current runtime; use MANUAL DECISION / CONFIGURATION-CONTEXT GAP where necessary.
+
+SCREEN ACCESSORIES
+Ordinary accessories may include tool bars, document trays, pen holders, phone/tablet holders, hooks, flower holders, accessory rails, plinths, optional panels, and desk-to-floor-screen fixing sets. Keep them optional unless manufacturer evidence makes them required, and preserve exact compatibility when source proves it.
+
+DIRECT SKU WITH INCLUDED FEATURE
+When the manufacturer sells separate direct-priced SKUs such as screen, screen with one accessory rail, and screen with two accessory rails, retain the authoritative SKUs. Do not recommend base screen + duplicate priced rail when the rail is already included in the priced SKU; avoid double charging.
+
+SUPPLIER CODE COMPOSITION
+Some manufacturers define base article code + selected finish code = final commercial/order code (for example article 123456 + finish 789 = 123456789). If source explicitly proves this relationship, planning must preserve the base article, finish code, and composition rule, and flag: DYNAMIC SUPPLIER CODE COMPOSITION REQUIRED, because current runtime does not natively compose the final supplier code. Do NOT recommend duplicate pricing rows for every finish, synthetic pre-composed SKUs, or manual price duplication by finish; the recommended future generic architecture is an explicit supplier-code composition policy evaluated when configuration is selected and persisted in quotation snapshot/repricing. Only flag this when manufacturer source explicitly proves code composition.
+
+PTS / POINT PRICING
+If source pricing is in PTS/points rather than currency, planning must explicitly state the source price basis is PTS, that no currency should be assumed, and that point-to-monetary conversion must be configured before quotation use. Do not recommend treating PTS directly as EUR/AED/USD. This is commercial setup guidance, not a pricing-architecture reason to split templates.
+
+FINISH / MATERIAL PLANNING
+Separate finish/material colour, upholstery price category, and supplier/order-code suffix; do not confuse them. Recommend Material/Finish Guidance for source-supported melamine finishes, fabric families, acoustic upholstery, frame colours, and glass/acrylic finishes. Only recommend Matrix where price changes by source category.
+
+SCREEN AS REUSABLE LINKED PRODUCT
+A Screen Product Template may be independently configured and reused from desk/workstation Product Templates (conceptually: Desk family -> Linked Product -> Screens -> select Screen family/configuration). Identify when Screens is a good reusable Linked Product candidate. Do NOT duplicate Screen SKUs/pricing into a desk template, make every Screen a desk-local accessory, create synthetic desk+screen SKUs, or automatically persist cross-template links during Planning. Current known linked-product limitation: linked Product Templates can currently expose only a narrowed child configuration and do not reuse the full child Product Library configuration. If full Screen child configuration is required, flag: LINKED CHILD FULL CONFIGURATOR EXTENSION REQUIRED, as a later runtime improvement; do not block standalone Screen Product Setup because of this.
+
+EXTERNAL PRODUCT COMPATIBILITY
+Preserve explicit manufacturer compatibility such as suitable for named desk ranges, not compatible with a named range, only for bench, only for a particular top thickness, or only for middle workstation positions. Do not automatically convert those relationships into cross-template rules; use them for planning notes, future Linked Product compatibility, or manual sales guidance unless exact current runtime support exists.
+
+ARCHITECTURE GAP DISCIPLINE
+Distinguish A. PRODUCT SETUP (can be represented with current architecture); B. SMALL GENERIC RUNTIME GAP (current architecture concept is correct but runtime needs a small extension); C. MANUAL DECISION (manufacturer rule depends on context current schema/runtime cannot evaluate); D. FUTURE ENHANCEMENT (useful but not required to create the standalone Screens template). Do NOT recommend schema redesign unless existing structures genuinely cannot preserve manufacturer truth. Known likely Screen gaps: mixed Base/Model + Matrix family selection; dynamic supplier-code composition; linked-child full configurator; external/configuration-context rules. Treat these separately.
+
+SCREEN PLANNING RESULT PRECEDENCE
+Choose the final Planning Result in this order:
+
+1. NEED MORE SOURCE
+Use when authoritative commercial source coverage is incomplete, required pages/rows are still missing, pricing evidence is incomplete, or the current extraction explicitly says additional source extraction is required. Source incompleteness takes precedence over architecture-gap readiness.
+
+2. READY AFTER ARCHITECTURE GAP
+Use only when source coverage is sufficiently complete to define the intended Product Setup, but one or more real generic ProjectWorkflow runtime gaps must be implemented before that intended setup can work safely. Examples may include mixed Base/Model + Matrix family selection or source-proven dynamic supplier-code composition.
+
+3. READY
+Use when source coverage is sufficiently complete and the intended Product Setup can be represented safely with current ProjectWorkflow architecture. A future optional enhancement such as richer Linked Product UX does not by itself force READY AFTER ARCHITECTURE GAP when the standalone Screens template is already usable.
+
+FINAL SCREEN SOURCE GATE
+Before returning the plan verify: direct authoritative Screen SKUs are not turned into fake Matrix rows; real upholstery/category pricing remains Matrix; mixed Base/Model + Matrix does not cause artificial template splitting; installation rails/support systems are not primary Screens; included hardware is not charged twice; required-separate hardware is not treated as optional; alternative mounts preserve exactly-one behavior; multiple simultaneous requirements stay separate; context-dependent mounting is not made unconditional; floor-screen hinges/bases are not made universally required; finish colours are not confused with price categories; supplier-code composition is flagged only when source-proven; PTS is not treated as currency; Linked Product candidacy does not duplicate Screen pricing into desks; architecture gaps are generic ProjectWorkflow gaps, not catalogue hacks; manufacturer family boundaries remain understandable in Product Library; every manufacturer family in FAMILY / EXTRACTION ROADMAP appears in exactly the intended Product Template, Separate Later, or an explicit source warning; no family marked Extract separately = Yes appears in another template's Add More batch; SOURCE / EXTRACTION BATCHES matches the template boundaries stated in PRODUCT TEMPLATES and TEMPLATE STRUCTURE; Base/Model visual family/subgroup organization was not confused with Native System/Base architecture; NEED MORE SOURCE takes precedence when commercial source coverage is still incomplete; and the plan is concise and implementation-oriented.`,
   chair_seating: `CHAIR & SEATING PLANNING FOCUS
 Use this focus for task, executive, visitor, conference, training, beam/waiting, lounge, outdoor, stool, and related seating ranges. First classify each supplied seating section as simple direct-price seating, encoded/composite finish family, Model × upholstery-grade matrix, base price plus surcharge, one shell across base architectures, beam/waiting, training/multipurpose, lounge/outdoor, or counter/stool. One source can contain several patterns; do not force every chair range into an upholstery matrix.
 
@@ -1485,7 +2033,7 @@ Before returning PRODUCT SETUP PLAN, internally correct every resolvable issue. 
 };
 
 export function buildProductTemplateSetupPlanningPrompt(focus: ProductTemplateSetupPlanningFocus = "general") {
-  const sharedAccessoryEvidenceInstructions = focus === "chair_seating" || focus === "desk_executive" || focus === "sofa_lounge" || focus === "meeting_conference" || focus === "storage_cabinets"
+  const sharedAccessoryEvidenceInstructions = focus === "chair_seating" || focus === "desk_executive" || focus === "sofa_lounge" || focus === "meeting_conference" || focus === "storage_cabinets" || focus === "screens"
     ? `Internally verify every shared/common accessory recommendation against its affected Product Template, applicability evidence, dual-numbered source page, manufacturer evidence, configuration strategy, and any supplier-code ambiguity. Return only verified shared items that materially affect setup in SHARED / COMMON; put only unresolved critical applicability issues under Manual review.`
     : `For every shared/common accessory recommendation, output:
 Accessory: [manufacturer description/code]
@@ -1495,10 +2043,10 @@ Source: PDF page X / printed catalogue page Y
 Evidence: short explanation of what the manufacturer actually shows/states
 Recommended strategy: Include Locally / Standalone Product / Both / Manual Decision
 Reason:`;
-  const sharedAccessoryStrategyInstructions = focus === "chair_seating" || focus === "desk_executive" || focus === "sofa_lounge" || focus === "meeting_conference" || focus === "storage_cabinets"
+  const sharedAccessoryStrategyInstructions = focus === "chair_seating" || focus === "desk_executive" || focus === "sofa_lounge" || focus === "meeting_conference" || focus === "storage_cabinets" || focus === "screens"
     ? `For optional shared accessories, internally evaluate whether Sales needs them during the main product configuration and verify the strategy, reason, affected templates, and any duplicated or reused supplier/price-list code ambiguity. Return only items that materially affect setup or require a critical Manual Decision.`
     : `For optional shared accessories such as modesty panels, cable trays, screens, and shared accessories, evaluate whether Sales needs to select them during the main product configuration. If yes, recommend Include locally; if no, recommend Standalone product where appropriate; if uncertain, use MANUAL DECISION. Identify the strategy, reason, affected templates, and any duplicated or reused supplier/price-list code ambiguity.`;
-  const batchOutputInstructions = focus === "chair_seating" || focus === "desk_executive" || focus === "sofa_lounge" || focus === "meeting_conference" || focus === "storage_cabinets"
+  const batchOutputInstructions = focus === "chair_seating" || focus === "desk_executive" || focus === "sofa_lounge" || focus === "meeting_conference" || focus === "storage_cabinets" || focus === "screens"
     ? `For every template, internally verify MAIN SOURCE PAGES and SHARED / SUPPORTING PAGES and how each belongs in extraction, a later Add More JSON batch, Manufacturer Finish Guidance, an independent product, or manual inspection. Return these only through the compact Main pages, Extraction, Finish Guidance, Manual Decision, SHARED / COMMON, or WARNINGS lines.`
     : `For every template, list MAIN SOURCE PAGES and SHARED / SUPPORTING PAGES, stating whether each is included in extraction, a later Add More JSON batch, Manufacturer Finish Guidance, an independent product, or manual inspection.`;
   const outputInstructions = focus === "chair_seating" ? `Analyze thoroughly internally, but return only the shortest practical Chair & Seating setup plan needed for ProjectWorkflow decisions. Do not explain reasoning step-by-step.
@@ -1781,6 +2329,100 @@ STORAGE OUTPUT BREVITY RULES
 - Do not force Modular for size variants or unproven shared-side bookcase structures.
 - Perform the final Storage source gate internally; return only unresolved critical issues under Manual Decision or WARNINGS.`;
 
+  const screenOutputInstructions = `Analyze thoroughly internally, but return only the shortest practical Screens / Dividers setup plan. Do not expose reasoning or add text before or after the plan.
+
+Return human-readable output using exactly this structure:
+
+PAGE NUMBERING NOTE
+- [PDF / printed-page relationship, or "Unavailable" where not known]
+
+SCREEN PRODUCT SETUP PLAN
+
+1. PRODUCT TEMPLATES
+- Number:
+- Template names:
+- Why:
+
+2. FAMILY / EXTRACTION ROADMAP
+| Family | Printed pages | PDF pages | Recommended setup | Extract separately? | Priority |
+| --- | ---: | ---: | --- | --- | --- |
+
+Use one row per true manufacturer Screen family. Recommended setup must use the existing global allowed values. Use only the existing Priority values: BEST FIRST TEST, Current, Next, Later.
+
+3. TEMPLATE STRUCTURE
+
+For each Product Template:
+
+Template: <name>
+
+Manufacturer families:
+- <source-defined family>
+- <source-defined family>
+
+ProjectWorkflow consolidation:
+- <why these manufacturer families belong in this Product Template>
+
+Families:
+- <family> -> Base/Model
+- <family> -> Category/Matrix
+- <family> -> etc.
+
+Required Companions:
+- concise source-backed rules only
+
+Installation / Configuration:
+- concise mounting/support groups
+
+Optional Accessories:
+- concise groups
+
+Finishes:
+- concise finish/material guidance
+
+Linked Product:
+- Yes / No / Candidate
+- target families only when source-supported
+
+Extraction:
+- Core pages:
+- Add More / supporting pages:
+
+4. SOURCE / EXTRACTION BATCHES
+| Batch | Section | Printed pages | PDF pages | Purpose |
+| --- | --- | ---: | ---: | --- |
+
+5. MANUAL DECISIONS
+- only configuration-dependent source rules that current runtime cannot safely automate
+
+6. ARCHITECTURE GAPS
+- only real generic ProjectWorkflow gaps exposed by this manufacturer
+
+7. SEPARATE LATER
+- nearby manufacturer families that should not enter the current Product Template, or None
+
+8. EXTRACTION / SOURCE WARNINGS
+- missing pages
+- incomplete commercial rows
+- PTS conversion
+- unresolved commercial evidence
+
+9. PLANNING RESULT
+- READY
+or
+- READY AFTER ARCHITECTURE GAP
+or
+- NEED MORE SOURCE
+
+This compact Screens structure satisfies the global mandatory roadmap, dual-page-numbering, batching, manufacturer-family/consolidation, and cross-section consistency contracts. Do not emit the separate generic PRODUCT 1 / PRODUCT 2 prose structure for Screens when this dedicated compact Screens structure is active.
+
+SCREEN OUTPUT BREVITY RULES
+- Do NOT output long essays, implementation code, database schema, speculative redesign, or duplicated extraction JSON.
+- Do not manufacture fake templates, fake matrices, synthetic SKUs, or duplicated finish-price rows to work around current runtime limitations.
+- Do not recommend one Product Template per material, height, width, front vs lateral, acoustic variant, mounting style, or finish family.
+- Do not split a template merely to avoid the mixed Base/Model + Matrix runtime gap; flag it under ARCHITECTURE GAPS instead.
+- Only flag MIXED PRIMARY PRICING FAMILY SELECTION REQUIRED, DYNAMIC SUPPLIER CODE COMPOSITION REQUIRED, or LINKED CHILD FULL CONFIGURATOR EXTENSION REQUIRED when the manufacturer source actually exposes that gap.
+- Perform the final Screen source gate internally; return only unresolved critical issues under 5. MANUAL DECISIONS or 8. EXTRACTION / SOURCE WARNINGS.`;
+
   return `You are planning how a manufacturer price list should be entered into ProjectWorkflow.
 
 DO NOT EXTRACT ProductTemplateDraft JSON. DO NOT RETURN JSON.
@@ -1867,5 +2509,5 @@ A family declared as a separate PRODUCT or marked Extract separately = Yes must 
 For a template that already exists, additional pages are added through Edit in Smart Setup and + Add More JSON rather than a new Product Template. For native System/Base templates keep the System/Base and its directly related Main Product pages together in Batch 1 and verified required companions/accessories in a later batch.
 External LLM limits may require multiple coherent batches for one template using + Add More JSON. Batch by commercial source structure, never equal page counts. INCLUDED components do not need a separate accessory extraction unless independently sold. Include REQUIRED SEPARATE ITEM pages in the relevant product extraction/Add More batch. Include OPTIONAL SEPARATE ITEM pages only when verified compatible and useful in the configurator. PREPARED FOR wording alone is not reason to extract the accessory page. UNCONFIRMED remains under Pages to inspect manually. Include a shared accessory page in a Product Template extraction batch only if at least one relevant item on that page has verified applicability. ${batchOutputInstructions} Good boundaries must also support future Prices Only, Selected Sections, New Item, and Not Found updates.
 
-${focus === "storage_cabinets" ? storageOutputInstructions : outputInstructions}`;
+${focus === "storage_cabinets" ? storageOutputInstructions : focus === "screens" ? screenOutputInstructions : outputInstructions}`;
 }

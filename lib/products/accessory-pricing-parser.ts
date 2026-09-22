@@ -106,6 +106,42 @@ const targetKindIssueCodes: Record<AccessoryApplicabilityTargetKind, string> = {
   option_item: "unknown_option_item_reference",
 };
 
+/** Builds the option_item identity set from an accessory_pricing groups array: exact group_id+row_id match only. Named so both the server parser and the exported client validator visibly share it. */
+function optionItemIdentitySet(groups: AccessoryConfigurationGroup[]) {
+  return identitySet(groups);
+}
+
+export type AccessoryPricingReferenceIssue = {
+  code: "unknown_option_item_reference";
+  message: string;
+};
+
+/**
+ * Pure option_item reference check against an accessory_pricing groups array, using the exact same
+ * identity semantics as pricingTargetReferenceIssues below (same optionItemIdentitySet/identityKey/
+ * resolveAccessoryApplicabilityTarget building blocks and the exact same message wording). Exported so
+ * the client can validate the EXACT LIVE final AccessoryPricingTable groups/serialized payload - the
+ * same groups array that becomes the "accessory_pricing" hidden field - before Add Template submits,
+ * without waiting for the server round trip. Never loosens or duplicates a second, divergent check.
+ */
+export function accessoryPricingReferenceIssues(groups: AccessoryConfigurationGroup[]): AccessoryPricingReferenceIssue[] {
+  const ids = optionItemIdentitySet(groups);
+  const issues: AccessoryPricingReferenceIssue[] = [];
+  groups.forEach((group) => {
+    group.conditional_configuration?.applicability.forEach((rule) => {
+      const target = resolveAccessoryApplicabilityTarget(rule);
+      if (!target || target.kind !== "option_item") return;
+      if (!ids.has(identityKey(target.group_id, target.row_id))) {
+        issues.push({
+          code: "unknown_option_item_reference",
+          message: `${targetKindLabels.option_item} reference '${target.group_id} / ${target.row_id}' does not exist in the submitted pricing data.`,
+        });
+      }
+    });
+  });
+  return issues;
+}
+
 function pricingTargetReferenceIssues(groups: AccessoryConfigurationGroup[], baseModelPricing: unknown, categoryPricing: unknown, workstationPricing: unknown) {
   const normalizedCategoryPricing = Array.isArray(categoryPricing) ? categoryPricing : [];
   // Each target kind resolves against its own authoritative pricing source, reusing the same
@@ -116,7 +152,7 @@ function pricingTargetReferenceIssues(groups: AccessoryConfigurationGroup[], bas
     price_matrix: identitySet(groupedStandardCategoryPricingRows(normalizedCategoryPricing)),
     modular: identitySet(modularItemPricingGroups(normalizedCategoryPricing)),
     workstation: identitySet(workstationPricingGroups(Array.isArray(workstationPricing) ? workstationPricing : [])),
-    option_item: identitySet(groups),
+    option_item: optionItemIdentitySet(groups),
   };
 
   const issues: AccessoryConfigurationIssue[] = [];

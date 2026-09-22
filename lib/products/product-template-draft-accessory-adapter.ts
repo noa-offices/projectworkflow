@@ -86,7 +86,13 @@ export function mapDraftOptionGroupsToAccessories(draft: ProductTemplateDraft, r
   const optionGroups: AccessoryGroup[] = draft.optionGroups.flatMap((group, groupIndex) => {
     const reviewedRoute = reviewedPlan?.routes.find((route) => route.key === `option:${group.id}`);
     if (reviewedPlan && reviewedRoute?.destination !== "accessory") return [];
-    if (!selectionIsSafe(group)) {
+    // A group with a reviewed accessory route has already been explicitly confirmed for Accessory
+    // Pricing by Smart Setup Review, and the mapped configuration below comes from the reviewed
+    // contract (reviewedConfiguration), not from the raw draft selection rule - so selectionIsSafe's
+    // narrow raw-selection shape check only guards the unreviewed/raw-import path, never a group the
+    // reviewer already routed to "accessory". Never drop a reviewed, actively-routed source group merely
+    // because its own role is conditional_option/accessory/companion or another non-companion role.
+    if (!reviewedRoute?.accessory && !selectionIsSafe(group)) {
       errors.push(`Option group '${group.label ?? group.id}' was not applied because its selection rule cannot be represented safely by Accessory Pricing.`);
       return [];
     }
