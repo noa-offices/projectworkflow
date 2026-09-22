@@ -6,6 +6,16 @@ const page = readFileSync("app/products/templates/page.tsx", "utf8");
 const actions = readFileSync("app/products/templates/actions.ts", "utf8");
 const filterBar = readFileSync("components/products/product-management-filter-bar.tsx", "utf8");
 const results = readFileSync("components/products/product-management-template-results.tsx", "utf8");
+const priceHistoryOnDeleteMigration = readFileSync(
+  "supabase/migrations/106_quotation_item_price_history_template_on_delete_set_null.sql",
+  "utf8",
+);
+
+function permanentlyDeleteProductTemplateBody() {
+  const start = actions.indexOf("export async function permanentlyDeleteProductTemplate(formData: FormData)");
+  const end = actions.indexOf("\nexport async function deactivateProductTemplate", start);
+  return actions.slice(start, end);
+}
 
 // Part A: the Management filter bar and results list are pure prop-driven presentational components -
 // they never build their own template edit/open URLs. Both editHref/openHref (results list) and
@@ -178,4 +188,95 @@ test("createProductTemplate still merges its success redirect onto returnPath(fo
 test("no forced /products/templates?manage=1 compatibility redirect was introduced in page.tsx or actions.ts", () => {
   assert.equal(page.includes('redirect(pathWithParams("/products/manage"'), false, "no new compatibility redirect out of /products/templates?manage=1 should exist yet");
   assert.equal(actions.includes('redirect("/products/manage")'), false, "actions.ts must not redirect to /products/manage on its own");
+});
+
+// Permanent delete: allow deletion of archived/discontinued templates used in quotations while
+// preserving all historical quotation data.
+
+// Part 8 (migration safety): quotation_item_price_history.source_template_id -> product_templates
+// must use ON DELETE SET NULL, never CASCADE, and must never delete or recreate the table/rows.
+test("the new migration sets quotation_item_price_history.source_template_id to ON DELETE SET NULL, never CASCADE, and never drops the table or deletes rows", () => {
+  assert.match(priceHistoryOnDeleteMigration, /quotation_item_price_history/);
+  assert.match(priceHistoryOnDeleteMigration, /source_template_id/);
+  assert.match(priceHistoryOnDeleteMigration, /references public\.product_templates \(id\)/);
+  assert.match(priceHistoryOnDeleteMigration, /on delete set null/i);
+  assert.equal(/on delete cascade/i.test(priceHistoryOnDeleteMigration), false, "quotation price-history rows must never cascade-delete when the source template is deleted");
+  assert.equal(/drop table/i.test(priceHistoryOnDeleteMigration), false, "the table must not be recreated");
+  assert.equal(/^\s*delete from/im.test(priceHistoryOnDeleteMigration), false, "the migration must never delete existing rows");
+});
+
+// CASE 3/4: the lifecycle guard (active templates blocked) and the linked-family hard blocker survive
+// unchanged.
+test("permanentlyDeleteProductTemplate still blocks active templates and still hard-blocks on linked families", () => {
+  const body = permanentlyDeleteProductTemplateBody();
+  assert.match(body, /if \(template\.is_active \|\| template\.lifecycle_status === "active"\) \{/, "CASE 4: the active-lifecycle guard must remain unchanged");
+  assert.match(body, /\.from\("product_template_linked_families"\)/);
+  assert.match(body, /if \(\(linkedFamilyCount \?\? 0\) > 0\) \{/, "CASE 3: linked-family usage must still hard-block permanent deletion, unaffected by quotation usage");
+});
+
+// CASE 1: quotation usage is no longer a hard blocker; the function no longer counts/blocks on
+// quotation_items at all.
+test("permanentlyDeleteProductTemplate no longer counts or blocks on quotation_items usage", () => {
+  const body = permanentlyDeleteProductTemplateBody();
+  assert.equal(body.includes('.from("quotation_items")'), false, "CASE 1: the quotation_items dependency check must be removed entirely");
+  assert.equal(body.includes("quotationItemCount"), false);
+  assert.equal(body.includes("used in existing quotations"), false, "the old combined quotation/linked-family blocker message must be gone");
+});
+
+// CASE 1/5: quotation_item_price_history rows are detached (source_template_id -> null), never
+// deleted, before the product_templates row is removed - and if that detach fails, the delete aborts.
+test("permanentlyDeleteProductTemplate nulls quotation_item_price_history.source_template_id before deleting the template, and aborts on failure", () => {
+  const body = permanentlyDeleteProductTemplateBody();
+  const detachMatch = /\.from\("quotation_item_price_history"\)\s*\.update\(\{ source_template_id: null \}\)\s*\.eq\("source_template_id", id\)/.exec(body);
+  assert.ok(detachMatch, "CASE 5: quotation_item_price_history.source_template_id must be explicitly nulled");
+  const deleteIndex = body.indexOf('.from("product_templates").delete()');
+  assert.ok(deleteIndex > detachMatch.index, "the price-history detach must run before the product_templates delete");
+  assert.match(body, /if \(priceHistoryDetachError\) \{/, "a failed detach must be checked");
+  const abortIndex = body.indexOf("if (priceHistoryDetachError) {");
+  assert.ok(abortIndex < deleteIndex, "the abort-on-failure check must run before the product_templates delete");
+  const priceHistoryBlockStart = body.indexOf('.from("quotation_item_price_history")');
+  const nextFromCall = body.indexOf(".from(", priceHistoryBlockStart + 1);
+  const priceHistoryStatement = body.slice(priceHistoryBlockStart, nextFromCall);
+  assert.equal(priceHistoryStatement.includes(".delete()"), false, "quotation_item_price_history rows must never be deleted, only detached");
+});
+
+// CASE 2: quotation_items snapshot fields, source_component_data, and commercial fields are never
+// written by this function - only the FK's own ON DELETE SET NULL behavior (already audited as safe)
+// touches quotation_items.source_template_id, which this function does not update directly.
+test("permanentlyDeleteProductTemplate never writes to quotation_items or its snapshot/commercial columns", () => {
+  const body = permanentlyDeleteProductTemplateBody();
+  assert.equal(body.includes('.from("quotation_items")'), false);
+  [
+    "specification_snapshot",
+    "item_name_snapshot",
+    "item_code_snapshot",
+    "brand_name_snapshot",
+    "finish_selections_snapshot",
+    "selected_options_snapshot",
+    "internal_components_snapshot",
+    "source_component_data",
+  ].forEach((field) => {
+    assert.equal(body.includes(field), false, `CASE 2: permanentlyDeleteProductTemplate must never reference/mutate ${field}`);
+  });
+});
+
+// CASE 6: UI state - quotation usage alone is a warning (permanent delete stays available); a linked
+// product family remains the sole hard blocker.
+test("Archive/Discontinued UI: quotation usage warns (delete available), linked-family usage still hard-blocks", () => {
+  assert.equal(page.includes("const deleteBlocked = isUsedInQuotations || isLinked;"), false, "quotation usage must no longer factor into deleteBlocked");
+  const deleteBlockedOccurrences = page.split("const deleteBlocked = isLinked;").length - 1;
+  assert.equal(deleteBlockedOccurrences, 2, "both the Archive and Discontinued lists must gate deleteBlocked on isLinked only");
+  assert.equal(page.split("Linked to product families - cannot delete").length - 1, 2, "the hard-blocker label must remain for linked families in both lists");
+  assert.equal(page.includes("Used in quotations - cannot delete"), false, "quotation usage must no longer render as a hard-blocker label");
+  const warningOccurrences = page.split("Used in historical quotations. Permanent deletion will preserve saved quotation snapshots, but live source repricing and source navigation will no longer be available.").length - 1;
+  assert.equal(warningOccurrences, 2, "both lists must show the quotation-usage warning when not linked");
+  const confirmOccurrences = page.split("Continue with permanent deletion?").length - 1;
+  assert.equal(confirmOccurrences, 2, "both lists must require the stronger confirmation copy when quotation usage is present");
+});
+
+// Part 6 (source repricing untouched): useCurrentSourcePriceForQuotationItem keeps its existing
+// safe null-source-template handling unchanged.
+test("useCurrentSourcePriceForQuotationItem is unchanged: still reports a friendly message when source_template_id is null, never throws", () => {
+  const quotationsActions = readFileSync("app/quotations/actions.ts", "utf8");
+  assert.match(quotationsActions, /if \(!item\.source_template_id\) \{\s*redirectWithMessage\(redirectPath, "Line item has no linked source template\."\);\s*\}/);
 });

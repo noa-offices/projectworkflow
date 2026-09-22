@@ -1933,19 +1933,15 @@ export async function permanentlyDeleteProductTemplate(formData: FormData) {
     .select("id,is_active,lifecycle_status")
     .eq("id", id)
     .maybeSingle<{ id: string; is_active: boolean; lifecycle_status: ProductTemplateLifecycleStatus }>();
-  const { count: quotationItemCount, error: quotationItemError } = await supabase
-    .from("quotation_items")
-    .select("id", { count: "exact", head: true })
-    .eq("source_template_id", id);
   const { count: linkedFamilyCount, error: linkedFamilyError } = await supabase
     .from("product_template_linked_families")
     .select("id", { count: "exact", head: true })
     .or(`parent_template_id.eq.${id},linked_template_id.eq.${id}`);
 
-  if (templateError || !template || quotationItemError || linkedFamilyError) {
+  if (templateError || !template || linkedFamilyError) {
     console.error(
       "PRODUCT TEMPLATE DEPENDENCY CHECK ERROR",
-      templateError?.message ?? quotationItemError?.message ?? linkedFamilyError?.message,
+      templateError?.message ?? linkedFamilyError?.message,
     );
     redirectWithMessageToPath(redirectPath, "Product template dependencies could not be checked.");
   }
@@ -1954,11 +1950,29 @@ export async function permanentlyDeleteProductTemplate(formData: FormData) {
     redirectWithMessageToPath(redirectPath, "Archive or discontinue this product before deleting it permanently.");
   }
 
-  if ((quotationItemCount ?? 0) > 0 || (linkedFamilyCount ?? 0) > 0) {
+  // Linked product families remain a hard blocker: that is a live, reusable Product Library
+  // relationship, not quotation history. Quotation usage (quotation_items.source_template_id) is
+  // intentionally NOT checked here anymore - every historical display/commercial field on
+  // quotation_items is already snapshotted independently of the live template, and the FK there
+  // already uses ON DELETE SET NULL, so permanent deletion is safe even when the template was quoted.
+  if ((linkedFamilyCount ?? 0) > 0) {
     redirectWithMessageToPath(
       redirectPath,
-      "This product is used in existing quotations. It cannot be permanently deleted because quotation history must be preserved.",
+      "This product is linked to another product family. It cannot be permanently deleted while that link exists.",
     );
+  }
+
+  // Belt-and-suspenders ahead of the price-history FK's own ON DELETE SET NULL behavior: detach the
+  // now-dangling source template reference first. quotation_item_price_history rows are never deleted -
+  // only this column is cleared. If this fails, abort before touching product_templates.
+  const { error: priceHistoryDetachError } = await supabase
+    .from("quotation_item_price_history")
+    .update({ source_template_id: null })
+    .eq("source_template_id", id);
+
+  if (priceHistoryDetachError) {
+    console.error("PRODUCT TEMPLATE PRICE HISTORY DETACH ERROR", priceHistoryDetachError.message);
+    redirectWithMessageToPath(redirectPath, "Product template could not be permanently deleted.");
   }
 
   const { error } = await supabase.from("product_templates").delete().eq("id", id);

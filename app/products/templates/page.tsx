@@ -3881,10 +3881,15 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                 {archivedTemplateList.map((template) => {
                   const isUsedInQuotations = usedTemplateIds.has(template.id);
                   const isLinked = linkedTemplateIds.has(template.id);
-                  const deleteBlocked = isUsedInQuotations || isLinked;
-                  const deleteBlockedLabel = isUsedInQuotations
-                    ? "Used in quotations - cannot delete"
-                    : "Linked to product families - cannot delete";
+                  // Quotation usage is no longer a hard delete blocker: quotation_items.source_template_id
+                  // and quotation_item_price_history.source_template_id both null out safely on delete
+                  // (ON DELETE SET NULL), and every historical display/commercial field is already
+                  // snapshotted independently of the live template. Linked product families remain a hard
+                  // blocker - that relationship is live/reusable Product Library data, not history.
+                  const deleteBlocked = isLinked;
+                  const deleteConfirmMessage = isUsedInQuotations
+                    ? "This Product Template has been used in historical quotations.\nSaved quotation names, specifications, prices, selections and totals will be preserved.\nLive source repricing/navigation for those quotation items will no longer be available.\n\nContinue with permanent deletion?"
+                    : "Permanently delete this product template? This cannot be undone.";
 
                   return (
                     <div
@@ -3904,6 +3909,11 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                         <p className="mt-1 text-xs text-zinc-500">
                           Keep archived to preserve quotation history.
                         </p>
+                        {!deleteBlocked && isUsedInQuotations ? (
+                          <p className="mt-1 text-xs font-semibold text-amber-700">
+                            Used in historical quotations. Permanent deletion will preserve saved quotation snapshots, but live source repricing and source navigation will no longer be available.
+                          </p>
+                        ) : null}
                       </div>
                       <div className="flex flex-wrap gap-2 md:justify-end">
                         <form action={restoreProductTemplate}>
@@ -3917,13 +3927,13 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                         </form>
                         {deleteBlocked ? (
                           <span className="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-xs font-semibold text-zinc-500">
-                            {deleteBlockedLabel}
+                            Linked to product families - cannot delete
                           </span>
                         ) : (
                           <form action={permanentlyDeleteProductTemplate}>
                             <input type="hidden" name="id" value={template.id} />
                             <ConfirmSubmitButton
-                              message="Permanently delete this product template? This cannot be undone."
+                              message={deleteConfirmMessage}
                               className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
                             >
                               Delete permanently
@@ -3955,10 +3965,12 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                       {discontinuedTemplateList.map((template) => {
                         const isUsedInQuotations = usedTemplateIds.has(template.id);
                         const isLinked = linkedTemplateIds.has(template.id);
-                        const deleteBlocked = isUsedInQuotations || isLinked;
-                        const deleteBlockedLabel = isUsedInQuotations
-                          ? "Used in quotations - cannot delete"
-                          : "Linked to product families - cannot delete";
+                        // Same rule as the Archive list above: quotation usage warns, only a linked
+                        // product family still hard-blocks permanent deletion.
+                        const deleteBlocked = isLinked;
+                        const deleteConfirmMessage = isUsedInQuotations
+                          ? "This Product Template has been used in historical quotations.\nSaved quotation names, specifications, prices, selections and totals will be preserved.\nLive source repricing/navigation for those quotation items will no longer be available.\n\nContinue with permanent deletion?"
+                          : "Permanently delete this discontinued product template? This cannot be undone.";
 
                         return (
                           <div
@@ -3975,6 +3987,11 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                               <p className="mt-1 text-sm text-zinc-500">
                                 {brandMap.get(template.brand_id) ?? "Unknown brand"} / {template.template_code ?? "No template code"}
                               </p>
+                              {!deleteBlocked && isUsedInQuotations ? (
+                                <p className="mt-1 text-xs font-semibold text-amber-700">
+                                  Used in historical quotations. Permanent deletion will preserve saved quotation snapshots, but live source repricing and source navigation will no longer be available.
+                                </p>
+                              ) : null}
                             </div>
                             <div className="flex flex-wrap gap-2 md:justify-end">
                               <form action={restoreProductTemplate}>
@@ -3997,13 +4014,13 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                               </form>
                               {deleteBlocked ? (
                                 <span className="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-xs font-semibold text-zinc-500">
-                                  {deleteBlockedLabel}
+                                  Linked to product families - cannot delete
                                 </span>
                               ) : (
                                 <form action={permanentlyDeleteProductTemplate}>
                                   <input type="hidden" name="id" value={template.id} />
                                   <ConfirmSubmitButton
-                                    message="Permanently delete this discontinued product template? This cannot be undone."
+                                    message={deleteConfirmMessage}
                                     className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
                                   >
                                     Delete permanently
