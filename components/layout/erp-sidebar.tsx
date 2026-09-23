@@ -335,6 +335,7 @@ export function ErpSidebar({
               { label: "Company Profile", href: "/settings/company", icon: Building2, active: isRouteActive(pathname, "/settings/company") },
               { label: "Document Defaults", href: "/settings/documents", icon: FileText, active: isRouteActive(pathname, "/settings/documents") },
               { label: "My Profile", href: "/settings/profile", icon: User, active: isRouteActive(pathname, "/settings/profile") },
+              { label: "ProjectWorkflow Activity", href: "/settings/activity", icon: BarChart3, active: isRouteActive(pathname, "/settings/activity"), hidden: !isSystemOwner },
               { label: "User Management", href: "/settings/users", icon: Users, active: isRouteActive(pathname, "/settings/users"), hidden: !isSystemOwner },
               { label: "HR Management", href: "/hr", icon: Users2, active: isHrActive(pathname), hidden: !canManagePeople },
               { label: "Worker Directory", href: "/settings/workers", icon: HardHat, active: isRouteActive(pathname, "/settings/workers"), hidden: !canManagePeople },

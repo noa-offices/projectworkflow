@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import {
   Building2,
+  BarChart3,
   BadgeDollarSign,
   ChevronRight,
   FileText,
@@ -154,6 +155,12 @@ export default async function SettingsPage() {
 
         {isSystemOwner ? (
           <SettingsGroup title="Access & Permissions">
+            <SettingsItem
+              href="/settings/activity"
+              icon={BarChart3}
+              title="ProjectWorkflow Activity"
+              description="Review bounded user active application-time summaries and details."
+            />
             <SettingsItem
               href="/settings/roles"
               icon={ShieldCheck}
