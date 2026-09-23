@@ -34,6 +34,17 @@ const agents: readonly Readonly<AiAgentConfig>[] = Object.freeze([
     modelEnv: "FINAL_SPECIFICATION_AI_MODEL",
     defaultModel: "gpt-4.1-mini",
   }),
+  Object.freeze({
+    id: "noa_orchestrator",
+    label: "NOA Assistant",
+    enabled: true,
+    provider: "openai",
+    mode: "read_only",
+    capabilities: Object.freeze(["product_read", "quotation_read", "price_read", "help"]) as readonly AiAgentCapability[],
+    canWrite: false,
+    modelEnv: "NOA_AI_MODEL",
+    defaultModel: "gpt-4.1-mini",
+  }),
 ]);
 
 export function listAiAgents(): readonly Readonly<AiAgentConfig>[] {

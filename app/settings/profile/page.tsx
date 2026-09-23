@@ -220,6 +220,12 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
             >
               Back to settings
             </Link>
+            <Link
+              href="/settings/profile/activity"
+              className="text-sm font-semibold text-emerald-900 transition hover:text-emerald-800"
+            >
+              ProjectWorkflow Activity
+            </Link>
             {showMessage ? (
               <p className={`rounded-md border px-3 py-2 text-sm ${messageClassName}`}>
                 {params.message}

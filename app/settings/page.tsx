@@ -8,6 +8,7 @@ import {
   FileText,
   HardHat,
   ShieldCheck,
+  Sparkles,
   UserCircle,
   Users,
   Users2,
@@ -158,6 +159,12 @@ export default async function SettingsPage() {
               icon={ShieldCheck}
               title="Role Guide"
               description="Review effective feature permissions across application roles."
+            />
+            <SettingsItem
+              href="/settings/ai"
+              icon={Sparkles}
+              title="AI Settings"
+              description="Manage AI providers and per-agent model settings."
             />
           </SettingsGroup>
         ) : null}

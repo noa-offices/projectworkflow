@@ -24,6 +24,7 @@ import { uploadPendingRowImagesAfterSave } from "@/lib/products/smart-product-ro
 import { saveProductTemplateRowReference } from "@/app/products/templates/row-reference-actions";
 import { saveProductTemplateSubgroupReference } from "@/app/products/templates/subgroup-reference-actions";
 import { persistedProductTemplateSubgroupKeys, reconcileStaleProductTemplateSubgroupReferences, resolveProductTemplateSubgroupIdentity, type ProductTemplateSubgroupReferenceRow } from "@/lib/products/product-template-subgroup-references";
+import { bulkDeleteResultMessage, bulkLifecycleResultMessage } from "@/lib/products/product-management-bulk-lifecycle";
 import { brandPriceBaselineDate, latestBrandPriceListUpdate } from "@/lib/product-price-check";
 import { createClient } from "@/lib/supabase/server";
 
@@ -772,17 +773,18 @@ async function validateProductTemplateCategories({
   }
 }
 
+// Non-redirecting on purpose: reused by both the single-row lifecycle actions (which redirect
+// themselves on failure, preserving their existing messages) and the bulk lifecycle actions
+// (which must keep processing the remaining selected ids after one failure).
 async function updateProductTemplateLifecycle({
   actionLabel,
   id,
-  message,
   status,
 }: {
   actionLabel: string;
   id: string;
-  message: string;
   status: ProductTemplateLifecycleStatus;
-}) {
+}): Promise<boolean> {
   const supabase = await createClient();
   const isActive = status === "active";
   const { error } = await supabase
@@ -795,8 +797,19 @@ async function updateProductTemplateLifecycle({
 
   if (error) {
     console.error(`PRODUCT TEMPLATE ${actionLabel} ERROR`, error.message);
-    redirectWithMessage(message);
+    return false;
   }
+
+  return true;
+}
+
+function uniqueSelectedIds(formData: FormData): string[] {
+  return Array.from(new Set(
+    formData
+      .getAll("ids")
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean),
+  ));
 }
 
 async function duplicateCategoryExists({
@@ -1867,12 +1880,15 @@ export async function archiveProductTemplate(formData: FormData) {
     redirectWithMessageToPath(redirectPath, "Product template id is required.");
   }
 
-  await updateProductTemplateLifecycle({
+  const ok = await updateProductTemplateLifecycle({
     actionLabel: "ARCHIVE",
     id,
-    message: "Product template could not be moved to Archive.",
     status: "archived",
   });
+
+  if (!ok) {
+    redirectWithMessage("Product template could not be moved to Archive.");
+  }
 
   revalidatePath("/products/templates");
   redirectWithMessageToPath(redirectPath, "Product template moved to Archive.");
@@ -1887,12 +1903,15 @@ export async function markProductTemplateDiscontinued(formData: FormData) {
     redirectWithMessageToPath(redirectPath, "Product template id is required.");
   }
 
-  await updateProductTemplateLifecycle({
+  const ok = await updateProductTemplateLifecycle({
     actionLabel: "DISCONTINUE",
     id,
-    message: "Product template could not be marked as discontinued.",
     status: "discontinued",
   });
+
+  if (!ok) {
+    redirectWithMessage("Product template could not be marked as discontinued.");
+  }
 
   revalidatePath("/products/templates");
   redirectWithMessageToPath(redirectPath, "Product template marked as discontinued.");
@@ -1907,27 +1926,37 @@ export async function restoreProductTemplate(formData: FormData) {
     redirectWithMessageToPath(redirectPath, "Product template id is required.");
   }
 
-  await updateProductTemplateLifecycle({
+  const ok = await updateProductTemplateLifecycle({
     actionLabel: "RESTORE",
     id,
-    message: "Product template could not be restored.",
     status: "active",
   });
+
+  if (!ok) {
+    redirectWithMessage("Product template could not be restored.");
+  }
 
   revalidatePath("/products/templates");
   redirectWithMessageToPath(redirectPath, "Product template restored.");
 }
 
-export async function permanentlyDeleteProductTemplate(formData: FormData) {
-  await requireProductLibraryManager();
-  const id = textValue(formData, "id");
-  const redirectPath = returnPath(formData);
+type PermanentDeleteTemplateResult =
+  | { status: "deleted"; id: string }
+  | { status: "blocked_linked"; id: string }
+  | { status: "blocked_active"; id: string }
+  | { status: "not_found"; id: string }
+  | { status: "failed"; id: string; message: string };
 
-  if (!id) {
-    redirectWithMessageToPath(redirectPath, "Product template id is required.");
-  }
-
-  const supabase = await createClient();
+// Shared by the single-row and bulk permanent-delete actions. Preserves the exact dependency
+// rules from the original single-row implementation: active templates and templates referenced
+// by product_template_linked_families are hard blockers; historical quotation usage is NOT a
+// blocker (quotation_items/quotation_item_price_history already snapshot everything they need
+// and null out their source_template_id on delete). Non-redirecting so the caller decides how to
+// report the outcome - a single redirect for the single-row action, or a tally for the bulk one.
+async function permanentlyDeleteProductTemplateById(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  id: string,
+): Promise<PermanentDeleteTemplateResult> {
   const { data: template, error: templateError } = await supabase
     .from("product_templates")
     .select("id,is_active,lifecycle_status")
@@ -1938,16 +1967,20 @@ export async function permanentlyDeleteProductTemplate(formData: FormData) {
     .select("id", { count: "exact", head: true })
     .or(`parent_template_id.eq.${id},linked_template_id.eq.${id}`);
 
-  if (templateError || !template || linkedFamilyError) {
+  if (templateError || linkedFamilyError) {
     console.error(
       "PRODUCT TEMPLATE DEPENDENCY CHECK ERROR",
       templateError?.message ?? linkedFamilyError?.message,
     );
-    redirectWithMessageToPath(redirectPath, "Product template dependencies could not be checked.");
+    return { id, message: "Product template dependencies could not be checked.", status: "failed" };
+  }
+
+  if (!template) {
+    return { id, status: "not_found" };
   }
 
   if (template.is_active || template.lifecycle_status === "active") {
-    redirectWithMessageToPath(redirectPath, "Archive or discontinue this product before deleting it permanently.");
+    return { id, status: "blocked_active" };
   }
 
   // Linked product families remain a hard blocker: that is a live, reusable Product Library
@@ -1956,10 +1989,7 @@ export async function permanentlyDeleteProductTemplate(formData: FormData) {
   // quotation_items is already snapshotted independently of the live template, and the FK there
   // already uses ON DELETE SET NULL, so permanent deletion is safe even when the template was quoted.
   if ((linkedFamilyCount ?? 0) > 0) {
-    redirectWithMessageToPath(
-      redirectPath,
-      "This product is linked to another product family. It cannot be permanently deleted while that link exists.",
-    );
+    return { id, status: "blocked_linked" };
   }
 
   // Belt-and-suspenders ahead of the price-history FK's own ON DELETE SET NULL behavior: detach the
@@ -1972,18 +2002,141 @@ export async function permanentlyDeleteProductTemplate(formData: FormData) {
 
   if (priceHistoryDetachError) {
     console.error("PRODUCT TEMPLATE PRICE HISTORY DETACH ERROR", priceHistoryDetachError.message);
-    redirectWithMessageToPath(redirectPath, "Product template could not be permanently deleted.");
+    return { id, message: "Product template could not be permanently deleted.", status: "failed" };
   }
 
   const { error } = await supabase.from("product_templates").delete().eq("id", id);
 
   if (error) {
     console.error("PRODUCT TEMPLATE PERMANENT DELETE ERROR", error.message);
-    redirectWithMessageToPath(redirectPath, "Product template could not be permanently deleted.");
+    return { id, message: "Product template could not be permanently deleted.", status: "failed" };
+  }
+
+  return { id, status: "deleted" };
+}
+
+export async function permanentlyDeleteProductTemplate(formData: FormData) {
+  await requireProductLibraryManager();
+  const id = textValue(formData, "id");
+  const redirectPath = returnPath(formData);
+
+  if (!id) {
+    redirectWithMessageToPath(redirectPath, "Product template id is required.");
+  }
+
+  const supabase = await createClient();
+  const result = await permanentlyDeleteProductTemplateById(supabase, id);
+
+  if (result.status === "failed") {
+    redirectWithMessageToPath(redirectPath, result.message);
+  }
+
+  if (result.status === "not_found") {
+    redirectWithMessageToPath(redirectPath, "Product template dependencies could not be checked.");
+  }
+
+  if (result.status === "blocked_active") {
+    redirectWithMessageToPath(redirectPath, "Archive or discontinue this product before deleting it permanently.");
+  }
+
+  if (result.status === "blocked_linked") {
+    redirectWithMessageToPath(
+      redirectPath,
+      "This product is linked to another product family. It cannot be permanently deleted while that link exists.",
+    );
   }
 
   revalidatePath("/products/templates");
   redirectWithMessageToPath(redirectPath, "Product template permanently deleted.");
+}
+
+export async function bulkArchiveProductTemplates(formData: FormData) {
+  await requireProductLibraryManager();
+  const ids = uniqueSelectedIds(formData);
+  const redirectPath = returnPath(formData);
+
+  if (!ids.length) {
+    redirectWithMessageToPath(redirectPath, "No product templates selected.");
+  }
+
+  let archivedCount = 0;
+  let failedCount = 0;
+
+  for (const id of ids) {
+    const ok = await updateProductTemplateLifecycle({ actionLabel: "BULK ARCHIVE", id, status: "archived" });
+    if (ok) {
+      archivedCount += 1;
+    } else {
+      failedCount += 1;
+    }
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessageToPath(redirectPath, bulkLifecycleResultMessage("Archived", archivedCount, failedCount, "archived"));
+}
+
+export async function bulkRestoreProductTemplates(formData: FormData) {
+  await requireProductLibraryManager();
+  const ids = uniqueSelectedIds(formData);
+  const redirectPath = returnPath(formData);
+
+  if (!ids.length) {
+    redirectWithMessageToPath(redirectPath, "No product templates selected.");
+  }
+
+  let restoredCount = 0;
+  let failedCount = 0;
+
+  for (const id of ids) {
+    const ok = await updateProductTemplateLifecycle({ actionLabel: "BULK RESTORE", id, status: "active" });
+    if (ok) {
+      restoredCount += 1;
+    } else {
+      failedCount += 1;
+    }
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessageToPath(redirectPath, bulkLifecycleResultMessage("Restored", restoredCount, failedCount, "restored"));
+}
+
+export async function bulkPermanentlyDeleteProductTemplates(formData: FormData) {
+  await requireProductLibraryManager();
+  const ids = uniqueSelectedIds(formData);
+  const redirectPath = returnPath(formData);
+
+  if (!ids.length) {
+    redirectWithMessageToPath(redirectPath, "No product templates selected.");
+  }
+
+  const supabase = await createClient();
+  let deletedCount = 0;
+  let blockedLinkedCount = 0;
+  let blockedActiveCount = 0;
+  let failedCount = 0;
+
+  // Every id is revalidated here regardless of what the client's selection preview showed -
+  // eligibility can change between preview and submit (e.g. a link added concurrently), so the
+  // client-computed preview is never trusted for the actual deletion decision.
+  for (const id of ids) {
+    const result = await permanentlyDeleteProductTemplateById(supabase, id);
+
+    if (result.status === "deleted") {
+      deletedCount += 1;
+    } else if (result.status === "blocked_linked") {
+      blockedLinkedCount += 1;
+    } else if (result.status === "blocked_active") {
+      blockedActiveCount += 1;
+    } else {
+      failedCount += 1;
+    }
+  }
+
+  revalidatePath("/products/templates");
+  redirectWithMessageToPath(
+    redirectPath,
+    bulkDeleteResultMessage({ blockedActiveCount, blockedLinkedCount, deletedCount, failedCount }),
+  );
 }
 
 export async function deactivateProductTemplate(formData: FormData) {

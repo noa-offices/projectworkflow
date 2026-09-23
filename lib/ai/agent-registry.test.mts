@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { getAiAgentConfig, listAiAgents } from "./agent-registry.js";
 
-test("registers the three enabled non-writing current agents", () => {
+test("registers the four enabled non-writing current agents", () => {
   const agents = listAiAgents();
-  assert.deepEqual(agents.map((agent) => agent.id), ["source_qa", "specification_enrichment", "final_specification"]);
+  assert.deepEqual(agents.map((agent) => agent.id), ["source_qa", "specification_enrichment", "final_specification", "noa_orchestrator"]);
   assert.equal(new Set(agents.map((agent) => agent.id)).size, agents.length);
   assert.ok(agents.every((agent) => agent.enabled && !agent.canWrite));
 });
@@ -24,6 +24,11 @@ test("declares current capabilities and model metadata", () => {
     id: "final_specification", label: "Final Specification", enabled: true, provider: "openai", mode: "suggestion",
     capabilities: ["read_builder_selection", "suggest_text"],
     canWrite: false, modelEnv: "FINAL_SPECIFICATION_AI_MODEL", defaultModel: "gpt-4.1-mini",
+  });
+  assert.deepEqual(getAiAgentConfig("noa_orchestrator"), {
+    id: "noa_orchestrator", label: "NOA Assistant", enabled: true, provider: "openai", mode: "read_only",
+    capabilities: ["product_read", "quotation_read", "price_read", "help"],
+    canWrite: false, modelEnv: "NOA_AI_MODEL", defaultModel: "gpt-4.1-mini",
   });
 });
 

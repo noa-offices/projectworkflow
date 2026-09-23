@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useDeferredValue, useMemo, useState } from "react";
-import { archiveProductTemplate, markProductTemplateDiscontinued, markTemplatePriceChecked } from "@/app/products/templates/actions";
+import { archiveProductTemplate, bulkArchiveProductTemplates, markProductTemplateDiscontinued, markTemplatePriceChecked } from "@/app/products/templates/actions";
 import { ConfirmSubmitButton } from "@/components/confirm-submit-button";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { ProductTemplateImageUploader } from "@/components/products/product-template-image-uploader";
+import { pruneSelectionToVisibleIds } from "@/lib/products/product-management-bulk-lifecycle";
 
 type PriceStatusTone = "ok" | "notice" | "warning" | "neutral";
 
@@ -141,6 +142,55 @@ function TemplateRowActions({
   );
 }
 
+function BulkArchiveBar({
+  checkedIds,
+  onClearSelection,
+  onSelectAllVisible,
+  returnTo,
+}: {
+  checkedIds: Set<string>;
+  onClearSelection: () => void;
+  onSelectAllVisible: () => void;
+  returnTo: string;
+}) {
+  if (!checkedIds.size) {
+    return null;
+  }
+
+  return (
+    <div className="sticky top-0 z-20 flex flex-wrap items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
+      <span className="font-semibold text-emerald-900">{checkedIds.size} selected</span>
+      <button
+        type="button"
+        onClick={onSelectAllVisible}
+        className="inline-flex h-8 items-center rounded-md border border-emerald-200 bg-white px-3 text-xs font-semibold text-emerald-900 transition hover:border-emerald-300"
+      >
+        Select all visible
+      </button>
+      <button
+        type="button"
+        onClick={onClearSelection}
+        className="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300"
+      >
+        Clear selection
+      </button>
+      <form action={bulkArchiveProductTemplates} className="ml-auto">
+        {Array.from(checkedIds).map((id) => (
+          <input key={id} type="hidden" name="ids" value={id} />
+        ))}
+        <input type="hidden" name="return_to" value={returnTo} />
+        <ConfirmSubmitButton
+          message={`Archive ${checkedIds.size} selected product template${checkedIds.size === 1 ? "" : "s"}?`}
+          className="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+          pendingLabel="Archiving..."
+        >
+          Archive selected
+        </ConfirmSubmitButton>
+      </form>
+    </div>
+  );
+}
+
 function CompactPriceCheckStatus({
   detail,
   label,
@@ -178,6 +228,7 @@ export function ProductManagementTemplateResults({
 }: ProductManagementTemplateResultsProps) {
   const [localSearch, setLocalSearch] = useState("");
   const deferredLocalSearch = useDeferredValue(localSearch);
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
 
   const filteredTemplates = useMemo(() => {
     const normalizedSearch = deferredLocalSearch.trim().toLowerCase();
@@ -189,8 +240,28 @@ export function ProductManagementTemplateResults({
     return templates.filter((template) => template.searchText.includes(normalizedSearch));
   }, [deferredLocalSearch, templates]);
 
+  const visibleIdsSignature = filteredTemplates.map((template) => template.id).join("|");
+  const [prunedForVisibleIdsSignature, setPrunedForVisibleIdsSignature] = useState(visibleIdsSignature);
+
+  // Never leave a selected id pointing at a row that's no longer visible - covers both a full
+  // result-context change (brand/category/global search) and the component's own local in-panel
+  // search narrowing what's shown. Adjusted during render (not an effect) so the prune is visible
+  // in the same render pass instead of causing an extra one.
+  if (visibleIdsSignature !== prunedForVisibleIdsSignature) {
+    setPrunedForVisibleIdsSignature(visibleIdsSignature);
+    setCheckedIds((previousCheckedIds) =>
+      pruneSelectionToVisibleIds(previousCheckedIds, visibleIdsSignature ? visibleIdsSignature.split("|") : []));
+  }
+
   return (
     <div className="space-y-4">
+      <BulkArchiveBar
+        checkedIds={checkedIds}
+        onClearSelection={() => setCheckedIds(new Set())}
+        onSelectAllVisible={() => setCheckedIds(new Set(filteredTemplates.map((template) => template.id)))}
+        returnTo={returnTo}
+      />
+
       {searchPlaceholder ? (
         <div className="flex justify-end">
           <input
@@ -235,6 +306,23 @@ export function ProductManagementTemplateResults({
               </div>
               <div className="flex flex-1 flex-col gap-3 p-4">
                 <div className="flex flex-wrap items-start gap-2">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${template.templateName}`}
+                    checked={checkedIds.has(template.id)}
+                    onChange={(event) => {
+                      setCheckedIds((previousCheckedIds) => {
+                        const nextCheckedIds = new Set(previousCheckedIds);
+                        if (event.target.checked) {
+                          nextCheckedIds.add(template.id);
+                        } else {
+                          nextCheckedIds.delete(template.id);
+                        }
+                        return nextCheckedIds;
+                      });
+                    }}
+                    className="mt-1 h-4 w-4 rounded border-zinc-300 text-emerald-900"
+                  />
                   <h3 className="min-w-0 flex-1 text-sm font-semibold text-zinc-950">
                     {template.templateName}
                   </h3>

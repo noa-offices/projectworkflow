@@ -1,6 +1,8 @@
 import "server-only";
 
-import { OPENAI_RESPONSES_API_ENDPOINT } from "../ai/provider-config";
+import { runAiProvider } from "../ai/provider-router.server";
+import { resolveAiAgentRuntimeConfig } from "../ai/resolve-agent-runtime-config.server";
+import { AiProviderError } from "../ai/types";
 import {
   parseFinalSpecificationResult,
   type FinalSpecificationRequest,
@@ -38,54 +40,22 @@ const schema = {
   },
 } as const;
 
-function outputText(value: unknown) {
-  if (!value || typeof value !== "object") return null;
-  const output = (value as { output?: unknown }).output;
-  if (!Array.isArray(output)) return null;
-  for (const item of output) {
-    if (!item || typeof item !== "object" || !Array.isArray((item as { content?: unknown }).content)) continue;
-    for (const content of (item as { content: unknown[] }).content) {
-      if (content && typeof content === "object" && (content as { type?: unknown }).type === "output_text" && typeof (content as { text?: unknown }).text === "string") {
-        return (content as { text: string }).text;
-      }
-    }
-  }
-  return null;
-}
-
 export async function improveFinalSpecificationWithProvider(
   request: FinalSpecificationRequest,
 ): Promise<FinalSpecificationResult> {
-  const apiKey = process.env.SOURCE_QA_AI_API_KEY?.trim();
-  if (!apiKey) throw new FinalSpecificationProviderError("Final specification AI is not configured.", "not_configured");
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const runtime = await resolveAiAgentRuntimeConfig("final_specification");
+  if (!runtime.enabled || !runtime.apiKeyConfigured) throw new FinalSpecificationProviderError("Final specification AI is not configured.", "not_configured");
   try {
-    const response = await fetch(OPENAI_RESPONSES_API_ENDPOINT, {
-      method: "POST",
-      signal: controller.signal,
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: process.env.FINAL_SPECIFICATION_AI_MODEL?.trim() || DEFAULT_FINAL_SPECIFICATION_AI_MODEL,
-        store: false,
-        instructions,
-        input: [{ role: "user", content: [{ type: "input_text", text: JSON.stringify(request) }] }],
-        text: { format: { type: "json_schema", name: "final_specification", strict: true, schema } },
-      }),
-    });
-    if (!response.ok) throw new FinalSpecificationProviderError("Final specification could not be improved.");
-    const text = outputText(await response.json());
-    const result = text ? parseFinalSpecificationResult(JSON.parse(text)) : null;
+    const response = await runAiProvider({ provider: runtime.provider, model: runtime.model, responseSchema: { name: "final_specification", schema }, systemInstructions: instructions, timeoutMs: TIMEOUT_MS, userContent: request });
+    const result = parseFinalSpecificationResult(JSON.parse(response.text));
     if (!result) throw new FinalSpecificationProviderError("Final specification returned an invalid result.");
     return result;
   } catch (error) {
     if (error instanceof FinalSpecificationProviderError) throw error;
-    if (error instanceof Error && error.name === "AbortError") {
+    if (error instanceof AiProviderError && error.kind === "not_configured") throw new FinalSpecificationProviderError("Final specification AI is not configured.", "not_configured");
+    if (error instanceof AiProviderError && error.kind === "timeout") {
       throw new FinalSpecificationProviderError("Final specification request timed out.");
     }
     throw new FinalSpecificationProviderError("Final specification could not be improved.");
-  } finally {
-    clearTimeout(timeout);
   }
 }

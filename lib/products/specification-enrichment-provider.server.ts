@@ -1,4 +1,7 @@
 import "server-only";
+import { runAiProvider } from "@/lib/ai/provider-router.server";
+import { resolveAiAgentRuntimeConfig } from "@/lib/ai/resolve-agent-runtime-config.server";
+import { AiProviderError } from "@/lib/ai/types";
 import { parseBatchSpecificationEnrichmentResult, parseSpecificationEnrichmentResult, type BatchSpecificationEnrichmentProviderItem, type BatchSpecificationEnrichmentResultItem, type SpecificationEnrichmentContext, type SpecificationEnrichmentResult, type SpecificationEnrichmentRow } from "./specification-enrichment-contract";
 
 export const DEFAULT_SPEC_ENRICHMENT_AI_MODEL = "gpt-4.1-mini";
@@ -14,31 +17,29 @@ const batchInstructions = `${instructions}
 
 BATCH MODE: Improve specification wording only; never suggest Display Names. Return a results array containing exactly one result for every supplied targetId, preserving each targetId exactly and in the same order. For accessory targets, describe only that accessory item's own stable facts. Return specificationSuggestion null when no safe material improvement exists.`;
 const batchSchema = { type: "object", additionalProperties: false, required: ["results"], properties: { results: { type: "array", minItems: 1, maxItems: 6, items: { type: "object", additionalProperties: false, required: ["targetId", "specificationSuggestion"], properties: { targetId: { type: "string" }, specificationSuggestion: { type: ["string", "null"], maxLength: 1000 } } } } } } as const;
-function outputText(value: unknown) { if (!value || typeof value !== "object") return null; const output = (value as { output?: unknown }).output; if (!Array.isArray(output)) return null; for (const item of output) if (item && typeof item === "object" && Array.isArray((item as { content?: unknown }).content)) for (const content of (item as { content: unknown[] }).content) if (content && typeof content === "object" && (content as { type?: unknown }).type === "output_text" && typeof (content as { text?: unknown }).text === "string") return (content as { text: string }).text; return null; }
 export async function enrichSpecificationWithProvider(input: { row: SpecificationEnrichmentRow; context: SpecificationEnrichmentContext; sourceFragment: unknown }): Promise<SpecificationEnrichmentResult> {
-  const apiKey = process.env.SOURCE_QA_AI_API_KEY?.trim(); if (!apiKey) throw new SpecificationEnrichmentProviderError("Specification enrichment is not configured.", "not_configured");
+  const runtime = await resolveAiAgentRuntimeConfig("specification_enrichment");
+  if (!runtime.enabled || !runtime.apiKeyConfigured) throw new SpecificationEnrichmentProviderError("Specification enrichment is not configured.", "not_configured");
   const currentRow = { id: input.row.id, displayName: input.row.displayName, specification: input.row.specification, supplierCodes: input.row.supplierCodes, referenceCodes: input.row.referenceCodes, dimensions: input.row.dimensions };
   const context = { templateName: input.context.templateName, groupLabel: input.context.groupLabel, rowType: input.context.rowType };
-  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try { const response = await fetch("https://api.openai.com/v1/responses", { method: "POST", signal: controller.signal, headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.SPEC_ENRICHMENT_AI_MODEL?.trim() || DEFAULT_SPEC_ENRICHMENT_AI_MODEL, store: false, instructions, input: [{ role: "user", content: [{ type: "input_text", text: JSON.stringify({ currentRow, context, matchedSourceContext: input.sourceFragment }) }] }], text: { format: { type: "json_schema", name: "specification_enrichment", strict: true, schema } } }) }); if (!response.ok) throw new SpecificationEnrichmentProviderError("Specification enrichment could not be completed."); const text = outputText(await response.json()); const result = text ? parseSpecificationEnrichmentResult(JSON.parse(text)) : null; if (!result) throw new SpecificationEnrichmentProviderError("Specification enrichment returned an invalid result."); return result; }
-  catch (error) { if (error instanceof SpecificationEnrichmentProviderError) throw error; if (error instanceof Error && error.name === "AbortError") throw new SpecificationEnrichmentProviderError("Specification enrichment timed out."); throw new SpecificationEnrichmentProviderError("Specification enrichment could not be completed."); } finally { clearTimeout(timeout); }
+  try { const response = await runAiProvider({ provider: runtime.provider, model: runtime.model, responseSchema: { name: "specification_enrichment", schema }, systemInstructions: instructions, timeoutMs: TIMEOUT_MS, userContent: { currentRow, context, matchedSourceContext: input.sourceFragment } }); const result = parseSpecificationEnrichmentResult(JSON.parse(response.text)); if (!result) throw new SpecificationEnrichmentProviderError("Specification enrichment returned an invalid result."); return result; }
+  catch (error) { if (error instanceof SpecificationEnrichmentProviderError) throw error; if (error instanceof AiProviderError && error.kind === "not_configured") throw new SpecificationEnrichmentProviderError("Specification enrichment is not configured.", "not_configured"); if (error instanceof AiProviderError && error.kind === "timeout") throw new SpecificationEnrichmentProviderError("Specification enrichment timed out."); throw new SpecificationEnrichmentProviderError("Specification enrichment could not be completed."); }
 }
 
 export async function enrichSpecificationBatchWithProvider(items: BatchSpecificationEnrichmentProviderItem[]): Promise<BatchSpecificationEnrichmentResultItem[]> {
   if (!items.length || items.length > 6) throw new SpecificationEnrichmentProviderError("Specification enrichment batch is invalid.");
-  const apiKey = process.env.SOURCE_QA_AI_API_KEY?.trim(); if (!apiKey) throw new SpecificationEnrichmentProviderError("Specification enrichment is not configured.", "not_configured");
-  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const runtime = await resolveAiAgentRuntimeConfig("specification_enrichment");
+  if (!runtime.enabled || !runtime.apiKeyConfigured) throw new SpecificationEnrichmentProviderError("Specification enrichment is not configured.", "not_configured");
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", { method: "POST", signal: controller.signal, headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.SPEC_ENRICHMENT_AI_MODEL?.trim() || DEFAULT_SPEC_ENRICHMENT_AI_MODEL, store: false, instructions: batchInstructions, input: [{ role: "user", content: [{ type: "input_text", text: JSON.stringify(items) }] }], text: { format: { type: "json_schema", name: "batch_specification_enrichment", strict: true, schema: batchSchema } } }) });
-    if (!response.ok) throw new SpecificationEnrichmentProviderError("Specification enrichment could not be completed.");
-    const text = outputText(await response.json());
-    const parsed = text ? JSON.parse(text) as unknown : null;
+    const response = await runAiProvider({ provider: runtime.provider, model: runtime.model, responseSchema: { name: "batch_specification_enrichment", schema: batchSchema }, systemInstructions: batchInstructions, timeoutMs: TIMEOUT_MS, userContent: items });
+    const parsed = JSON.parse(response.text) as unknown;
     const result = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parseBatchSpecificationEnrichmentResult((parsed as { results?: unknown }).results, items.map((item) => item.targetId)) : null;
     if (!result) throw new SpecificationEnrichmentProviderError("Specification enrichment returned an invalid batch result.");
     return result;
   } catch (error) {
     if (error instanceof SpecificationEnrichmentProviderError) throw error;
-    if (error instanceof Error && error.name === "AbortError") throw new SpecificationEnrichmentProviderError("Specification enrichment timed out.");
+    if (error instanceof AiProviderError && error.kind === "not_configured") throw new SpecificationEnrichmentProviderError("Specification enrichment is not configured.", "not_configured");
+    if (error instanceof AiProviderError && error.kind === "timeout") throw new SpecificationEnrichmentProviderError("Specification enrichment timed out.");
     throw new SpecificationEnrichmentProviderError("Specification enrichment could not be completed.");
-  } finally { clearTimeout(timeout); }
+  }
 }

@@ -20,6 +20,10 @@ import {
   type ProductManagementTemplateResult,
 } from "@/components/products/product-management-template-results";
 import {
+  ProductManagementArchiveResults,
+  type ArchivedTemplateResult,
+} from "@/components/products/product-management-archive-results";
+import {
   TemplateDetailImageGallery,
 } from "@/components/products/template-image-galleries";
 import {
@@ -64,9 +68,7 @@ import {
   markTemplatePriceChecked,
   markVisibleProductTemplatesPriceChecked,
   permanentlyDeleteLinkedProductFamily,
-  permanentlyDeleteProductTemplate,
   restoreLinkedProductFamily,
-  restoreProductTemplate,
   updateLinkedProductFamily,
   updateBrandPriceListUpdate,
   updateProductComponent,
@@ -1755,6 +1757,20 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
   const templatePriceHistoryList = templatePriceHistory ?? [];
   const templateDetailPriceHistoryList = templateDetailPriceHistory ?? [];
   const brandMap = new Map(brandList.map((brand) => [brand.id, brand.name]));
+  const toArchivedTemplateResult = (
+    template: ProductTemplate,
+    lifecycleStatus: "archived" | "discontinued",
+  ): ArchivedTemplateResult => ({
+    brandName: brandMap.get(template.brand_id) ?? null,
+    code: template.template_code,
+    id: template.id,
+    lifecycleStatus,
+    linked: linkedTemplateIds.has(template.id),
+    name: template.template_name,
+    usedInQuotations: usedTemplateIds.has(template.id),
+  });
+  const archivedTemplateResults = archivedTemplateList.map((template) => toArchivedTemplateResult(template, "archived"));
+  const discontinuedTemplateResults = discontinuedTemplateList.map((template) => toArchivedTemplateResult(template, "discontinued"));
   const categoryMap = new Map(
     categoryList.map((category) => [category.id, category.name]),
   );
@@ -3877,79 +3893,12 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                   Archived products are hidden from active library. Unused archived records can be permanently deleted.
                 </p>
               </div>
-              <div className="divide-y divide-zinc-100">
-                {archivedTemplateList.map((template) => {
-                  const isUsedInQuotations = usedTemplateIds.has(template.id);
-                  const isLinked = linkedTemplateIds.has(template.id);
-                  // Quotation usage is no longer a hard delete blocker: quotation_items.source_template_id
-                  // and quotation_item_price_history.source_template_id both null out safely on delete
-                  // (ON DELETE SET NULL), and every historical display/commercial field is already
-                  // snapshotted independently of the live template. Linked product families remain a hard
-                  // blocker - that relationship is live/reusable Product Library data, not history.
-                  const deleteBlocked = isLinked;
-                  const deleteConfirmMessage = isUsedInQuotations
-                    ? "This Product Template has been used in historical quotations.\nSaved quotation names, specifications, prices, selections and totals will be preserved.\nLive source repricing/navigation for those quotation items will no longer be available.\n\nContinue with permanent deletion?"
-                    : "Permanently delete this product template? This cannot be undone.";
-
-                  return (
-                    <div
-                      key={template.id}
-                      className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"
-                    >
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-semibold text-zinc-950">
-                            {template.template_name}
-                          </h3>
-                          <TemplateLifecycleBadge status="archived" />
-                        </div>
-                        <p className="mt-1 text-sm text-zinc-500">
-                          {brandMap.get(template.brand_id) ?? "Unknown brand"} / {template.template_code ?? "No template code"}
-                        </p>
-                        <p className="mt-1 text-xs text-zinc-500">
-                          Keep archived to preserve quotation history.
-                        </p>
-                        {!deleteBlocked && isUsedInQuotations ? (
-                          <p className="mt-1 text-xs font-semibold text-amber-700">
-                            Used in historical quotations. Permanent deletion will preserve saved quotation snapshots, but live source repricing and source navigation will no longer be available.
-                          </p>
-                        ) : null}
-                      </div>
-                      <div className="flex flex-wrap gap-2 md:justify-end">
-                        <form action={restoreProductTemplate}>
-                          <input type="hidden" name="id" value={template.id} />
-                          <PendingSubmitButton
-                            className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                            pendingLabel="Restoring..."
-                          >
-                            Restore
-                          </PendingSubmitButton>
-                        </form>
-                        {deleteBlocked ? (
-                          <span className="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-xs font-semibold text-zinc-500">
-                            Linked to product families - cannot delete
-                          </span>
-                        ) : (
-                          <form action={permanentlyDeleteProductTemplate}>
-                            <input type="hidden" name="id" value={template.id} />
-                            <ConfirmSubmitButton
-                              message={deleteConfirmMessage}
-                              className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
-                            >
-                              Delete permanently
-                            </ConfirmSubmitButton>
-                          </form>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                {!archivedTemplateList.length ? (
-                  <p className="p-6 text-sm text-zinc-500">
-                    No archived product templates.
-                  </p>
-                ) : null}
-              </div>
+              <ProductManagementArchiveResults
+                emptyMessage="No archived product templates."
+                mode="archive"
+                returnTo={managementListHref}
+                templates={archivedTemplateResults}
+              />
               <div className="border-t border-zinc-200">
                 <details>
                   <summary className="cursor-pointer px-4 py-4 font-semibold text-zinc-950">
@@ -3961,82 +3910,12 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                         Discontinued products are hidden from new quotations but preserved for old quotation history.
                       </p>
                     </div>
-                    <div className="divide-y divide-zinc-100">
-                      {discontinuedTemplateList.map((template) => {
-                        const isUsedInQuotations = usedTemplateIds.has(template.id);
-                        const isLinked = linkedTemplateIds.has(template.id);
-                        // Same rule as the Archive list above: quotation usage warns, only a linked
-                        // product family still hard-blocks permanent deletion.
-                        const deleteBlocked = isLinked;
-                        const deleteConfirmMessage = isUsedInQuotations
-                          ? "This Product Template has been used in historical quotations.\nSaved quotation names, specifications, prices, selections and totals will be preserved.\nLive source repricing/navigation for those quotation items will no longer be available.\n\nContinue with permanent deletion?"
-                          : "Permanently delete this discontinued product template? This cannot be undone.";
-
-                        return (
-                          <div
-                            key={template.id}
-                            className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center"
-                          >
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <h3 className="font-semibold text-zinc-950">
-                                  {template.template_name}
-                                </h3>
-                                <TemplateLifecycleBadge status="discontinued" />
-                              </div>
-                              <p className="mt-1 text-sm text-zinc-500">
-                                {brandMap.get(template.brand_id) ?? "Unknown brand"} / {template.template_code ?? "No template code"}
-                              </p>
-                              {!deleteBlocked && isUsedInQuotations ? (
-                                <p className="mt-1 text-xs font-semibold text-amber-700">
-                                  Used in historical quotations. Permanent deletion will preserve saved quotation snapshots, but live source repricing and source navigation will no longer be available.
-                                </p>
-                              ) : null}
-                            </div>
-                            <div className="flex flex-wrap gap-2 md:justify-end">
-                              <form action={restoreProductTemplate}>
-                                <input type="hidden" name="id" value={template.id} />
-                                <PendingSubmitButton
-                                  className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                                  pendingLabel="Restoring..."
-                                >
-                                  Reactivate
-                                </PendingSubmitButton>
-                              </form>
-                              <form action={archiveProductTemplate}>
-                                <input type="hidden" name="id" value={template.id} />
-                                <PendingSubmitButton
-                                  className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
-                                  pendingLabel="Archiving..."
-                                >
-                                  Move to Archive
-                                </PendingSubmitButton>
-                              </form>
-                              {deleteBlocked ? (
-                                <span className="inline-flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-xs font-semibold text-zinc-500">
-                                  Linked to product families - cannot delete
-                                </span>
-                              ) : (
-                                <form action={permanentlyDeleteProductTemplate}>
-                                  <input type="hidden" name="id" value={template.id} />
-                                  <ConfirmSubmitButton
-                                    message={deleteConfirmMessage}
-                                    className="inline-flex h-8 items-center rounded-md border border-red-200 px-3 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50"
-                                  >
-                                    Delete permanently
-                                  </ConfirmSubmitButton>
-                                </form>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {!discontinuedTemplateList.length ? (
-                        <p className="p-6 text-sm text-zinc-500">
-                          No discontinued product templates.
-                        </p>
-                      ) : null}
-                    </div>
+                    <ProductManagementArchiveResults
+                      emptyMessage="No discontinued product templates."
+                      mode="discontinued"
+                      returnTo={managementListHref}
+                      templates={discontinuedTemplateResults}
+                    />
                   </div>
                 </details>
               </div>

@@ -1,11 +1,13 @@
 import "server-only";
 
+import { runAiProvider } from "@/lib/ai/provider-router.server";
+import { resolveAiAgentRuntimeConfig } from "@/lib/ai/resolve-agent-runtime-config.server";
+import { AiProviderError, type AiProviderContentPart, type AiProviderId } from "@/lib/ai/types";
 import type { ProductTemplateDraft } from "./product-template-draft";
 import { validateOriginalImportedJsonSources, type OriginalImportedJsonSource } from "./original-imported-json-sources";
 import { parseSourceQaAiReport, type SourceQaAiReport } from "./source-qa-ai-contract";
 
 export type SourceQaAiProviderInput = { sourcePdf: { fileName: string; bytes: ArrayBuffer }; originalImportedJsonSources: OriginalImportedJsonSource[]; draft: ProductTemplateDraft };
-export const DEFAULT_SOURCE_QA_AI_MODEL = "gpt-4.1";
 const MAX_PDF_BYTES = 15 * 1024 * 1024;
 const MAX_DRAFT_BYTES = 2 * 1024 * 1024;
 const TIMEOUT_MS = 90_000;
@@ -121,52 +123,35 @@ const exactCodeRules = `
 
 EXACT SUPPLIER/MODEL CODE VERIFICATION: Supplier/model codes are identifiers, not natural-language text. For every coded JSON row, independently of price verification, locate its source row, read the complete source code, and compare the identifier character-for-character. Report any mismatch even when dimensions and prices otherwise match. Do not normalize away suffixes, prefixes, letters, digits, hyphens, slashes, or meaningful spaces. Near matches are never equivalent: 9MU202a ≠ 9MU202; ABC-R ≠ ABC; ML18/1 ≠ ML18; X-20 ≠ X20.`;
 
-function outputText(value: unknown) {
-  if (!value || typeof value !== "object") return null;
-  const response = value as { status?: unknown; output?: unknown };
-  if (response.status !== "completed" || !Array.isArray(response.output)) return null;
-  for (const item of response.output) {
-    if (!item || typeof item !== "object" || !Array.isArray((item as { content?: unknown }).content)) continue;
-    for (const content of (item as { content: unknown[] }).content) if (content && typeof content === "object" && (content as { type?: unknown }).type === "output_text" && typeof (content as { text?: unknown }).text === "string") return (content as { text: string }).text;
-  }
-  return null;
-}
-
-async function requestReport(input: SourceQaAiProviderInput, apiKey: string, originalJsonText: string, draftJson: string, signal: AbortSignal) {
-  const content: Array<Record<string, unknown>> = [{ type: "input_file", filename: input.sourcePdf.fileName, file_data: `data:application/pdf;base64,${Buffer.from(input.sourcePdf.bytes).toString("base64")}` }, { type: "input_text", text: originalJsonText }];
-  if (draftJson) content.push({ type: "input_text", text: `Reviewed ProductTemplateDraft JSON (secondary context only):\n${draftJson}` });
-  const response = await fetch("https://api.openai.com/v1/responses", { method: "POST", signal, headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: process.env.SOURCE_QA_AI_MODEL?.trim() || DEFAULT_SOURCE_QA_AI_MODEL, store: false, instructions: instructions + exactCodeRules, input: [{ role: "user", content }], text: { format: { type: "json_schema", name: "source_qa_ai_report", strict: true, schema } } }) });
-  if (!response.ok) {
-    const body = (await response.text()).slice(0, 4_000);
-    console.error("Source QA AI provider HTTP error", { status: response.status, statusText: response.statusText, retryAfter: response.headers.get("retry-after"), body });
-    if (response.status === 401 || response.status === 403) throw new SourceQaAiProviderError("AI Source QA provider authentication failed.");
-    if (response.status === 429) throw new SourceQaAiProviderError("AI Source QA provider is temporarily unavailable.");
-    throw new SourceQaAiProviderError("AI Source QA provider request failed.");
-  }
-  const text = outputText(await response.json());
-  if (!text) throw new SourceQaAiProviderError("AI Source QA provider returned no usable report.");
-  try { return parseSourceQaAiReport(JSON.parse(text)); } catch { return null; }
+async function requestReport(input: SourceQaAiProviderInput, provider: AiProviderId, model: string, originalJsonText: string, draftJson: string) {
+  const content: AiProviderContentPart[] = [
+    { type: "file", filename: input.sourcePdf.fileName, mimeType: "application/pdf", data: Buffer.from(input.sourcePdf.bytes).toString("base64") },
+    { type: "text", text: originalJsonText },
+  ];
+  if (draftJson) content.push({ type: "text", text: `Reviewed ProductTemplateDraft JSON (secondary context only):\n${draftJson}` });
+  const response = await runAiProvider({ provider, model, content, responseSchema: { name: "source_qa_ai_report", schema }, systemInstructions: instructions + exactCodeRules, timeoutMs: TIMEOUT_MS });
+  try { return parseSourceQaAiReport(JSON.parse(response.text)); } catch { return null; }
 }
 
 export async function verifySourceQaWithProvider(input: SourceQaAiProviderInput): Promise<SourceQaAiReport> {
-  const apiKey = process.env.SOURCE_QA_AI_API_KEY?.trim();
-  if (!apiKey) throw new SourceQaAiProviderError("AI Source QA is not configured yet.");
+  const runtime = await resolveAiAgentRuntimeConfig("source_qa");
+  if (!runtime.enabled || !runtime.apiKeyConfigured) throw new SourceQaAiProviderError("AI Source QA is not configured yet.");
   if (!input.sourcePdf.fileName.toLowerCase().endsWith(".pdf") || !input.sourcePdf.bytes.byteLength) throw new SourceQaAiProviderError("Source PDF is invalid.");
   if (input.sourcePdf.bytes.byteLength > MAX_PDF_BYTES) throw new SourceQaAiProviderError("Source PDF exceeds the Source QA V1 limit.");
   const originalSources = validateOriginalImportedJsonSources(input.originalImportedJsonSources);
   if (!originalSources.valid) throw new SourceQaAiProviderError(originalSources.message);
   const draftJson = JSON.stringify(input.draft);
   if (Buffer.byteLength(draftJson, "utf8") > MAX_DRAFT_BYTES) throw new SourceQaAiProviderError("Product draft exceeds the Source QA V1 limit.");
-  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
     const payload = buildSourceQaTextPayload({ fixedInstructionsText: instructions + exactCodeRules, sources: originalSources.sources.map((source) => source.rawJson), draftJson });
     if (payload.trimmed) console.info("Source QA AI provider payload trimmed to stay within the text token budget", { estimatedTokens: payload.estimatedTokens, budgetTokens: SOURCE_QA_AI_INPUT_TOKEN_BUDGET, droppedDraft: payload.droppedDraft, droppedSourceCount: payload.droppedSourceCount });
-    for (let attempt = 0; attempt < 2; attempt += 1) { const report = await requestReport(input, apiKey, payload.originalJsonText, payload.draftJson, controller.signal); if (report) return report; }
+    for (let attempt = 0; attempt < 2; attempt += 1) { const report = await requestReport(input, runtime.provider, runtime.model, payload.originalJsonText, payload.draftJson); if (report) return report; }
     throw new SourceQaAiProviderError("AI Source QA returned an invalid report.");
   } catch (error) {
     if (error instanceof SourceQaAiProviderError) throw error;
+    if (error instanceof AiProviderError && error.kind === "not_configured") throw new SourceQaAiProviderError("AI Source QA is not configured yet.");
+    if (error instanceof AiProviderError && error.kind === "timeout") throw new SourceQaAiProviderError("AI Source QA request timed out.");
     console.error("Source QA AI provider exception", { name: error instanceof Error ? error.name : typeof error, message: error instanceof Error ? error.message : String(error) });
-    if (error instanceof Error && error.name === "AbortError") throw new SourceQaAiProviderError("AI Source QA request timed out.");
     throw new SourceQaAiProviderError("AI Source QA provider request failed.");
-  } finally { clearTimeout(timeout); }
+  }
 }
