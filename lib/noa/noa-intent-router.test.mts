@@ -35,6 +35,8 @@ test("conversation greetings route to greeting and stay concise", () => {
     assert.equal(classifyNoaRoute(message, context()), "greeting", message);
   }
   assert.equal(greetingResponseText("hey noa", " Junais "), "Hey Junais 👋 How can I help?");
+  assert.equal(greetingResponseText("hey noa", " Junais KP "), "Hey Junais 👋 How can I help?");
+  assert.equal(greetingResponseText("hey noa", "   "), "Hey 👋 How can I help?");
   assert.equal(greetingResponseText("hi"), "Hey 👋 How can I help?");
   assert.ok(!greetingResponseText("hey noa", "Junais").includes("products and pricing"));
 });
@@ -576,6 +578,32 @@ test("UA-1A routing regressions: ordinary domain questions are not stolen by Use
   assert.equal(classifyNoaRoute("show purchase orders", context()), "Procurement");
   assert.equal(classifyNoaRoute("show clients", context()), "Client");
   assert.equal(classifyNoaRoute("which page am I on", context()), "context");
+});
+
+// Natural-language "my record/activity today" routing fix ----------------------
+
+test("natural-language own-activity 'record' phrasing routes to UserActivity", () => {
+  for (const message of [
+    "what is my record today",
+    "my record today",
+    "show my record today",
+    "show today record",
+    "today's activity",
+    "my activity today",
+    "show my activity today",
+    "what activity i have today",
+    "what i did today",
+    "show what i did today",
+    "my work record today",
+  ]) {
+    assert.equal(classifyNoaRoute(message, context()), "UserActivity", message);
+  }
+});
+
+test("natural-language 'record' routing regressions: domain-specific record requests are unaffected", () => {
+  assert.equal(classifyNoaRoute("show client record", context()), "Client");
+  assert.equal(classifyNoaRoute("show project record", context()), "Project");
+  assert.equal(classifyNoaRoute("show quotation record", context()), "Quotation");
 });
 
 // Phase UA-1B - Team / other-user activity routing -----------------------------

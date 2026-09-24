@@ -16,6 +16,7 @@ import {
 } from "@/lib/activity-time/activity-time-view";
 import { requireSystemOwner } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { saveActivityTrackingSettings } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,7 @@ const USER_LIMIT = 50;
 const INTERVAL_LIMIT = 20;
 
 type ActivityManagementPageProps = {
-  searchParams?: Promise<{ period?: string; user?: string }>;
+  searchParams?: Promise<{ message?: string; messageType?: string; period?: string; user?: string }>;
 };
 
 type ActivitySettingsRow = {
@@ -243,6 +244,35 @@ export default async function ActivityManagementPage({ searchParams }: ActivityM
             </div>
           </Card>
         ) : null}
+
+        <Card>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-zinc-950">Activity Tracking Settings</h2>
+              <p className="mt-1 text-sm text-zinc-500">Configure how ProjectWorkflow records active application time.</p>
+            </div>
+            {params.message ? (
+              <p className={`rounded-md border px-3 py-2 text-sm ${params.messageType === "error" ? "border-red-200 bg-red-50 text-red-900" : "border-emerald-200 bg-emerald-50 text-emerald-950"}`}>
+                {params.message}
+              </p>
+            ) : null}
+          </div>
+          <form action={saveActivityTrackingSettings} className="mt-5 grid gap-4 sm:grid-cols-2">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">Organization timezone</span>
+              <input name="organization_timezone" defaultValue={settings.organization_timezone} required className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10" />
+              <span className="text-xs text-zinc-500">Use a valid IANA timezone, such as Asia/Dubai.</span>
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">Idle timeout</span>
+              <select name="activity_idle_timeout_minutes" defaultValue={String(settings.activity_idle_timeout_minutes)} className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10">
+                {[5, 10, 15, 20, 30, 45, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
+              </select>
+              <span className="text-xs text-zinc-500">Controls how long an interaction interval may count after the latest recorded activity.</span>
+            </label>
+            <div className="sm:col-span-2"><button type="submit" className="rounded-md bg-emerald-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800">Save activity tracking settings</button></div>
+          </form>
+        </Card>
 
         <Card><p className="text-sm leading-6 text-zinc-600">This shows ProjectWorkflow active application time. It is not verified attendance or total working hours.</p></Card>
       </div>

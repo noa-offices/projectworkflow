@@ -3,6 +3,7 @@ import "server-only";
 import { requireActiveUser, requireSettingsManager, requireSystemOwner } from "@/lib/auth";
 import { resolveDateRange, type DateRangeKey } from "@/lib/insights/date-ranges";
 import { createClient } from "@/lib/supabase/server";
+import { readActivityTimeForUser, readRecentActivityTimeUsers, resolveActivityTimeProfile } from "@/lib/noa/noa-activity-time-reads.server";
 import type { NoaCapabilityResult, NoaPageContext } from "./noa-types";
 
 // UA-1A: OWN activity, gated by requireActiveUser() only.
@@ -75,6 +76,8 @@ const TEAM_CONFIRMED_QUOTATION_LIMITATION_TEXT =
 // working hours, clock-in/out, or online/presence status. No query is ever run for this kind.
 const ATTENDANCE_LIMITATION_TEXT =
   "ProjectWorkflow tracks recorded application activity, not verified attendance or working hours. I can show your recent recorded ProjectWorkflow activity instead.";
+const PRESENCE_LIMITATION_TEXT =
+  "ProjectWorkflow doesn't track verified attendance or online presence. I can show your recent ProjectWorkflow activity instead.";
 
 function isNextRedirectError(error: unknown) {
   return Boolean(
@@ -95,6 +98,7 @@ function formatTimestamp(value: string) {
 type UserActivityQuestionKind =
   // UA-1A own-scope kinds (unchanged)
   | "attendance_boundary"
+  | "presence_boundary"
   | "last_activity"
   | "price_activity"
   | "quotation_activity"
@@ -106,7 +110,67 @@ type UserActivityQuestionKind =
   | "team_confirmed_quotation_unsupported"
   | "team_quotation_activity"
   | "team_recent_activity"
-  | "team_summary";
+  | "team_summary"
+  | "activity_time_own"
+  | "activity_time_attendance"
+  | "activity_time_intervals"
+  | "activity_time_recent"
+  | "activity_time_other"
+  | "activity_time_other_intervals"
+  | "activity_time_team_recent";
+
+function activityTimeTargetName(message: string): string | null {
+  const patterns = [
+    /(?:show|what is|how much|how long)\s+([a-z][a-z'-]*)(?:'s)?\s+(?:projectworkflow\s+)?(?:active|activity)\s+time/i,
+    /show\s+([a-z][a-z'-]*)(?:'s)?\s+(?:projectworkflow\s+)?activity intervals?/i,
+    /^([a-z][a-z'-]*)(?:'s)?\s+(?:projectworkflow\s+)?(?:active|activity)\s+time/i,
+  ];
+  const excluded = new Set(["i", "me", "my", "mine", "the", "team", "today", "who", "projectworkflow", "active", "activity", "interval"]);
+  for (const pattern of patterns) {
+    const name = message.match(pattern)?.[1]?.trim();
+    if (name && !excluded.has(name.toLowerCase())) return name;
+  }
+  return null;
+}
+
+function hasFirstPersonReference(message: string) {
+  return /\b(?:i|me|my|mine)\b/i.test(message);
+}
+
+function isActivityIntervalCountQuestion(normalized: string) {
+  return /\b(?:how many|count)\b[^?]*\b(?:activity|active)?\s*intervals?\b|\bmy interval count\b/.test(normalized);
+}
+
+function isPresenceBoundaryQuestion(normalized: string) {
+  return /\bwho is (?:currently )?working\b|\bwho is working now\b|\bwho is online\b|\bwho is at work\b|\bam i online\b|\bam i (?:currently )?(?:working|at work)\b/.test(normalized);
+}
+
+function activityTimeKind(message: string): UserActivityQuestionKind | null {
+  const normalized = message.toLowerCase();
+  if (hasFirstPersonReference(message)) {
+    if (/\bhow many hours? did i work\b/.test(normalized)) return "activity_time_attendance";
+    if (/\bwas i active recently\b|\bmy recent projectworkflow activity\b/.test(normalized)) return "activity_time_recent";
+    if (/\b(?:show )?my (?:projectworkflow )?activity intervals?\b/.test(normalized)) return "activity_time_intervals";
+    if (isActivityIntervalCountQuestion(normalized)) return "activity_time_own";
+    if (/\b(?:projectworkflow )?active time\b|\bactivity time\b|\bhow active (?:was|am) i\b|\bhow (?:much|long) (?:time )?(?:am|i) active\b|\bfirst (?:recorded )?activity today\b|\b(?:latest activity|last activity today)\b/.test(normalized)) return "activity_time_own";
+  }
+  if (/\bwho (?:has|had) (?:recent )?(?:projectworkflow )?activity\b|\bwho is working now\b|\bshow today'?s user activity time\b/.test(normalized)) return "activity_time_team_recent";
+  const target = activityTimeTargetName(message);
+  if (target) return /\bintervals?\b/.test(normalized) ? "activity_time_other_intervals" : "activity_time_other";
+  if (/\bhow many hours? did i work\b/.test(normalized)) return "activity_time_attendance";
+  if (isActivityIntervalCountQuestion(normalized)) return "activity_time_own";
+  if (/\b(?:activity|active) intervals? today\b|\bhow many active intervals?\b/.test(normalized)) return "activity_time_intervals";
+  if (/\bwas i active recently\b|\bmy recent projectworkflow activity\b/.test(normalized)) return "activity_time_recent";
+  if (/\b(?:projectworkflow )?active time\b|\bactivity time\b|\bhow active (?:was|am) i\b|\bhow (?:much|long) (?:time )?(?:am|i) active\b|\bfirst (?:recorded )?activity today\b|\b(?:latest activity|last activity today)\b/.test(normalized)) return "activity_time_own";
+  return null;
+}
+
+function nameActivityTimeText(text: string, name: string) {
+  return text
+    .replace(/^You have\b/, `${name} has`)
+    .replace(/^You don't have\b/, `${name} doesn't have`)
+    .replace(/^Your\b/, `${name}'s`);
+}
 
 // PART 13 support: team-ish phrasing ("the team", "who worked on/edited/is ...") - deliberately
 // narrow (requires "team" or a "who <verb>" construction), so "show users" (no activity verb)
@@ -146,6 +210,9 @@ function otherUserNameTarget(message: string): string | null {
 // own-scope catch-all, and "summary" as the final default.
 function userActivityQuestionKind(message: string): UserActivityQuestionKind {
   const normalized = message.toLowerCase();
+  if (isPresenceBoundaryQuestion(normalized)) return "presence_boundary";
+  const timeKind = activityTimeKind(message);
+  if (timeKind) return timeKind;
   if (/\b(hours?|clock|start work|online|currently working|working currently|at work)\b/.test(normalized)) {
     return "attendance_boundary";
   }
@@ -282,7 +349,7 @@ async function summaryAnswer(
     .map(([category, count]) => `${count} ${CATEGORY_LABEL[category]}-related recorded activit${count === 1 ? "y" : "ies"}`);
 
   const deterministicText = parts.length === 0
-    ? `I didn't find any recorded ProjectWorkflow activity for you ${label}.`
+    ? `I couldn't find any recorded ProjectWorkflow actions for you ${label}.`
     : `${label === "today" ? "Today" : label[0].toUpperCase() + label.slice(1)} you had ${parts.join(", ")}.`;
 
   return {
@@ -754,6 +821,90 @@ export async function fetchNoaUserActivityCapability(
   _context: NoaPageContext,
 ): Promise<NoaCapabilityResult> {
   const kind = userActivityQuestionKind(message);
+
+  if (kind === "presence_boundary") {
+    let userId: string;
+    try {
+      const { user } = await requireActiveUser();
+      userId = user.id;
+    } catch (error) {
+      if (isNextRedirectError(error)) return UNAUTHORIZED_RESULT;
+      throw error;
+    }
+
+    if (/\bam i online\b/i.test(message)) {
+      const supabase = await createClient();
+      const { data } = await supabase
+        .from("audit_activity_log")
+        .select("created_at")
+        .eq("created_by", userId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .returns<Array<{ created_at: string }>>();
+      const latest = (data ?? [])[0]?.created_at;
+      return {
+        data: {
+          deterministicOnly: true,
+          deterministicText: latest
+            ? `ProjectWorkflow doesn't track verified online presence. Your latest recorded ProjectWorkflow activity was at ${formatTimestamp(latest)}.`
+            : "ProjectWorkflow doesn't track verified online presence.",
+          kind: "user_activity_presence_boundary",
+        },
+        ok: true,
+        sources: [{ label: "User Activity · Checked your ProjectWorkflow activity", type: "user_activity" }],
+      };
+    }
+
+    return {
+      data: { deterministicOnly: true, deterministicText: PRESENCE_LIMITATION_TEXT, kind: "user_activity_presence_boundary" },
+      ok: true,
+      sources: [{ label: "User Activity · Checked your ProjectWorkflow activity", type: "user_activity" }],
+    };
+  }
+
+  const isActivityTimeOther = kind === "activity_time_other" || kind === "activity_time_other_intervals";
+  if (kind === "activity_time_team_recent" || isActivityTimeOther) {
+    try {
+      await requireSystemOwner();
+    } catch (error) {
+      if (isNextRedirectError(error)) return TEAM_UNAUTHORIZED_RESULT;
+      throw error;
+    }
+    const supabase = await createClient();
+    if (kind === "activity_time_team_recent") {
+      const result = await readRecentActivityTimeUsers(supabase, message);
+      return { data: result, ok: true, sources: [{ label: "User Activity · Checked ProjectWorkflow activity time", type: "user_activity_time" }] };
+    }
+    const targetName = activityTimeTargetName(message);
+    if (!targetName) return OTHER_USER_NOT_FOUND_RESULT;
+    const resolved = await resolveActivityTimeProfile(supabase, targetName);
+    if (resolved.kind === "not_found") return OTHER_USER_NOT_FOUND_RESULT;
+    if (resolved.kind === "ambiguous") return OTHER_USER_AMBIGUOUS_RESULT;
+    const result = await readActivityTimeForUser(supabase, resolved.id, message, { intervals: kind === "activity_time_other_intervals" });
+    return {
+      data: { ...result, displayName: resolved.fullName, deterministicText: nameActivityTimeText(result.deterministicText, resolved.fullName) },
+      ok: true,
+      sources: [{ label: "User Activity · Checked ProjectWorkflow activity time", type: "user_activity_time" }],
+    };
+  }
+
+  if (kind === "activity_time_own" || kind === "activity_time_attendance" || kind === "activity_time_intervals" || kind === "activity_time_recent") {
+    let userId: string;
+    try {
+      const { user } = await requireActiveUser();
+      userId = user.id;
+    } catch (error) {
+      if (isNextRedirectError(error)) return UNAUTHORIZED_RESULT;
+      throw error;
+    }
+    const supabase = await createClient();
+    const result = await readActivityTimeForUser(supabase, userId, message, {
+      attendanceBoundary: kind === "activity_time_attendance",
+      intervals: kind === "activity_time_intervals",
+      recent: kind === "activity_time_recent",
+    });
+    return { data: result, ok: true, sources: [{ label: "User Activity · Checked your ProjectWorkflow active time", type: "user_activity_time" }] };
+  }
 
   const isTeamKind = kind === "team_summary" || kind === "team_quotation_activity" ||
     kind === "team_recent_activity" || kind === "team_confirmed_quotation_unsupported";

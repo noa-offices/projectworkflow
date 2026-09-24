@@ -62,10 +62,14 @@ test("not-found returns a fixed domain-specific message per capability", () => {
   assert.ok(priceCapabilitySource.includes("I couldn't find enough product information to check the price status."));
 });
 
-test("out-of-scope returns the fixed NOA scope message, not a per-request generated one", () => {
+test("out-of-scope returns a fixed clarification message, not a per-request generated one", () => {
+  // Conversation polish: the capability-listing intro used to double as the out-of-scope
+  // fallback; it's now shown only for an explicit "what can you do" capability question
+  // (NOA_CAPABILITY_SUMMARY_TEXT), and out-of-scope gets a short clarification instead.
   assert.ok(orchestratorSource.includes(
-    "I'm NOA, the ProjectWorkflow assistant. I can help with products, quotations, pricing, projects, procurement, and using ProjectWorkflow.",
+    "I'm not sure what you'd like me to check. Try asking about a product, quotation, project, activity, or another ProjectWorkflow area.",
   ));
+  assert.ok(!orchestratorSource.includes("I'm NOA, the ProjectWorkflow assistant. I can help with"));
 });
 
 test("needs-context (ambiguous) responses are fixed clarification text, not passed to the provider", () => {

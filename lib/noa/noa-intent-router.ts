@@ -74,6 +74,17 @@ const SELF_CONTEXT_PHRASES = [
 // Deliberately narrow: every pattern requires an explicit "i"/"my" activity verb, so ordinary
 // domain questions ("show quotations", "show products") never match any of these.
 const USER_ACTIVITY_PATTERNS = [
+  /\b(?:projectworkflow )?active time\b/,
+  /\bactivity time\b/,
+  /\bhow active (?:was|am) i\b/,
+  /\bhow (?:much|long) (?:time )?(?:am|i) active\b/,
+  /\bfirst (?:recorded )?activity today\b/,
+  /\b(?:latest activity|last activity today)\b/,
+  /\bwas i active recently\b/,
+  /\b(?:activity|active) intervals? today\b/,
+  /\bhow many active intervals?\b/,
+  /\bhow many (?:activity )?intervals?\b/,
+  /\bmy interval count\b/,
   /\bwhat (?:did|do) i (?:work|worked) on\b/,
   /\bwhat i (?:work|worked) (?:on )?today\b/,
   /\bwhat did i do\b/,
@@ -93,6 +104,15 @@ const USER_ACTIVITY_PATTERNS = [
   /\bam i online\b/,
   /\bam i (?:currently )?working\b/,
   /\bam i (?:currently )?at work\b/,
+  // Natural-language "record"/"activity" phrasing - deliberately requires "my"/"i"/"today" in a
+  // specific position (never a bare "record" keyword) so "show client record"/"show project
+  // record"/"show quotation record" are never matched here and keep routing to their own domain.
+  /\bmy record today\b/,
+  /\bwhat is my record\b/,
+  /\btoday'?s? record\b/,
+  /\bmy work record\b/,
+  /\btoday'?s activity\b/,
+  /\bwhat activity i have\b/,
 ];
 
 // UA-1B: explicit team/other-user activity phrasing - same routing precedence as
@@ -101,6 +121,12 @@ const USER_ACTIVITY_PATTERNS = [
 // narrow: every pattern requires an explicit "team"/"who <verb>"/named-target activity phrase, so
 // "show users" (no activity verb) and ordinary domain questions never match any of these.
 const TEAM_AND_OTHER_USER_ACTIVITY_PATTERNS = [
+  /\bwho (?:has|had) (?:recent )?(?:projectworkflow )?activity\b/,
+  /\bwho is working now\b/,
+  /\bshow today'?s user activity time\b/,
+  /\b(?:show|what is|how much|how long) \w+(?:'s)? (?:projectworkflow )?(?:active|activity) time\b/,
+  /\bshow \w+(?:'s)? (?:projectworkflow )?activity intervals?\b/,
+  /^\w+(?:'s)? (?:projectworkflow )?(?:active|activity) time\b/,
   /\bwhat did the team work on\b/,
   /\bshow (?:recent )?team activity\b/,
   /\bhow many (?:quotations?|quote) did the team work on\b/,
@@ -486,7 +512,7 @@ export function describeNoaPageContext(context: NoaPageContext): string {
 // Falls back to a generic greeting when no name is available, per PART 1's explicit requirement.
 export function greetingResponseText(message: string, displayName?: string): string {
   const normalized = normalizeNoaUserMessage(message);
-  const name = displayName?.trim() || null;
+  const name = displayName?.trim().split(/\s+/).find(Boolean) || null;
 
   if (/\bhow are you\b/.test(normalized) || /\bhow'?s it going\b/.test(normalized)) {
     return "I'm doing well — how can I help?";

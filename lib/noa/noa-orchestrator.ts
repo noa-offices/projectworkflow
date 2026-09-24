@@ -13,8 +13,12 @@ import { fetchNoaUserActivityCapability } from "@/lib/noa/noa-user-activity-capa
 import type { NoaAnswer, NoaChatRequest } from "@/lib/noa/noa-types";
 import { runNoaProvider } from "@/lib/noa/noa-provider.server";
 
+// Conversation polish: a short clarification for an unclear/off-topic request - NOT a capability
+// list. The capability list is shown only for the separate, explicit "capabilities" route above
+// (NOA_CAPABILITY_SUMMARY_TEXT); repeating it here on every unclear message was the stale,
+// stiff-feeling fallback this replaces.
 const HELP_ANSWER_TEXT =
-  "I'm NOA, the ProjectWorkflow assistant. I can help with products, quotations, pricing, projects, procurement, and using ProjectWorkflow.";
+  "I'm not sure what you'd like me to check. Try asking about a product, quotation, project, activity, or another ProjectWorkflow area.";
 
 // The one and only dispatch point: classify -> call exactly one capability -> (optionally) phrase
 // the result with the provider. No capability ever calls another, and the model never picks which
@@ -73,14 +77,29 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
     return { domain, sources: [], text: capabilityResult.message };
   }
 
-  const { text } = await runNoaProvider({
-    capabilityData: capabilityResult.data,
-    context: request.context,
-    displayName: request.displayName,
-    domain,
-    message: request.message,
-    recentMessages: request.recentMessages ?? [],
-  });
+  const deterministicData = typeof capabilityResult.data === "object" && capabilityResult.data !== null
+    ? capabilityResult.data as { deterministicOnly?: unknown; deterministicText?: unknown }
+    : null;
+  if (deterministicData?.deterministicOnly === true && typeof deterministicData.deterministicText === "string") {
+    return { domain, sources: capabilityResult.sources, text: deterministicData.deterministicText };
+  }
 
-  return { domain, sources: capabilityResult.sources, text };
+  try {
+    const { text } = await runNoaProvider({
+      capabilityData: capabilityResult.data,
+      context: request.context,
+      displayName: request.displayName,
+      domain,
+      message: request.message,
+      recentMessages: request.recentMessages ?? [],
+    });
+    return { domain, sources: capabilityResult.sources, text };
+  } catch (error) {
+    const deterministicText = typeof capabilityResult.data === "object" && capabilityResult.data !== null
+      && "deterministicText" in capabilityResult.data && typeof capabilityResult.data.deterministicText === "string"
+      ? capabilityResult.data.deterministicText.trim()
+      : "";
+    if (deterministicText) return { domain, sources: capabilityResult.sources, text: deterministicText };
+    throw error;
+  }
 }
