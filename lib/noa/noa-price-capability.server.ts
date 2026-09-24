@@ -36,6 +36,7 @@ type BroadTemplateRow = TemplateRow & {
 };
 
 type BrandRow = {
+  code: string | null;
   id: string;
   last_price_list_checked_at: string | null;
   name: string;
@@ -107,7 +108,7 @@ type PriceQuestionKind = "detail" | "list" | "summary";
 
 function priceQuestionKind(message: string): PriceQuestionKind {
   const normalized = message.toLowerCase();
-  if (/\b(summar|overall|every|all|how many|count|number of)\b/.test(normalized)) return "summary";
+  if (/\b(summarize|summary|overall|every|all|how many|count|number of)\b/.test(normalized)) return "summary";
   if (/\b(which|show|list)\b/.test(normalized)) return "list";
   return "detail";
 }
@@ -127,15 +128,33 @@ function messageMatchesName(normalizedMessage: string, name: string): boolean {
     || new RegExp(`\\b${escapeRegExp(variant)}\\b`).test(normalizedMessage);
 }
 
+function messageMatchesCode(normalizedMessage: string, code: string | null): boolean {
+  const normalizedCode = code?.trim().toLowerCase();
+  return Boolean(normalizedCode && new RegExp(`\\b${escapeRegExp(normalizedCode)}\\b`).test(normalizedMessage));
+}
+
+function uniqueFirstTokenBrand(brands: BrandRow[], normalizedMessage: string): BrandRow | null {
+  const matches = brands.filter((brand) => {
+    const firstToken = brand.name.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+    return firstToken.length >= 3 && new RegExp(`\\b${escapeRegExp(firstToken)}\\b`).test(normalizedMessage);
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+
 async function matchedBrandFor(supabase: Awaited<ReturnType<typeof createClient>>, normalizedMessage: string, contextBrandId?: string, brandText?: string) {
-  const { data } = await supabase.from("brands").select("id,name").returns<Array<{ id: string; name: string }>>();
+  const { data } = await supabase.from("brands").select("id,name,code").returns<BrandRow[]>();
   const brands = data ?? [];
-  if (brandText) {
-    const matches = brands.filter((brand) => messageMatchesName(brandText.toLowerCase(), brand.name));
-    return matches.length === 1 ? matches[0] : null;
-  }
-  const textMatch = brands.find((brand) => messageMatchesName(normalizedMessage, brand.name));
-  if (textMatch) return textMatch;
+  const text = (brandText ?? normalizedMessage).trim().toLowerCase();
+  const exactCode = brands.find((brand) => brand.code?.trim().toLowerCase() === text);
+  if (exactCode) return exactCode;
+  const exactName = brands.find((brand) => brand.name.trim().toLowerCase() === text);
+  if (exactName) return exactName;
+  const codeMatch = brands.find((brand) => messageMatchesCode(text, brand.code));
+  if (codeMatch) return codeMatch;
+  const nameMatch = brands.find((brand) => messageMatchesName(text, brand.name));
+  if (nameMatch) return nameMatch;
+  const firstTokenMatch = uniqueFirstTokenBrand(brands, text);
+  if (firstTokenMatch) return firstTokenMatch;
   if (contextBrandId) return brands.find((brand) => brand.id === contextBrandId) ?? null;
   return null;
 }

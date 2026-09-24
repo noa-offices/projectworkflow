@@ -79,7 +79,7 @@ test("TC-3A.2 routes Client-capability phrases before Quotation and extracts a n
 test("TC-3A.2 resolves a generic Help candidate before AI, but lets no-match reach the existing extractor", () => {
   const candidateIndex = orchestrator.indexOf('const genericEntityCandidate = route === "Help" ? entityLookupCandidate(request.message) : null;');
   const resolverIndex = orchestrator.indexOf("const resolved = await resolveNoaEntityCandidate(genericEntityCandidate);");
-  const extractorIndex = orchestrator.indexOf("const extracted = await extractNoaSemanticRequest({ context: request.context, message: request.message });");
+  const extractorIndex = orchestrator.indexOf("await extractNoaSemanticRequest({ context: request.context, message: request.message });");
   assert.ok(candidateIndex >= 0 && resolverIndex > candidateIndex && extractorIndex > resolverIndex);
   assert.ok(orchestrator.includes('} else if (resolved.domain === "ambiguous") {'));
   assert.ok(!orchestrator.includes('I couldn\'t find a matching Project File or client for "${genericEntityCandidate}"'));

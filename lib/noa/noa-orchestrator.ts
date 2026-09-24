@@ -10,7 +10,7 @@ import { fetchNoaClientCapability } from "@/lib/noa/noa-client-capability.server
 import { fetchNoaInsightsCapability } from "@/lib/noa/noa-insights-capability.server";
 import { fetchNoaPriceCapability } from "@/lib/noa/noa-price-capability.server";
 import { fetchNoaProcurementCapability } from "@/lib/noa/noa-procurement-capability.server";
-import { fetchNoaProductCapability } from "@/lib/noa/noa-product-capability.server";
+import { fetchNoaProductCapability, resolveNoaProductCandidate } from "@/lib/noa/noa-product-capability.server";
 import { fetchNoaProjectCapability, projectFileIdentifierCount, resolveNoaEntityCandidate } from "@/lib/noa/noa-project-capability.server";
 import { fetchNoaQuotationCapability, quotationIdentifierCount, quotationStructuredRequest } from "@/lib/noa/noa-quotation-capability.server";
 import { fetchNoaUserActivityCapability } from "@/lib/noa/noa-user-activity-capability.server";
@@ -595,7 +595,18 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
       }
     }
 
-    const extracted = await extractNoaSemanticRequest({ context: request.context, message: request.message });
+    if (!semanticRequest && route === "Help") {
+      const productResolution = await resolveNoaProductCandidate(genericEntityCandidate ?? request.message);
+      if (productResolution.kind === "resolved") {
+        semanticRequest = { domain: "Product", intent: "unsupported", product: productResolution.product };
+      } else if (productResolution.kind === "ambiguous") {
+        return { domain: "Help", sources: [], text: "I found more than one matching product in the Product Library. Please provide a more specific product name or code." };
+      }
+    }
+
+    const extracted = semanticRequest
+      ? { domain: "Unclear" as const, intent: "unsupported" as const }
+      : await extractNoaSemanticRequest({ context: request.context, message: request.message });
 
     if (!semanticRequest && route === "Help" && !genericEntityCandidate && extracted.entity?.type === "unknown") {
       const resolved = await resolveNoaEntityCandidate(extracted.entity.text);

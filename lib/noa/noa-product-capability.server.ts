@@ -41,8 +41,9 @@ type BroadTemplateRow = TemplateRow & {
   sub_category_id: string | null;
 };
 
-type BrandRow = { id: string; name: string };
+type BrandRow = { code: string | null; id: string; name: string };
 type CategoryRow = { brand_id: string; id: string; name: string; parent_id: string | null };
+type ProductIdentityRow = Pick<TemplateRow, "id" | "internal_selection_name" | "item_code" | "template_code" | "template_name">;
 
 function lifecycleLabel(template: Pick<TemplateRow, "is_active" | "lifecycle_status">) {
   if (template.lifecycle_status === "archived" || template.lifecycle_status === "discontinued") {
@@ -115,6 +116,11 @@ function messageMatchesName(normalizedMessage: string, name: string): boolean {
     || new RegExp(`\\b${escapeRegExp(variant)}\\b`).test(normalizedMessage);
 }
 
+function messageMatchesCode(normalizedMessage: string, code: string | null): boolean {
+  const normalizedCode = code?.trim().toLowerCase();
+  return Boolean(normalizedCode && new RegExp(`\\b${escapeRegExp(normalizedCode)}\\b`).test(normalizedMessage));
+}
+
 type LifecycleFilter = "active" | "archived" | "discontinued";
 
 // PART 2: only the three real lifecycle values already used elsewhere in this file - no new
@@ -131,14 +137,17 @@ function lifecycleWord(filter: LifecycleFilter | null) {
 }
 
 async function matchedBrandFor(supabase: Awaited<ReturnType<typeof createClient>>, normalizedMessage: string, contextBrandId?: string, brandText?: string) {
-  const { data } = await supabase.from("brands").select("id,name").returns<BrandRow[]>();
+  const { data } = await supabase.from("brands").select("id,name,code").returns<BrandRow[]>();
   const brands = data ?? [];
-  if (brandText) {
-    const matches = brands.filter((brand) => messageMatchesName(brandText.toLowerCase(), brand.name));
-    return matches.length === 1 ? matches[0] : null;
-  }
-  const textMatch = brands.find((brand) => messageMatchesName(normalizedMessage, brand.name));
-  if (textMatch) return textMatch;
+  const text = (brandText ?? normalizedMessage).trim().toLowerCase();
+  const exactCode = brands.find((brand) => brand.code?.trim().toLowerCase() === text);
+  if (exactCode) return exactCode;
+  const exactName = brands.find((brand) => brand.name.trim().toLowerCase() === text);
+  if (exactName) return exactName;
+  const codeMatch = brands.find((brand) => messageMatchesCode(text, brand.code));
+  if (codeMatch) return codeMatch;
+  const nameMatch = brands.find((brand) => messageMatchesName(text, brand.name));
+  if (nameMatch) return nameMatch;
   if (contextBrandId) return brands.find((brand) => brand.id === contextBrandId) ?? null;
   return null;
 }
@@ -285,6 +294,76 @@ const UNAUTHORIZED_RESULT: NoaCapabilityResult = {
   reason: "unauthorized",
 };
 
+export type NoaProductCandidateResolution =
+  | { kind: "resolved"; product: NoaSemanticProduct }
+  | { kind: "ambiguous" }
+  | { kind: "none" };
+
+// This is intentionally a small pre-router verifier, not another search endpoint. It first
+// verifies Product Library access, then returns only the user's own candidate text or a proven
+// brand/category filter; no Product Library row is returned to the orchestrator or an AI model.
+export async function resolveNoaProductCandidate(messageOrCandidate: string): Promise<NoaProductCandidateResolution> {
+  try {
+    await requireProductLibraryManager();
+  } catch (error) {
+    if (isNextRedirectError(error)) return { kind: "none" };
+    throw error;
+  }
+
+  const candidate = messageOrCandidate.trim();
+  if (!candidate) return { kind: "none" };
+  const normalized = candidate.toLowerCase();
+  const supabase = await createClient();
+  const brand = await matchedBrandFor(supabase, normalized);
+  const categories = await matchedCategoryFor(supabase, normalized, brand?.id ?? null);
+  const isBrowseRequest = /\b(show|list|all|which)\b/.test(normalized);
+
+  if (isBrowseRequest && (brand || categories?.length)) {
+    return {
+      kind: "resolved",
+      product: {
+        ...(brand ? { brandText: brand.name } : {}),
+        ...(categories?.length === 1 ? { categoryText: categories[0].name } : {}),
+      },
+    };
+  }
+
+  const safeCandidate = candidate.replace(/[%,]/g, "");
+  if (safeCandidate.length >= 2) {
+    const exactFilter = `template_name.ilike.${safeCandidate},internal_selection_name.ilike.${safeCandidate},template_code.ilike.${safeCandidate},item_code.ilike.${safeCandidate}`;
+    const { data: exactMatches } = await supabase
+      .from("product_templates")
+      .select("id,template_name,internal_selection_name,template_code,item_code")
+      .or(exactFilter)
+      .limit(2)
+      .returns<ProductIdentityRow[]>();
+    if ((exactMatches?.length ?? 0) > 1) return { kind: "ambiguous" };
+    if (exactMatches?.length === 1) return { kind: "resolved", product: { productText: candidate } };
+
+    const partialFilter = `template_name.ilike.%${safeCandidate}%,internal_selection_name.ilike.%${safeCandidate}%,template_code.ilike.%${safeCandidate}%,item_code.ilike.%${safeCandidate}%`;
+    const { data: partialMatches } = await supabase
+      .from("product_templates")
+      .select("id,template_name,internal_selection_name,template_code,item_code")
+      .or(partialFilter)
+      .limit(2)
+      .returns<ProductIdentityRow[]>();
+    if ((partialMatches?.length ?? 0) > 1) return { kind: "ambiguous" };
+    if (partialMatches?.length === 1) return { kind: "resolved", product: { productText: candidate } };
+  }
+
+  if (brand || categories?.length) {
+    return {
+      kind: "resolved",
+      product: {
+        ...(brand ? { brandText: brand.name } : {}),
+        ...(categories?.length === 1 ? { categoryText: categories[0].name } : {}),
+      },
+    };
+  }
+
+  return { kind: "none" };
+}
+
 export async function fetchNoaProductCapability(
   message: string,
   context: NoaPageContext,
@@ -311,7 +390,7 @@ export async function fetchNoaProductCapability(
     return fetchBroadProductResult(supabase, message, context, questionKind, options?.product);
   }
 
-  if (context.productTemplateId) {
+  if (context.productTemplateId && !options?.product?.productText) {
     const { data: template } = await supabase
       .from("product_templates")
       .select(TEMPLATE_SELECT)
