@@ -281,3 +281,67 @@ test("15. A non-matching-currency accessory is excluded from unit and reported, 
   assert.ok(result.price.missingExchangeRateCurrencies.includes("EUR"));
   assert.ok(result.issues.some((issue) => issue.code === "missing_exchange_rate"));
 });
+
+// ── Fixture 16: per-option priceCurrency (GPC-3.2) ───────────────────────────────────────────
+
+const mixedCurrencyVariantGroup = [{
+  id: "grp-mix", pricing_type: "base_model_group", group_name: "Models", is_active: true, sort_order: 0,
+  items: [
+    { id: "row-aed", display_name: "AED row", price: 500, currency: "AED", is_active: true, sort_order: 0 },
+    { id: "row-eur", display_name: "EUR row", price: 3195, currency: "EUR", is_active: true, sort_order: 1 },
+    { id: "row-none", display_name: "No currency row", price: 700, is_active: true, sort_order: 2 },
+  ],
+}];
+
+test("16. Each Base/Model option's priceCurrency comes from its OWN row, never the template's default/aggregate currency - a row without one falls back to the template", () => {
+  const result = resolveProductConfigurationState(template({ variantPricing: mixedCurrencyVariantGroup, currency: "AED" }), {});
+  const rowStep = result.steps.find((step) => step.key === "variant_row")!;
+  const aedOption = rowStep.options.find((option) => option.id === "row-aed")!;
+  const eurOption = rowStep.options.find((option) => option.id === "row-eur")!;
+  const noneOption = rowStep.options.find((option) => option.id === "row-none")!;
+  assert.equal(aedOption.priceCurrency, "AED");
+  assert.equal(eurOption.priceCurrency, "EUR");
+  assert.equal(noneOption.priceCurrency, "AED");
+});
+
+const requiredServiceUnitAndOptionalPanel = [
+  {
+    id: "service-units", group_name: "Support Service Units", is_active: true, sort_order: 0,
+    items: [
+      { id: "1af-090", item_name: "Right service unit", price: 1042, currency: "EUR", is_active: true, sort_order: 0, role: "normal" },
+      { id: "1af-091", item_name: "Left service unit", price: 1042, currency: "EUR", is_active: true, sort_order: 1, role: "normal" },
+    ],
+    conditional_configuration: {
+      role: "conditional_option", selection: "exactly_one",
+      applicability: [{ base_model_group_id: "grp1", base_model_row_id: "row1", required: true, visible: true, allowed_item_ids: ["1af-090", "1af-091"], fixed_quantity: 1 }],
+    },
+  },
+  {
+    id: "modesty", group_name: "Modesty Panels", group_is_required: false, is_active: true, sort_order: 1,
+    items: [{ id: "panel-standard", item_name: "Standard Modesty Panel", price: 154, currency: "EUR", is_active: true, sort_order: 0, role: "normal" }],
+  },
+];
+
+test("17. Required conditional accessory groups block completion, then optional groups require review", () => {
+  const monolithModel = [{ ...variantGroupSingle[0], items: [{ ...variantGroupSingle[0].items[0], price: 3001, currency: "EUR" }] }];
+  const initial = resolveProductConfigurationState(template({ variantPricing: monolithModel, accessoryPricing: requiredServiceUnitAndOptionalPanel, currency: "EUR", defaultUnitPrice: 3001 }), {});
+  assert.equal(initial.nextRequiredStep?.key, "accessory:service-units");
+  assert.equal(initial.nextRequiredStep?.required, true);
+  assert.equal(initial.nextRequiredStep?.options.length, 2);
+
+  const selected = resolveProductConfigurationState(
+    template({ variantPricing: monolithModel, accessoryPricing: requiredServiceUnitAndOptionalPanel, currency: "EUR", defaultUnitPrice: 3001 }),
+    { accessoryQuantities: { "1af-090": 1 } },
+  );
+  assert.equal(selected.nextRequiredStep, null);
+  assert.equal(selected.price.accessories, 1042);
+  assert.equal(selected.price.unit, 4043);
+  assert.equal(selected.optionalSteps[0]?.key, "accessory:modesty");
+
+  const skipped = resolveProductConfigurationState(
+    template({ variantPricing: monolithModel, accessoryPricing: requiredServiceUnitAndOptionalPanel, currency: "EUR", defaultUnitPrice: 3001 }),
+    { accessoryQuantities: { "1af-090": 1 }, skippedAccessoryGroupIds: ["modesty"] },
+  );
+  assert.equal(skipped.optionalSteps.length, 0);
+  assert.equal(skipped.price.unit, 4043);
+});

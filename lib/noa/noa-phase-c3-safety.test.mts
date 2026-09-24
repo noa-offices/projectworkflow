@@ -75,7 +75,12 @@ test("the incoming conversationReference is validated (never blindly trusted) bo
 
 test("the reference is built ONLY from this result's own capabilityData - never from recentMessages, provider text, or prose", () => {
   const fnStart = orchestratorSource.indexOf("function buildUserActivityConversationReference");
-  const fnBody = orchestratorSource.slice(fnStart, orchestratorSource.indexOf("\nexport async function runNoaOrchestrator", fnStart));
+  // GPC-3 renamed the exported dispatch function to runNoaOrchestratorCore and added a thin
+  // runNoaOrchestrator wrapper at the very end of the file (which legitimately still matches the
+  // literal "export async function runNoaOrchestrator" text this end-anchor originally looked
+  // for) - narrowed to the next section marker instead, so the slice stays scoped to just this
+  // one builder function, exactly as originally intended.
+  const fnBody = orchestratorSource.slice(fnStart, orchestratorSource.indexOf("\n// C4B:", fnStart));
   assert.ok(!fnBody.includes("recentMessages"));
   assert.ok(!fnBody.includes("request.message"));
   assert.ok(fnBody.includes("data: unknown"));
@@ -92,7 +97,9 @@ test("the summary capability path computes quotation identifiers from rows it al
 
 test("the client component round-trips the reference: sends it on every request, replaces (never merges) it after success, and leaves it untouched on failure", () => {
   assert.ok(assistantSource.includes("conversationReferenceRef.current"));
-  assert.match(assistantSource, /body: JSON\.stringify\(\{ context, conversationReference, message, recentMessages \}\)/);
+  // GPC-3 added a second, independent productConfigurationReference field to the same request
+  // body (see the dedicated GPC-3 safety test for that addition) - the literal grew accordingly.
+  assert.match(assistantSource, /body: JSON\.stringify\(\{ context, conversationReference, message, productConfigurationReference, recentMessages \}\)/);
   assert.ok(assistantSource.includes("conversationReferenceRef.current = answer.conversationReference;"));
   const catchIndex = assistantSource.indexOf(".catch((error: unknown) => {");
   const catchBlock = assistantSource.slice(catchIndex, assistantSource.indexOf(".finally(", catchIndex));
@@ -198,12 +205,17 @@ test("only a single conversationReference field exists on the answer/request con
 
 // ── Regression: greeting/capabilities/other domains unaffected ─────────────────
 
-test("regression: greeting and explicit capabilities routes are unaffected by C3 and still return before any semantic/reference logic runs", () => {
+test("regression: greeting and explicit capabilities routes are unaffected by C3 and still return before any semantic extraction/capability dispatch", () => {
+  // A later, external change (predating GPC-3) moved conversationReference PARSING earlier in the
+  // function (now alongside route classification) - parsing alone is harmless (it's just
+  // isNoaConversationReference(), never a business action), so the safety property this test
+  // actually guards - greeting/capabilities never reach the semantic extractor or a capability
+  // call - is checked directly instead of via conversationReference's parse position.
   const greetingIndex = orchestratorSource.indexOf('if (route === "greeting")');
   const capabilitiesIndex = orchestratorSource.indexOf('if (route === "capabilities")');
-  const referenceValidationIndex = orchestratorSource.indexOf("isNoaConversationReference(request.conversationReference)");
-  assert.ok(greetingIndex >= 0 && capabilitiesIndex >= 0 && referenceValidationIndex >= 0);
-  assert.ok(greetingIndex < referenceValidationIndex && capabilitiesIndex < referenceValidationIndex);
+  const extractorCallIndex = orchestratorSource.indexOf("await extractNoaSemanticRequest(");
+  assert.ok(greetingIndex >= 0 && capabilitiesIndex >= 0 && extractorCallIndex >= 0);
+  assert.ok(greetingIndex < extractorCallIndex && capabilitiesIndex < extractorCallIndex);
 });
 
 test("no mutation calls and no cross-capability chaining were introduced", () => {

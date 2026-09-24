@@ -7,6 +7,10 @@
 // fully erased at compile time (no runtime cycle), the same safe pattern TypeScript projects use
 // whenever two small type modules reference each other.
 import type { NoaConversationReference } from "./noa-conversation-reference";
+// GPC-3: a SEPARATE bounded reference for an in-progress Product Library guided configuration -
+// see noa-product-configuration-reference.ts for why this is not merged into
+// NoaConversationReference. Same type-only import shape as the line above.
+import type { NoaProductConfigurationReference } from "./noa-product-configuration-reference";
 
 export type NoaVisualState =
   | "idle"
@@ -19,8 +23,27 @@ export type NoaVisualState =
 
 export type NoaMessageRole = "user" | "assistant";
 
+// GPC-3.1: a bounded, human-readable choice the server offers for the CURRENT guided-configuration
+// question only - display data, never proof of anything. `value` is deliberately the same visible
+// text the existing free-text matcher already accepts (never an internal row id, never a
+// price/spec-bearing token) - clicking a choice sends `value` through the exact same message path
+// as typed text, and the server revalidates it against the CURRENT step exactly as it would any
+// other reply. See PART 1 of GPC-3.1's own task for why a signed/opaque token was deliberately
+// not introduced here.
+export type NoaChoice = {
+  label: string;
+  // Optional short secondary line (dimension/price) - display-only, never sent back to the server.
+  secondary?: string;
+  value: string;
+};
+
 export type NoaMessage = {
   createdAt: number;
+  // GPC-3.1: only ever set on an assistant guided-configuration question, and only ever the SAME
+  // choices that answer's own text already describes - never client-supplied, never persisted
+  // beyond this one message (see noa-messages.tsx: only the LATEST assistant message's choices are
+  // clickable).
+  choices?: NoaChoice[];
   // Set only on assistant replies once a real backend answer arrives (Phase 1B) - user messages
   // never carry these.
   domain?: NoaDomain;
@@ -70,6 +93,10 @@ export type NoaSource = {
 };
 
 export type NoaAnswer = {
+  // GPC-3.1: present only for a guided-configuration question - see NoaChoice/NoaMessage above.
+  // Absent (undefined) for every ordinary NOA answer (Quotation/Project/Client/Product Q&A/Price/
+  // Procurement/UserActivity), so existing rendering is entirely unaffected (PART 11).
+  choices?: NoaChoice[];
   domain: NoaDomain;
   sources: NoaSource[];
   text: string;
@@ -79,6 +106,12 @@ export type NoaAnswer = {
   // whenever this result has no useful reference, so the client always replaces its stored
   // reference with exactly what the server returns.
   conversationReference?: NoaConversationReference;
+  // GPC-3: the fresh Product Configuration reference for THIS result, if a guided configuration is
+  // active - kept entirely separate from conversationReference (see
+  // noa-product-configuration-reference.ts). Unlike conversationReference, this is preserved
+  // across an ordinary unrelated answer rather than cleared by omission - see
+  // noa-orchestrator.ts's passthrough handling.
+  productConfigurationReference?: NoaProductConfigurationReference;
 };
 
 export type NoaChatRequest = {
@@ -87,6 +120,10 @@ export type NoaChatRequest = {
   // NoaAnswer.conversationReference. Untrusted input: validated with isNoaConversationReference()
   // before use, never assumed well-formed.
   conversationReference?: NoaConversationReference;
+  // GPC-3: the caller's own previously-returned productConfigurationReference, round-tripped
+  // verbatim - see NoaAnswer.productConfigurationReference. Untrusted input: validated with
+  // isNoaProductConfigurationReference() before use, never assumed well-formed.
+  productConfigurationReference?: NoaProductConfigurationReference;
   // Conversation polish: the caller's own safe display name (profiles.full_name), used only for
   // occasional personalization (greetings, provider tone) - optional since callers/tests that
   // don't have it yet must keep working unchanged.

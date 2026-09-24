@@ -5,10 +5,12 @@ import { NoaChatDrawer } from "@/components/noa/noa-chat-drawer";
 import { NoaLauncher } from "@/components/noa/noa-launcher";
 import { classifyNoaIntent } from "@/lib/noa/noa-intent-router";
 import type { NoaConversationReference } from "@/lib/noa/noa-conversation-reference";
+import type { NoaProductConfigurationReference } from "@/lib/noa/noa-product-configuration-reference";
 import { noaStateReducer, type NoaStateEvent } from "@/lib/noa/noa-state-machine";
 import type {
   NoaAnswer,
   NoaAuthContext,
+  NoaChoice,
   NoaDomain,
   NoaMessage,
   NoaSource,
@@ -27,7 +29,7 @@ const NOA_CHAT_ENDPOINT = "/api/noa/chat";
 function createMessage(
   role: NoaMessage["role"],
   text: string,
-  meta?: { domain?: NoaDomain; sources?: NoaSource[] },
+  meta?: { choices?: NoaChoice[]; domain?: NoaDomain; sources?: NoaSource[] },
 ): NoaMessage {
   return {
     createdAt: Date.now(),
@@ -36,6 +38,9 @@ function createMessage(
       : `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     role,
     text,
+    // GPC-3.1: only ever set for an assistant message, and only ever the server's own bounded
+    // choices for THAT answer - never invented client-side, never carried over from a prior turn.
+    ...(meta?.choices?.length ? { choices: meta.choices } : {}),
     ...(meta?.domain ? { domain: meta.domain } : {}),
     ...(meta?.sources?.length ? { sources: meta.sources } : {}),
   };
@@ -46,9 +51,10 @@ async function requestNoaAnswer(
   context: ReturnType<typeof useNoaPageContext>,
   recentMessages: Array<{ role: "user" | "assistant"; text: string }>,
   conversationReference: NoaConversationReference | undefined,
+  productConfigurationReference: NoaProductConfigurationReference | undefined,
 ): Promise<NoaAnswer> {
   const response = await fetch(NOA_CHAT_ENDPOINT, {
-    body: JSON.stringify({ context, conversationReference, message, recentMessages }),
+    body: JSON.stringify({ context, conversationReference, message, productConfigurationReference, recentMessages }),
     headers: { "Content-Type": "application/json" },
     method: "POST",
   });
@@ -74,6 +80,12 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
   // whatever the server returns after each successful reply, and cleared entirely on error. Never
   // persisted beyond this component instance.
   const conversationReferenceRef = useRef<NoaConversationReference | undefined>(undefined);
+  // GPC-3: the same replace-wholesale-from-the-server pattern as conversationReferenceRef above,
+  // held independently. Safe to always replace verbatim (never merge) because the ORCHESTRATOR is
+  // responsible for re-attaching an active configuration reference to an ordinary, unrelated
+  // answer's productConfigurationReference field when it should persist - the client stays a dumb
+  // mirror of whatever the server last returned, exactly like conversationReferenceRef.
+  const productConfigurationReferenceRef = useRef<NoaProductConfigurationReference | undefined>(undefined);
   const pageContext = useNoaPageContext();
 
   const dispatch = useCallback((event: NoaStateEvent) => {
@@ -109,14 +121,18 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
     setPendingDomain(classifyNoaIntent(trimmed, pageContext));
     dispatch({ type: "SEND" });
 
-    requestNoaAnswer(trimmed, pageContext, recentMessages, conversationReferenceRef.current)
+    requestNoaAnswer(trimmed, pageContext, recentMessages, conversationReferenceRef.current, productConfigurationReferenceRef.current)
       .then((answer) => {
         // Always replace, never merge/accumulate - a result with no reference of its own
         // (conversationReference undefined) correctly clears any stale one from before.
         conversationReferenceRef.current = answer.conversationReference;
+        // Same replace-wholesale rule, but the server (not the client) decides when
+        // undefined truly means "end/cancel configuration" vs. "an unrelated answer that should
+        // leave an active configuration alone" - see noa-orchestrator.ts's passthrough handling.
+        productConfigurationReferenceRef.current = answer.productConfigurationReference;
         setMessages((current) => [
           ...current,
-          createMessage("assistant", answer.text, { domain: answer.domain, sources: answer.sources }),
+          createMessage("assistant", answer.text, { choices: answer.choices, domain: answer.domain, sources: answer.sources }),
         ]);
         dispatch({ type: "RESPONSE_SUCCESS" });
       })

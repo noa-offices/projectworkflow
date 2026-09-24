@@ -14,8 +14,23 @@ import { fetchNoaProductCapability, resolveNoaProductCandidate } from "@/lib/noa
 import { fetchNoaProjectCapability, projectFileIdentifierCount, resolveNoaEntityCandidate } from "@/lib/noa/noa-project-capability.server";
 import { fetchNoaQuotationCapability, quotationIdentifierCount, quotationStructuredRequest } from "@/lib/noa/noa-quotation-capability.server";
 import { fetchNoaUserActivityCapability } from "@/lib/noa/noa-user-activity-capability.server";
-import type { NoaAnswer, NoaChatRequest } from "@/lib/noa/noa-types";
+import type { NoaAnswer, NoaChatRequest, NoaChoice, NoaPageContext } from "@/lib/noa/noa-types";
 import { runNoaProvider } from "@/lib/noa/noa-provider.server";
+// GPC-3: the ONLY configuration-state engine (GPC-1) and the ONLY single-template loader (GPC-2) -
+// this file never reimplements auto-resolution/pricing/compatibility rules, it only calls them.
+import {
+  resolveProductConfigurationState,
+  type ProductConfigurationOption,
+  type ProductConfigurationState,
+  type ProductConfigurationStep,
+  type ProductConfigurationTemplateInput,
+} from "@/lib/products/product-configuration-state";
+import { loadProductConfigurationTemplate, type ProductConfigurationTemplateLoadResult } from "@/lib/products/product-configuration-loader.server";
+import {
+  isNoaProductConfigurationReference,
+  type NoaProductConfigurationReference,
+  type NoaProductConfigurationSelections,
+} from "@/lib/noa/noa-product-configuration-reference";
 
 // C2: the only 3 UserActivity semantic intents wired to that capability (recorded UserActivity,
 // ProjectWorkflow active time, recent-presence-style questions). "follow_up"/"unsupported" for
@@ -527,10 +542,413 @@ function buildQuotationConversationReference(data: unknown): NoaConversationRefe
   };
 }
 
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// GPC-3: Guided Product Configuration (start / resume / cancel / start-over)
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Deliberately isolated from the rest of the routing pipeline above: this whole block only ever
+// calls GPC-2 (loadProductConfigurationTemplate) for data and GPC-1 (resolveProductConfigurationState)
+// for every configuration/pricing decision - it never reimplements auto-resolution, compatibility,
+// or pricing rules itself (PART 7/18). Every turn independently re-authorizes and re-loads the
+// current template (PART 6/17) - a templateId round-tripped from a prior answer is never trusted
+// on its own. Still fully READ-ONLY: no write action exists here (PART 10 is future work).
+
+// PART 5: narrow start phrasing only - "configure X" / "help me configure X". Not a broad intent
+// classifier; anything else falls through to normal routing unchanged.
+const PRODUCT_CONFIGURATION_START_PATTERN = /^(?:help me )?configure\s+(.+?)[.!]?$/i;
+// PART 14: exact control phrases only, not bare "cancel"/"stop" (too easily a false positive for
+// an unrelated message).
+const PRODUCT_CONFIGURATION_CANCEL_PATTERN = /^(?:cancel configuration|stop configuring)[.!]?$/i;
+const PRODUCT_CONFIGURATION_START_OVER_PATTERN = /^start over[.!]?$/i;
+const MAX_DISPLAYED_CONFIGURATION_OPTIONS = 10;
+
+function productConfigurationStartTarget(message: string): string | null {
+  const target = message.trim().match(PRODUCT_CONFIGURATION_START_PATTERN)?.[1]?.trim();
+  return target || null;
+}
+
+// PART 15: only "obvious" deterministic fresh-domain signals - the same identifier fast-paths and
+// deterministic router already used above, never a second semantic guess. A message that resolves
+// to Product/Help/context/greeting/capabilities is NOT considered "fresh other-domain" (it's either
+// still about the product in view, or genuinely ambiguous - both fall through to configuration
+// resume, which is exactly what an answer like "1800 x 900" needs).
+function looksLikeFreshOtherDomainRequest(message: string, context: NoaPageContext): boolean {
+  if (quotationIdentifierCount(message) > 0 || projectFileIdentifierCount(message) > 0) return true;
+  const route = classifyNoaRoute(message, context);
+  return route !== "Product" && route !== "Help" && route !== "context" && route !== "greeting" && route !== "capabilities";
+}
+
+// PART 12: only the step kinds GPC-1 actually returns as a single-choice step map to a single
+// selection field - modular/accessory (multi-selection) steps are deliberately excluded here (a
+// step whose key isn't in this map is treated as PART 12's "not yet supported" case).
+function productConfigurationSelectionKey(stepKey: string): keyof NoaProductConfigurationSelections | null {
+  switch (stepKey) {
+    case "system_base": return "systemRowId";
+    case "variant_group": return "variantGroupId";
+    case "variant_subgroup": return "subgroupId";
+    case "variant_row": return "variantRowId";
+    case "workstation_size": return "deskingSizeId";
+    case "category_group": return "categoryGroupId";
+    case "category_row": return "categoryRowId";
+    case "fabric_category": return "fabricCategory";
+    default: return null;
+  }
+}
+
+// PART 7: GPC-1's own `autoApplied` output (never a second auto-resolution algorithm) is folded
+// back into the persisted selections, so the NEXT turn's reference reflects what was actually
+// auto-selected. Required-companion auto-applies (stepKey "accessory:...") are deliberately
+// skipped - required-component-overrides.ts's effectiveRequiredQuantities() already re-derives
+// them fresh every turn from the trigger/overrides, so persisting them would be redundant, not
+// unsafe, but also not necessary; only single-choice steps need their id remembered.
+function applyAutoResolvedSelections(
+  selections: NoaProductConfigurationSelections,
+  autoApplied: ProductConfigurationState["autoApplied"],
+): NoaProductConfigurationSelections {
+  let next = selections;
+  for (const entry of autoApplied) {
+    const key = productConfigurationSelectionKey(entry.stepKey);
+    if (!key) continue;
+    next = { ...next, [key]: entry.optionId };
+  }
+  return next;
+}
+
+type ProductConfigurationAnswerMatch =
+  | { kind: "matched"; optionId: string }
+  | { kind: "none" }
+  // GPC-3.1 PART 9: the matcher's own candidate set is exposed here (cheap - it already computed
+  // them to decide "more than one") so the caller can re-offer just THOSE instead of every current
+  // option.
+  | { kind: "ambiguous"; candidates: ProductConfigurationOption[] };
+
+// GPC-3.1 PART 7: normalization only - lowercase, trim, collapse whitespace, fold every dash
+// variant to a space, fold "×" to "x" and tighten "<digit> x <digit>" spacing so "210x100" and
+// "210 x 100" compare equal. No fuzzy/Levenshtein matching, no synonym table.
+function normalizeConfigurationAnswerText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[–—-]/g, " ")
+    .replace(/×/g, "x")
+    .replace(/(\d)\s*x\s*(\d)/gi, "$1 x $2")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// A "tight" (space-free) form for token containment checks only - lets a typed "w210" match a
+// haystack that actually reads "w 210" without treating every space as significant.
+function tightenConfigurationAnswerText(value: string): string {
+  return value.replace(/\s+/g, "");
+}
+
+function configurationOptionSearchText(option: ProductConfigurationOption): string {
+  return normalizeConfigurationAnswerText(`${option.label} ${option.dimension ?? ""}`);
+}
+
+// PART 11: a small, fully deterministic matcher - exact visible label, exact dimension, a unique
+// normalized-substring partial label, then (GPC-3.1 addition) a unique token-reduced match across
+// label + dimension combined. Never a supplier/product code match here since GPC-1's current
+// ProductConfigurationOption doesn't expose one distinctly from the label (nothing to match
+// against yet). The model never picks the row - only this function does; no fuzzy/AI matching.
+function matchProductConfigurationAnswer(message: string, options: ProductConfigurationOption[]): ProductConfigurationAnswerMatch {
+  const normalized = normalizeConfigurationAnswerText(message);
+  if (!normalized) return { kind: "none" };
+
+  const exactLabel = options.find((option) => normalizeConfigurationAnswerText(option.label) === normalized);
+  if (exactLabel) return { kind: "matched", optionId: exactLabel.id };
+
+  const exactDimension = options.find((option) => option.dimension && normalizeConfigurationAnswerText(option.dimension) === normalized);
+  if (exactDimension) return { kind: "matched", optionId: exactDimension.id };
+
+  const partialMatches = options.filter((option) => normalizeConfigurationAnswerText(option.label).includes(normalized));
+  if (partialMatches.length === 1) return { kind: "matched", optionId: partialMatches[0].id };
+  if (partialMatches.length > 1) return { kind: "ambiguous", candidates: partialMatches };
+
+  // GPC-3.1: tolerate a typed reply that omits repeated generic words (e.g. "Desk") or reorders
+  // model/dimension fragments, as long as EVERY typed token is present (tight-contained) in
+  // exactly one option's combined label+dimension text. Only tried for multi-token input - a
+  // single leftover token is already covered by the partial-label check above.
+  const userTokens = normalized.split(" ").filter(Boolean);
+  if (userTokens.length > 1) {
+    const tokenMatches = options.filter((option) => {
+      const haystack = tightenConfigurationAnswerText(configurationOptionSearchText(option));
+      return userTokens.every((token) => haystack.includes(tightenConfigurationAnswerText(token)));
+    });
+    if (tokenMatches.length === 1) return { kind: "matched", optionId: tokenMatches[0].id };
+    if (tokenMatches.length > 1) return { kind: "ambiguous", candidates: tokenMatches };
+  }
+
+  return { kind: "none" };
+}
+
+// PART 3: cosmetic-only display formatting - never changes GPC-1's own option data, only how it
+// is rendered. Folds the existing " - " separator into an em dash for a cleaner button label.
+function configurationChoiceLabel(option: ProductConfigurationOption): string {
+  return option.label.replace(/\s-\s/g, " — ");
+}
+
+// GPC-3.2: currency comes from THIS option's own source row (option.priceCurrency), never from the
+// aggregate/current configuration currency - a different option can legitimately be priced in a
+// different currency than whatever is currently resolved elsewhere (the proven UAT bug). When no
+// currency is available for this option, the price is omitted rather than guessed.
+function configurationChoiceSecondary(option: ProductConfigurationOption): string | undefined {
+  const parts: string[] = [];
+  if (option.dimension) parts.push(option.dimension.replace(/(\d)\s*x\s*(\d)/gi, "$1 × $2"));
+  if (typeof option.priceContribution === "number" && option.priceCurrency) {
+    parts.push(`${option.priceCurrency} ${option.priceContribution.toLocaleString()}`);
+  }
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
+// PART 1/6: bounded, server-issued, display-only choices for a set of CURRENT GPC-1 options -
+// `value` is deliberately the option's own visible label (the exact string the matcher above
+// already accepts via its exact-label path), never an internal id or a new opaque token.
+function productConfigurationChoicesFor(options: ProductConfigurationOption[], includeSkip = false): NoaChoice[] {
+  const choices = options.slice(0, MAX_DISPLAYED_CONFIGURATION_OPTIONS).map((option) => ({
+    label: configurationChoiceLabel(option),
+    secondary: configurationChoiceSecondary(option),
+    value: option.label,
+  }));
+  return includeSkip ? [...choices, { label: "Skip", value: "Skip" }] : choices;
+}
+
+// PART 2: short, natural, GPC-terminology-free question text per step kind - never a step key,
+// never an internal id. `noun` is reused by the invalid/ambiguous correction text below so both
+// stay consistent for the same step.
+function productConfigurationStepPhrase(stepKind: string): { question: string; noun: string } {
+  switch (stepKind) {
+    case "system_base": return { question: "Choose a system or base", noun: "option" };
+    case "variant_group": return { question: "Choose a product family", noun: "family" };
+    case "variant_subgroup": return { question: "Choose a configuration", noun: "configuration" };
+    case "variant_row": return { question: "Choose a model / size", noun: "model" };
+    case "workstation_size": return { question: "Choose a size", noun: "size" };
+    case "category_group": return { question: "Choose a category", noun: "category" };
+    case "category_row": return { question: "Choose an item", noun: "item" };
+    case "fabric_category": return { question: "Choose a finish", noun: "finish" };
+    default: return { question: "Choose an option", noun: "option" };
+  }
+}
+
+// PART 2/6/8/9: one short deterministic question with structured, bounded choices - the option
+// list is never dumped into the message text. `isFirstQuestion` names the product once, on the
+// very first question of a fresh configuration only (matches the worked example); every later
+// question stays short. `correction` is an optional short PART 8/9 prefix for an invalid/ambiguous
+// reply, and `candidates` (PART 9) narrows the re-offered choices to just the ambiguous matches
+// when the matcher already exposed them, falling back to every current option otherwise.
+function productConfigurationQuestionAnswer(
+  step: ProductConfigurationStep,
+  reference: NoaProductConfigurationReference,
+  templateName: string,
+  isFirstQuestion: boolean,
+  correction?: { text: string; candidates?: ProductConfigurationOption[] },
+): NoaAnswer {
+  const phrase = productConfigurationStepPhrase(step.kind);
+  const offered = correction?.candidates ?? step.options;
+  const boundedNote = step.options.length > MAX_DISPLAYED_CONFIGURATION_OPTIONS && !correction?.candidates
+    ? ` I found ${step.options.length} options. Here are the first ${MAX_DISPLAYED_CONFIGURATION_OPTIONS} — you can also type part of the ${phrase.noun} name or dimension.`
+    : "";
+  const questionText = isFirstQuestion ? `${phrase.question} for ${templateName}.` : `${phrase.question}.`;
+  const correctionLine = correction ? `${correction.text}\n\n` : "";
+  return {
+    choices: productConfigurationChoicesFor(offered, step.kind === "accessory" && !step.required),
+    domain: "Product",
+    productConfigurationReference: reference,
+    sources: [],
+    text: `${correctionLine}${questionText}${boundedNote}`,
+  };
+}
+
+// PART 12: a required multi-selection step (modular/accessory) has no single selection field to
+// write into yet - a bounded, honest deferral rather than an invented grammar.
+function productConfigurationUnsupportedStepAnswer(step: ProductConfigurationStep, reference: NoaProductConfigurationReference): NoaAnswer {
+  return {
+    domain: "Product",
+    productConfigurationReference: reference,
+    sources: [],
+    text: `"${step.label}" needs multiple selections, which guided configuration doesn't support yet - that's coming in a later phase. You can still ask me about this product directly.`,
+  };
+}
+
+// PART 13: a deterministic completion marker - product name/dimension/current source unit price
+// ONLY, all read directly from GPC-1's own current output, never calculated here. The reference is
+// kept alive (PART 13) so a later phase (GPC-4) can still consume it.
+function productConfigurationCompletionAnswer(
+  template: ProductConfigurationTemplateInput,
+  state: ProductConfigurationState,
+  reference: NoaProductConfigurationReference,
+): NoaAnswer {
+  const dimensionPart = state.dimension ? ` (${state.dimension})` : "";
+  return {
+    domain: "Product",
+    productConfigurationReference: reference,
+    sources: [],
+    text: `Configuration choices for ${template.templateName}${dimensionPart} are complete. Current source unit price: ${state.price.currency} ${state.price.unit}.`,
+  };
+}
+
+// PART 17: every terminal GPC-2 outcome ends the configuration with a deterministic message and
+// NO productConfigurationReference (so the client naturally drops it) - never a guessed
+// replacement template.
+function terminateProductConfiguration(reason: Extract<ProductConfigurationTemplateLoadResult, { ok: false }>["reason"]): NoaAnswer {
+  const text = reason === "unauthorized"
+    ? "I don't have access to that ProjectWorkflow area with your current permissions."
+    : reason === "not_found"
+      ? "I couldn't find that product anymore, so this configuration has ended."
+      : reason === "inactive"
+        ? "That product is no longer available to configure, so this configuration has ended."
+        : "That product's brand record could not be found, so this configuration has ended.";
+  return { domain: "Product", sources: [], text };
+}
+
+// PART 5/6: template + brand load (GPC-2) then evaluate (GPC-1) with the given selections. Shared
+// by both start and resume so there is exactly one place that turns a loaded template + selections
+// into a NoaAnswer.
+function answerForConfigurationState(
+  template: ProductConfigurationTemplateInput,
+  selections: NoaProductConfigurationSelections,
+  templateId: string,
+): NoaAnswer {
+  const state = resolveProductConfigurationState(template, selections);
+  const effectiveSelections = applyAutoResolvedSelections(selections, state.autoApplied);
+  const reference: NoaProductConfigurationReference = { mode: "configuring", selections: effectiveSelections, templateId };
+
+  const nextStep = state.nextRequiredStep ?? state.optionalSteps[0] ?? null;
+  if (!nextStep) return productConfigurationCompletionAnswer(template, state, reference);
+
+  const selectionKey = productConfigurationSelectionKey(nextStep.kind);
+  if (!selectionKey && nextStep.kind !== "accessory") return productConfigurationUnsupportedStepAnswer(nextStep, reference);
+
+  // PART 2: the product name is named once, only on the very first question of a fresh
+  // configuration (empty incoming selections) - every later question stays short.
+  const isFirstQuestion = Object.keys(selections).length === 0;
+  return productConfigurationQuestionAnswer(nextStep, reference, template.templateName, isFirstQuestion);
+}
+
+// PART 5: start a NEW configuration. `existingTemplateId` is set only by "start over" (PART 14),
+// which preserves the template but resets every selection. Otherwise the product target text is
+// resolved through the EXISTING Product capability search (fetchNoaProductCapability) - never a
+// second search implementation (PART 5's own instruction) - and only a single unambiguous match
+// proceeds.
+async function startProductConfiguration(
+  searchText: string | null,
+  context: NoaPageContext,
+  existingTemplateId?: string,
+): Promise<NoaAnswer> {
+  let templateId = existingTemplateId ?? null;
+
+  if (!templateId) {
+    if (!searchText) return { domain: "Product", sources: [], text: "Which product would you like to configure?" };
+    const result = await fetchNoaProductCapability(searchText, context);
+    if (!result.ok) return { domain: "Product", sources: [], text: result.message };
+    const rows = Array.isArray(result.data) ? (result.data as Array<Record<string, unknown>>) : [];
+    if (rows.length === 0) return { domain: "Product", sources: [], text: "I couldn't find a matching product in the Product Library." };
+    if (rows.length > 1) return { domain: "Product", sources: [], text: "I found more than one matching product in the Product Library. Please provide a more specific product name or code." };
+    const candidateId = rows[0]?.id;
+    if (typeof candidateId !== "string" || !candidateId) return { domain: "Product", sources: [], text: "I couldn't find a matching product in the Product Library." };
+    templateId = candidateId;
+  }
+
+  const loaded = await loadProductConfigurationTemplate(templateId);
+  if (!loaded.ok) return terminateProductConfiguration(loaded.reason);
+
+  return answerForConfigurationState(loaded.template, {}, templateId);
+}
+
+// PART 6/10/17: every resume turn independently re-authorizes and reloads the current template
+// through GPC-2 - the templateId is the only thing trusted from the prior reference, and even that
+// is only ever used as a lookup key, never as proof of continued validity.
+async function resumeProductConfiguration(reference: NoaProductConfigurationReference, message: string): Promise<NoaAnswer> {
+  const loaded = await loadProductConfigurationTemplate(reference.templateId);
+  if (!loaded.ok) return terminateProductConfiguration(loaded.reason);
+
+  // PART 17: stale selections are GPC-1's own report, never guessed at or silently dropped by
+  // this file - they simply don't block re-evaluation (GPC-1 already ignores them safely).
+  const currentState = resolveProductConfigurationState(loaded.template, reference.selections);
+
+  const nextStep = currentState.nextRequiredStep ?? currentState.optionalSteps[0] ?? null;
+  if (!nextStep) {
+    return productConfigurationCompletionAnswer(loaded.template, currentState, reference);
+  }
+
+  const selectionKey = productConfigurationSelectionKey(nextStep.kind);
+  if (!selectionKey && nextStep.kind !== "accessory") return productConfigurationUnsupportedStepAnswer(nextStep, reference);
+
+  if (nextStep.kind === "accessory" && !nextStep.required && /^skip$/i.test(message.trim()) && nextStep.groupId) {
+    const skippedAccessoryGroupIds = Array.from(new Set([...(reference.selections.skippedAccessoryGroupIds ?? []), nextStep.groupId]));
+    return answerForConfigurationState(loaded.template, { ...reference.selections, skippedAccessoryGroupIds }, reference.templateId);
+  }
+
+  // PART 10/11: the user's answer is interpreted ONLY against the CURRENT step's CURRENT valid
+  // options - never a raw id, never an LLM-picked row.
+  const match = matchProductConfigurationAnswer(message, nextStep.options);
+  const noun = productConfigurationStepPhrase(nextStep.kind).noun;
+  if (match.kind === "none") {
+    return productConfigurationQuestionAnswer(
+      nextStep,
+      reference,
+      loaded.template.templateName,
+      false,
+      { text: `I couldn't match that to one of the available ${noun}s. Choose one below, or type part of the ${noun} name or dimension.` },
+    );
+  }
+  if (match.kind === "ambiguous") {
+    return productConfigurationQuestionAnswer(
+      nextStep,
+      reference,
+      loaded.template.templateName,
+      false,
+      { candidates: match.candidates, text: `That matches more than one ${noun}. Choose one below.` },
+    );
+  }
+
+  const nextSelections: NoaProductConfigurationSelections = nextStep.kind === "accessory"
+    ? {
+        ...reference.selections,
+        accessoryQuantities: {
+          ...Object.fromEntries(Object.entries(reference.selections.accessoryQuantities ?? {}).filter(([itemId]) => !nextStep.options.some((option) => option.id === itemId))),
+          [match.optionId]: 1,
+        },
+        skippedAccessoryGroupIds: (reference.selections.skippedAccessoryGroupIds ?? []).filter((groupId) => groupId !== nextStep.groupId),
+      }
+    : { ...reference.selections, [selectionKey!]: match.optionId };
+  return answerForConfigurationState(loaded.template, nextSelections, reference.templateId);
+}
+
+// The single entry point for every configuration-shaped turn: start / resume / cancel / start
+// over. Returns null when the message is not a configuration turn at all, so the caller falls
+// through to normal routing unchanged (PART 15).
+async function maybeHandleProductConfigurationTurn(request: NoaChatRequest): Promise<NoaAnswer | null> {
+  const startTarget = productConfigurationStartTarget(request.message);
+  if (startTarget) {
+    // PART 16: an explicit new "configure X" always starts fresh and replaces any prior
+    // configuration reference, even mid-configuration - never merged.
+    return startProductConfiguration(startTarget, request.context);
+  }
+
+  const incomingReference = isNoaProductConfigurationReference(request.productConfigurationReference)
+    ? request.productConfigurationReference
+    : undefined;
+  if (!incomingReference) return null;
+
+  if (PRODUCT_CONFIGURATION_CANCEL_PATTERN.test(request.message.trim())) {
+    return { domain: "Product", sources: [], text: "Product configuration cancelled." };
+  }
+
+  if (PRODUCT_CONFIGURATION_START_OVER_PATTERN.test(request.message.trim())) {
+    return startProductConfiguration(null, request.context, incomingReference.templateId);
+  }
+
+  // PART 15: an obvious fresh other-domain request is never consumed as a configuration answer -
+  // fall through to normal routing (the wrapper below re-attaches this reference afterward).
+  if (looksLikeFreshOtherDomainRequest(request.message, request.context)) return null;
+
+  return resumeProductConfiguration(incomingReference, request.message);
+}
+
 // The one and only dispatch point: classify -> call exactly one capability -> (optionally) phrase
 // the result with the provider. No capability ever calls another, and the model never picks which
 // capability or query runs - that's fully deterministic, in code, before the provider is invoked.
-export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAnswer> {
+async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswer> {
   const recordedQuotationFollowUpFrom = recordedQuotationFollowUpReference(request.message, request.recentMessages ?? []);
   const conversationReference = isNoaConversationReference(request.conversationReference)
     ? request.conversationReference
@@ -843,4 +1261,26 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
     if (deterministicText) return { conversationReference: newConversationReference, domain, sources: capabilityResult.sources, text: deterministicText };
     throw error;
   }
+}
+
+// PART 15/20: the real public entry point. Configuration start/resume/cancel/start-over is
+// intercepted FIRST and short-circuits entirely (its own reference handling, never touching
+// runNoaOrchestratorCore's routing at all). Otherwise the existing core pipeline runs completely
+// unchanged, and - only when an active configuration reference came in AND the core's own answer
+// didn't already return one of its own - that reference is re-attached to the outgoing answer, so
+// an ordinary unrelated request (PART 15) never silently drops an in-progress configuration. This
+// is the ENTIRE passthrough mechanism: no other line in runNoaOrchestratorCore was touched to
+// achieve it.
+export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAnswer> {
+  const configurationAnswer = await maybeHandleProductConfigurationTurn(request);
+  if (configurationAnswer) return configurationAnswer;
+
+  const answer = await runNoaOrchestratorCore(request);
+  const incomingConfigurationReference = isNoaProductConfigurationReference(request.productConfigurationReference)
+    ? request.productConfigurationReference
+    : undefined;
+  if (incomingConfigurationReference && answer.productConfigurationReference === undefined) {
+    return { ...answer, productConfigurationReference: incomingConfigurationReference };
+  }
+  return answer;
 }

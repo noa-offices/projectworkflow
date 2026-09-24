@@ -156,12 +156,16 @@ test("regression: Product/Price/Admin/Insights dispatch branches are untouched",
   }
 });
 
-test("regression: greeting/capabilities/context routes still return before any semantic/reference logic runs", () => {
+test("regression: greeting/capabilities/context routes still return before any semantic extraction/capability dispatch", () => {
+  // A later, external change (predating GPC-3) moved conversationReference PARSING earlier in the
+  // function (now alongside route classification) - parsing alone is harmless (it never performs
+  // a business action), so the safety property this test actually guards - greeting/capabilities/
+  // context never reach the semantic extractor or a capability call - is checked directly instead.
   const greetingIndex = orchestratorSource.indexOf('if (route === "greeting")');
   const capabilitiesIndex = orchestratorSource.indexOf('if (route === "capabilities")');
   const contextIndex = orchestratorSource.indexOf('if (route === "context")');
-  const referenceValidationIndex = orchestratorSource.indexOf("isNoaConversationReference(request.conversationReference)");
-  assert.ok(contextIndex < referenceValidationIndex && greetingIndex < referenceValidationIndex && capabilitiesIndex < referenceValidationIndex);
+  const extractorCallIndex = orchestratorSource.indexOf("await extractNoaSemanticRequest(");
+  assert.ok(contextIndex < extractorCallIndex && greetingIndex < extractorCallIndex && capabilitiesIndex < extractorCallIndex);
 });
 
 // ── Security preservation (tests 11-13) ─────────────────────────────────────────

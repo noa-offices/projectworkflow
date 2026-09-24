@@ -37,7 +37,10 @@ export function NoaChatDrawer({
       }`}
     >
       <NoaHeader onClose={onClose} state={state} />
-      <NoaMessages messages={messages} onQuickPrompt={onSend} />
+      {/* GPC-3.1: a request in flight disables every choice button - PART 5's "prevent
+          double-submit", reusing the exact same isBusy this drawer already computes for the
+          composer below. */}
+      <NoaMessages isBusy={isBusy} messages={messages} onQuickPrompt={onSend} />
       <NoaStatus pendingDomain={pendingDomain} state={state} />
       <NoaComposer disabled={isBusy} onSend={onSend} />
     </div>

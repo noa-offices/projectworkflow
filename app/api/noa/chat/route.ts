@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { logServerActionError } from "@/lib/action-errors";
 import { isNoaConversationReference } from "@/lib/noa/noa-conversation-reference";
+import { isNoaProductConfigurationReference } from "@/lib/noa/noa-product-configuration-reference";
 import { runNoaOrchestrator } from "@/lib/noa/noa-orchestrator";
 import { NoaProviderError } from "@/lib/noa/noa-provider.server";
 import type { NoaChatRequest, NoaPageContext } from "@/lib/noa/noa-types";
@@ -94,7 +95,21 @@ export async function POST(request: Request) {
     ? rawConversationReference
     : undefined;
 
-  const chatRequest: NoaChatRequest = { context, conversationReference, displayName, message, recentMessages };
+  // GPC-3: same untrusted, independently-validated round-trip pattern as conversationReference
+  // above - a separate reference, never merged with it.
+  const rawProductConfigurationReference = (body as { productConfigurationReference?: unknown }).productConfigurationReference;
+  const productConfigurationReference = isNoaProductConfigurationReference(rawProductConfigurationReference)
+    ? rawProductConfigurationReference
+    : undefined;
+
+  const chatRequest: NoaChatRequest = {
+    context,
+    conversationReference,
+    displayName,
+    message,
+    productConfigurationReference,
+    recentMessages,
+  };
 
   try {
     const answer = await runNoaOrchestrator(chatRequest);

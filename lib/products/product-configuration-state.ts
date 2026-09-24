@@ -105,6 +105,7 @@ export type ProductConfigurationSelections = {
   workstationVariantRowId?: string | null;
   modularQuantities?: Record<string, number>;
   accessoryQuantities?: Record<string, number>;
+  skippedAccessoryGroupIds?: string[];
   requiredOverrides?: RequiredComponentOverrides;
   quantity?: number | null;
 };
@@ -131,6 +132,12 @@ export type ProductConfigurationOption = {
   label: string;
   dimension?: string | null;
   priceContribution?: number | null;
+  // GPC-3.2: the currency THIS option's own priceContribution is actually denominated in - always
+  // read from the same source row that produced the number (row.currency), falling back to the
+  // template's own currency only when that row has none. Never the aggregate/current
+  // `state.price.currency` (which reflects whatever is CURRENTLY selected elsewhere, not this
+  // option) - that mismatch was GPC-3.2's proven root cause.
+  priceCurrency?: string | null;
 };
 
 export type ProductConfigurationStep = {
@@ -142,6 +149,10 @@ export type ProductConfigurationStep = {
   autoResolved: boolean;
   multi: boolean;
   options: ProductConfigurationOption[];
+  groupId?: string;
+  minSelections?: number;
+  maxSelections?: number | null;
+  selectedOptionIds?: string[];
 };
 
 export type ProductConfigurationAutoApplied = { stepKey: string; optionId: string; reason: string };
@@ -224,6 +235,15 @@ function rowDimension(row: Record<string, unknown> | null | undefined): string |
   return typeof dimension === "string" && dimension.trim() ? dimension.trim() : null;
 }
 
+// GPC-3.2: the SAME source row that produced a priceContribution number is the only place its
+// currency may come from - falls back to the template's own currency only when the row itself has
+// none (PART 2's own precedence, not a new one). Reused everywhere a row without a typed
+// `currency?: string` field (a generic Record) needs its price labelled correctly.
+function rowCurrency(row: Record<string, unknown> | null | undefined, template: ProductConfigurationTemplateInput): string {
+  const currency = row?.currency;
+  return typeof currency === "string" && currency.trim() ? currency.trim() : template.currency;
+}
+
 // ── Main entry point ──────────────────────────────────────────────────────────────────────────
 
 export function resolveProductConfigurationState(
@@ -262,12 +282,18 @@ export function resolveProductConfigurationState(
       resolved: Boolean(nativeSystem.selected),
       autoResolved: autoResolvedSystem,
       multi: false,
-      options: nativeSystem.options.map((option) => ({
-        id: option.row.id ?? "",
-        label: rowLabel(option.row, option.row.id ?? "System / Base option"),
-        dimension: rowDimension(option.row),
-        priceContribution: roundSourceAmount(systemPriceContribution(option.row, currency, 1).amount),
-      })),
+      options: nativeSystem.options.map((option) => {
+        const contribution = systemPriceContribution(option.row, currency, 1);
+        return {
+          id: option.row.id ?? "",
+          label: rowLabel(option.row, option.row.id ?? "System / Base option"),
+          dimension: rowDimension(option.row),
+          priceContribution: roundSourceAmount(contribution.amount),
+          // systemPriceContribution() already resolves row.currency ?? rowCurrency internally -
+          // reused here rather than re-deriving it a second way.
+          priceCurrency: contribution.currency,
+        };
+      }),
     });
   }
 
@@ -358,6 +384,7 @@ export function resolveProductConfigurationState(
         label: rowLabel(row, row.id ?? "Model option"),
         dimension: rowDimension(row),
         priceContribution: roundSourceAmount(baseModelPriceOrDefault(numberValue(row.price, NaN) || null, template.defaultUnitPrice)),
+        priceCurrency: rowCurrency(row, template),
       })),
     });
   }
@@ -393,6 +420,7 @@ export function resolveProductConfigurationState(
         label: rowLabel(row, row.id ?? "Workstation size"),
         dimension: rowDimension(row),
         priceContribution: roundSourceAmount(numberValue(row.default_price)),
+        priceCurrency: rowCurrency(row, template),
       })),
     });
   }
@@ -496,6 +524,7 @@ export function resolveProductConfigurationState(
               id: category,
               label: category,
               priceContribution: roundSourceAmount(numberValue(resolvedCategoryRow!.prices?.[category])),
+              priceCurrency: rowCurrency(resolvedCategoryRow as Record<string, unknown>, template),
             })),
           });
         }
@@ -578,6 +607,7 @@ export function resolveProductConfigurationState(
           label: rowLabel(row as Record<string, unknown>, id),
           dimension: rowDimension(row as Record<string, unknown>),
           priceContribution: roundSourceAmount(unitPrice),
+          priceCurrency: rowCurrency(row as Record<string, unknown>, template),
         };
       });
       const groupHasSelection = options.some((option) => modularQuantityForRow(option.id) > 0);
@@ -682,9 +712,7 @@ export function resolveProductConfigurationState(
   }
 
   const structuralSupportOptions: ProductConfigurationOption[] = [];
-  const optionalAccessoryOptions: ProductConfigurationOption[] = [];
   let structuralSupportResolved = true;
-  let optionalAccessoryResolved = true;
 
   for (const [itemId, item] of itemById) {
     if (companionItemIds.has(itemId)) continue;
@@ -696,6 +724,7 @@ export function resolveProductConfigurationState(
       label: rowLabel(item as Record<string, unknown>, itemId),
       dimension: rowDimension(item as Record<string, unknown>),
       priceContribution: roundSourceAmount(unitPrice),
+      priceCurrency: rowCurrency(item as Record<string, unknown>, template),
     };
     if (item.role === "structural_support") {
       const compatible = !item.compatible_targets?.length || currentSupportKeys.size === 0
@@ -704,11 +733,6 @@ export function resolveProductConfigurationState(
       structuralSupportOptions.push(option);
       if (evaluation.required && !evaluation.selectedItemIds.includes(itemId) && evaluation.selectedItemIds.length === 0) {
         structuralSupportResolved = false;
-      }
-    } else {
-      optionalAccessoryOptions.push(option);
-      if (evaluation.required && evaluation.selectedItemIds.length === 0) {
-        optionalAccessoryResolved = false;
       }
     }
   }
@@ -725,16 +749,34 @@ export function resolveProductConfigurationState(
       options: structuralSupportOptions,
     });
   }
-  if (optionalAccessoryOptions.length > 0) {
+  const skippedAccessoryGroupIds = new Set(selections.skippedAccessoryGroupIds ?? []);
+  for (const evaluation of accessoryEvaluation.groups) {
+    if (!evaluation.visible || evaluation.role === "companion") continue;
+    const options = evaluation.allowedItemIds.flatMap((itemId) => {
+      const item = itemById.get(itemId);
+      return item ? [{
+        id: itemId,
+        label: rowLabel(item as Record<string, unknown>, itemId),
+        dimension: rowDimension(item as Record<string, unknown>),
+        priceContribution: roundSourceAmount(numberValue(item.price)),
+        priceCurrency: rowCurrency(item as Record<string, unknown>, template),
+      }] : [];
+    });
+    if (!options.length) continue;
+    const skipped = skippedAccessoryGroupIds.has(evaluation.groupId);
     steps.push({
-      key: "accessory",
+      key: `accessory:${evaluation.groupId}`,
       kind: "accessory",
-      label: "Accessories",
-      required: false,
-      resolved: optionalAccessoryResolved,
+      label: parsedAccessoryGroups.find((group) => group.id === evaluation.groupId)?.group_name?.trim() || "Accessory",
+      required: evaluation.required,
+      resolved: evaluation.required ? evaluation.valid : skipped || evaluation.selectedItemIds.length > 0,
       autoResolved: false,
-      multi: true,
-      options: optionalAccessoryOptions,
+      multi: evaluation.minSelections > 1,
+      options,
+      groupId: evaluation.groupId,
+      minSelections: evaluation.minSelections,
+      maxSelections: evaluation.maxSelections,
+      selectedOptionIds: evaluation.selectedItemIds,
     });
   }
 
@@ -886,12 +928,12 @@ export function resolveProductConfigurationState(
   // ── next required step + optional steps ─────────────────────────────────────────────────────
   const requiredStepOrder: ProductConfigurationStepKind[] = [
     "system_base", "variant_group", "variant_subgroup", "variant_row",
-    "workstation_size", "category_group", "category_row", "fabric_category", "modular",
+    "workstation_size", "category_group", "category_row", "fabric_category", "modular", "accessory",
   ];
   const requiredUnresolved = steps.filter((step) => step.required && !step.resolved);
   const nextRequiredStep = requiredStepOrder
     .flatMap((kind) => requiredUnresolved.filter((step) => step.kind === kind))[0] ?? null;
-  const optionalSteps = steps.filter((step) => !step.required);
+  const optionalSteps = steps.filter((step) => step.kind === "accessory" && !step.required && !step.resolved);
 
   return {
     steps,
