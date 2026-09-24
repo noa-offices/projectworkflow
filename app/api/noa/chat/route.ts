@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { logServerActionError } from "@/lib/action-errors";
+import { isNoaConversationReference } from "@/lib/noa/noa-conversation-reference";
 import { runNoaOrchestrator } from "@/lib/noa/noa-orchestrator";
 import { NoaProviderError } from "@/lib/noa/noa-provider.server";
 import type { NoaChatRequest, NoaPageContext } from "@/lib/noa/noa-types";
@@ -86,7 +87,14 @@ export async function POST(request: Request) {
     ? rawRecentMessages.filter(isValidRecentMessage).slice(-MAX_RECENT_MESSAGES)
     : [];
 
-  const chatRequest: NoaChatRequest = { context, displayName, message, recentMessages };
+  // C3: an untrusted, client-round-tripped conversationReference - validated here (never merely
+  // trusted) before being handed to the orchestrator, which validates it again independently.
+  const rawConversationReference = (body as { conversationReference?: unknown }).conversationReference;
+  const conversationReference = isNoaConversationReference(rawConversationReference)
+    ? rawConversationReference
+    : undefined;
+
+  const chatRequest: NoaChatRequest = { context, conversationReference, displayName, message, recentMessages };
 
   try {
     const answer = await runNoaOrchestrator(chatRequest);

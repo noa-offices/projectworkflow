@@ -4,6 +4,8 @@ import { requireActiveUser, requireSettingsManager, requireSystemOwner } from "@
 import { resolveDateRange, type DateRangeKey } from "@/lib/insights/date-ranges";
 import { createClient } from "@/lib/supabase/server";
 import { readActivityTimeForUser, readRecentActivityTimeUsers, resolveActivityTimeProfile } from "@/lib/noa/noa-activity-time-reads.server";
+import { MAX_CONVERSATION_REFERENCE_ENTITIES, type NoaConversationReference } from "./noa-conversation-reference";
+import type { NoaSemanticRequest } from "./noa-semantic-request";
 import type { NoaCapabilityResult, NoaPageContext } from "./noa-types";
 
 // UA-1A: OWN activity, gated by requireActiveUser() only.
@@ -117,7 +119,10 @@ type UserActivityQuestionKind =
   | "activity_time_recent"
   | "activity_time_other"
   | "activity_time_other_intervals"
-  | "activity_time_team_recent";
+  | "activity_time_team_recent"
+  // C3: quotation entity follow-up ("which quotation?") - answered only from the client-provided
+  // conversationReference's own already-safe labels, never a fresh generic quotation query.
+  | "quotation_follow_up";
 
 function activityTimeTargetName(message: string): string | null {
   const patterns = [
@@ -237,6 +242,56 @@ async function recordedQuotationFollowUpAnswer(
     ok: true,
     sources: [{ label: "User Activity · Checked your recorded quotation activity", type: "user_activity" }],
   };
+}
+
+// C2: maps a C1 semantic request (already subject/period-resolved by the orchestrator) onto one
+// of the existing kind values below - never a new execution path, never new auth logic. This is
+// the ONLY place a semantic request influences this capability: everything downstream (auth
+// gates, data reads, deterministic text) is the exact same code every other kind already runs
+// through. Returns null for any combination C2 doesn't wire (per the reviewed scope: only
+// self/named_user for activity_time, self/named_user/team for recorded_activity, self/team for
+// recent_presence) - the caller falls back to the existing regex classifier unchanged.
+function semanticActivityOverride(
+  semanticRequest: NoaSemanticRequest | undefined,
+): { kind: UserActivityQuestionKind; targetName?: string } | null {
+  if (!semanticRequest || semanticRequest.domain !== "UserActivity") return null;
+  const subject = semanticRequest.subject;
+
+  if (semanticRequest.intent === "activity_time") {
+    if (subject?.type === "self") return { kind: "activity_time_own" };
+    if (subject?.type === "named_user" && subject.name.trim()) return { kind: "activity_time_other", targetName: subject.name.trim() };
+    return null;
+  }
+
+  if (semanticRequest.intent === "recorded_activity") {
+    if (subject?.type === "self") return { kind: "summary" };
+    if (subject?.type === "named_user" && subject.name.trim()) return { kind: "other_user_activity", targetName: subject.name.trim() };
+    if (subject?.type === "team") return { kind: "team_summary" };
+    return null;
+  }
+
+  // recent_presence: interpreted as recent ProjectWorkflow activity within the configured idle
+  // window (PART 7 product semantics) - reuses the existing activity_time_recent/
+  // activity_time_team_recent kinds and their real data reads, deliberately bypassing the
+  // deterministic presence-refusal kind below for a message the extractor/resolver has
+  // confidently classified as self or team recent-presence.
+  if (semanticRequest.intent === "recent_presence") {
+    if (subject?.type === "self") return { kind: "activity_time_recent" };
+    if (subject?.type === "team") return { kind: "activity_time_team_recent" };
+    return null;
+  }
+
+  // C3: follow_up is only ever wired here for the one supported shape - a quotation entity recall
+  // resolved entirely from the caller's own conversationReference.entities (see the
+  // "quotation_follow_up" dispatch branch below), never a fresh generic quotation query.
+  if (semanticRequest.intent === "follow_up") {
+    if (semanticRequest.entityReference?.type === "quotation" && semanticRequest.entityReference.fromPreviousResult) {
+      return { kind: "quotation_follow_up" };
+    }
+    return null;
+  }
+
+  return null;
 }
 
 // PART 1/3: deterministic classification only, checked in this exact priority order - attendance
@@ -388,10 +443,22 @@ async function summaryAnswer(
     ? `I couldn't find any recorded ProjectWorkflow actions for you ${label}.`
     : `${label === "today" ? "Today" : label[0].toUpperCase() + label.slice(1)} you had ${parts.join(", ")}.`;
 
+  // C3: safe quotation labels from the SAME already-fetched rows - no extra query - so the
+  // orchestrator can build a bounded conversationReference for an immediate "which quotation?"
+  // follow-up (PART 2). Never a raw internal id, only the human-facing identifier already parsed
+  // out of the audit log's own title text by quotationIdentifierFromAuditTitle().
+  const quotationIdentifiers = Array.from(new Set(
+    rows
+      .filter((row) => row.entity_type === "quotation" || row.entity_type === "quotation_item" || row.entity_type === "quotation_section")
+      .map((row) => quotationIdentifierFromAuditTitle(row.title))
+      .filter((identifier): identifier is string => Boolean(identifier)),
+  )).slice(0, MAX_ACTIVITY_LOG_ROWS);
+
   return {
     data: {
       byCategory: Object.fromEntries(counts),
       kind: "user_activity_summary",
+      quotationIdentifiers,
       range: rangeKey,
       returnedCount: rows.length,
       truncatedCount: rows.length >= MAX_ACTIVITY_LOG_ROWS ? 1 : 0,
@@ -855,7 +922,11 @@ async function otherUserLastActivityAnswer(
 export async function fetchNoaUserActivityCapability(
   message: string,
   _context: NoaPageContext,
-  options: { recordedQuotationFollowUpFrom?: string } = {},
+  options: {
+    conversationReference?: NoaConversationReference;
+    recordedQuotationFollowUpFrom?: string;
+    semanticRequest?: NoaSemanticRequest;
+  } = {},
 ): Promise<NoaCapabilityResult> {
   if (options.recordedQuotationFollowUpFrom) {
     try {
@@ -868,7 +939,39 @@ export async function fetchNoaUserActivityCapability(
     }
   }
 
-  const kind = userActivityQuestionKind(message);
+  // C2: a resolved semantic request (subject/period already refined by the orchestrator) picks
+  // the kind directly, bypassing the fragile regex classifier below for THIS request only - the
+  // classifier itself is untouched and still runs for every message without a usable semantic
+  // result (PART 9: extractor/semantic failure always preserves the existing deterministic path).
+  const semanticOverride = semanticActivityOverride(options.semanticRequest);
+  const kind = semanticOverride?.kind ?? userActivityQuestionKind(message);
+
+  // C3: "which quotation?" answered ONLY from the caller's own conversationReference.entities -
+  // never a fresh/generic quotation query (PART 8/9). Still requires requireActiveUser(): the
+  // reference never grants access on its own (PART 11), and since only the SELF recorded_activity
+  // path (summaryAnswer()) ever populates entities, this is always the caller's own data.
+  if (kind === "quotation_follow_up") {
+    try {
+      await requireActiveUser();
+    } catch (error) {
+      if (isNextRedirectError(error)) return UNAUTHORIZED_RESULT;
+      throw error;
+    }
+    const labels = (options.conversationReference?.entities ?? [])
+      .filter((entity) => entity.type === "quotation" && typeof entity.label === "string" && entity.label.trim())
+      .map((entity) => entity.label!.trim())
+      .slice(0, MAX_CONVERSATION_REFERENCE_ENTITIES);
+    const deterministicText = labels.length === 0
+      ? "I found recorded quotation activity, but no safe quotation identifier is available from that activity record."
+      : labels.length === 1
+        ? `The quotation was ${labels[0]}.`
+        : `The quotations were ${labels.join(", ")}.`;
+    return {
+      data: { deterministicOnly: true, deterministicText, kind: "user_activity_quotation_follow_up", quotationIdentifiers: labels },
+      ok: true,
+      sources: [{ label: "User Activity · Checked your recorded quotation activity", type: "user_activity" }],
+    };
+  }
 
   if (kind === "presence_boundary") {
     let userId: string;
@@ -920,10 +1023,12 @@ export async function fetchNoaUserActivityCapability(
     }
     const supabase = await createClient();
     if (kind === "activity_time_team_recent") {
-      const result = await readRecentActivityTimeUsers(supabase, message);
+      const result = await readRecentActivityTimeUsers(supabase, message, {
+        forceRecent: semanticOverride?.kind === "activity_time_team_recent",
+      });
       return { data: result, ok: true, sources: [{ label: "User Activity · Checked ProjectWorkflow activity time", type: "user_activity_time" }] };
     }
-    const targetName = activityTimeTargetName(message);
+    const targetName = semanticOverride?.targetName ?? activityTimeTargetName(message);
     if (!targetName) return OTHER_USER_NOT_FOUND_RESULT;
     const resolved = await resolveActivityTimeProfile(supabase, targetName);
     if (resolved.kind === "not_found") return OTHER_USER_NOT_FOUND_RESULT;
@@ -978,7 +1083,7 @@ export async function fetchNoaUserActivityCapability(
       }
       if (!isSystemOwner) return OTHER_USER_NAME_LIMITATION_RESULT;
 
-      const targetName = otherUserNameTarget(message);
+      const targetName = semanticOverride?.targetName ?? otherUserNameTarget(message);
       if (!targetName) return OTHER_USER_NAME_LIMITATION_RESULT;
 
       const resolved = await resolveTargetProfile(supabase, targetName);

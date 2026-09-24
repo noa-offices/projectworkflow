@@ -109,10 +109,19 @@ export async function resolveActivityTimeProfile(supabase: Awaited<ReturnType<ty
   return { fullName: data[0].full_name?.trim() || name, id: data[0].id, kind: "found" as const };
 }
 
-export async function readRecentActivityTimeUsers(supabase: Awaited<ReturnType<typeof createClient>>, message: string) {
+// C2: `forceRecent` lets a caller that already knows (via the C1 semantic layer) that a message
+// means "recent_presence" force the idle-window interpretation even when the raw text has none of
+// the literal trigger words below (e.g. "who online"/"anyone using projectworkflow now") - the
+// underlying query/wording logic itself is unchanged, this only decides which of the two existing
+// branches (idle-window vs. today-listing) runs.
+export async function readRecentActivityTimeUsers(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  message: string,
+  options: { forceRecent?: boolean } = {},
+) {
   const configured = await configuration(supabase);
   if (!configured) return { deterministicText: "ProjectWorkflow activity-time settings are unavailable right now.", kind: "activity_time_unavailable" };
-  const isRecent = /\brecent\b|\bworking now\b/i.test(message);
+  const isRecent = options.forceRecent || /\brecent\b|\bworking now\b/i.test(message);
   const cutoff = new Date(Date.now() - configured.settings.activity_idle_timeout_minutes * 60_000).toISOString();
   const baseQuery = supabase.from("projectworkflow_activity_daily").select("profile_id,latest_activity_at", { count: "exact" })
     .order("latest_activity_at", { ascending: false }).limit(MAX_ACTIVITY_TIME_USERS);
@@ -127,5 +136,9 @@ export async function readRecentActivityTimeUsers(supabase: Awaited<ReturnType<t
   const description = isRecent
     ? `recent ProjectWorkflow activity within the last ${configured.settings.activity_idle_timeout_minutes} minutes`
     : "recorded ProjectWorkflow activity today";
-  return { deterministicText: total === 0 ? `No users have ${description}.` : `${total} user${total === 1 ? " has" : "s have"} ${description}.${total > rows.length ? ` Showing ${rows.length}.` : ""} ${rows.map((row) => names.get(row.profile_id) ?? "Unknown user").join(", ")}.`, kind: "activity_time_recent_users", returnedUserCount: rows.length, totalUserCount: total };
+  // Product semantics (PART 7): "who is online"-style questions are deliberately answered as
+  // recent ProjectWorkflow interaction, never a presence/attendance claim - this qualifier makes
+  // that explicit every time the idle-window branch is used, regardless of how it was triggered.
+  const presenceNote = isRecent ? " This reflects recent ProjectWorkflow interaction, not verified attendance." : "";
+  return { deterministicText: total === 0 ? `No users have ${description}.` : `${total} user${total === 1 ? " has" : "s have"} ${description}.${total > rows.length ? ` Showing ${rows.length}.` : ""} ${rows.map((row) => names.get(row.profile_id) ?? "Unknown user").join(", ")}.${presenceNote}`, kind: "activity_time_recent_users", returnedUserCount: rows.length, totalUserCount: total };
 }

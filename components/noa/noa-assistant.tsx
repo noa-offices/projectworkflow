@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { NoaChatDrawer } from "@/components/noa/noa-chat-drawer";
 import { NoaLauncher } from "@/components/noa/noa-launcher";
 import { classifyNoaIntent } from "@/lib/noa/noa-intent-router";
+import type { NoaConversationReference } from "@/lib/noa/noa-conversation-reference";
 import { noaStateReducer, type NoaStateEvent } from "@/lib/noa/noa-state-machine";
 import type {
   NoaAnswer,
@@ -44,9 +45,10 @@ async function requestNoaAnswer(
   message: string,
   context: ReturnType<typeof useNoaPageContext>,
   recentMessages: Array<{ role: "user" | "assistant"; text: string }>,
+  conversationReference: NoaConversationReference | undefined,
 ): Promise<NoaAnswer> {
   const response = await fetch(NOA_CHAT_ENDPOINT, {
-    body: JSON.stringify({ context, message, recentMessages }),
+    body: JSON.stringify({ context, conversationReference, message, recentMessages }),
     headers: { "Content-Type": "application/json" },
     method: "POST",
   });
@@ -67,6 +69,11 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
   // classifier the backend uses for routing, never a second guess.
   const [pendingDomain, setPendingDomain] = useState<NoaDomain | null>(null);
   const settleTimerRef = useRef<number | null>(null);
+  // C3: the single, ephemeral reference to the immediately previous result - held only in memory
+  // (a ref, not state, since it never needs to trigger a render on its own), replaced wholesale by
+  // whatever the server returns after each successful reply, and cleared entirely on error. Never
+  // persisted beyond this component instance.
+  const conversationReferenceRef = useRef<NoaConversationReference | undefined>(undefined);
   const pageContext = useNoaPageContext();
 
   const dispatch = useCallback((event: NoaStateEvent) => {
@@ -102,8 +109,11 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
     setPendingDomain(classifyNoaIntent(trimmed, pageContext));
     dispatch({ type: "SEND" });
 
-    requestNoaAnswer(trimmed, pageContext, recentMessages)
+    requestNoaAnswer(trimmed, pageContext, recentMessages, conversationReferenceRef.current)
       .then((answer) => {
+        // Always replace, never merge/accumulate - a result with no reference of its own
+        // (conversationReference undefined) correctly clears any stale one from before.
+        conversationReferenceRef.current = answer.conversationReference;
         setMessages((current) => [
           ...current,
           createMessage("assistant", answer.text, { domain: answer.domain, sources: answer.sources }),
@@ -111,6 +121,8 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
         dispatch({ type: "RESPONSE_SUCCESS" });
       })
       .catch((error: unknown) => {
+        // A failed request has nothing new to remember; the previous reference is left as-is
+        // rather than guessed at.
         const errorText = error instanceof Error && error.message ? error.message : REQUEST_FAILED_TEXT;
         setMessages((current) => [...current, createMessage("assistant", errorText)]);
         dispatch({ type: "RESPONSE_ERROR" });

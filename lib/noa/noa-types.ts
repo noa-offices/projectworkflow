@@ -1,6 +1,12 @@
 // Pure, dependency-free NOA types shared by the assistant UI and its page-context/state-machine
 // helpers. Kept alias-free (no "@/..." imports) so lib/noa/noa-state-machine.ts and
 // lib/noa/use-noa-page-context.ts can be unit tested with the plain Node test runner.
+//
+// C3: NoaConversationReference is defined in its own file and imported here type-only. That file
+// itself imports NoaDomain from this one, also type-only - a type-only circular reference is
+// fully erased at compile time (no runtime cycle), the same safe pattern TypeScript projects use
+// whenever two small type modules reference each other.
+import type { NoaConversationReference } from "./noa-conversation-reference";
 
 export type NoaVisualState =
   | "idle"
@@ -67,10 +73,20 @@ export type NoaAnswer = {
   domain: NoaDomain;
   sources: NoaSource[];
   text: string;
+  // C3: the fresh, bounded reference to THIS result (UserActivity only today) - the caller
+  // round-trips it verbatim on the next request so a short follow-up ("which quotation?", "what
+  // about yesterday?") can be resolved without parsing prose. Omitted (not merged/accumulated)
+  // whenever this result has no useful reference, so the client always replaces its stored
+  // reference with exactly what the server returns.
+  conversationReference?: NoaConversationReference;
 };
 
 export type NoaChatRequest = {
   context: NoaPageContext;
+  // C3: the caller's own previously-returned conversationReference, round-tripped verbatim - see
+  // NoaAnswer.conversationReference. Untrusted input: validated with isNoaConversationReference()
+  // before use, never assumed well-formed.
+  conversationReference?: NoaConversationReference;
   // Conversation polish: the caller's own safe display name (profiles.full_name), used only for
   // occasional personalization (greetings, provider tone) - optional since callers/tests that
   // don't have it yet must keep working unchanged.

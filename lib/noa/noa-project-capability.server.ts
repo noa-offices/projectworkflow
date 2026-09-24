@@ -64,6 +64,10 @@ function projectTarget(message: string) {
     /status of project (.+)$/i,
     /(?:what|which) client is project (.+?) for$/i,
     /where is project (.+)$/i,
+    // C4B: natural phrasing that names the project without the "X for"/"of project X" structure
+    // the patterns above require.
+    /tell me about (?:project )?(.+)$/i,
+    /what status is (?:project )?(.+?)\??$/i,
   ];
   for (const pattern of patterns) {
     const target = message.match(pattern)?.[1]?.trim();
@@ -74,7 +78,7 @@ function projectTarget(message: string) {
 
 function isDetailQuestion(message: string, context: NoaPageContext) {
   return Boolean(context.projectId) && /\b(this|current|status|client|where|details?)\b/i.test(message) ||
-    /\b(project details?|project status|status of project|client is project|where is project)\b/i.test(message);
+    /\b(project details?|project status|status of project|client is project|where is project|tell me about|status is)\b/i.test(message);
 }
 
 async function clientNames(

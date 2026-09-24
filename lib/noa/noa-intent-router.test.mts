@@ -729,3 +729,18 @@ test("B7 routing regressions: UserActivity and Admin unchanged", () => {
   assert.equal(classifyNoaRoute("what did i work on today", context()), "UserActivity");
   assert.equal(classifyNoaRoute("show users", context()), "Admin");
 });
+
+// Phase C4A - Quotation regression: the deterministic router itself is untouched by C4A (the
+// bare-identifier gap it doesn't cover is fixed at the orchestrator's semantic-fallback layer,
+// not here) - these confirm the keyword-matched cases still work exactly as before.
+test("C4A regression: keyword-matched Quotation phrasing is unaffected by C4A (deterministic router unchanged)", () => {
+  assert.equal(classifyNoaRoute("show me the pending quotes", context()), "Quotation");
+  assert.equal(classifyNoaRoute("how many quotes do we have", context()), "Quotation");
+  assert.equal(classifyNoaRoute("compare QN-0005-001 and QN-0004-001", context()), "Quotation");
+  assert.equal(classifyNoaRoute("show quotes for Apex", context()), "Quotation");
+});
+
+test("C4A regression: a bare quotation-identifier-only message with no domain keyword still falls to Help at the deterministic router layer (fixed only by the orchestrator's semantic fallback, not by a new router pattern)", () => {
+  assert.equal(classifyNoaRoute("what is QN-0005-001 worth", context()), "Help");
+  assert.equal(classifyNoaRoute("what status is QN-0005-001", context()), "Help");
+});
