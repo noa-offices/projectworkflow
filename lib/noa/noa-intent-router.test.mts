@@ -8,6 +8,7 @@ import {
   NOA_CAPABILITY_SUMMARY_TEXT,
   noaThinkingStatusText,
   normalizeNoaUserMessage,
+  recordedQuotationFollowUpReference,
 } from "./noa-intent-router.js";
 
 function context(overrides: Partial<Parameters<typeof classifyNoaIntent>[1]> = {}) {
@@ -620,6 +621,34 @@ test("UA-1B team/other-user activity phrases route to UserActivity", () => {
   ]) {
     assert.equal(classifyNoaRoute(message, context()), "UserActivity", message);
   }
+});
+
+test("real UAT activity, presence, named-user, and ProjectWorkflow routing stays deterministic", () => {
+  for (const message of [
+    "What time was my first ProjectWorkflow activity today?",
+    "Who is currently online?",
+    "what yahya did today?",
+  ]) {
+    assert.equal(classifyNoaRoute(message, context()), "UserActivity", message);
+  }
+  assert.equal(classifyNoaRoute("show active projects", context()), "Project");
+  assert.equal(classifyNoaRoute("show active users", context()), "Admin");
+  assert.equal(classifyNoaRoute("show active procurement orders", context()), "Procurement");
+  assert.equal(classifyNoaRoute("which products need price checking", context()), "Price");
+  assert.equal(classifyNoaRoute("hey noa", context()), "greeting");
+});
+
+test("recorded quotation follow-up requires an immediately prior own recorded-activity request", () => {
+  const activityHistory = [
+    { role: "user" as const, text: "What did I work on today?" },
+    { role: "assistant" as const, text: "Today you had 1 quotation-related recorded activity." },
+  ];
+  assert.equal(recordedQuotationFollowUpReference("which quotation?", activityHistory), "What did I work on today?");
+  const quotationHistory = [
+    { role: "user" as const, text: "show pending quotations" },
+    { role: "assistant" as const, text: "I found pending quotations." },
+  ];
+  assert.equal(recordedQuotationFollowUpReference("which quotation?", quotationHistory), null);
 });
 
 test("UA-1B routing regressions: own activity, ordinary domain questions, and users-mention wording unchanged", () => {

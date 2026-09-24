@@ -78,7 +78,7 @@ const USER_ACTIVITY_PATTERNS = [
   /\bactivity time\b/,
   /\bhow active (?:was|am) i\b/,
   /\bhow (?:much|long) (?:time )?(?:am|i) active\b/,
-  /\bfirst (?:recorded )?activity today\b/,
+  /\bfirst (?:recorded |projectworkflow )?activity today\b/,
   /\b(?:latest activity|last activity today)\b/,
   /\bwas i active recently\b/,
   /\b(?:activity|active) intervals? today\b/,
@@ -104,6 +104,8 @@ const USER_ACTIVITY_PATTERNS = [
   /\bam i online\b/,
   /\bam i (?:currently )?working\b/,
   /\bam i (?:currently )?at work\b/,
+  /\bwho is (?:currently )?(?:online|working|at work)\b/,
+  /\bis [a-z][a-z'-]* online\b/,
   // Natural-language "record"/"activity" phrasing - deliberately requires "my"/"i"/"today" in a
   // specific position (never a bare "record" keyword) so "show client record"/"show project
   // record"/"show quotation record" are never matched here and keep routing to their own domain.
@@ -123,6 +125,7 @@ const USER_ACTIVITY_PATTERNS = [
 const TEAM_AND_OTHER_USER_ACTIVITY_PATTERNS = [
   /\bwho (?:has|had) (?:recent )?(?:projectworkflow )?activity\b/,
   /\bwho is working now\b/,
+  /\bwho is currently online\b/,
   /\bshow today'?s user activity time\b/,
   /\b(?:show|what is|how much|how long) \w+(?:'s)? (?:projectworkflow )?(?:active|activity) time\b/,
   /\bshow \w+(?:'s)? (?:projectworkflow )?activity intervals?\b/,
@@ -138,10 +141,34 @@ const TEAM_AND_OTHER_USER_ACTIVITY_PATTERNS = [
   // above, same UserActivity route either way) but never matches multi-word subjects like
   // "the team" (handled separately above), so it can't misfire on team phrasing.
   /\bwhat did \w+(?:'s)? work on\b/,
+  /\bwhat did \w+(?:'s)? do today\b/,
+  /\bwhat \w+(?:'s)? did today\b/,
+  /\bwhat has \w+(?:'s)? done today\b/,
   /\bshow \w+(?:'s)? activity\b/,
   /\bwhat quotations did \w+ work on\b/,
   /\bwhat was \w+'s last (?:recorded )?(?:projectworkflow )?activity\b/,
 ];
+
+const RECORDED_QUOTATION_FOLLOW_UP_PATTERNS = [
+  /^which (?:quotation|quote)$/,
+  /^show me which (?:quotation|quote)$/,
+  /^what (?:quotation|quote) was that$/,
+];
+
+const RECORDED_OWN_ACTIVITY_REFERENCE = /\bwhat (?:did|do) i work on\b|\bwhat did i do\b|\b(?:show )?my (?:recent )?(?:projectworkflow )?activity\b|\b(?:what is )?my record\b|\bmy work record\b/;
+
+// Conversation text establishes only the referent. The follow-up capability re-reads bounded
+// audit rows for every quotation fact and identity rather than trusting remembered prose.
+export function recordedQuotationFollowUpReference(
+  message: string,
+  recentMessages: Array<{ role: "user" | "assistant"; text: string }>,
+): string | null {
+  const normalized = normalizeNoaUserMessage(message);
+  if (!RECORDED_QUOTATION_FOLLOW_UP_PATTERNS.some((pattern) => pattern.test(normalized))) return null;
+  const priorUserMessage = [...recentMessages].reverse().find((entry) => entry.role === "user")?.text;
+  if (!priorUserMessage || !RECORDED_OWN_ACTIVITY_REFERENCE.test(normalizeNoaUserMessage(priorUserMessage))) return null;
+  return priorUserMessage;
+}
 
 // B6: narrow Admin/System phrasing - checked at the same early precedence point as UserActivity
 // (before every domain keyword list), since "model"/"provider" would otherwise collide with

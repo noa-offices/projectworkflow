@@ -79,11 +79,10 @@ export async function readActivityTimeForUser(
   const intervalCount = dailyRows.reduce((total, row) => total + row.interval_count, 0);
   const recent = latest ? new Date().getTime() <= new Date(latest).getTime() + settings.activity_idle_timeout_minutes * 60_000 : false;
   const subject = "You";
-  const disclaimer = options.attendanceBoundary ? " This measures ProjectWorkflow activity only, not your total working hours or attendance." : "";
   let deterministicText = intervalCount === 0
     ? `${subject} have no recorded ProjectWorkflow activity ${range.label}.`
     : `${subject} have ${formatActivityDuration(activeMinutes)} of ProjectWorkflow active time ${range.label} across ${intervalCount} activity interval${intervalCount === 1 ? "" : "s"}.`;
-  if (/\bfirst (?:recorded )?activity\b/i.test(message) && first) deterministicText = `Your first recorded ProjectWorkflow activity ${range.label} was at ${formatTime(first, settings.organization_timezone)}.`;
+  if (/\bfirst (?:recorded |projectworkflow )?activity\b/i.test(message) && first) deterministicText = `Your first recorded ProjectWorkflow activity ${range.label} was at ${formatTime(first, settings.organization_timezone)}.`;
   if (/\b(?:latest|last) activity\b/i.test(message) && latest) deterministicText = `Your latest ProjectWorkflow activity was at ${formatTime(latest, settings.organization_timezone)}.`;
   if (options.recent) deterministicText = recent ? `You have recent ProjectWorkflow activity within the last ${settings.activity_idle_timeout_minutes} minutes.` : `You don't have recent ProjectWorkflow activity within the last ${settings.activity_idle_timeout_minutes} minutes.`;
   if (/\b(?:how many|count)\b[^?]*\b(?:activity|active)?\s*intervals?\b|\bmy interval count\b/i.test(message)) {
@@ -96,7 +95,10 @@ export async function readActivityTimeForUser(
     const intervals = intervalsData ?? [];
     deterministicText = intervals.length === 0 ? `You have no recorded ProjectWorkflow activity intervals ${range.label}.` : `${subject} have ${intervals.length} ProjectWorkflow activity interval${intervals.length === 1 ? "" : "s"} ${range.label}: ${intervals.map((row) => `${formatTime(row.started_at, settings.organization_timezone)}–${formatTime(row.ended_at ?? effectiveOpenActivityIntervalEnd(row.last_activity_at, new Date(), settings.activity_idle_timeout_minutes)?.toISOString() ?? null, settings.organization_timezone)} (${formatActivityDuration(Math.floor(activityIntervalMilliseconds({ endedAt: row.ended_at, lastActivityAt: row.last_activity_at, startedAt: row.started_at }, new Date(), settings.activity_idle_timeout_minutes) / 60_000))})`).join("; ")}.`;
   }
-  return { activeMinutes, deterministicText: `${deterministicText}${disclaimer}`, firstActivityAt: first, intervalCount, kind: "activity_time", latestActivityAt: latest, period, recent };
+  if (options.attendanceBoundary) {
+    deterministicText = `ProjectWorkflow recorded ${formatActivityDuration(activeMinutes)} of active application time for you ${range.label}. This is ProjectWorkflow activity time, not verified attendance or your total working hours.`;
+  }
+  return { activeMinutes, deterministicText, firstActivityAt: first, intervalCount, kind: "activity_time", latestActivityAt: latest, period, recent };
 }
 
 export async function resolveActivityTimeProfile(supabase: Awaited<ReturnType<typeof createClient>>, name: string) {

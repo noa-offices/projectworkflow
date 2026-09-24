@@ -1,6 +1,6 @@
 import "server-only";
 
-import { classifyNoaRoute, describeNoaPageContext, greetingResponseText, NOA_CAPABILITY_SUMMARY_TEXT } from "@/lib/noa/noa-intent-router";
+import { classifyNoaRoute, describeNoaPageContext, greetingResponseText, NOA_CAPABILITY_SUMMARY_TEXT, recordedQuotationFollowUpReference } from "@/lib/noa/noa-intent-router";
 import { fetchNoaAdminCapability } from "@/lib/noa/noa-admin-capability.server";
 import { fetchNoaClientCapability } from "@/lib/noa/noa-client-capability.server";
 import { fetchNoaInsightsCapability } from "@/lib/noa/noa-insights-capability.server";
@@ -24,7 +24,8 @@ const HELP_ANSWER_TEXT =
 // the result with the provider. No capability ever calls another, and the model never picks which
 // capability or query runs - that's fully deterministic, in code, before the provider is invoked.
 export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAnswer> {
-  const route = classifyNoaRoute(request.message, request.context);
+  const recordedQuotationFollowUpFrom = recordedQuotationFollowUpReference(request.message, request.recentMessages ?? []);
+  const route = recordedQuotationFollowUpFrom ? "UserActivity" : classifyNoaRoute(request.message, request.context);
 
   // NOA self/page-context questions ("where am I", "which page is this") are answered directly
   // from NoaPageContext - never a capability call, never the AI provider. Not exposed as a
@@ -64,7 +65,7 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
           : domain === "Procurement"
             ? await fetchNoaProcurementCapability(request.message, request.context)
             : domain === "UserActivity"
-              ? await fetchNoaUserActivityCapability(request.message, request.context)
+              ? await fetchNoaUserActivityCapability(request.message, request.context, { recordedQuotationFollowUpFrom: recordedQuotationFollowUpFrom ?? undefined })
               : domain === "Admin"
                 ? await fetchNoaAdminCapability(request.message, request.context)
                 : domain === "Insights"

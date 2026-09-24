@@ -43,3 +43,17 @@ test("UAT presence and online wording bypasses provider phrasing and greeting us
   assert.ok(activity.includes("deterministicOnly: true"));
   assert.ok(router.includes("displayName?.trim().split(/\\s+/).find(Boolean) || null"));
 });
+
+test("UAT strict activity-time, named-user, and quotation follow-up paths remain bounded", () => {
+  assert.ok(reads.includes("ProjectWorkflow recorded ${formatActivityDuration(activeMinutes)} of active application time"));
+  assert.ok(reads.includes("not verified attendance or your total working hours"));
+  assert.ok(!reads.includes("continuous session"));
+  assert.ok(activity.includes("what ([a-z][a-z'-]*) did today"));
+  assert.ok(activity.includes("await requireSettingsManager();"));
+  assert.ok(activity.includes("await requireSystemOwner();"));
+  assert.ok(activity.includes("recordedQuotationFollowUpAnswer"));
+  assert.ok(activity.includes("quotationIdentifierFromAuditTitle"));
+  assert.ok(activity.includes("auditLogRowsForUser(supabase, userId"));
+  assert.ok(orchestrator.includes("recordedQuotationFollowUpReference"));
+  assert.ok(orchestrator.includes("recordedQuotationFollowUpFrom"));
+});

@@ -142,7 +142,7 @@ function isActivityIntervalCountQuestion(normalized: string) {
 }
 
 function isPresenceBoundaryQuestion(normalized: string) {
-  return /\bwho is (?:currently )?working\b|\bwho is working now\b|\bwho is online\b|\bwho is at work\b|\bam i online\b|\bam i (?:currently )?(?:working|at work)\b/.test(normalized);
+  return /\bwho is (?:currently )?(?:working|online|at work)\b|\bwho is working now\b|\bis [a-z][a-z'-]* online\b|\bam i online\b|\bam i (?:currently )?(?:working|at work)\b/.test(normalized);
 }
 
 function activityTimeKind(message: string): UserActivityQuestionKind | null {
@@ -152,7 +152,7 @@ function activityTimeKind(message: string): UserActivityQuestionKind | null {
     if (/\bwas i active recently\b|\bmy recent projectworkflow activity\b/.test(normalized)) return "activity_time_recent";
     if (/\b(?:show )?my (?:projectworkflow )?activity intervals?\b/.test(normalized)) return "activity_time_intervals";
     if (isActivityIntervalCountQuestion(normalized)) return "activity_time_own";
-    if (/\b(?:projectworkflow )?active time\b|\bactivity time\b|\bhow active (?:was|am) i\b|\bhow (?:much|long) (?:time )?(?:am|i) active\b|\bfirst (?:recorded )?activity today\b|\b(?:latest activity|last activity today)\b/.test(normalized)) return "activity_time_own";
+    if (/\b(?:projectworkflow )?active time\b|\bactivity time\b|\bhow active (?:was|am) i\b|\bhow (?:much|long) (?:time )?(?:am|i) active\b|\bfirst (?:recorded |projectworkflow )?activity today\b|\b(?:latest activity|last activity today)\b/.test(normalized)) return "activity_time_own";
   }
   if (/\bwho (?:has|had) (?:recent )?(?:projectworkflow )?activity\b|\bwho is working now\b|\bshow today'?s user activity time\b/.test(normalized)) return "activity_time_team_recent";
   const target = activityTimeTargetName(message);
@@ -161,7 +161,7 @@ function activityTimeKind(message: string): UserActivityQuestionKind | null {
   if (isActivityIntervalCountQuestion(normalized)) return "activity_time_own";
   if (/\b(?:activity|active) intervals? today\b|\bhow many active intervals?\b/.test(normalized)) return "activity_time_intervals";
   if (/\bwas i active recently\b|\bmy recent projectworkflow activity\b/.test(normalized)) return "activity_time_recent";
-  if (/\b(?:projectworkflow )?active time\b|\bactivity time\b|\bhow active (?:was|am) i\b|\bhow (?:much|long) (?:time )?(?:am|i) active\b|\bfirst (?:recorded )?activity today\b|\b(?:latest activity|last activity today)\b/.test(normalized)) return "activity_time_own";
+  if (/\b(?:projectworkflow )?active time\b|\bactivity time\b|\bhow active (?:was|am) i\b|\bhow (?:much|long) (?:time )?(?:am|i) active\b|\bfirst (?:recorded |projectworkflow )?activity today\b|\b(?:latest activity|last activity today)\b/.test(normalized)) return "activity_time_own";
   return null;
 }
 
@@ -190,6 +190,9 @@ function isTeamActivityRequest(message: string): boolean {
 function otherUserNameTarget(message: string): string | null {
   const patterns = [
     /what did ([a-z][a-z'-]*) work on/i,
+    /what did ([a-z][a-z'-]*) do today/i,
+    /what ([a-z][a-z'-]*) did today/i,
+    /what has ([a-z][a-z'-]*) done today/i,
     /show ([a-z][a-z'-]*)(?:'s)? activity/i,
     /what quotations did ([a-z][a-z'-]*) work on/i,
     /what was ([a-z][a-z'-]*)'s last (?:recorded )?(?:projectworkflow )?activity/i,
@@ -201,6 +204,39 @@ function otherUserNameTarget(message: string): string | null {
     return raw;
   }
   return null;
+}
+
+function quotationIdentifierFromAuditTitle(title: string) {
+  return title.match(/\b(?:QN|Q|QT|QUO)-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/i)?.[0] ?? null;
+}
+
+async function recordedQuotationFollowUpAnswer(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  previousMessage: string,
+): Promise<NoaCapabilityResult> {
+  const rangeKey = activityDateRangeKey(previousMessage);
+  const { from, to } = resolveDateRange(rangeKey, undefined, undefined);
+  const rows = await auditLogRowsForUser(supabase, userId, from.toISOString(), to.toISOString(), MAX_ACTIVITY_LOG_ROWS);
+  const quotationRows = rows.filter(
+    (row) => row.entity_type === "quotation" || row.entity_type === "quotation_item" || row.entity_type === "quotation_section",
+  );
+  const identifiers = Array.from(new Set(
+    quotationRows
+      .map((row) => quotationIdentifierFromAuditTitle(row.title))
+      .filter((identifier): identifier is string => Boolean(identifier)),
+  )).slice(0, MAX_ACTIVITY_LOG_ROWS);
+  const label = rangeLabel(rangeKey);
+  const deterministicText = quotationRows.length === 0
+    ? `I couldn't find any recorded quotation activity for you ${label}.`
+    : identifiers.length === 0
+      ? `I found recorded quotation activity for you ${label}, but no safe quotation identifier is available from those records.`
+      : `Your recorded quotation activity ${label} was on ${identifiers.join(", ")}.`;
+  return {
+    data: { deterministicOnly: true, deterministicText, kind: "user_activity_recorded_quotation_follow_up", quotationIdentifiers: identifiers },
+    ok: true,
+    sources: [{ label: "User Activity · Checked your recorded quotation activity", type: "user_activity" }],
+  };
 }
 
 // PART 1/3: deterministic classification only, checked in this exact priority order - attendance
@@ -819,7 +855,19 @@ async function otherUserLastActivityAnswer(
 export async function fetchNoaUserActivityCapability(
   message: string,
   _context: NoaPageContext,
+  options: { recordedQuotationFollowUpFrom?: string } = {},
 ): Promise<NoaCapabilityResult> {
+  if (options.recordedQuotationFollowUpFrom) {
+    try {
+      const { user } = await requireActiveUser();
+      const supabase = await createClient();
+      return recordedQuotationFollowUpAnswer(supabase, user.id, options.recordedQuotationFollowUpFrom);
+    } catch (error) {
+      if (isNextRedirectError(error)) return UNAUTHORIZED_RESULT;
+      throw error;
+    }
+  }
+
   const kind = userActivityQuestionKind(message);
 
   if (kind === "presence_boundary") {
@@ -903,7 +951,7 @@ export async function fetchNoaUserActivityCapability(
       intervals: kind === "activity_time_intervals",
       recent: kind === "activity_time_recent",
     });
-    return { data: result, ok: true, sources: [{ label: "User Activity · Checked your ProjectWorkflow active time", type: "user_activity_time" }] };
+    return { data: { ...result, deterministicOnly: true }, ok: true, sources: [{ label: "User Activity · Checked your ProjectWorkflow active time", type: "user_activity_time" }] };
   }
 
   const isTeamKind = kind === "team_summary" || kind === "team_quotation_activity" ||
