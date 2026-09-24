@@ -4,7 +4,25 @@ import { useEffect, useRef } from "react";
 import { NoaSourceBadges } from "@/components/noa/noa-source-badges";
 import type { NoaMessage } from "@/lib/noa/noa-types";
 
-const QUICK_PROMPTS = ["Find a product", "Check quotation", "Price status", "How do I..."];
+// Home UX: a starter is either a PROVEN working request sent verbatim (`prompt`), or a small
+// UI-only helper (`draft`) for a request that needs information the starter itself can't supply
+// (GPC's "configure <product name>" needs an actual product name). A `draft` starter is never sent
+// to the server as-is - NoaAssistant's handleSend recognizes the encoded signal below, shows a
+// local guidance message, and prefixes the draft onto the user's NEXT typed message instead.
+export type NoaQuickPrompt = { label: string; prompt?: string; draft?: string };
+
+// Exported so NoaAssistant (the only other file that touches this) can recognize it without a
+// second, drifting copy of the encoding - never a real chat message on its own.
+export const NOA_DRAFT_STARTER_SIGNAL_PREFIX = "__noa-draft-starter__:";
+
+// Max 4 primary starters (PART 8) - each a proven-working request or the one guided helper, never
+// the old vague literal strings that routed to Help/fallback.
+const QUICK_PROMPTS: NoaQuickPrompt[] = [
+  { draft: "configure ", label: "Configure product" },
+  { label: "Pending quotations", prompt: "Show pending quotations" },
+  { label: "Active projects", prompt: "Show active projects" },
+  { label: "What can NOA do?", prompt: "What can you do?" },
+];
 
 export function NoaMessages({
   isBusy = false,
@@ -28,7 +46,9 @@ export function NoaMessages({
   }, [messages.length]);
 
   return (
-    <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+    // PART 2: a touch more vertical rhythm between turns and a touch more bubble padding - purely
+    // spacing/sizing, the same message paragraph/choices rendering as before.
+    <div className="flex-1 space-y-3.5 overflow-y-auto px-4 py-4">
       {messages.map((message) => {
         const choicesEnabled = !isBusy && message.id === latestMessageId;
         return (
@@ -37,7 +57,7 @@ export function NoaMessages({
             className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}
           >
             <p
-              className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm leading-6 ${
+              className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm leading-6 shadow-sm ${
                 message.role === "user"
                   ? "bg-emerald-900 text-white"
                   : "bg-zinc-100 text-zinc-900"
@@ -79,14 +99,14 @@ export function NoaMessages({
 
       {!hasUserMessage ? (
         <div className="flex flex-wrap gap-2 pt-1">
-          {QUICK_PROMPTS.map((prompt) => (
+          {QUICK_PROMPTS.map((quickPrompt) => (
             <button
-              key={prompt}
+              key={quickPrompt.label}
               className="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:border-emerald-300 hover:bg-emerald-50"
-              onClick={() => onQuickPrompt(prompt)}
+              onClick={() => onQuickPrompt(quickPrompt.prompt ?? `${NOA_DRAFT_STARTER_SIGNAL_PREFIX}${quickPrompt.draft ?? ""}`)}
               type="button"
             >
-              {prompt}
+              {quickPrompt.label}
             </button>
           ))}
         </div>

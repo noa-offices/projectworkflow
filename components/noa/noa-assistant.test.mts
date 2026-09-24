@@ -56,3 +56,52 @@ test("NoaAssistant's session thread is plain React state (useState), not persist
   const source = readFileSync("components/noa/noa-assistant.tsx", "utf8");
   assert.match(source, /const \[messages, setMessages\] = useState<NoaMessage\[\]>/);
 });
+
+// ── Home UX: better introduction + working starter actions ─────────────────────────────────────
+
+test("Home UX 7/8. Greeting is concise and mentions product configuration, without claiming AI/internal-architecture capabilities", () => {
+  const source = readFileSync("components/noa/noa-assistant.tsx", "utf8");
+  const greetingMatch = source.match(/const GREETING_TEXT =\s*\n?\s*"([^;]+)";/);
+  assert.ok(greetingMatch, "GREETING_TEXT constant not found");
+  const greeting = greetingMatch![1];
+  assert.ok(/configure/i.test(greeting), "greeting should mention configuring products");
+  assert.ok(greeting.length < 260, "greeting should stay concise");
+  for (const forbidden of [/\bAI\b/i, /\bagent(s)?\b/i, /\bdatabase\b/i, /\barchitecture\b/i, /system[- ]owner/i]) {
+    assert.ok(!forbidden.test(greeting), `greeting must not mention ${forbidden}`);
+  }
+});
+
+test("Home UX 5/6. Configure-product draft signal is intercepted before it ever becomes an outgoing request", () => {
+  const source = readFileSync("components/noa/noa-assistant.tsx", "utf8");
+  assert.ok(source.includes("import { NOA_DRAFT_STARTER_SIGNAL_PREFIX } from \"@/components/noa/noa-messages\";"));
+  assert.ok(source.includes("if (text.startsWith(NOA_DRAFT_STARTER_SIGNAL_PREFIX)) {"));
+  assert.ok(source.includes("pendingConfigureDraftRef.current = text.slice(NOA_DRAFT_STARTER_SIGNAL_PREFIX.length);"));
+  // The intercepted click never reaches requestNoaAnswer/dispatch SEND - it returns immediately.
+  const handleSendStart = source.indexOf("const handleSend = useCallback((text: string) => {");
+  const interceptEnd = source.indexOf("return;", handleSendStart);
+  const interceptBlock = source.slice(handleSendStart, interceptEnd);
+  assert.ok(!interceptBlock.includes("requestNoaAnswer") && !interceptBlock.includes('dispatch({ type: "SEND" })'));
+});
+
+test("Home UX 6. The next real message is prefixed with the pending draft, then the draft is cleared", () => {
+  const source = readFileSync("components/noa/noa-assistant.tsx", "utf8");
+  assert.ok(source.includes("const outgoing = pendingConfigureDraftRef.current ? `${pendingConfigureDraftRef.current}${typed}` : typed;"));
+  assert.ok(source.includes("pendingConfigureDraftRef.current = null;"));
+  // The SAME outgoing text is what's shown in the user's own bubble and what's actually sent.
+  assert.ok(source.includes('createMessage("user", outgoing)'));
+  assert.ok(source.includes("requestNoaAnswer(outgoing, "));
+});
+
+test("Home UX 11. No router/capability/provider file is imported (only pre-existing prose comments may name them)", () => {
+  const assistantSource = readFileSync("components/noa/noa-assistant.tsx", "utf8");
+  const messagesSource = readFileSync("components/noa/noa-messages.tsx", "utf8");
+  const importLines = (source: string) => source.split("\n").filter((line) => line.trim().startsWith("import "));
+  for (const source of [assistantSource, messagesSource]) {
+    for (const line of importLines(source)) {
+      assert.ok(!/noa-orchestrator|noa-.*-capability\.server|noa-provider/.test(line), `unexpected import: ${line}`);
+    }
+  }
+  // classifyNoaIntent is the existing, unchanged client-side pre-classifier (already used before
+  // this change) - not a new router wiring.
+  assert.ok(assistantSource.includes('import { classifyNoaIntent } from "@/lib/noa/noa-intent-router";'));
+});
