@@ -1,13 +1,21 @@
 "use client";
 
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NoaAvatar } from "@/components/noa/noa-avatar";
 import type { NoaVisualState } from "@/lib/noa/noa-types";
 
-// PART 1: a single, one-shot "hello" shortly after NOA first appears on the page - never repeats,
-// no interval kept alive afterward, never blocks interaction either way (the button works
-// identically before/during/after the greet).
+// PART 15: a single, one-shot "hello" shortly after NOA first appears on the page - never
+// repeats, no interval kept alive afterward, never blocks interaction either way.
 const GREET_DELAY_MS = 650;
+
+// PART 1/10/20: FULL (default, whole robot visible) or SNEAK (user-chosen hidden-behind-the-edge
+// state). Deliberately just these two - no separate near-hidden "tab" level. Pure local
+// presentation state, kept entirely OUT of noa-state-machine.ts (that machine still owns
+// idle/hover/open/thinking/etc. exactly as before; this only decides how the CLOSED states look,
+// and survives open/close for the rest of the page session by simply never being reset - see the
+// comment above `mode` below for why no reset-on-open logic is even needed).
+type NoaLauncherMode = "full" | "sneak";
 
 export function NoaLauncher({
   onHoverEnd,
@@ -23,7 +31,7 @@ export function NoaLauncher({
   state: NoaVisualState;
 }) {
   const isHovered = state === "hover";
-  const isAlert = state !== "idle" && state !== "hover";
+  const isClosed = state === "idle" || state === "hover";
   const floatEnabled = state === "idle" || state === "hover" || state === "open";
 
   const [greeted, setGreeted] = useState(false);
@@ -32,17 +40,21 @@ export function NoaLauncher({
     return () => window.clearTimeout(timer);
   }, []);
 
+  // PART 20: clicking the robot (the ONLY way to open the drawer from this component, in either
+  // mode - PART 3/8) never touches `mode`, so whichever mode the user picked is exactly what's
+  // still selected the next time the drawer closes. No reset effect needed.
+  const [mode, setMode] = useState<NoaLauncherMode>("full");
+  const isSneak = mode === "sneak";
+
   return (
-    // PART 3 "peek" presentation: docked flush to the viewport's own right edge (not floating
-    // fully on-screen like before) - NOA rests mostly in view but leans slightly off the edge,
-    // then leans further INTO view on hover/focus/alert as an invitation to open it. The <button>
-    // below keeps a normal, fully on-screen, generously-sized hit box at all times (PART 5) - only
-    // the decorative avatar/dock content inside it is translated, so this never makes the control
-    // harder to reach on mobile. The vertical offset (bottom-20/sm:bottom-24) is unchanged from
-    // before, so this still sits above the app's other fixed bottom-right control
-    // (GlobalLoadingIndicator, bottom-4 right-4) rather than on top of it.
+    // PART 2/9: `group` marks this as the hover/focus scope for the secondary Hide/Show control
+    // below (CSS group-hover/group-focus-within - no JS hover state needed for that reveal). The
+    // vertical offset (bottom-20/sm:bottom-24) is unchanged from before, so this still sits above
+    // the app's other fixed bottom-right control (GlobalLoadingIndicator, bottom-4 right-4) rather
+    // than on top of it. Full mode sits a small inset from the true edge (so it's never clipped by
+    // default - PART 1); Sneak docks flush to the edge (PART 5's "wall").
     <div
-      className="fixed bottom-20 right-0 z-40 sm:bottom-24"
+      className={`group fixed bottom-20 z-40 sm:bottom-24 ${isSneak ? "right-0" : "right-2 sm:right-3"}`}
       data-noa-page-section={pageSection}
     >
       <span
@@ -54,9 +66,38 @@ export function NoaLauncher({
       >
         Ask NOA
       </span>
+      {/* PART 2/9/18/23: the Hide/Show control - a SEPARATE button/hit box from the main "open"
+          button below (never overlapping it), positioned above the avatar so it never covers the
+          face. `noa-secondary-control` (defined in noa-assistant.tsx's shared <style>) hides this
+          until hover/keyboard-focus ONLY on devices that actually have hover + a fine pointer
+          (real mice); on touch devices (no reliable hover) it stays at a small, subtle opacity by
+          default instead, so there's still always a way to reach it (PART 18). */}
+      {isClosed ? (
+        <button
+          aria-label={isSneak ? "Show NOA" : "Hide NOA"}
+          className="noa-secondary-control absolute -top-2 right-1 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-400 opacity-70 shadow-sm outline-none transition-colors duration-200 hover:text-zinc-700 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2"
+          onClick={(event) => {
+            // PART 3: never opens chat - this control only ever changes the presentation mode.
+            event.stopPropagation();
+            onHoverEnd();
+            setMode(isSneak ? "full" : "sneak");
+          }}
+          type="button"
+        >
+          {isSneak ? (
+            <ChevronLeft aria-hidden="true" className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
+          )}
+        </button>
+      ) : null}
       <button
         aria-label="Open NOA assistant"
-        className="group relative flex h-14 w-14 items-center justify-center outline-none transition-transform duration-200 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 sm:h-[76px] sm:w-[76px]"
+        // PART 3/6/8/11: clicking the robot itself always opens chat, in either mode. Full mode's
+        // box just wraps the avatar at its own natural size; Sneak's box is deliberately WIDER
+        // than the visible crop window below so the tap target stays generous even though the
+        // painted content is narrower (PART 6/23 - the hitbox itself is never translated/clipped).
+        className={isSneak ? "relative flex h-14 w-11 items-center justify-end outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 sm:h-16 sm:w-14" : "relative flex items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2"}
         onBlur={onHoverEnd}
         onClick={onToggle}
         onFocus={onHoverStart}
@@ -64,32 +105,33 @@ export function NoaLauncher({
         onMouseLeave={onHoverEnd}
         type="button"
       >
-        {/* The "ledge" NOA peeks from - a soft rounded dock bleeding past the button's own right
-            edge (i.e. off the viewport), never a hard visual cutoff. Purely decorative: it never
-            extends the button's own hit box, only its painted background. */}
-        <span
-          aria-hidden="true"
-          className="absolute inset-y-2 -right-4 left-2 rounded-l-[26px] border border-white/60 bg-white/70 shadow-lg shadow-zinc-900/10 backdrop-blur-sm transition-colors duration-300 group-hover:bg-white/85"
-        />
-        <span
-          aria-hidden="true"
-          className="absolute inset-1 rounded-full bg-black/10 blur-lg transition-opacity duration-200"
-          style={{ opacity: isHovered || isAlert ? 0.3 : 0.16 }}
-        />
-        {/* PART 3 "occasional attention" - a separate, dedicated layer (never sharing `transform`
-            with the avatar's own hover-translate below) so the two motions can never fight. Long
-            9s cycle, almost entirely dormant, one brief soft amber blip near the end - sparse by
-            design, not a constant loop. Idle only; never runs during hover/alert. */}
-        {state === "idle" ? (
-          <span aria-hidden="true" className="noa-anim-peek-attention absolute inset-3 rounded-full bg-amber-300/70 blur-md" />
-        ) : null}
-        <span
-          className={`relative block transition-transform duration-300 ease-out ${
-            isHovered || isAlert ? "translate-x-0" : "translate-x-[16%]"
-          }`}
-        >
+        {isSneak ? (
+          // PART 5/6/7/8: the crop WINDOW - narrower/shorter than the avatar at rest, so only its
+          // own top-left slice (head + a shoulder edge) is painted; everything past this box's
+          // edges is simply clipped by `overflow-hidden`, never a separate crop/mask asset. It
+          // GROWS on hover/keyboard-focus (revealing more upper torso, PART 8) via a plain size
+          // transition - real proportions of the same full-size avatar underneath, never a
+          // different image.
+          <span className="relative h-10 w-5 overflow-hidden rounded-l-2xl transition-[width,height] duration-300 ease-out group-hover:h-12 group-hover:w-9 group-focus-within:h-12 group-focus-within:w-9 sm:h-12 sm:w-6 sm:group-hover:h-14 sm:group-hover:w-11 sm:group-focus-within:h-14 sm:group-focus-within:w-11">
+            {/* PART 5: the ONLY "wall" treatment - a hairline static rim light along the clip
+                edge, never a blurred halo/dock/panel (PART 11). */}
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 left-0 w-px bg-gradient-to-b from-transparent via-amber-200/60 to-transparent"
+            />
+            <span
+              // PART 7/8: resting state is the sparse "curious peek" CSS animation (mostly hidden,
+              // one brief small lean out every ~11s); hovering/focusing cancels that animation and
+              // snaps to the fully-revealed resting position instead, transitioning smoothly - two
+              // mutually exclusive drivers of the SAME transform, never running together.
+              className="noa-anim-sneak-lean absolute left-0 top-0 transition-transform duration-300 ease-out group-hover:[animation:none] group-hover:translate-x-0 group-focus-within:[animation:none] group-focus-within:translate-x-0"
+            >
+              <NoaAvatar floatEnabled={floatEnabled} greet={greeted} size="launcher" state={state} />
+            </span>
+          </span>
+        ) : (
           <NoaAvatar floatEnabled={floatEnabled} greet={greeted} size="launcher" state={state} />
-        </span>
+        )}
       </button>
     </div>
   );

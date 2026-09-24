@@ -197,36 +197,89 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
   return (
     <>
       {/* Component-local keyframes only (no animation library, no globals.css edit): idle
-          float+breathe, idle glow pulse, thinking ring, the one-shot success pulse, the one-shot
-          greet wiggle, the ambient halo pulse, and the sparse peek-mode attention blip. Respects
-          prefers-reduced-motion by disabling motion while keeping the state glow colors. */}
+          float+breathe, eye-light pulse, chest/logo pulse, two staggered occasional wing
+          shimmers, thinking ring, the one-shot success pulse, the one-shot greet lean/bounce +
+          eye brighten, and the sparse sneak-mode "curious peek" lean. Every cycle length below is
+          deliberately different (PART 14 "slightly offset timing") so nothing peaks in sync.
+          Respects prefers-reduced-motion by disabling all of it while keeping the state glow
+          colors/Full-Sneak positioning static. Also carries the ONE non-keyframe rule this file
+          needs: PART 18's hover-only reveal for the launcher's secondary Hide/Show control, which
+          only applies on devices that actually have real hover + a fine pointer (a mouse) - on
+          touch devices (no reliable hover) that control stays visible at its own base Tailwind
+          opacity (set in noa-launcher.tsx) instead, so there's always a way to reach it. */}
       <style>{`
-        /* Float now also carries a very small scale "breathe" in the same transform timeline
-           (never a second animation stacked on the same element/property - see noa-avatar.tsx's
-           own comment on why the one-shot greet wiggle instead lives on a CHILD element). */
-        @keyframes noa-float { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-3px) scale(1.015); } }
-        @keyframes noa-idle-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 0.9; } }
+        /* Float carries a very small scale "breathe" in the same transform timeline (never a
+           second animation stacked on the same element/property - see noa-avatar.tsx's own
+           comment on why the one-shot greet motion instead lives on a CHILD element). Amplitude
+           kept to 1-2px (PART 16) - alive, not bouncing. */
+        @keyframes noa-float { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-2px) scale(1.008); } }
+        /* Eye-light: slow, clearly-visible brightness change - no flashing. */
+        @keyframes noa-idle-pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 0.95; } }
         @keyframes noa-thinking-ring { 0% { transform: rotate(0deg); opacity: 0.65; } 50% { opacity: 1; } 100% { transform: rotate(360deg); opacity: 0.65; } }
         @keyframes noa-success-pulse { 0% { transform: scale(1); opacity: 0.85; } 100% { transform: scale(1.6); opacity: 0; } }
-        /* One-shot "hello" wiggle - plays once whenever noa-avatar.tsx's "greet" prop turns true;
-           its own 100% keyframe already returns to rotate(0deg), the same as unanimated rest. */
-        @keyframes noa-greet { 0% { transform: rotate(0deg); } 15% { transform: rotate(-7deg); } 35% { transform: rotate(5deg); } 55% { transform: rotate(-3deg); } 75% { transform: rotate(2deg); } 100% { transform: rotate(0deg); } }
-        /* Large, slow ambient-halo breathing behind the character (PART 1 "soft light" feel). */
-        @keyframes noa-ambient-pulse { 0%, 100% { opacity: 0.55; transform: scale(1); } 50% { opacity: 0.9; transform: scale(1.06); } }
-        /* PART 3 "occasional attention" for the peek launcher - almost entirely dormant across a
-           9s cycle, one brief soft blip near the end. Deliberately sparse, never a constant loop. */
-        @keyframes noa-peek-attention { 0%, 88%, 100% { opacity: 0; transform: scale(0.85); } 94% { opacity: 0.8; transform: scale(1.12); } }
-        .noa-anim-float { animation: noa-float 3.4s ease-in-out infinite; }
-        .noa-anim-idle-pulse { animation: noa-idle-pulse 3.2s ease-in-out infinite; }
+        /* One-shot "hello" - a tiny lateral lean + small upward bounce + a few degrees of
+           rotation, plays once whenever noa-avatar.tsx's "greet" prop turns true. Its own 100%
+           keyframe already returns to the unanimated resting transform. */
+        @keyframes noa-greet { 0% { transform: translate(0, 0) rotate(0deg); } 20% { transform: translate(-2px, -3px) rotate(-3deg); } 45% { transform: translate(1px, -5px) rotate(2deg); } 70% { transform: translate(-1px, -1px) rotate(-1deg); } 100% { transform: translate(0, 0) rotate(0deg); } }
+        /* Companion one-shot eye brighten, timed alongside the greet lean above (never combined
+           with the continuous idle-pulse on the same element - see noa-avatar.tsx). */
+        @keyframes noa-greet-eye { 0% { opacity: 0.6; transform: scale(1); } 40% { opacity: 1; transform: scale(1.25); } 100% { opacity: 0.6; transform: scale(1); } }
+        /* Companion one-shot chest brighten, same timing family as the eye brighten above (never
+           combined with the continuous chest-pulse on the same element). */
+        @keyframes noa-greet-chest { 0% { opacity: 0.45; transform: scale(1); } 40% { opacity: 0.85; transform: scale(1.15); } 100% { opacity: 0.45; transform: scale(1); } }
+        /* Chest/logo light: slower and weaker than the eye-light above. */
+        @keyframes noa-chest-pulse { 0%, 100% { opacity: 0.45; transform: scale(1); } 50% { opacity: 0.8; transform: scale(1.05); } }
+        /* Wing/side shimmer (left + right, staggered cycle lengths per PART 14): dormant almost
+           the entire cycle, one brief streak that travels a short distance and fades - never a
+           continuous loop, never a spin/flap. */
+        @keyframes noa-wing-shimmer { 0%, 88%, 100% { opacity: 0; transform: translateY(6px) scale(0.7); } 94% { opacity: 1; transform: translateY(-6px) scale(1.2); } }
+        /* One-shot "both wings light up" flash, timed alongside the greet lean above (PART 15). */
+        @keyframes noa-greet-wing { 0% { opacity: 0; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.2); } 100% { opacity: 0; transform: scale(0.8); } }
+        /* Sneak-mode "curious peek" (launcher only): the resting offset itself (5px, mostly
+           hidden) with one brief, small lean toward fully-revealed - PART 17 "roughly every
+           10-14 sec". Hover/focus overrides this entirely (see noa-launcher.tsx's group-hover/
+           group-focus-within [animation:none]), never runs alongside the hover reveal. */
+        @keyframes noa-sneak-lean { 0%, 92%, 100% { transform: translateX(5px); } 96% { transform: translateX(0); } }
+        /* PART 9/10: layer-ready motion classes - only ever reached from noa-avatar.tsx's
+           USE_LAYERED_NOA_AVATAR branch, which is false today (PART 6/8), so these never run in
+           production yet. Bounded per PART 10/11: a small +/-3-5deg head tilt, a small one-shot
+           arm rotation for the greeting - never a fake 3D rotation, never exaggerated. */
+        @keyframes noa-layer-tilt { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
+        @keyframes noa-layer-wave { 0% { transform: rotate(0deg); } 30% { transform: rotate(-8deg); } 60% { transform: rotate(4deg); } 100% { transform: rotate(0deg); } }
+        .noa-anim-float { animation: noa-float 5s ease-in-out infinite; }
+        .noa-anim-idle-pulse { animation: noa-idle-pulse 3.4s ease-in-out infinite; }
         .noa-anim-thinking-ring { animation: noa-thinking-ring 1.6s linear infinite; }
         .noa-anim-success-pulse { animation: noa-success-pulse 0.6s ease-out; }
-        .noa-anim-greet { animation: noa-greet 1.4s ease-in-out 1; transform-origin: 50% 85%; }
-        .noa-anim-ambient-pulse { animation: noa-ambient-pulse 4.5s ease-in-out infinite; }
-        .noa-anim-peek-attention { animation: noa-peek-attention 9s ease-in-out infinite; }
+        .noa-anim-greet { animation: noa-greet 1.05s ease-in-out 1; transform-origin: 50% 85%; }
+        .noa-anim-greet-eye { animation: noa-greet-eye 1.1s ease-in-out 1; }
+        .noa-anim-greet-chest { animation: noa-greet-chest 1.1s ease-in-out 1; }
+        .noa-anim-greet-wing { animation: noa-greet-wing 1.1s ease-in-out 1; }
+        .noa-anim-chest-pulse { animation: noa-chest-pulse 5s ease-in-out infinite; }
+        .noa-anim-wing-shimmer-left { animation: noa-wing-shimmer 8s ease-in-out infinite; }
+        .noa-anim-wing-shimmer-right { animation: noa-wing-shimmer 10.5s ease-in-out infinite; }
+        .noa-anim-sneak-lean { animation: noa-sneak-lean 11s ease-in-out infinite; }
+        .noa-anim-layer-tilt { animation: noa-layer-tilt 6s ease-in-out infinite; }
+        .noa-anim-layer-wave { animation: noa-layer-wave 1.1s ease-in-out 1; transform-origin: 20% 15%; }
         @media (prefers-reduced-motion: reduce) {
           .noa-anim-float, .noa-anim-idle-pulse, .noa-anim-thinking-ring, .noa-anim-success-pulse,
-          .noa-anim-greet, .noa-anim-ambient-pulse, .noa-anim-peek-attention {
+          .noa-anim-greet, .noa-anim-greet-eye, .noa-anim-greet-chest, .noa-anim-greet-wing,
+          .noa-anim-chest-pulse, .noa-anim-wing-shimmer-left, .noa-anim-wing-shimmer-right,
+          .noa-anim-sneak-lean, .noa-anim-layer-tilt, .noa-anim-layer-wave {
             animation: none !important;
+          }
+          /* PART 21: Full/Sneak positioning itself still works without animation - the sneak
+             crop's resting (mostly-hidden) offset is kept as a static transform. */
+          .noa-anim-sneak-lean { transform: translateX(5px); }
+        }
+        /* PART 2/9/18: hover-only reveal for the secondary Hide/Show control, but ONLY on
+           devices with real hover + a fine pointer - touch devices keep it at its own base
+           opacity (see noa-launcher.tsx) since they have no hover to reveal it with. */
+        @media (hover: hover) and (pointer: fine) {
+          .noa-secondary-control { opacity: 0; pointer-events: none; }
+          .group:hover .noa-secondary-control,
+          .group:focus-within .noa-secondary-control {
+            opacity: 1;
+            pointer-events: auto;
           }
         }
       `}</style>
