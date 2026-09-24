@@ -42,6 +42,13 @@ export type NoaSemanticQuotation = {
   request: "detail" | "total" | "status";
 };
 
+// Candidate text only: the extractor never supplies IDs, rows, prices, or status facts.
+export type NoaSemanticProduct = {
+  productText?: string;
+  brandText?: string;
+  categoryText?: string;
+};
+
 export type NoaSemanticEntity =
   | { type: "unknown"; text: string }
   | { type: "project_file"; text: string }
@@ -56,6 +63,7 @@ export type NoaSemanticRequest = {
   metric?: string;
   followUp?: boolean;
   quotation?: NoaSemanticQuotation;
+  product?: NoaSemanticProduct;
   entity?: NoaSemanticEntity;
 };
 
@@ -119,6 +127,14 @@ function isNoaSemanticQuotationShape(value: unknown): value is NoaSemanticQuotat
     && (candidate.request === "detail" || candidate.request === "total" || candidate.request === "status");
 }
 
+function isNoaSemanticProductShape(value: unknown): value is NoaSemanticProduct {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  const values = [candidate.productText, candidate.brandText, candidate.categoryText];
+  return values.every((text) => text === undefined || (typeof text === "string" && text.trim().length > 0 && text.trim().length <= 160))
+    && values.some((text) => typeof text === "string");
+}
+
 function isNoaSemanticEntityShape(value: unknown): value is NoaSemanticEntity {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
@@ -143,6 +159,7 @@ export function isNoaSemanticRequest(value: unknown): value is NoaSemanticReques
   if (candidate.metric !== undefined && typeof candidate.metric !== "string") return false;
   if (candidate.followUp !== undefined && typeof candidate.followUp !== "boolean") return false;
   if (candidate.quotation !== undefined && !isNoaSemanticQuotationShape(candidate.quotation)) return false;
+  if (candidate.product !== undefined && !isNoaSemanticProductShape(candidate.product)) return false;
   if (candidate.entity !== undefined && !isNoaSemanticEntityShape(candidate.entity)) return false;
 
   return true;

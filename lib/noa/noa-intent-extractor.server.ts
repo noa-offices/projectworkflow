@@ -25,6 +25,7 @@ subject: who the question is about - self (I/me/my), named_user (give the exact 
 period: today/yesterday/this_week/last_7_days/this_month only if a time period is actually mentioned.
 entityReference: only for a follow-up referring back to something already discussed - type (e.g. "quotation") and fromPreviousResult true.
 For a Quotation request with a direct QN-... identifier, include quotation with the exact quotationNo and request: "detail", "total", or "status". QN-... identifiers are quotation numbers.
+For a Product or Price request, include product with only candidate text explicitly present: productText, brandText, and/or categoryText. Do not supply IDs or facts.
 For a likely Project File name/reference or client name, include entity with only the candidate text from the message. Use type "project_file" or "client" only as a hint when wording is explicit; otherwise use "unknown". Do not decide whether a candidate exists.`;
 
 const schema = {
@@ -70,6 +71,16 @@ const schema = {
       properties: {
         quotationNo: { type: "string", maxLength: 80 },
         request: { type: "string", enum: ["detail", "total", "status"] },
+      },
+    },
+    product: {
+      type: "object",
+      additionalProperties: false,
+      minProperties: 1,
+      properties: {
+        productText: { type: "string", maxLength: 160 },
+        brandText: { type: "string", maxLength: 160 },
+        categoryText: { type: "string", maxLength: 160 },
       },
     },
     entity: {

@@ -7,6 +7,7 @@ import {
   productTemplatePriceCheckState,
   type ProductPriceCheckState,
 } from "@/lib/product-price-check";
+import type { NoaSemanticProduct } from "@/lib/noa/noa-semantic-request";
 import type { NoaCapabilityResult, NoaPageContext } from "@/lib/noa/noa-types";
 import { createClient } from "@/lib/supabase/server";
 
@@ -126,9 +127,13 @@ function messageMatchesName(normalizedMessage: string, name: string): boolean {
     || new RegExp(`\\b${escapeRegExp(variant)}\\b`).test(normalizedMessage);
 }
 
-async function matchedBrandFor(supabase: Awaited<ReturnType<typeof createClient>>, normalizedMessage: string, contextBrandId?: string) {
+async function matchedBrandFor(supabase: Awaited<ReturnType<typeof createClient>>, normalizedMessage: string, contextBrandId?: string, brandText?: string) {
   const { data } = await supabase.from("brands").select("id,name").returns<Array<{ id: string; name: string }>>();
   const brands = data ?? [];
+  if (brandText) {
+    const matches = brands.filter((brand) => messageMatchesName(brandText.toLowerCase(), brand.name));
+    return matches.length === 1 ? matches[0] : null;
+  }
   const textMatch = brands.find((brand) => messageMatchesName(normalizedMessage, brand.name));
   if (textMatch) return textMatch;
   if (contextBrandId) return brands.find((brand) => brand.id === contextBrandId) ?? null;
@@ -139,12 +144,13 @@ async function matchedCategoryFor(
   supabase: Awaited<ReturnType<typeof createClient>>,
   normalizedMessage: string,
   brandId: string | null,
+  categoryText?: string,
 ) {
   let query = supabase.from("product_categories").select("id,brand_id,name,parent_id").eq("is_active", true);
   if (brandId) query = query.eq("brand_id", brandId);
   const { data } = await query.returns<CategoryRow[]>();
   const categories = data ?? [];
-  const matches = categories.filter((category) => messageMatchesName(normalizedMessage, category.name));
+  const matches = categories.filter((category) => messageMatchesName((categoryText ?? normalizedMessage).toLowerCase(), category.name));
   return matches.length ? matches : null;
 }
 
@@ -190,10 +196,11 @@ async function fetchBroadPriceResult(
   message: string,
   context: NoaPageContext,
   kind: "list" | "summary",
+  product?: NoaSemanticProduct,
 ): Promise<NoaCapabilityResult> {
   const normalizedMessage = message.toLowerCase();
-  const brand = await matchedBrandFor(supabase, normalizedMessage, context.brandId);
-  const categories = await matchedCategoryFor(supabase, normalizedMessage, brand?.id ?? null);
+  const brand = await matchedBrandFor(supabase, normalizedMessage, context.brandId, product?.brandText);
+  const categories = await matchedCategoryFor(supabase, normalizedMessage, brand?.id ?? null, product?.categoryText);
 
   if (!brand && !categories) {
     return {
@@ -320,6 +327,7 @@ async function fetchBroadPriceResult(
 export async function fetchNoaPriceCapability(
   message: string,
   context: NoaPageContext,
+  options?: { product?: NoaSemanticProduct },
 ): Promise<NoaCapabilityResult> {
   // Defense-in-depth: independently re-checked here, reusing the same gate the real price-status
   // UI (Product Management) already requires, not trusted from the route-level auth check.
@@ -338,7 +346,7 @@ export async function fetchNoaPriceCapability(
   // over the current-record context.
   const questionKind = priceQuestionKind(message);
   if (questionKind !== "detail") {
-    return fetchBroadPriceResult(supabase, message, context, questionKind);
+    return fetchBroadPriceResult(supabase, message, context, questionKind, options?.product);
   }
 
   // A quotation's saved price is a fixed historical snapshot, never the live current price - if
@@ -365,7 +373,7 @@ export async function fetchNoaPriceCapability(
   }
 
   if (!template) {
-    const searchTerm = extractSearchTerm(message);
+    const searchTerm = options?.product?.productText ?? extractSearchTerm(message);
     if (!searchTerm) {
       return NOT_ENOUGH_INFO_RESULT;
     }
@@ -375,9 +383,16 @@ export async function fetchNoaPriceCapability(
       .from("product_templates")
       .select(TEMPLATE_SELECT)
       .or(`template_name.ilike.%${escapedTerm}%,internal_selection_name.ilike.%${escapedTerm}%`)
-      .limit(1)
-      .maybeSingle<TemplateRow>();
-    template = data;
+      .limit(options?.product?.productText ? 2 : 1)
+      .returns<TemplateRow[]>();
+    if (options?.product?.productText && (data?.length ?? 0) > 1) {
+      return {
+        message: "I found more than one matching product. Please provide a more specific product name or code.",
+        ok: false,
+        reason: "ambiguous",
+      };
+    }
+    template = data?.[0] ?? null;
   }
 
   if (!template) {

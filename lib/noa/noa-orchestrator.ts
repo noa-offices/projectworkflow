@@ -715,7 +715,7 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
     // as every other C4 reroute (PART 7: Price is a separate, later check below, so a confident
     // Price classification is never collapsed into Product here).
     if (!semanticRequest && extracted.domain === "Product") {
-      semanticRequest = { domain: "Product", intent: extracted.intent };
+      semanticRequest = { domain: "Product", intent: extracted.intent, ...(extracted.product ? { product: extracted.product } : {}) };
     }
 
     // C4D: a Price follow-up ("when was it checked?") only ever resolves against a valid
@@ -732,7 +732,7 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
     // check above (PART 7), so an extractor classification of "Price" is never collapsed into a
     // Product reroute; both are still gated on the extractor's own independent domain enum value.
     if (!semanticRequest && extracted.domain === "Price") {
-      semanticRequest = { domain: "Price", intent: extracted.intent };
+      semanticRequest = { domain: "Price", intent: extracted.intent, ...(extracted.product ? { product: extracted.product } : {}) };
     }
   }
 
@@ -754,7 +754,7 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
   const domain = effectiveRoute;
 
   const capabilityResult = domain === "Product"
-    ? await fetchNoaProductCapability(productMessageOverride ?? request.message, request.context)
+    ? await fetchNoaProductCapability(productMessageOverride ?? request.message, request.context, semanticRequest?.domain === "Product" ? { product: semanticRequest.product } : undefined)
     : domain === "Quotation"
       ? await fetchNoaQuotationCapability(request.message, request.context, {
           quotation: deterministicQuotation ?? (semanticRequest?.domain === "Quotation" ? semanticRequest.quotation : undefined),
@@ -779,7 +779,7 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
                 ? await fetchNoaAdminCapability(request.message, request.context)
                 : domain === "Insights"
                   ? await fetchNoaInsightsCapability(request.message, request.context)
-                  : await fetchNoaPriceCapability(productMessageOverride ?? request.message, request.context);
+                  : await fetchNoaPriceCapability(productMessageOverride ?? request.message, request.context, semanticRequest?.domain === "Price" ? { product: semanticRequest.product } : undefined);
 
   if (!capabilityResult.ok) {
     // Unauthorized / not-found / ambiguous: return the capability's own safe copy directly,

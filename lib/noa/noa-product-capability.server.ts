@@ -1,6 +1,7 @@
 import "server-only";
 
 import { requireProductLibraryManager } from "@/lib/auth";
+import type { NoaSemanticProduct } from "@/lib/noa/noa-semantic-request";
 import type { NoaCapabilityResult, NoaPageContext } from "@/lib/noa/noa-types";
 import { createClient } from "@/lib/supabase/server";
 
@@ -129,9 +130,13 @@ function lifecycleWord(filter: LifecycleFilter | null) {
   return filter === "active" ? "active" : filter;
 }
 
-async function matchedBrandFor(supabase: Awaited<ReturnType<typeof createClient>>, normalizedMessage: string, contextBrandId?: string) {
+async function matchedBrandFor(supabase: Awaited<ReturnType<typeof createClient>>, normalizedMessage: string, contextBrandId?: string, brandText?: string) {
   const { data } = await supabase.from("brands").select("id,name").returns<BrandRow[]>();
   const brands = data ?? [];
+  if (brandText) {
+    const matches = brands.filter((brand) => messageMatchesName(brandText.toLowerCase(), brand.name));
+    return matches.length === 1 ? matches[0] : null;
+  }
   const textMatch = brands.find((brand) => messageMatchesName(normalizedMessage, brand.name));
   if (textMatch) return textMatch;
   if (contextBrandId) return brands.find((brand) => brand.id === contextBrandId) ?? null;
@@ -142,12 +147,13 @@ async function matchedCategoryFor(
   supabase: Awaited<ReturnType<typeof createClient>>,
   normalizedMessage: string,
   brandId: string | null,
+  categoryText?: string,
 ) {
   let query = supabase.from("product_categories").select("id,brand_id,name,parent_id").eq("is_active", true);
   if (brandId) query = query.eq("brand_id", brandId);
   const { data } = await query.returns<CategoryRow[]>();
   const categories = data ?? [];
-  const matches = categories.filter((category) => messageMatchesName(normalizedMessage, category.name));
+  const matches = categories.filter((category) => messageMatchesName((categoryText ?? normalizedMessage).toLowerCase(), category.name));
   return matches.length ? matches : null;
 }
 
@@ -166,10 +172,11 @@ async function fetchBroadProductResult(
   message: string,
   context: NoaPageContext,
   kind: "count" | "list",
+  product?: NoaSemanticProduct,
 ): Promise<NoaCapabilityResult> {
   const normalizedMessage = message.toLowerCase();
-  const brand = await matchedBrandFor(supabase, normalizedMessage, context.brandId);
-  const categories = await matchedCategoryFor(supabase, normalizedMessage, brand?.id ?? null);
+  const brand = await matchedBrandFor(supabase, normalizedMessage, context.brandId, product?.brandText);
+  const categories = await matchedCategoryFor(supabase, normalizedMessage, brand?.id ?? null, product?.categoryText);
   const lifecycle = detectLifecycleFilter(normalizedMessage);
 
   let countQuery = supabase.from("product_templates").select("id", { count: "exact", head: true });
@@ -281,6 +288,7 @@ const UNAUTHORIZED_RESULT: NoaCapabilityResult = {
 export async function fetchNoaProductCapability(
   message: string,
   context: NoaPageContext,
+  options?: { product?: NoaSemanticProduct },
 ): Promise<NoaCapabilityResult> {
   // Defense-in-depth: the API route already confirmed the caller is signed in, but the product
   // domain's own authorization is re-checked here independently, exactly like the real Product
@@ -300,7 +308,7 @@ export async function fetchNoaProductCapability(
   // current-record context (see quotationQuestionKind() in noa-quotation-capability.server.ts).
   const questionKind = productQuestionKind(message);
   if (questionKind !== "detail") {
-    return fetchBroadProductResult(supabase, message, context, questionKind);
+    return fetchBroadProductResult(supabase, message, context, questionKind, options?.product);
   }
 
   if (context.productTemplateId) {
@@ -324,7 +332,7 @@ export async function fetchNoaProductCapability(
     }
   }
 
-  const searchTerm = extractSearchTerm(message);
+  const searchTerm = options?.product?.productText ?? extractSearchTerm(message);
   if (!searchTerm) {
     return {
       message: "I couldn't understand that ProjectWorkflow request. Try asking about a product, quotation, or price status.",
@@ -340,7 +348,7 @@ export async function fetchNoaProductCapability(
     .or(
       `template_name.ilike.%${escapedTerm}%,internal_selection_name.ilike.%${escapedTerm}%,template_code.ilike.%${escapedTerm}%,item_code.ilike.%${escapedTerm}%,supplier_name.ilike.%${escapedTerm}%`,
     )
-    .limit(MAX_RESULTS)
+    .limit(options?.product?.productText ? 2 : MAX_RESULTS)
     .returns<TemplateRow[]>();
 
   if (!templates?.length) {
@@ -348,6 +356,14 @@ export async function fetchNoaProductCapability(
       message: "I couldn't find a matching product in the Product Library.",
       ok: false,
       reason: "not_found",
+    };
+  }
+
+  if (options?.product?.productText && templates.length > 1) {
+    return {
+      message: "I found more than one matching product in the Product Library. Please provide a more specific product name or code.",
+      ok: false,
+      reason: "ambiguous",
     };
   }
 

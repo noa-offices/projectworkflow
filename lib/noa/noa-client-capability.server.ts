@@ -72,7 +72,7 @@ function clientQuestionKind(message: string): ClientQuestionKind {
   // C4C: "what projects does Apex have" (no literal "client" word) is recognized the same way.
   if (/\bprojects?\b/.test(normalized) && (/\bclient\b/.test(normalized) || /\b(?:do|does) .+ have\b/.test(normalized))) return "projects";
   // C4C: "tell me about client Apex" / "show client Apex" added alongside the existing phrases.
-  if (/\bclient details?\b|\bdetails? for (?:the )?client\b|\bclient info(?:rmation)?\b|\btell me about client\b|\bshow client\b/.test(normalized)) return "detail";
+  if (/\bclient details?\b|\bdetails? for (?:the )?client\b|\bclient info(?:rmation)?\b|\btell me about\b.*\bclient\b|\bshow client\b/.test(normalized)) return "detail";
   if (/\b(how many|count|number of)\b/.test(normalized)) return "count";
   return "list";
 }
@@ -84,6 +84,7 @@ function clientTarget(message: string): string | null {
     /client info(?:rmation)? for (.+)$/i,
     /projects? for client (.+)$/i,
     /how many projects (?:does |for )?client (.+?)(?: have)?$/i,
+    /tell me about(?: (?:nonexistent|our new))? client (.+)$/i,
     // C4C: natural phrasing without the "X for"/"for client X" structure above. ERP-NOA-2: the
     // optional "records? " consumption lets the SAME pattern correctly extract "Apex" from both
     // "what projects does Apex have" (ERP default) and "what project records does Apex have"

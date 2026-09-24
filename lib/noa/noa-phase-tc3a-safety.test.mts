@@ -110,3 +110,13 @@ test("TC-3A.4 routes generic tell-about Client requests before bare Quotation cl
   assert.ok(router.includes('if (genericClientTellAbout || CLIENT_INTENT_PATTERNS.some((pattern) => pattern.test(normalized)))'));
   assert.ok(client.includes("I couldn't find that client record."));
 });
+
+test("TC-3A.5 keeps natural tell-about Client requests on the existing detail/not-found path", () => {
+  assert.ok(client.includes('\\btell me about\\b.*\\bclient\\b'));
+  assert.ok(client.includes('/tell me about(?: (?:nonexistent|our new))? client (.+)$/i'));
+  assert.ok(client.includes('if (kind === "detail" || kind === "projects")'));
+  assert.ok(client.includes("const client = await findClient(supabase, target);"));
+  assert.ok(client.includes("I couldn't find that client record."));
+  assert.ok(client.includes('if (/\\b(how many|count|number of)\\b/.test(normalized)) return "count";'));
+  assert.ok(client.includes('return "list";'));
+});
