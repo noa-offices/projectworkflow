@@ -444,7 +444,9 @@ export function classifyNoaRoute(message: string, context: NoaPageContext): NoaR
   // "client" is also a Quotation keyword just below ("quotations for client X" / "quotation
   // total for client X" must keep routing to Quotation exactly as before). Only phrasing that
   // unambiguously asks about the Client record itself resolves here.
-  if (CLIENT_INTENT_PATTERNS.some((pattern) => pattern.test(normalized))) {
+  const genericClientTellAbout = /\btell me about\b.*\bclient\b/.test(normalized) &&
+    !/\b(?:quotation|quote|quoted|quote number|line item|project quotation)\b/.test(normalized);
+  if (genericClientTellAbout || CLIENT_INTENT_PATTERNS.some((pattern) => pattern.test(normalized))) {
     return "Client";
   }
 

@@ -103,3 +103,10 @@ test("TC-3A.3 keeps explicit Client routes ahead of Quotation's bare client keyw
   assert.ok(router.includes('/\\bshow client\\b/'));
   assert.ok(client.includes("I couldn't find that client record."));
 });
+
+test("TC-3A.4 routes generic tell-about Client requests before bare Quotation client routing", () => {
+  assert.ok(router.includes('const genericClientTellAbout = /\\btell me about\\b.*\\bclient\\b/.test(normalized)'));
+  assert.ok(router.includes('! /\\b(?:quotation|quote|quoted|quote number|line item|project quotation)\\b/.test(normalized)'.replace("! ", "!")));
+  assert.ok(router.includes('if (genericClientTellAbout || CLIENT_INTENT_PATTERNS.some((pattern) => pattern.test(normalized)))'));
+  assert.ok(client.includes("I couldn't find that client record."));
+});
