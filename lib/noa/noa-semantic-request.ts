@@ -37,6 +37,16 @@ export type NoaSemanticEntityReference = {
   fromPreviousResult?: boolean;
 };
 
+export type NoaSemanticQuotation = {
+  quotationNo: string;
+  request: "detail" | "total" | "status";
+};
+
+export type NoaSemanticEntity =
+  | { type: "unknown"; text: string }
+  | { type: "project_file"; text: string }
+  | { type: "client"; text: string };
+
 export type NoaSemanticRequest = {
   domain: NoaDomain | "Unclear";
   intent: NoaSemanticIntent;
@@ -45,6 +55,8 @@ export type NoaSemanticRequest = {
   entityReference?: NoaSemanticEntityReference;
   metric?: string;
   followUp?: boolean;
+  quotation?: NoaSemanticQuotation;
+  entity?: NoaSemanticEntity;
 };
 
 // The safe, deterministic result for any extraction failure (malformed provider output, schema
@@ -98,6 +110,24 @@ function isNoaSemanticEntityReferenceShape(value: unknown): value is NoaSemantic
   return true;
 }
 
+function isNoaSemanticQuotationShape(value: unknown): value is NoaSemanticQuotation {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.quotationNo === "string"
+    && candidate.quotationNo.trim().length > 0
+    && candidate.quotationNo.trim().length <= 80
+    && (candidate.request === "detail" || candidate.request === "total" || candidate.request === "status");
+}
+
+function isNoaSemanticEntityShape(value: unknown): value is NoaSemanticEntity {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (candidate.type === "unknown" || candidate.type === "project_file" || candidate.type === "client")
+    && typeof candidate.text === "string"
+    && candidate.text.trim().length > 0
+    && candidate.text.trim().length <= 160;
+}
+
 // Strict, closed-shape validation for untrusted provider JSON - anything that doesn't fully
 // conform is not a NoaSemanticRequest at all (the caller should treat it as UNCLEAR_SEMANTIC_REQUEST
 // rather than trusting a partially-matching object).
@@ -112,6 +142,8 @@ export function isNoaSemanticRequest(value: unknown): value is NoaSemanticReques
   if (candidate.entityReference !== undefined && !isNoaSemanticEntityReferenceShape(candidate.entityReference)) return false;
   if (candidate.metric !== undefined && typeof candidate.metric !== "string") return false;
   if (candidate.followUp !== undefined && typeof candidate.followUp !== "boolean") return false;
+  if (candidate.quotation !== undefined && !isNoaSemanticQuotationShape(candidate.quotation)) return false;
+  if (candidate.entity !== undefined && !isNoaSemanticEntityShape(candidate.entity)) return false;
 
   return true;
 }

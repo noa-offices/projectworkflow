@@ -1,19 +1,29 @@
 import "server-only";
 
 import { requireQuotationActionUser } from "@/lib/auth";
+import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import type { NoaSemanticQuotation } from "@/lib/noa/noa-semantic-request";
 import type { NoaCapabilityResult, NoaPageContext } from "@/lib/noa/noa-types";
 import { createClient } from "@/lib/supabase/server";
 
 const MAX_ITEM_ROWS = 8;
 const MAX_QUOTATION_ROWS = 10;
 
-// Fixed, narrow column list only.
+// Fixed, narrow column list only. ERP-NOA-1 (PART 6): `legacy_reference` and `layout_settings`
+// were added so the single-quotation detail answer can compute the current ERP `reference`
+// fallback chain (see quotationDisplayReference()) instead of relying on the standalone linked
+// Project's name alone. `layout_settings` itself is never included in the returned data - only
+// the derived `reference` string (via the existing, reused projectFileFromLayoutSettings()) is.
 const QUOTATION_SELECT =
-  "id,quotation_no,title,client_id,project_id,status,quotation_date,currency,grand_total,revision_no,option_no,is_active";
+  "id,quotation_no,title,client_id,project_id,status,quotation_date,currency,grand_total,revision_no,option_no,is_active,legacy_reference,layout_settings";
 
 // Fixed, narrow fields for read-only status summaries and lists.  These intentionally do not
-// include quotation_items or any live Product Library fields.
-const QUOTATION_STATUS_SELECT = "id,quotation_no,status,created_at,client_id,project_id";
+// include quotation_items or any live Product Library fields. ERP-NOA-3 (PART 2): `title`,
+// `legacy_reference`, `layout_settings` were added so the list path's `project` field can use the
+// same current ERP reference fallback chain as the single-quotation detail answer, instead of the
+// standalone linked Project's name alone. `layout_settings` itself is never included in the
+// returned row data - only the derived reference string (via quotationDisplayReference()) is.
+const QUOTATION_STATUS_SELECT = "id,quotation_no,title,status,created_at,client_id,project_id,legacy_reference,layout_settings";
 
 // Deliberately snapshot columns only (item_*_snapshot / model_snapshot / etc.), never live
 // product_templates fields - historical quotation questions must answer from what was saved with
@@ -27,6 +37,8 @@ type QuotationRow = {
   grand_total: number | null;
   id: string;
   is_active: boolean;
+  layout_settings: unknown;
+  legacy_reference: string | null;
   option_no: number | null;
   project_id: string | null;
   quotation_date: string | null;
@@ -40,9 +52,12 @@ type QuotationStatusRow = {
   client_id: string | null;
   created_at: string | null;
   id: string;
+  layout_settings: unknown;
+  legacy_reference: string | null;
   project_id: string | null;
   quotation_no: string | null;
   status: string | null;
+  title: string | null;
 };
 
 type ItemRow = {
@@ -91,7 +106,33 @@ function extractQuotationIdentifier(message: string): string | null {
   return match ? match[0] : null;
 }
 
+// A QN identifier is sufficiently specific to bypass AI classification. It deliberately starts
+// with the existing permissive parser, then narrows only the deterministic fast-path shape.
+export function quotationIdentifierCount(message: string): number {
+  return [...message.matchAll(/\bQN-\d{3,}(?:-\d+)*\b/gi)].length;
+}
+
+export function quotationStructuredRequest(message: string): NoaSemanticQuotation | undefined {
+  if (quotationIdentifierCount(message) !== 1) return undefined;
+  const quotationNo = extractQuotationIdentifier(message);
+  if (!quotationNo || !/^QN-\d{3,}(?:-\d+)*$/i.test(quotationNo)) return undefined;
+
+  const normalized = message.toLowerCase();
+  return {
+    quotationNo,
+    request: /\b(worth|value|total)\b/.test(normalized)
+      ? "total"
+      : /\bstatus\b/.test(normalized)
+        ? "status"
+        : "detail",
+  };
+}
+
 type QuotationQuestionKind = "count" | "list" | "summary" | "detail";
+
+type NoaQuotationCapabilityOptions = {
+  quotation?: NoaSemanticQuotation;
+};
 
 function b2Target(message: string, relation: "client" | "project") {
   const match = message.match(new RegExp(`\\b${relation}\\s+([^?.,]+)`, "i"));
@@ -166,6 +207,7 @@ function normalizeQuotationStatusIntent(message: string, availableStatuses: stri
 export async function fetchNoaQuotationCapability(
   message: string,
   context: NoaPageContext,
+  options: NoaQuotationCapabilityOptions = {},
 ): Promise<NoaCapabilityResult> {
   // Defense-in-depth: independently re-checked here, not trusted from the route-level auth check.
   try {
@@ -176,6 +218,11 @@ export async function fetchNoaQuotationCapability(
   }
 
   const supabase = await createClient();
+
+  if (options.quotation) {
+    const quotation = await quotationForIdentifier(supabase, options.quotation.quotationNo);
+    return quotation ? buildQuotationAnswer(supabase, quotation, options.quotation.request) : NOT_FOUND_RESULT;
+  }
 
   const broadAnswer = await buildBroadQuotationAnswer(supabase, message, context);
   if (broadAnswer) return broadAnswer;
@@ -210,13 +257,7 @@ export async function fetchNoaQuotationCapability(
     };
   }
 
-  const { data: quotation } = await supabase
-    .from("quotations")
-    .select(QUOTATION_SELECT)
-    .ilike("quotation_no", `%${identifier}%`)
-    .order("quotation_date", { ascending: false })
-    .limit(1)
-    .maybeSingle<QuotationRow>();
+  const quotation = await quotationForIdentifier(supabase, identifier);
 
   if (!quotation) {
     return NOT_FOUND_RESULT;
@@ -311,14 +352,20 @@ async function buildQuotationStatusAnswer(
     : "";
 
   if (questionKind === "list") {
-    const rows = await Promise.all(matching.slice(0, MAX_QUOTATION_ROWS).map(async (quotation) => ({
-      id: quotation.id,
-      quotationNo: quotation.quotation_no,
-      status: quotation.status,
-      client: quotation.client_id ? await clientNameFor(supabase, quotation.client_id) : null,
-      project: quotation.project_id ? await projectNameFor(supabase, quotation.project_id) : null,
-      createdAt: quotation.created_at,
-    })));
+    // ERP-NOA-3 (PART 2): `project` keeps its existing field name (PART 3 backward compatibility)
+    // but is now populated via the same current ERP reference fallback chain the single-quotation
+    // detail answer already uses - never standalone `projects.project_name` alone.
+    const rows = await Promise.all(matching.slice(0, MAX_QUOTATION_ROWS).map(async (quotation) => {
+      const projectName = quotation.project_id ? await projectNameFor(supabase, quotation.project_id) : null;
+      return {
+        id: quotation.id,
+        quotationNo: quotation.quotation_no,
+        status: quotation.status,
+        client: quotation.client_id ? await clientNameFor(supabase, quotation.client_id) : null,
+        project: quotationDisplayReference(quotation, projectName) || null,
+        createdAt: quotation.created_at,
+      };
+    }));
     const totalMatching = matching.length;
     return {
       data: {
@@ -370,9 +417,33 @@ async function buildQuotationStatusAnswer(
   };
 }
 
+// ERP-NOA-1 (PART 6): the current ERP display-reference fallback chain, reusing the SAME
+// projectFileFromLayoutSettings() every other caller uses (no new parser). Priority: an actual
+// confirmed ERP Project File's own reference, then the quotation's own legacy_reference/title
+// columns, then the linked standalone Project Record's name (now last, not first - PART 1/2's
+// "standalone is secondary" finding), then the quotation number itself as the final fallback.
+// quotation_no itself is never touched by this - it remains the one and only identifier.
+// ERP-NOA-3: narrowed to the 4 fields this function actually reads, so the SAME fallback chain
+// serves both the single-quotation detail answer (QuotationRow) and the list path's rows
+// (QuotationStatusRow) - one reference implementation, never a duplicate.
+type QuotationReferenceSource = { layout_settings: unknown; legacy_reference: string | null; quotation_no: string | null; title: string | null };
+
+function quotationDisplayReference(quotation: QuotationReferenceSource, projectName: string | null): string {
+  const projectFileReference = projectFileFromLayoutSettings(quotation.layout_settings)?.reference?.trim() || null;
+  return (
+    projectFileReference ||
+    quotation.legacy_reference?.trim() ||
+    quotation.title?.trim() ||
+    projectName ||
+    quotation.quotation_no ||
+    ""
+  );
+}
+
 async function buildQuotationAnswer(
   supabase: Awaited<ReturnType<typeof createClient>>,
   quotation: QuotationRow,
+  requestedField: NoaSemanticQuotation["request"] = "detail",
 ): Promise<NoaCapabilityResult> {
   const [clientName, projectName, items, itemCount] = await Promise.all([
     quotation.client_id ? clientNameFor(supabase, quotation.client_id) : Promise.resolve(null),
@@ -387,7 +458,9 @@ async function buildQuotationAnswer(
     data: {
       id: quotation.id,
       quotationNo: quotation.quotation_no,
+      requestedField,
       title: quotation.title,
+      reference: quotationDisplayReference(quotation, projectName),
       client: clientName,
       project: projectName,
       status: quotation.status,
@@ -422,6 +495,20 @@ async function buildQuotationAnswer(
     ok: true,
     sources: [{ label, recordId: quotation.id, type: "quotation" }],
   };
+}
+
+async function quotationForIdentifier(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  quotationNo: string,
+) {
+  const { data } = await supabase
+    .from("quotations")
+    .select(QUOTATION_SELECT)
+    .ilike("quotation_no", `%${quotationNo}%`)
+    .order("quotation_date", { ascending: false })
+    .limit(1)
+    .maybeSingle<QuotationRow>();
+  return data;
 }
 
 async function clientNameFor(supabase: Awaited<ReturnType<typeof createClient>>, clientId: string) {

@@ -14,8 +14,12 @@ const conversationReferenceSource = readFileSync("lib/noa/noa-conversation-refer
 // ── Project semantic wiring / target recognition (tests 1-5) ───────────────────
 
 test("projectTarget recognizes the C4B natural phrasings without touching the query/select/auth logic", () => {
-  assert.ok(projectCapabilitySource.includes("/tell me about (?:project )?(.+)$/i"));
-  assert.ok(projectCapabilitySource.includes("/what status is (?:project )?(.+?)\\??$/i"));
+  // ERP-NOA-1 widened these two literal patterns to also optionally consume "record(s) " (so the
+  // same pattern serves both the default ERP path and the explicit "project record X" path) -
+  // that phase's own safety test covers the exact new literal; this older C4B check only confirms
+  // the underlying phrase recognition ("tell me about"/"what status is") still exists at all.
+  assert.ok(projectCapabilitySource.includes("tell me about (?:project"));
+  assert.ok(projectCapabilitySource.includes("what status is (?:project"));
   assert.ok(projectCapabilitySource.includes("PROJECT_SELECT = \"id,client_id,project_name,project_number,project_code,location,consultant,contractor,project_status,is_active,created_at\";"));
 });
 
@@ -38,9 +42,12 @@ test("the Project reroute only ever fires for the Help/unresolved fallback path"
 
 // ── Follow-up behavior (tests 6-8) ──────────────────────────────────────────────
 
+// ERP-NOA-2 renamed the end-of-function marker comment (now "C4B/ERP-NOA-2: builds a bounded
+// Project conversationReference...") when it extended resolveProjectFollowUp to also recognize a
+// "project_file" entity type - these two slice boundaries are updated to match.
 test("resolveProjectFollowUp only fires against a Project-domain conversationReference carrying a project label", () => {
   const fnStart = orchestratorSource.indexOf("function resolveProjectFollowUp");
-  const fnEnd = orchestratorSource.indexOf("\n// C4B: builds a bounded Project conversationReference", fnStart);
+  const fnEnd = orchestratorSource.indexOf("\n// C4B/ERP-NOA-2: builds a bounded Project conversationReference", fnStart);
   const fnBody = orchestratorSource.slice(fnStart, fnEnd);
   assert.ok(fnBody.includes('if (reference.domain !== "Project") return undefined;'));
   assert.ok(fnBody.includes('entity.type === "project"'));
@@ -48,7 +55,7 @@ test("resolveProjectFollowUp only fires against a Project-domain conversationRef
 
 test("a pronoun follow-up rewrites the message with the inherited project label, then re-dispatches through the unchanged capability - never answering from stale data directly", () => {
   const fnStart = orchestratorSource.indexOf("function resolveProjectFollowUp");
-  const fnEnd = orchestratorSource.indexOf("\n// C4B: builds a bounded Project conversationReference", fnStart);
+  const fnEnd = orchestratorSource.indexOf("\n// C4B/ERP-NOA-2: builds a bounded Project conversationReference", fnStart);
   const fnBody = orchestratorSource.slice(fnStart, fnEnd);
   assert.ok(fnBody.includes("rewrittenMessage"));
   assert.ok(!/\bstatus\b|\bclient\b/i.test(fnBody.replace(/\/\/.*$/gm, "")), "resolver must not reference/reuse status or client facts");

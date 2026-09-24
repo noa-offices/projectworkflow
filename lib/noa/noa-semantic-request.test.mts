@@ -19,7 +19,7 @@ test("NoaSemanticRequest carries no business-fact fields (counts/prices/statuses
   // Only the documented keys are ever meaningful - a business field slipping in would still be
   // "valid" per isNoaSemanticRequest (it doesn't reject unknown keys), so this test instead
   // asserts the known key set itself never includes anything business-shaped.
-  const allowedKeys = new Set(["domain", "intent", "subject", "period", "entityReference", "metric", "followUp"]);
+  const allowedKeys = new Set(["domain", "intent", "subject", "period", "entityReference", "metric", "followUp", "quotation", "entity"]);
   for (const key of Object.keys(value)) {
     assert.ok(allowedKeys.has(key), `unexpected field: ${key}`);
   }
@@ -44,6 +44,32 @@ test("accepts a full valid shape", () => {
     metric: "active_time",
     followUp: true,
   }));
+});
+
+test("accepts only the bounded Quotation tool arguments", () => {
+  assert.ok(isNoaSemanticRequest({
+    domain: "Quotation",
+    intent: "unsupported",
+    quotation: { quotationNo: "QN-0005-001", request: "total" },
+  }));
+});
+
+test("rejects malformed Quotation tool arguments", () => {
+  for (const quotation of [
+    { quotationNo: "", request: "detail" },
+    { quotationNo: "QN-0005-001", request: "price" },
+    { quotationNo: 5, request: "status" },
+    { quotationNo: "QN-0005-001" },
+  ]) {
+    assert.ok(!isNoaSemanticRequest({ domain: "Quotation", intent: "unsupported", quotation }));
+  }
+});
+
+test("accepts only bounded Project File and client entity candidates", () => {
+  assert.ok(isNoaSemanticRequest({ domain: "Project", intent: "unsupported", entity: { type: "project_file", text: "Galleria Mall Boutique Refurbishment" } }));
+  assert.ok(isNoaSemanticRequest({ domain: "Client", intent: "unsupported", entity: { type: "client", text: "Apex Luxury Retail LLC" } }));
+  assert.ok(!isNoaSemanticRequest({ domain: "Project", intent: "unsupported", entity: { type: "project", text: "Galleria" } }));
+  assert.ok(!isNoaSemanticRequest({ domain: "Client", intent: "unsupported", entity: { type: "client", text: "" } }));
 });
 
 test("rejects a non-object value", () => {

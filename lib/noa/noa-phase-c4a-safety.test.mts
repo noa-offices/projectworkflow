@@ -14,13 +14,13 @@ const conversationReferenceSource = readFileSync("lib/noa/noa-conversation-refer
 
 // ── Quotation semantic wiring (tests 1-5: routing, no business-logic change) ───
 
-test("Quotation business logic was not touched - the capability file is byte-identical in scope to before C4A (auth/query/kind logic unchanged)", () => {
+test("Quotation structured input is additive and keeps the existing auth/query/kind logic", () => {
   // C4A's whole design point: the Quotation capability already re-derives list/count/detail/
   // total/status/comparison/client-relation from raw message text once it receives the message,
   // so semantic wiring only needed to fix ROUTING (getting domain=Quotation for a bare-identifier
   // message with no domain keyword) - never touching quotation business rules.
   assert.ok(quotationCapabilitySource.includes("export async function fetchNoaQuotationCapability("));
-  assert.ok(quotationCapabilitySource.includes("message: string,\n  context: NoaPageContext,\n): Promise<NoaCapabilityResult> {"));
+  assert.ok(quotationCapabilitySource.includes("message: string,\n  context: NoaPageContext,\n  options: NoaQuotationCapabilityOptions = {},"));
   assert.ok(!quotationCapabilitySource.includes("semanticRequest"));
   assert.ok(!quotationCapabilitySource.includes("conversationReference"));
 });
@@ -32,7 +32,12 @@ test("no new Quotation semantic intent enum was introduced - C4A reroutes on dom
 });
 
 test("a confident Quotation-domain classification reroutes an otherwise-unresolved Help message - no intent gate, since the capability re-derives its own kind from message text", () => {
-  assert.match(orchestratorSource, /if \(!semanticRequest && extracted\.domain === "Quotation"\) \{\s*\n\s*semanticRequest = \{ domain: "Quotation", intent: extracted\.intent \};/);
+  const start = orchestratorSource.indexOf('if (!semanticRequest && extracted.domain === "Quotation")');
+  const end = orchestratorSource.indexOf("\n    }\n\n    // C4B:", start);
+  const block = orchestratorSource.slice(start, end);
+  assert.ok(block.includes('semanticRequest = {'));
+  assert.ok(block.includes('domain: "Quotation"'));
+  assert.ok(block.includes("intent: extracted.intent"));
 });
 
 test("the Quotation reroute only ever fires for the Help/unresolved fallback path, never for an already-clear domain (Product/Price/Project/Client/Procurement/Admin/Insights)", () => {
@@ -93,17 +98,16 @@ test("the Quotation reroute check never reads conversationReference at all - it 
 
 // ── Test 9: malformed/absent reference leaves existing Quotation behavior intact ─
 
-test("Quotation dispatch itself is unchanged - it never receives or requires a conversationReference/semanticRequest argument", () => {
-  assert.match(orchestratorSource, /: domain === "Quotation"\s*\n\s*\? await fetchNoaQuotationCapability\(request\.message, request\.context\)/);
+test("Quotation dispatch receives only the optional structured quotation input", () => {
+  assert.match(orchestratorSource, /: domain === "Quotation"\s*\n\s*\? await fetchNoaQuotationCapability\(request\.message, request\.context, \{/);
+  assert.ok(orchestratorSource.includes("quotation: deterministicQuotation ?? (semanticRequest?.domain === \"Quotation\" ? semanticRequest.quotation : undefined)"));
 });
 
 // ── Security preservation ───────────────────────────────────────────────────────
 
-test("Quotation authorization is untouched: requireQuotationActionUser() remains the single auth gate, unconditional and independent of any semantic/reference input", () => {
+test("Quotation authorization is untouched: requireQuotationActionUser() remains the single auth gate", () => {
   assert.ok(quotationCapabilitySource.includes("await requireQuotationActionUser();"));
   const authIndex = quotationCapabilitySource.indexOf("await requireQuotationActionUser();");
-  const semanticMention = quotationCapabilitySource.indexOf("semantic");
-  assert.ok(semanticMention === -1, "the capability must not reference 'semantic' anywhere - auth/logic stays fully independent of C4A");
   assert.ok(authIndex >= 0);
 });
 

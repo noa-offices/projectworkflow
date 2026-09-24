@@ -23,7 +23,9 @@ domain: the ProjectWorkflow area the message is about, or "Unclear" if none of t
 intent: "recorded_activity" for what-did-I/they-work-on questions, "activity_time" for how-long/duration/active-time questions, "recent_presence" for who-is-online/active-now questions, "follow_up" for a short reference back to a prior answer (e.g. "which one", "which quotation"), otherwise "unsupported".
 subject: who the question is about - self (I/me/my), named_user (give the exact name as written), or team (asking about other people in general, e.g. "who is online").
 period: today/yesterday/this_week/last_7_days/this_month only if a time period is actually mentioned.
-entityReference: only for a follow-up referring back to something already discussed - type (e.g. "quotation") and fromPreviousResult true.`;
+entityReference: only for a follow-up referring back to something already discussed - type (e.g. "quotation") and fromPreviousResult true.
+For a Quotation request with a direct QN-... identifier, include quotation with the exact quotationNo and request: "detail", "total", or "status". QN-... identifiers are quotation numbers.
+For a likely Project File name/reference or client name, include entity with only the candidate text from the message. Use type "project_file" or "client" only as a hint when wording is explicit; otherwise use "unknown". Do not decide whether a candidate exists.`;
 
 const schema = {
   type: "object",
@@ -59,6 +61,24 @@ const schema = {
         type: { type: "string", maxLength: 40 },
         value: { type: "string", maxLength: 80 },
         fromPreviousResult: { type: "boolean" },
+      },
+    },
+    quotation: {
+      type: "object",
+      additionalProperties: false,
+      required: ["quotationNo", "request"],
+      properties: {
+        quotationNo: { type: "string", maxLength: 80 },
+        request: { type: "string", enum: ["detail", "total", "status"] },
+      },
+    },
+    entity: {
+      type: "object",
+      additionalProperties: false,
+      required: ["type", "text"],
+      properties: {
+        type: { type: "string", enum: ["unknown", "project_file", "client"] },
+        text: { type: "string", maxLength: 160 },
       },
     },
     metric: { type: "string", maxLength: 40 },

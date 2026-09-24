@@ -1,11 +1,20 @@
 import "server-only";
 
 import { requireActiveUser } from "@/lib/auth";
+import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
+import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { createClient } from "@/lib/supabase/server";
+import type { NoaSemanticEntity } from "./noa-semantic-request";
 import type { NoaCapabilityResult, NoaPageContext } from "./noa-types";
 
 const MAX_CLIENT_ROWS = 20;
 const MAX_CLIENT_PROJECT_ROWS = 10;
+// ERP-NOA-2: bounded scan of this client's own quotations only (never unbounded), matching the
+// same "bounded candidate rows" principle Project's own PROJECT_FILE_SCAN_LIMIT uses.
+const CLIENT_PROJECT_FILE_SCAN_LIMIT = 200;
+// ERP-NOA-2 (PART 4): explicit wording required to reach the older standalone `projects` table
+// for a client's projects - generic "projects" now means ERP Project Files (PART 1).
+const CLIENT_PROJECT_RECORD_PATTERN = /\bproject records?\b/i;
 
 // Identity/lifecycle fields only - PART 5/12: contact fields that DO exist on this table
 // (contact_person, email, phone, website, address, city, country, trn, notes - confirmed via
@@ -52,6 +61,7 @@ function isNextRedirectError(error: unknown): boolean {
 }
 
 type ClientQuestionKind = "count" | "detail" | "list" | "projects";
+type NoaClientCapabilityOptions = { entity?: NoaSemanticEntity & { type: "client" } };
 
 // PART 3: deterministic classification only (no LLM), mirroring productQuestionKind()/
 // quotationQuestionKind()/the Project capability's own question detection.
@@ -74,9 +84,12 @@ function clientTarget(message: string): string | null {
     /client info(?:rmation)? for (.+)$/i,
     /projects? for client (.+)$/i,
     /how many projects (?:does |for )?client (.+?)(?: have)?$/i,
-    // C4C: natural phrasing without the "X for"/"for client X" structure above.
+    // C4C: natural phrasing without the "X for"/"for client X" structure above. ERP-NOA-2: the
+    // optional "records? " consumption lets the SAME pattern correctly extract "Apex" from both
+    // "what projects does Apex have" (ERP default) and "what project records does Apex have"
+    // (explicit standalone path).
     /(?:tell me about|show) client (.+)$/i,
-    /projects? (?:do|does) (?:client )?(.+?) have\b/i,
+    /projects?(?: records?)? (?:do|does) (?:client )?(.+?) have\b/i,
   ];
   for (const pattern of patterns) {
     const target = message.match(pattern)?.[1]?.trim();
@@ -124,18 +137,40 @@ async function findClient(
   return data ?? null;
 }
 
-// PART 8: a specific Client's detail summary may include project/quotation COUNTS, always
-// computed in code from a bounded head-only count query - never full rows handed to the model to
-// tally, and never a duplicate of the Quotation capability's own detail/list behavior.
+async function resolveClientEntity(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  candidate: string,
+): Promise<ClientRow | NoaCapabilityResult> {
+  const normalized = candidate.trim().toLowerCase();
+  const safeCandidate = candidate.replace(/[%_,().?!]/g, " ").trim();
+  if (!safeCandidate) return { message: `I couldn't find a matching client for "${candidate}".`, ok: false, reason: "not_found" };
+  const { data } = await supabase
+    .from("clients")
+    .select(CLIENT_SELECT)
+    .ilike("company_name", `%${safeCandidate}%`)
+    .limit(3)
+    .returns<ClientRow[]>();
+  const rows = data ?? [];
+  const exact = rows.filter((client) => client.company_name.trim().toLowerCase() === normalized);
+  const matches = exact.length > 0 ? exact : rows;
+  if (matches.length === 0) return { message: `I couldn't find a matching client for "${candidate}".`, ok: false, reason: "not_found" };
+  if (matches.length > 1) return { message: `I found more than one client matching "${candidate}". Please be more specific.`, ok: false, reason: "ambiguous" };
+  return matches[0];
+}
+
+// ERP-NOA-3 (PART 1): the detail summary's inline project count now uses the SAME bounded ERP
+// Project File source (clientProjectFiles(), below) that clientProjectFilesAnswer() already
+// established in ERP-NOA-2 - never a second parsing/query architecture. Quotation count is
+// untouched (still a direct, unrelated count query against `quotations`).
 async function clientDetailAnswer(
   supabase: Awaited<ReturnType<typeof createClient>>,
   client: ClientRow,
 ): Promise<NoaCapabilityResult> {
-  const [{ count: projectCount }, { count: quotationCount }] = await Promise.all([
-    supabase.from("projects").select("id", { count: "exact", head: true }).eq("client_id", client.id),
+  const [projectFiles, { count: quotationCount }] = await Promise.all([
+    clientProjectFiles(supabase, client.id),
     supabase.from("quotations").select("id", { count: "exact", head: true }).eq("client_id", client.id),
   ]);
-  const projects = projectCount ?? 0;
+  const projects = projectFiles.length;
   const quotations = quotationCount ?? 0;
 
   return {
@@ -144,7 +179,7 @@ async function clientDetailAnswer(
       kind: "client_record_detail",
       projectCount: projects,
       quotationCount: quotations,
-      deterministicText: `${client.company_name} is ${archiveState(client)}, with ${projects} project${projects === 1 ? "" : "s"} and ${quotations} quotation${quotations === 1 ? "" : "s"}.`,
+      deterministicText: `${client.company_name} is ${archiveState(client)}, with ${projects} Project File${projects === 1 ? "" : "s"} and ${quotations} quotation${quotations === 1 ? "" : "s"}.`,
     },
     ok: true,
     sources: [{ label: "Client · Checked client record", type: "client_record" }],
@@ -180,6 +215,82 @@ async function clientProjectsAnswer(
     },
     ok: true,
     sources: [{ label: "Client · Checked related projects", recordId: client.id, type: "client_project" }],
+  };
+}
+
+type ClientProjectFileStatus = "active" | "completed" | "cancelled";
+
+function safeClientProjectFileRow(order: {
+  clientName: string;
+  currency: string;
+  orderNo: string;
+  reference: string;
+  status: ClientProjectFileStatus;
+  total: number;
+}) {
+  return {
+    clientName: order.clientName,
+    currency: order.currency,
+    orderNo: order.orderNo,
+    reference: order.reference,
+    status: order.status,
+    total: order.total,
+  };
+}
+
+// ERP-NOA-2/3: the single bounded ERP Project File scan for one client - matches quotations by
+// the authoritative `client_id` FK (bounded, server-side, never an unbounded scan), then reuses
+// the SAME existing union every other current caller (Project capability, Procurement capability,
+// the Active Project Files page) uses to resolve each quotation's confirmed Project File - never a
+// new parser. Reused by BOTH clientProjectFilesAnswer() (below) and clientDetailAnswer()'s inline
+// count (ERP-NOA-3 PART 1), so there is only ever one parsing/query path for this relationship.
+async function clientProjectFiles(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clientId: string,
+): Promise<Array<{ clientName: string; currency: string; orderNo: string; reference: string; status: ClientProjectFileStatus; total: number }>> {
+  const { data } = await supabase
+    .from("quotations")
+    .select("layout_settings")
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: false })
+    .limit(CLIENT_PROJECT_FILE_SCAN_LIMIT)
+    .returns<Array<{ layout_settings: unknown }>>();
+
+  return (data ?? [])
+    .flatMap((quotation) => {
+      const order = projectFileFromLayoutSettings(quotation.layout_settings) ??
+        clientApprovalDraftFromLayoutSettings(quotation.layout_settings)?.confirmedOrder;
+      if (!order) return [];
+      const settings = quotation.layout_settings as Record<string, unknown> | null;
+      const completedAt = typeof settings?.projectCompletedAt === "string" ? settings.projectCompletedAt : null;
+      const cancelledAt = typeof settings?.projectCancelledAt === "string" ? settings.projectCancelledAt : null;
+      const status: ClientProjectFileStatus = cancelledAt ? "cancelled" : completedAt ? "completed" : "active";
+      return [{ clientName: order.clientName, currency: order.currency, orderNo: order.orderNo, reference: order.reference, status, total: order.total }];
+    })
+    .filter((order, index, all) => all.findIndex((candidate) => candidate.orderNo === order.orderNo) === index);
+}
+
+async function clientProjectFilesAnswer(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  client: ClientRow,
+  countOnly: boolean,
+): Promise<NoaCapabilityResult> {
+  const orders = await clientProjectFiles(supabase, client.id);
+  const totalMatching = orders.length;
+  const rows = countOnly ? [] : orders.slice(0, MAX_CLIENT_PROJECT_ROWS).map(safeClientProjectFileRow);
+
+  return {
+    data: {
+      client: safeClientRow(client),
+      kind: countOnly ? "client_project_file_count" : "client_project_file_list",
+      returnedCount: rows.length,
+      rows,
+      totalMatching,
+      truncatedCount: Math.max(0, totalMatching - rows.length),
+      deterministicText: `${client.company_name} has ${totalMatching} Project File${totalMatching === 1 ? "" : "s"}.${countOnly ? "" : ` Showing ${rows.length}.`}`,
+    },
+    ok: true,
+    sources: [{ label: "Client · Checked related Project Files", type: "client_project_file" }],
   };
 }
 
@@ -220,6 +331,7 @@ async function clientListAnswer(
 export async function fetchNoaClientCapability(
   message: string,
   _context: NoaPageContext,
+  options: NoaClientCapabilityOptions = {},
 ): Promise<NoaCapabilityResult> {
   try {
     await requireActiveUser();
@@ -230,6 +342,18 @@ export async function fetchNoaClientCapability(
 
   const supabase = await createClient();
   const kind = clientQuestionKind(message);
+
+  if (options.entity) {
+    const resolved = await resolveClientEntity(supabase, options.entity.text);
+    if ("ok" in resolved) return resolved;
+    if (kind === "projects") {
+      const countOnly = /\b(how many|count|number of)\b/.test(message.toLowerCase());
+      return CLIENT_PROJECT_RECORD_PATTERN.test(message)
+        ? clientProjectsAnswer(supabase, resolved, countOnly)
+        : clientProjectFilesAnswer(supabase, resolved, countOnly);
+    }
+    return clientDetailAnswer(supabase, resolved);
+  }
 
   if (kind === "detail" || kind === "projects") {
     const target = clientTarget(message);
@@ -242,9 +366,16 @@ export async function fetchNoaClientCapability(
       return { message: "I couldn't find that client record.", ok: false, reason: "not_found" };
     }
 
-    return kind === "projects"
-      ? clientProjectsAnswer(supabase, client, /\b(how many|count|number of)\b/.test(message.toLowerCase()))
-      : clientDetailAnswer(supabase, client);
+    if (kind === "projects") {
+      const countOnly = /\b(how many|count|number of)\b/.test(message.toLowerCase());
+      // ERP-NOA-2 (PART 1/4): generic "projects" now means ERP Project Files by default; explicit
+      // "project record(s)" wording is the only way back to the standalone `projects` table.
+      return CLIENT_PROJECT_RECORD_PATTERN.test(message)
+        ? clientProjectsAnswer(supabase, client, countOnly)
+        : clientProjectFilesAnswer(supabase, client, countOnly);
+    }
+
+    return clientDetailAnswer(supabase, client);
   }
 
   return clientListAnswer(supabase, message, kind === "count");

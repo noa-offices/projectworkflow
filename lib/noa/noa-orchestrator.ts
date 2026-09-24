@@ -11,8 +11,8 @@ import { fetchNoaInsightsCapability } from "@/lib/noa/noa-insights-capability.se
 import { fetchNoaPriceCapability } from "@/lib/noa/noa-price-capability.server";
 import { fetchNoaProcurementCapability } from "@/lib/noa/noa-procurement-capability.server";
 import { fetchNoaProductCapability } from "@/lib/noa/noa-product-capability.server";
-import { fetchNoaProjectCapability } from "@/lib/noa/noa-project-capability.server";
-import { fetchNoaQuotationCapability } from "@/lib/noa/noa-quotation-capability.server";
+import { fetchNoaProjectCapability, projectFileIdentifierCount, resolveNoaEntityCandidate } from "@/lib/noa/noa-project-capability.server";
+import { fetchNoaQuotationCapability, quotationIdentifierCount, quotationStructuredRequest } from "@/lib/noa/noa-quotation-capability.server";
 import { fetchNoaUserActivityCapability } from "@/lib/noa/noa-user-activity-capability.server";
 import type { NoaAnswer, NoaChatRequest } from "@/lib/noa/noa-types";
 import { runNoaProvider } from "@/lib/noa/noa-provider.server";
@@ -153,7 +153,11 @@ function resolveProjectFollowUp(
   extractedIntent: NoaSemanticIntent | undefined,
 ): { rewrittenMessage: string; semanticRequest: NoaSemanticRequest } | undefined {
   if (reference.domain !== "Project") return undefined;
-  const projectLabel = reference.entities?.find((entity) => entity.type === "project")?.label;
+  // ERP-NOA-2: an ERP Project File reference (type "project_file", the ERP-NOA-1 default path) is
+  // checked first; the explicit standalone Project Record shape (type "project") is still
+  // supported unchanged as a fallback.
+  const projectLabel = reference.entities?.find((entity) => entity.type === "project_file")?.label
+    ?? reference.entities?.find((entity) => entity.type === "project")?.label;
   if (!projectLabel) return undefined;
 
   const looksLikeFollowUp = extractedIntent === "follow_up" || PROJECT_PRONOUN_FOLLOW_UP_PATTERN.test(message);
@@ -170,13 +174,45 @@ function resolveProjectFollowUp(
   };
 }
 
-// C4B: builds a bounded Project conversationReference from THIS successful, already-authorized
-// capabilityData only - never from provider text. Reads only `project.projectName`/
-// `rows[].projectName`, the safe human-readable label every existing Project capability result
-// (detail/list/count) already returns - never a UUID, never a client id.
+// C4B/ERP-NOA-2: builds a bounded Project conversationReference from THIS successful,
+// already-authorized capabilityData only - never from provider text. Supports BOTH current
+// Project capability response shapes:
+//   A. ERP Project File (ERP-NOA-1's default path): `data.projectFile.orderNo` (detail) /
+//      `data.rows[].orderNo` (list) - checked first, since this is now the default "project"
+//      concept. Entities use type "project_file", preferring orderNo as the primary label and
+//      (for a single-result detail lookup) the human-readable `reference` as a secondary label.
+//   B. Standalone Project Record (explicit "project record" path, unchanged since C4B):
+//      `data.project.projectName` / `data.rows[].projectName`, entity type "project".
+// Never reads an id/UUID/client id either way.
 function buildProjectConversationReference(data: unknown): NoaConversationReference | undefined {
   const record = typeof data === "object" && data !== null ? (data as Record<string, unknown>) : null;
   if (!record) return undefined;
+
+  const orderNos: string[] = [];
+  const projectFile = record.projectFile;
+  if (projectFile && typeof projectFile === "object" && typeof (projectFile as Record<string, unknown>).orderNo === "string") {
+    const label = ((projectFile as Record<string, unknown>).orderNo as string).trim();
+    if (label) orderNos.push(label);
+  }
+  if (Array.isArray(record.rows)) {
+    for (const row of record.rows) {
+      if (row && typeof row === "object" && typeof (row as Record<string, unknown>).orderNo === "string") {
+        const label = ((row as Record<string, unknown>).orderNo as string).trim();
+        if (label) orderNos.push(label);
+      }
+    }
+  }
+  const uniqueOrderNos = Array.from(new Set(orderNos));
+  if (uniqueOrderNos.length > 0) {
+    const entities = uniqueOrderNos.map((label) => ({ label, type: "project_file" }));
+    if (uniqueOrderNos.length === 1 && projectFile && typeof projectFile === "object") {
+      const reference = (projectFile as Record<string, unknown>).reference;
+      if (typeof reference === "string" && reference.trim()) {
+        entities.push({ label: reference.trim(), type: "reference" });
+      }
+    }
+    return { domain: "Project", entities: boundConversationReferenceEntities(entities), intent: "project_lookup" };
+  }
 
   const labels: string[] = [];
   const project = record.project;
@@ -496,7 +532,16 @@ function buildQuotationConversationReference(data: unknown): NoaConversationRefe
 // capability or query runs - that's fully deterministic, in code, before the provider is invoked.
 export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAnswer> {
   const recordedQuotationFollowUpFrom = recordedQuotationFollowUpReference(request.message, request.recentMessages ?? []);
-  const route = recordedQuotationFollowUpFrom ? "UserActivity" : classifyNoaRoute(request.message, request.context);
+  const deterministicQuotation = quotationStructuredRequest(request.message);
+  const quotationIdentifierTotal = quotationIdentifierCount(request.message);
+  const projectFileIdentifierTotal = projectFileIdentifierCount(request.message);
+  const route = recordedQuotationFollowUpFrom
+    ? "UserActivity"
+    : quotationIdentifierTotal > 0
+      ? "Quotation"
+      : projectFileIdentifierTotal > 0
+        ? "Project"
+        : classifyNoaRoute(request.message, request.context);
 
   // NOA self/page-context questions ("where am I", "which page is this") are answered directly
   // from NoaPageContext - never a capability call, never the AI provider. Not exposed as a
@@ -539,6 +584,18 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
   if (!recordedQuotationFollowUpFrom && (route === "UserActivity" || route === "Help")) {
     const extracted = await extractNoaSemanticRequest({ context: request.context, message: request.message });
 
+    if (route === "Help" && extracted.entity?.type === "unknown") {
+      const resolved = await resolveNoaEntityCandidate(extracted.entity.text);
+      if (resolved.domain === "Project" || resolved.domain === "Client") {
+        semanticRequest = { domain: resolved.domain, entity: resolved.entity, intent: extracted.intent };
+      } else {
+        const message = resolved.domain === "ambiguous"
+          ? `I found both a Project File and a Client matching "${extracted.entity.text}". Which one do you mean?`
+          : `I couldn't find a matching Project File or client for "${extracted.entity.text}".`;
+        return { domain: "Help", sources: [], text: message };
+      }
+    }
+
     // C3: a follow-up-shaped message is only ever resolved against a valid UserActivity
     // conversationReference - never any other domain's stale reference (PART 9). Subject/period
     // still flow through the normal capability auth gate below; nothing here grants access.
@@ -563,7 +620,11 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
     // domain classification is enough to route there; the capability's own existing ambiguous/
     // not-found handling stays the safety net if the message turns out not to be answerable.
     if (!semanticRequest && extracted.domain === "Quotation") {
-      semanticRequest = { domain: "Quotation", intent: extracted.intent };
+      semanticRequest = {
+        domain: "Quotation",
+        intent: extracted.intent,
+        ...(extracted.quotation ? { quotation: extracted.quotation } : {}),
+      };
     }
 
     // C4B: a pronoun-shaped Project follow-up ("what status is it?") only ever resolves against a
@@ -582,7 +643,11 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
     // Project capability's own text parsing) can. Same domain-only, no-intent-gate shape as
     // Quotation's C4A reroute.
     if (!semanticRequest && extracted.domain === "Project") {
-      semanticRequest = { domain: "Project", intent: extracted.intent };
+      semanticRequest = {
+        domain: "Project",
+        intent: extracted.intent,
+        ...(extracted.entity?.type === "project_file" || extracted.entity?.type === "unknown" ? { entity: { type: "project_file" as const, text: extracted.entity.text } } : {}),
+      };
     }
 
     // C4C: a Client follow-up ("what projects do they have?", "how many projects?") only ever
@@ -600,7 +665,11 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
     // has no domain keyword the deterministic router recognizes. Same domain-only, no-intent-gate
     // shape as Quotation/Project's C4A/C4B reroutes.
     if (!semanticRequest && extracted.domain === "Client") {
-      semanticRequest = { domain: "Client", intent: extracted.intent };
+      semanticRequest = {
+        domain: "Client",
+        intent: extracted.intent,
+        ...(extracted.entity?.type === "client" || extracted.entity?.type === "unknown" ? { entity: { type: "client" as const, text: extracted.entity.text } } : {}),
+      };
     }
 
     // C4C: a Procurement follow-up ("what is the ETA?") only ever resolves against a valid
@@ -677,11 +746,17 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
   const capabilityResult = domain === "Product"
     ? await fetchNoaProductCapability(productMessageOverride ?? request.message, request.context)
     : domain === "Quotation"
-      ? await fetchNoaQuotationCapability(request.message, request.context)
+      ? await fetchNoaQuotationCapability(request.message, request.context, {
+          quotation: deterministicQuotation ?? (semanticRequest?.domain === "Quotation" ? semanticRequest.quotation : undefined),
+        })
       : domain === "Project"
-        ? await fetchNoaProjectCapability(projectMessageOverride ?? request.message, request.context)
+        ? await fetchNoaProjectCapability(projectMessageOverride ?? request.message, request.context, {
+            entity: semanticRequest?.entity?.type === "project_file" ? semanticRequest.entity : undefined,
+          })
         : domain === "Client"
-          ? await fetchNoaClientCapability(clientMessageOverride ?? request.message, request.context)
+        ? await fetchNoaClientCapability(clientMessageOverride ?? request.message, request.context, {
+            entity: semanticRequest?.entity?.type === "client" ? semanticRequest.entity : undefined,
+          })
           : domain === "Procurement"
             ? await fetchNoaProcurementCapability(procurementMessageOverride ?? request.message, request.context)
             : domain === "UserActivity"

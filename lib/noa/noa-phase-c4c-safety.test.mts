@@ -17,7 +17,11 @@ const conversationReferenceSource = readFileSync("lib/noa/noa-conversation-refer
 
 test("clientQuestionKind/clientTarget recognize the C4C natural phrasings without touching the query/select/auth logic", () => {
   assert.ok(clientCapabilitySource.includes("/(?:tell me about|show) client (.+)$/i"));
-  assert.ok(clientCapabilitySource.includes("/projects? (?:do|does) (?:client )?(.+?) have\\b/i"));
+  // ERP-NOA-2 widened this literal to also optionally consume "records? " (so the same pattern
+  // serves both the ERP-default and explicit "project records" paths) - that phase's own safety
+  // test covers the exact new literal; this older C4C check only confirms the underlying
+  // "projects...do/does...have" phrase recognition still exists.
+  assert.ok(clientCapabilitySource.includes("projects?(?: records?)? (?:do|does) (?:client )?(.+?) have"));
   assert.ok(clientCapabilitySource.includes('const CLIENT_SELECT = "id,company_name,client_number,client_code,is_active";'));
 });
 
