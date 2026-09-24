@@ -542,6 +542,92 @@ function buildQuotationConversationReference(data: unknown): NoaConversationRefe
   };
 }
 
+// C4A: ordinal list-selection follow-up ("yah for 3rd one") against the immediately previous
+// Quotation LIST reference. A SMALL deterministic parser only - no AI, no semantic extractor call
+// (this whole resolution runs BEFORE that block, so it's never reached for a message this resolves)
+// - and deliberately narrow: every pattern below requires either a "the <ordinal>" prefix or an
+// "<ordinal> one"/"number N" shape, never a bare digit or ordinal word alone, so an unrelated
+// sentence that happens to contain "third"/"last" etc. is never misread as a list selection.
+const QUOTATION_ORDINAL_WORDS: Record<string, number> = {
+  eighth: 8, fifth: 5, first: 1, fourth: 4, ninth: 9,
+  second: 2, seventh: 7, sixth: 6, tenth: 10, third: 3,
+};
+const QUOTATION_ORDINAL_WORD_PATTERN = new RegExp(
+  `\\bthe\\s+(${Object.keys(QUOTATION_ORDINAL_WORDS).join("|")})\\b|\\b(${Object.keys(QUOTATION_ORDINAL_WORDS).join("|")})\\s+one\\b`,
+  "i",
+);
+const QUOTATION_ORDINAL_SUFFIX_PATTERN = /\b(\d{1,2})(?:st|nd|rd|th)\s+one\b/i;
+const QUOTATION_ORDINAL_NUMBER_PATTERN = /\bnumber\s+(\d{1,2})\b/i;
+const QUOTATION_ORDINAL_LAST_PATTERN = /\blast\s+one\b/i;
+
+// Returns a 1-based list position, or null when the message doesn't clearly indicate one.
+function parseQuotationOrdinalPosition(message: string, entityCount: number): number | null {
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) return null;
+
+  if (QUOTATION_ORDINAL_LAST_PATTERN.test(normalized)) return entityCount;
+
+  const wordMatch = normalized.match(QUOTATION_ORDINAL_WORD_PATTERN);
+  if (wordMatch) {
+    const word = wordMatch[1] ?? wordMatch[2];
+    if (word && word in QUOTATION_ORDINAL_WORDS) return QUOTATION_ORDINAL_WORDS[word];
+  }
+
+  const suffixMatch = normalized.match(QUOTATION_ORDINAL_SUFFIX_PATTERN);
+  if (suffixMatch) {
+    const value = Number(suffixMatch[1]);
+    if (Number.isInteger(value) && value > 0) return value;
+  }
+
+  const numberMatch = normalized.match(QUOTATION_ORDINAL_NUMBER_PATTERN);
+  if (numberMatch) {
+    const value = Number(numberMatch[1]);
+    if (Number.isInteger(value) && value > 0) return value;
+  }
+
+  return null;
+}
+
+// PART 5: a fixed, deterministic "1, 2, or 3"-style list of the valid choices - never a guess at
+// which one the user meant.
+function joinQuotationOrdinalChoices(count: number): string {
+  const numbers = Array.from({ length: count }, (_, index) => String(index + 1));
+  if (numbers.length === 1) return numbers[0];
+  if (numbers.length === 2) return numbers.join(" or ");
+  return `${numbers.slice(0, -1).join(", ")}, or ${numbers[numbers.length - 1]}`;
+}
+
+type QuotationOrdinalFollowUp =
+  | { kind: "selected"; rewrittenMessage: string }
+  | { kind: "out_of_range"; count: number };
+
+// PART 3/6/7/9: only ever consulted when the round-tripped conversationReference is ALREADY
+// Quotation-domain with at least one quotation entity - a Product/Client/Project/etc. reference (or
+// no reference at all) never reaches parseQuotationOrdinalPosition, so it can never guess. Entities
+// are read in their EXISTING stored order (PART 7) - never re-sorted/re-ranked here. PART 4: the
+// reference supplies identity ONLY - the rewritten message re-dispatches through the same, unchanged
+// Quotation capability text parsing every other C4A path already relies on, so the actual answer is
+// always a fresh, freshly-authorized read, never the stale list data itself.
+function resolveQuotationOrdinalFollowUp(
+  message: string,
+  reference: NoaConversationReference,
+): QuotationOrdinalFollowUp | undefined {
+  if (reference.domain !== "Quotation") return undefined;
+  const quotationEntities = (reference.entities ?? []).filter(
+    (entity): entity is { type: string; label: string } => entity.type === "quotation" && Boolean(entity.label),
+  );
+  if (quotationEntities.length === 0) return undefined;
+
+  const position = parseQuotationOrdinalPosition(message, quotationEntities.length);
+  if (position === null) return undefined;
+
+  if (position < 1 || position > quotationEntities.length) {
+    return { count: quotationEntities.length, kind: "out_of_range" };
+  }
+
+  return { kind: "selected", rewrittenMessage: `tell me about ${quotationEntities[position - 1].label}` };
+}
+
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 // GPC-3: Guided Product Configuration (start / resume / cancel / start-over)
 // ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -1159,6 +1245,24 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
     ? resolveClientFollowUp(request.message, conversationReference, undefined)
     : undefined;
   const referenceFollowUpRoute = projectReferenceFollowUp ? "Project" : clientReferenceFollowUp ? "Client" : undefined;
+  // C4A: resolved BEFORE any route classification/extraction so it can never trigger the semantic
+  // extractor (PART 1: "Do NOT use AI") - purely a deterministic parse of the current message
+  // against the previous Quotation list reference. Lower priority than an explicit QN identifier
+  // (quotationIdentifierTotal, checked first below) or a recorded UserActivity "which quotation?"
+  // follow-up - both existing fast paths always win over an ordinal guess.
+  const quotationOrdinalFollowUp = conversationReference?.domain === "Quotation"
+    ? resolveQuotationOrdinalFollowUp(request.message, conversationReference)
+    : undefined;
+  // PART 5: an out-of-range ordinal never falls through to Help/the provider - it's a fixed,
+  // deterministic clarification, answered immediately without a capability call.
+  if (quotationOrdinalFollowUp?.kind === "out_of_range") {
+    return {
+      domain: "Quotation",
+      sources: [],
+      text: `There were only ${quotationOrdinalFollowUp.count} quotation${quotationOrdinalFollowUp.count === 1 ? "" : "s"} in the previous list. Choose ${joinQuotationOrdinalChoices(quotationOrdinalFollowUp.count)}.`,
+    };
+  }
+  const quotationMessageOverride = quotationOrdinalFollowUp?.kind === "selected" ? quotationOrdinalFollowUp.rewrittenMessage : undefined;
   const deterministicQuotation = quotationStructuredRequest(request.message);
   const quotationIdentifierTotal = quotationIdentifierCount(request.message);
   const projectFileIdentifierTotal = projectFileIdentifierCount(request.message);
@@ -1168,7 +1272,9 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
       ? "Quotation"
       : projectFileIdentifierTotal > 0
         ? "Project"
-        : referenceFollowUpRoute ?? classifyNoaRoute(request.message, request.context);
+        : quotationMessageOverride
+          ? "Quotation"
+          : referenceFollowUpRoute ?? classifyNoaRoute(request.message, request.context);
 
   // NOA self/page-context questions ("where am I", "which page is this") are answered directly
   // from NoaPageContext - never a capability call, never the AI provider. Not exposed as a
@@ -1384,7 +1490,7 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
   const capabilityResult = domain === "Product"
     ? await fetchNoaProductCapability(productMessageOverride ?? request.message, request.context, semanticRequest?.domain === "Product" ? { product: semanticRequest.product } : undefined)
     : domain === "Quotation"
-      ? await fetchNoaQuotationCapability(request.message, request.context, {
+      ? await fetchNoaQuotationCapability(quotationMessageOverride ?? request.message, request.context, {
           quotation: deterministicQuotation ?? (semanticRequest?.domain === "Quotation" ? semanticRequest.quotation : undefined),
         })
       : domain === "Project"

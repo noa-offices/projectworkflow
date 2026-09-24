@@ -99,7 +99,11 @@ test("the Quotation reroute check never reads conversationReference at all - it 
 // ── Test 9: malformed/absent reference leaves existing Quotation behavior intact ─
 
 test("Quotation dispatch receives only the optional structured quotation input", () => {
-  assert.match(orchestratorSource, /: domain === "Quotation"\s*\n\s*\? await fetchNoaQuotationCapability\(request\.message, request\.context, \{/);
+  // Ordinal-follow-up (C4A quotation-ordinal-selection) widened this the same way C4B/C4C/C4D
+  // widened Project/Client/Procurement/Product's own message argument: `<override> ?? request.message`.
+  // quotationMessageOverride is only ever set by resolveQuotationOrdinalFollowUp's own narrow,
+  // deterministic parser - never by anything semantic/AI-derived.
+  assert.match(orchestratorSource, /: domain === "Quotation"\s*\n\s*\? await fetchNoaQuotationCapability\(quotationMessageOverride \?\? request\.message, request\.context, \{/);
   assert.ok(orchestratorSource.includes("quotation: deterministicQuotation ?? (semanticRequest?.domain === \"Quotation\" ? semanticRequest.quotation : undefined)"));
 });
 
