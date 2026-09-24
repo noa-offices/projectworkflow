@@ -642,14 +642,15 @@ function tightenConfigurationAnswerText(value: string): string {
 }
 
 function configurationOptionSearchText(option: ProductConfigurationOption): string {
-  return normalizeConfigurationAnswerText(`${option.label} ${option.dimension ?? ""}`);
+  return normalizeConfigurationAnswerText(`${option.label} ${option.dimension ?? ""} ${option.supplierCode ?? ""}`);
 }
 
-// PART 11: a small, fully deterministic matcher - exact visible label, exact dimension, a unique
-// normalized-substring partial label, then (GPC-3.1 addition) a unique token-reduced match across
-// label + dimension combined. Never a supplier/product code match here since GPC-1's current
-// ProductConfigurationOption doesn't expose one distinctly from the label (nothing to match
-// against yet). The model never picks the row - only this function does; no fuzzy/AI matching.
+// GPC-3.4 PART 8: a small, fully deterministic matcher - exact visible label, exact dimension,
+// exact supplier code, a unique normalized-substring partial label, then (GPC-3.1 addition) a
+// unique token-reduced match across label + dimension + supplier code combined. `supplierCode` is
+// presentation-only metadata (PART 4) - matching against it never changes what gets selected; the
+// same `option.id` is written either way. The model never picks the row - only this function does;
+// no fuzzy/AI matching.
 function matchProductConfigurationAnswer(message: string, options: ProductConfigurationOption[]): ProductConfigurationAnswerMatch {
   const normalized = normalizeConfigurationAnswerText(message);
   if (!normalized) return { kind: "none" };
@@ -659,6 +660,9 @@ function matchProductConfigurationAnswer(message: string, options: ProductConfig
 
   const exactDimension = options.find((option) => option.dimension && normalizeConfigurationAnswerText(option.dimension) === normalized);
   if (exactDimension) return { kind: "matched", optionId: exactDimension.id };
+
+  const exactSupplierCode = options.find((option) => option.supplierCode && normalizeConfigurationAnswerText(option.supplierCode) === normalized);
+  if (exactSupplierCode) return { kind: "matched", optionId: exactSupplierCode.id };
 
   const partialMatches = options.filter((option) => normalizeConfigurationAnswerText(option.label).includes(normalized));
   if (partialMatches.length === 1) return { kind: "matched", optionId: partialMatches[0].id };
@@ -691,9 +695,12 @@ function configurationChoiceLabel(option: ProductConfigurationOption): string {
 // aggregate/current configuration currency - a different option can legitimately be priced in a
 // different currency than whatever is currently resolved elsewhere (the proven UAT bug). When no
 // currency is available for this option, the price is omitted rather than guessed.
+// GPC-3.4 PART 4/7: the supplier code (when GPC-1 provided one) is shown here as secondary,
+// deterministic information - never as the main label, and never in place of the price.
 function configurationChoiceSecondary(option: ProductConfigurationOption): string | undefined {
   const parts: string[] = [];
   if (option.dimension) parts.push(option.dimension.replace(/(\d)\s*x\s*(\d)/gi, "$1 × $2"));
+  if (option.supplierCode) parts.push(option.supplierCode);
   if (typeof option.priceContribution === "number" && option.priceCurrency) {
     parts.push(`${option.priceCurrency} ${option.priceContribution.toLocaleString()}`);
   }
@@ -714,18 +721,33 @@ function productConfigurationChoicesFor(options: ProductConfigurationOption[], i
 
 // PART 2: short, natural, GPC-terminology-free question text per step kind - never a step key,
 // never an internal id. `noun` is reused by the invalid/ambiguous correction text below so both
-// stay consistent for the same step.
-function productConfigurationStepPhrase(stepKind: string): { question: string; noun: string } {
-  switch (stepKind) {
-    case "system_base": return { question: "Choose a system or base", noun: "option" };
-    case "variant_group": return { question: "Choose a product family", noun: "family" };
-    case "variant_subgroup": return { question: "Choose a configuration", noun: "configuration" };
-    case "variant_row": return { question: "Choose a model / size", noun: "model" };
-    case "workstation_size": return { question: "Choose a size", noun: "size" };
-    case "category_group": return { question: "Choose a category", noun: "category" };
-    case "category_row": return { question: "Choose an item", noun: "item" };
-    case "fabric_category": return { question: "Choose a finish", noun: "finish" };
-    default: return { question: "Choose an option", noun: "option" };
+// stay consistent for the same step. `terminator` is the punctuation the full question ends with
+// ("." for a statement, "?" for the optional-accessory question) - the caller appends it once,
+// never both.
+//
+// GPC-3.4 PART 5/6: for an "accessory" step (Service Unit / Modesty Panel / Top-Access / any other
+// accessory group - never a MONOLITH-specific case), the generic "Choose an option." is replaced
+// with wording built deterministically from the step's own group label and GPC-1's own
+// `step.required` (never inferred from the group name/kind) - required groups read as a
+// requirement with no Skip, optional groups read as an invitation with Skip (Skip is already
+// wired in via `productConfigurationChoicesFor`'s own `includeSkip` check).
+function productConfigurationStepPhrase(step: Pick<ProductConfigurationStep, "kind" | "label" | "required">): { question: string; noun: string; terminator: "." | "?" } {
+  switch (step.kind) {
+    case "system_base": return { question: "Choose a system or base", noun: "option", terminator: "." };
+    case "variant_group": return { question: "Choose a product family", noun: "family", terminator: "." };
+    case "variant_subgroup": return { question: "Choose a configuration", noun: "configuration", terminator: "." };
+    case "variant_row": return { question: "Choose a model / size", noun: "model", terminator: "." };
+    case "workstation_size": return { question: "Choose a size", noun: "size", terminator: "." };
+    case "category_group": return { question: "Choose a category", noun: "category", terminator: "." };
+    case "category_row": return { question: "Choose an item", noun: "item", terminator: "." };
+    case "fabric_category": return { question: "Choose a finish", noun: "finish", terminator: "." };
+    case "accessory": {
+      const noun = step.label.trim().toLowerCase() || "option";
+      return step.required
+        ? { question: `Choose a required ${noun}`, noun, terminator: "." }
+        : { question: `Would you like to add a ${noun}`, noun, terminator: "?" };
+    }
+    default: return { question: "Choose an option", noun: "option", terminator: "." };
   }
 }
 
@@ -742,12 +764,12 @@ function productConfigurationQuestionAnswer(
   isFirstQuestion: boolean,
   correction?: { text: string; candidates?: ProductConfigurationOption[] },
 ): NoaAnswer {
-  const phrase = productConfigurationStepPhrase(step.kind);
+  const phrase = productConfigurationStepPhrase(step);
   const offered = correction?.candidates ?? step.options;
   const boundedNote = step.options.length > MAX_DISPLAYED_CONFIGURATION_OPTIONS && !correction?.candidates
     ? ` I found ${step.options.length} options. Here are the first ${MAX_DISPLAYED_CONFIGURATION_OPTIONS} — you can also type part of the ${phrase.noun} name or dimension.`
     : "";
-  const questionText = isFirstQuestion ? `${phrase.question} for ${templateName}.` : `${phrase.question}.`;
+  const questionText = isFirstQuestion ? `${phrase.question} for ${templateName}${phrase.terminator}` : `${phrase.question}${phrase.terminator}`;
   const correctionLine = correction ? `${correction.text}\n\n` : "";
   return {
     choices: productConfigurationChoicesFor(offered, step.kind === "accessory" && !step.required),
@@ -769,21 +791,194 @@ function productConfigurationUnsupportedStepAnswer(step: ProductConfigurationSte
   };
 }
 
-// PART 13: a deterministic completion marker - product name/dimension/current source unit price
-// ONLY, all read directly from GPC-1's own current output, never calculated here. The reference is
-// kept alive (PART 13) so a later phase (GPC-4) can still consume it.
-function productConfigurationCompletionAnswer(
+// ── GPC-4: post-completion (summary / specification / price) ───────────────────────────────────
+// Everything below is read directly from GPC-1's OWN current output (state.steps/.specification/
+// .dimension/.price) plus the persisted selection ids that chose them - never a second
+// accessory/pricing evaluation, never a provider/LLM call. The reference is always passed through
+// unchanged (PART 12) so a later phase (GPC-5) can still consume it for change/back/start-over.
+
+type ProductConfigurationSummaryLine = { label: string; value: string };
+type ProductConfigurationSummarySections = {
+  fields: ProductConfigurationSummaryLine[];
+  requiredAccessoryLines: string[];
+  optionalAccessoryLines: string[];
+};
+
+// A step's own `options` array already carries the GPC-3.4 human label for whichever id was
+// selected - looking it up here (by the SAME selection id GPC-1 already validated) is the only
+// re-derivation this file does; it never re-parses Product Library data itself.
+function selectedOptionLabel(step: ProductConfigurationStep | undefined, selectedId: string | null | undefined): string | null {
+  if (!step || !selectedId) return null;
+  return step.options.find((option) => option.id === selectedId)?.label ?? null;
+}
+
+// GPC-4.1 PART 2/3: a small, deterministic detector for internal/workflow-sounding GPC group
+// labels (e.g. a Category/Matrix group's own persisted name, typically a pricing-engine label
+// like "Finish Category Pricing"/"Category Pricing", or a Base/Model "... group" wrapper) - text
+// pattern only, never a guess at what the "real" name should have been. When a label doesn't match
+// this, PART 3's own fallback applies: the existing human step label is shown as-is.
+function isInternalWorkflowLabel(label: string): boolean {
+  return /\bpricing\b/i.test(label) || /\bgroup\b/i.test(label);
+}
+
+// PART 6/7/9/10/12: human-facing selection lines only - never a step key, internal id, or row id.
+// Required vs. optional accessory groups are split into their own buckets (never an inline
+// "Required — X" repeated per line) using `step.required` (GPC-1's own flag, never inferred from
+// the group name); a skipped optional group is excluded entirely rather than shown as "selected
+// nothing". PART 2: the Category/Matrix GROUP line itself is only shown when its own persisted
+// name doesn't look like internal workflow/pricing terminology - the actually useful facts are the
+// specific item chosen (shown as "Model", matching the Base/Model vocabulary) and its finish.
+function productConfigurationSummarySections(
+  state: ProductConfigurationState,
+  selections: NoaProductConfigurationSelections,
+): ProductConfigurationSummarySections {
+  const stepByKey = new Map(state.steps.map((step) => [step.key, step]));
+  const fields: ProductConfigurationSummaryLine[] = [];
+
+  const push = (label: string, value: string | null) => {
+    if (value) fields.push({ label, value });
+  };
+
+  push("System", selectedOptionLabel(stepByKey.get("system_base"), selections.systemRowId));
+  push("Product family", selectedOptionLabel(stepByKey.get("variant_group"), selections.variantGroupId));
+  push("Configuration", selectedOptionLabel(stepByKey.get("variant_subgroup"), selections.subgroupId));
+  push("Model", selectedOptionLabel(stepByKey.get("variant_row"), selections.variantRowId));
+  push("Size", selectedOptionLabel(stepByKey.get("workstation_size"), selections.deskingSizeId));
+
+  const categoryGroupLabel = selectedOptionLabel(stepByKey.get("category_group"), selections.categoryGroupId);
+  if (categoryGroupLabel && !isInternalWorkflowLabel(categoryGroupLabel)) push("Category", categoryGroupLabel);
+  push("Model", selectedOptionLabel(stepByKey.get("category_row"), selections.categoryRowId));
+  push("Finish", selectedOptionLabel(stepByKey.get("fabric_category"), selections.fabricCategory));
+
+  if (state.dimension) fields.push({ label: "Dimension", value: state.dimension });
+
+  const skippedGroupIds = new Set(selections.skippedAccessoryGroupIds ?? []);
+  const requiredAccessoryLines: string[] = [];
+  const optionalAccessoryLines: string[] = [];
+  for (const step of state.steps) {
+    if (step.kind !== "accessory" || !step.groupId || skippedGroupIds.has(step.groupId)) continue;
+    const selectedLabels = (step.selectedOptionIds ?? [])
+      .map((id) => step.options.find((option) => option.id === id)?.label)
+      .filter((label): label is string => Boolean(label));
+    if (!selectedLabels.length) continue;
+    // PART 11: the ONLY joining this file ever does is a plain ", " between separately-selected
+    // option labels (each already GPC-3.4's own human label) - never a rewrite of any one option's
+    // own text, never AI, never a Product Library mutation.
+    const line = `${step.label}: ${selectedLabels.join(", ")}`;
+    (step.required ? requiredAccessoryLines : optionalAccessoryLines).push(line);
+  }
+
+  return { fields, requiredAccessoryLines, optionalAccessoryLines };
+}
+
+// PART 1/3/4/5/9/14: the default, immediate post-completion response - grouped sections joined
+// with real blank-line-separated newlines (never one paragraph), the configured source unit price
+// shown prominently in its own section near the end, required/optional accessory selections
+// grouped under a single header each rather than repeated inline. PART 8: the price only claims
+// completeness when GPC-1 itself reports no missing exchange rate.
+function productConfigurationSummaryAnswer(
+  template: ProductConfigurationTemplateInput,
+  state: ProductConfigurationState,
+  selections: NoaProductConfigurationSelections,
+  reference: NoaProductConfigurationReference,
+): NoaAnswer {
+  const heading = template.brandName ? `${template.templateName} — ${template.brandName}` : template.templateName;
+  const sections = productConfigurationSummarySections(state, selections);
+
+  const configuredLines = sections.fields.map((line) => `${line.label}: ${line.value}`);
+  if (sections.requiredAccessoryLines.length) configuredLines.push("Required", ...sections.requiredAccessoryLines);
+  if (sections.optionalAccessoryLines.length) configuredLines.push("Optional", ...sections.optionalAccessoryLines);
+
+  const priceBlock = state.price.missingExchangeRateCurrencies.length > 0
+    ? ["Configured source unit price", `Incomplete - missing exchange rate for ${state.price.missingExchangeRateCurrencies.join(", ")}.`]
+    : ["Configured source unit price", `${state.price.currency} ${state.price.unit.toLocaleString()}`];
+
+  const blocks: string[] = [heading];
+  if (configuredLines.length) blocks.push(["Configured selections", ...configuredLines].join("\n"));
+  blocks.push(priceBlock.join("\n"));
+  blocks.push("You can ask me for the final specification.");
+
+  return { domain: "Product", productConfigurationReference: reference, sources: [], text: blocks.join("\n\n") };
+}
+
+// PART 4/5/13: the CURRENT, freshly-reevaluated `state.specification` only - no rewrite, no second
+// generator, no chat-prose extraction. A blank/missing specification is reported honestly rather
+// than invented.
+function productConfigurationSpecificationAnswer(
   template: ProductConfigurationTemplateInput,
   state: ProductConfigurationState,
   reference: NoaProductConfigurationReference,
 ): NoaAnswer {
-  const dimensionPart = state.dimension ? ` (${state.dimension})` : "";
-  return {
-    domain: "Product",
-    productConfigurationReference: reference,
-    sources: [],
-    text: `Configuration choices for ${template.templateName}${dimensionPart} are complete. Current source unit price: ${state.price.currency} ${state.price.unit}.`,
-  };
+  const specification = state.specification?.trim();
+  if (!specification) {
+    return {
+      domain: "Product",
+      productConfigurationReference: reference,
+      sources: [],
+      text: "I don't have a configured specification for this selection.",
+    };
+  }
+  const text = `Configured specification — ${template.templateName.toUpperCase()}\n\n${specification}`;
+  return { domain: "Product", productConfigurationReference: reference, sources: [], text };
+}
+
+// PART 8/13: `state.price` only - no arithmetic, no FX/AED conversion performed here. Buckets are
+// listed only when GPC-1 itself already reports a non-zero amount for them.
+function productConfigurationPriceAnswer(
+  template: ProductConfigurationTemplateInput,
+  state: ProductConfigurationState,
+  reference: NoaProductConfigurationReference,
+): NoaAnswer {
+  if (state.price.missingExchangeRateCurrencies.length > 0) {
+    return {
+      domain: "Product",
+      productConfigurationReference: reference,
+      sources: [],
+      text: `I can't confirm a complete source unit price for ${template.templateName} - missing exchange rate for ${state.price.missingExchangeRateCurrencies.join(", ")}.`,
+    };
+  }
+  const lines = [`Configured source unit price: ${state.price.currency} ${state.price.unit.toLocaleString()}.`];
+  const buckets: Array<[string, number]> = [
+    ["Base", state.price.base],
+    ["System / Base", state.price.system],
+    ["Workstation variant", state.price.workstationVariant],
+    ["Accessories", state.price.accessories],
+  ];
+  for (const [label, amount] of buckets) {
+    if (amount) lines.push(`${label}: ${state.price.currency} ${amount.toLocaleString()}`);
+  }
+  return { domain: "Product", productConfigurationReference: reference, sources: [], text: lines.join("\n") };
+}
+
+type ProductConfigurationPostCompletionIntent = "specification" | "summary" | "price";
+
+// PART 2: a SMALL deterministic classifier - keyword matching only, no semantic extractor call, no
+// general intent router. Applies ONLY while a reference is already GPC-3.3-complete (see the two
+// call sites below); it is never consulted while a required/optional step is still pending, so it
+// can never misfire against a normal typed answer to a configuration question.
+function classifyProductConfigurationPostCompletionIntent(message: string): ProductConfigurationPostCompletionIntent | null {
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized.includes("specification")) return "specification";
+  if (/\bprice\b/.test(normalized) || normalized.includes("how much")) return "price";
+  if (normalized.includes("summary") || normalized.includes("what did i configure") || /show (?:the )?configur/.test(normalized)) return "summary";
+  return null;
+}
+
+// PART 10: the CURRENT user message decides which of the three deterministic answers comes back -
+// an unrecognized message falls back to the same compact summary (PART 3), never the old
+// unconditionally-repeated completion sentence.
+function productConfigurationCompletionResponse(
+  message: string,
+  template: ProductConfigurationTemplateInput,
+  state: ProductConfigurationState,
+  selections: NoaProductConfigurationSelections,
+  reference: NoaProductConfigurationReference,
+): NoaAnswer {
+  const intent = classifyProductConfigurationPostCompletionIntent(message);
+  if (intent === "specification") return productConfigurationSpecificationAnswer(template, state, reference);
+  if (intent === "price") return productConfigurationPriceAnswer(template, state, reference);
+  return productConfigurationSummaryAnswer(template, state, selections, reference);
 }
 
 // PART 17: every terminal GPC-2 outcome ends the configuration with a deterministic message and
@@ -813,7 +1008,7 @@ function answerForConfigurationState(
   const reference: NoaProductConfigurationReference = { mode: "configuring", selections: effectiveSelections, templateId };
 
   const nextStep = state.nextRequiredStep ?? state.optionalSteps[0] ?? null;
-  if (!nextStep) return productConfigurationCompletionAnswer(template, state, reference);
+  if (!nextStep) return productConfigurationSummaryAnswer(template, state, effectiveSelections, reference);
 
   const selectionKey = productConfigurationSelectionKey(nextStep.kind);
   if (!selectionKey && nextStep.kind !== "accessory") return productConfigurationUnsupportedStepAnswer(nextStep, reference);
@@ -867,7 +1062,11 @@ async function resumeProductConfiguration(reference: NoaProductConfigurationRefe
 
   const nextStep = currentState.nextRequiredStep ?? currentState.optionalSteps[0] ?? null;
   if (!nextStep) {
-    return productConfigurationCompletionAnswer(loaded.template, currentState, reference);
+    // GPC-4 PART 2/10: the configuration was ALREADY complete before this message arrived (no new
+    // selection is being applied this turn) - the user's current message is what decides whether
+    // they get the specification, the price, or the summary again, never a repeated generic
+    // sentence.
+    return productConfigurationCompletionResponse(message, loaded.template, currentState, reference.selections, reference);
   }
 
   const selectionKey = productConfigurationSelectionKey(nextStep.kind);
@@ -881,7 +1080,7 @@ async function resumeProductConfiguration(reference: NoaProductConfigurationRefe
   // PART 10/11: the user's answer is interpreted ONLY against the CURRENT step's CURRENT valid
   // options - never a raw id, never an LLM-picked row.
   const match = matchProductConfigurationAnswer(message, nextStep.options);
-  const noun = productConfigurationStepPhrase(nextStep.kind).noun;
+  const noun = productConfigurationStepPhrase(nextStep).noun;
   if (match.kind === "none") {
     return productConfigurationQuestionAnswer(
       nextStep,

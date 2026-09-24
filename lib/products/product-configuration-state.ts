@@ -18,6 +18,7 @@ import {
   parseAccessoryConfigurationGroups,
   structuralSupportCompatibleTargetKey,
   type AccessoryApplicabilityTarget,
+  type AccessoryConfigurationGroup,
   type AccessoryConfigurationItem,
   type AccessoryGroupEvaluation,
   type StructuralSupportCompatibleTarget,
@@ -138,6 +139,10 @@ export type ProductConfigurationOption = {
   // `state.price.currency` (which reflects whatever is CURRENTLY selected elsewhere, not this
   // option) - that mismatch was GPC-3.2's proven root cause.
   priceCurrency?: string | null;
+  // GPC-3.4 PART 4: presentation-only supplier code (accessory/conditional-option items only) -
+  // deterministic display metadata, never trusted selection identity. `id` remains the
+  // configuration key; this is purely what the secondary line and typed matching may show/accept.
+  supplierCode?: string | null;
 };
 
 export type ProductConfigurationStep = {
@@ -242,6 +247,87 @@ function rowDimension(row: Record<string, unknown> | null | undefined): string |
 function rowCurrency(row: Record<string, unknown> | null | undefined, template: ProductConfigurationTemplateInput): string {
   const currency = row?.currency;
   return typeof currency === "string" && currency.trim() ? currency.trim() : template.currency;
+}
+
+// ── GPC-3.4 PART 1/2/3/4/8: accessory/conditional-option item display label ────────────────────
+// (Service Unit / Modesty Panel / Top-Access, and any future accessory group - never a
+// MONOLITH-specific case). Presentation-only: never changes `item.id`, which stays the
+// configuration key throughout.
+
+// Supplier codes look like "1AF 090" / "1AF090" / "1af-090" - short, code-like tokens. Stripped of
+// spaces/dashes and lowercased for comparison so an `item_name` that is merely the same code in a
+// different format/case is never mistaken for a descriptive name (PART 1's own precedence).
+function normalizeAccessoryCodeText(value: string): string {
+  return value.replace(/[\s-]+/g, "").toLowerCase();
+}
+
+function isDescriptiveAccessoryItemName(itemName: string, supplierCode: string | null): boolean {
+  if (!itemName) return false;
+  if (!supplierCode) return true;
+  return normalizeAccessoryCodeText(itemName) !== normalizeAccessoryCodeText(supplierCode);
+}
+
+// A concise label cut from the item's own `specification` text - never fabricated, never inferred
+// beyond what the text already says. Stops at the first clause boundary (" with", a comma,
+// semicolon, opening parenthesis, period, or newline) so "Right service unit with adjustable
+// feet." becomes "Right service unit", then title-cases it for display.
+function conciseLabelFromAccessorySpecification(specification: string | null): string | null {
+  if (!specification) return null;
+  const firstLine = specification.split(/\r?\n/)[0]?.trim();
+  if (!firstLine) return null;
+  const boundary = firstLine.match(/^(.*?)(?:\s+with\s|[.,;(]|$)/i);
+  const clause = (boundary ? boundary[1] : firstLine).trim();
+  if (!clause) return null;
+  return clause
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+// PART 1: given a group's already-persisted subgroups (e.g. "123 cm service unit"), a leading
+// measurement token is extracted deterministically - never inferred from the item code (PART 1's
+// own instruction). Returns null when no subgroup carries a recognizable leading measurement.
+function accessorySubgroupDimensionByItemId(group: AccessoryConfigurationGroup): Map<string, string> {
+  const byItemId = new Map<string, string>();
+  for (const subgroup of group.subgroups ?? []) {
+    if (typeof subgroup.subgroup_name !== "string") continue;
+    const measurement = subgroup.subgroup_name.match(/^(\d+\s*cm)\b/i)?.[1];
+    if (!measurement) continue;
+    for (const rowId of subgroup.row_ids ?? []) {
+      byItemId.set(rowId, measurement.replace(/\s+/g, " ").toLowerCase());
+    }
+  }
+  return byItemId;
+}
+
+// PART 1/2/3/8/9: label priority - `item_name` (when it is a real descriptive name, not just the
+// supplier code re-formatted), otherwise a concise label cut from the existing `specification`
+// (optionally suffixed with a deterministically-available subgroup dimension), otherwise the
+// supplier code itself, otherwise the internal item id as an absolute last resort (test 12: id is
+// never preferred over better descriptive data that actually exists). `supplierCode` is returned
+// alongside for PART 4's presentation-only secondary line.
+function accessoryOptionLabel(
+  item: AccessoryConfigurationItem,
+  fallbackId: string,
+  subgroupDimension: string | null,
+): { label: string; supplierCode: string | null } {
+  const supplierCode = typeof item.supplier_price_list_code === "string" && item.supplier_price_list_code.trim()
+    ? item.supplier_price_list_code.trim()
+    : null;
+  const itemName = typeof item.item_name === "string" ? item.item_name.trim() : "";
+
+  if (isDescriptiveAccessoryItemName(itemName, supplierCode)) {
+    return { label: itemName, supplierCode };
+  }
+
+  const specLabel = conciseLabelFromAccessorySpecification(typeof item.specification === "string" ? item.specification : null);
+  if (specLabel) {
+    return { label: subgroupDimension ? `${specLabel} — ${subgroupDimension}` : specLabel, supplierCode };
+  }
+
+  if (supplierCode) return { label: supplierCode, supplierCode };
+  return { label: fallbackId, supplierCode: null };
 }
 
 // ── Main entry point ──────────────────────────────────────────────────────────────────────────
@@ -695,6 +781,7 @@ export function resolveProductConfigurationState(
   // ── 11/12. Structural support vs. optional accessories, split from the same evaluation ────────
   const itemById = new Map<string, AccessoryConfigurationItem>();
   const groupIdByItemId = new Map<string, string>();
+  const subgroupDimensionByItemId = new Map<string, string>();
   for (const group of parsedAccessoryGroups) {
     const groupId = typeof group.id === "string" && group.id ? group.id : "";
     for (const item of group.items ?? []) {
@@ -702,6 +789,9 @@ export function resolveProductConfigurationState(
         itemById.set(item.id, item);
         groupIdByItemId.set(item.id, groupId);
       }
+    }
+    for (const [itemId, dimension] of accessorySubgroupDimensionByItemId(group)) {
+      subgroupDimensionByItemId.set(itemId, dimension);
     }
   }
   const companionItemIds = new Set(companionItems.map((entry) => entry.itemId));
@@ -719,12 +809,14 @@ export function resolveProductConfigurationState(
     const evaluation = evaluationForItem(itemId);
     if (!evaluation || !evaluation.visible || !evaluation.allowedItemIds.includes(itemId)) continue;
     const unitPrice = numberValue(item.price);
+    const { label, supplierCode } = accessoryOptionLabel(item, itemId, subgroupDimensionByItemId.get(itemId) ?? null);
     const option: ProductConfigurationOption = {
       id: itemId,
-      label: rowLabel(item as Record<string, unknown>, itemId),
+      label,
       dimension: rowDimension(item as Record<string, unknown>),
       priceContribution: roundSourceAmount(unitPrice),
       priceCurrency: rowCurrency(item as Record<string, unknown>, template),
+      supplierCode,
     };
     if (item.role === "structural_support") {
       const compatible = !item.compatible_targets?.length || currentSupportKeys.size === 0
@@ -754,13 +846,16 @@ export function resolveProductConfigurationState(
     if (!evaluation.visible || evaluation.role === "companion") continue;
     const options = evaluation.allowedItemIds.flatMap((itemId) => {
       const item = itemById.get(itemId);
-      return item ? [{
+      if (!item) return [];
+      const { label, supplierCode } = accessoryOptionLabel(item, itemId, subgroupDimensionByItemId.get(itemId) ?? null);
+      return [{
         id: itemId,
-        label: rowLabel(item as Record<string, unknown>, itemId),
+        label,
         dimension: rowDimension(item as Record<string, unknown>),
         priceContribution: roundSourceAmount(numberValue(item.price)),
         priceCurrency: rowCurrency(item as Record<string, unknown>, template),
-      }] : [];
+        supplierCode,
+      }];
     });
     if (!options.length) continue;
     const skipped = skippedAccessoryGroupIds.has(evaluation.groupId);
