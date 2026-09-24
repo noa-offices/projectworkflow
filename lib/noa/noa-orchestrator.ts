@@ -1,6 +1,6 @@
 import "server-only";
 
-import { classifyNoaRoute, describeNoaPageContext, greetingResponseText, NOA_CAPABILITY_SUMMARY_TEXT, recordedQuotationFollowUpReference } from "@/lib/noa/noa-intent-router";
+import { classifyNoaRoute, describeNoaPageContext, entityLookupCandidate, greetingResponseText, NOA_CAPABILITY_SUMMARY_TEXT, recordedQuotationFollowUpReference } from "@/lib/noa/noa-intent-router";
 import { extractNoaSemanticRequest } from "@/lib/noa/noa-intent-extractor.server";
 import { boundConversationReferenceEntities, isNoaConversationReference, type NoaConversationReference } from "@/lib/noa/noa-conversation-reference";
 import type { NoaSemanticIntent, NoaSemanticRequest } from "@/lib/noa/noa-semantic-request";
@@ -532,6 +532,16 @@ function buildQuotationConversationReference(data: unknown): NoaConversationRefe
 // capability or query runs - that's fully deterministic, in code, before the provider is invoked.
 export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAnswer> {
   const recordedQuotationFollowUpFrom = recordedQuotationFollowUpReference(request.message, request.recentMessages ?? []);
+  const conversationReference = isNoaConversationReference(request.conversationReference)
+    ? request.conversationReference
+    : undefined;
+  const projectReferenceFollowUp = conversationReference?.domain === "Project"
+    ? resolveProjectFollowUp(request.message, conversationReference, undefined)
+    : undefined;
+  const clientReferenceFollowUp = !projectReferenceFollowUp && conversationReference?.domain === "Client"
+    ? resolveClientFollowUp(request.message, conversationReference, undefined)
+    : undefined;
+  const referenceFollowUpRoute = projectReferenceFollowUp ? "Project" : clientReferenceFollowUp ? "Client" : undefined;
   const deterministicQuotation = quotationStructuredRequest(request.message);
   const quotationIdentifierTotal = quotationIdentifierCount(request.message);
   const projectFileIdentifierTotal = projectFileIdentifierCount(request.message);
@@ -541,7 +551,7 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
       ? "Quotation"
       : projectFileIdentifierTotal > 0
         ? "Project"
-        : classifyNoaRoute(request.message, request.context);
+        : referenceFollowUpRoute ?? classifyNoaRoute(request.message, request.context);
 
   // NOA self/page-context questions ("where am I", "which page is this") are answered directly
   // from NoaPageContext - never a capability call, never the AI provider. Not exposed as a
@@ -562,13 +572,6 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
     return { domain: "Help", sources: [], text: NOA_CAPABILITY_SUMMARY_TEXT };
   }
 
-  // C3: an untrusted, client-round-tripped conversationReference - validated before any use;
-  // malformed input is simply ignored (never trusted, never a source of authorization or
-  // business fact).
-  const conversationReference = isNoaConversationReference(request.conversationReference)
-    ? request.conversationReference
-    : undefined;
-
   // C2/C3 hybrid routing: only for a message already deterministically routed to UserActivity, or
   // one that fell all the way through to "Help" (unresolved) and might semantically be a
   // UserActivity question. Never runs for any other clear domain (Product/Price/Quotation/
@@ -576,23 +579,30 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
   // below) and never for the already-resolved recordedQuotationFollowUpFrom case. At most one
   // extractor call per request. Any failure or non-UserActivity/unsupported-intent result is
   // silently ignored - the existing deterministic route/fallback is preserved exactly (PART 9).
-  let semanticRequest: NoaSemanticRequest | undefined;
-  let projectMessageOverride: string | undefined;
-  let clientMessageOverride: string | undefined;
+  let semanticRequest: NoaSemanticRequest | undefined = projectReferenceFollowUp?.semanticRequest ?? clientReferenceFollowUp?.semanticRequest;
+  let projectMessageOverride: string | undefined = projectReferenceFollowUp?.rewrittenMessage;
+  let clientMessageOverride: string | undefined = clientReferenceFollowUp?.rewrittenMessage;
   let procurementMessageOverride: string | undefined;
   let productMessageOverride: string | undefined;
   if (!recordedQuotationFollowUpFrom && (route === "UserActivity" || route === "Help")) {
+    const genericEntityCandidate = route === "Help" ? entityLookupCandidate(request.message) : null;
+    if (genericEntityCandidate) {
+      const resolved = await resolveNoaEntityCandidate(genericEntityCandidate);
+      if (resolved.domain === "Project" || resolved.domain === "Client") {
+        semanticRequest = { domain: resolved.domain, entity: resolved.entity, intent: "unsupported" };
+      } else if (resolved.domain === "ambiguous") {
+        return { domain: "Help", sources: [], text: `I found both a Project File and a Client matching "${genericEntityCandidate}". Which one do you mean?` };
+      }
+    }
+
     const extracted = await extractNoaSemanticRequest({ context: request.context, message: request.message });
 
-    if (route === "Help" && extracted.entity?.type === "unknown") {
+    if (!semanticRequest && route === "Help" && !genericEntityCandidate && extracted.entity?.type === "unknown") {
       const resolved = await resolveNoaEntityCandidate(extracted.entity.text);
       if (resolved.domain === "Project" || resolved.domain === "Client") {
         semanticRequest = { domain: resolved.domain, entity: resolved.entity, intent: extracted.intent };
-      } else {
-        const message = resolved.domain === "ambiguous"
-          ? `I found both a Project File and a Client matching "${extracted.entity.text}". Which one do you mean?`
-          : `I couldn't find a matching Project File or client for "${extracted.entity.text}".`;
-        return { domain: "Help", sources: [], text: message };
+      } else if (resolved.domain === "ambiguous") {
+        return { domain: "Help", sources: [], text: `I found both a Project File and a Client matching "${extracted.entity.text}". Which one do you mean?` };
       }
     }
 

@@ -269,6 +269,8 @@ const PROCUREMENT_KEYWORDS = ["procurement", "purchase order", "purchase orders"
 // "show quotations for client X" and "quotation total for client X" never match any of these and
 // keep routing to Quotation exactly as before.
 const CLIENT_INTENT_PATTERNS = [
+  /\btell me about client\b/,
+  /\bshow client\b/,
   /\bclient details?\b/,
   /\bdetails? for (?:the )?client\b/,
   /\bclient info(?:rmation)?\b/,
@@ -281,6 +283,11 @@ const CLIENT_INTENT_PATTERNS = [
   /\bprojects?\b[\s\S]*\bfor (?:the )?client\b/,
   /\bhow many projects\b[\s\S]*\bclient\b/,
 ];
+
+export function entityLookupCandidate(message: string): string | null {
+  const candidate = message.match(/^\s*tell me about\s+(.+?)\s*[?.!]*\s*$/i)?.[1]?.trim();
+  return candidate || null;
+}
 
 // Words that mark a message as a genuine follow-up about whatever is currently on screen, rather
 // than an unrelated fresh statement that merely happens to share a page with a capability domain.
