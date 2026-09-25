@@ -1681,6 +1681,12 @@ export async function updateProductTemplateDefaultPrice(formData: FormData) {
       newDefaultUnitPrice,
       note,
       oldDefaultUnitPrice: template.default_unit_price,
+      // N2B3.1: additive structured change, alongside the existing oldDefaultUnitPrice/
+      // newDefaultUnitPrice keys above (never a replacement) - only added when the price
+      // actually differs, using the exact same authoritative values already in this function.
+      ...(template.default_unit_price !== newDefaultUnitPrice
+        ? { changes: [{ field: "unit_price", label: "Unit price", oldValue: template.default_unit_price, newValue: newDefaultUnitPrice, currency: normalizeCurrency(currency) }] }
+        : {}),
     },
     actorName: displayName,
     createdBy: user.id,

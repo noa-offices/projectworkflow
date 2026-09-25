@@ -6,6 +6,7 @@ import { boundConversationReferenceEntities, isNoaConversationReference, type No
 import type { NoaSemanticIntent, NoaSemanticRequest } from "@/lib/noa/noa-semantic-request";
 import { resolveNoaSemanticPeriod, resolveNoaSemanticSubject } from "@/lib/noa/noa-subject-resolver";
 import { fetchNoaAdminCapability } from "@/lib/noa/noa-admin-capability.server";
+import { fetchNoaAttentionCapability, type NoaAttentionItem } from "@/lib/noa/noa-attention-capability.server";
 import { fetchNoaClientCapability } from "@/lib/noa/noa-client-capability.server";
 import { fetchNoaInsightsCapability } from "@/lib/noa/noa-insights-capability.server";
 import { fetchNoaPriceCapability } from "@/lib/noa/noa-price-capability.server";
@@ -14,7 +15,7 @@ import { fetchNoaProductCapability, resolveNoaProductCandidate } from "@/lib/noa
 import { fetchNoaProjectCapability, projectFileIdentifierCount, resolveNoaEntityCandidate } from "@/lib/noa/noa-project-capability.server";
 import { fetchNoaQuotationCapability, quotationIdentifierCount, quotationStructuredRequest } from "@/lib/noa/noa-quotation-capability.server";
 import { fetchNoaUserActivityCapability } from "@/lib/noa/noa-user-activity-capability.server";
-import type { NoaAnswer, NoaChatRequest, NoaChoice, NoaPageContext } from "@/lib/noa/noa-types";
+import type { NoaAnalyticsTransport, NoaAnswer, NoaChatRequest, NoaChoice, NoaDomain, NoaPageContext } from "@/lib/noa/noa-types";
 import { runNoaProvider } from "@/lib/noa/noa-provider.server";
 // GPC-3: the ONLY configuration-state engine (GPC-1) and the ONLY single-template loader (GPC-2) -
 // this file never reimplements auto-resolution/pricing/compatibility rules, it only calls them.
@@ -83,6 +84,263 @@ const PROCUREMENT_FOLLOW_UP_PATTERN = /\b(eta|etd|stage|documents?|vendors?|prog
 // (runNoaProvider still receives request.message, never the rewritten override), only the
 // capability's target lookup needs the clean canonical form.
 const PRODUCT_PRONOUN_FOLLOW_UP_PATTERN = /\b(it|that product|this product)\b/i;
+
+// Attention structured UI: a runtime guard for the Attention capability's own `{ kind: "attention",
+// count, items }` data shape - never trusts `capabilityResult.data` (typed `unknown`) blindly.
+// This is the ONLY place the orchestrator reads Attention's structured items; every other domain's
+// capabilityData continues to reach the provider (or the deterministicOnly text path) exactly as
+// before.
+type NoaAttentionCapabilityData = { count: number; items: NoaAttentionItem[]; kind: "attention" };
+
+function isAttentionCapabilityData(data: unknown): data is NoaAttentionCapabilityData {
+  return Boolean(
+    data &&
+    typeof data === "object" &&
+    (data as { kind?: unknown }).kind === "attention" &&
+    Array.isArray((data as { items?: unknown }).items) &&
+    typeof (data as { count?: unknown }).count === "number",
+  );
+}
+
+// N2B3.4: a runtime guard for the Catch-Up capability's own `{ kind: "user_activity_catch_up", ...
+// }` data shape (built by buildCatchUpResult() in noa-user-activity-capability.server.ts) - same
+// "never trust unknown capabilityResult.data blindly" discipline as isAttentionCapabilityData()
+// above. This is the ONLY place the orchestrator reads Catch-Up's structured items.
+type NoaCatchUpItemData = {
+  action: string;
+  actorLabel?: string;
+  changes?: Array<{
+    field: string;
+    label?: string;
+    oldValue: string | number | boolean | null;
+    newValue: string | number | boolean | null;
+    currency?: string;
+  }>;
+  detail?: string;
+  entityType: string;
+  occurredAt: string;
+  occurrenceCount?: number;
+  title: string;
+};
+
+type NoaCatchUpCapabilityData = {
+  entityIdentifier?: string;
+  items: NoaCatchUpItemData[];
+  kind: "user_activity_catch_up";
+  returnedCount: number;
+  totalMatching: number;
+  truncatedCount: number;
+};
+
+function isCatchUpCapabilityData(data: unknown): data is NoaCatchUpCapabilityData {
+  return Boolean(
+    data &&
+    typeof data === "object" &&
+    (data as { kind?: unknown }).kind === "user_activity_catch_up" &&
+    Array.isArray((data as { items?: unknown }).items) &&
+    typeof (data as { returnedCount?: unknown }).returnedCount === "number" &&
+    typeof (data as { totalMatching?: unknown }).totalMatching === "number" &&
+    typeof (data as { truncatedCount?: unknown }).truncatedCount === "number",
+  );
+}
+
+// N2B3.4 PART 12: the exact sentinel noa-user-activity-capability.server.ts's own
+// UNRESOLVED_ACTOR_LABEL constant uses - never displayed (PART 12: "Do NOT show 'Unresolved
+// user'"), so an item whose actorLabel equals this is treated as having no safe actor to show.
+const CATCH_UP_UNRESOLVED_ACTOR_LABEL = "Unresolved user";
+
+// N2C1.1: presentation-only guards for the C1 Insights capability's already-existing structured
+// `data` shapes (built by noa-insights-capability.server.ts, NOT modified by this phase) - same
+// "never trust unknown capabilityResult.data blindly" discipline as isAttentionCapabilityData()/
+// isCatchUpCapabilityData() above. Deliberately narrower than the full data shape (only the
+// fields actually needed for the card transport) - the empty-result variant of
+// insights_quotation_analytics omits totalsByCurrency/statusCounts/etc entirely, so those stay
+// optional here and are handled as the empty-state case below.
+type NoaQuotationAnalyticsData = {
+  averageByCurrency?: Record<string, number>;
+  confirmedCount?: number;
+  confirmedTotalsByCurrency?: Record<string, number>;
+  kind: "insights_quotation_analytics";
+  range: string;
+  statusCounts?: Record<string, number>;
+  totalMatching: number;
+  totalsByCurrency?: Record<string, number>;
+  deterministicText: string;
+};
+
+function isQuotationAnalyticsData(data: unknown): data is NoaQuotationAnalyticsData {
+  return Boolean(
+    data &&
+    typeof data === "object" &&
+    (data as { kind?: unknown }).kind === "insights_quotation_analytics" &&
+    typeof (data as { totalMatching?: unknown }).totalMatching === "number" &&
+    typeof (data as { deterministicText?: unknown }).deterministicText === "string",
+  );
+}
+
+type NoaQuotationCompareData = {
+  current: { count: number; totalsByCurrency: Record<string, number> };
+  kind: "insights_quotation_compare";
+  previous: { count: number; totalsByCurrency: Record<string, number> };
+};
+
+function isQuotationCompareData(data: unknown): data is NoaQuotationCompareData {
+  const candidate = data as { current?: unknown; kind?: unknown; previous?: unknown } | null;
+  return Boolean(
+    candidate &&
+    typeof candidate === "object" &&
+    candidate.kind === "insights_quotation_compare" &&
+    candidate.current && typeof candidate.current === "object" &&
+    candidate.previous && typeof candidate.previous === "object",
+  );
+}
+
+type NoaQuotationTrendData = {
+  currency: string | null;
+  kind: "insights_quotation_trend";
+  monthCount: number;
+  months: Array<{ count: number; month: string; total: number | null }>;
+};
+
+function isQuotationTrendData(data: unknown): data is NoaQuotationTrendData {
+  return Boolean(
+    data &&
+    typeof data === "object" &&
+    (data as { kind?: unknown }).kind === "insights_quotation_trend" &&
+    Array.isArray((data as { months?: unknown }).months),
+  );
+}
+
+// N2C1.1: a small, closed-enum display mapping over the SAME DateRangeKey values the Insights
+// capability already resolves internally (lib/insights/date-ranges.ts) - never a new business
+// definition, purely a Title Case label for the analytics card header. An unmapped/custom key
+// falls back to a generic humanizer, never an invented meaning.
+function analyticsHumanize(value: string): string {
+  return value.split(/[\s_-]+/).filter(Boolean).map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(" ");
+}
+
+const ANALYTICS_PERIOD_LABEL: Record<string, string> = {
+  today: "Today",
+  this_week: "This week",
+  this_month: "This month",
+  last_month: "Last month",
+  "7d": "Last 7 days",
+  "30d": "Last 30 days",
+  this_year: "This year",
+};
+
+function analyticsPeriodLabel(range: string): string {
+  return ANALYTICS_PERIOD_LABEL[range] ?? analyticsHumanize(range);
+}
+
+// N2C1.1: a LOCAL mirror of noa-insights-capability.server.ts's own two proven status overrides
+// (never imported - Insights/the orchestrator's transport layer never cross-imports a capability
+// module's internals; this duplicates only the two known, authorized persisted-status keys,
+// exactly matching the same convention lib/noa/noa-insights-capability.server.ts's own
+// insightsQuotationStatusLabel() already established).
+const ANALYTICS_STATUS_LABEL: Record<string, string> = {
+  draft: "Pending",
+  client_confirmed: "Client Confirmed",
+};
+
+function analyticsStatusLabel(status: string): string {
+  return ANALYTICS_STATUS_LABEL[status] ?? analyticsHumanize(status);
+}
+
+const ANALYTICS_MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function analyticsMonthLabel(monthKey: string): string {
+  const match = monthKey.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return monthKey;
+  const monthIndex = Number(match[2]) - 1;
+  if (monthIndex < 0 || monthIndex > 11) return monthKey;
+  return `${ANALYTICS_MONTH_LABELS[monthIndex]} ${match[1]}`;
+}
+
+// PART 6: multiple currencies are joined as separate lines under ONE metric label - never summed,
+// never converted. The client renders each line separately (never a single merged figure).
+function analyticsCurrencyLines(totalsByCurrency: Record<string, number> | undefined): string {
+  const entries = Object.entries(totalsByCurrency ?? {});
+  if (entries.length === 0) return "—";
+  return entries.map(([currency, total]) => `${currency} ${total.toLocaleString("en-US", { maximumFractionDigits: 2 })}`).join("\n");
+}
+
+// PART 4/7/12: the empty-result variant of insights_quotation_analytics omits totalsByCurrency
+// entirely (see noa-insights-capability.server.ts's own early-return for a zero-row period) -
+// detected here by that field's absence, never by parsing `deterministicText`. Reuses the
+// server's own already-written empty sentence verbatim as `emptyMessage` (PART 12) - never a
+// client-invented empty string.
+function buildQuotationAnalyticsTransport(data: NoaQuotationAnalyticsData): NoaAnalyticsTransport {
+  const period = analyticsPeriodLabel(data.range);
+  if (!data.totalsByCurrency) {
+    return { emptyMessage: data.deterministicText, kind: "quotation_analytics", period, title: "Quotation analytics" };
+  }
+  const metrics = [
+    { key: "count", label: "Quotations", value: String(data.totalMatching) },
+    { key: "quoted_value", label: "Quoted value", value: analyticsCurrencyLines(data.totalsByCurrency) },
+    { key: "average_value", label: "Average value", value: analyticsCurrencyLines(data.averageByCurrency) },
+    {
+      key: "confirmed_value",
+      label: "Client-confirmed",
+      // PART 7: an honest "no confirmed records" dash, never a financial AED 0 the server itself
+      // never asserted - gated on the server's own confirmedCount, never inferred from totals.
+      value: (data.confirmedCount ?? 0) > 0 ? analyticsCurrencyLines(data.confirmedTotalsByCurrency) : "—",
+    },
+  ];
+  const statusBreakdown = Object.entries(data.statusCounts ?? {}).map(([status, count]) => ({ label: analyticsStatusLabel(status), count }));
+  return { kind: "quotation_analytics", metrics, period, statusBreakdown, title: "Quotation analytics" };
+}
+
+// PART 9: current/previous labels are hardcoded "This month"/"Last month" because
+// quotationCompareAnswer() itself always compares exactly these two fixed ranges (never
+// parameterized) - a safe, accurate label, not a guess.
+function buildQuotationCompareTransport(data: NoaQuotationCompareData): NoaAnalyticsTransport {
+  const currencies = Array.from(new Set([...Object.keys(data.current.totalsByCurrency), ...Object.keys(data.previous.totalsByCurrency)]));
+  const currencyRows = currencies.map((currency) => {
+    const currentValue = data.current.totalsByCurrency[currency] ?? 0;
+    const previousValue = data.previous.totalsByCurrency[currency] ?? 0;
+    return { currency, currentValue, difference: currentValue - previousValue, previousValue };
+  });
+  return {
+    comparison: {
+      countDifference: data.current.count - data.previous.count,
+      currencyRows,
+      currentCount: data.current.count,
+      currentLabel: "This month",
+      previousCount: data.previous.count,
+      previousLabel: "Last month",
+    },
+    kind: "quotation_compare",
+    title: "Quotation comparison",
+  };
+}
+
+// PART 11: zero-activity months are filtered out here (a presentation reshape of the server's own
+// already-computed 12-month array, never a new calculation) - matching the deterministic text's
+// own nonEmptyMonths behavior exactly.
+function buildQuotationTrendTransport(data: NoaQuotationTrendData): NoaAnalyticsTransport {
+  const trend = data.months
+    .filter((month) => month.count > 0)
+    .map((month) => ({
+      count: month.count,
+      ...(data.currency && month.total !== null ? { currency: data.currency, total: month.total } : {}),
+      label: analyticsMonthLabel(month.month),
+    }));
+  return {
+    ...(trend.length === 0 ? { emptyMessage: "No quotation activity recorded in this period." } : { trend }),
+    kind: "quotation_trend",
+    period: `Last ${data.monthCount} months`,
+    title: "Quotation trend",
+  };
+}
+
+function buildAnalyticsTransport(domain: NoaDomain, data: unknown): NoaAnalyticsTransport | undefined {
+  if (domain !== "Insights") return undefined;
+  if (isQuotationAnalyticsData(data)) return buildQuotationAnalyticsTransport(data);
+  if (isQuotationCompareData(data)) return buildQuotationCompareTransport(data);
+  if (isQuotationTrendData(data)) return buildQuotationTrendTransport(data);
+  return undefined;
+}
 
 // C3: resolves a short UserActivity follow-up (PART 6/8/9) against the client-round-tripped
 // conversationReference - pure, deterministic, never touches capabilityData/recentMessages/the
@@ -1266,15 +1524,27 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
   const deterministicQuotation = quotationStructuredRequest(request.message);
   const quotationIdentifierTotal = quotationIdentifierCount(request.message);
   const projectFileIdentifierTotal = projectFileIdentifierCount(request.message);
+  // N2B2 PART 1: a bare QN/CO identifier used to force Quotation/Project detail unconditionally -
+  // the exact collision the B0 audit proved ("what changed on CO-0003-001" landed on Project
+  // detail). classifyNoaRoute() already recognizes historical/Catch-Up phrasing ("what changed"/
+  // "what happened"/"catch me up") ahead of every other check (N2B1) - reusing that ONE existing
+  // call (never a second classifier, never new keyword logic here), a message that BOTH carries
+  // an identifier AND reads as historical now defers to it instead of the identifier fast path.
+  // Deliberately narrow: this only ever changes behavior when an identifier is actually present -
+  // every other precedence tier (quotationMessageOverride, referenceFollowUpRoute's pronoun
+  // follow-ups, e.g. "what happened to it?", and classifyNoaRoute's own final-fallback role) is
+  // completely untouched, so a bare identifier message ("tell me about QN-0005-001", which
+  // classifyNoaRoute alone would route to Help) still falls through to the identifier fast path
+  // exactly as before.
+  const deterministicRoute = classifyNoaRoute(request.message, request.context);
+  const identifierRoute = quotationIdentifierTotal > 0 ? "Quotation" : projectFileIdentifierTotal > 0 ? "Project" : null;
   const route = recordedQuotationFollowUpFrom
     ? "UserActivity"
-    : quotationIdentifierTotal > 0
-      ? "Quotation"
-      : projectFileIdentifierTotal > 0
-        ? "Project"
-        : quotationMessageOverride
-          ? "Quotation"
-          : referenceFollowUpRoute ?? classifyNoaRoute(request.message, request.context);
+    : identifierRoute && deterministicRoute !== "UserActivity"
+      ? identifierRoute
+      : quotationMessageOverride
+        ? "Quotation"
+        : referenceFollowUpRoute ?? deterministicRoute;
 
   // NOA self/page-context questions ("where am I", "which page is this") are answered directly
   // from NoaPageContext - never a capability call, never the AI provider. Not exposed as a
@@ -1513,7 +1783,9 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
                 ? await fetchNoaAdminCapability(request.message, request.context)
                 : domain === "Insights"
                   ? await fetchNoaInsightsCapability(request.message, request.context)
-                  : await fetchNoaPriceCapability(productMessageOverride ?? request.message, request.context, semanticRequest?.domain === "Price" ? { product: semanticRequest.product } : undefined);
+                  : domain === "Attention"
+                    ? await fetchNoaAttentionCapability(request.message, request.context)
+                    : await fetchNoaPriceCapability(productMessageOverride ?? request.message, request.context, semanticRequest?.domain === "Price" ? { product: semanticRequest.product } : undefined);
 
   if (!capabilityResult.ok) {
     // Unauthorized / not-found / ambiguous: return the capability's own safe copy directly,
@@ -1544,8 +1816,59 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
   const deterministicData = typeof capabilityResult.data === "object" && capabilityResult.data !== null
     ? capabilityResult.data as { deterministicOnly?: unknown; deterministicText?: unknown }
     : null;
+  // Attention structured UI: the SAME already-authorized `items`/`count` the deterministic text
+  // was built from, reshaped into the small transport-safe shape (never the internal-only `key`,
+  // never a DB uuid) - computed only for a real Attention answer that actually has the `attention`
+  // capability's own data shape, so every other domain's deterministicOnly answer (UserActivity's
+  // attendance/Catch-Up/etc.) is completely unaffected. The client never parses `text` to recover
+  // this - it's the exact same array the prose was generated from, just re-shaped.
+  const attention = domain === "Attention" && isAttentionCapabilityData(capabilityResult.data)
+    ? {
+        count: capabilityResult.data.count,
+        items: capabilityResult.data.items.map((item) => ({
+          detail: item.detail,
+          entityIdentifier: item.entityIdentifier,
+          entityLabel: item.entityLabel,
+          kind: item.kind,
+          sourceDomain: item.sourceDomain,
+          title: item.title,
+        })),
+      }
+    : undefined;
+  // N2B3.4: the SAME already-fetched `items`/counts the deterministic text was built from,
+  // reshaped into the small transport-safe shape (never the internal-only `key`, never a DB
+  // uuid) - computed only for a real Catch-Up answer. `groupCount` is the TOTAL consolidated
+  // group count (displayed + truncated), matching the "X activity groups" figure the deterministic
+  // text's own capNote already describes - pure arithmetic on already-authoritative fields, never
+  // a client-side recount. The client never parses `text` to recover any of this.
+  const catchUp = domain === "UserActivity" && isCatchUpCapabilityData(capabilityResult.data)
+    ? {
+        ...(capabilityResult.data.entityIdentifier
+          ? { entityIdentifier: capabilityResult.data.entityIdentifier, heading: capabilityResult.data.entityIdentifier }
+          : {}),
+        groupCount: capabilityResult.data.returnedCount + capabilityResult.data.truncatedCount,
+        items: capabilityResult.data.items.map((item) => ({
+          action: item.action,
+          ...(item.actorLabel && item.actorLabel !== CATCH_UP_UNRESOLVED_ACTOR_LABEL ? { actorLabel: item.actorLabel } : {}),
+          ...(item.changes?.length ? { changes: item.changes } : {}),
+          ...(item.detail ? { detail: item.detail } : {}),
+          entityType: item.entityType,
+          occurredAt: item.occurredAt,
+          ...(item.occurrenceCount ? { occurrenceCount: item.occurrenceCount } : {}),
+          title: item.title,
+        })),
+        rawEventCount: capabilityResult.data.totalMatching,
+      }
+    : undefined;
+  // N2C1.1: reshaped from the SAME already-computed capabilityResult.data every Insights answer
+  // already returns (see noa-insights-capability.server.ts, untouched by this phase) - never
+  // parsed from `deterministicText`. Computed unconditionally (like attention/catchUp above) so it
+  // reaches the client regardless of which return path below is taken - quotation_trend/
+  // quotation_summary don't set deterministicOnly and would otherwise only ever hit the provider
+  // path, where this transport would never be attached.
+  const analytics = buildAnalyticsTransport(domain, capabilityResult.data);
   if (deterministicData?.deterministicOnly === true && typeof deterministicData.deterministicText === "string") {
-    return { conversationReference: newConversationReference, domain, sources: capabilityResult.sources, text: deterministicData.deterministicText };
+    return { analytics, attention, catchUp, conversationReference: newConversationReference, domain, sources: capabilityResult.sources, text: deterministicData.deterministicText };
   }
 
   try {
@@ -1557,13 +1880,13 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
       message: request.message,
       recentMessages: request.recentMessages ?? [],
     });
-    return { conversationReference: newConversationReference, domain, sources: capabilityResult.sources, text };
+    return { analytics, conversationReference: newConversationReference, domain, sources: capabilityResult.sources, text };
   } catch (error) {
     const deterministicText = typeof capabilityResult.data === "object" && capabilityResult.data !== null
       && "deterministicText" in capabilityResult.data && typeof capabilityResult.data.deterministicText === "string"
       ? capabilityResult.data.deterministicText.trim()
       : "";
-    if (deterministicText) return { conversationReference: newConversationReference, domain, sources: capabilityResult.sources, text: deterministicText };
+    if (deterministicText) return { analytics, conversationReference: newConversationReference, domain, sources: capabilityResult.sources, text: deterministicText };
     throw error;
   }
 }

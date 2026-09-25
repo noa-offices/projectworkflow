@@ -63,15 +63,20 @@ test("9. quotation status counts are read directly from the status column, never
   assert.ok(insightsSource.includes("row.status"));
 });
 
-// 10. project statuses use exact 4-value vocabulary
-test("10. project status vocabulary is exactly active/on_hold/completed/cancelled", () => {
-  assert.match(insightsSource, /const PROJECT_STATUSES = \["active", "on_hold", "completed", "cancelled"\] as const;/);
+// N2C2: superseded - C0/C2 proved the standalone `projects` table (and its project_status enum,
+// including "on_hold") is empty and not authoritative for ERP Project Files; project_summary was
+// corrected to read ERP Project Files instead (a deliberate bug fix, not a regression). Re-scoped
+// to check the CORRECTED 3-value status vocabulary (active/completed/cancelled, never a 4th
+// invented on_hold state for ERP Project Files) instead of the old standalone-table query shape.
+test("10. ERP Project File status vocabulary is exactly active/completed/cancelled, never a 4th invented on_hold state", () => {
+  assert.match(insightsSource, /status: cancelledAt \? "cancelled" : completedAt \? "completed" : "active",/);
+  assert.ok(!/onHoldCount|pendingCount|delayedCount/.test(insightsSource));
 });
 
-// 11. is_active separate from project_status
-test("11. is_active (archive state) is computed independently from project_status counts", () => {
+// 11. is_active (client archive state) separate from ERP Project File status
+test("11. is_active (client archive state) is computed independently from ERP Project File status counts", () => {
   assert.ok(insightsSource.includes('.eq("is_active", true)') && insightsSource.includes('.eq("is_active", false)'));
-  assert.ok(insightsSource.includes('.eq("project_status", status)'));
+  assert.ok(insightsSource.includes("insightsProjectFiles(supabase)"));
 });
 
 // 12. Product price summary calls existing price-state helper

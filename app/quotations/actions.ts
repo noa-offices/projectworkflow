@@ -1803,6 +1803,23 @@ async function insertQuotationItemPriceHistory({
     ? "Use current source price"
     : "Row price updated";
 
+  // N2B3.1: the SAME already-normalized values the existing metadata below already computes
+  // (quotationMoneyValue() called again on the same inputs - never a new/second normalization
+  // algorithm, per PART 4). `changes` is additive only - every existing metadata key below is
+  // untouched. Only the two allow-listed high-value fields (PART 11) are ever considered, and
+  // only when the normalized value actually differs - no fake zero-delta entries.
+  const oldUnitPriceValue = quotationMoneyValue(current.unit_price);
+  const newUnitPriceValue = quotationMoneyValue(newValues.unit_price);
+  const oldDiscountValueValue = quotationMoneyValue(current.discount_value);
+  const newDiscountValueValue = quotationMoneyValue(newValues.discount_value);
+  const itemPriceChanges: Array<{ field: string; label: string; oldValue: number; newValue: number; currency?: string }> = [];
+  if (oldUnitPriceValue !== newUnitPriceValue) {
+    itemPriceChanges.push({ field: "unit_price", label: "Unit price", oldValue: oldUnitPriceValue, newValue: newUnitPriceValue, currency: newCurrency });
+  }
+  if (oldDiscountValueValue !== newDiscountValueValue) {
+    itemPriceChanges.push({ field: "discount_value", label: "Discount", oldValue: oldDiscountValueValue, newValue: newDiscountValueValue });
+  }
+
   await createAuditLog(supabase, {
     entityType: "quotation_item",
     entityId: current.id,
@@ -1826,6 +1843,7 @@ async function insertQuotationItemPriceHistory({
       oldUnitPrice: quotationMoneyValue(current.unit_price),
       sourcePriceLabel,
       sourcePriceType,
+      ...(itemPriceChanges.length > 0 ? { changes: itemPriceChanges } : {}),
     },
     actorName,
     createdBy: changedBy,
@@ -5308,6 +5326,12 @@ export async function updateQuotationStatus(formData: FormData) {
       approvalStatus: cancelledApprovalDraft?.approvalStatus,
       approvalNo: cancelledApprovalDraft?.approvalNo,
       quotationLabel: quotationLabel(quotation.title, quotation.quotation_no),
+      // N2B3.1: additive structured change, alongside the existing old_status/new_status keys
+      // above (never a replacement for them) - only added when the status actually differs,
+      // using the exact same authoritative values already in this function.
+      ...(quotation.status !== nextStatus
+        ? { changes: [{ field: "status", label: "Status", oldValue: quotation.status, newValue: nextStatus }] }
+        : {}),
     },
     actorName: displayName,
     createdBy: user.id,

@@ -57,7 +57,10 @@ test("Home UX 1. Old vague starter strings are gone", () => {
 test("Home UX 3/4/7. Proven-request starters send their proven outgoing text, not their short label", () => {
   assert.ok(source.includes('{ label: "Pending quotations", prompt: "Show pending quotations" }'));
   assert.ok(source.includes('{ label: "Active projects", prompt: "Show active projects" }'));
-  assert.ok(source.includes('{ label: "What can NOA do?", prompt: "What can you do?" }'));
+});
+
+test("N2A3. Needs attention starter sends the exact proven Attention phrase", () => {
+  assert.ok(source.includes('{ label: "Needs attention", prompt: "what needs my attention" }'));
 });
 
 test("Home UX 5/6. Configure-product starter never sends the bare label - it's encoded as a local draft signal", () => {

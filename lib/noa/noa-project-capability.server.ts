@@ -95,6 +95,14 @@ export function projectFileIdentifierCount(message: string): number {
   return [...message.matchAll(PROJECT_FILE_IDENTIFIER_PATTERN)].length;
 }
 
+// N2B2: exported so lib/noa/noa-user-activity-capability.server.ts's Project-File-scoped
+// Catch-Up can extract the same CO identifier shape this file already authoritatively defines -
+// never a second CO regex. Returns the first match only (matches this file's existing single-
+// identifier detail-question assumption).
+export function projectFileIdentifierFromMessage(message: string): string | null {
+  return message.match(PROJECT_FILE_IDENTIFIER_PATTERN)?.[0] ?? null;
+}
+
 function isDetailQuestion(message: string, context: NoaPageContext) {
   return Boolean(context.projectId) && /\b(this|current|status|client|where|details?)\b/i.test(message) ||
     projectFileIdentifierCount(message) > 0 ||
@@ -197,6 +205,10 @@ type ProjectFileSummary = {
   createdAt: string;
   currency: string;
   orderNo: string;
+  // N2A1: added so lib/noa/noa-attention-capability.server.ts can join to quotation_items (which
+  // has no order_no column, only quotation_id) for vendor grouping - a pure additive field, no
+  // existing caller of allProjectFiles()/ProjectFileSummary reads or is affected by it.
+  quotationId: string;
   reference: string;
   status: ProjectFileStatus;
   total: number;
@@ -274,15 +286,19 @@ export async function resolveNoaEntityCandidate(candidate: string): Promise<NoaE
 // unbounded scan. Cancelled orders are still returned here (a detail lookup may legitimately ask
 // about one) but are excluded from both the active and completed LIST views below, exactly like
 // the original behavior.
-async function allProjectFiles(
+// N2A1: exported (was module-private) so lib/noa/noa-attention-capability.server.ts can reuse
+// this exact bounded ERP Project File extraction/query for its Procurement subsection, rather
+// than writing a second, subtly-different parser - see ProjectFileSummary's own comment on the
+// one additive field (quotationId) this required.
+export async function allProjectFiles(
   supabase: Awaited<ReturnType<typeof createClient>>,
 ): Promise<ProjectFileSummary[]> {
   const { data } = await supabase
     .from("quotations")
-    .select("layout_settings")
+    .select("id,layout_settings")
     .order("created_at", { ascending: false })
     .limit(PROJECT_FILE_SCAN_LIMIT)
-    .returns<QuotationLayoutRow[]>();
+    .returns<(QuotationLayoutRow & { id: string })[]>();
 
   return (data ?? [])
     .flatMap((quotation) => {
@@ -299,6 +315,7 @@ async function allProjectFiles(
         createdAt: order.createdAt,
         currency: order.currency,
         orderNo: order.orderNo,
+        quotationId: quotation.id,
         reference: order.reference,
         status,
         total: order.total,

@@ -119,6 +119,17 @@ const USER_ACTIVITY_PATTERNS = [
 
 // UA-1B: explicit team/other-user activity phrasing - same routing precedence as
 // USER_ACTIVITY_PATTERNS above (checked at the same point, before every domain keyword list), so
+// N2B1: narrow, historical/event-oriented phrasing - "what changed"/"what happened"/"catch me
+// up" - checked at this SAME early precedence point (before every domain keyword list, including
+// Insights) so a genuine change-history question always wins. This is the proven fix for the B0
+// UAT collision: INSIGHTS_PATTERNS used to contain `/\bwhat changed\b/` itself, which is why
+// "What changed today?" used to route to Insights before ever reaching this check - that pattern
+// has been removed from INSIGHTS_PATTERNS (a message matching it now only ever matches here
+// instead). Deliberately anchored to the actual verb phrase, never a bare "changed"/"happened"/
+// "catch"/"check"/"attention" keyword, so ordinary Insights summary/trend/overview phrasing (none
+// of which contains "changed"/"happened"/"catch me up") is never captured here.
+const CATCH_UP_PATTERNS = [/\bwhat changed\b/, /\bwhat happened\b/, /\bcatch me up\b/];
+
 // e.g. "who worked on quotations today" isn't stolen by the Quotation keyword list. Deliberately
 // narrow: every pattern requires an explicit "team"/"who <verb>"/named-target activity phrase, so
 // "show users" (no activity verb) and ordinary domain questions never match any of these.
@@ -212,7 +223,50 @@ const INSIGHTS_PATTERNS = [
   /\bbusiness overview\b/,
   /\bthis month'?s overview\b/,
   /\bgive me (?:a|this month'?s) (?:business )?(?:summary|overview)\b/,
-  /\bwhat changed\b/,
+  // N2C1: narrow, anchored quotation-analytics/aggregate phrasing only - checked at this same
+  // INSIGHTS_PATTERNS precedence point (after UserActivity/Catch-Up, before every operational
+  // domain keyword list), so historical/change-event phrasing (already caught earlier by
+  // CATCH_UP_PATTERNS) and single-quotation current-state questions ("tell me about QN-0005-001",
+  // "what is QN-0005-001 worth", "show QN-0005-001" - none of which match any pattern below,
+  // since none contain "analytics"/"overview"/"breakdown"/a period word/"conversion rate"/
+  // "compare ... month") are never stolen from their existing routes.
+  /\bquotation analytics\b/,
+  /\bsales overview\b/,
+  /\bquotation status breakdown\b/,
+  /\bhow much (?:did we|have we) quote[d]?\b/,
+  /\bhow many quotations?\b[\s\S]*\b(?:this|last) (?:month|week|quarter|year)\b/,
+  /\bhow much (?:was|is) client[- ]confirmed\b/,
+  /\bcompare (?:this month|this week|this quarter|this year) (?:with|to|vs\.?) (?:last month|last week|last quarter|last year)\b/,
+  /\b(?:conversion|win|success) rate\b/,
+  // N2C2: narrow, anchored Project File/client analytics phrasing only - same precedence point as
+  // the N2C1 block above. None of these match a bare CO/client-name identifier lookup ("tell me
+  // about CO-0003-001", "tell me about Apex Luxury Retail"), a Catch-Up phrase (caught earlier by
+  // CATCH_UP_PATTERNS), or an Attention phrase (caught earlier by ATTENTION_PATTERNS) - so those
+  // stay on their existing routes untouched.
+  /\bproject file analytics\b/,
+  /\bproject analytics\b/,
+  /\bhow many active project files?\b/,
+  /\bactive project (?:file )?value\b/,
+  /\bproject file status breakdown\b/,
+  /\bhow many (?:projects?|project files?) (?:are|is) on[- ]?hold\b/,
+  /\bclient analytics\b/,
+  /\btop clients? by (?:quotation|confirmed|project(?:\s*file)?) value\b/,
+  /\bhow many quotations does each client have\b/,
+];
+
+// N2A1: explicit "what needs attention" style phrasing only - checked at the same early
+// precedence point as Insights (before every operational domain keyword list below), so it can
+// never be stolen by Price's bare "due" keyword or any other domain list. Deliberately full,
+// anchored phrases (never a bare "check"/"attention" word alone) so an unrelated message that
+// merely contains "check" ("what did i check") is never misrouted here - that phrasing already
+// belongs to USER_ACTIVITY_PATTERNS, checked earlier, and stays there unaffected.
+const ATTENTION_PATTERNS = [
+  /\bwhat needs my attention\b/,
+  /\bwhat needs attention(?: today)?\b/,
+  /\banything i need to check\b/,
+  /\bwhat should i look at\b/,
+  /\bshow attention items\b/,
+  /\bshow what needs attention\b/,
 ];
 
 const PRICE_KEYWORDS = [
@@ -406,7 +460,8 @@ export function classifyNoaRoute(message: string, context: NoaPageContext): NoaR
   // checked first among the domain-ish routes).
   if (
     USER_ACTIVITY_PATTERNS.some((pattern) => pattern.test(normalized)) ||
-    TEAM_AND_OTHER_USER_ACTIVITY_PATTERNS.some((pattern) => pattern.test(normalized))
+    TEAM_AND_OTHER_USER_ACTIVITY_PATTERNS.some((pattern) => pattern.test(normalized)) ||
+    CATCH_UP_PATTERNS.some((pattern) => pattern.test(normalized))
   ) {
     return "UserActivity";
   }
@@ -422,6 +477,13 @@ export function classifyNoaRoute(message: string, context: NoaPageContext): NoaR
   // INSIGHTS_PATTERNS' comment).
   if (INSIGHTS_PATTERNS.some((pattern) => pattern.test(normalized))) {
     return "Insights";
+  }
+
+  // N2A1: checked immediately after Insights, before every operational domain keyword list, so
+  // an explicit "what needs my attention" style question always wins - never a semantic
+  // extraction call for these phrases (see ATTENTION_PATTERNS' own comment).
+  if (ATTENTION_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return "Attention";
   }
 
   // Price checked before Quotation/Product: a price-specific ask ("is this product's price
@@ -491,7 +553,7 @@ export function classifyNoaRoute(message: string, context: NoaPageContext): NoaR
 // internal-only and never shown as a domain badge, so they collapse to "Help" here.
 export function classifyNoaIntent(message: string, context: NoaPageContext): NoaDomain {
   const route = classifyNoaRoute(message, context);
-  return route === "Product" || route === "Quotation" || route === "Price" || route === "Project" || route === "Client" || route === "Procurement" || route === "UserActivity" || route === "Admin" || route === "Insights" || route === "Help"
+  return route === "Product" || route === "Quotation" || route === "Price" || route === "Project" || route === "Client" || route === "Procurement" || route === "UserActivity" || route === "Admin" || route === "Insights" || route === "Attention" || route === "Help"
     ? route
     : "Help";
 }
@@ -579,6 +641,7 @@ export const NOA_CAPABILITY_SUMMARY_TEXT =
 
 const THINKING_STATUS_BY_DOMAIN: Record<NoaDomain, string> = {
   Admin: "Checking system settings...",
+  Attention: "Checking what needs attention...",
   Client: "Checking client records...",
   Insights: "Calculating insights...",
   Help: "Reviewing ProjectWorkflow guidance...",

@@ -37,8 +37,128 @@ export type NoaChoice = {
   value: string;
 };
 
+// NOA Attention structured UI: the smallest additive transport for rendering Attention findings
+// as cards/chips instead of parsing the deterministic prose (see noa-orchestrator.ts's own
+// comment on why this exists). Deliberately narrow - only the fields the renderer needs, all
+// already safe/business-facing values the Attention capability itself already produces. Never a
+// DB uuid, vendor_key, quotation_id, or internal audit id - `entityIdentifier` is always a plain
+// business identifier (e.g. an orderNo) when present, nothing else.
+export type NoaAttentionSourceDomain = "Price" | "Procurement" | "ClientPayment";
+
+export type NoaAttentionTransportItem = {
+  sourceDomain: NoaAttentionSourceDomain;
+  kind: string;
+  title: string;
+  detail: string;
+  entityLabel: string;
+  entityIdentifier?: string;
+};
+
+export type NoaAttentionTransport = {
+  count: number;
+  items: NoaAttentionTransportItem[];
+};
+
+// N2B3.4: the smallest additive transport for rendering Catch-Up answers as a timeline instead of
+// the client parsing deterministic prose. Mirrors the structured-change shape B3.1/B3.2 already
+// validate server-side (never redefined differently here) and only the fields
+// noa-user-activity-capability.server.ts's own NoaCatchUpItem already exposes - never a DB uuid,
+// entity uuid, parent uuid, or raw metadata. `actorLabel` is omitted by the orchestrator whenever
+// the server's own unresolved-actor sentinel would otherwise show, so its mere presence here
+// already means "safe to display".
+export type NoaCatchUpChange = {
+  field: string;
+  label?: string;
+  oldValue: string | number | boolean | null;
+  newValue: string | number | boolean | null;
+  currency?: string;
+};
+
+export type NoaCatchUpTransportItem = {
+  occurredAt: string;
+  action: string;
+  title: string;
+  detail?: string;
+  actorLabel?: string;
+  entityType: string;
+  occurrenceCount?: number;
+  changes?: NoaCatchUpChange[];
+};
+
+export type NoaCatchUpTransport = {
+  // Present only for entity-scoped Catch-Up (the CO/QN identifier itself) - global Catch-Up omits
+  // this and the client falls back to a neutral heading, never an inferred time-window label.
+  heading?: string;
+  entityIdentifier?: string;
+  rawEventCount: number;
+  groupCount: number;
+  items: NoaCatchUpTransportItem[];
+};
+
+// N2C1.1: the smallest additive transport for rendering quotation Analytics as compact cards
+// instead of the client parsing deterministic prose. Deliberately narrower than a general-purpose
+// dashboard contract - no chart/axis/color config, just factual values already computed by
+// noa-insights-capability.server.ts. `value` on a metric may contain multiple `\n`-separated lines
+// when multiple currencies exist (PART 6) - never a merged/converted single figure.
+export type NoaAnalyticsMetric = {
+  key: string;
+  label: string;
+  value: string;
+};
+
+export type NoaAnalyticsStatusRow = {
+  label: string;
+  count: number;
+};
+
+export type NoaAnalyticsCurrencyComparisonRow = {
+  currency: string;
+  currentValue: number;
+  previousValue: number;
+  difference: number;
+};
+
+export type NoaAnalyticsComparison = {
+  currentLabel: string;
+  previousLabel: string;
+  currentCount: number;
+  previousCount: number;
+  countDifference: number;
+  currencyRows: NoaAnalyticsCurrencyComparisonRow[];
+};
+
+export type NoaAnalyticsTrendRow = {
+  label: string;
+  count: number;
+  currency?: string;
+  total?: number;
+};
+
+export type NoaAnalyticsTransport = {
+  kind: "quotation_analytics" | "quotation_compare" | "quotation_trend";
+  title: string;
+  period?: string;
+  metrics?: NoaAnalyticsMetric[];
+  statusBreakdown?: NoaAnalyticsStatusRow[];
+  comparison?: NoaAnalyticsComparison;
+  trend?: NoaAnalyticsTrendRow[];
+  emptyMessage?: string;
+};
+
 export type NoaMessage = {
   createdAt: number;
+  // Attention structured UI: present only on an assistant Attention answer, and only ever the
+  // server's own already-authorized items for THAT answer - never client-computed, never carried
+  // over from a prior message. See NoaAnswer.attention below for the full rationale.
+  attention?: NoaAttentionTransport;
+  // N2C1.1: present only on an assistant quotation-Analytics answer, reshaped from the SAME
+  // capabilityResult.data every Insights answer already returns - never client-computed. See
+  // NoaAnswer.analytics below.
+  analytics?: NoaAnalyticsTransport;
+  // N2B3.4: present only on an assistant Catch-Up answer that actually has items - the same
+  // server-authorized items array the deterministic text was built from, never client-computed,
+  // never carried over from a prior message. See NoaAnswer.catchUp below.
+  catchUp?: NoaCatchUpTransport;
   // GPC-3.1: only ever set on an assistant guided-configuration question, and only ever the SAME
   // choices that answer's own text already describes - never client-supplied, never persisted
   // beyond this one message (see noa-messages.tsx: only the LATEST assistant message's choices are
@@ -84,7 +204,7 @@ export type NoaPageContext = {
 // Phase 1B backend types - still alias-free/pure, so lib/noa/noa-intent-router.ts (and any other
 // pure NOA helper) can depend on them and stay unit testable.
 
-export type NoaDomain = "Product" | "Quotation" | "Price" | "Project" | "Client" | "Procurement" | "UserActivity" | "Admin" | "Insights" | "Help";
+export type NoaDomain = "Product" | "Quotation" | "Price" | "Project" | "Client" | "Procurement" | "UserActivity" | "Admin" | "Insights" | "Attention" | "Help";
 
 export type NoaSource = {
   label: string;
@@ -93,6 +213,25 @@ export type NoaSource = {
 };
 
 export type NoaAnswer = {
+  // Attention structured UI: present ONLY for a successful Attention answer that actually has
+  // findings - the orchestrator populates this from the SAME already-authorized items array the
+  // deterministic text was built from, never a client-side reconstruction. Absent for every other
+  // domain and for an empty/unauthorized Attention result, so the client's existing fallback to
+  // plain `text` rendering (PART 11) is exercised automatically, not a special case.
+  attention?: NoaAttentionTransport;
+  // N2C1.1: present ONLY for a quotation Analytics answer (quotation_analytics/quotation_compare/
+  // quotation_trend) - reshaped from the SAME structured `data` every Insights answer already
+  // returns, never a client-side reconstruction from prose. Absent for every other Insights kind
+  // (quotation_summary, project/client/product/procurement summaries, overview, the
+  // conversion-rate refusal) and every other domain, so the client's existing fallback to plain
+  // `text` rendering (PART 17) is exercised automatically, not a special case.
+  analytics?: NoaAnalyticsTransport;
+  // N2B3.4: present ONLY for a successful Catch-Up answer that actually has items - the
+  // orchestrator populates this from the SAME already-fetched items array the deterministic text
+  // was built from, never a client-side reconstruction. Absent for every other UserActivity kind
+  // and every other domain, so the client's existing fallback to plain `text` rendering (PART 19)
+  // is exercised automatically, not a special case.
+  catchUp?: NoaCatchUpTransport;
   // GPC-3.1: present only for a guided-configuration question - see NoaChoice/NoaMessage above.
   // Absent (undefined) for every ordinary NOA answer (Quotation/Project/Client/Product Q&A/Price/
   // Procurement/UserActivity), so existing rendering is entirely unaffected (PART 11).

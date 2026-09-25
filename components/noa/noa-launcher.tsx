@@ -18,13 +18,22 @@ const MODE_DRAG_THRESHOLD_PX = 38;
 // comment above `mode` below for why no reset-on-open logic is even needed).
 type NoaLauncherMode = "full" | "sneak";
 
+// N2A3 PART 6: pure display formatting only, no business meaning - 1-9 shown as-is, anything
+// higher collapses to "9+" (PART 6) so the badge never grows unbounded.
+function attentionBadgeLabel(count: number | null | undefined): string | null {
+  if (typeof count !== "number" || count <= 0) return null;
+  return count > 9 ? "9+" : String(count);
+}
+
 export function NoaLauncher({
+  attentionCount,
   onHoverEnd,
   onHoverStart,
   onToggle,
   pageSection,
   state,
 }: {
+  attentionCount?: number | null;
   onHoverEnd: () => void;
   onHoverStart: () => void;
   onToggle: () => void;
@@ -56,6 +65,14 @@ export function NoaLauncher({
     setIsDragging(false);
   };
 
+  // N2A3 PART 8: shown in Full only - Sneak's own transform/overflow already makes a clean badge
+  // placement awkward, and the task explicitly allows hiding it there. PART 17: the numeral form
+  // ("9+") is fine visually but reads oddly aloud, so the aria suffix spells it out instead.
+  const badgeLabel = !isSneak ? attentionBadgeLabel(attentionCount) : null;
+  const attentionAriaSuffix = badgeLabel
+    ? ` ${typeof attentionCount === "number" && attentionCount > 9 ? "More than 9 items" : `${attentionCount} item${attentionCount === 1 ? "" : "s"}`} need attention.`
+    : "";
+
   return (
     // PART 2/9: `group` marks this as the hover/focus scope for the secondary Hide/Show control
     // below (CSS group-hover/group-focus-within - no JS hover state needed for that reveal). The
@@ -68,7 +85,7 @@ export function NoaLauncher({
       data-noa-page-section={pageSection}
     >
       <button
-        aria-label={isSneak ? "Open NOA assistant. Drag left to show." : "Open NOA assistant. Drag right to hide."}
+        aria-label={`${isSneak ? "Open NOA assistant. Drag left to show." : "Open NOA assistant. Drag right to hide."}${attentionAriaSuffix}`}
         // PART 3/6/8/11: clicking the robot itself always opens chat, in either mode. Full mode's
         // box always remains a generous target; Sneak uses the viewport edge as NOA's hiding
         // surface rather than a crop window inside this button.
@@ -147,6 +164,17 @@ export function NoaLauncher({
             <NoaAvatar floatEnabled={floatEnabled} greet={greeted} size="launcher" state={state} />
           )}
         </span>
+        {/* N2A3 PART 6/7/9/17/19: decorative only - pointer-events-none so it can never intercept
+            the drag/click handled above, aria-hidden since the button's own aria-label already
+            carries the count, and it never touches drag/animation state or the avatar itself. */}
+        {badgeLabel ? (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute -right-0.5 -top-0.5 z-10 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full border-2 border-white bg-amber-400 px-1 text-[10px] font-semibold leading-none text-amber-950 shadow-sm"
+          >
+            {badgeLabel}
+          </span>
+        ) : null}
       </button>
     </div>
   );

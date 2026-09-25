@@ -497,7 +497,9 @@ async function buildQuotationAnswer(
   };
 }
 
-async function quotationForIdentifier(
+// N2B2: exported so lib/noa/noa-user-activity-capability.server.ts's quotation-scoped Catch-Up
+// can reuse this exact authoritative QN -> quotation row resolution - never a second QN resolver.
+export async function quotationForIdentifier(
   supabase: Awaited<ReturnType<typeof createClient>>,
   quotationNo: string,
 ) {

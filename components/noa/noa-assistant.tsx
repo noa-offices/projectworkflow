@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { NoaChatDrawer } from "@/components/noa/noa-chat-drawer";
 import { NoaLauncher } from "@/components/noa/noa-launcher";
 import { NOA_DRAFT_STARTER_SIGNAL_PREFIX } from "@/components/noa/noa-messages";
@@ -9,8 +9,11 @@ import type { NoaConversationReference } from "@/lib/noa/noa-conversation-refere
 import type { NoaProductConfigurationReference } from "@/lib/noa/noa-product-configuration-reference";
 import { noaStateReducer, type NoaStateEvent } from "@/lib/noa/noa-state-machine";
 import type {
+  NoaAnalyticsTransport,
   NoaAnswer,
+  NoaAttentionTransport,
   NoaAuthContext,
+  NoaCatchUpTransport,
   NoaChoice,
   NoaDomain,
   NoaMessage,
@@ -20,7 +23,7 @@ import type {
 import { useNoaPageContext } from "@/lib/noa/use-noa-page-context";
 
 const GREETING_TEXT =
-  "Hi, I'm NOA 👋\nI can help you find and configure products, check quotations and pricing, review projects and procurement, and answer questions about ProjectWorkflow.";
+  "Hi, I'm NOA 👋\nI can help you find and configure products, check quotations and pricing, review projects and procurement, and answer questions about ProjectWorkflow. I can also show you what needs attention.";
 // Home UX PART 5: the "Configure product" starter never sends this to the server (GPC requires
 // "configure <product name>", which the starter alone can't supply) - it's shown locally, then the
 // user's NEXT typed message is prefixed with the pending draft (see handleSend below).
@@ -30,11 +33,16 @@ const SETTLE_DELAY_MS = 900;
 // Send only a small bounded slice of prior turns, never the entire session.
 const RECENT_MESSAGE_LIMIT = 6;
 const NOA_CHAT_ENDPOINT = "/api/noa/chat";
+// N2A3: a separate, minimal read endpoint - never the chat endpoint via a hidden synthetic turn
+// (PART 2). Its own route (app/api/noa/attention/route.ts) calls the exact same
+// fetchNoaAttentionCapability() the chat orchestrator dispatches to - this component never
+// recomputes or parses a count itself.
+const NOA_ATTENTION_ENDPOINT = "/api/noa/attention";
 
 function createMessage(
   role: NoaMessage["role"],
   text: string,
-  meta?: { choices?: NoaChoice[]; domain?: NoaDomain; sources?: NoaSource[] },
+  meta?: { analytics?: NoaAnalyticsTransport; attention?: NoaAttentionTransport; catchUp?: NoaCatchUpTransport; choices?: NoaChoice[]; domain?: NoaDomain; sources?: NoaSource[] },
 ): NoaMessage {
   return {
     createdAt: Date.now(),
@@ -43,6 +51,15 @@ function createMessage(
       : `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     role,
     text,
+    // Attention structured UI: only ever the server's own already-authorized items for THIS
+    // answer - never client-computed, never carried over from a prior message.
+    ...(meta?.attention ? { attention: meta.attention } : {}),
+    // N2C1.1: only ever the server's own already-computed analytics data for THIS answer - never
+    // client-computed, never carried over from a prior message.
+    ...(meta?.analytics ? { analytics: meta.analytics } : {}),
+    // N2B3.4: only ever the server's own already-authorized items for THIS answer - never
+    // client-computed, never carried over from a prior message.
+    ...(meta?.catchUp ? { catchUp: meta.catchUp } : {}),
     // GPC-3.1: only ever set for an assistant message, and only ever the server's own bounded
     // choices for THAT answer - never invented client-side, never carried over from a prior turn.
     ...(meta?.choices?.length ? { choices: meta.choices } : {}),
@@ -96,6 +113,38 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
   // beyond that one message, never sent to the server on its own.
   const pendingConfigureDraftRef = useRef<string | null>(null);
   const pageContext = useNoaPageContext();
+
+  // N2A3 PART 1/4/13/14/18: the launcher badge's ONLY source of truth - a single mount-time read
+  // from the server's own Attention capability (never recomputed/duplicated client-side, never
+  // parsed from chat prose). `null` means "no badge" (either not yet loaded, unauthorized, or
+  // genuinely zero findings) - there is deliberately no separate loading/error state, since a
+  // failed or denied fetch must look identical to "nothing to show" (PART 5) rather than
+  // surfacing anything. No interval, no refetch on hover/drag/animation - see the effect below.
+  const [attentionCount, setAttentionCount] = useState<number | null>(null);
+  const attentionFetchStartedRef = useRef(false);
+
+  useEffect(() => {
+    // PART 18: guards against React's dev-mode double-invoke of effects firing a second request -
+    // not a cache, just a one-shot latch for this component instance.
+    if (!auth || attentionFetchStartedRef.current) return;
+    attentionFetchStartedRef.current = true;
+
+    let cancelled = false;
+    fetch(NOA_ATTENTION_ENDPOINT)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { available?: boolean; count?: number } | null) => {
+        if (cancelled || !data || data.available === false || typeof data.count !== "number") return;
+        setAttentionCount(data.count);
+      })
+      .catch(() => {
+        // PART 5: a badge-fetch failure must never affect chat - no error message, no visual
+        // state change, no retry loop. The badge simply stays hidden (attentionCount stays null).
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth]);
 
   const dispatch = useCallback((event: NoaStateEvent) => {
     setVisualState((current) => noaStateReducer(current, event));
@@ -155,7 +204,7 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
         productConfigurationReferenceRef.current = answer.productConfigurationReference;
         setMessages((current) => [
           ...current,
-          createMessage("assistant", answer.text, { choices: answer.choices, domain: answer.domain, sources: answer.sources }),
+          createMessage("assistant", answer.text, { analytics: answer.analytics, attention: answer.attention, catchUp: answer.catchUp, choices: answer.choices, domain: answer.domain, sources: answer.sources }),
         ]);
         dispatch({ type: "RESPONSE_SUCCESS" });
       })
@@ -280,6 +329,7 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
         }
       `}</style>
       <NoaLauncher
+        attentionCount={attentionCount}
         onHoverEnd={handleHoverEnd}
         onHoverStart={handleHoverStart}
         onToggle={handleToggle}
