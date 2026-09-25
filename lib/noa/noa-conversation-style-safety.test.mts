@@ -24,8 +24,8 @@ test("conversation routes are deterministic, concise, and capability-on-demand",
     router.indexOf("if (GREETING_PATTERNS.some") <
       router.indexOf("if (includesAny(normalized, HELP_PHRASES))"),
   );
-  assert.ok(router.includes('return "greeting"'));
-  assert.ok(router.includes('return "capabilities"'));
+  assert.ok(router.includes('return { route: "greeting", rule: "greeting", strength: "exact" };')); // I3: classifyNoaRouteWithStrength branch
+  assert.ok(router.includes('return { route: "capabilities", rule: "capabilities", strength: "exact" };')); // I3: classifyNoaRouteWithStrength branch
   assert.ok(router.includes("NOA_CAPABILITY_SUMMARY_TEXT"));
   const summary = router.match(/export const NOA_CAPABILITY_SUMMARY_TEXT\s*=\s*"([^"]+)"/)?.[1] ?? "";
   assert.ok(!/attendance/i.test(summary));

@@ -1,8 +1,40 @@
 import "server-only";
 
-import { classifyNoaRoute, describeNoaPageContext, entityLookupCandidate, greetingResponseText, NOA_CAPABILITY_SUMMARY_TEXT, recordedQuotationFollowUpReference } from "@/lib/noa/noa-intent-router";
-import { extractNoaSemanticRequest } from "@/lib/noa/noa-intent-extractor.server";
-import { boundConversationReferenceEntities, isNoaConversationReference, type NoaConversationReference } from "@/lib/noa/noa-conversation-reference";
+import {
+  buildNoaRouteDiagnostics,
+  classifyNoaRoute,
+  classifyNoaRouteWithStrength,
+  decideNoaSemanticV2Outcome,
+  describeNoaPageContext,
+  entityLookupCandidate,
+  greetingResponseText,
+  isNoaGenericSemanticCandidate,
+  isNoaRouteDiagnosticsEnabled,
+  isNoaSemanticV2FlagEnabled,
+  NOA_CAPABILITY_SUMMARY_TEXT,
+  noaSemanticV2Eligibility,
+  recordedQuotationFollowUpReference,
+  type NoaRouteClassification,
+  type NoaRouteDiagnostics,
+  type NoaSemanticV2Decision,
+  type NoaSemanticV2Eligibility,
+  type NoaSemanticV2ProtectedReason,
+} from "@/lib/noa/noa-intent-router";
+import { extractNoaSemanticRequest, extractNoaSemanticRequestV2, type NoaIntentExtractorV2Result } from "@/lib/noa/noa-intent-extractor.server";
+import {
+  bindNoaConversationFollowUp,
+  boundConversationReferenceEntities,
+  buildNoaInsightsConversationReference,
+  buildNoaReferenceDiagnostics,
+  detectNoaFollowUpCues,
+  isNoaBindableConversationReference,
+  isNoaConversationFollowUpCandidate,
+  isNoaConversationReference,
+  noaCurrentPageEntity,
+  sanitizeNoaConversationReference,
+  type NoaConversationReference,
+} from "@/lib/noa/noa-conversation-reference";
+import { resolveNoaConversationFollowUp, validateNoaSemanticCompatibility } from "@/lib/noa/noa-semantic-resolver";
 import type { NoaSemanticIntent, NoaSemanticRequest } from "@/lib/noa/noa-semantic-request";
 import { resolveNoaSemanticPeriod, resolveNoaSemanticSubject } from "@/lib/noa/noa-subject-resolver";
 import { fetchNoaAdminCapability } from "@/lib/noa/noa-admin-capability.server";
@@ -12,7 +44,7 @@ import { fetchNoaInsightsCapability } from "@/lib/noa/noa-insights-capability.se
 import { fetchNoaPriceCapability } from "@/lib/noa/noa-price-capability.server";
 import { fetchNoaProcurementCapability } from "@/lib/noa/noa-procurement-capability.server";
 import { fetchNoaProductCapability, resolveNoaProductCandidate } from "@/lib/noa/noa-product-capability.server";
-import { fetchNoaProjectCapability, projectFileIdentifierCount, resolveNoaEntityCandidate } from "@/lib/noa/noa-project-capability.server";
+import { fetchNoaProjectCapability, projectFileIdentifierCount, projectFileIdentifierFromMessage, resolveNoaEntityCandidate } from "@/lib/noa/noa-project-capability.server";
 import { fetchNoaQuotationCapability, quotationIdentifierCount, quotationStructuredRequest } from "@/lib/noa/noa-quotation-capability.server";
 import { fetchNoaUserActivityCapability } from "@/lib/noa/noa-user-activity-capability.server";
 import type { NoaAnalyticsTransport, NoaAnswer, NoaChatRequest, NoaChoice, NoaDomain, NoaPageContext } from "@/lib/noa/noa-types";
@@ -334,11 +366,250 @@ function buildQuotationTrendTransport(data: NoaQuotationTrendData): NoaAnalytics
   };
 }
 
+// N2C2.1: presentation-only reshapes of the C2 Insights capability's already-existing structured
+// `data` (insights_project_file_analytics / insights_client_ranking / insights_client_summary) -
+// same "never trust unknown data blindly" guard discipline as the quotation guards above, never
+// parsed from `deterministicText`, never a recomputed total. Currency maps are rendered through
+// the SAME analyticsCurrencyLines() helper as C1 (one line per currency, never summed/converted).
+function analyticsDataKind(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const kind = (data as { kind?: unknown }).kind;
+  return typeof kind === "string" ? kind : undefined;
+}
+
+function analyticsCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function analyticsCurrencyMap(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const entries = Object.entries(value as Record<string, unknown>).filter((entry): entry is [string, number] => typeof entry[1] === "number");
+  return Object.fromEntries(entries);
+}
+
+function analyticsDeterministicText(data: unknown): string {
+  const text = (data as { deterministicText?: unknown }).deterministicText;
+  return typeof text === "string" ? text : "";
+}
+
+function analyticsAmount(currency: string, value: number): string {
+  return `${currency} ${value.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+}
+
+type NoaProjectFileAnalyticsData = {
+  activeCount?: number;
+  activeTotalsByCurrency?: Record<string, number>;
+  cancelledCount?: number;
+  completedCount?: number;
+  completedTotalsByCurrency?: Record<string, number>;
+  kind: "insights_project_file_analytics";
+  totalCount: number;
+};
+
+// Empty variant (totalCount 0) reuses the server's own empty sentence verbatim - never zero tiles.
+// Counts render as tiles and the active/completed/cancelled distribution as neutral chips; each
+// value tile is the server's own per-currency map, one line per currency.
+function buildProjectFileAnalyticsTransport(data: unknown): NoaAnalyticsTransport {
+  const record = data as NoaProjectFileAnalyticsData;
+  const title = "Project File analytics";
+  if (analyticsCount(record.totalCount) === 0) {
+    return { emptyMessage: analyticsDeterministicText(data) || "I found no ERP Project Files.", kind: "project_file_analytics", title };
+  }
+  return {
+    kind: "project_file_analytics",
+    metrics: [
+      { key: "project_files", label: "Project Files", value: String(analyticsCount(record.totalCount)) },
+      { key: "active_value", label: "Active value", value: analyticsCurrencyLines(analyticsCurrencyMap(record.activeTotalsByCurrency)) },
+      { key: "completed_value", label: "Completed value", value: analyticsCurrencyLines(analyticsCurrencyMap(record.completedTotalsByCurrency)) },
+    ],
+    period: "ERP Project Files",
+    statusBreakdown: [
+      { count: analyticsCount(record.activeCount), label: "Active" },
+      { count: analyticsCount(record.completedCount), label: "Completed" },
+      { count: analyticsCount(record.cancelledCount), label: "Cancelled" },
+    ],
+    title,
+  };
+}
+
+const CLIENT_RANKING_TITLE: Record<string, string> = {
+  confirmed_value: "Top clients by confirmed value",
+  project_value: "Top clients by project value",
+  quotation_count: "Quotations per client",
+  quotation_value: "Top clients by quotation value",
+};
+
+// quotation_count is a single currency-free group (plain count). Every value metric is one group
+// PER currency exactly as the server ranked it - never merged, never a cross-currency "overall top
+// client". Rank numbers are the server's own already-sorted order (index + 1), never re-sorted.
+function buildClientRankingTransport(data: unknown): NoaAnalyticsTransport {
+  const record = data as { metric?: unknown; rankings?: unknown; rows?: unknown };
+  const metric = typeof record.metric === "string" ? record.metric : "quotation_value";
+  const title = CLIENT_RANKING_TITLE[metric] ?? "Client analytics";
+  let rankings: NonNullable<NoaAnalyticsTransport["rankings"]> = [];
+
+  if (metric === "quotation_count") {
+    const rows = Array.isArray(record.rows) ? (record.rows as Array<{ clientName?: unknown; count?: unknown }>) : [];
+    const rankingRows = rows
+      .filter((row) => typeof row.clientName === "string")
+      .map((row, index) => ({ label: row.clientName as string, rank: index + 1, value: String(analyticsCount(row.count)) }));
+    rankings = rankingRows.length ? [{ rows: rankingRows }] : [];
+  } else {
+    const groups = Array.isArray(record.rankings) ? (record.rankings as Array<{ currency?: unknown; rows?: unknown }>) : [];
+    rankings = groups
+      .filter((group) => typeof group.currency === "string" && Array.isArray(group.rows))
+      .map((group) => {
+        const currency = group.currency as string;
+        const rows = (group.rows as Array<{ clientName?: unknown; value?: unknown }>)
+          .filter((row) => typeof row.clientName === "string")
+          .map((row, index) => ({ label: row.clientName as string, rank: index + 1, value: analyticsAmount(currency, analyticsCount(row.value)) }));
+        return { heading: currency, rows };
+      })
+      .filter((group) => group.rows.length > 0);
+  }
+
+  if (rankings.length === 0) {
+    return { emptyMessage: analyticsDeterministicText(data) || "I found no client records to rank.", kind: "client_analytics", period: "All time", title };
+  }
+  return { kind: "client_analytics", period: "All time", rankings, title };
+}
+
+// Client summary: identity/lifecycle counts only (the SAME three numbers the prose already states).
+function buildClientSummaryTransport(data: unknown): NoaAnalyticsTransport {
+  const record = data as { activeClients?: unknown; archivedClients?: unknown; projectCount?: unknown };
+  return {
+    kind: "client_analytics",
+    metrics: [
+      { key: "active_clients", label: "Active clients", value: String(analyticsCount(record.activeClients)) },
+      { key: "archived_clients", label: "Archived clients", value: String(analyticsCount(record.archivedClients)) },
+      { key: "project_files", label: "Project Files", value: String(analyticsCount(record.projectCount)) },
+    ],
+    title: "Client summary",
+  };
+}
+
+function analyticsCountRanking(value: unknown): Array<{ label: string; rank: number; value: string }> {
+  const rows = Array.isArray(value) ? (value as Array<{ count?: unknown; name?: unknown }>) : [];
+  return rows
+    .filter((row) => typeof row.name === "string")
+    .map((row, index) => ({ label: row.name as string, rank: index + 1, value: String(analyticsCount(row.count)) }));
+}
+
+// N2C3: Product Library analytics - lifecycle count tiles, the price-status helper's own labels as
+// neutral chips, and brand/category rankings as plain numeric counts (no currency, no sales figure).
+function buildProductAnalyticsTransport(data: unknown): NoaAnalyticsTransport {
+  const record = data as {
+    activeCount?: unknown; archivedCount?: unknown; brandRanking?: unknown; categoryRanking?: unknown; discontinuedCount?: unknown;
+    priceStatus?: unknown; scanCapped?: unknown; scannedCount?: unknown; scannedTotal?: unknown; totalCount?: unknown; uncategorizedCount?: unknown;
+  };
+  const title = "Product analytics";
+  if (analyticsCount(record.totalCount) === 0) {
+    return { emptyMessage: analyticsDeterministicText(data) || "There are no product templates in the Product Library yet.", kind: "product_analytics", title };
+  }
+  const priceRows = Array.isArray(record.priceStatus) ? (record.priceStatus as Array<{ count?: unknown; label?: unknown }>) : [];
+  const brandRows = analyticsCountRanking(record.brandRanking);
+  const categoryRows = analyticsCountRanking(record.categoryRanking);
+  const notes = [
+    record.scanCapped === true
+      ? `Price status and rankings are based on the first ${analyticsCount(record.scannedCount)} of ${analyticsCount(record.scannedTotal)} active templates.`
+      : "",
+    analyticsCount(record.uncategorizedCount) > 0 ? `${analyticsCount(record.uncategorizedCount)} active template${analyticsCount(record.uncategorizedCount) === 1 ? " has" : "s have"} no main category.` : "",
+  ].filter(Boolean);
+  return {
+    kind: "product_analytics",
+    metrics: [
+      { key: "total_products", label: "Products", value: String(analyticsCount(record.totalCount)) },
+      { key: "active_products", label: "Active", value: String(analyticsCount(record.activeCount)) },
+      { key: "archived_products", label: "Archived", value: String(analyticsCount(record.archivedCount)) },
+      { key: "discontinued_products", label: "Discontinued", value: String(analyticsCount(record.discontinuedCount)) },
+    ],
+    ...(notes.length ? { note: notes.join(" ") } : {}),
+    period: "Product Library",
+    rankings: [
+      ...(brandRows.length ? [{ heading: "Top brands by product count", rows: brandRows }] : []),
+      ...(categoryRows.length ? [{ heading: "Top categories by product count", rows: categoryRows }] : []),
+    ],
+    statusBreakdown: priceRows
+      .filter((row) => typeof row.label === "string")
+      .map((row) => ({ count: analyticsCount(row.count), label: row.label as string })),
+    statusLabel: "Price status",
+    title,
+  };
+}
+
+// N2C4: procurement analytics - order/vendor count tiles plus vendor-stage chips (the existing
+// vendorStepLabel() vocabulary, already applied server-side). Counts only, no currency.
+function buildProcurementAnalyticsTransport(data: unknown): NoaAnalyticsTransport {
+  const record = data as {
+    activeCount?: unknown; completedCount?: unknown; detailCapped?: unknown; detailOrderCount?: unknown; missingEtaCount?: unknown;
+    missingEtdCount?: unknown; vendorGroupCount?: unknown; vendorStages?: unknown;
+  };
+  const title = "Procurement analytics";
+  if (analyticsCount(record.activeCount) + analyticsCount(record.completedCount) === 0) {
+    return { emptyMessage: analyticsDeterministicText(data) || "I found no procurement orders.", kind: "procurement_analytics", title };
+  }
+  const stages = Array.isArray(record.vendorStages) ? (record.vendorStages as Array<{ count?: unknown; label?: unknown }>) : [];
+  return {
+    kind: "procurement_analytics",
+    metrics: [
+      { key: "active_orders", label: "Active orders", value: String(analyticsCount(record.activeCount)) },
+      { key: "completed_orders", label: "Completed orders", value: String(analyticsCount(record.completedCount)) },
+      { key: "vendor_groups", label: "Vendor groups", value: String(analyticsCount(record.vendorGroupCount)) },
+      { key: "missing_eta", label: "Missing ETA", value: String(analyticsCount(record.missingEtaCount)) },
+      { key: "missing_etd", label: "Missing ETD", value: String(analyticsCount(record.missingEtdCount)) },
+    ],
+    note: record.detailCapped === true
+      ? `Vendor figures cover the ${analyticsCount(record.detailOrderCount)} most recent active orders.`
+      : "Vendor figures cover active orders.",
+    statusBreakdown: stages
+      .filter((row) => typeof row.label === "string")
+      .map((row) => ({ count: analyticsCount(row.count), label: row.label as string })),
+    statusLabel: "Vendor stages",
+    title,
+  };
+}
+
+function analyticsLines(value: unknown): string {
+  const lines = Array.isArray(value) ? value.filter((line): line is string => typeof line === "string") : [];
+  return lines.length ? lines.join("\n") : "—";
+}
+
+// N2C4: client payment analytics - only ever reached for a role the capability already let
+// through canViewClientPayments(); a denied role gets an ok:false refusal and therefore no data and
+// no transport at all. Amount lines are the server's own per-currency formatted strings (one line
+// per currency, never summed/converted here).
+function buildPaymentAnalyticsTransport(data: unknown): NoaAnalyticsTransport {
+  const record = data as { outstandingLines?: unknown; overdueInstallmentCount?: unknown; overdueLines?: unknown; projectFileCount?: unknown; receivedLines?: unknown; scopeNote?: unknown };
+  const title = "Client payment analytics";
+  if (analyticsCount(record.projectFileCount) === 0) {
+    return { emptyMessage: analyticsDeterministicText(data) || "There are no active ERP Project Files to summarize client payments for.", kind: "payment_analytics", title };
+  }
+  return {
+    kind: "payment_analytics",
+    metrics: [
+      { key: "received", label: "Received", value: analyticsLines(record.receivedLines) },
+      { key: "outstanding", label: "Outstanding", value: analyticsLines(record.outstandingLines) },
+      { key: "overdue_amount", label: "Overdue", value: analyticsLines(record.overdueLines) },
+      { key: "overdue_count", label: "Overdue instalments", value: String(analyticsCount(record.overdueInstallmentCount)) },
+    ],
+    ...(typeof record.scopeNote === "string" ? { note: record.scopeNote } : {}),
+    period: "Active Project Files",
+    title,
+  };
+}
+
 function buildAnalyticsTransport(domain: NoaDomain, data: unknown): NoaAnalyticsTransport | undefined {
   if (domain !== "Insights") return undefined;
   if (isQuotationAnalyticsData(data)) return buildQuotationAnalyticsTransport(data);
   if (isQuotationCompareData(data)) return buildQuotationCompareTransport(data);
   if (isQuotationTrendData(data)) return buildQuotationTrendTransport(data);
+  const kind = analyticsDataKind(data);
+  if (kind === "insights_project_file_analytics") return buildProjectFileAnalyticsTransport(data);
+  if (kind === "insights_client_ranking") return buildClientRankingTransport(data);
+  if (kind === "insights_client_summary") return buildClientSummaryTransport(data);
+  if (kind === "insights_product_analytics") return buildProductAnalyticsTransport(data);
+  if (kind === "insights_procurement_analytics") return buildProcurementAnalyticsTransport(data);
+  if (kind === "insights_payment_analytics") return buildPaymentAnalyticsTransport(data);
   return undefined;
 }
 
@@ -1488,6 +1759,211 @@ async function maybeHandleProductConfigurationTurn(request: NoaChatRequest): Pro
   return resumeProductConfiguration(incomingReference, request.message);
 }
 
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// I3: hybrid semantic V2 runtime (flag-gated by NOA_SEMANTIC_V2, default OFF)
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Deterministic fast path first; the V2 classifier runs only for an unresolved (strength "none")
+// or page-context-only route - or (I4) a generic_keyword route whose narrow
+// isNoaGenericSemanticCandidate() signal fired - with no deterministic protection, and its validated result is turned
+// into a decision by the pure router helpers (decideNoaSemanticV2Outcome ->
+// resolveNoaSemanticCapabilityRequest). The classifier only ever selects a route and a canonical
+// capability phrase - the capability itself still runs through its own existing auth gates below.
+
+// PART 4: an existing conversation-reference follow-up (UserActivity/Project/Client/Procurement/
+// Product/Price pronoun or bare follow-up) is deterministic territory - pure checks only, the same
+// resolvers the pipeline below already uses, called with no extracted intent.
+function hasDeterministicConversationFollowUp(message: string, reference: NoaConversationReference | undefined): boolean {
+  if (!reference) return false;
+  return Boolean(
+    (reference.domain === "UserActivity" && resolveUserActivityFollowUp(message, reference, undefined)) ||
+    resolveProjectFollowUp(message, reference, undefined) ||
+    resolveClientFollowUp(message, reference, undefined) ||
+    resolveProcurementFollowUp(message, reference, undefined) ||
+    resolveProductFollowUp(message, reference, undefined) ||
+    resolveProductPriceFollowUp(message, reference, undefined),
+  );
+}
+
+// PART 21: closed enum/status fields only (see NoaRouteDiagnostics) - console only, never persisted.
+function logNoaRouteDiagnostics(diagnostics: NoaRouteDiagnostics): void {
+  if (!isNoaRouteDiagnosticsEnabled(process.env.NODE_ENV, process.env.NOA_DEBUG_ROUTING)) return;
+  console.info("[NOA_ROUTE_DIAG]", JSON.stringify(diagnostics));
+}
+
+// PART 7: the ONLY V2 classifier call site - current message + compact page section only (the
+// extractor itself never sends recentMessages, DB rows, capability data, or auth data).
+// I5: `preExtracted` is the SAME request's classification already obtained by the I5 follow-up
+// pre-pass (below) - reused instead of calling the classifier a second time.
+async function runNoaSemanticV2(
+  request: NoaChatRequest,
+  classification: NoaRouteClassification,
+  preExtracted?: NoaIntentExtractorV2Result,
+): Promise<NoaSemanticV2Decision> {
+  let extraction = preExtracted ?? await extractNoaSemanticV2ForRequest(request);
+  // A model-only `previous_result` on a fully specified fresh request is not authority to reuse
+  // the active reference. I5 binds references only when the message itself proves a follow-up;
+  // otherwise let the normal V2 resolver handle the complete request independently.
+  if (extraction.stage === "success" &&
+    extraction.request.reference === "previous_result" &&
+    !isNoaConversationFollowUpCandidate(detectNoaFollowUpCues(request.message))) {
+    extraction = { ...extraction, request: { ...extraction.request, reference: "none" } };
+  }
+  const { decision, diagnostics } = decideNoaSemanticV2Outcome(extraction, classification);
+  logNoaRouteDiagnostics(diagnostics);
+  return decision;
+}
+
+// The ONLY V2 extractor call in this file (shared by runNoaSemanticV2 and the I5 pre-pass, never
+// both for one request): current message + compact page section only - I5 adds NO conversation
+// context, label, identifier, or prior prose to it (PART 19; deterministic binding below owns it).
+async function extractNoaSemanticV2ForRequest(request: NoaChatRequest): Promise<NoaIntentExtractorV2Result> {
+  return await extractNoaSemanticRequestV2({ context: request.context, message: request.message });
+}
+
+// PART 9/13: clarify/unsupported are fixed resolver text; choices reuse the existing NoaAnswer
+// `choices` transport (rendered by the same chat UI buttons GPC-3.1 already uses).
+function semanticV2Answer(decision: Extract<NoaSemanticV2Decision, { kind: "answer" }>): NoaAnswer {
+  return {
+    domain: decision.domain,
+    sources: [],
+    text: decision.text,
+    ...(decision.choices?.length ? { choices: decision.choices } : {}),
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// I5: conversation intelligence (flag-gated by NOA_SEMANTIC_V2, like every other V2 behavior)
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+//
+// semantic V2 (expresses reference/ordinal/metric/period only) -> bindNoaConversationFollowUp()
+// (pure, deterministic referent choice from the ONE stored reference / the page route) ->
+// resolveNoaConversationFollowUp() (pure, existing canonical capability phrase) -> the SAME
+// capability dispatch below, with its own auth gates. The model never selects an entity.
+
+// The Project capability's own CO parser / the Quotation capability's own QN parser - a label is
+// only ever used as an identifier when it is exactly one whole identifier by those parsers.
+function isNoaIdentifierLabel(entityType: "quotation" | "project_file", label: string): boolean {
+  const trimmed = label.trim();
+  if (entityType === "quotation") return quotationIdentifierCount(trimmed) === 1 && quotationStructuredRequest(trimmed)?.quotationNo === trimmed;
+  return projectFileIdentifierCount(trimmed) === 1 && projectFileIdentifierFromMessage(trimmed) === trimmed;
+}
+
+// I5 PART 8/18: an entity-scoped Catch-Up result remembers only its own already-authorized
+// identifier (the capability's `entityIdentifier`), typed by the capability's own QN/CO parsers,
+// under that entity's own domain so "what status is it?" / "what changed on it?" keep working.
+function buildCatchUpConversationReference(data: unknown): NoaConversationReference | undefined {
+  if (!isCatchUpCapabilityData(data) || !data.entityIdentifier) return undefined;
+  const label = data.entityIdentifier.trim();
+  if (isNoaIdentifierLabel("quotation", label)) return { domain: "Quotation", entities: [{ label, type: "quotation" }], intent: "catch_up" };
+  if (isNoaIdentifierLabel("project_file", label)) return { domain: "Project", entities: [{ label, type: "project_file" }], intent: "catch_up" };
+  return undefined;
+}
+
+type NoaConversationFollowUpOutcome =
+  | { kind: "none"; extraction?: NoaIntentExtractorV2Result }
+  | { kind: "dispatch"; domain: Exclude<NoaDomain, "Help">; canonicalMessage: string }
+  | { kind: "answer"; answer: NoaAnswer };
+
+const NO_CONVERSATION_FOLLOW_UP: NoaConversationFollowUpOutcome = { kind: "none" };
+
+// I5.0.2: quotation history is a closed, deterministic previous-result operation. Keep it ahead
+// of the semantic pre-pass so an already-authorized QN reference can never fall through to a
+// page/current-state Project route. The stored entity type remains authoritative; the QN parser is
+// only a final substitution safety check. CO references never enter this branch.
+function resolveQuotationHistoryFollowUp(
+  message: string,
+  reference: NoaConversationReference | undefined,
+): Extract<NoaConversationFollowUpOutcome, { kind: "dispatch" }> | undefined {
+  if (reference?.domain !== "Quotation") return undefined;
+  const cues = detectNoaFollowUpCues(message);
+  if (!cues.history || !cues.entityPronoun) return undefined;
+  const binding = bindNoaConversationFollowUp({
+    cues,
+    isIdentifierLabel: isNoaIdentifierLabel,
+    pageEntity: null,
+    reference,
+    semantic: null,
+  });
+  const resolution = resolveNoaConversationFollowUp(binding);
+  return resolution?.kind === "dispatch" && resolution.domain === "UserActivity" ? resolution : undefined;
+}
+
+function logNoaReferenceDiagnostics(diagnostics: ReturnType<typeof buildNoaReferenceDiagnostics>): void {
+  if (!isNoaRouteDiagnosticsEnabled(process.env.NODE_ENV, process.env.NOA_DEBUG_ROUTING)) return;
+  console.info("[NOA_REFERENCE_DIAG]", JSON.stringify(diagnostics));
+}
+
+// PART 3-9/11: the I5 pre-pass. Runs only for a narrow deterministic follow-up shape (see
+// isNoaConversationFollowUpCandidate) with something to bind to. The protected Catch-Up route never
+// calls the classifier (cues alone decide there); every other route calls it at most once, and a
+// failed/unusable classification leaves the existing deterministic pipeline completely in charge
+// (PART 21) - the stored reference is never mutated here. A clarification/unsupported answer
+// re-emits the SAME (sanitized) incoming reference, so the user can answer it ("the second one").
+async function resolveNoaConversationFollowUpTurn(
+  request: NoaChatRequest,
+  reference: NoaConversationReference | undefined,
+  classification: NoaRouteClassification,
+): Promise<NoaConversationFollowUpOutcome> {
+  const cues = detectNoaFollowUpCues(request.message);
+  if (!isNoaConversationFollowUpCandidate(cues)) return NO_CONVERSATION_FOLLOW_UP;
+
+  const pageEntity = noaCurrentPageEntity(
+    request.context.pathname ?? "",
+    Boolean(request.context.quotationId),
+    (label) => isNoaIdentifierLabel("project_file", label),
+  );
+  const bindable = isNoaBindableConversationReference(reference) ? reference : undefined;
+  // C3 keeps owning its own UserActivity follow-ups ("what about yesterday?", "which quotation?").
+  if (bindable?.domain === "UserActivity" && resolveUserActivityFollowUp(request.message, bindable, undefined)) return NO_CONVERSATION_FOLLOW_UP;
+
+  const deterministicHistory = classification.rule === "catch_up";
+  let extraction: NoaIntentExtractorV2Result | undefined;
+  if (deterministicHistory) {
+    // Protected Catch-Up route: no classifier call at all - only "it"/"here" history follow-ups.
+    if (!cues.entityPronoun && !cues.currentPage) return NO_CONVERSATION_FOLLOW_UP;
+  } else {
+    // Never an exact/anchored deterministic route - only the same strengths V2 may already touch.
+    if (classification.strength !== "none" && classification.strength !== "page_context" && classification.strength !== "generic_keyword") {
+      return NO_CONVERSATION_FOLLOW_UP;
+    }
+    if (!bindable && !cues.currentPage) return NO_CONVERSATION_FOLLOW_UP;
+    extraction = await extractNoaSemanticV2ForRequest(request);
+    if (extraction.stage !== "success") return { extraction, kind: "none" };
+  }
+
+  // I6.3 PART 6: a reference may specialize a compatible semantic request, never repair an
+  // incompatible one - an incompatible shape contributes no model slots, so only the user's own
+  // deterministic cues can bind. action_requested is still passed through so the binder's own
+  // write-request guard keeps firing.
+  const extracted = extraction?.request ?? null;
+  const bindingSemantic = extracted && (extracted.clarificationReason === "action_requested" || validateNoaSemanticCompatibility(extracted).compatible)
+    ? extracted
+    : null;
+  const binding = bindNoaConversationFollowUp({
+    cues,
+    isIdentifierLabel: isNoaIdentifierLabel,
+    pageEntity,
+    reference: bindable,
+    semantic: bindingSemantic,
+  });
+  logNoaReferenceDiagnostics(buildNoaReferenceDiagnostics(bindable, pageEntity, Boolean(extraction), binding));
+
+  const resolution = resolveNoaConversationFollowUp(binding);
+  if (!resolution) return { extraction, kind: "none" };
+  if (resolution.kind === "dispatch") return resolution;
+  return {
+    answer: {
+      domain: resolution.domain,
+      sources: [],
+      text: resolution.text,
+      ...(resolution.choices?.length ? { choices: resolution.choices } : {}),
+      ...(reference ? { conversationReference: reference } : {}),
+    },
+    kind: "answer",
+  };
+}
+
 // The one and only dispatch point: classify -> call exactly one capability -> (optionally) phrase
 // the result with the provider. No capability ever calls another, and the model never picks which
 // capability or query runs - that's fully deterministic, in code, before the provider is invoked.
@@ -1538,13 +2014,75 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
   // exactly as before.
   const deterministicRoute = classifyNoaRoute(request.message, request.context);
   const identifierRoute = quotationIdentifierTotal > 0 ? "Quotation" : projectFileIdentifierTotal > 0 ? "Project" : null;
+
+  // I3: route strength for the semantic V2 activation rule. Same pure precedence chain as
+  // classifyNoaRoute() above (which returns this classification's `.route`), so routing itself is
+  // unchanged; this only adds HOW the route was matched. Every deterministic fast path resolved
+  // above (recorded follow-up, QN/CO/order identifiers, ordinal, reference rewrites) plus a generic
+  // "tell me about X" entity lookup is a protection that keeps V2 from ever running (PART 4).
+  const routeClassification = classifyNoaRouteWithStrength(request.message, request.context);
+  const semanticV2FlagEnabled = isNoaSemanticV2FlagEnabled(process.env.NOA_SEMANTIC_V2);
+  const quotationHistoryFollowUp = semanticV2FlagEnabled
+    ? resolveQuotationHistoryFollowUp(request.message, sanitizeNoaConversationReference(request.conversationReference))
+    : undefined;
+
+  // I5: conversation follow-up binding (flag ON only - flag OFF never reaches it). Every existing
+  // deterministic fast path above keeps absolute precedence: an explicit QN/CO/order identifier, a
+  // recorded-quotation follow-up, or the C4A quotation ordinal rewrite all skip I5 entirely.
+  const conversationFollowUp: NoaConversationFollowUpOutcome = quotationHistoryFollowUp ?? (semanticV2FlagEnabled &&
+    !recordedQuotationFollowUpFrom &&
+    !quotationOrdinalFollowUp &&
+    !identifierRoute &&
+    !PROCUREMENT_ORDER_TOKEN_PATTERN.test(request.message)
+    ? await resolveNoaConversationFollowUpTurn(request, sanitizeNoaConversationReference(request.conversationReference), routeClassification)
+    : NO_CONVERSATION_FOLLOW_UP);
+  if (conversationFollowUp.kind === "answer") return conversationFollowUp.answer;
+  const conversationDispatch = conversationFollowUp.kind === "dispatch" ? conversationFollowUp : undefined;
+
   const route = recordedQuotationFollowUpFrom
     ? "UserActivity"
-    : identifierRoute && deterministicRoute !== "UserActivity"
-      ? identifierRoute
-      : quotationMessageOverride
-        ? "Quotation"
-        : referenceFollowUpRoute ?? deterministicRoute;
+    : conversationDispatch
+      ? conversationDispatch.domain
+      : identifierRoute && deterministicRoute !== "UserActivity"
+        ? identifierRoute
+        : quotationMessageOverride
+          ? "Quotation"
+          : referenceFollowUpRoute ?? deterministicRoute;
+
+  const semanticV2ProtectedReason: NoaSemanticV2ProtectedReason | null = recordedQuotationFollowUpFrom
+    ? "recorded_quotation_follow_up"
+    : identifierRoute || PROCUREMENT_ORDER_TOKEN_PATTERN.test(request.message)
+      ? "identifier"
+      : quotationOrdinalFollowUp
+        ? "ordinal_follow_up"
+        : referenceFollowUpRoute || hasDeterministicConversationFollowUp(request.message, conversationReference)
+          ? "reference_follow_up"
+          : entityLookupCandidate(request.message)
+            ? "entity_lookup_candidate"
+            : null;
+  // I4: a generic_keyword route becomes eligible only when this pure, narrow intent-shape signal
+  // fires (never generic_keyword in general); every protection above still wins first.
+  const genericSemanticCandidate = isNoaGenericSemanticCandidate(request.message, routeClassification);
+  // I5: a bound follow-up already has its deterministic destination - no second V2 decision.
+  const semanticV2Eligibility: NoaSemanticV2Eligibility = conversationDispatch
+    ? { eligible: false, reason: "conversation_reference_bound" }
+    : noaSemanticV2Eligibility({
+        classification: routeClassification,
+        flagEnabled: semanticV2FlagEnabled,
+        genericSemanticCandidate,
+        protectedReason: semanticV2ProtectedReason,
+      });
+  if (!semanticV2Eligibility.eligible) {
+    logNoaRouteDiagnostics(buildNoaRouteDiagnostics(routeClassification, undefined, semanticV2Eligibility.reason, genericSemanticCandidate));
+  }
+  // At most ONE semantic classification per request (PART 23): once V2 has been attempted, the V1
+  // extractor below is skipped for this message. I5: the pre-pass above counts as that attempt
+  // (its extraction, if any, is reused by runNoaSemanticV2 below rather than repeated).
+  let semanticV2Attempted = conversationFollowUp.kind === "dispatch" || conversationFollowUp.extraction !== undefined;
+  const semanticV2PreExtraction = conversationFollowUp.kind === "none" ? conversationFollowUp.extraction : undefined;
+  let semanticV2Dispatch: Extract<NoaSemanticV2Decision, { kind: "dispatch" }> | undefined = conversationDispatch
+    ? { canonicalMessage: conversationDispatch.canonicalMessage, domain: conversationDispatch.domain, kind: "dispatch" }
+    : undefined;
 
   // NOA self/page-context questions ("where am I", "which page is this") are answered directly
   // from NoaPageContext - never a capability call, never the AI provider. Not exposed as a
@@ -1563,6 +2101,17 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
   // every Help/out-of-scope fallback.
   if (route === "capabilities") {
     return { domain: "Help", sources: [], text: NOA_CAPABILITY_SUMMARY_TEXT };
+  }
+
+  // I3 PART 5/18: an eligible non-Help route is a page_context route or a client-ranking cue the
+  // generic keyword lists only matched incidentally (strength "none"), or (I4) a generic_keyword
+  // route whose genericSemanticCandidate signal fired. A fallback decision keeps `route` exactly as
+  // the deterministic router chose it, so the original keyword capability still runs.
+  if (semanticV2Eligibility.eligible && route !== "Help") {
+    semanticV2Attempted = true;
+    const decision = await runNoaSemanticV2(request, routeClassification, semanticV2PreExtraction);
+    if (decision.kind === "answer") return semanticV2Answer(decision);
+    if (decision.kind === "dispatch") semanticV2Dispatch = decision;
   }
 
   // C2/C3 hybrid routing: only for a message already deterministically routed to UserActivity, or
@@ -1597,7 +2146,25 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
       }
     }
 
-    const extracted = semanticRequest
+    // I3 PART 5/6/23: an unresolved Help fallback (strength "none", never explicit Help/how-to/
+    // off-topic) goes to V2 instead of V1 when the flag is on - only after the existing
+    // deterministic product-candidate check above found nothing, so its resolved/ambiguous
+    // outcomes keep precedence. A V2 fallback decision simply continues this existing path with
+    // V1 skipped (no second classification), ending at the same Help answer as before.
+    if (!semanticRequest && route === "Help" && semanticV2Eligibility.eligible) {
+      semanticV2Attempted = true;
+      const decision = await runNoaSemanticV2(request, routeClassification, semanticV2PreExtraction);
+      if (decision.kind === "answer") return semanticV2Answer(decision);
+      if (decision.kind === "dispatch") semanticV2Dispatch = decision;
+    } else if (semanticRequest && route === "Help" && semanticV2Eligibility.eligible) {
+      logNoaRouteDiagnostics(buildNoaRouteDiagnostics(routeClassification, undefined, "deterministic_candidate_resolved"));
+    }
+
+    // I3 PART 16: with the flag on, a protected Catch-Up message is never handed to the V1
+    // extractor either, so V1's semantic UserActivity override can never preempt Catch-Up. Flag
+    // off: unchanged.
+    const skipV1Extraction = semanticV2Attempted || (semanticV2FlagEnabled && routeClassification.rule === "catch_up");
+    const extracted = semanticRequest || skipV1Extraction
       ? { domain: "Unclear" as const, intent: "unsupported" as const }
       : await extractNoaSemanticRequest({ context: request.context, message: request.message });
 
@@ -1751,11 +2318,34 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
 
   // Help/out-of-scope never reaches a capability or the AI provider at all - it's a fixed,
   // deterministic redirect back to what NOA can actually do.
-  if (effectiveRoute === "Help") {
+  // I3 PART 9: a V2 dispatch selects the resolver's own deterministic domain (never "Help", never a
+  // model-supplied name); everything else keeps the existing effectiveRoute.
+  const dispatchRoute = semanticV2Dispatch ? semanticV2Dispatch.domain : effectiveRoute;
+  if (dispatchRoute === "Help") {
     return { domain: "Help", sources: [], text: HELP_ANSWER_TEXT };
   }
 
-  const domain = effectiveRoute;
+  const domain = dispatchRoute;
+
+  // I5: a bound follow-up's canonical phrase is the ONLY capability input - a C4 pronoun rewrite
+  // computed above from the raw follow-up wording ("how much did client X confirm") can never
+  // override it or double-bind the same message.
+  if (conversationDispatch) {
+    semanticRequest = undefined;
+    projectMessageOverride = undefined;
+    clientMessageOverride = undefined;
+    procurementMessageOverride = undefined;
+    productMessageOverride = undefined;
+  }
+
+  // I3 PART 10/11: the SAME capability functions below receive the resolver's canonical phrase as
+  // their message (e.g. "top clients by quotation value") - nothing else about the request changes
+  // (context, auth, the capability's own permission gates are untouched). The user's original
+  // wording is kept for provider phrasing only.
+  const originalMessage = request.message;
+  if (semanticV2Dispatch) {
+    request = { ...request, message: semanticV2Dispatch.canonicalMessage };
+  }
 
   const capabilityResult = domain === "Product"
     ? await fetchNoaProductCapability(productMessageOverride ?? request.message, request.context, semanticRequest?.domain === "Product" ? { product: semanticRequest.product } : undefined)
@@ -1789,17 +2379,28 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
 
   if (!capabilityResult.ok) {
     // Unauthorized / not-found / ambiguous: return the capability's own safe copy directly,
-    // without spending a provider call on something the model can't help with anyway. No
-    // conversationReference is returned - an unsuccessful result has nothing safe to remember.
-    return { domain, sources: [], text: capabilityResult.message };
+    // without spending a provider call on something the model can't help with anyway. I5 keeps
+    // the previous sanitized reference because a failed read produced no newer authorized result
+    // that could safely replace it; flag OFF retains the pre-I5 clearing behavior.
+    const preservedConversationReference = semanticV2FlagEnabled
+      ? sanitizeNoaConversationReference(conversationReference)
+      : undefined;
+    return { conversationReference: preservedConversationReference, domain, sources: [], text: capabilityResult.message };
   }
 
   // C3/C4A: built ONLY from this successful, already-authorized capabilityData (PART 2/10) -
   // never from provider text, never sent into the provider payload below (PART 12: capabilityData
   // remains the only source of business facts for the model).
-  const newConversationReference = domain === "UserActivity"
-    ? buildUserActivityConversationReference(semanticRequest, capabilityResult.data)
-    : domain === "Quotation"
+  // I5 PART 17/18 (flag ON only): Insights (client ranking / quotation analytics) and entity-scoped
+  // Catch-Up results now also create a reference; still exactly ONE active reference. The newest
+  // useful authorized result replaces it; when this result cannot create a useful reference, I5
+  // preserves the previous sanitized one. Flag OFF retains the pre-I5 clearing behavior.
+  const freshConversationReference = domain === "UserActivity"
+    ? buildUserActivityConversationReference(semanticRequest, capabilityResult.data) ??
+      (semanticV2FlagEnabled ? buildCatchUpConversationReference(capabilityResult.data) : undefined)
+    : semanticV2FlagEnabled && domain === "Insights"
+      ? buildNoaInsightsConversationReference(capabilityResult.data)
+      : domain === "Quotation"
       ? buildQuotationConversationReference(capabilityResult.data)
       : domain === "Project"
         ? buildProjectConversationReference(capabilityResult.data)
@@ -1812,6 +2413,8 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
               : domain === "Price"
                 ? buildPriceConversationReference(capabilityResult.data)
                 : undefined;
+  const newConversationReference = freshConversationReference ??
+    (semanticV2FlagEnabled ? sanitizeNoaConversationReference(conversationReference) : undefined);
 
   const deterministicData = typeof capabilityResult.data === "object" && capabilityResult.data !== null
     ? capabilityResult.data as { deterministicOnly?: unknown; deterministicText?: unknown }
@@ -1877,7 +2480,7 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
       context: request.context,
       displayName: request.displayName,
       domain,
-      message: request.message,
+      message: originalMessage,
       recentMessages: request.recentMessages ?? [],
     });
     return { analytics, conversationReference: newConversationReference, domain, sources: capabilityResult.sources, text };

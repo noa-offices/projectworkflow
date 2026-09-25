@@ -309,14 +309,23 @@ async function buildBroadQuotationAnswer(
   const { data } = await supabase.from("quotations").select(QUOTATION_SELECT).eq(foreignKey, relationRow.id).order("quotation_date", { ascending: false }).returns<QuotationRow[]>();
   const rows = data ?? [];
   const statusIntent = normalizeQuotationStatusIntent(message, [...new Set(rows.flatMap((row) => row.status ? [row.status] : []))]);
-  if (statusIntent.unsupported.length) return { message: "I can check quotation statuses, but that status is not mapped safely yet.", ok: false, reason: "ambiguous" };
-  const matching = statusIntent.statuses.length ? rows.filter((row) => row.status && statusIntent.statuses.includes(row.status)) : rows;
+  // I5.0.1: this exact generated selected-client metric phrase means a value filtered by the
+  // established persisted `client_confirmed` status. It is not a request to inspect whether that
+  // status exists for this particular client: zero matching rows is a valid value result, not an
+  // unsupported-status error. All ordinary status questions retain the existing safe mapping.
+  const selectedClientConfirmedValue = /\btotal confirmed quotation value for client\b/.test(normalized);
+  if (statusIntent.unsupported.length && !selectedClientConfirmedValue) return { message: "I can check quotation statuses, but that status is not mapped safely yet.", ok: false, reason: "ambiguous" };
+  const effectiveStatuses = selectedClientConfirmedValue ? ["client_confirmed"] : statusIntent.statuses;
+  const matching = effectiveStatuses.length ? rows.filter((row) => row.status && effectiveStatuses.includes(row.status)) : rows;
   const totals = [...new Set(matching.map((row) => row.currency ?? "Unknown"))].map((currency) => ({ currency, total: matching.filter((row) => (row.currency ?? "Unknown") === currency).reduce((sum, row) => sum + (row.grand_total ?? 0), 0) }));
   const wantsTotal = /\b(total|value)\b/.test(normalized);
   const listed = matching.slice(0, MAX_QUOTATION_ROWS).map((row) => ({ id: row.id, quotationNo: row.quotation_no, status: row.status, currency: row.currency, grandTotal: row.grand_total }));
   const label = relation === "client" ? "Client" : "Project";
-  const statusLabel = statusIntent.statuses.length ? ` ${quotationStatusDisplayLabel(statusIntent.statuses[0]).toLowerCase()}` : "";
-  return { data: { kind: "quotation_relation_read", relation, totalMatching: matching.length, returnedCount: listed.length, truncatedCount: Math.max(0, matching.length - listed.length), rows: listed, totals, deterministicText: wantsTotal ? `${label} has ${totals.map((total) => `${total.currency} ${total.total}`).join(" and ")} in${statusLabel} quotation value.` : `${label} has ${matching.length}${statusLabel} quotation${matching.length === 1 ? "" : "s"}. Showing ${listed.length}.` }, ok: true, sources: [{ label: "Checked quotations", type: "quotation" }] };
+  const statusLabel = effectiveStatuses.length ? ` ${quotationStatusDisplayLabel(effectiveStatuses[0]).toLowerCase()}` : "";
+  const totalText = totals.length
+    ? `${label} has ${totals.map((total) => `${total.currency} ${total.total}`).join(" and ")} in${statusLabel} quotation value.`
+    : `${label} has no${statusLabel} quotation value.`;
+  return { data: { kind: "quotation_relation_read", relation, totalMatching: matching.length, returnedCount: listed.length, truncatedCount: Math.max(0, matching.length - listed.length), rows: listed, totals, deterministicText: wantsTotal ? totalText : `${label} has ${matching.length}${statusLabel} quotation${matching.length === 1 ? "" : "s"}. Showing ${listed.length}.` }, ok: true, sources: [{ label: "Checked quotations", type: "quotation" }] };
 }
 
 async function buildQuotationStatusAnswer(

@@ -4,6 +4,14 @@ import { runAiProvider } from "@/lib/ai/provider-router.server";
 import { resolveAiAgentRuntimeConfig } from "@/lib/ai/resolve-agent-runtime-config.server";
 import type { NoaPageContext } from "@/lib/noa/noa-types";
 import { isNoaSemanticRequest, UNCLEAR_SEMANTIC_REQUEST, type NoaSemanticRequest } from "@/lib/noa/noa-semantic-request";
+import {
+  isNoaSemanticRequestV2,
+  NOA_SEMANTIC_REQUEST_V2_SCHEMA,
+  UNCLEAR_SEMANTIC_REQUEST_V2,
+  validateNoaSemanticRequestV2AgainstMessage,
+  validateSemanticPeriodAgainstMessage,
+  type NoaSemanticRequestV2,
+} from "@/lib/noa/noa-semantic-request";
 
 // C1: understands language only. This module never authorizes anything, never queries a database,
 // and never sees business data - it turns one rough English message into the small closed
@@ -15,6 +23,10 @@ import { isNoaSemanticRequest, UNCLEAR_SEMANTIC_REQUEST, type NoaSemanticRequest
 // no second provider architecture, per the reviewed C1 architecture plan.
 
 const TIMEOUT_MS = 10_000;
+// I3 PART 22: V2 only - the classifier now sits on the live request path (flag-gated), so it gets
+// a tighter budget than V1's unchanged TIMEOUT_MS above. A timeout degrades to "provider_error"
+// and the deterministic route, never a user-visible error.
+const V2_TIMEOUT_MS = 4_000;
 
 // Deliberately tiny: no ProjectWorkflow schema dump, no long examples, no business vocabulary -
 // just enough for the model to place a message into the closed enums below.
@@ -135,4 +147,97 @@ export async function extractNoaSemanticRequest(input: NoaIntentExtractorInput):
     // none of them are worth distinguishing for a classification-only call with a safe fallback.
     return UNCLEAR_SEMANTIC_REQUEST;
   }
+}
+
+// I1: V2 classifier instructions. Same spirit as V1's SYSTEM_INSTRUCTIONS above (teach semantic
+// concepts, not a ProjectWorkflow schema dump or a list of phrases) but covering the wider V2
+// vocabulary. Not used by any runtime caller yet - only extractNoaSemanticRequestV2() below calls
+// this, and nothing in the orchestrator/router calls that function yet (I2/I3 do).
+const SYSTEM_INSTRUCTIONS_V2 = `You classify one ProjectWorkflow chat message into a small structured intent. You do not answer the question, compute facts, decide access, or invent text not present in the message. Output only the schema fields, every field, using null where a slot does not apply.
+
+domain: the ProjectWorkflow area the message is about, or "Unclear" if none fit.
+intent: lookup (a specific thing), list, count, aggregate (a total/summary), rank (a "best/top/most" comparison across many), compare (two specific things), trend (over time), history (what changed/happened - Catch-Up), attention (things needing action), activity/activity_time/presence (what someone worked on / how long / who is online), howto (how do I...), or unsupported.
+entityType/entityText: only when a specific candidate is named in the message. entityText must be copied verbatim from the message - never invented, never a database ID. For a Product list or lookup, keep the complete explicit search phrase together: retain a named brand and its adjacent product/category qualifier (for example, "Interstuhl chairs" or "LAS desks"), rather than returning the brand alone. A brand-only request remains brand-only.
+reference: "previous_result" only for a short follow-up to something already discussed (e.g. "which one", "what about them"), "current_page" only when the message clearly means the thing currently on screen, otherwise "none".
+metric/period/comparison/sortDirection: only when explicit or clearly implied; otherwise null.
+For rankings across clients, use domain Client, intent rank, entityType client, and leave entityText null unless one client is explicitly named. Select quotation_count for how often clients are quoted, quotation_value for monetary quotation value, confirmed_value for confirmed business, and project_file_value for Project File value; otherwise request missing_metric rather than guessing.
+Use Insights for analytical overviews, comparisons, trends, and rankings rather than a current-state entity lookup. Questions about changes, what happened, or catching up describe UserActivity with intent history, not a current-state Project or Quotation lookup.
+subject/subjectName: subjectName only when subject is "named_user", and it must be the exact name as written in the message; null otherwise.
+quotationStatus/projectFileStatus/priceStatus/procurementStatus/attentionKind: only when the message clearly asks about that specific status/kind.
+needsClarification/clarificationReason: set true with the specific missing/ambiguous slot when the request is genuinely ambiguous - for example "who is our best client" is rank+client with no metric named, so metric is null, needsClarification is true, and clarificationReason is "missing_metric". Never guess a metric, entity, or period the user did not state or clearly imply.
+If the message asks you to change, create, approve, or delete something, set clarificationReason to "action_requested" and do not treat it as a read intent.
+Exact identifiers (quotation numbers, order numbers) are parsed elsewhere - never populate entityText with one.
+confidence: "high" only when the classification is unambiguous; "low" otherwise.`;
+
+export type NoaIntentExtractorV2Result = {
+  request: NoaSemanticRequestV2;
+  stage: "disabled" | "provider_error" | "invalid_json" | "schema_mismatch" | "grounding_failed" | "success";
+};
+
+// I1: additive V2 extractor - does NOT replace extractNoaSemanticRequest() above, and nothing in
+// the orchestrator/router calls this yet (I2/I3 wire routing/activation). Same cost-control shape
+// as V1: only the current message and a compact page-context hint are ever sent, never the
+// conversation transcript, never database rows/business data. Any failure (disabled, provider
+// error, timeout, malformed JSON, schema mismatch, or a grounding failure - the model naming
+// entity/subject text that does not actually appear in the message) degrades to
+// UNCLEAR_SEMANTIC_REQUEST_V2, mirroring V1's "extraction uncertainty is never an answer-generation
+// error" rule exactly.
+export async function extractNoaSemanticRequestV2(input: NoaIntentExtractorInput): Promise<NoaIntentExtractorV2Result> {
+  const runtime = await resolveAiAgentRuntimeConfig("noa_orchestrator");
+
+  if (!runtime.enabled || !runtime.apiKeyConfigured) {
+    return { request: UNCLEAR_SEMANTIC_REQUEST_V2, stage: "disabled" };
+  }
+
+  let responseText: string | undefined;
+  try {
+    const response = await runAiProvider({
+      model: runtime.model,
+      provider: runtime.provider,
+      responseSchema: { name: "noa_semantic_request_v2", schema: NOA_SEMANTIC_REQUEST_V2_SCHEMA },
+      systemInstructions: SYSTEM_INSTRUCTIONS_V2,
+      timeoutMs: V2_TIMEOUT_MS,
+      userContent: {
+        message: input.message,
+        pageContext: { section: input.context.section },
+      },
+    });
+    responseText = response.text;
+  } catch {
+    // Covers a provider/network error, a timeout, AND a provider rejecting the schema itself
+    // (I0.5: an OpenAI strict-schema rejection surfaces as an AiProviderError here) - all three
+    // are "the provider call did not succeed", distinct from a successful call that returned
+    // unparsable or off-schema text below.
+    return { request: UNCLEAR_SEMANTIC_REQUEST_V2, stage: "provider_error" };
+  }
+
+  if (!responseText) {
+    return { request: UNCLEAR_SEMANTIC_REQUEST_V2, stage: "invalid_json" };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(responseText);
+  } catch {
+    return { request: UNCLEAR_SEMANTIC_REQUEST_V2, stage: "invalid_json" };
+  }
+
+  if (!isNoaSemanticRequestV2(parsed)) {
+    return { request: UNCLEAR_SEMANTIC_REQUEST_V2, stage: "schema_mismatch" };
+  }
+
+  if (!validateNoaSemanticRequestV2AgainstMessage(parsed, input.message)) {
+    return { request: UNCLEAR_SEMANTIC_REQUEST_V2, stage: "grounding_failed" };
+  }
+
+  // I8 GOAL A: an explicit-period safety net independent of the model's own needsClarification/
+  // confidence - if the message names a specific, already-supported period and the model's period
+  // doesn't match it (including leaving it null), treat this exactly like a grounding failure
+  // rather than letting a downstream default (e.g. history's "no period -> today") silently answer
+  // a different period than the one actually asked for.
+  if (!validateSemanticPeriodAgainstMessage(input.message, parsed)) {
+    return { request: UNCLEAR_SEMANTIC_REQUEST_V2, stage: "grounding_failed" };
+  }
+
+  return { request: parsed, stage: "success" };
 }

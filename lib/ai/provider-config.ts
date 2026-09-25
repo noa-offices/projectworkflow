@@ -14,7 +14,7 @@ const APPROVED_MODELS: Readonly<Record<AiProviderId, readonly string[]>> = {
   // Kept explicit: system settings never accept arbitrary model identifiers.
   openai: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-4.1", "gpt-4.1-mini"],
   anthropic: ["claude-sonnet-4-6"],
-  gemini: ["gemini-2.5-flash-lite"],
+  gemini: ["gemini-3.5-flash-lite"],
 };
 
 export function listAiProviderConfigs(): readonly Readonly<AiProviderConfig>[] {

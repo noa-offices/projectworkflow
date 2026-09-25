@@ -29,8 +29,11 @@ test("TC-3B.1 verifies generic Product candidates after auth and before AI fallb
   assert.ok(product.includes("template_code.ilike"));
   assert.ok(product.includes("item_code.ilike"));
   const resolverIndex = orchestrator.indexOf("const productResolution = await resolveNoaProductCandidate");
-  const extractorIndex = orchestrator.indexOf("await extractNoaSemanticRequest");
+  const extractorIndex = orchestrator.indexOf("await extractNoaSemanticRequest({");
   assert.ok(resolverIndex >= 0 && extractorIndex > resolverIndex);
+  // I3: the Help-route V2 classifier call also runs only after the product candidate check.
+  const helpV2Index = orchestrator.indexOf('if (!semanticRequest && route === "Help" && semanticV2Eligibility.eligible) {');
+  assert.ok(helpV2Index > resolverIndex);
   assert.ok(orchestrator.includes('productResolution.kind === "ambiguous"'));
 });
 

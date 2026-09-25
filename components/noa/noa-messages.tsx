@@ -6,6 +6,7 @@ import { NoaSourceBadges } from "@/components/noa/noa-source-badges";
 import type {
   NoaAnalyticsComparison,
   NoaAnalyticsMetric,
+  NoaAnalyticsRankingGroup,
   NoaAnalyticsStatusRow,
   NoaAnalyticsTransport,
   NoaAnalyticsTrendRow,
@@ -414,6 +415,30 @@ function NoaAnalyticsTrendRowView({ row }: { row: NoaAnalyticsTrendRow }) {
   );
 }
 
+// N2C2.1: a compact numbered ranking list (client/brand/category rankings). Each group is
+// rendered independently under its own optional heading (a currency code for value rankings), so
+// currencies are never merged into one list. Label wraps (min-w-0 + break-words) and the value
+// stays on its own right-aligned slot - no table, no horizontal scroll, mobile-safe. Plain
+// non-interactive divs only; rank/label/value are the server's own already-formatted strings.
+function NoaAnalyticsRankingList({ group }: { group: NoaAnalyticsRankingGroup }) {
+  return (
+    <div>
+      {group.heading ? (
+        <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">{group.heading}</div>
+      ) : null}
+      <div className="flex flex-col divide-y divide-zinc-100 rounded-xl border border-zinc-200 bg-white">
+        {group.rows.map((row) => (
+          <div className="flex items-baseline gap-2 px-2 py-1.5 text-sm" key={`${row.rank}-${row.label}`}>
+            <span className="w-5 shrink-0 text-xs font-medium text-zinc-400">{row.rank}.</span>
+            <span className="min-w-0 flex-1 break-words text-zinc-800">{row.label}</span>
+            <span className="shrink-0 text-right font-bold text-zinc-900">{row.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // C1.2 PART 1/5/6: the analytics card replaces the long text bubble entirely (never both).
 // Title/period hierarchy strengthened (bolder title, small muted period on its own line) and
 // overall vertical rhythm tightened (gap-3->gap-2.5, p-3->p-2.5) versus C1.1, while keeping the
@@ -431,7 +456,8 @@ function NoaAnalyticsCards({ analytics }: { analytics: NoaAnalyticsTransport }) 
       ) : (
         <>
           {analytics.metrics?.length ? (
-            <div className="grid grid-cols-2 gap-1.5">
+            // N2C2.1: an odd trailing tile spans both columns instead of leaving an empty cell.
+            <div className="grid grid-cols-2 gap-1.5 [&>*:last-child:nth-child(odd)]:col-span-2">
               {analytics.metrics.map((metric) => (
                 <NoaAnalyticsMetricCard key={metric.key} metric={metric} />
               ))}
@@ -439,7 +465,7 @@ function NoaAnalyticsCards({ analytics }: { analytics: NoaAnalyticsTransport }) 
           ) : null}
           {analytics.statusBreakdown?.length ? (
             <div>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">Status</div>
+              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">{analytics.statusLabel ?? "Status"}</div>
               <div className="flex flex-wrap gap-1.5">
                 {analytics.statusBreakdown.map((row) => (
                   <NoaAnalyticsStatusChip key={row.label} row={row} />
@@ -455,8 +481,16 @@ function NoaAnalyticsCards({ analytics }: { analytics: NoaAnalyticsTransport }) 
               ))}
             </div>
           ) : null}
+          {analytics.rankings?.length ? (
+            <div className="flex flex-col gap-2">
+              {analytics.rankings.map((group, index) => (
+                <NoaAnalyticsRankingList group={group} key={group.heading ?? `ranking-${index}`} />
+              ))}
+            </div>
+          ) : null}
         </>
       )}
+      {analytics.note ? <div className="text-[11px] text-zinc-500">{analytics.note}</div> : null}
     </div>
   );
 }

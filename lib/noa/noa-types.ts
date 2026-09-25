@@ -134,14 +134,44 @@ export type NoaAnalyticsTrendRow = {
   total?: number;
 };
 
+// N2C2.1: a numbered ranking row - `value` is the server's own already-formatted figure (a plain
+// count, or ONE currency's amount), never a merged cross-currency figure.
+export type NoaAnalyticsRankingRow = {
+  rank: number;
+  label: string;
+  value: string;
+};
+
+// N2C2.1: one ranked list. A currency-based ranking is emitted as one group PER currency (heading =
+// that currency code); a count ranking is a single group with no currency at all.
+export type NoaAnalyticsRankingGroup = {
+  heading?: string;
+  rows: NoaAnalyticsRankingRow[];
+};
+
 export type NoaAnalyticsTransport = {
-  kind: "quotation_analytics" | "quotation_compare" | "quotation_trend";
+  kind:
+    | "quotation_analytics"
+    | "quotation_compare"
+    | "quotation_trend"
+    // N2C2.1/N2C3/N2C4: additive kinds over the SAME transport/card UI - never a second UI stack.
+    | "project_file_analytics"
+    | "client_analytics"
+    | "product_analytics"
+    | "procurement_analytics"
+    | "payment_analytics";
   title: string;
   period?: string;
   metrics?: NoaAnalyticsMetric[];
   statusBreakdown?: NoaAnalyticsStatusRow[];
+  // N2C2.1: optional heading for the status chip section (defaults to "Status").
+  statusLabel?: string;
   comparison?: NoaAnalyticsComparison;
   trend?: NoaAnalyticsTrendRow[];
+  rankings?: NoaAnalyticsRankingGroup[];
+  // N2C2.1: a short muted scope/bound note (e.g. "Based on the 200 most recent records") - always
+  // server-written, never client-invented.
+  note?: string;
   emptyMessage?: string;
 };
 

@@ -1,4 +1,6 @@
-import type { NoaDomain, NoaPageContext, NoaRouteKind } from "./noa-types";
+import type { NoaChoice, NoaDomain, NoaPageContext, NoaRouteKind } from "./noa-types";
+import type { NoaSemanticRequestV2 } from "./noa-semantic-request";
+import { resolveNoaSemanticCapabilityRequest, type NoaSemanticResolution } from "./noa-semantic-resolver";
 
 // Pure, alias-free, deterministic routing (no second LLM call) - kept in its own module per the
 // Phase 1B testability requirement: everything else that would dispatch to it
@@ -252,6 +254,24 @@ const INSIGHTS_PATTERNS = [
   /\bclient analytics\b/,
   /\btop clients? by (?:quotation|confirmed|project(?:\s*file)?) value\b/,
   /\bhow many quotations does each client have\b/,
+  // N2C3: narrow Product Library analytics/ranking phrasing only. Current-state Product/Price
+  // questions ("show products", "how many active products", "which products need a price check",
+  // "product price status") match none of these and keep their existing Product/Price routes.
+  /\bproduct analytics\b/,
+  /\bproduct summary\b/,
+  /\b(?:products|product count) by (?:brand|category)\b/,
+  /\btop (?:brands|categories) by product count\b/,
+  // N2C4: narrow procurement/payment analytics phrasing only. Current-state Procurement questions
+  // ("show procurement orders", "procurement status", "how many completed purchase orders do we
+  // have", "which supplier is missing eta") match none of these and keep their existing routes.
+  /\bprocurement analytics\b/,
+  /\bprocurement status breakdown\b/,
+  /\bhow many vendors? (?:are |is )?missing (?:eta|etd)\b/,
+  /\bpayment analytics\b/,
+  /\bclient payments? summary\b/,
+  /\bhow much has been received\b/,
+  /\bhow much (?:is )?(?:still )?outstanding\b/,
+  /\bhow many (?:client )?payments? (?:are|is) overdue\b/,
 ];
 
 // N2A1: explicit "what needs attention" style phrasing only - checked at the same early
@@ -431,28 +451,99 @@ export function isContextualFollowUp(message: string): boolean {
 // simpler code, same precedence, and it's what prevents "project quotation total" from ever being
 // misrouted to the Project domain instead of Quotation.)
 export function classifyNoaRoute(message: string, context: NoaPageContext): NoaRouteKind {
+  return classifyNoaRouteWithStrength(message, context).route;
+}
+
+// ============================================================================================
+// I3: route match strength - additive metadata over the SAME precedence chain classifyNoaRoute()
+// has always used (classifyNoaRoute() above now simply returns `.route` from this function, so its
+// output is byte-for-byte unchanged for every existing caller). Strength says HOW the router
+// arrived at the route, which is what the semantic-V2 activation rule needs:
+//   exact           - greeting / capability-list / self-context / identifier-driven compare
+//   anchored        - explicit anchored phrase lists (UserActivity, Catch-Up, Admin, Insights,
+//                     Attention, how-to, off-topic, explicit Client phrasing, explicit "help")
+//   generic_keyword - a bare Price/Quotation/Project/Product/Procurement keyword substring hit
+//   page_context    - chosen only because the current page implies a domain
+//   none            - nothing matched; the Help default is an UNRESOLVED fallback, not explicit Help
+// `rule` is a closed, message-free label of which branch matched (diagnostics + protected-route
+// checks such as Catch-Up), never user text.
+// ============================================================================================
+export type NoaRouteStrength = "exact" | "anchored" | "generic_keyword" | "page_context" | "none";
+
+export type NoaRouteRule =
+  | "greeting"
+  | "capabilities"
+  | "howto"
+  | "off_topic"
+  | "self_context"
+  | "user_activity"
+  | "catch_up"
+  | "admin"
+  | "insights"
+  | "attention"
+  | "price_keyword"
+  | "identifier_compare"
+  | "project_client_label"
+  | "client_intent"
+  | "quotation_keyword"
+  | "project_keyword"
+  | "product_keyword"
+  | "procurement_keyword"
+  | "client_ranking_cue"
+  | "explicit_help"
+  | "page_context"
+  | "unresolved";
+
+export type NoaRouteClassification = {
+  route: NoaRouteKind;
+  rule: NoaRouteRule;
+  strength: NoaRouteStrength;
+};
+
+// I3: the one narrow exception to "a generic keyword hit is generic_keyword". A superlative/
+// ranking question about clients ("who is our best client", "top clients", "which client do we
+// quote the most") only lands on Quotation/Price/etc. because "client"/"quotation" happen to be
+// bare keywords in those lists - no deterministic route or capability answers a client ranking
+// question from that match (the only client-ranking calculation is Insights' anchored
+// "top clients by ..." phrasing, already matched earlier by INSIGHTS_PATTERNS). The ROUTE is left
+// exactly as before (so classifyNoaRoute() and every fallback are unchanged); only the strength is
+// reported as "none" so the flag-gated semantic layer may interpret it. Rollback: delete this check.
+const CLIENT_RANKING_CUE_CLIENT = /\bclients?\b/;
+const CLIENT_RANKING_CUE_SUPERLATIVE = /\b(?:best|top|biggest|largest|highest|most|leading)\b/;
+
+function isClientRankingCue(normalized: string): boolean {
+  return CLIENT_RANKING_CUE_CLIENT.test(normalized) && CLIENT_RANKING_CUE_SUPERLATIVE.test(normalized);
+}
+
+function genericKeywordRoute(route: NoaRouteKind, rule: NoaRouteRule, normalized: string): NoaRouteClassification {
+  return isClientRankingCue(normalized)
+    ? { route, rule: "client_ranking_cue", strength: "none" }
+    : { route, rule, strength: "generic_keyword" };
+}
+
+export function classifyNoaRouteWithStrength(message: string, context: NoaPageContext): NoaRouteClassification {
   const normalized = normalizeNoaUserMessage(message);
 
   // Conversation polish: checked before everything else - a pure greeting or an explicit
   // capability question always wins, regardless of page context or any domain keyword.
   if (GREETING_PATTERNS.some((pattern) => pattern.test(normalized))) {
-    return "greeting";
+    return { route: "greeting", rule: "greeting", strength: "exact" };
   }
 
   if (includesAny(normalized, CAPABILITY_HELP_PHRASES)) {
-    return "capabilities";
+    return { route: "capabilities", rule: "capabilities", strength: "exact" };
   }
 
   if (includesAny(normalized, HELP_PHRASES)) {
-    return "Help";
+    return { route: "Help", rule: "howto", strength: "anchored" };
   }
 
   if (includesAny(normalized, OFF_TOPIC_SIGNALS)) {
-    return "Help";
+    return { route: "Help", rule: "off_topic", strength: "anchored" };
   }
 
   if (includesAny(normalized, SELF_CONTEXT_PHRASES)) {
-    return "context";
+    return { route: "context", rule: "self_context", strength: "exact" };
   }
 
   // UA-1A: explicit own-activity intent beats every domain keyword and page-context fallback
@@ -460,46 +551,52 @@ export function classifyNoaRoute(message: string, context: NoaPageContext): NoaR
   // checked first among the domain-ish routes).
   if (
     USER_ACTIVITY_PATTERNS.some((pattern) => pattern.test(normalized)) ||
-    TEAM_AND_OTHER_USER_ACTIVITY_PATTERNS.some((pattern) => pattern.test(normalized)) ||
-    CATCH_UP_PATTERNS.some((pattern) => pattern.test(normalized))
+    TEAM_AND_OTHER_USER_ACTIVITY_PATTERNS.some((pattern) => pattern.test(normalized))
   ) {
-    return "UserActivity";
+    return { route: "UserActivity", rule: "user_activity", strength: "anchored" };
+  }
+
+  // I3: same route as the UserActivity check above (identical precedence - it was previously one
+  // combined `||` condition), split out only so Catch-Up can be recognized as its own protected
+  // rule.
+  if (CATCH_UP_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return { route: "UserActivity", rule: "catch_up", strength: "anchored" };
   }
 
   // B6: checked immediately after UserActivity so a genuine team-activity "who" question above
   // already won; Admin never gets a chance to steal it.
   if (ADMIN_PATTERNS.some((pattern) => pattern.test(normalized))) {
-    return "Admin";
+    return { route: "Admin", rule: "admin", strength: "anchored" };
   }
 
   // B7: checked after Admin, before every operational domain keyword list, so an explicit
   // analytics/summary/trend question always wins - but never a bare operational question (see
   // INSIGHTS_PATTERNS' comment).
   if (INSIGHTS_PATTERNS.some((pattern) => pattern.test(normalized))) {
-    return "Insights";
+    return { route: "Insights", rule: "insights", strength: "anchored" };
   }
 
   // N2A1: checked immediately after Insights, before every operational domain keyword list, so
   // an explicit "what needs my attention" style question always wins - never a semantic
   // extraction call for these phrases (see ATTENTION_PATTERNS' own comment).
   if (ATTENTION_PATTERNS.some((pattern) => pattern.test(normalized))) {
-    return "Attention";
+    return { route: "Attention", rule: "attention", strength: "anchored" };
   }
 
   // Price checked before Quotation/Product: a price-specific ask ("is this product's price
   // status current or due?") is more specific than the domain noun it also mentions.
   if (includesAny(normalized, PRICE_KEYWORDS)) {
-    return "Price";
+    return genericKeywordRoute("Price", "price_keyword", normalized);
   }
 
   if (/\b(compare|difference between)\b/.test(normalized) && /\b[a-z]{0,4}-?\d{3,}/i.test(normalized)) {
-    return "Quotation";
+    return { route: "Quotation", rule: "identifier_compare", strength: "exact" };
   }
 
   // A client label is part of Project detail, not a cross-domain Client request. Keep this
   // narrow so explicit quotation vocabulary below still wins for "quotations for project X".
   if (/\bproject\b/.test(normalized) && /\b(what client|which client)\b/.test(normalized)) {
-    return "Project";
+    return { route: "Project", rule: "project_client_label", strength: "anchored" };
   }
 
   // B4: narrow, explicit Client-intent phrasing only - never a bare "client" capture, since
@@ -509,27 +606,27 @@ export function classifyNoaRoute(message: string, context: NoaPageContext): NoaR
   const genericClientTellAbout = /\btell me about\b.*\bclient\b/.test(normalized) &&
     !/\b(?:quotation|quote|quoted|quote number|line item|project quotation)\b/.test(normalized);
   if (genericClientTellAbout || CLIENT_INTENT_PATTERNS.some((pattern) => pattern.test(normalized))) {
-    return "Client";
+    return { route: "Client", rule: "client_intent", strength: "anchored" };
   }
 
   if (includesAny(normalized, QUOTATION_KEYWORDS)) {
-    return "Quotation";
+    return genericKeywordRoute("Quotation", "quotation_keyword", normalized);
   }
 
   if (includesAny(normalized, PROJECT_KEYWORDS)) {
-    return "Project";
+    return genericKeywordRoute("Project", "project_keyword", normalized);
   }
 
   if (includesAny(normalized, PRODUCT_KEYWORDS)) {
-    return "Product";
+    return genericKeywordRoute("Product", "product_keyword", normalized);
   }
 
   if (includesAny(normalized, PROCUREMENT_KEYWORDS)) {
-    return "Procurement";
+    return genericKeywordRoute("Procurement", "procurement_keyword", normalized);
   }
 
   if (normalized.includes("help")) {
-    return "Help";
+    return { route: "Help", rule: "explicit_help", strength: "anchored" };
   }
 
   // Narrow page-context fallback: only for a genuinely contextual/ambiguous follow-up ("why is
@@ -537,15 +634,316 @@ export function classifyNoaRoute(message: string, context: NoaPageContext): NoaR
   // merely happens to share a page with a capability domain.
   if (isContextualFollowUp(normalized)) {
     if (context.section === "quotations" || context.quotationId) {
-      return "Quotation";
+      return { route: "Quotation", rule: "page_context", strength: "page_context" };
     }
 
     if (context.section === "products" || context.productTemplateId) {
-      return "Product";
+      return { route: "Product", rule: "page_context", strength: "page_context" };
     }
   }
 
-  return "Help";
+  // I3 PART 6: "nothing matched" - an unresolved fallback, distinct from explicit Help above.
+  return { route: "Help", rule: "unresolved", strength: "none" };
+}
+
+// ============================================================================================
+// I3: semantic V2 runtime helpers - pure, deterministic, alias-free (testable with the plain
+// test runner). The orchestrator owns the only extractor call and the only capability dispatch;
+// these helpers only decide WHETHER the semantic layer may run and WHAT its validated result
+// means. Nothing here reads a database, authorizes anything, or sees business data.
+// ============================================================================================
+
+// PART 1: explicit opt-in only. Anything other than "1"/"true"/"on" (case-insensitive) - including
+// unset - is OFF. Rollback = unset NOA_SEMANTIC_V2 (or set it to 0).
+export function isNoaSemanticV2FlagEnabled(value: string | undefined): boolean {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "on";
+}
+
+// PART 21: dev-only diagnostics unless explicitly enabled in production.
+export function isNoaRouteDiagnosticsEnabled(nodeEnv: string | undefined, debugRouting: string | undefined): boolean {
+  return nodeEnv !== "production" || debugRouting === "1";
+}
+
+// Deterministic protections the orchestrator detects outside the router (identifier fast paths,
+// conversation-reference follow-ups, generic entity lookup). Closed labels only.
+export type NoaSemanticV2ProtectedReason =
+  | "recorded_quotation_follow_up"
+  | "identifier"
+  | "ordinal_follow_up"
+  | "reference_follow_up"
+  | "entity_lookup_candidate";
+
+// Route rules that are never semantic territory regardless of strength (PART 4) - belt-and-braces
+// on top of the strength check below, so a future strength re-labeling can't silently expose them.
+const NOA_SEMANTIC_V2_PROTECTED_RULES: ReadonlySet<NoaRouteRule> = new Set<NoaRouteRule>([
+  "greeting", "capabilities", "howto", "off_topic", "self_context", "user_activity", "catch_up",
+  "admin", "insights", "attention", "identifier_compare", "client_intent", "explicit_help",
+]);
+
+export type NoaSemanticV2Eligibility =
+  | { eligible: true }
+  | { eligible: false; reason: string };
+
+// ============================================================================================
+// I4: generic-keyword semantic candidate. A bare Quotation/Project/Product/Procurement keyword hit
+// ("quote", "projects", "procurement") says which LIST matched, not what the user asked. This pure
+// helper answers one narrow question - "is this generic-keyword message shaped like a higher-level
+// natural-language request the keyword route can't express?" - using a few intent-SHAPE cues, never
+// a sentence list and never a domain decision (V2 + the I2 resolver still own the meaning, and the
+// original deterministic route still runs on every fallback):
+//   ranking      - a superlative/ranking word ("who do we quote the most", "highest quotation
+//                  value"). Allowed on Quotation/Project/Product/Procurement keyword routes: the
+//                  only rank the resolver can dispatch is client ranking (Insights); every other
+//                  rank is an honest unsupported, which a generic_keyword route never surfaces
+//                  (decideNoaSemanticV2Outcome falls back instead).
+//   natural list - collective "do we have"/"gives us" phrasing, or a "which/what <noun> are
+//                  <state>" status question ("which projects are finished"). Project/Procurement
+//                  keyword routes only - their resolvers map exactly the active/completed status the
+//                  capability itself filters by. Product/Quotation list/count are deliberately NOT
+//                  included: their resolvers can't carry the capability's own filters (archived,
+//                  brand, pending, ...) so a rewrite could only lose information.
+// Price keyword routes are never candidates (precise current-state capability). Any
+// identifier-shaped token disqualifies the message outright (identifiers stay deterministic).
+// Rollback: make this return false.
+// ============================================================================================
+const GENERIC_SEMANTIC_IDENTIFIER_GUARD = /\b[a-z]{0,4}-?\d{3,}/;
+const GENERIC_SEMANTIC_RANKING_CUE = /\b(?:best|worst|top|biggest|largest|highest|lowest|leading|most|least|ranking|ranked)\b(?! recent)/;
+const GENERIC_SEMANTIC_COLLECTIVE_CUE = /\b(?:do|did|have) we\b|\bgives? us\b/;
+const GENERIC_SEMANTIC_STATE_QUESTION = /^(?:which|what) (?!(?:is|are|was|were)\b)(?:[a-z]+ ){1,3}(?:are|is|were) (?:now |currently |still |already )?[a-z]+$/;
+const GENERIC_SEMANTIC_RANKING_RULES: ReadonlySet<NoaRouteRule> = new Set<NoaRouteRule>([
+  "quotation_keyword", "project_keyword", "product_keyword", "procurement_keyword",
+]);
+const GENERIC_SEMANTIC_NATURAL_LIST_RULES: ReadonlySet<NoaRouteRule> = new Set<NoaRouteRule>([
+  "project_keyword", "procurement_keyword",
+]);
+
+export function isNoaGenericSemanticCandidate(message: string, classification: NoaRouteClassification): boolean {
+  if (classification.strength !== "generic_keyword") return false;
+  const normalized = normalizeNoaUserMessage(message);
+  if (GENERIC_SEMANTIC_IDENTIFIER_GUARD.test(normalized)) return false;
+  if (GENERIC_SEMANTIC_RANKING_RULES.has(classification.rule) && GENERIC_SEMANTIC_RANKING_CUE.test(normalized)) return true;
+  return GENERIC_SEMANTIC_NATURAL_LIST_RULES.has(classification.rule) &&
+    (GENERIC_SEMANTIC_COLLECTIVE_CUE.test(normalized) || GENERIC_SEMANTIC_STATE_QUESTION.test(normalized));
+}
+
+// PART 5: I3's conservative activation rule - flag ON, no deterministic protection, and route
+// strength none/page_context. I4: a generic_keyword route is eligible ONLY when the caller also
+// reports isNoaGenericSemanticCandidate() === true for it - never generic_keyword in general.
+export function noaSemanticV2Eligibility(input: {
+  classification: NoaRouteClassification;
+  flagEnabled: boolean;
+  protectedReason: NoaSemanticV2ProtectedReason | null;
+  genericSemanticCandidate?: boolean;
+}): NoaSemanticV2Eligibility {
+  if (!input.flagEnabled) return { eligible: false, reason: "flag_off" };
+  if (input.protectedReason) return { eligible: false, reason: `protected_${input.protectedReason}` };
+  if (NOA_SEMANTIC_V2_PROTECTED_RULES.has(input.classification.rule)) return { eligible: false, reason: `protected_${input.classification.rule}` };
+  const { strength } = input.classification;
+  if (strength === "generic_keyword" && input.genericSemanticCandidate === true) return { eligible: true };
+  if (strength !== "none" && strength !== "page_context") return { eligible: false, reason: `route_strength_${strength}` };
+  return { eligible: true };
+}
+
+export type NoaSemanticV2ExtractionStage = "disabled" | "provider_error" | "invalid_json" | "schema_mismatch" | "grounding_failed" | "success";
+
+export type NoaSemanticV2Decision =
+  | { kind: "dispatch"; domain: Exclude<NoaDomain, "Help">; canonicalMessage: string }
+  | { kind: "answer"; domain: NoaDomain; text: string; choices?: NoaChoice[] }
+  | { kind: "fallback"; reason: string };
+
+// PART 21: the ONLY fields ever logged - closed enums/status values. Never the raw message,
+// entityText, subjectName, capability data, provider response, or any credential.
+export type NoaRouteDiagnostics = {
+  deterministicRoute: NoaRouteKind;
+  routeStrength: NoaRouteStrength;
+  routeRule: NoaRouteRule;
+  semanticRan: boolean;
+  semanticStage: NoaSemanticV2ExtractionStage | null;
+  semanticDomain: string | null;
+  semanticIntent: string | null;
+  semanticMetric: string | null;
+  semanticConfidence: string | null;
+  // I5.2: application-code proof for the one narrow low-confidence dispatch exception. This is a
+  // fixed policy label, never a message, entity, identifier, or business value.
+  confidenceOverride: "deterministic_safe_dispatch" | null;
+  resolverKind: NoaSemanticResolution["kind"] | null;
+  fallbackReason: string | null;
+  // I4: whether isNoaGenericSemanticCandidate() fired - a boolean, never the cue text itself.
+  genericSemanticCandidate: boolean;
+};
+
+export function buildNoaRouteDiagnostics(
+  classification: NoaRouteClassification,
+  semantic?: { stage: NoaSemanticV2ExtractionStage; request: NoaSemanticRequestV2 | null; resolverKind: NoaSemanticResolution["kind"] | null },
+  fallbackReason?: string | null,
+  genericSemanticCandidate = false,
+  confidenceOverride: NoaRouteDiagnostics["confidenceOverride"] = null,
+): NoaRouteDiagnostics {
+  const request = semantic?.stage === "success" ? semantic.request : null;
+  return {
+    deterministicRoute: classification.route,
+    routeStrength: classification.strength,
+    routeRule: classification.rule,
+    semanticRan: Boolean(semantic),
+    semanticStage: semantic?.stage ?? null,
+    semanticDomain: request?.domain ?? null,
+    semanticIntent: request?.intent ?? null,
+    semanticMetric: request?.metric ?? null,
+    semanticConfidence: request?.confidence ?? null,
+    confidenceOverride,
+    resolverKind: semantic?.resolverKind ?? null,
+    fallbackReason: fallbackReason ?? null,
+    genericSemanticCandidate,
+  };
+}
+
+// I5.2: this is intentionally an allow-list, not a confidence bypass. These are the only four
+// closed, entity-free client-ranking combinations the resolver already maps to an existing
+// read-only Insights capability. No lookup, reference, action, filter, or invented entity can
+// satisfy every condition below.
+const DETERMINISTIC_SAFE_LOW_CONFIDENCE_CLIENT_RANKING_METRICS = new Set([
+  "quotation_value",
+  "confirmed_value",
+  "project_file_value",
+  "quotation_count",
+]);
+
+function isDeterministicallySafeLowConfidenceDispatch(
+  semantic: NoaSemanticRequestV2,
+  resolution: Extract<NoaSemanticResolution, { kind: "dispatch" }>,
+): boolean {
+  return semantic.confidence === "low"
+    && (semantic.domain === "Client" || semantic.domain === "Insights")
+    && semantic.intent === "rank"
+    && semantic.entityType === "client"
+    && semantic.entityText === null
+    && semantic.reference === "none"
+    && semantic.needsClarification === false
+    && semantic.clarificationReason === null
+    && semantic.period === null
+    && semantic.comparison === null
+    && DETERMINISTIC_SAFE_LOW_CONFIDENCE_CLIENT_RANKING_METRICS.has(semantic.metric ?? "")
+    && resolution.domain === "Insights";
+}
+
+// PART 8/9/18/20 + I3.1 PART 1/2: turns ONE validated V2 extraction into a deterministic runtime
+// decision.
+//   - any non-success stage                                 -> fallback (existing deterministic route)
+//   - a previous_result reference, or current_page on a page_context route -> fallback (reference
+//     binding is I5's job; the existing page-context/follow-up paths already own it)
+//   - the PURE resolver is then run exactly once, regardless of confidence (I3.1: low confidence
+//     no longer skips the resolver - it only restricts what a low-confidence result is ALLOWED to
+//     become, so there is never a second/duplicate resolver call for the same request)
+//   - HIGH confidence: resolver dispatch/clarify/unsupported/fallback -> mapped 1:1, except that a
+//     page_context route is only overridden by a dispatch to a DIFFERENT domain (the page-bound
+//     deterministic path keeps owning same-domain and clarify/unsupported cases)
+//   - LOW confidence (I3.1): the model's own uncertainty is never enough to justify guessing a
+//     business action. A `clarify` result is still safe to surface - it asks the user to resolve
+//     the SAME missing slot the resolver would independently require even at high confidence,
+//     produces zero DB access, and offers only I2's fixed deterministic choices - so it is
+//     answered exactly like a high-confidence clarify (including the same page_context gating).
+//     `unsupported` and `fallback` are rejected, as are all dispatches except I5.2's closed,
+//     entity-free client-ranking allow-list below. That exception is independently proven by
+//     application code and maps only to an existing read-only Insights capability; low confidence
+//     otherwise never selects a capability or replaces an answer with an "unsupported" refusal.
+//   - I4 generic_keyword route (only ever reached via isNoaGenericSemanticCandidate()): a real,
+//     working deterministic capability already owns this message, so V2 may only REPLACE it with a
+//     high-confidence dispatch - and a same-domain dispatch only when the model extracted no
+//     entityText (the resolver's same-domain canonical phrases don't carry one, so the rewrite
+//     would silently drop the user's filter; the keyword route keeps owning entity lookups).
+//     clarify/unsupported fall back to the keyword route, with ONE exception mirroring I3's
+//     client_ranking_cue bridge: the client-ranking clarification (rank + client), which no
+//     keyword route can answer. Strictly narrower than I3.1 - never looser.
+// The resolver never emits a model-supplied capability name or identifier - `domain` and
+// `canonicalMessage` are always the resolver's own deterministic values.
+export function decideNoaSemanticV2Outcome(
+  extraction: { request: NoaSemanticRequestV2; stage: NoaSemanticV2ExtractionStage },
+  classification: NoaRouteClassification,
+): { decision: NoaSemanticV2Decision; diagnostics: NoaRouteDiagnostics } {
+  // Only ever called for an eligible route, so a generic_keyword route here means the I4
+  // candidate signal fired.
+  const isGenericKeyword = classification.strength === "generic_keyword";
+  const finish = (
+    decision: NoaSemanticV2Decision,
+    resolverKind: NoaSemanticResolution["kind"] | null,
+    confidenceOverride: NoaRouteDiagnostics["confidenceOverride"] = null,
+  ) => ({
+    decision,
+    diagnostics: buildNoaRouteDiagnostics(
+      classification,
+      { request: extraction.request, resolverKind, stage: extraction.stage },
+      decision.kind === "fallback" ? decision.reason : null,
+      isGenericKeyword,
+      confidenceOverride,
+    ),
+  });
+
+  if (extraction.stage !== "success") return finish({ kind: "fallback", reason: `semantic_${extraction.stage}` }, null);
+  const semantic = extraction.request;
+  const isHighConfidence = semantic.confidence === "high";
+  const isPageContext = classification.strength === "page_context";
+  // Reference binding is I5's job: a previous_result follow-up is never answered as a fresh
+  // question, and on a page_context route "current_page" means the thing the deterministic
+  // page-bound path already owns. On an unresolved route a current_page hint binds nothing the
+  // resolver uses (I3 live smoke: the Attention paraphrase sometimes comes back current_page), so
+  // it is not a reason to fall back there.
+  if (semantic.reference === "previous_result" || (isPageContext && semantic.reference === "current_page")) {
+    return finish({ kind: "fallback", reason: "semantic_reference_binding_deferred" }, null);
+  }
+
+  const resolution = resolveNoaSemanticCapabilityRequest(semantic);
+
+  if (resolution.kind === "dispatch") {
+    // I3.1 PART 2/5/6: low confidence never dispatches a capability, regardless of domain -
+    // reported with its own reason so this is distinguishable in diagnostics from every other
+    // low-confidence rejection (I3.1 PART 8).
+    const deterministicConfidenceAccepted = isDeterministicallySafeLowConfidenceDispatch(semantic, resolution);
+    if (!isHighConfidence && !deterministicConfidenceAccepted) return finish({ kind: "fallback", reason: "semantic_low_confidence_dispatch" }, resolution.kind);
+    if (resolution.domain === "Help") return finish({ kind: "fallback", reason: "resolver_help_dispatch" }, resolution.kind);
+    if (isPageContext && resolution.domain === classification.route) {
+      return finish({ kind: "fallback", reason: "page_context_same_domain" }, resolution.kind);
+    }
+    if (isGenericKeyword && resolution.domain === classification.route && semantic.entityText !== null) {
+      return finish({ kind: "fallback", reason: "generic_keyword_same_domain_entity" }, resolution.kind);
+    }
+    return finish(
+      { canonicalMessage: resolution.canonicalMessage, domain: resolution.domain, kind: "dispatch" },
+      resolution.kind,
+      deterministicConfidenceAccepted ? "deterministic_safe_dispatch" : null,
+    );
+  }
+
+  if (resolution.kind === "fallback") return finish({ kind: "fallback", reason: resolution.reason }, resolution.kind);
+
+  // I3.1 PART 2: an "unsupported" answer is a semantically-produced refusal - only ever surfaced
+  // at high confidence, exactly like today. At low confidence it defers to the existing
+  // deterministic fallback instead of asserting something is unsupported on shaky footing.
+  if (resolution.kind === "unsupported" && !isHighConfidence) {
+    return finish({ kind: "fallback", reason: "semantic_low_confidence" }, resolution.kind);
+  }
+
+  if (isPageContext) return finish({ kind: "fallback", reason: `page_context_${resolution.kind}` }, resolution.kind);
+  if (isGenericKeyword && !(resolution.kind === "clarify" && semantic.intent === "rank" && semantic.entityType === "client")) {
+    return finish({ kind: "fallback", reason: `generic_keyword_${resolution.kind}` }, resolution.kind);
+  }
+
+  const answerDomain: NoaDomain = semantic.domain === "Unclear" ? "Help" : semantic.domain;
+  if (resolution.kind === "clarify") {
+    // I3.1 PART 1/4: a low-confidence `clarify` is allowed through unchanged - the resolver
+    // independently re-derived the missing slot itself (e.g. "rank" with no metric), the choices
+    // are I2's fixed deterministic set, and nothing here executes a capability or reads the
+    // database, so asking the user is strictly safer than the old wrong deterministic fallback.
+    return finish({
+      domain: answerDomain,
+      kind: "answer",
+      text: resolution.text,
+      ...(resolution.choices?.length ? { choices: resolution.choices.map((choice) => ({ ...choice })) } : {}),
+    }, resolution.kind);
+  }
+
+  return finish({ domain: answerDomain, kind: "answer", text: resolution.text }, resolution.kind);
 }
 
 // Backward-compatible entry point for callers that only need the public, user-facing domain

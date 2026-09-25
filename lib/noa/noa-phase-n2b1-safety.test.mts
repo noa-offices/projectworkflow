@@ -78,7 +78,8 @@ test("insights collision fix: the literal /\\bwhat changed\\b/ pattern was remov
 // 13. Attention routing unchanged
 test("13. Attention routing/patterns are untouched by this phase", () => {
   assert.ok(router.includes("const ATTENTION_PATTERNS = ["));
-  assert.ok(router.includes('return "Attention";'));
+  // I3: classifyNoaRoute() now returns classifyNoaRouteWithStrength(...).route - same branch.
+  assert.ok(router.includes('return { route: "Attention", rule: "attention", strength: "anchored" };'));
 });
 
 // 14. UserActivity own-auth gate reused

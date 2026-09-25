@@ -51,7 +51,9 @@ test("a Product follow-up rewrites the message to a canonical 'product <label>' 
   const fnEnd = orchestratorSource.indexOf("\n// C4D: builds a bounded Product conversationReference", fnStart);
   const fnBody = orchestratorSource.slice(fnStart, fnEnd);
   assert.ok(fnBody.includes("`product ${productLabel}`"));
-  assert.match(orchestratorSource, /const \{ text \} = await runNoaProvider\(\{\s*\n\s*capabilityData: capabilityResult\.data,\s*\n\s*context: request\.context,\s*\n\s*displayName: request\.displayName,\s*\n\s*domain,\s*\n\s*message: request\.message,/);
+  assert.match(orchestratorSource, /const \{ text \} = await runNoaProvider\(\{\s*\n\s*capabilityData: capabilityResult\.data,\s*\n\s*context: request\.context,\s*\n\s*displayName: request\.displayName,\s*\n\s*domain,\s*\n\s*message: originalMessage,/);
+  // I3: originalMessage is captured before any capability-only message substitution.
+  assert.ok(orchestratorSource.includes("const originalMessage = request.message;"));
 });
 
 test("buildProductConversationReference reads only the safe name field from the array-shaped detail result or the product_list rows - never id/UUID", () => {

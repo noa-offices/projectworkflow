@@ -12,10 +12,10 @@ test("UAT activity-time phrases route to UserActivity without affecting other do
   assert.ok(router.includes("\\b(?:projectworkflow )?active time\\b"));
   assert.ok(router.includes("\\bhow many (?:activity )?intervals?\\b"));
   assert.ok(router.includes("\\bmy interval count\\b"));
-  assert.ok(router.includes('return "UserActivity"'));
+  assert.ok(router.includes('return { route: "UserActivity", rule: "user_activity", strength: "anchored" };')); // I3: classifyNoaRouteWithStrength branch
   assert.ok(router.includes("PROJECT_KEYWORDS"));
   assert.ok(router.includes("ADMIN_PATTERNS"));
-  assert.ok(router.includes('return "capabilities"'));
+  assert.ok(router.includes('return { route: "capabilities", rule: "capabilities", strength: "exact" };')); // I3: classifyNoaRouteWithStrength branch
 });
 
 test("UAT self activity-time takes precedence over named-user extraction and interval counts stay deterministic", () => {

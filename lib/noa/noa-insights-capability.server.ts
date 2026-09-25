@@ -8,9 +8,22 @@ import {
   type ProductPriceCheckState,
 } from "@/lib/product-price-check";
 import { resolveDateRange, type DateRangeKey } from "@/lib/insights/date-ranges";
+// N2C4: the EXISTING client-payment visibility rule (same helper Attention and the Project File
+// payment panel use) - no new permission logic.
+import { canViewClientPayments } from "@/lib/auth";
+import { VENDOR_STEP_LABELS, vendorStepLabel } from "@/lib/procurement/vendor-steps";
+import {
+  calculateClientPaymentSummary,
+  deriveClientPaymentStatus,
+  formatPaymentMoney,
+  type ClientPaymentInstallmentRow,
+  type ClientPaymentReceiptRow,
+} from "@/lib/projects/client-payment-model";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
+import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { createClient } from "@/lib/supabase/server";
+import type { AppRole } from "@/lib/supabase/types";
 import type { NoaCapabilityResult, NoaPageContext } from "./noa-types";
 
 // B7: NOA Insights is deliberately NARROWER than the existing app/insights/sales-report page,
@@ -29,6 +42,13 @@ const MAX_PRICE_SCAN = 200;
 // the same underlying `quotations` scan reimplemented locally below.
 const PROJECT_FILE_SCAN_LIMIT = 200;
 const MAX_CLIENT_RANKING_ROWS = 10;
+// N2C3: display bound for the brand/category product-count rankings (the underlying template scan
+// itself is bounded by MAX_PRICE_SCAN).
+const MAX_PRODUCT_RANKING_ROWS = 10;
+// N2C4: bound on how many active Project Files get vendor-level / payment-level detail reads in one
+// answer (keeps every `.in(...)` id list small); any excess is disclosed in the answer, never
+// silently extrapolated.
+const MAX_ANALYTICS_ORDER_DETAIL = 50;
 
 const UNAUTHORIZED_RESULT: NoaCapabilityResult = {
   message: "I couldn't access ProjectWorkflow insights for this account.",
@@ -38,6 +58,18 @@ const UNAUTHORIZED_RESULT: NoaCapabilityResult = {
 
 const PRODUCT_PRICE_UNAUTHORIZED_RESULT: NoaCapabilityResult = {
   message: "Product price insights aren't available with your current permissions.",
+  ok: false,
+  reason: "unauthorized",
+};
+
+const PRODUCT_ANALYTICS_UNAUTHORIZED_RESULT: NoaCapabilityResult = {
+  message: "Product Library insights aren't available with your current permissions.",
+  ok: false,
+  reason: "unauthorized",
+};
+
+const PAYMENT_UNAUTHORIZED_RESULT: NoaCapabilityResult = {
+  message: "Client payment insights aren't available with your current permissions.",
   ok: false,
   reason: "unauthorized",
 };
@@ -63,7 +95,12 @@ type InsightsQuestionKind =
   | "client_ranking"
   | "client_summary"
   | "overview"
+  // N2C4: additive procurement/payment analytics kinds.
+  | "payment_analytics"
+  | "procurement_analytics"
   | "procurement_summary"
+  // N2C3: additive Product Library analytics kind.
+  | "product_analytics"
   | "product_price_summary"
   | "project_file_analytics"
   | "project_file_on_hold_unsupported"
@@ -120,6 +157,24 @@ function insightsQuestionKind(message: string): InsightsQuestionKind {
   ) {
     return "client_ranking";
   }
+  // N2C4: explicit payment/procurement analytics phrasing - checked before the generic quotation/
+  // client catch-alls below ("client payment summary" would otherwise fall into client_summary).
+  if (
+    /\bpayment analytics\b/.test(normalized) ||
+    /\b(?:client )?payments? summary\b/.test(normalized) ||
+    /\bhow much has been received\b/.test(normalized) ||
+    /\bhow much (?:is )?(?:still )?outstanding\b/.test(normalized) ||
+    /\bhow many (?:client )?payments? (?:are|is) overdue\b/.test(normalized)
+  ) {
+    return "payment_analytics";
+  }
+  if (
+    /\bprocurement analytics\b/.test(normalized) ||
+    /\bprocurement status breakdown\b/.test(normalized) ||
+    /\bhow many vendors? (?:are |is )?missing (?:eta|etd)\b/.test(normalized)
+  ) {
+    return "procurement_analytics";
+  }
   if (
     /\bquotations?\b/.test(normalized) ||
     /\bclient[- ]confirmed\b/.test(normalized) ||
@@ -145,6 +200,16 @@ function insightsQuestionKind(message: string): InsightsQuestionKind {
     return "project_file_analytics";
   }
   if (/\bproject(s)?\b/.test(normalized) && !/\bproject orders?\b/.test(normalized)) return "project_summary";
+  // N2C3: explicit Product Library analytics/ranking phrasing only - checked before the generic
+  // product/price catch-all, so "product price summary" still resolves to product_price_summary.
+  if (
+    /\bproduct analytics\b/.test(normalized) ||
+    /\bproduct summary\b/.test(normalized) ||
+    /\b(?:products|product count) by (?:brand|category)\b/.test(normalized) ||
+    /\btop (?:brands|categories) by product count\b/.test(normalized)
+  ) {
+    return "product_analytics";
+  }
   if (/\b(product|products|price|pricing)\b/.test(normalized)) return "product_price_summary";
   if (/\bclients?\b/.test(normalized)) return "client_summary";
   if (/\bprocurement\b/.test(normalized)) return "procurement_summary";
@@ -493,6 +558,9 @@ type InsightsProjectFile = {
   clientName: string;
   currency: string;
   orderNo: string;
+  // N2C4: the owning quotation row (same field allProjectFiles() exposes) - needed only to scope
+  // vendor/payment detail reads to these exact Project Files; never surfaced in any answer.
+  quotationId: string;
   status: InsightsProjectFileStatus;
   total: number;
 };
@@ -533,6 +601,7 @@ async function insightsProjectFiles(
       clientName: order.clientName,
       currency: order.currency,
       orderNo: order.orderNo,
+      quotationId: quotation.id,
       status: cancelledAt ? "cancelled" : completedAt ? "completed" : "active",
       total: order.total,
     });
@@ -693,6 +762,39 @@ type PriceScanTemplateRow = {
 type PriceScanBrandRow = { id: string; last_price_list_checked_at: string | null; name: string };
 type PriceScanBrandUpdateRow = { brand_id: string; created_at: string | null; effective_from: string | null; received_at: string | null; status: string; title: string | null };
 
+// N2C3: the per-template price-state loop, extracted verbatim from productPriceSummaryAnswer() so
+// the Product analytics answer reuses the EXACT same rule (and the same brand/price-list reads)
+// over the SAME bounded template set - never a second implementation. Also returns the brand rows
+// it already fetched, so Product analytics resolves brand names without another brands read.
+async function productPriceStatusCounts(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  templates: PriceScanTemplateRow[],
+): Promise<{ brandsById: Map<string, PriceScanBrandRow>; statusCounts: Map<ProductPriceCheckState["key"], number>; statusLabels: Map<ProductPriceCheckState["key"], string> }> {
+  const brandIds = Array.from(new Set(templates.map((template) => template.brand_id)));
+  const [{ data: brandRows }, { data: updateRows }] = await Promise.all([
+    supabase.from("brands").select("id,name,last_price_list_checked_at").in("id", brandIds).returns<PriceScanBrandRow[]>(),
+    supabase.from("brand_price_list_updates").select("brand_id,title,effective_from,received_at,created_at,status").in("brand_id", brandIds).in("status", ["draft", "active"]).returns<PriceScanBrandUpdateRow[]>(),
+  ]);
+  const brandsById = new Map((brandRows ?? []).map((row) => [row.id, row]));
+  const updatesByBrand = new Map<string, PriceScanBrandUpdateRow[]>();
+  for (const update of updateRows ?? []) {
+    updatesByBrand.set(update.brand_id, [...(updatesByBrand.get(update.brand_id) ?? []), update]);
+  }
+
+  const formatDate = (value: string | null) => value ?? "unknown date";
+  const statusCounts = new Map<ProductPriceCheckState["key"], number>();
+  const statusLabels = new Map<ProductPriceCheckState["key"], string>();
+  for (const template of templates) {
+    const brandRow = brandsById.get(template.brand_id);
+    const latestUpdate = latestBrandPriceListUpdate(updatesByBrand.get(template.brand_id) ?? []);
+    const baseline = brandPriceBaselineDate({ fallbackCheckedAt: brandRow?.last_price_list_checked_at ?? null, latestBrandPriceListUpdate: latestUpdate });
+    const status = productTemplatePriceCheckState({ brandPriceBaselineAt: baseline, formatDate, latestBrandPriceListUpdate: latestUpdate, template });
+    statusCounts.set(status.key, (statusCounts.get(status.key) ?? 0) + 1);
+    if (!statusLabels.has(status.key)) statusLabels.set(status.key, status.label);
+  }
+  return { brandsById, statusCounts, statusLabels };
+}
+
 // PART 7: reuses productTemplatePriceCheckState() per template - the exact same rule set the
 // Price capability and Product Management price badges use, never reimplemented here. Gated by
 // requireProductLibraryManager() in the entry point before this ever runs.
@@ -719,26 +821,7 @@ async function productPriceSummaryAnswer(
     };
   }
 
-  const brandIds = Array.from(new Set(templates.map((template) => template.brand_id)));
-  const [{ data: brandRows }, { data: updateRows }] = await Promise.all([
-    supabase.from("brands").select("id,name,last_price_list_checked_at").in("id", brandIds).returns<PriceScanBrandRow[]>(),
-    supabase.from("brand_price_list_updates").select("brand_id,title,effective_from,received_at,created_at,status").in("brand_id", brandIds).in("status", ["draft", "active"]).returns<PriceScanBrandUpdateRow[]>(),
-  ]);
-  const brandsById = new Map((brandRows ?? []).map((row) => [row.id, row]));
-  const updatesByBrand = new Map<string, PriceScanBrandUpdateRow[]>();
-  for (const update of updateRows ?? []) {
-    updatesByBrand.set(update.brand_id, [...(updatesByBrand.get(update.brand_id) ?? []), update]);
-  }
-
-  const formatDate = (value: string | null) => value ?? "unknown date";
-  const statusCounts = new Map<ProductPriceCheckState["key"], number>();
-  for (const template of templates) {
-    const brandRow = brandsById.get(template.brand_id);
-    const latestUpdate = latestBrandPriceListUpdate(updatesByBrand.get(template.brand_id) ?? []);
-    const baseline = brandPriceBaselineDate({ fallbackCheckedAt: brandRow?.last_price_list_checked_at ?? null, latestBrandPriceListUpdate: latestUpdate });
-    const status = productTemplatePriceCheckState({ brandPriceBaselineAt: baseline, formatDate, latestBrandPriceListUpdate: latestUpdate, template });
-    statusCounts.set(status.key, (statusCounts.get(status.key) ?? 0) + 1);
-  }
+  const { statusCounts } = await productPriceStatusCounts(supabase, templates);
 
   const needsCheck = statusCounts.get("needs_check") ?? 0;
   const due = statusCounts.get("due") ?? 0;
@@ -754,6 +837,138 @@ async function productPriceSummaryAnswer(
     },
     ok: true,
     sources: [{ label: "Insights · Calculated from authorized product price status", type: "insights" }],
+  };
+}
+
+type ProductAnalyticsTemplateRow = PriceScanTemplateRow & { lifecycle_status: string | null; main_category_id: string | null };
+type ProductCategoryNameRow = { id: string; name: string };
+
+// N2C3: a fixed display order over the helper's own closed key set - never a severity ranking.
+const PRODUCT_PRICE_STATUS_ORDER: ProductPriceCheckState["key"][] = ["needs_check", "due", "scheduled", "no_price_list_date", "checked", "current"];
+
+// N2C3: deterministic count ranking - count descending, then name ascending as a stable tiebreak.
+function rankByProductCount(counts: Map<string, { count: number; name: string }>): Array<{ count: number; name: string }> {
+  return Array.from(counts.values())
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+    .slice(0, MAX_PRODUCT_RANKING_ROWS);
+}
+
+// N2C3: Product Library analytics - counts only, from existing Product Template/Brand/Category
+// data. No sales/revenue/popularity/margin/stock figure exists or is invented here.
+// - Lifecycle totals are exact head counts (no rows transferred) mirroring the Product Library's
+//   own normalizeTemplateLifecycleStatus() rule: archived/discontinued lifecycle wins, otherwise
+//   is_active decides active vs archived - the three buckets partition every template.
+// - Price status and brand/category rankings come from ONE bounded scan over the SAME template set
+//   productPriceSummaryAnswer() uses (is_active, template_name order, MAX_PRICE_SCAN), with price
+//   status decided by the shared productPriceStatusCounts() helper - so the price figures here are
+//   identical to the existing product price summary. Rankings count only lifecycle-active
+//   templates in that scan, grouped by brand, and by main-category NAME (categories are brand-
+//   scoped rows, and the Product capability already treats a category name as one concept).
+// Gated by requireProductLibraryManager() in the entry point before this ever runs.
+async function productAnalyticsAnswer(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<NoaCapabilityResult> {
+  const sources = [{ label: "Insights · Calculated from authorized Product Library records", type: "insights" }];
+  const [totalResult, activeResult, archivedResult, discontinuedResult, scanResult] = await Promise.all([
+    supabase.from("product_templates").select("id", { count: "exact", head: true }),
+    supabase.from("product_templates").select("id", { count: "exact", head: true }).eq("is_active", true).not("lifecycle_status", "in", "(archived,discontinued)"),
+    supabase.from("product_templates").select("id", { count: "exact", head: true }).or("lifecycle_status.eq.archived,and(is_active.eq.false,lifecycle_status.eq.active)"),
+    supabase.from("product_templates").select("id", { count: "exact", head: true }).eq("lifecycle_status", "discontinued"),
+    supabase
+      .from("product_templates")
+      .select("id,template_name,brand_id,main_category_id,lifecycle_status,created_at,last_price_checked_at,price_check_interval_days", { count: "exact" })
+      .eq("is_active", true)
+      .order("template_name", { ascending: true })
+      .limit(MAX_PRICE_SCAN)
+      .returns<ProductAnalyticsTemplateRow[]>(),
+  ]);
+
+  const totalCount = totalResult.count ?? 0;
+  const activeCount = activeResult.count ?? 0;
+  const archivedCount = archivedResult.count ?? 0;
+  const discontinuedCount = discontinuedResult.count ?? 0;
+  const templates = scanResult.data ?? [];
+  const scannedTotal = scanResult.count ?? templates.length;
+  const scanCapped = scannedTotal > templates.length;
+
+  if (totalCount === 0) {
+    return {
+      data: { kind: "insights_product_analytics", totalCount: 0, deterministicOnly: true, deterministicText: "There are no product templates in the Product Library yet." },
+      ok: true,
+      sources,
+    };
+  }
+
+  const priceStatus = templates.length > 0
+    ? await productPriceStatusCounts(supabase, templates)
+    : { brandsById: new Map<string, PriceScanBrandRow>(), statusCounts: new Map<ProductPriceCheckState["key"], number>(), statusLabels: new Map<ProductPriceCheckState["key"], string>() };
+
+  const lifecycleActive = templates.filter((template) => template.lifecycle_status !== "archived" && template.lifecycle_status !== "discontinued");
+  const categoryIds = Array.from(new Set(lifecycleActive.map((template) => template.main_category_id).filter((value): value is string => Boolean(value))));
+  const { data: categoryRows } = categoryIds.length
+    ? await supabase.from("product_categories").select("id,name").in("id", categoryIds).returns<ProductCategoryNameRow[]>()
+    : { data: [] as ProductCategoryNameRow[] };
+  const categoryNameById = new Map((categoryRows ?? []).map((row) => [row.id, row.name.trim()]));
+
+  const brandCounts = new Map<string, { count: number; name: string }>();
+  const categoryCounts = new Map<string, { count: number; name: string }>();
+  let uncategorizedCount = 0;
+  for (const template of lifecycleActive) {
+    const brandName = priceStatus.brandsById.get(template.brand_id)?.name?.trim() || "Unknown brand";
+    const brandEntry = brandCounts.get(template.brand_id) ?? { count: 0, name: brandName };
+    brandEntry.count += 1;
+    brandCounts.set(template.brand_id, brandEntry);
+
+    const categoryName = template.main_category_id ? categoryNameById.get(template.main_category_id) : undefined;
+    if (!categoryName) {
+      uncategorizedCount += 1;
+      continue;
+    }
+    const categoryKey = categoryName.toLowerCase();
+    const categoryEntry = categoryCounts.get(categoryKey) ?? { count: 0, name: categoryName };
+    categoryEntry.count += 1;
+    categoryCounts.set(categoryKey, categoryEntry);
+  }
+
+  const brandRanking = rankByProductCount(brandCounts);
+  const categoryRanking = rankByProductCount(categoryCounts);
+  const priceStatusRows = PRODUCT_PRICE_STATUS_ORDER
+    .filter((key) => (priceStatus.statusCounts.get(key) ?? 0) > 0)
+    .map((key) => ({ count: priceStatus.statusCounts.get(key) ?? 0, key, label: priceStatus.statusLabels.get(key) ?? key }));
+  const scanNote = scanCapped
+    ? `Price status and rankings are based on the first ${templates.length} of ${scannedTotal} active templates.`
+    : "";
+
+  const deterministicText = [
+    "Product analytics",
+    "",
+    `${totalCount} product template${totalCount === 1 ? "" : "s"}`,
+    `${activeCount} active · ${archivedCount} archived · ${discontinuedCount} discontinued`,
+    ...(priceStatusRows.length ? ["", "Price status", priceStatusRows.map((row) => `${row.label} ${row.count}`).join(" · ")] : []),
+    ...(brandRanking.length ? ["", "Top brands by product count", ...brandRanking.map((row, index) => `${index + 1}. ${row.name} — ${row.count}`)] : []),
+    ...(categoryRanking.length ? ["", "Top categories by product count", ...categoryRanking.map((row, index) => `${index + 1}. ${row.name} — ${row.count}`)] : []),
+    ...(scanNote ? ["", scanNote] : []),
+  ].join("\n");
+
+  return {
+    data: {
+      activeCount,
+      archivedCount,
+      brandRanking,
+      categoryRanking,
+      discontinuedCount,
+      kind: "insights_product_analytics",
+      priceStatus: priceStatusRows,
+      scanCapped,
+      scannedCount: templates.length,
+      scannedTotal,
+      totalCount,
+      uncategorizedCount,
+      deterministicOnly: true,
+      deterministicText,
+    },
+    ok: true,
+    sources,
   };
 }
 
@@ -780,6 +995,9 @@ async function clientSummaryAnswer(
       archivedClients: archived,
       kind: "insights_client_summary",
       projectCount: projects,
+      // N2C2.1: now rendered as a structured summary card from these same three counts, so the
+      // provider is never asked to re-narrate them (the card replaces the prose bubble entirely).
+      deterministicOnly: true,
       deterministicText: `There are ${active} active client${active === 1 ? "" : "s"} and ${archived} archived, across ${projects} ERP Project File${projects === 1 ? "" : "s"}.`,
     },
     ok: true,
@@ -991,6 +1209,257 @@ async function procurementSummaryAnswer(
   };
 }
 
+type ProcurementAnalyticsItemRow = { brand_name_snapshot: string | null; quotation_id: string; supplier_name_snapshot: string | null };
+type ProcurementAnalyticsProgressRow = { active_step: number | null; eta: string | null; etd: string | null; order_no: string; vendor_key: string };
+
+// N2C4: procurement analytics over the SAME bounded ERP Project File read (insightsProjectFiles())
+// the Project File analytics use - so order counts always agree with the Project File card.
+// Procurement orders = non-cancelled Project Files; active/completed is the Project File's own
+// status (never a vendor step). Vendor groups reuse buildEffectiveDocumentGroups() - the exact
+// grouping the Procurement capability/UI and Attention already use - and missing ETA/ETD is
+// counted from the authoritative procurement_vendor_progress rows (a vendor group with no row, or
+// a null field, is missing - the same fact Attention reports, but uncapped by Attention's own
+// 10-item display bound). Vendor stages reuse vendorStepLabel() - no invented status. Gated by
+// requireProcurementManager() in the entry point before this ever runs.
+async function procurementAnalyticsAnswer(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<NoaCapabilityResult> {
+  const sources = [{ label: "Insights · Calculated from authorized procurement orders", type: "insights" }];
+  const orders = (await insightsProjectFiles(supabase)).filter((order) => order.status !== "cancelled");
+  const activeOrders = orders.filter((order) => order.status === "active");
+  const completedCount = orders.length - activeOrders.length;
+
+  if (orders.length === 0) {
+    return {
+      data: { kind: "insights_procurement_analytics", activeCount: 0, completedCount: 0, deterministicOnly: true, deterministicText: "I found no procurement orders." },
+      ok: true,
+      sources,
+    };
+  }
+
+  const detailOrders = activeOrders.slice(0, MAX_ANALYTICS_ORDER_DETAIL);
+  const [{ data: itemRows }, { data: progressRows }] = detailOrders.length
+    ? await Promise.all([
+        supabase
+          .from("quotation_items")
+          .select("quotation_id,brand_name_snapshot,supplier_name_snapshot")
+          .in("quotation_id", detailOrders.map((order) => order.quotationId))
+          .eq("is_active", true)
+          .returns<ProcurementAnalyticsItemRow[]>(),
+        supabase
+          .from("procurement_vendor_progress")
+          .select("order_no,vendor_key,active_step,eta,etd")
+          .in("order_no", detailOrders.map((order) => order.orderNo))
+          .returns<ProcurementAnalyticsProgressRow[]>(),
+      ])
+    : [{ data: [] as ProcurementAnalyticsItemRow[] }, { data: [] as ProcurementAnalyticsProgressRow[] }];
+
+  const itemsByQuotationId = new Map<string, ProcurementAnalyticsItemRow[]>();
+  for (const row of itemRows ?? []) {
+    itemsByQuotationId.set(row.quotation_id, [...(itemsByQuotationId.get(row.quotation_id) ?? []), row]);
+  }
+  const progressByOrder = new Map<string, Map<string, ProcurementAnalyticsProgressRow>>();
+  for (const row of progressRows ?? []) {
+    const forOrder = progressByOrder.get(row.order_no) ?? new Map<string, ProcurementAnalyticsProgressRow>();
+    forOrder.set(row.vendor_key, row);
+    progressByOrder.set(row.order_no, forOrder);
+  }
+
+  let vendorGroupCount = 0;
+  let missingEtaCount = 0;
+  let missingEtdCount = 0;
+  const stageCounts = new Map<string, number>();
+  for (const order of detailOrders) {
+    const groups = buildEffectiveDocumentGroups(itemsByQuotationId.get(order.quotationId) ?? []);
+    const progressForOrder = progressByOrder.get(order.orderNo);
+    for (const group of groups) {
+      const progress = progressForOrder?.get(group.dedupeKey);
+      vendorGroupCount += 1;
+      if (!progress?.eta) missingEtaCount += 1;
+      if (!progress?.etd) missingEtdCount += 1;
+      const stage = vendorStepLabel(progress?.active_step ?? 0);
+      stageCounts.set(stage, (stageCounts.get(stage) ?? 0) + 1);
+    }
+  }
+
+  const vendorStages = VENDOR_STEP_LABELS
+    .filter((step) => (stageCounts.get(step.label) ?? 0) > 0)
+    .map((step) => ({ count: stageCounts.get(step.label) ?? 0, label: step.label }));
+  const detailCapped = activeOrders.length > detailOrders.length;
+  const scopeNote = detailCapped
+    ? `Vendor figures cover the ${detailOrders.length} most recent of ${activeOrders.length} active orders.`
+    : "Vendor figures cover active orders.";
+
+  const deterministicText = [
+    "Procurement analytics",
+    "",
+    `${activeOrders.length} active · ${completedCount} completed procurement order${orders.length === 1 ? "" : "s"}`,
+    "",
+    `${vendorGroupCount} vendor group${vendorGroupCount === 1 ? "" : "s"}`,
+    `${missingEtaCount} missing ETA`,
+    `${missingEtdCount} missing ETD`,
+    ...(vendorStages.length ? ["", "Vendor stages", vendorStages.map((row) => `${row.label} ${row.count}`).join(" · ")] : []),
+    "",
+    scopeNote,
+  ].join("\n");
+
+  return {
+    data: {
+      activeCount: activeOrders.length,
+      completedCount,
+      detailCapped,
+      detailOrderCount: detailOrders.length,
+      kind: "insights_procurement_analytics",
+      missingEtaCount,
+      missingEtdCount,
+      vendorGroupCount,
+      vendorStages,
+      deterministicOnly: true,
+      deterministicText,
+    },
+    ok: true,
+    sources,
+  };
+}
+
+type PaymentAnalyticsScheduleRow = { id: string; quotation_id: string };
+type PaymentAnalyticsInstallmentRow = Pick<ClientPaymentInstallmentRow, "id" | "schedule_id" | "sequence_no" | "expected_amount" | "due_type" | "due_date" | "due_triggered_at" | "status_override">;
+type PaymentAnalyticsReceiptRow = Pick<ClientPaymentReceiptRow, "id" | "schedule_id" | "installment_id" | "amount_received" | "voided_at">;
+
+function addFils(totals: Map<string, bigint>, currency: string, value: bigint) {
+  totals.set(currency, (totals.get(currency) ?? BigInt(0)) + value);
+}
+
+function paymentMoneyLines(totals: Map<string, bigint>): string[] {
+  return Array.from(totals.entries()).map(([currency, value]) => formatPaymentMoney(currency, value));
+}
+
+// N2C4: client payment analytics = the per-Project File figures the real payment panel already
+// shows (components/projects/client-payment-panel.tsx: calculateClientPaymentSummary(order.total,
+// installments, receipts, todayIso) -> Received / Outstanding / Overdue), summed PER CURRENCY
+// across the active ERP Project Files in the bounded Project File read - never a new accounting
+// definition, never an FX conversion, never a cross-currency total:
+// - Received    = non-voided receipts allocated to an instalment (the helper's own rule)
+// - Outstanding = contract total - received - waived, floored at 0 (the helper's own rule)
+// - Overdue     = unpaid part of instalments deriveClientPaymentStatus() marks "Overdue"
+// - Overdue instalments = count of those same instalments
+// Scope mirrors Attention's payment findings (active Project Files only - cancelled/completed
+// files are excluded). Reads use only the columns those two helpers consume. The caller has
+// already passed canViewClientPayments() before this ever runs.
+async function paymentAnalyticsAnswer(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<NoaCapabilityResult> {
+  const sources = [{ label: "Insights · Calculated from authorized client payment records", type: "insights" }];
+  const activeOrders = (await insightsProjectFiles(supabase)).filter((order) => order.status === "active");
+
+  if (activeOrders.length === 0) {
+    return {
+      data: { kind: "insights_payment_analytics", projectFileCount: 0, deterministicOnly: true, deterministicText: "There are no active ERP Project Files to summarize client payments for." },
+      ok: true,
+      sources,
+    };
+  }
+
+  const scopedOrders = activeOrders.slice(0, MAX_ANALYTICS_ORDER_DETAIL);
+  const { data: scheduleRows } = await supabase
+    .from("client_payment_schedules")
+    .select("id,quotation_id")
+    .in("quotation_id", scopedOrders.map((order) => order.quotationId))
+    .returns<PaymentAnalyticsScheduleRow[]>();
+  const schedules = scheduleRows ?? [];
+  const scheduleIds = schedules.map((schedule) => schedule.id);
+
+  const [{ data: installmentRows }, { data: receiptRows }] = scheduleIds.length
+    ? await Promise.all([
+        supabase
+          .from("client_payment_installments")
+          .select("id,schedule_id,sequence_no,expected_amount,due_type,due_date,due_triggered_at,status_override")
+          .in("schedule_id", scheduleIds)
+          .order("sequence_no", { ascending: true })
+          .returns<PaymentAnalyticsInstallmentRow[]>(),
+        supabase
+          .from("client_payment_receipts")
+          .select("id,schedule_id,installment_id,amount_received,voided_at")
+          .in("schedule_id", scheduleIds)
+          .returns<PaymentAnalyticsReceiptRow[]>(),
+      ])
+    : [{ data: [] as PaymentAnalyticsInstallmentRow[] }, { data: [] as PaymentAnalyticsReceiptRow[] }];
+
+  const scheduleByQuotationId = new Map(schedules.map((schedule) => [schedule.quotation_id, schedule]));
+  const installmentsBySchedule = new Map<string, PaymentAnalyticsInstallmentRow[]>();
+  for (const row of installmentRows ?? []) {
+    installmentsBySchedule.set(row.schedule_id, [...(installmentsBySchedule.get(row.schedule_id) ?? []), row]);
+  }
+  const receiptsBySchedule = new Map<string, PaymentAnalyticsReceiptRow[]>();
+  for (const row of receiptRows ?? []) {
+    receiptsBySchedule.set(row.schedule_id, [...(receiptsBySchedule.get(row.schedule_id) ?? []), row]);
+  }
+
+  // Same todayIso convention as the payment panel and Attention.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const received = new Map<string, bigint>();
+  const outstanding = new Map<string, bigint>();
+  const overdue = new Map<string, bigint>();
+  let overdueInstallmentCount = 0;
+  let scheduledCount = 0;
+
+  for (const order of scopedOrders) {
+    const schedule = scheduleByQuotationId.get(order.quotationId);
+    if (schedule) scheduledCount += 1;
+    // The helpers read only the selected columns (see the Pick types above).
+    const installments = (schedule ? installmentsBySchedule.get(schedule.id) ?? [] : []) as ClientPaymentInstallmentRow[];
+    const receipts = (schedule ? receiptsBySchedule.get(schedule.id) ?? [] : []) as ClientPaymentReceiptRow[];
+    const summary = calculateClientPaymentSummary(order.total, installments, receipts, todayIso);
+    addFils(received, order.currency, summary.received);
+    addFils(outstanding, order.currency, summary.outstanding);
+    addFils(overdue, order.currency, summary.overdue);
+    for (const installment of installments) {
+      const installmentReceived = summary.receivedByInstallment.get(installment.id) ?? BigInt(0);
+      if (deriveClientPaymentStatus(installment, installmentReceived, todayIso) === "Overdue") overdueInstallmentCount += 1;
+    }
+  }
+
+  const receivedLines = paymentMoneyLines(received);
+  const outstandingLines = paymentMoneyLines(outstanding);
+  const overdueLines = paymentMoneyLines(overdue);
+  const scopeCapped = activeOrders.length > scopedOrders.length;
+  const scopeNote = `${scopeCapped ? `Covers the ${scopedOrders.length} most recent of ${activeOrders.length}` : `Covers ${scopedOrders.length}`} active Project File${scopedOrders.length === 1 ? "" : "s"}; ${scheduledCount} ${scheduledCount === 1 ? "has" : "have"} a payment schedule.`;
+
+  const deterministicText = [
+    "Client payment analytics",
+    "",
+    "Received",
+    ...receivedLines,
+    "",
+    "Outstanding",
+    ...outstandingLines,
+    "",
+    "Overdue",
+    ...overdueLines,
+    `${overdueInstallmentCount} overdue instalment${overdueInstallmentCount === 1 ? "" : "s"}`,
+    "",
+    scopeNote,
+  ].join("\n");
+
+  return {
+    data: {
+      kind: "insights_payment_analytics",
+      outstandingLines,
+      overdueInstallmentCount,
+      overdueLines,
+      projectFileCount: scopedOrders.length,
+      receivedLines,
+      scheduledCount,
+      scopeCapped,
+      scopeNote,
+      deterministicOnly: true,
+      deterministicText,
+    },
+    ok: true,
+    sources,
+  };
+}
+
 // PART 10: cross-domain overview - each subsection preserves its own domain's permission gate.
 // A permission gap never fails the whole overview; that subsection's line simply says so.
 async function overviewAnswer(
@@ -1053,8 +1522,12 @@ export async function fetchNoaInsightsCapability(
   message: string,
   _context: NoaPageContext,
 ): Promise<NoaCapabilityResult> {
+  // N2C4: the role is captured from the SAME base requireActiveUser() call (exactly as the
+  // Attention capability does) - used only by the client-payment visibility check below.
+  let profileRole: AppRole | null | undefined;
   try {
-    await requireActiveUser();
+    const { profile } = await requireActiveUser();
+    profileRole = profile?.role;
   } catch (error) {
     if (isNextRedirectError(error)) return UNAUTHORIZED_RESULT;
     throw error;
@@ -1084,6 +1557,17 @@ export async function fetchNoaInsightsCapability(
     return productPriceSummaryAnswer(supabase);
   }
 
+  // N2C3: the SAME Product Library gate as product_price_summary - checked before any read.
+  if (kind === "product_analytics") {
+    try {
+      await requireProductLibraryManager();
+    } catch (error) {
+      if (isNextRedirectError(error)) return PRODUCT_ANALYTICS_UNAUTHORIZED_RESULT;
+      throw error;
+    }
+    return productAnalyticsAnswer(supabase);
+  }
+
   if (kind === "procurement_summary") {
     try {
       await requireProcurementManager();
@@ -1092,6 +1576,24 @@ export async function fetchNoaInsightsCapability(
       throw error;
     }
     return procurementSummaryAnswer(supabase);
+  }
+
+  // N2C4: the SAME Procurement gate as procurement_summary - checked before any read.
+  if (kind === "procurement_analytics") {
+    try {
+      await requireProcurementManager();
+    } catch (error) {
+      if (isNextRedirectError(error)) return PROCUREMENT_UNAUTHORIZED_RESULT;
+      throw error;
+    }
+    return procurementAnalyticsAnswer(supabase);
+  }
+
+  // N2C4: canViewClientPayments() decides BEFORE any payment table (or Project File) is read. A
+  // denied role gets a fixed refusal with no amounts, no counts, no overdue figure.
+  if (kind === "payment_analytics") {
+    if (!canViewClientPayments(profileRole)) return PAYMENT_UNAUTHORIZED_RESULT;
+    return paymentAnalyticsAnswer(supabase);
   }
 
   return overviewAnswer(supabase);
