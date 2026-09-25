@@ -1,13 +1,14 @@
 "use client";
 
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NoaAvatar } from "@/components/noa/noa-avatar";
 import type { NoaVisualState } from "@/lib/noa/noa-types";
 
 // PART 15: a single, one-shot "hello" shortly after NOA first appears on the page - never
 // repeats, no interval kept alive afterward, never blocks interaction either way.
 const GREET_DELAY_MS = 650;
+const DRAG_ACTIVATION_PX = 6;
+const MODE_DRAG_THRESHOLD_PX = 38;
 
 // PART 1/10/20: FULL (default, whole robot visible) or SNEAK (user-chosen hidden-behind-the-edge
 // state). Deliberately just these two - no separate near-hidden "tab" level. Pure local
@@ -30,9 +31,8 @@ export function NoaLauncher({
   pageSection?: string;
   state: NoaVisualState;
 }) {
-  const isHovered = state === "hover";
-  const isClosed = state === "idle" || state === "hover";
   const floatEnabled = state === "idle" || state === "hover" || state === "open";
+  const isDrawerOpen = state !== "idle" && state !== "hover";
 
   const [greeted, setGreeted] = useState(false);
   useEffect(() => {
@@ -45,6 +45,16 @@ export function NoaLauncher({
   // still selected the next time the drawer closes. No reset effect needed.
   const [mode, setMode] = useState<NoaLauncherMode>("full");
   const isSneak = mode === "sneak";
+  const dragRef = useRef<{ horizontal: boolean; pointerId: number; startX: number; startY: number } | null>(null);
+  const suppressClickRef = useRef(false);
+  const [dragOffset, setDragOffset] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const resetDrag = () => {
+    dragRef.current = null;
+    setDragOffset(0);
+    setIsDragging(false);
+  };
 
   return (
     // PART 2/9: `group` marks this as the hover/focus scope for the secondary Hide/Show control
@@ -54,84 +64,89 @@ export function NoaLauncher({
     // than on top of it. Full mode sits a small inset from the true edge (so it's never clipped by
     // default - PART 1); Sneak docks flush to the edge (PART 5's "wall").
     <div
-      className={`group fixed bottom-20 z-40 sm:bottom-24 ${isSneak ? "right-0" : "right-2 sm:right-3"}`}
+      className={`group fixed bottom-20 z-40 sm:bottom-24 ${isDrawerOpen ? "hidden sm:block" : ""} ${isSneak ? "right-0" : "right-2 sm:right-3"}`}
       data-noa-page-section={pageSection}
     >
-      <span
-        aria-hidden="true"
-        role="tooltip"
-        className={`pointer-events-none absolute bottom-full right-3 mb-2 whitespace-nowrap rounded-md bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white shadow-lg transition-opacity duration-150 ${
-          isHovered ? "opacity-100" : "opacity-0"
-        }`}
-      >
-        Ask NOA
-      </span>
-      {/* PART 2/9/18/23: the Hide/Show control - a SEPARATE button/hit box from the main "open"
-          button below (never overlapping it), positioned above the avatar so it never covers the
-          face. `noa-secondary-control` (defined in noa-assistant.tsx's shared <style>) hides this
-          until hover/keyboard-focus ONLY on devices that actually have hover + a fine pointer
-          (real mice); on touch devices (no reliable hover) it stays at a small, subtle opacity by
-          default instead, so there's still always a way to reach it (PART 18). */}
-      {isClosed ? (
-        <button
-          aria-label={isSneak ? "Show NOA" : "Hide NOA"}
-          className="noa-secondary-control absolute -top-2 right-1 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-400 opacity-70 shadow-sm outline-none transition-colors duration-200 hover:text-zinc-700 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2"
-          onClick={(event) => {
-            // PART 3: never opens chat - this control only ever changes the presentation mode.
-            event.stopPropagation();
-            onHoverEnd();
-            setMode(isSneak ? "full" : "sneak");
-          }}
-          type="button"
-        >
-          {isSneak ? (
-            <ChevronLeft aria-hidden="true" className="h-3.5 w-3.5" />
-          ) : (
-            <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
-          )}
-        </button>
-      ) : null}
       <button
-        aria-label="Open NOA assistant"
+        aria-label={isSneak ? "Open NOA assistant. Drag left to show." : "Open NOA assistant. Drag right to hide."}
         // PART 3/6/8/11: clicking the robot itself always opens chat, in either mode. Full mode's
-        // box just wraps the avatar at its own natural size; Sneak's box is deliberately WIDER
-        // than the visible crop window below so the tap target stays generous even though the
-        // painted content is narrower (PART 6/23 - the hitbox itself is never translated/clipped).
-        className={isSneak ? "relative flex h-14 w-11 items-center justify-end outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 sm:h-16 sm:w-14" : "relative flex items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2"}
+        // box always remains a generous target; Sneak uses the viewport edge as NOA's hiding
+        // surface rather than a crop window inside this button.
+        className={`${isSneak ? "relative flex h-16 w-14 items-center justify-end overflow-visible sm:h-20 sm:w-20" : "relative flex items-center justify-center"} touch-pan-y cursor-grab outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 ${isDragging ? "cursor-grabbing" : ""}`}
         onBlur={onHoverEnd}
-        onClick={onToggle}
+        onClick={() => {
+          if (suppressClickRef.current) {
+            suppressClickRef.current = false;
+            return;
+          }
+          onToggle();
+        }}
         onFocus={onHoverStart}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowRight" && !isSneak) {
+            event.preventDefault();
+            setMode("sneak");
+          }
+          if (event.key === "ArrowLeft" && isSneak) {
+            event.preventDefault();
+            setMode("full");
+          }
+          if (event.key === "Home") {
+            event.preventDefault();
+            setMode("full");
+          }
+        }}
         onMouseEnter={onHoverStart}
         onMouseLeave={onHoverEnd}
+        onPointerCancel={(event) => {
+          if (dragRef.current?.pointerId === event.pointerId) {
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+            resetDrag();
+          }
+        }}
+        onPointerDown={(event) => {
+          dragRef.current = { horizontal: false, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          const drag = dragRef.current;
+          if (!drag || drag.pointerId !== event.pointerId) return;
+          const dx = event.clientX - drag.startX;
+          const dy = event.clientY - drag.startY;
+          if (!drag.horizontal) {
+            if (Math.abs(dx) < DRAG_ACTIVATION_PX && Math.abs(dy) < DRAG_ACTIVATION_PX) return;
+            if (Math.abs(dx) <= Math.abs(dy)) return;
+            drag.horizontal = true;
+            setIsDragging(true);
+          }
+          event.preventDefault();
+          setDragOffset(isSneak ? Math.min(0, dx) : Math.max(0, dx));
+        }}
+        onPointerUp={(event) => {
+          const drag = dragRef.current;
+          if (!drag || drag.pointerId !== event.pointerId) return;
+          const dx = event.clientX - drag.startX;
+          const completedDrag = drag.horizontal && Math.abs(dx) >= DRAG_ACTIVATION_PX;
+          if (completedDrag) {
+            suppressClickRef.current = true;
+            if (!isSneak && dx >= MODE_DRAG_THRESHOLD_PX) setMode("sneak");
+            if (isSneak && dx <= -MODE_DRAG_THRESHOLD_PX) setMode("full");
+          }
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+          resetDrag();
+        }}
         type="button"
       >
-        {isSneak ? (
-          // PART 5/6/7/8: the crop WINDOW - narrower/shorter than the avatar at rest, so only its
-          // own top-left slice (head + a shoulder edge) is painted; everything past this box's
-          // edges is simply clipped by `overflow-hidden`, never a separate crop/mask asset. It
-          // GROWS on hover/keyboard-focus (revealing more upper torso, PART 8) via a plain size
-          // transition - real proportions of the same full-size avatar underneath, never a
-          // different image.
-          <span className="relative h-10 w-5 overflow-hidden rounded-l-2xl transition-[width,height] duration-300 ease-out group-hover:h-12 group-hover:w-9 group-focus-within:h-12 group-focus-within:w-9 sm:h-12 sm:w-6 sm:group-hover:h-14 sm:group-hover:w-11 sm:group-focus-within:h-14 sm:group-focus-within:w-11">
-            {/* PART 5: the ONLY "wall" treatment - a hairline static rim light along the clip
-                edge, never a blurred halo/dock/panel (PART 11). */}
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-y-0 left-0 w-px bg-gradient-to-b from-transparent via-amber-200/60 to-transparent"
-            />
-            <span
-              // PART 7/8: resting state is the sparse "curious peek" CSS animation (mostly hidden,
-              // one brief small lean out every ~11s); hovering/focusing cancels that animation and
-              // snaps to the fully-revealed resting position instead, transitioning smoothly - two
-              // mutually exclusive drivers of the SAME transform, never running together.
-              className="noa-anim-sneak-lean absolute left-0 top-0 transition-transform duration-300 ease-out group-hover:[animation:none] group-hover:translate-x-0 group-focus-within:[animation:none] group-focus-within:translate-x-0"
-            >
-              <NoaAvatar floatEnabled={floatEnabled} greet={greeted} size="launcher" state={state} />
-            </span>
-          </span>
-        ) : (
-          <NoaAvatar floatEnabled={floatEnabled} greet={greeted} size="launcher" state={state} />
-        )}
+        <span
+          className={`inline-flex ${isDragging ? "noa-dragging" : "transition-transform duration-200 ease-out"}`}
+          style={isDragging ? { transform: `translateX(${dragOffset}px)` } : undefined}
+        >
+          {isSneak ? (
+            <NoaAvatar floatEnabled={false} greet={false} pose="sneak" size="launcher" state={state} />
+          ) : (
+            <NoaAvatar floatEnabled={floatEnabled} greet={greeted} size="launcher" state={state} />
+          )}
+        </span>
       </button>
     </div>
   );

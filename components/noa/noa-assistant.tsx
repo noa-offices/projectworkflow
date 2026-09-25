@@ -229,23 +229,19 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
         @keyframes noa-greet-chest { 0% { opacity: 0.45; transform: scale(1); } 40% { opacity: 0.85; transform: scale(1.15); } 100% { opacity: 0.45; transform: scale(1); } }
         /* Chest/logo light: slower and weaker than the eye-light above. */
         @keyframes noa-chest-pulse { 0%, 100% { opacity: 0.45; transform: scale(1); } 50% { opacity: 0.8; transform: scale(1.05); } }
-        /* Wing/side shimmer (left + right, staggered cycle lengths per PART 14): dormant almost
-           the entire cycle, one brief streak that travels a short distance and fades - never a
-           continuous loop, never a spin/flap. */
-        @keyframes noa-wing-shimmer { 0%, 88%, 100% { opacity: 0; transform: translateY(6px) scale(0.7); } 94% { opacity: 1; transform: translateY(-6px) scale(1.2); } }
-        /* One-shot "both wings light up" flash, timed alongside the greet lean above (PART 15). */
-        @keyframes noa-greet-wing { 0% { opacity: 0; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.2); } 100% { opacity: 0; transform: scale(0.8); } }
-        /* Sneak-mode "curious peek" (launcher only): the resting offset itself (5px, mostly
-           hidden) with one brief, small lean toward fully-revealed - PART 17 "roughly every
-           10-14 sec". Hover/focus overrides this entirely (see noa-launcher.tsx's group-hover/
-           group-focus-within [animation:none]), never runs alongside the hover reveal. */
-        @keyframes noa-sneak-lean { 0%, 92%, 100% { transform: translateX(5px); } 96% { transform: translateX(0); } }
+        /* Sneak is a layered doorway pose: the body exits right while the head independently
+           counter-leans back into the page. The browser viewport—not a local crop—is the edge. */
+        @keyframes noa-sneak-composite-idle { 0%, 90%, 100% { transform: translateX(44px) rotate(-3deg); } 95% { transform: translateX(40px) rotate(-3.5deg); } }
+        @keyframes noa-sneak-head-idle { 0%, 90%, 100% { transform: translateX(-3px) rotate(-2deg); } 95% { transform: translateX(-4px) rotate(-3deg); } }
         /* PART 9/10: layer-ready motion classes - only ever reached from noa-avatar.tsx's
            USE_LAYERED_NOA_AVATAR branch, which is false today (PART 6/8), so these never run in
            production yet. Bounded per PART 10/11: a small +/-3-5deg head tilt, a small one-shot
            arm rotation for the greeting - never a fake 3D rotation, never exaggerated. */
         @keyframes noa-layer-tilt { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
         @keyframes noa-layer-wave { 0% { transform: rotate(0deg); } 30% { transform: rotate(-8deg); } 60% { transform: rotate(4deg); } 100% { transform: rotate(0deg); } }
+        /* PART 9/10: left-arm secondary motion - deliberately smaller than the right arm's
+           greeting wave and slower than the head tilt, so it reads as idle sway, not a gesture. */
+        @keyframes noa-layer-sway { 0%, 100% { transform: rotate(-1.5deg); } 50% { transform: rotate(1deg); } }
         .noa-anim-float { animation: noa-float 5s ease-in-out infinite; }
         .noa-anim-idle-pulse { animation: noa-idle-pulse 3.4s ease-in-out infinite; }
         .noa-anim-thinking-ring { animation: noa-thinking-ring 1.6s linear infinite; }
@@ -253,34 +249,34 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
         .noa-anim-greet { animation: noa-greet 1.05s ease-in-out 1; transform-origin: 50% 85%; }
         .noa-anim-greet-eye { animation: noa-greet-eye 1.1s ease-in-out 1; }
         .noa-anim-greet-chest { animation: noa-greet-chest 1.1s ease-in-out 1; }
-        .noa-anim-greet-wing { animation: noa-greet-wing 1.1s ease-in-out 1; }
         .noa-anim-chest-pulse { animation: noa-chest-pulse 5s ease-in-out infinite; }
-        .noa-anim-wing-shimmer-left { animation: noa-wing-shimmer 8s ease-in-out infinite; }
-        .noa-anim-wing-shimmer-right { animation: noa-wing-shimmer 10.5s ease-in-out infinite; }
-        .noa-anim-sneak-lean { animation: noa-sneak-lean 11s ease-in-out infinite; }
         .noa-anim-layer-tilt { animation: noa-layer-tilt 6s ease-in-out infinite; }
         .noa-anim-layer-wave { animation: noa-layer-wave 1.1s ease-in-out 1; transform-origin: 20% 15%; }
+        .noa-anim-layer-sway { animation: noa-layer-sway 7.5s ease-in-out infinite; transform-origin: 80% 15%; }
+        .noa-sneak-composite { animation: noa-sneak-composite-idle 12s ease-in-out infinite; transform: translateX(44px) rotate(-3deg); transform-origin: 50% 85%; transition: transform 240ms ease-out; }
+        .noa-sneak-head { animation: noa-sneak-head-idle 12s ease-in-out infinite; transform: translateX(-3px) rotate(-2deg); transform-origin: 50% 72%; transition: transform 240ms ease-out; }
+        .group:hover .noa-sneak-composite, .group:focus-within .noa-sneak-composite { animation: none; transform: translateX(34px) rotate(-3.5deg); }
+        .group:hover .noa-sneak-head, .group:focus-within .noa-sneak-head { animation: none; transform: translateX(-4px) rotate(-3deg); }
+        @media (min-width: 640px) {
+          @keyframes noa-sneak-composite-idle { 0%, 90%, 100% { transform: translateX(56px) rotate(-3deg); } 95% { transform: translateX(52px) rotate(-3.5deg); } }
+          .noa-sneak-composite { transform: translateX(56px) rotate(-3deg); }
+          .group:hover .noa-sneak-composite, .group:focus-within .noa-sneak-composite { transform: translateX(46px) rotate(-3.5deg); }
+        }
+        @media (min-width: 640px) and (prefers-reduced-motion: reduce) {
+          .noa-sneak-composite { transform: translateX(56px) rotate(-3deg); }
+        }
+        .noa-dragging .noa-anim-float, .noa-dragging .noa-anim-layer-tilt,
+        .noa-dragging .noa-anim-layer-sway, .noa-dragging .noa-sneak-composite,
+        .noa-dragging .noa-sneak-head { animation: none !important; }
         @media (prefers-reduced-motion: reduce) {
           .noa-anim-float, .noa-anim-idle-pulse, .noa-anim-thinking-ring, .noa-anim-success-pulse,
-          .noa-anim-greet, .noa-anim-greet-eye, .noa-anim-greet-chest, .noa-anim-greet-wing,
-          .noa-anim-chest-pulse, .noa-anim-wing-shimmer-left, .noa-anim-wing-shimmer-right,
-          .noa-anim-sneak-lean, .noa-anim-layer-tilt, .noa-anim-layer-wave {
+          .noa-anim-greet, .noa-anim-greet-eye, .noa-anim-greet-chest,
+          .noa-anim-chest-pulse, .noa-anim-layer-tilt, .noa-anim-layer-wave, .noa-anim-layer-sway,
+          .noa-sneak-composite, .noa-sneak-head {
             animation: none !important;
           }
-          /* PART 21: Full/Sneak positioning itself still works without animation - the sneak
-             crop's resting (mostly-hidden) offset is kept as a static transform. */
-          .noa-anim-sneak-lean { transform: translateX(5px); }
-        }
-        /* PART 2/9/18: hover-only reveal for the secondary Hide/Show control, but ONLY on
-           devices with real hover + a fine pointer - touch devices keep it at its own base
-           opacity (see noa-launcher.tsx) since they have no hover to reveal it with. */
-        @media (hover: hover) and (pointer: fine) {
-          .noa-secondary-control { opacity: 0; pointer-events: none; }
-          .group:hover .noa-secondary-control,
-          .group:focus-within .noa-secondary-control {
-            opacity: 1;
-            pointer-events: auto;
-          }
+          .noa-sneak-composite { transform: translateX(44px) rotate(-3deg); }
+          .noa-sneak-head { transform: translateX(-3px) rotate(-2deg); }
         }
       `}</style>
       <NoaLauncher

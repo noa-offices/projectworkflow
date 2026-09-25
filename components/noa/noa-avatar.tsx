@@ -36,17 +36,19 @@ const SIZE_CLASS: Record<NoaAvatarSize, string> = {
 
 // PART 10/11: a layer's own motion class - only ever reached from the (today unused)
 // USE_LAYERED_NOA_AVATAR branch below. Bounded per PART 9/10/11: a small ±3-5deg head tilt, a
-// small one-shot arm rotation for the greeting - never a fake 3D rotation, never a full
-// articulation.
-function layerMotionClass(motion: "tilt" | "greetingWave" | undefined, greet: boolean): string {
+// small one-shot right-arm rotation for the greeting, a subtle continuous left-arm sway - never a
+// fake 3D rotation, never a full articulation.
+function layerMotionClass(motion: "tilt" | "greetingWave" | "sway" | undefined, greet: boolean): string {
   if (motion === "tilt") return "noa-anim-layer-tilt";
   if (motion === "greetingWave" && greet) return "noa-anim-layer-wave";
+  if (motion === "sway") return "noa-anim-layer-sway";
   return "";
 }
 
 export function NoaAvatar({
   floatEnabled = false,
   greet = false,
+  pose = "full",
   size = "launcher",
   state,
 }: {
@@ -57,46 +59,25 @@ export function NoaAvatar({
   // greet motion composes as an independent nested transform instead of fighting the idle float
   // for the same property.
   greet?: boolean;
+  pose?: "full" | "sneak";
   size?: NoaAvatarSize;
   state: NoaVisualState;
 }) {
   const isThinking = state === "thinking" || state === "responding";
-  const isIdleLike = state === "idle" || state === "hover" || state === "open";
-  // PART 20: the header (always inside the open drawer) stays calmer - eye/chest light may
-  // remain, but no wing shimmer there.
-  const wingShimmerEnabled = size === "launcher" && isIdleLike;
+  const isSneak = pose === "sneak";
 
   return (
     <span
       className={`relative inline-flex items-center justify-center ${SIZE_CLASS[size]} ${
         floatEnabled ? "noa-anim-float" : ""
-      }`}
+      } ${isSneak ? "noa-sneak-composite" : ""}`}
     >
-      {/* PART 14: two small, occasional light streaks travelling a short distance near the
-          shoulder/side, staggered timing - dormant almost the whole cycle each, never continuous,
-          never a spin/flap. During the one-shot greet they flash together instead (PART 15). */}
-      {wingShimmerEnabled ? (
-        <>
-          <span
-            aria-hidden="true"
-            className={`pointer-events-none absolute left-[12%] top-[52%] h-[16%] w-[4%] rounded-full bg-amber-100 ${
-              greet ? "noa-anim-greet-wing" : "noa-anim-wing-shimmer-left"
-            }`}
-          />
-          <span
-            aria-hidden="true"
-            className={`pointer-events-none absolute right-[12%] top-[54%] h-[16%] w-[4%] rounded-full bg-amber-100 ${
-              greet ? "noa-anim-greet-wing" : "noa-anim-wing-shimmer-right"
-            }`}
-          />
-        </>
-      ) : null}
       {/* PART 13: chest/logo light - soft, slow, clearly weaker than the eye light below. Brief,
           separate brighten during the one-shot greet (PART 15) - never combined with the
           continuous idle pulse on the same element. */}
       <span
         aria-hidden="true"
-        className={`pointer-events-none absolute left-1/2 top-[64%] h-[12%] w-[34%] -translate-x-1/2 -translate-y-1/2 rounded-full blur-md transition-colors duration-500 ${CHEST_GLOW_CLASS_BY_STATE[state]} ${
+        className={`pointer-events-none absolute left-1/2 top-[64%] h-[8%] w-[18%] -translate-x-1/2 -translate-y-1/2 rounded-full blur-sm transition-colors duration-500 ${CHEST_GLOW_CLASS_BY_STATE[state]} ${
           greet ? "noa-anim-greet-chest" : state === "idle" ? "noa-anim-chest-pulse" : ""
         }`}
       />
@@ -104,7 +85,7 @@ export function NoaAvatar({
           visible. The robot artwork itself is never distorted, cropped, or recolored. */}
       <span
         aria-hidden="true"
-        className={`pointer-events-none absolute left-1/2 top-[30%] h-[27%] w-[27%] -translate-x-1/2 -translate-y-1/2 rounded-full blur-md transition-colors duration-300 ${EYE_GLOW_CLASS_BY_STATE[state]} ${
+        className={`pointer-events-none absolute left-1/2 top-[30%] h-[19%] w-[19%] -translate-x-1/2 -translate-y-1/2 rounded-full blur-sm transition-colors duration-300 ${EYE_GLOW_CLASS_BY_STATE[state]} ${
           greet ? "noa-anim-greet-eye" : state === "idle" ? "noa-anim-idle-pulse" : ""
         } ${isThinking ? "noa-anim-thinking-ring" : ""}`}
       />
@@ -122,7 +103,12 @@ export function NoaAvatar({
             <img
               alt=""
               aria-hidden="true"
-              className={`absolute inset-0 h-full w-full select-none object-contain drop-shadow-sm ${layerMotionClass(layer.motion, greet)}`}
+              className={`absolute inset-0 h-full w-full select-none object-contain drop-shadow-sm ${layerMotionClass(
+                isSneak ? undefined : layer.motion,
+                greet,
+              )} ${
+                isSneak && layer.name === "head" ? "noa-sneak-head" : ""
+              }`}
               draggable={false}
               key={layer.name}
               src={layer.src}
