@@ -98,19 +98,60 @@ test("connection/TTS failures release voice mode for manual fallback; long trans
   h.final("x".repeat(2001), "long"); assert.equal(h.state().phase, "error");
 });
 
-function route(path: "session" | "speech", options: { auth?: boolean; flag?: boolean; providerStatus?: number } = {}) {
+function route(path: "session" | "speech", options: { auth?: boolean; flag?: boolean; providerStatus?: number; providerBody?: unknown; nonJson?: boolean; fetchError?: Error } = {}) {
   const calls: any[] = [];
+  const logs: any[] = [];
   const env = { NEXT_PUBLIC_NOA_REALTIME_VOICE: options.flag === false ? "false" : "true", OPENAI_API_KEY: "standard-secret" };
   const { POST } = compile(`app/api/noa/voice/${path}/route.ts`, { "@/lib/supabase/server": { createClient: async () => ({ auth: { getUser: async () => ({ data: { user: options.auth === false ? null : { id: "user" } } }) } }) } }, {
-    process: { env }, fetch: async (url: string, init: any) => {
+    process: { env }, console: { error: (entry: unknown) => logs.push(entry) }, fetch: async (url: string, init: any) => {
       calls.push({ url, ...init, body: JSON.parse(init.body) });
-      return path === "session" ? Response.json({ value: "ek_ephemeral", expires_at: 123, private: "hidden" }, { status: options.providerStatus ?? 200 })
+      if (options.fetchError) throw options.fetchError;
+      if (options.nonJson) return new Response("private gateway response", { status: options.providerStatus ?? 502 });
+      return path === "session" ? Response.json(options.providerBody ?? { value: "ek_ephemeral", expires_at: 123, private: "hidden" }, { status: options.providerStatus ?? 200 })
         : new Response(new Uint8Array([0, 0, 1, 0]), { status: options.providerStatus ?? 200 });
     },
   });
   const request = (body?: unknown) => new Request(`https://app.test/api/noa/voice/${path}`, { method: "POST", ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  return { POST, request, calls, env };
+  return { POST, request, calls, env, logs };
 }
+
+test("session upstream 4xx logs only safe diagnostics and keeps the client 502 generic", async () => {
+  const h = route("session", { providerStatus: 400, providerBody: {
+    error: { code: "invalid_value", type: "invalid_request_error", message: "Unsupported session parameter.", user: "private-user", Authorization: "standard-secret" },
+    value: "ek_private", user_data: "private-request",
+  } });
+  const response = await h.POST(h.request({ user_data: "do not log" }));
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), { error: "Realtime voice isn't available right now." });
+  assert.deepEqual(h.logs, [{ upstreamStatus: 400, model: "gpt-4o-mini-transcribe", code: "invalid_value", type: "invalid_request_error", message: "Unsupported session parameter." }]);
+});
+
+test("session diagnostics redact keys, masked keys, ephemeral secrets and email in every error field", async () => {
+  const secretText = "standard-secret legacy-secret sk-proj-abc***xyz ek_sensitive Bearer token-value user@example.com";
+  const h = route("session", { providerStatus: 401, providerBody: { error: { code: secretText, type: secretText, message: `${secretText}\n${"x".repeat(900)}` } } });
+  Object.assign(h.env, { SOURCE_QA_AI_API_KEY: "legacy-secret" });
+  await h.POST(h.request());
+  const logged = JSON.stringify(h.logs);
+  for (const secret of ["standard-secret", "legacy-secret", "sk-proj-", "ek_sensitive", "token-value", "user@example.com"]) assert.ok(!logged.includes(secret));
+  assert.ok(h.logs[0].message.length <= 500);
+  assert.ok(!h.logs[0].message.includes("\n"));
+});
+
+test("session success/auth/flag never log payloads; malformed errors and transport failures stay safe", async () => {
+  for (const options of [{}, { auth: false }, { flag: false }]) {
+    const h = route("session", options); await h.POST(h.request()); assert.deepEqual(h.logs, []);
+  }
+  const malformed = route("session", { providerStatus: 403, nonJson: true });
+  assert.equal((await malformed.POST(malformed.request())).status, 502);
+  assert.deepEqual(malformed.logs[0], { upstreamStatus: 403, model: "gpt-4o-mini-transcribe", code: null, type: null, message: null });
+  const failed = route("session", { fetchError: new TypeError("secret exception standard-secret") });
+  assert.equal((await failed.POST(failed.request())).status, 502);
+  assert.equal(failed.logs[0].code, "session_request_failed"); assert.equal(failed.logs[0].upstreamStatus, null);
+  assert.doesNotMatch(JSON.stringify(failed.logs), /secret exception|standard-secret/);
+  const invalid = route("session", { providerBody: { value: "sk-private", expires_at: 123 } });
+  assert.equal((await invalid.POST(invalid.request())).status, 502);
+  assert.equal(invalid.logs[0].code, "invalid_session_response"); assert.equal(invalid.logs[0].upstreamStatus, 200);
+});
 
 test("both routes require auth and flag; session fixed transcription/VAD, ephemeral only, no tools", async () => {
   for (const name of ["session", "speech"] as const) {
