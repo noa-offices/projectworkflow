@@ -1,4 +1,5 @@
 import "server-only";
+import { withNoaSpokenResponse } from "./noa-spoken-response";
 
 import {
   buildNoaRouteDiagnostics,
@@ -2506,7 +2507,7 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
 // achieve it.
 export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAnswer> {
   const configurationAnswer = await maybeHandleProductConfigurationTurn(request);
-  if (configurationAnswer) return configurationAnswer;
+  if (configurationAnswer) return withNoaSpokenResponse(configurationAnswer);
 
   const agentAnswer = await tryNoaAgentBrief(request, process.env.NOA_AGENTS_V1 === "true", {
     validIdentifier: isNoaIdentifierLabel,
@@ -2521,7 +2522,7 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
     ? request.productConfigurationReference
     : undefined;
   if (incomingConfigurationReference && answer.productConfigurationReference === undefined) {
-    return { ...answer, productConfigurationReference: incomingConfigurationReference };
+    return withNoaSpokenResponse({ ...answer, productConfigurationReference: incomingConfigurationReference });
   }
-  return answer;
+  return withNoaSpokenResponse(answer);
 }

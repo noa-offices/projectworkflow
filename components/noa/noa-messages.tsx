@@ -2,6 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import type React from "react";
+import { Square, Volume2 } from "lucide-react";
+import { hasSpeechText, type NoaVoice } from "@/components/noa/use-noa-voice";
 import { NoaSourceBadges } from "@/components/noa/noa-source-badges";
 import type {
   NoaAnalyticsComparison,
@@ -522,10 +524,12 @@ export function NoaMessages({
   isBusy = false,
   messages,
   onQuickPrompt,
+  voice,
 }: {
   isBusy?: boolean;
   messages: NoaMessage[];
   onQuickPrompt: (prompt: string) => void;
+  voice?: NoaVoice;
 }) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const hasUserMessage = messages.some((message) => message.role === "user");
@@ -544,6 +548,7 @@ export function NoaMessages({
     // spacing/sizing, the same message paragraph/choices rendering as before.
     <div className="flex-1 space-y-3.5 overflow-y-auto px-4 py-4">
       {messages.map((message) => {
+        const speechText = message.voiceText ?? message.text;
         const choicesEnabled = !isBusy && message.id === latestMessageId;
         // PART 1/11/12: structured cards render ONLY when the server actually sent non-empty
         // Attention items - never parsed from `message.text`. An empty/absent `attention` (e.g.
@@ -597,6 +602,17 @@ export function NoaMessages({
                 {message.text}
               </p>
             )}
+            {voice?.speechSupported && message.role === "assistant" && hasSpeechText(speechText) ? (
+              <button
+                aria-label={voice.speakingId === message.id ? "Stop reading response" : "Read response aloud"}
+                aria-pressed={voice.speakingId === message.id}
+                className="mt-1 inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-100"
+                onClick={() => voice.speak(message.id, speechText)}
+                type="button"
+              >
+                {voice.speakingId === message.id ? <Square aria-hidden="true" className="h-4 w-4" /> : <Volume2 aria-hidden="true" className="h-4 w-4" />}
+              </button>
+            ) : null}
             {/* Source badges only ever render for assistant messages - user messages never carry
                 domain/sources metadata in the first place (see NoaMessage in lib/noa/noa-types.ts). */}
             {message.role === "assistant" ? (

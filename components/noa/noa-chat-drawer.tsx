@@ -4,6 +4,8 @@ import { NoaComposer } from "@/components/noa/noa-composer";
 import { NoaHeader } from "@/components/noa/noa-header";
 import { NoaMessages } from "@/components/noa/noa-messages";
 import { NoaStatus } from "@/components/noa/noa-status";
+import { useNoaVoice } from "@/components/noa/use-noa-voice";
+import { useNoaRealtimeVoice, type VoiceSubmit } from "@/components/noa/use-noa-realtime-voice";
 import type { NoaDomain, NoaMessage, NoaVisualState } from "@/lib/noa/noa-types";
 
 export function NoaChatDrawer({
@@ -17,11 +19,16 @@ export function NoaChatDrawer({
   isOpen: boolean;
   messages: NoaMessage[];
   onClose: () => void;
-  onSend: (text: string) => void;
+  onSend: VoiceSubmit;
   pendingDomain: NoaDomain | null;
   state: NoaVisualState;
 }) {
   const isBusy = state === "thinking" || state === "responding";
+  const voice = useNoaVoice(isOpen);
+  const realtime = useNoaRealtimeVoice(isOpen, onSend);
+  const realtimeEnabled = process.env.NEXT_PUBLIC_NOA_REALTIME_VOICE === "true";
+  const manualSend = (text: string) => { realtime.stop(); void onSend(text); };
+  const close = () => { realtime.stop(); voice.abortInput(); voice.stopSpeech(); onClose(); };
 
   return (
     // A floating popup anchored near the launcher, not a full-height drawer: on desktop it's a
@@ -40,13 +47,38 @@ export function NoaChatDrawer({
           : "pointer-events-none translate-y-2 scale-95 opacity-0"
       }`}
     >
-      <NoaHeader onClose={onClose} state={state} />
+      <NoaHeader onClose={close} state={state} />
+      {realtimeEnabled && (
+        <div className="shrink-0 border-b border-zinc-100 px-4 py-2 text-xs text-zinc-600">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <button
+              type="button"
+              disabled={!realtime.active && isBusy}
+              className="rounded-lg border border-zinc-200 px-2 py-1.5 font-medium text-zinc-800 focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50"
+              onClick={() => {
+                if (realtime.active) realtime.stop();
+                else { voice.abortInput(); voice.stopSpeech(); void realtime.start(); }
+              }}
+            >
+              {realtime.active ? "End voice conversation" : "Start voice conversation"}
+            </button>
+            <span>AI-generated voice</span>
+          </div>
+          <p role="status" aria-live="polite" className="mt-1">
+            {realtime.phase === "error" ? "Realtime voice isn't available right now. Use typing or manual voice."
+              : realtime.phase === "connecting" ? "Connecting…"
+              : realtime.active ? `${realtime.phase.charAt(0).toUpperCase()}${realtime.phase.slice(1)} — microphone on`
+              : "Microphone off"}
+          </p>
+          {realtime.transcript && <p aria-label="Voice transcript" className="mt-1 max-h-16 overflow-y-auto break-words text-zinc-800">{realtime.transcript}</p>}
+        </div>
+      )}
       {/* GPC-3.1: a request in flight disables every choice button - PART 5's "prevent
           double-submit", reusing the exact same isBusy this drawer already computes for the
           composer below. */}
-      <NoaMessages isBusy={isBusy} messages={messages} onQuickPrompt={onSend} />
+      <NoaMessages isBusy={isBusy} messages={messages} onQuickPrompt={manualSend} voice={realtime.active ? undefined : voice} />
       <NoaStatus pendingDomain={pendingDomain} state={state} />
-      <NoaComposer disabled={isBusy} onSend={onSend} />
+      <NoaComposer disabled={isBusy} onSend={manualSend} voice={realtime.active ? undefined : voice} />
     </div>
   );
 }

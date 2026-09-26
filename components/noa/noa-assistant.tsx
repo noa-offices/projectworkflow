@@ -42,7 +42,7 @@ const NOA_ATTENTION_ENDPOINT = "/api/noa/attention";
 function createMessage(
   role: NoaMessage["role"],
   text: string,
-  meta?: { agentBrief?: NoaAnswer["agentBrief"]; analytics?: NoaAnalyticsTransport; attention?: NoaAttentionTransport; catchUp?: NoaCatchUpTransport; choices?: NoaChoice[]; domain?: NoaDomain; sources?: NoaSource[] },
+  meta?: { voiceText?: string; agentBrief?: NoaAnswer["agentBrief"]; analytics?: NoaAnalyticsTransport; attention?: NoaAttentionTransport; catchUp?: NoaCatchUpTransport; choices?: NoaChoice[]; domain?: NoaDomain; sources?: NoaSource[] },
 ): NoaMessage {
   return {
     createdAt: Date.now(),
@@ -51,6 +51,7 @@ function createMessage(
       : `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     role,
     text,
+    ...(role === "assistant" && meta?.voiceText !== undefined ? { voiceText: meta.voiceText } : {}),
     ...(meta?.agentBrief ? { agentBrief: meta.agentBrief } : {}),
     // Attention structured UI: only ever the server's own already-authorized items for THIS
     // answer - never client-computed, never carried over from a prior message.
@@ -93,6 +94,12 @@ async function requestNoaAnswer(
 export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
   const [visualState, setVisualState] = useState<NoaVisualState>("idle");
   const [messages, setMessages] = useState<NoaMessage[]>(() => [createMessage("assistant", GREETING_TEXT)]);
+  const messagesRef = useRef(messages);
+  const requestQueueRef = useRef<Promise<NoaAnswer | undefined>>(Promise.resolve(undefined));
+  const appendMessage = useCallback((message: NoaMessage) => {
+    messagesRef.current = [...messagesRef.current, message];
+    setMessages(messagesRef.current);
+  }, []);
   // Domain classified up front, before the request even goes out, purely so NoaStatus can show
   // "Checking Product Library..." instead of a generic "thinking" - reuses the same deterministic
   // classifier the backend uses for routing, never a second guess.
@@ -171,7 +178,7 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
     // arms the draft prefix and shows a local guidance message, no request, no busy state.
     if (text.startsWith(NOA_DRAFT_STARTER_SIGNAL_PREFIX)) {
       pendingConfigureDraftRef.current = text.slice(NOA_DRAFT_STARTER_SIGNAL_PREFIX.length);
-      setMessages((current) => [...current, createMessage("assistant", CONFIGURE_PRODUCT_GUIDANCE_TEXT)]);
+      appendMessage(createMessage("assistant", CONFIGURE_PRODUCT_GUIDANCE_TEXT));
       return;
     }
 
@@ -184,51 +191,59 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
     const outgoing = pendingConfigureDraftRef.current ? `${pendingConfigureDraftRef.current}${typed}` : typed;
     pendingConfigureDraftRef.current = null;
 
-    clearSettleTimer();
+    // Typed, manual and realtime turns share one ordered request path and reference pair.
+    const result = requestQueueRef.current.then(() => {
+      clearSettleTimer();
+      const recentMessages = messagesRef.current
+        .slice(-RECENT_MESSAGE_LIMIT)
+        .map((message) => ({ role: message.role, text: message.text }));
 
-    const recentMessages = messages
-      .slice(-RECENT_MESSAGE_LIMIT)
-      .map((message) => ({ role: message.role, text: message.text }));
+      appendMessage(createMessage("user", outgoing));
+      setPendingDomain(classifyNoaIntent(outgoing, pageContext));
+      dispatch({ type: "SETTLE" });
+      dispatch({ type: "SEND" });
 
-    setMessages((current) => [...current, createMessage("user", outgoing)]);
-    setPendingDomain(classifyNoaIntent(outgoing, pageContext));
-    dispatch({ type: "SEND" });
-
-    requestNoaAnswer(outgoing, pageContext, recentMessages, conversationReferenceRef.current, productConfigurationReferenceRef.current)
-      .then((answer) => {
-        // Always replace, never merge/accumulate - a result with no reference of its own
-        // (conversationReference undefined) correctly clears any stale one from before.
-        conversationReferenceRef.current = answer.conversationReference;
-        // Same replace-wholesale rule, but the server (not the client) decides when
-        // undefined truly means "end/cancel configuration" vs. "an unrelated answer that should
-        // leave an active configuration alone" - see noa-orchestrator.ts's passthrough handling.
-        productConfigurationReferenceRef.current = answer.productConfigurationReference;
-        setMessages((current) => [
-          ...current,
-          createMessage("assistant", answer.text, { agentBrief: answer.agentBrief, analytics: answer.analytics, attention: answer.attention, catchUp: answer.catchUp, choices: answer.choices, domain: answer.domain, sources: answer.sources }),
-        ]);
-        dispatch({ type: "RESPONSE_SUCCESS" });
-      })
-      .catch((error: unknown) => {
-        // A failed request has nothing new to remember; the previous reference is left as-is
-        // rather than guessed at.
-        const errorText = error instanceof Error && error.message ? error.message : REQUEST_FAILED_TEXT;
-        setMessages((current) => [...current, createMessage("assistant", errorText)]);
-        dispatch({ type: "RESPONSE_ERROR" });
-      })
-      .finally(() => {
-        setPendingDomain(null);
-        scheduleSettle();
-      });
-  }, [clearSettleTimer, dispatch, messages, pageContext, scheduleSettle]);
+      return requestNoaAnswer(outgoing, pageContext, recentMessages, conversationReferenceRef.current, productConfigurationReferenceRef.current)
+        .then((answer) => {
+          // Always replace, never merge/accumulate - a result with no reference of its own
+          // (conversationReference undefined) correctly clears any stale one from before.
+          conversationReferenceRef.current = answer.conversationReference;
+          // Same replace-wholesale rule, but the server (not the client) decides when
+          // undefined truly means "end/cancel configuration" vs. "an unrelated answer that should
+          // leave an active configuration alone" - see noa-orchestrator.ts's passthrough handling.
+          productConfigurationReferenceRef.current = answer.productConfigurationReference;
+          appendMessage(
+            createMessage("assistant", answer.text, { voiceText: answer.voiceText, agentBrief: answer.agentBrief, analytics: answer.analytics, attention: answer.attention, catchUp: answer.catchUp, choices: answer.choices, domain: answer.domain, sources: answer.sources }),
+          );
+          dispatch({ type: "RESPONSE_SUCCESS" });
+          return answer;
+        })
+        .catch((error: unknown) => {
+          // A failed request has nothing new to remember; the previous reference is left as-is
+          // rather than guessed at.
+          const errorText = error instanceof Error && error.message ? error.message : REQUEST_FAILED_TEXT;
+          appendMessage(createMessage("assistant", errorText));
+          dispatch({ type: "RESPONSE_ERROR" });
+          return undefined;
+        })
+        .finally(() => {
+          setPendingDomain(null);
+          scheduleSettle();
+        });
+    });
+    requestQueueRef.current = result;
+    return result;
+  }, [appendMessage, clearSettleTimer, dispatch, pageContext, scheduleSettle]);
 
   const isOpen = visualState !== "idle" && visualState !== "hover";
 
   const handleToggle = useCallback(() => {
+    if (isOpen && process.env.NEXT_PUBLIC_NOA_REALTIME_VOICE === "true") { setVisualState("idle"); return; }
     dispatch({ type: isOpen ? "CLOSE" : "OPEN" });
   }, [dispatch, isOpen]);
 
   const handleClose = useCallback(() => {
+    if (process.env.NEXT_PUBLIC_NOA_REALTIME_VOICE === "true") { setVisualState("idle"); return; }
     dispatch({ type: "CLOSE" });
   }, [dispatch]);
 

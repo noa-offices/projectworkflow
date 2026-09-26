@@ -176,6 +176,8 @@ export type NoaAnalyticsTransport = {
 };
 
 export type NoaMessage = {
+  // Optional plain-text spoken projection; empty means no safe speech, absent uses text.
+  voiceText?: string;
   agentBrief?: NoaAgentBriefTransport;
   createdAt: number;
   // Attention structured UI: present only on an assistant Attention answer, and only ever the
@@ -244,6 +246,8 @@ export type NoaSource = {
 };
 
 export type NoaAnswer = {
+  // Server-generated alternate presentation of authorized display fields; empty suppresses speech.
+  voiceText?: string;
   agentBrief?: NoaAgentBriefTransport;
   // Attention structured UI: present ONLY for a successful Attention answer that actually has
   // findings - the orchestrator populates this from the SAME already-authorized items array the
