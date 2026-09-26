@@ -16,6 +16,7 @@ const GREETING_PATTERNS = [
   /^hi$/, /^hi noa$/,
   /^hello$/, /^hello noa$/,
   /^hey$/, /^hey noa$/,
+  /^(?:hi|hello|hey) noa[,!]?\s+how are you(?: doing)?$/,
   /^good morning$/, /^good afternoon$/, /^good evening$/,
   /^how are you$/, /^how are you doing$/, /^how'?s it going$/,
 ];

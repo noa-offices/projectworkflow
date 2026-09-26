@@ -17,7 +17,7 @@ export async function POST(request: Request) {
           type: "transcription",
           audio: { input: {
             noise_reduction: { type: "near_field" },
-            transcription: { model: "gpt-4o-mini-transcribe", prompt: "NOA, ProjectWorkflow, LAS, LAS MOBILI, Interstuhl, EXQUITECH, ETA, ETD, RFQ, quotation, Project File." },
+            transcription: { model: "gpt-4o-mini-transcribe", prompt: "This is ProjectWorkflow. The assistant's name is NOA, spelled N-O-A. When addressing the assistant as NOA or Hey NOA, transcribe the name as NOA, not Noah. Preserve Noah when referring to a person. Vocabulary: NOA, ProjectWorkflow, LAS, LAS MOBILI, Interstuhl, EXQUITECH, ETA, ETD, RFQ, Quotation, Project File." },
             turn_detection: { type: "server_vad", threshold: 0.5, prefix_padding_ms: 300, silence_duration_ms: 800 },
           } },
         },

@@ -311,6 +311,7 @@ async function fetchBroadPriceResult(
     return {
       data: {
         kind: "price_list",
+        entityLabel: phrase,
         returnedCount: rows.length,
         rows,
         scanCapped,
@@ -332,6 +333,7 @@ async function fetchBroadPriceResult(
   return {
     data: {
       kind: "price_summary",
+      entityLabel: phrase,
       counts: STATUS_ORDER.filter((key) => counts.get(key)).map((key) => ({ count: counts.get(key) ?? 0, statusKey: key })),
       scanCapped,
       scannedCount: evaluated.length,

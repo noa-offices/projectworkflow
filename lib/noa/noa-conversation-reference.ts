@@ -6,6 +6,7 @@
 // helper module.
 
 import type { NoaDomain } from "./noa-types";
+import type { ProductPriceCheckState } from "../product-price-check";
 import type {
   NoaSemanticMetricV2,
   NoaSemanticPeriod,
@@ -39,7 +40,41 @@ export type NoaConversationReference = {
   metric?: NoaSemanticMetricV2;
   analyticsPeriod?: NoaSemanticPeriodV2;
   resultCount?: number;
+  previousFinding?: NoaPreviousFinding;
 };
+
+// CFI1: one signed, short-lived observation; no rows, prose, prices or write permissions.
+export type NoaPreviousFinding = {
+  domain: "Price";
+  entityType: "product_template";
+  entityLabel: string;
+  findingKind: Extract<ProductPriceCheckState["key"], "no_price_list_date">;
+  allowedFollowUps: ["explain", "guidance", "confirm"];
+  issuedAt: number;
+  proof: string;
+};
+
+export function sanitizeNoaPreviousFinding(value: unknown): NoaPreviousFinding | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const v = value as Record<string, unknown>;
+  if (v.domain !== "Price" || v.entityType !== "product_template" || v.findingKind !== "no_price_list_date" ||
+    typeof v.entityLabel !== "string" || !/^[\p{L}\p{N}][\p{L}\p{N} .,'’&()/+-]{0,119}$/u.test(v.entityLabel) ||
+    /[0-9a-f]{8}-[0-9a-f]{4}-/i.test(v.entityLabel) ||
+    !Array.isArray(v.allowedFollowUps) || v.allowedFollowUps.join(",") !== "explain,guidance,confirm" ||
+    typeof v.issuedAt !== "number" || !Number.isSafeInteger(v.issuedAt) || v.issuedAt < 0 ||
+    typeof v.proof !== "string" || !/^[0-9a-f]{64}$/.test(v.proof)) return undefined;
+  return { domain: "Price", entityType: "product_template", entityLabel: v.entityLabel,
+    findingKind: "no_price_list_date", allowedFollowUps: ["explain", "guidance", "confirm"], issuedAt: v.issuedAt, proof: v.proof };
+}
+
+export function detectNoaFindingFollowUp(message: string): "explain" | "guidance" | "confirm" | "action" | undefined {
+  const text = message.toLowerCase().replace(/\s+/g, " ").trim().replace(/[?!.]+$/, "");
+  if (/^(?:(?:can|could|would) you )?(?:configure|fix|update) that(?: for me)?$/.test(text)) return "action";
+  if (/^(?:how (?:do|can) i fix that|what should i do about that)$/.test(text)) return "guidance";
+  if (/^(?:what about that|why is that|can you explain that)$/.test(text)) return "explain";
+  if (/^(?:i think you need to configure that|does that need to be configured|can that be configured)$/.test(text)) return "confirm";
+  return undefined;
+}
 
 const KNOWN_DOMAINS: ReadonlySet<string> = new Set<NoaDomain>([
   "Product", "Quotation", "Price", "Project", "Client", "Procurement",
@@ -93,6 +128,7 @@ export function isNoaConversationReference(value: unknown): value is NoaConversa
 
   if (typeof candidate.domain !== "string" || !KNOWN_DOMAINS.has(candidate.domain)) return false;
   if (typeof candidate.intent !== "string" || !candidate.intent.trim()) return false;
+  if (candidate.previousFinding !== undefined && !sanitizeNoaPreviousFinding(candidate.previousFinding)) return false;
   if (candidate.subject !== undefined && !isSubjectShape(candidate.subject)) return false;
   if (candidate.period !== undefined && (typeof candidate.period !== "string" || !KNOWN_PERIODS.has(candidate.period))) return false;
   if (candidate.entities !== undefined) {
@@ -131,6 +167,7 @@ export function sanitizeNoaConversationReference(value: unknown): NoaConversatio
   return {
     domain: value.domain,
     intent: value.intent,
+    ...(value.previousFinding ? { previousFinding: sanitizeNoaPreviousFinding(value.previousFinding) } : {}),
     ...(subject ? { subject } : {}),
     ...(value.period ? { period: value.period } : {}),
     ...(value.entities

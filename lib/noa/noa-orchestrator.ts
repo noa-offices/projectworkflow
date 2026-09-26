@@ -1,5 +1,6 @@
 import "server-only";
 import { withNoaSpokenResponse } from "./noa-spoken-response";
+import { buildNoaPreviousFinding, resolveNoaFindingFollowUp, withoutNoaPreviousFinding } from "./noa-finding-reference.server";
 
 import {
   buildNoaRouteDiagnostics,
@@ -2416,8 +2417,12 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
               : domain === "Price"
                 ? buildPriceConversationReference(capabilityResult.data)
                 : undefined;
-  const newConversationReference = freshConversationReference ??
-    (semanticV2FlagEnabled ? sanitizeNoaConversationReference(conversationReference) : undefined);
+  const previousFinding = domain === "Price" ? buildNoaPreviousFinding(capabilityResult.data) : undefined;
+  const baseConversationReference = freshConversationReference ??
+    (semanticV2FlagEnabled ? withoutNoaPreviousFinding(sanitizeNoaConversationReference(conversationReference)) : undefined);
+  const newConversationReference = previousFinding
+    ? { ...(freshConversationReference ?? { domain: "Price" as const, intent: "price_finding" }), previousFinding }
+    : baseConversationReference;
 
   const deterministicData = typeof capabilityResult.data === "object" && capabilityResult.data !== null
     ? capabilityResult.data as { deterministicOnly?: unknown; deterministicText?: unknown }
@@ -2506,6 +2511,14 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
 // is the ENTIRE passthrough mechanism: no other line in runNoaOrchestratorCore was touched to
 // achieve it.
 export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAnswer> {
+  // CFI1 is read-only and must precede guided configuration and agent activation.
+  const findingAnswer = resolveNoaFindingFollowUp(request.message, request.conversationReference);
+  if (findingAnswer) {
+    if (isNoaProductConfigurationReference(request.productConfigurationReference)) {
+      findingAnswer.productConfigurationReference = request.productConfigurationReference;
+    }
+    return withNoaSpokenResponse(findingAnswer);
+  }
   const configurationAnswer = await maybeHandleProductConfigurationTurn(request);
   if (configurationAnswer) return withNoaSpokenResponse(configurationAnswer);
 

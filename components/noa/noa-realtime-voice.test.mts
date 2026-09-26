@@ -91,8 +91,11 @@ test("close/restart ignores old session events and old answer; idle and maximum 
 test("connection/TTS failures release voice mode for manual fallback; long transcripts fail safely", async () => {
   const failed = harness({ setupError: true }); await failed.controller.start(); assert.equal(failed.state().phase, "error"); assert.equal(failed.timers.size, 0);
   const h = harness({ speechError: true }); await h.controller.start(); h.begin(); h.final("Question"); await flush();
-  h.requests[0].reply.resolve({ text: "Visual still exists", voiceText: "Answer" }); await flush(); assert.equal(h.state().phase, "error");
-  await h.controller.start(); h.begin("long"); h.final("x".repeat(2001), "long"); assert.equal(h.state().phase, "error");
+  h.requests[0].reply.resolve({ text: "Visual still exists", voiceText: "Answer" }); await flush(); assert.equal(h.state().phase, "listening");
+  assert.match(h.state().error, /Speech couldn't play/);
+  assert.equal(h.counts().connects, 1);
+  h.begin("long"); assert.equal(h.state().error, undefined);
+  h.final("x".repeat(2001), "long"); assert.equal(h.state().phase, "error");
 });
 
 function route(path: "session" | "speech", options: { auth?: boolean; flag?: boolean; providerStatus?: number } = {}) {
@@ -126,7 +129,7 @@ test("both routes require auth and flag; session fixed transcription/VAD, epheme
 
 test("speech validates bytes/plain bounded text/only voiceText and streams exact text with fixed model", async () => {
   const h = route("speech");
-  for (const body of [{ voiceText: "x".repeat(601) }, { voiceText: "" }, { voiceText: "..." }, { voiceText: "<speak>Hi</speak>" }, { voiceText: "Hi", model: "other" }, { voiceText: 12 }, [], null]) {
+  for (const body of [{ voiceText: "x".repeat(601) }, { voiceText: "" }, { voiceText: "..." }, { voiceText: "<speak>Hi</speak>" }, { voiceText: "Hi", model: "other" }, { voiceText: "Hi", voice: "other" }, { voiceText: 12 }, [], null]) {
     assert.equal((await h.POST(h.request(body))).status, 400);
   }
   assert.equal((await h.POST(h.request({ voiceText: "x".repeat(5000) }))).status, 413); assert.equal(h.calls.length, 0);
@@ -167,15 +170,63 @@ test("drawer flags, Start/End, readable state, transcript, disclosure, close, an
   const render = () => elements(NoaChatDrawer({ isOpen: true, messages, onClose: () => closed++, onSend: (text: string) => sent.push(text), state: "open" }));
   assert.equal(render().filter((n) => n.type === "button").length, 0);
   env.NEXT_PUBLIC_NOA_REALTIME_VOICE = "true";
-  const start = render().find((n) => n.type === "button"); assert.equal(start.props.children, "Start voice conversation"); start.props.onClick(); assert.equal(started, 1); assert.equal(manualStops, 2);
+  const start = render().find((n) => n.type === "button"); assert.equal(start.props.children, "Voice"); assert.equal(start.props["aria-label"], "Start voice conversation"); start.props.onClick(); assert.equal(started, 1); assert.equal(manualStops, 2);
   Object.assign(state, { active: true, phase: "listening", transcript: "Project File" });
-  const nodes = render(); assert.equal(nodes.find((n) => n.type === "button").props.children, "End voice conversation");
-  assert.ok(nodes.some((n) => n.props?.role === "status" && n.props.children.includes("microphone on")));
+  const nodes = render(); assert.equal(nodes.find((n) => n.type === "button").props.children, "End voice");
+  assert.equal(nodes.find((n) => n.type === "button").props["aria-label"], "End voice conversation");
+  for (const [phase, label] of [["listening", "Listening…"], ["thinking", "Thinking…"], ["speaking", "Speaking…"], ["transcribing", "Listening…"]]) {
+    state.phase = phase;
+    assert.ok(render().some((n) => n.props?.role === "status" && n.props.children === label));
+  }
+  state.error = "Speech couldn't play.";
+  assert.equal(render().find((n) => n.type === "NoaMessages").props.voice, undefined);
+  assert.equal(render().find((n) => n.type === "NoaComposer").props.voice, undefined);
+  assert.ok(render().some((n) => n.props?.role === "status" && n.props.children === state.error));
+  nodes.find((n) => n.type === "button").props.onClick(); assert.ok(stopped > 0);
   assert.ok(nodes.some((n) => n.props?.children === "AI-generated voice"));
   const renderedMessages = nodes.find((n) => n.type === "NoaMessages"); assert.equal(renderedMessages.props.messages, messages); assert.equal(renderedMessages.props.voice, undefined);
   nodes.find((n) => n.type === "NoaHeader").props.onClose(); assert.equal(closed, 1); assert.ok(stopped > 0);
   Object.assign(state, { active: false, phase: "error" });
   const fallback = render().find((n) => n.type === "NoaComposer"); assert.equal(fallback.props.voice, voice); fallback.props.onSend("Typed works"); assert.deepEqual(sent, ["Typed works"]);
+});
+
+test("NOA spelling context stays static; transcripts about Noah are not rewritten", async () => {
+  const r = route("session"); await r.POST(r.request());
+  const prompt = r.calls[0].body.session.audio.input.transcription.prompt;
+  for (const term of ["N-O-A", "Hey NOA", "ProjectWorkflow", "LAS MOBILI", "Interstuhl", "EXQUITECH", "ETA", "ETD", "RFQ", "Quotation", "Project File", "Preserve Noah"]) assert.ok(prompt.includes(term));
+  const h = harness(); await h.controller.start(); h.begin(); h.final("Ask Noah about the quotation"); await flush();
+  assert.equal(h.requests[0].text, "Ask Noah about the quotation"); h.controller.stop();
+});
+
+test("V3.2 only normalizes closed leading invocations and contextual Interstool chair phrases", async () => {
+  const { normalizeNoaVoiceTranscript } = compile("components/noa/use-noa-realtime-voice.ts", { "./noa-realtime-transport": {} });
+  for (const greeting of ["Hey", "Hello", "Hi", "Okay", "OK"]) {
+    for (const name of ["Noah", "Nova"]) assert.equal(normalizeNoaVoiceTranscript(`${greeting} ${name}, what needs my attention?`), `${greeting} NOA, what needs my attention?`);
+  }
+  for (const text of ["I spoke to Noah yesterday", "Nova is a project name", "Hello Noah is the title", "Ask Noah about Interstool", "Interstol chairs"]) assert.equal(normalizeNoaVoiceTranscript(text), text);
+  assert.equal(normalizeNoaVoiceTranscript("Interstool chairs"), "Interstuhl chairs");
+  const h = harness(); await h.controller.start(); h.begin(); h.final("Can you find me price for every chair from Interstool?"); await flush();
+  assert.equal(h.requests[0].text, "Can you find me price for every chair from Interstuhl?"); h.controller.stop();
+  assert.doesNotMatch(readFileSync("components/noa/noa-assistant.tsx", "utf8"), /normalizeNoaVoiceTranscript/);
+});
+
+test("compact Voice row sits above composer, wraps at narrow widths, and has no agent wording", () => {
+  const source = readFileSync("components/noa/noa-chat-drawer.tsx", "utf8");
+  assert.doesNotMatch(source, /Live Agent|Voice Agent|Call Agent|overflow-x|whitespace-nowrap/);
+  assert.match(source, /flex min-w-0 flex-wrap/);
+  assert.ok(source.indexOf("<NoaMessages") < source.indexOf("{realtimeEnabled &&"));
+  assert.ok(source.indexOf("{realtimeEnabled &&") < source.indexOf("<NoaComposer"));
+});
+
+test("End cancels neural speech and a new session keeps using exact authoritative voiceText", async () => {
+  const h = harness(); await h.controller.start();
+  for (let i = 0; i < 3; i++) {
+    h.begin(String(i)); h.final("Question", String(i)); await flush();
+    h.requests[i].reply.resolve({ text: "Different visual text", voiceText: `Exact answer ${i}` }); await flush();
+    assert.equal(h.speech[i].text, `Exact answer ${i}`);
+    h.speech[i].done.resolve(undefined); await flush();
+  }
+  h.controller.stop(); assert.equal(h.speech[2].signal.aborted, true);
 });
 
 test("voice implementation adds no persistence, business agent, tools, or client standard key", () => {

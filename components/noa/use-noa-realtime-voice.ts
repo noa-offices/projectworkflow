@@ -6,8 +6,16 @@ import { createRealtimeTransport, createStreamingPlayer } from "./noa-realtime-t
 
 export type VoiceEvent = { type: string; item_id?: string; delta?: string; transcript?: string };
 export type VoicePhase = "idle" | "connecting" | "listening" | "transcribing" | "thinking" | "speaking" | "error";
-export type VoiceSnapshot = { phase: VoicePhase; transcript: string };
+export type VoiceSnapshot = { phase: VoicePhase; transcript: string; error?: string };
 export type VoiceSubmit = (text: string) => Promise<NoaAnswer | undefined> | undefined;
+
+// Voice-only, closed corrections. A name elsewhere in ordinary prose is never rewritten.
+export function normalizeNoaVoiceTranscript(text: string): string {
+  return text.trim()
+    .replace(/^(hey|hello|hi|okay|ok)\s+(?:noah|nova|noa)(?=\s*[,!?]|\s*$)/i, "$1 NOA")
+    .replace(/\bInterstool(?=\s+chairs?\b)/gi, "Interstuhl")
+    .replace(/(\bchairs?\s+from\s+)Interstool\b/gi, "$1Interstuhl");
+}
 export interface RealtimeTransport {
   connect(signal: AbortSignal, receive: (event: VoiceEvent) => void): Promise<void>;
   close(): void;
@@ -84,7 +92,7 @@ export function createNoaRealtimeVoice(transport: RealtimeTransport, player: Str
       }
       if (event.type !== "conversation.item.input_audio_transcription.completed") return;
       completed.add(id);
-      const text = typeof event.transcript === "string" ? event.transcript.trim() : "";
+      const text = typeof event.transcript === "string" ? normalizeNoaVoiceTranscript(event.transcript) : "";
       if (!text) { update("listening", ""); return; }
       if (text.length > 2000) { stop("error"); return; }
       touch(); update("thinking", text);
@@ -106,7 +114,12 @@ export function createNoaRealtimeVoice(transport: RealtimeTransport, player: Str
         }).then(() => {
           if (valid() && turn === activeTurn && !speechSignal.aborted) { touch(); update("listening"); }
         }).catch(() => {
-          if (valid() && turn === activeTurn && !speechSignal.aborted) stop("error");
+          if (valid() && turn === activeTurn && !speechSignal.aborted) {
+            // Keep neural playback ownership until End; never switch engines on a TTS error.
+            silence(); touch();
+            snapshot = { phase: "listening", transcript: snapshot.transcript, error: "Speech couldn't play. You can keep talking or end voice." };
+            listeners.forEach((listener) => listener());
+          }
         });
       }).catch(() => { if (valid() && turn === activeTurn) stop("error"); });
     };

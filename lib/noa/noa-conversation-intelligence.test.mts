@@ -596,7 +596,8 @@ test("PART 17/21: clarification/failure/no-useful-result paths preserve only the
   assert.ok(turn.includes('if (extraction.stage !== "success") return { extraction, kind: "none" };'));
   assert.ok(!/reference\.(entities|intent|domain)\s*=/.test(turn));
   assert.ok(coreBody.includes("const preservedConversationReference = semanticV2FlagEnabled\n      ? sanitizeNoaConversationReference(conversationReference)"));
-  assert.ok(coreBody.includes("const newConversationReference = freshConversationReference ??\n    (semanticV2FlagEnabled ? sanitizeNoaConversationReference(conversationReference) : undefined);"));
+  assert.ok(coreBody.includes("const baseConversationReference = freshConversationReference ??"));
+  assert.ok(coreBody.includes("withoutNoaPreviousFinding(sanitizeNoaConversationReference(conversationReference))"));
 });
 
 test("RouteClassification type is re-used, not redefined", () => {
