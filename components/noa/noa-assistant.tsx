@@ -42,7 +42,7 @@ const NOA_ATTENTION_ENDPOINT = "/api/noa/attention";
 function createMessage(
   role: NoaMessage["role"],
   text: string,
-  meta?: { analytics?: NoaAnalyticsTransport; attention?: NoaAttentionTransport; catchUp?: NoaCatchUpTransport; choices?: NoaChoice[]; domain?: NoaDomain; sources?: NoaSource[] },
+  meta?: { agentBrief?: NoaAnswer["agentBrief"]; analytics?: NoaAnalyticsTransport; attention?: NoaAttentionTransport; catchUp?: NoaCatchUpTransport; choices?: NoaChoice[]; domain?: NoaDomain; sources?: NoaSource[] },
 ): NoaMessage {
   return {
     createdAt: Date.now(),
@@ -51,6 +51,7 @@ function createMessage(
       : `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     role,
     text,
+    ...(meta?.agentBrief ? { agentBrief: meta.agentBrief } : {}),
     // Attention structured UI: only ever the server's own already-authorized items for THIS
     // answer - never client-computed, never carried over from a prior message.
     ...(meta?.attention ? { attention: meta.attention } : {}),
@@ -204,7 +205,7 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
         productConfigurationReferenceRef.current = answer.productConfigurationReference;
         setMessages((current) => [
           ...current,
-          createMessage("assistant", answer.text, { analytics: answer.analytics, attention: answer.attention, catchUp: answer.catchUp, choices: answer.choices, domain: answer.domain, sources: answer.sources }),
+          createMessage("assistant", answer.text, { agentBrief: answer.agentBrief, analytics: answer.analytics, attention: answer.attention, catchUp: answer.catchUp, choices: answer.choices, domain: answer.domain, sources: answer.sources }),
         ]);
         dispatch({ type: "RESPONSE_SUCCESS" });
       })

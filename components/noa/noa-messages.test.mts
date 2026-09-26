@@ -41,8 +41,9 @@ test("5. Source badge rendering is unchanged", () => {
   assert.ok(source.includes("<NoaSourceBadges domain={message.domain} sources={message.sources} />"));
 });
 
-test("6. No new message component/rendering path was introduced - still one shared <p> for both roles", () => {
-  assert.equal((source.match(/<p\b/g) ?? []).length, 1);
+test("6. Ordinary prose remains a shared fallback; briefing card is an exclusive branch", () => {
+  assert.equal((source.match(/\{message\.text\}/g) ?? []).length, 1);
+  assert.ok(source.includes(") : hasAttentionCards"));
   assert.ok(!source.includes("react-markdown"));
 });
 

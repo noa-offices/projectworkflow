@@ -38,6 +38,8 @@ import { resolveNoaConversationFollowUp, validateNoaSemanticCompatibility } from
 import type { NoaSemanticIntent, NoaSemanticRequest } from "@/lib/noa/noa-semantic-request";
 import { resolveNoaSemanticPeriod, resolveNoaSemanticSubject } from "@/lib/noa/noa-subject-resolver";
 import { fetchNoaAdminCapability } from "@/lib/noa/noa-admin-capability.server";
+import { tryNoaAgentBrief } from "@/lib/noa/agents/noa-agent-runtime";
+import { executeNoaAgentPlan } from "@/lib/noa/agents/noa-agent-executor.server";
 import { fetchNoaAttentionCapability, type NoaAttentionItem } from "@/lib/noa/noa-attention-capability.server";
 import { fetchNoaClientCapability } from "@/lib/noa/noa-client-capability.server";
 import { fetchNoaInsightsCapability } from "@/lib/noa/noa-insights-capability.server";
@@ -2506,7 +2508,15 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
   const configurationAnswer = await maybeHandleProductConfigurationTurn(request);
   if (configurationAnswer) return configurationAnswer;
 
-  const answer = await runNoaOrchestratorCore(request);
+  const agentAnswer = await tryNoaAgentBrief(request, process.env.NOA_AGENTS_V1 === "true", {
+    validIdentifier: isNoaIdentifierLabel,
+    resolveClient: async (candidate) => {
+      const resolved = await resolveNoaEntityCandidate(candidate);
+      return resolved.domain === "Client" ? resolved.entity.text : null;
+    },
+    execute: executeNoaAgentPlan,
+  });
+  const answer = agentAnswer ?? await runNoaOrchestratorCore(request);
   const incomingConfigurationReference = isNoaProductConfigurationReference(request.productConfigurationReference)
     ? request.productConfigurationReference
     : undefined;

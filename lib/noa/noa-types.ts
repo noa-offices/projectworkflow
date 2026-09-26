@@ -176,6 +176,7 @@ export type NoaAnalyticsTransport = {
 };
 
 export type NoaMessage = {
+  agentBrief?: NoaAgentBriefTransport;
   createdAt: number;
   // Attention structured UI: present only on an assistant Attention answer, and only ever the
   // server's own already-authorized items for THAT answer - never client-computed, never carried
@@ -243,6 +244,7 @@ export type NoaSource = {
 };
 
 export type NoaAnswer = {
+  agentBrief?: NoaAgentBriefTransport;
   // Attention structured UI: present ONLY for a successful Attention answer that actually has
   // findings - the orchestrator populates this from the SAME already-authorized items array the
   // deterministic text was built from, never a client-side reconstruction. Absent for every other
@@ -317,3 +319,11 @@ export type NoaRouteKind = NoaDomain | "context" | "greeting" | "capabilities";
 export type NoaCapabilityResult =
   | { data: unknown; ok: true; sources: NoaSource[] }
   | { message: string; ok: false; reason: "unauthorized" | "not_found" | "ambiguous" };
+
+export type NoaAgentBriefTransport = {
+  title: string;
+  summary: string;
+  sections: Array<{ heading: string; facts: string[] }>;
+  partial: boolean;
+  omissions: string[];
+};

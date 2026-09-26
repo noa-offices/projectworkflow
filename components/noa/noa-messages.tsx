@@ -567,7 +567,20 @@ export function NoaMessages({
             key={message.id}
             className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}
           >
-            {hasAttentionCards && message.attention ? (
+            {message.role === "assistant" && message.agentBrief ? (
+              <section aria-label={message.agentBrief.title} className="w-full min-w-0 max-w-full space-y-3 rounded-2xl border border-zinc-200 bg-white p-3 text-sm [overflow-wrap:anywhere]">
+                <h3 className="font-semibold">{message.agentBrief.title}</h3>
+                {message.agentBrief.partial ? <p className="text-xs text-zinc-500">Partial briefing</p> : null}
+                <p className="text-xs text-zinc-500">{message.agentBrief.summary}</p>
+                {message.agentBrief.sections.map((section, index) => (
+                  <section key={index} className="min-w-0 space-y-1">
+                    <h4 className="font-medium">{section.heading}</h4>
+                    {section.facts.map((fact, factIndex) => <p key={factIndex} className="whitespace-pre-wrap">{fact}</p>)}
+                  </section>
+                ))}
+                {message.agentBrief.omissions.map((note, index) => <p key={index} className="text-xs text-zinc-500">{note}</p>)}
+              </section>
+            ) : hasAttentionCards && message.attention ? (
               <NoaAttentionCards attention={message.attention} />
             ) : hasCatchUpTimeline && message.catchUp ? (
               <NoaCatchUpTimeline catchUp={message.catchUp} />
