@@ -1,5 +1,6 @@
 import "server-only";
 import { withNoaSpokenResponse } from "./noa-spoken-response";
+import { prerouteNoaConversation, normalizeNoaBusinessParaphrase } from "./noa-conversation-prerouter";
 import { buildNoaPreviousFinding, resolveNoaFindingFollowUp, withoutNoaPreviousFinding } from "./noa-finding-reference.server";
 
 import {
@@ -2502,8 +2503,8 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
   }
 }
 
-// PART 15/20: the real public entry point. Configuration start/resume/cancel/start-over is
-// intercepted FIRST and short-circuits entirely (its own reference handling, never touching
+// PART 15/20: the real public entry point. After conversational/finding pre-routing,
+// configuration start/resume/cancel/start-over short-circuits (its own reference handling, never touching
 // runNoaOrchestratorCore's routing at all). Otherwise the existing core pipeline runs completely
 // unchanged, and - only when an active configuration reference came in AND the core's own answer
 // didn't already return one of its own - that reference is re-attached to the outgoing answer, so
@@ -2511,6 +2512,15 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
 // is the ENTIRE passthrough mechanism: no other line in runNoaOrchestratorCore was touched to
 // achieve it.
 export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAnswer> {
+  const conversationTurn = prerouteNoaConversation(request.message);
+  if (conversationTurn.kind !== "business_passthrough") {
+    // Social turns create no reference and do not erase an existing useful one.
+    return withNoaSpokenResponse({ domain: "Help", sources: [], text: conversationTurn.reply,
+      conversationReference: sanitizeNoaConversationReference(request.conversationReference),
+      ...(isNoaProductConfigurationReference(request.productConfigurationReference)
+        ? { productConfigurationReference: request.productConfigurationReference } : {}),
+    });
+  }
   // CFI1 is read-only and must precede guided configuration and agent activation.
   const findingAnswer = resolveNoaFindingFollowUp(request.message, request.conversationReference);
   if (findingAnswer) {
@@ -2522,6 +2532,17 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
   const configurationAnswer = await maybeHandleProductConfigurationTurn(request);
   if (configurationAnswer) return withNoaSpokenResponse(configurationAnswer);
 
+  const classification = classifyNoaRouteWithStrength(request.message, request.context);
+  const paraphrase = normalizeNoaBusinessParaphrase(request.message, classification.strength === "exact" || classification.strength === "anchored");
+  if (paraphrase.kind === "clarify") {
+    return withNoaSpokenResponse({ domain: "Help", sources: [], text: paraphrase.text, choices: paraphrase.choices,
+      conversationReference: sanitizeNoaConversationReference(request.conversationReference),
+      ...(isNoaProductConfigurationReference(request.productConfigurationReference)
+        ? { productConfigurationReference: request.productConfigurationReference } : {}),
+    });
+  }
+  const routedRequest = paraphrase.kind === "canonical" ? { ...request, message: paraphrase.message } : request;
+
   const agentAnswer = await tryNoaAgentBrief(request, process.env.NOA_AGENTS_V1 === "true", {
     validIdentifier: isNoaIdentifierLabel,
     resolveClient: async (candidate) => {
@@ -2530,7 +2551,7 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
     },
     execute: executeNoaAgentPlan,
   });
-  const answer = agentAnswer ?? await runNoaOrchestratorCore(request);
+  const answer = agentAnswer ?? await runNoaOrchestratorCore(routedRequest);
   const incomingConfigurationReference = isNoaProductConfigurationReference(request.productConfigurationReference)
     ? request.productConfigurationReference
     : undefined;

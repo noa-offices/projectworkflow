@@ -593,10 +593,10 @@ export function NoaMessages({
               <NoaAnalyticsCards analytics={message.analytics} />
             ) : (
               <p
-                className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm leading-6 shadow-sm ${
+                className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 ${
                   message.role === "user"
-                    ? "bg-emerald-900 text-white"
-                    : "bg-zinc-100 text-zinc-900"
+                    ? "bg-emerald-900 text-white shadow-sm"
+                    : "border border-zinc-100 bg-zinc-50 text-zinc-900"
                 }`}
               >
                 {message.text}
@@ -646,11 +646,11 @@ export function NoaMessages({
       })}
 
       {!hasUserMessage ? (
-        <div className="flex flex-wrap gap-2 pt-1">
+        <div className="flex flex-wrap gap-1.5 pt-1">
           {QUICK_PROMPTS.map((quickPrompt) => (
             <button
               key={quickPrompt.label}
-              className="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:border-emerald-300 hover:bg-emerald-50"
+              className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-700 transition hover:border-emerald-300 hover:bg-emerald-50 active:scale-95"
               onClick={() => onQuickPrompt(quickPrompt.prompt ?? `${NOA_DRAFT_STARTER_SIGNAL_PREFIX}${quickPrompt.draft ?? ""}`)}
               type="button"
             >

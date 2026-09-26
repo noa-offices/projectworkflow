@@ -164,17 +164,10 @@ export function NoaLauncher({
             <NoaAvatar floatEnabled={floatEnabled} greet={greeted} size="launcher" state={state} />
           )}
         </span>
-        {/* N2A3 PART 6/7/9/17/19: decorative only - pointer-events-none so it can never intercept
-            the drag/click handled above, aria-hidden since the button's own aria-label already
-            carries the count, and it never touches drag/animation state or the avatar itself. */}
-        {badgeLabel ? (
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute -right-0.5 -top-0.5 z-10 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full border-2 border-white bg-amber-400 px-1 text-[10px] font-semibold leading-none text-amber-950 shadow-sm"
-          >
-            {badgeLabel}
-          </span>
-        ) : null}
+        {/* UI Polish: the amber count badge is intentionally gone from the launcher - it read as
+            visually distracting. The count itself is still announced via aria-label above (never
+            removed), and proactive NOA alerts should eventually surface through the existing
+            Notification Center rather than a badge back here. */}
       </button>
     </div>
   );

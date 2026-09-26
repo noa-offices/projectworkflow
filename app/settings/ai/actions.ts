@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { getAiAgentConfig } from "@/lib/ai/agent-registry";
 import { getAiProviderConfig, isApprovedAiModel, listAiProviderConfigs } from "@/lib/ai/provider-config";
 import type { AiProviderId } from "@/lib/ai/types";
@@ -25,14 +24,16 @@ function optionalModel(providerId: AiProviderId, model: string) {
   return model;
 }
 
-export async function saveAiProviderSettings(formData: FormData) {
+async function persistAiProviderSettings(formData: FormData) {
   const { user } = await requireSystemOwner();
   const providerId = value(formData, "provider_id");
   if (!listAiProviderConfigs().some((provider) => provider.id === providerId)) throw new Error("Unknown AI provider.");
   const provider = providerId as AiProviderId;
   const enabled = value(formData, "enabled") === "true";
   const isDefault = value(formData, "is_default") === "true";
+  if (isDefault && !enabled) throw new Error("The default provider must be enabled.");
   const defaultModel = optionalModel(provider, value(formData, "default_model"));
+  if (!defaultModel && provider !== "openai") throw new Error("Select an approved model for this provider.");
   const supabase = await createClient();
 
   if (isDefault) {
@@ -56,15 +57,15 @@ export async function saveAiProviderSettings(formData: FormData) {
       .not("model", "is", null)
       .returns<Array<{ agent_id: string; model: string | null }>>();
     if (inheritedReadError) throw new Error("AI provider settings could not be saved.");
-    await Promise.all((inheritedAgents ?? [])
+    const updates = await Promise.all((inheritedAgents ?? [])
       .filter((agent) => agent.model && !isApprovedAiModel(provider, agent.model))
       .map((agent) => supabase.from("ai_agent_settings").update({ model: null }).eq("agent_id", agent.agent_id)));
+    if (updates.some((result) => result.error)) throw new Error("AI provider settings could not be saved.");
   }
   revalidatePath("/settings/ai");
-  redirect("/settings/ai?message=AI+provider+settings+saved.");
 }
 
-export async function saveAiAgentSettings(formData: FormData) {
+async function persistAiAgentSettings(formData: FormData) {
   const { user } = await requireSystemOwner();
   const agentId = value(formData, "agent_id");
   if (!getAiAgentConfig(agentId)) throw new Error("Unknown AI agent.");
@@ -73,12 +74,13 @@ export async function saveAiAgentSettings(formData: FormData) {
   const supabase = await createClient();
   let effectiveProvider = providerId;
   if (!effectiveProvider && modelRaw) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("ai_provider_settings")
       .select("provider_id")
       .eq("is_default", true)
       .eq("enabled", true)
       .maybeSingle<{ provider_id: AiProviderId }>();
+    if (error) throw new Error("AI agent settings could not be saved.");
     effectiveProvider = data?.provider_id ?? null;
   }
   if (modelRaw && !effectiveProvider) throw new Error("Select a global provider before choosing an inherited AI model.");
@@ -93,5 +95,23 @@ export async function saveAiAgentSettings(formData: FormData) {
   }, { onConflict: "agent_id" });
   if (error) throw new Error("AI agent settings could not be saved.");
   revalidatePath("/settings/ai");
-  redirect("/settings/ai?message=AI+agent+settings+saved.");
+}
+
+// Expected failures are returned as bounded UI state, never raw provider/DB errors.
+async function save(action: (data: FormData) => Promise<void>, data: FormData) {
+  try {
+    await action(data);
+    return { ok: true as const, message: "Saved" };
+  } catch (error) {
+    const safe = ["Unknown AI provider.", "Unsupported AI model.", "Unknown AI agent.", "The default provider must be enabled.", "Select an approved model for this provider.", "Select a global provider before choosing an inherited AI model."];
+    return { ok: false as const, message: error instanceof Error && safe.includes(error.message) ? error.message : "Could not save AI settings. Check your access and try again." };
+  }
+}
+
+export async function saveAiProviderSettings(data: FormData) {
+  return save(persistAiProviderSettings, data);
+}
+
+export async function saveAiAgentSettings(data: FormData) {
+  return save(persistAiAgentSettings, data);
 }

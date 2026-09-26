@@ -68,24 +68,20 @@ test("7/8/9. attentionBadgeLabel renders nothing for 0, the number for 1-9, and 
   assert.ok(launcher.includes('return count > 9 ? "9+" : String(count);'));
 });
 
-// 10. badge is pointer-events-none
-test("10. the badge span is pointer-events-none and aria-hidden", () => {
-  const badgeStart = launcher.indexOf("badgeLabel ? (");
-  const badgeBlock = launcher.slice(badgeStart, launcher.indexOf(") : null}", badgeStart));
-  assert.ok(badgeBlock.includes('aria-hidden="true"'));
-  assert.ok(badgeBlock.includes("pointer-events-none"));
+// 10. UI Polish: the visual badge is presentation-only and has been removed from the launcher -
+// the count is still announced for screen readers via the button's own aria-label (never deleted,
+// never touching the Notification Center or the attention backend).
+test("10. the visual badge span is gone; the count is still announced via aria-label", () => {
+  assert.ok(!/bg-amber-400/.test(launcher), "the amber count badge span should no longer render");
+  assert.ok(launcher.includes("const attentionAriaSuffix = badgeLabel"), "the count is still announced for screen readers");
 });
 
-// 11. badge does not replace launcher click/drag target
-test("11. the launcher button's click/drag handlers are unchanged - the badge is an additional sibling span, not a wrapper", () => {
+// 11. launcher click/drag target is unaffected by the badge removal
+test("11. the launcher button's click/drag handlers are unchanged after removing the visual badge", () => {
   assert.ok(launcher.includes("onClick={() => {"));
   assert.ok(launcher.includes("onPointerDown={(event) => {"));
   assert.ok(launcher.includes("onPointerMove={(event) => {"));
   assert.ok(launcher.includes("onPointerUp={(event) => {"));
-  // The badge span comes AFTER the avatar span, inside the same <button>, never wrapping it.
-  const avatarSpanEnd = launcher.indexOf("</span>", launcher.indexOf("<NoaAvatar floatEnabled={floatEnabled}"));
-  const badgeIndex = launcher.indexOf("badgeLabel ? (");
-  assert.ok(avatarSpanEnd > -1 && badgeIndex > avatarSpanEnd);
 });
 
 // 12. Needs attention starter exists

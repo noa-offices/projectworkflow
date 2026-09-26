@@ -12,8 +12,8 @@ export function NoaHeader({
   state: NoaVisualState;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-zinc-200 bg-gradient-to-b from-zinc-50/80 to-white px-4 py-3">
-      <div className="flex items-center gap-3">
+    <div className="flex items-center justify-between gap-3 border-b border-zinc-200 bg-gradient-to-b from-zinc-50/80 to-white px-4 py-2.5">
+      <div className="flex items-center gap-2.5">
         <span className="relative inline-flex">
           <NoaAvatar size="header" state={state} />
           {/* Small "ready" status dot - a subtle, premium-assistant touch. Decorative only
@@ -26,14 +26,14 @@ export function NoaHeader({
             }`}
           />
         </span>
-        <div>
+        <div className="leading-tight">
           <p className="text-sm font-semibold leading-tight text-zinc-950">NOA</p>
-          <p className="text-xs leading-tight text-zinc-500">ProjectWorkflow Assistant</p>
+          <p className="text-xs leading-tight text-zinc-400">ProjectWorkflow Assistant</p>
         </div>
       </div>
       <button
         aria-label="Close NOA"
-        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 active:scale-95"
+        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 active:scale-95"
         onClick={onClose}
         type="button"
       >

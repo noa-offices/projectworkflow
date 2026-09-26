@@ -16,6 +16,15 @@ export function normalizeNoaVoiceTranscript(text: string): string {
     .replace(/\bInterstool(?=\s+chairs?\b)/gi, "Interstuhl")
     .replace(/(\bchairs?\s+from\s+)Interstool\b/gi, "$1Interstuhl");
 }
+
+export function isUnusableNoaVoiceTranscript(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/[’']/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  if (!normalized || /^(?:um|uh|erm|hmm)(?: (?:um|uh|erm|hmm))+$/.test(normalized)) return true;
+  // Closed signatures of our static transcription context, including partial echoes.
+  // Never a fuzzy score or a filter on unfamiliar business/product vocabulary.
+  return /\bassistants name is noa\b|\bspelled n o a\b|\bwhen addressing the assistant\b|\btranscribe the name as noa not noah\b|\bpreserve noah when referring to a person\b|\bnoa projectworkflow las las mobili interstuhl\b/.test(normalized)
+    || /^this is projectworkflow(?:$| the assistants?\b)/.test(normalized);
+}
 export interface RealtimeTransport {
   connect(signal: AbortSignal, receive: (event: VoiceEvent) => void): Promise<void>;
   close(): void;
@@ -87,13 +96,15 @@ export function createNoaRealtimeVoice(transport: RealtimeTransport, player: Str
       if (id !== currentItem || activeTurn !== turn || completed.has(id)) return;
       if (event.type === "input_audio_buffer.speech_stopped") { update("transcribing"); return; }
       if (event.type === "conversation.item.input_audio_transcription.delta") {
-        if (typeof event.delta === "string") update("transcribing", (snapshot.transcript + event.delta).slice(0, 2000));
+        // Final-only display: an interim fragment can become a prompt echo in a later
+        // delta. Never expose unvalidated provider text, even briefly, in the drawer.
+        if (typeof event.delta === "string") update("transcribing", "");
         return;
       }
       if (event.type !== "conversation.item.input_audio_transcription.completed") return;
       completed.add(id);
       const text = typeof event.transcript === "string" ? normalizeNoaVoiceTranscript(event.transcript) : "";
-      if (!text) { update("listening", ""); return; }
+      if (isUnusableNoaVoiceTranscript(text)) { update("listening", ""); return; }
       if (text.length > 2000) { stop("error"); return; }
       touch(); update("thinking", text);
       // Keep NOA requests ordered: each uses the references returned by its predecessor.

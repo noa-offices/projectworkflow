@@ -486,7 +486,7 @@ test("37. conversion-rate refusal (and on-hold refusal) remain deterministic", (
 
 test("38. Product Configuration routing remains first (intercepted before the core pipeline)", () => {
   const wrapper = orchestrator.slice(orchestrator.indexOf("export async function runNoaOrchestrator("));
-  assert.ok(wrapper.indexOf("await maybeHandleProductConfigurationTurn(request);") < wrapper.indexOf("await runNoaOrchestratorCore(request);"));
+  assert.ok(wrapper.indexOf("await maybeHandleProductConfigurationTurn(request);") < wrapper.indexOf("await runNoaOrchestratorCore(routedRequest);"));
   const configurationTurn = orchestrator.slice(
     orchestrator.indexOf("async function maybeHandleProductConfigurationTurn("),
     orchestrator.indexOf("// I3: hybrid semantic V2 runtime"),

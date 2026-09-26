@@ -64,7 +64,7 @@ test("fixed server integration and mutually exclusive wrapping UI", () => {
   const source = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
   assert.ok(source.includes('process.env.NOA_AGENTS_V1 === "true"'));
   assert.ok(source.includes("execute: executeNoaAgentPlan"));
-  assert.ok(source.includes("agentAnswer ?? await runNoaOrchestratorCore(request)"));
+  assert.ok(source.includes("agentAnswer ?? await runNoaOrchestratorCore(routedRequest)"));
   const runtime = readFileSync("lib/noa/agents/noa-agent-runtime.ts", "utf8");
   assert.doesNotMatch(runtime, /supabase|runAiProvider|setInterval|\.from\(/);
   const ui = readFileSync("components/noa/noa-messages.tsx", "utf8");
