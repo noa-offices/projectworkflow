@@ -108,7 +108,10 @@ test("CFI2.2 actual shared orchestrator clarifies without capability calls and o
     tryNoaAgentBrief: () => null, runNoaOrchestratorCore: (r: any) => { seen.push(r); return { domain: "Help", text: "Existing result" }; } });
   const reference = { domain: "Project", intent: "project_lookup", entities: [{ type: "project_file", label: "CO-0003-001" }] };
   const answer = await run({ message: "What's today's status?", context: page, conversationReference: reference });
-  assert.equal(answer.choices.length, 4); assert.ok(answer.voiceText); assert.deepEqual(answer.conversationReference, reference); assert.equal(seen.length, 0);
+  assert.equal(answer.choices.length, 4); assert.ok(answer.voiceText); assert.equal(seen.length, 0);
+  // CFI2.5b: the daily-status clarify now creates its OWN fresh reference (so a following typed/
+  // spoken chip label can be resolved) instead of preserving whatever reference came in.
+  assert.deepEqual(answer.conversationReference, { domain: "Help", intent: "daily_status_clarification" });
   const original = { message: "Anything important today?", context: page, conversationReference: reference };
   await run(original);
   assert.equal(original.message, "Anything important today?"); assert.equal(seen[0].message, "what needs my attention"); assert.equal(seen[0].conversationReference, reference);
@@ -116,6 +119,48 @@ test("CFI2.2 actual shared orchestrator clarifies without capability calls and o
     const next = natural(choice.value);
     assert.ok(next.kind === "clarify" || classifyNoaRouteWithStrength(next.kind === "canonical" ? next.message : choice.value, page).route !== "Help");
   }
+});
+
+test("CFI2.5b: typing/speaking a daily-status chip label reaches the exact same route as clicking it, only right after that clarification", async () => {
+  const seen: any[] = [];
+  const run = orchestrator({ resolveNoaFindingFollowUp: () => undefined, maybeHandleProductConfigurationTurn: () => null,
+    tryNoaAgentBrief: () => null, runNoaOrchestratorCore: (r: any) => { seen.push(r); return { domain: "Help", text: "Existing result" }; } });
+  const dailyStatusReference = { domain: "Help", intent: "daily_status_clarification" };
+  // Expected route is whatever clicking the SAME chip already reaches - "My activity today." is
+  // already anchored to UserActivity by the existing classifier before paraphrase even runs (the
+  // exact "caller protects stronger routes" rule CFI2.2 already established), so it correctly
+  // reaches UserActivity even though this specific rewrite never fires for it.
+  const mappings: Array<[string, string]> = [
+    ["Attention items.", "Attention"],
+    ["Changes today.", "UserActivity"],
+    ["My activity today.", "UserActivity"],
+    ["Project status.", "Project"],
+    ["Changes.", "UserActivity"],
+  ];
+  for (const [typed, expectedRoute] of mappings) {
+    seen.length = 0;
+    const answer = await run({ message: typed, context: page, conversationReference: dailyStatusReference });
+    assert.equal(seen.length, 1, typed);
+    assert.equal(classifyNoaRouteWithStrength(seen[0].message, page).route, expectedRoute, typed);
+    assert.equal(answer.text, "Existing result", typed);
+  }
+});
+
+test("CFI2.5b: the same bare option words never invent daily-status routing without that exact preceding clarification", async () => {
+  const seen: any[] = [];
+  const run = orchestrator({ resolveNoaFindingFollowUp: () => undefined, maybeHandleProductConfigurationTurn: () => null,
+    tryNoaAgentBrief: () => null, runNoaOrchestratorCore: (r: any) => { seen.push(r); return { domain: "Help", text: "Existing result" }; } });
+  for (const message of ["Changes.", "My activity."]) {
+    seen.length = 0;
+    await run({ message, context: page });
+    // "Changes." alone stays exactly what it is - never rewritten to "what changed today".
+    assert.ok(seen.length === 0 || seen[0].message === message, message);
+  }
+  // A stale, unrelated reference (e.g. still-active Project lookup) must not be mistaken for the
+  // daily-status marker either - only the exact domain+intent pair gates this.
+  seen.length = 0;
+  await run({ message: "Changes.", context: page, conversationReference: { domain: "Project", intent: "project_lookup" } });
+  assert.ok(seen.length === 0 || seen[0].message === "Changes.");
 });
 
 test("business reaches existing routing with the exact original request; Agent Brief can still own the turn", async () => {

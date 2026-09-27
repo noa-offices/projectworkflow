@@ -2546,10 +2546,18 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
   // the exact stored marker from the ambiguous Project clarification above - never on domain alone.
   const priorProjectReferenceClarification = sanitizedIncomingReference?.domain === "Project"
     && sanitizedIncomingReference.intent === "project_reference_clarification";
-  const paraphrase = normalizeNoaBusinessParaphrase(request.message, classification.strength === "exact" || classification.strength === "anchored", priorProjectReferenceClarification);
+  // CFI2.5b: same closed-marker gating for the daily-status clarification's own four chip labels.
+  const priorDailyStatusClarification = sanitizedIncomingReference?.domain === "Help"
+    && sanitizedIncomingReference.intent === "daily_status_clarification";
+  const paraphrase = normalizeNoaBusinessParaphrase(request.message, classification.strength === "exact" || classification.strength === "anchored", priorProjectReferenceClarification, priorDailyStatusClarification);
   if (paraphrase.kind === "clarify") {
     return withNoaSpokenResponse({ domain: "Help", sources: [], text: paraphrase.text, choices: paraphrase.choices,
-      conversationReference: sanitizedIncomingReference,
+      // CFI2.5b: the daily-status clarify is the ONE clarify() that creates its own fresh reference
+      // (the marker the block above reads back next turn) - every other existing clarify() here
+      // keeps its prior behavior of just preserving whatever reference already existed.
+      conversationReference: paraphrase.contextTag === "daily_status"
+        ? { domain: "Help", intent: "daily_status_clarification" }
+        : sanitizedIncomingReference,
       ...(isNoaProductConfigurationReference(request.productConfigurationReference)
         ? { productConfigurationReference: request.productConfigurationReference } : {}),
     });

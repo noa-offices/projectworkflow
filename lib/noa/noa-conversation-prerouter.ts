@@ -8,7 +8,11 @@ export type NoaConversationTurn = { kind: Exclude<NoaConversationKind, "business
 export function prerouteNoaConversation(message: string): NoaConversationTurn {
   const normalized = message.toLowerCase().replace(/[’']/g, "").replace(/[.,!?;:…]+/g, " ").replace(/\s+/g, " ").trim();
   const text = normalized.replace(/^(?:hello|hi|hey) noa\s+/, "");
-  if (/^(?:(?:hello|hi|hey)(?: there| noa)?|good morning|good afternoon|good evening|bonjour)$/.test(normalized)) {
+  // A typed "Hey Noah"/"Hello, Noah" is still a plain greeting - transcription/spelling drift on
+  // the assistant's own name, never a reference to a person named Noah (this only matches when
+  // the ENTIRE message is just the greeting + name, so "ask Noah about the quotation" still falls
+  // through to business_passthrough untouched).
+  if (/^(?:(?:hello|hi|hey)(?: there| noa| noah)?|good morning|good afternoon|good evening|bonjour)$/.test(normalized)) {
     return { kind: "greeting", reply: normalized === "bonjour" ? "Bonjour ! Comment puis-je vous aider ?" : "Hello! How can I help?" };
   }
   if (/^(?:who are you|what are you|tell me about yourself|what can you do|who is noa)$/.test(text)) {
@@ -29,23 +33,42 @@ export function prerouteNoaConversation(message: string): NoaConversationTurn {
 }
 
 export type NoaBusinessParaphrase = { kind: "passthrough" } | { kind: "canonical"; message: string }
-  | { kind: "clarify"; text: string; choices: NoaChoice[] };
+  | { kind: "clarify"; text: string; choices: NoaChoice[]; contextTag?: "daily_status" };
+
+// CFI2.5b: the SAME four values the daily-status chips themselves already send - typing/speaking a
+// chip's visible label must reach the exact same route as clicking it, never a second definition.
+const DAILY_STATUS_OPTIONS = {
+  attention: "what needs my attention",
+  changes: "what changed today",
+  my_activity: "show my activity today",
+  project_status: "How are our projects doing?",
+} as const;
 
 // CFI2.2: closed whole-turn aliases only. No substring matching, entity extraction,
 // new calculations, or interpretation of filters. The caller protects stronger routes.
-export function normalizeNoaBusinessParaphrase(message: string, protectedMeaning = false, priorProjectReferenceClarification = false): NoaBusinessParaphrase {
+export function normalizeNoaBusinessParaphrase(message: string, protectedMeaning = false, priorProjectReferenceClarification = false, priorDailyStatusClarification = false): NoaBusinessParaphrase {
   if (protectedMeaning) return { kind: "passthrough" };
   const text = message.toLowerCase().replace(/[’']/g, "").replace(/[.!?]+$/, "").replace(/\s+/g, " ").trim();
   const canonical = (message: string): NoaBusinessParaphrase => ({ kind: "canonical", message });
-  const clarify = (text: string, choices: Array<[string, string]>): NoaBusinessParaphrase => ({ kind: "clarify", text, choices: choices.map(([label, value]) => ({ label, value })) });
+  const clarify = (text: string, choices: Array<[string, string]>, contextTag?: "daily_status"): NoaBusinessParaphrase => ({ kind: "clarify", text, choices: choices.map(([label, value]) => ({ label, value })), ...(contextTag ? { contextTag } : {}) });
   // CFI2.4: only continues an IMMEDIATELY preceding "Please specify the Project File number or
   // reference." clarification (the caller gates this on that exact stored marker) - never fires
   // for these same narrow phrases outside that context, so nothing is ever invented.
   if (priorProjectReferenceClarification && /^(?:give me the references?|show me the options|which projects|list them|what are the references?)$/.test(text)) {
     return canonical("show active project files");
   }
+  // CFI2.5b: only continues an IMMEDIATELY preceding daily-status clarification (the caller gates
+  // this on that exact stored marker) - these are deliberately narrow, closed aliases for the four
+  // chip labels themselves, never a global redefinition of "Changes"/"Projects" outside this
+  // context (see the ungated identical bare words falling through to normal routing below).
+  if (priorDailyStatusClarification) {
+    if (/^(?:attention items|attention|what needs attention)$/.test(text)) return canonical(DAILY_STATUS_OPTIONS.attention);
+    if (/^(?:changes today|todays changes|what changed today|changes)$/.test(text)) return canonical(DAILY_STATUS_OPTIONS.changes);
+    if (/^(?:my activity today|my activity|todays activity|what did i do today)$/.test(text)) return canonical(DAILY_STATUS_OPTIONS.my_activity);
+    if (/^(?:project status|active projects|projects|show project status)$/.test(text)) return canonical(DAILY_STATUS_OPTIONS.project_status);
+  }
   if (/^(?:whats|what is|give me) todays status$|^how are things today$|^give me an update for today$|^whats (?:going on|happening) today$|^anything i should know today$/.test(text)) {
-    return clarify("What would you like to check?", [["Attention items", "what needs my attention"], ["Changes today", "what changed today"], ["My activity today", "show my activity today"], ["Project status", "How are our projects doing?"]]);
+    return clarify("What would you like to check?", [["Attention items", DAILY_STATUS_OPTIONS.attention], ["Changes today", DAILY_STATUS_OPTIONS.changes], ["My activity today", DAILY_STATUS_OPTIONS.my_activity], ["Project status", DAILY_STATUS_OPTIONS.project_status]], "daily_status");
   }
   if (/^(?:anything important today|anything i need to deal with|what do i need to deal with|what should i look at today|is there anything i should check|anything urgent|what needs checking|what needs my attention today)$/.test(text)) return canonical("what needs my attention");
   if (/^(?:whats changed today|what happened today|whats been happening today|any updates today|catch me up on today|whats going on with updates today)$/.test(text)) return canonical("what changed today");

@@ -67,6 +67,94 @@ async function boundedJson(response: Response, limit: number): Promise<unknown> 
 }
 function object(value: unknown): Record<string, unknown> { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }
 
+// V4.2c: safe media-type parsing (RFC 2045-style "type/subtype; param=value; ..."), never a blind
+// string strip - whitespace around ";"/"=" is tolerated, the media type is compared
+// case-insensitively, and an unparseable rate/channels parameter makes the whole mime invalid
+// rather than being silently ignored.
+function parseGeminiAudioMimeType(value: unknown): { mediaType: string; rate: number | null; channels: number | null } | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const segments = value.split(";").map((segment) => segment.trim()).filter(Boolean);
+  const mediaType = segments[0]?.toLowerCase();
+  if (!mediaType) return null;
+  let rate: number | null = null;
+  let channels: number | null = null;
+  for (const segment of segments.slice(1)) {
+    const eq = segment.indexOf("=");
+    if (eq === -1) continue;
+    const key = segment.slice(0, eq).trim().toLowerCase();
+    const raw = segment.slice(eq + 1).trim();
+    if (key === "rate") { if (!/^\d+$/.test(raw)) return null; rate = Number(raw); }
+    else if (key === "channels") { if (!/^\d+$/.test(raw)) return null; channels = Number(raw); }
+  }
+  return { mediaType, rate, channels };
+}
+
+// V4.2 Diagnostics: read-only, best-effort observation of ONE live Gemini TTS round trip - a
+// separate response.clone() is read here so this can NEVER change what the real classify()/
+// decode() calls below see or do, and any failure in here is swallowed so diagnostics can never
+// themselves cause (or mask) a real failure. Logs only the bounded, non-secret shape fields this
+// diagnostics pass was asked to capture - never the request/response body, transcript, voiceText,
+// credentials, or full provider payload. Temporary: remove once the real root cause is confirmed.
+function redactedGeminiErrorMessage(value: unknown, key: string | undefined): string | null {
+  if (typeof value !== "string") return null;
+  let safe = value;
+  if (key) safe = safe.split(key).join("[REDACTED]");
+  return safe
+    .replace(/\bBearer\s+\S+/gi, "Bearer [REDACTED]")
+    .replace(/AIza[\w-]{20,}/g, "[REDACTED]")
+    .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, "[REDACTED]")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .slice(0, 300);
+}
+async function logGeminiVoiceDiagnostics(response: Response, endpoint: string, key: string | undefined): Promise<void> {
+  try {
+    const requestMode = endpoint.includes(":generateContent") ? "generateContent" : endpoint.includes("/interactions") ? "interactions" : "unknown";
+    const body = object(await boundedJson(response, 6_000_000));
+    const steps = Array.isArray(body.steps) ? body.steps : [];
+    const candidates = Array.isArray(body.candidates) ? body.candidates : [];
+    const contentItems = steps.flatMap((step) => { const content = object(step).content; return Array.isArray(content) ? content : []; }).map(object);
+    const audioItems = contentItems.filter((item) => typeof item.data === "string");
+    const audioPart = audioItems[0];
+    let decodedByteLength: number | null = null;
+    let firstFourBytesHex: string | null = null;
+    if (audioPart && typeof audioPart.data === "string") {
+      try {
+        const bytes = Buffer.from(audioPart.data, "base64");
+        decodedByteLength = bytes.length;
+        firstFourBytesHex = Array.from(bytes.subarray(0, 4)).map((byte) => byte.toString(16).padStart(2, "0")).join(" ");
+      } catch { /* leave nulls - decode itself is diagnostic-only here */ }
+    }
+    const errorField = object(body.error);
+    const hasError = Object.keys(errorField).length > 0;
+    console.log({
+      diagnostic: "noa_voice_gemini_tts",
+      provider: "gemini",
+      endpointPath: new URL(endpoint).pathname,
+      model: NOA_VOICE_PROFILES.gemini.model,
+      requestMode,
+      requestedMimeType: "audio/l16",
+      requestedSampleRate: 24000,
+      httpStatus: response.status,
+      responseContentType: response.headers.get("content-type"),
+      responseOk: response.ok,
+      topLevelKeys: Object.keys(body),
+      ...(hasError ? {
+        errorCode: typeof errorField.code === "string" || typeof errorField.code === "number" ? errorField.code : null,
+        errorStatusOrType: (typeof errorField.status === "string" ? errorField.status : typeof errorField.type === "string" ? errorField.type : null),
+        errorMessage: redactedGeminiErrorMessage(errorField.message, key),
+      } : {}),
+      stepsCount: steps.length,
+      candidatesCount: candidates.length,
+      audioItemsFound: audioItems.length,
+      parsedAudioMimeType: typeof audioPart?.mime_type === "string" ? audioPart.mime_type : null,
+      parsedSampleRate: typeof audioPart?.sample_rate === "number" ? audioPart.sample_rate : null,
+      base64Length: typeof audioPart?.data === "string" ? audioPart.data.length : null,
+      decodedByteLength,
+      firstFourBytesHex,
+    });
+  } catch { /* diagnostics must never break or alter the real request path */ }
+}
+
 // Output contract: signed 16-bit LE PCM, 24 kHz, mono, maximum 90 seconds.
 export interface NoaVoiceProvider {
   id: NoaVoiceProviderId;
@@ -87,39 +175,47 @@ const adapters = {
     body: (text: string) => ({ model: NOA_VOICE_PROFILES.openai.model, voice: NOA_VOICE_PROFILES.openai.voice, input: text, instructions: NOA_VOICE_STYLE, response_format: "pcm" }),
     decode: async (response: Response) => response.body!,
   },
-  // V4.2: the previous "v1beta/interactions" endpoint and steps[]/annotations/generation_config
-  // request+response shape do not exist in the documented API (see the doc link on
-  // NOA_VOICE_PROFILES.gemini in ./noa-voice-provider) - every real call silently produced no
-  // audio.steps to parse, so decode() always threw "invalid_audio" (never a failover code, so
-  // nothing ever recovered - exactly the reported symptom). Corrected to the real, documented
-  // generateContent contract: https://ai.google.dev/gemini-api/docs/speech-generation.
+  // V4.2b: verified directly against the live docs at https://ai.google.dev/gemini-api/docs/
+  // speech-generation (fetched during this change, not assumed) - the Interactions API is the
+  // real, documented TTS endpoint (the prior "generateContent" migration was itself the mistake:
+  // that endpoint does not document response_format/speech_metadata for TTS at all). Unary
+  // requests there default to a WAV-wrapped response; response_format.mime_type explicitly
+  // requests the documented headerless "audio/l16" form instead, and per-part speech_metadata
+  // (nested in content[].annotations[], not a bare top-level field) carries the delivery style.
   gemini: {
     credential: () => process.env.GEMINI_API_KEY?.trim(),
     health: () => checkProviderHealth("gemini", null),
     classify: (status: number, body: unknown) => classifyProviderFailure("gemini", status, body),
-    endpoint: `https://generativelanguage.googleapis.com/v1beta/models/${NOA_VOICE_PROFILES.gemini.model}:generateContent`,
+    endpoint: "https://generativelanguage.googleapis.com/v1beta/interactions",
     headers: (key: string): Record<string, string> => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
     body: (text: string) => ({
-      contents: [{ parts: [{ text }] }],
-      systemInstruction: { parts: [{ text: NOA_VOICE_STYLE }] },
-      generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: NOA_VOICE_PROFILES.gemini.voice } } } },
+      model: NOA_VOICE_PROFILES.gemini.model,
+      input: [{ type: "user_input", content: [{ type: "text", text, annotations: [{ type: "speech_metadata", style: NOA_VOICE_STYLE }] }] }],
+      response_format: { type: "audio", mime_type: "audio/l16", sample_rate: 24000 },
+      generation_config: { speech_config: [{ voice: NOA_VOICE_PROFILES.gemini.voice }] },
     }),
-    // Documented output is already headerless raw PCM (mimeType "audio/L16;codec=pcm;rate=24000")
-    // in candidates[0].content.parts[].inlineData.data - one base64 field, decoded exactly once,
-    // never a WAV container to parse or strip.
+    // Documented response path is steps[].content[].data (base64) - decoded exactly once, and
+    // only ever accepted when the documented mime_type/sample_rate confirm headerless L16 24k PCM
+    // (a WAV response - mime_type "audio/wav" - fails this same gate and is never stripped/guessed).
     decode: async (response: Response): Promise<ReadableStream<Uint8Array>> => {
       const body = object(await boundedJson(response, 6_000_000));
-      const candidates = Array.isArray(body.candidates) ? body.candidates : [];
-      const parts = candidates.flatMap((candidate) => {
-        const contentParts = object(object(candidate).content).parts;
-        return Array.isArray(contentParts) ? contentParts : [];
-      });
-      const inline = parts.map((part) => object(object(part).inlineData)).find((data) => typeof data.mimeType === "string" && typeof data.data === "string");
-      if (!inline) throw new NoaVoiceError("invalid_audio");
-      const mimeType = inline.mimeType as string;
-      const rate = /(?:^|;)\s*rate=(\d+)/i.exec(mimeType)?.[1];
-      if (!/^audio\/l16(?:;|$)/i.test(mimeType) || rate !== "24000") throw new NoaVoiceError("invalid_audio");
-      const data = inline.data as string;
+      const steps = Array.isArray(body.steps) ? body.steps : [];
+      const contentItems = steps.flatMap((step) => { const content = object(step).content; return Array.isArray(content) ? content : []; }).map(object);
+      // V4.2c: the proven live response parameterizes the media type (e.g.
+      // "audio/l16; rate=24000; channels=1") - a strict `=== "audio/l16"` equality check rejected
+      // it outright. Parsed safely (never a blind string strip): media type is the part before the
+      // first ";", each remaining "key=value" parameter is trimmed/lowercased before comparing.
+      const audioPart = contentItems.find((item) => parseGeminiAudioMimeType(item.mime_type)?.mediaType === "audio/l16" && typeof item.data === "string");
+      if (!audioPart) throw new NoaVoiceError("invalid_audio");
+      const parsedMime = parseGeminiAudioMimeType(audioPart.mime_type)!;
+      const fieldSampleRate = typeof audioPart.sample_rate === "number" ? audioPart.sample_rate : null;
+      // Sample rate may come from the documented response field OR the mime "rate" parameter -
+      // whichever is present must resolve to exactly 24000; a malformed rate/channels parameter
+      // parses as an invalid mime type entirely (never silently ignored).
+      const resolvedSampleRate = fieldSampleRate ?? parsedMime.rate;
+      if (resolvedSampleRate !== null && resolvedSampleRate !== 24000) throw new NoaVoiceError("invalid_audio");
+      if (parsedMime.channels !== null && parsedMime.channels !== 1) throw new NoaVoiceError("invalid_audio");
+      const data = audioPart.data as string;
       if (!data.length || data.length % 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) throw new NoaVoiceError("invalid_audio");
       const bytes = new Uint8Array(Buffer.from(data, "base64"));
       if (!bytes.length || bytes.length % 2 || bytes.length > 24_000 * 2 * 90) throw new NoaVoiceError("invalid_audio");
@@ -138,6 +234,8 @@ async function requestAudio(provider: NoaVoiceProviderId, text: string, signal: 
       method: "POST", signal: combined, redirect: "error", cache: "no-store",
       headers: adapter.headers(key), body: JSON.stringify(adapter.body(text)),
     });
+    // V4.2 Diagnostics: reads a CLONE, so this can never change what classify()/decode() below see.
+    if (provider === "gemini") await logGeminiVoiceDiagnostics(response.clone(), adapter.endpoint, key);
     if (!response.ok) {
       const body = await boundedJson(response, 16_384).catch(() => null);
       const code = adapter.classify(response.status, body);
@@ -146,10 +244,9 @@ async function requestAudio(provider: NoaVoiceProviderId, text: string, signal: 
     if (!response.body) throw new NoaVoiceError("provider_unavailable");
     return await adapters[provider].decode(response);
   } catch (error) {
-    if (signal.aborted) throw new NoaVoiceError("cancelled");
-    if (combined.aborted) throw new NoaVoiceError("timeout");
-    if (error instanceof NoaVoiceError) throw error;
-    throw new NoaVoiceError("provider_unavailable");
+    const finalCode: NoaVoiceFailure = signal.aborted ? "cancelled" : combined.aborted ? "timeout" : error instanceof NoaVoiceError ? error.code : "provider_unavailable";
+    if (provider === "gemini") console.log({ diagnostic: "noa_voice_gemini_tts_final_error", provider: "gemini", finalErrorCode: finalCode });
+    throw new NoaVoiceError(finalCode);
   }
 }
 export const NOA_VOICE_PROVIDERS: Readonly<Record<NoaVoiceProviderId, NoaVoiceProvider>> = Object.fromEntries(

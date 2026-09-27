@@ -15,7 +15,7 @@ const health=compile('lib/ai/provider-health.server.ts',{'server-only':{},'./pro
 const available={authStatus:'valid',reachability:'available',quotaStatus:'unknown'};
 function server(options:{env?:any;fetch?:any;health?:any;timeout?:boolean}={}) {
  const calls:any[]=[]; const env=options.env??{OPENAI_API_KEY:'test-openai-secret',GEMINI_API_KEY:'test-gemini-secret'};
- const api=compile('lib/noa/noa-voice-provider.server.ts',{'server-only':{},'./noa-voice-provider':contract,'@/lib/ai/provider-health.server':{...health,checkProviderHealth:options.health??(async()=>available)}},{process:{env},fetch:options.fetch??(async(url:string,init:any)=>{calls.push({url,init,body:JSON.parse(init.body)});return url.includes('openai')?new Response(new Uint8Array([0,64,0,128])):Response.json({candidates:[{content:{parts:[{inlineData:{mimeType:'audio/L16;codec=pcm;rate=24000',data:'AEAAgA=='}}]}}]});}),...(options.timeout?{AbortSignal:{any:AbortSignal.any.bind(AbortSignal),timeout:()=>AbortSignal.abort(new DOMException('timeout','TimeoutError'))}}:{})});
+ const api=compile('lib/noa/noa-voice-provider.server.ts',{'server-only':{},'./noa-voice-provider':contract,'@/lib/ai/provider-health.server':{...health,checkProviderHealth:options.health??(async()=>available)}},{process:{env},fetch:options.fetch??(async(url:string,init:any)=>{calls.push({url,init,body:JSON.parse(init.body)});return url.includes('openai')?new Response(new Uint8Array([0,64,0,128])):Response.json({steps:[{content:[{mime_type:'audio/l16',sample_rate:24000,data:'AEAAgA=='}]}]});}),...(options.timeout?{AbortSignal:{any:AbortSignal.any.bind(AbortSignal),timeout:()=>AbortSignal.abort(new DOMException('timeout','TimeoutError'))}}:{})});
  return {...api,calls,env};
 }
 const signal=()=>new AbortController().signal;
@@ -29,25 +29,54 @@ test('OpenAI streams exact authoritative text, marin, PCM, style and abort signa
  assert.deepEqual([...new Uint8Array(await new Response(stream).arrayBuffer())],[0,64,0,128]);
  const {body,init}=h.calls[0];assert.equal(body.input,'Exact NOA words.');assert.equal(body.voice,'marin');assert.equal(body.response_format,'pcm');assert.equal(body.instructions,contract.NOA_VOICE_STYLE);assert.ok(init.signal);assert.equal(init.redirect,'error');
 });
-test('Gemini uses the documented generateContent contract, Sulafat, and decodes headerless L16 PCM exactly once',async()=>{
+// V4.2b: this exact request shape was verified against the live docs at
+// https://ai.google.dev/gemini-api/docs/speech-generation during this change (not assumed) -
+// the Interactions API endpoint, response_format.mime_type="audio/l16" (explicitly requesting
+// headerless PCM instead of the WAV a unary request defaults to), and speech_metadata nested in
+// content[].annotations[] rather than a bare top-level field.
+test('Gemini uses the documented Interactions API contract, Sulafat, explicit audio/l16, and decodes steps[].content[].data exactly once',async()=>{
  const h=server();const stream=await h.NOA_VOICE_PROVIDERS.gemini.synthesize('Exact NOA words.',signal());assert.deepEqual([...new Uint8Array(await new Response(stream).arrayBuffer())],[0,64,0,128]);
- const {body,url,init}=h.calls[0];assert.equal(url,'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-lite-tts:generateContent');assert.equal(init.headers['x-goog-api-key'],'test-gemini-secret');
- assert.equal(body.contents[0].parts[0].text,'Exact NOA words.');assert.equal(body.systemInstruction.parts[0].text,contract.NOA_VOICE_STYLE);
- assert.deepEqual(body.generationConfig.responseModalities,['AUDIO']);assert.equal(body.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName,'Sulafat');
+ const {body,url,init}=h.calls[0];assert.equal(url,'https://generativelanguage.googleapis.com/v1beta/interactions');assert.equal(init.headers['x-goog-api-key'],'test-gemini-secret');
+ assert.equal(body.model,'gemini-3.8-flash-lite-tts');
+ assert.equal(body.input[0].content[0].text,'Exact NOA words.');
+ assert.equal(body.input[0].content[0].annotations[0].type,'speech_metadata');assert.equal(body.input[0].content[0].annotations[0].style,contract.NOA_VOICE_STYLE);
+ assert.deepEqual(body.response_format,{type:'audio',mime_type:'audio/l16',sample_rate:24000});
+ assert.deepEqual(body.generation_config.speech_config,[{voice:'Sulafat'}]);
 });
-for(const shape of [{candidates:[]},{candidates:[{content:{parts:[]}}]},{candidates:[{content:{parts:[{inlineData:{mimeType:'audio/L16;codec=pcm;rate=24000',data:'AEAAgA=='}}]}}],garbage:'a'.repeat(1000)}])
-test('Gemini decode never double-decodes and rejects/accepts based only on the documented inlineData field',async()=>{
+for(const shape of [{steps:[]},{steps:[{content:[]}]},{steps:[{content:[{mime_type:'audio/l16',sample_rate:24000,data:'AEAAgA=='}]}],garbage:'a'.repeat(1000)}])
+test('Gemini decode never double-decodes and accepts/rejects based only on the documented mime_type/data fields',async()=>{
  const h=server({fetch:async()=>Response.json(shape)});
- if(shape.candidates.length&&shape.candidates[0].content.parts.length)await h.NOA_VOICE_PROVIDERS.gemini.synthesize('Text',signal());
+ if(shape.steps.length&&shape.steps[0].content.length)await h.NOA_VOICE_PROVIDERS.gemini.synthesize('Text',signal());
  else await assert.rejects(h.NOA_VOICE_PROVIDERS.gemini.synthesize('Text',signal()),{code:'invalid_audio'});
 });
-for(const inlineData of [{mimeType:'audio/wav',data:'AAAAAA=='},{mimeType:'audio/L16;codec=pcm;rate=24000',data:'AA=='},{mimeType:'audio/L16;codec=pcm;rate=16000',data:'AAAAAA=='},{mimeType:'audio/L16;codec=pcm;rate=24000',data:'not_base64'},{mimeType:'audio/L16;codec=pcm;rate=24000',data:''}])test(`reject incompatible Gemini output ${JSON.stringify(inlineData)}`,async()=>{
- const h=server({fetch:async()=>Response.json({candidates:[{content:{parts:[{inlineData}]}}]})});await assert.rejects(h.NOA_VOICE_PROVIDERS.gemini.synthesize('Text',signal()),{code:'invalid_audio'});
+for(const part of [{mime_type:'audio/wav',data:'AAAAAA=='},{mime_type:'audio/l16',data:'AA=='},{mime_type:'audio/l16',sample_rate:16000,data:'AAAAAA=='},{mime_type:'audio/l16',data:'not_base64'},{mime_type:'audio/l16',data:''}])test(`reject incompatible Gemini output ${JSON.stringify(part)}`,async()=>{
+ const h=server({fetch:async()=>Response.json({steps:[{content:[part]}]})});await assert.rejects(h.NOA_VOICE_PROVIDERS.gemini.synthesize('Text',signal()),{code:'invalid_audio'});
 });
-// V4.2: a RIFF/WAV container (real Gemini API never returns this for the requested contract, but a
-// WAV header must never reach the raw PCM player if it somehow did) is rejected the same way.
-test('a WAV-header response (RIFF magic bytes) is rejected, never passed through as raw PCM',async()=>{
- const wav='UklGRhAAAABXQVZFZm10IBAAAAA=';const h=server({fetch:async()=>Response.json({candidates:[{content:{parts:[{inlineData:{mimeType:'audio/wav',data:wav}}]}}]})});
+// V4.2c: PROVEN live response is a PARAMETERIZED media type ("audio/l16; rate=24000;
+// channels=1") - a strict `mime_type === "audio/l16"` equality rejected every real utterance.
+// Parsed safely (media type before the first ";", each "key=value" trimmed/lowercased), never a
+// blind string strip.
+for(const [label,mimeType] of [['bare','audio/l16'],['rate param','audio/l16; rate=24000'],['rate+channels (proven live value)','audio/l16; rate=24000; channels=1'],['loose whitespace',' audio/l16 ;  rate = 24000 ; channels = 1 '],['uppercase media type','AUDIO/L16; rate=24000; channels=1'],['uppercase params','audio/l16; RATE=24000; CHANNELS=1']])
+test(`accepts ${label}: ${JSON.stringify(mimeType)}`,async()=>{
+ const h=server({fetch:async()=>Response.json({steps:[{content:[{mime_type:mimeType,data:'AEAAgA=='}]}]})});
+ const stream=await h.NOA_VOICE_PROVIDERS.gemini.synthesize('Text',signal());
+ assert.deepEqual([...new Uint8Array(await new Response(stream).arrayBuffer())],[0,64,0,128]);
+});
+for(const [label,mimeType] of [['wrong rate param','audio/l16; rate=16000; channels=1'],['wrong channels param','audio/l16; rate=24000; channels=2'],['unparseable rate param','audio/l16; rate=abc'],['unparseable channels param','audio/l16; rate=24000; channels=stereo']])
+test(`rejects ${label}: ${JSON.stringify(mimeType)}`,async()=>{
+ const h=server({fetch:async()=>Response.json({steps:[{content:[{mime_type:mimeType,data:'AEAAgA=='}]}]})});
+ await assert.rejects(h.NOA_VOICE_PROVIDERS.gemini.synthesize('Text',signal()),{code:'invalid_audio'});
+});
+test('a bare "rate=24000" mime parameter alone satisfies the sample-rate check when the response has no separate sample_rate field',async()=>{
+ const h=server({fetch:async()=>Response.json({steps:[{content:[{mime_type:'audio/l16; rate=24000',data:'AEAAgA=='}]}]})});
+ const stream=await h.NOA_VOICE_PROVIDERS.gemini.synthesize('Text',signal());
+ assert.deepEqual([...new Uint8Array(await new Response(stream).arrayBuffer())],[0,64,0,128]);
+});
+// V4.2b: a unary request's WAV default (mime_type "audio/wav", per the live docs) must never be
+// accepted/stripped as if it were raw PCM - this is exactly why response_format.mime_type above
+// explicitly asks for "audio/l16" instead of relying on the WAV default.
+test('a WAV-header response (RIFF magic bytes, mime_type audio/wav) is rejected, never passed through as raw PCM',async()=>{
+ const wav='UklGRhAAAABXQVZFZm10IBAAAAA=';const h=server({fetch:async()=>Response.json({steps:[{content:[{mime_type:'audio/wav',data:wav}]}]})});
  await assert.rejects(h.NOA_VOICE_PROVIDERS.gemini.synthesize('Text',signal()),{code:'invalid_audio'});
 });
 for(const [status,error,code] of [[401,{},'invalid_credential'],[429,{code:'insufficient_quota'},'quota_exhausted'],[429,{},'rate_limited'],[402,{},'billing_blocked'],[500,{},'provider_unavailable'],[400,{},'unknown']] as const)test(`provider ${status} maps ${code} without raw errors`,async()=>{
