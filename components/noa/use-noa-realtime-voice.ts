@@ -3,10 +3,11 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { NoaAnswer } from "@/lib/noa/noa-types";
 import { createRealtimeTransport, createStreamingPlayer } from "./noa-realtime-transport";
+import type { NoaVoiceProviderId, NoaVoiceSession } from "@/lib/noa/noa-voice-provider";
 
 export type VoiceEvent = { type: string; item_id?: string; delta?: string; transcript?: string };
 export type VoicePhase = "idle" | "connecting" | "listening" | "transcribing" | "thinking" | "speaking" | "error";
-export type VoiceSnapshot = { phase: VoicePhase; transcript: string; error?: string };
+export type VoiceSnapshot = { phase: VoicePhase; transcript: string; error?: string; voiceSessionProvider: NoaVoiceProviderId | null };
 export type VoiceSubmit = (text: string) => Promise<NoaAnswer | undefined> | undefined;
 
 // Voice-only, closed corrections. A name elsewhere in ordinary prose is never rewritten.
@@ -26,19 +27,20 @@ export function isUnusableNoaVoiceTranscript(text: string): boolean {
     || /^this is projectworkflow(?:$| the assistants?\b)/.test(normalized);
 }
 export interface RealtimeTransport {
-  connect(signal: AbortSignal, receive: (event: VoiceEvent) => void): Promise<void>;
+  connect(signal: AbortSignal, receive: (event: VoiceEvent) => void): Promise<NoaVoiceSession>;
   close(): void;
 }
 export interface StreamingPlayer {
   unlock(): Promise<void>;
-  play(text: string, signal: AbortSignal, started: () => void): Promise<void>;
+  play(text: string, signal: AbortSignal, started: () => void, session: NoaVoiceSession, replace: (next: NoaVoiceSession) => void): Promise<void>;
   stop(): void;
   dispose(): void;
 }
 
 // Internal seams keep lifecycle tests independent of microphone, network and audio hardware.
 export function createNoaRealtimeVoice(transport: RealtimeTransport, player: StreamingPlayer, submit: VoiceSubmit) {
-  let snapshot: VoiceSnapshot = { phase: "idle", transcript: "" };
+  let voiceSession: NoaVoiceSession | undefined;
+  let snapshot: VoiceSnapshot = { phase: "idle", transcript: "", voiceSessionProvider: null };
   const getSnapshot = () => snapshot;
   const listeners = new Set<() => void>();
   let session = 0;
@@ -52,7 +54,7 @@ export function createNoaRealtimeVoice(transport: RealtimeTransport, player: Str
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let sessionTimer: ReturnType<typeof setTimeout> | undefined;
   const update = (phase: VoicePhase, transcript = snapshot.transcript) => {
-    snapshot = { phase, transcript };
+    snapshot = { phase, transcript, voiceSessionProvider: voiceSession?.provider ?? null };
     listeners.forEach((listener) => listener());
   };
   const silence = () => { playback?.abort(); playback = undefined; player.stop(); };
@@ -60,6 +62,7 @@ export function createNoaRealtimeVoice(transport: RealtimeTransport, player: Str
     session++;
     connection?.abort(); connection = undefined;
     silence(); transport.close(); player.dispose();
+    voiceSession = undefined;
     clearTimeout(idleTimer); clearTimeout(sessionTimer);
     items.clear(); completed.clear(); currentItem = "";
     update(phase, "");
@@ -117,18 +120,21 @@ export function createNoaRealtimeVoice(transport: RealtimeTransport, player: Str
         if (typeof voiceText !== "string" || !/[\p{L}\p{N}]/u.test(voiceText) || voiceText.length > 600) {
           update("listening"); return;
         }
+        if (!voiceSession) { stop("error"); return; }
         playback = new AbortController();
         const speechSignal = playback.signal;
         // Do not hold the NOA queue while audio plays; new turns can interrupt it immediately.
         void player.play(voiceText, speechSignal, () => {
           if (valid() && turn === activeTurn && !speechSignal.aborted) update("speaking");
+        }, voiceSession, (next) => {
+          if (valid() && turn === activeTurn && !speechSignal.aborted) voiceSession = next;
         }).then(() => {
           if (valid() && turn === activeTurn && !speechSignal.aborted) { touch(); update("listening"); }
         }).catch(() => {
           if (valid() && turn === activeTurn && !speechSignal.aborted) {
-            // Keep neural playback ownership until End; never switch engines on a TTS error.
+            // Failed playback is stopped; any authorized replacement is for the next utterance.
             silence(); touch();
-            snapshot = { phase: "listening", transcript: snapshot.transcript, error: "Speech couldn't play. You can keep talking or end voice." };
+            snapshot = { phase: "listening", transcript: snapshot.transcript, voiceSessionProvider: voiceSession?.provider ?? null, error: "Speech couldn't play. You can keep talking or end voice." };
             listeners.forEach((listener) => listener());
           }
         });
@@ -138,7 +144,9 @@ export function createNoaRealtimeVoice(transport: RealtimeTransport, player: Str
       // Called directly from the Start click so mobile audio is unlocked by a user gesture.
       await player.unlock();
       if (!valid()) return;
-      await transport.connect(signal, receive);
+      const selected = await transport.connect(signal, receive);
+      if (!valid()) return;
+      voiceSession = selected;
       if (valid() && getSnapshot().phase === "connecting") update("listening");
     } catch { if (valid()) stop("error"); }
   };

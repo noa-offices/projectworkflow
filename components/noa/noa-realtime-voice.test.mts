@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 function compile(path: string, overrides: Record<string, any> = {}, globals: Record<string, any> = {}) {
   const output = ts.transpileModule(readFileSync(path, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const compiled = { exports: {} as any };
-  new Function("require", "module", "exports", ...Object.keys(globals), output)((id: string) => overrides[id] ?? require(id), compiled, compiled.exports, ...Object.values(globals));
+  new Function("require", "module", "exports", ...Object.keys(globals), output)((id: string) => overrides[id] ?? (id === "@/lib/noa/noa-voice-provider" ? compile("lib/noa/noa-voice-provider.ts") : require(id)), compiled, compiled.exports, ...Object.values(globals));
   return compiled.exports;
 }
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
@@ -23,7 +23,7 @@ function harness(options: { setupError?: boolean; speechError?: boolean } = {}) 
   const { createNoaRealtimeVoice } = compile("components/noa/use-noa-realtime-voice.ts", { "./noa-realtime-transport": {} }, {
     setTimeout: (callback: () => void, ms: number) => { timers.set(ms, callback); return ms; }, clearTimeout: (ms: number) => timers.delete(ms),
   });
-  const transport = { connect: async (_signal: AbortSignal, listener: typeof receive) => { connects++; receive = listener; if (options.setupError) throw Error(); }, close: () => { closes++; } };
+  const transport = { connect: async (_signal: AbortSignal, listener: typeof receive) => { connects++; receive = listener; if (options.setupError) throw Error(); return { provider: "openai", token: "v4-test-token" }; }, close: () => { closes++; } };
   const player = { unlock: async () => { unlocks++; }, stop: () => { stops++; }, dispose() {}, play: (text: string, signal: AbortSignal, started: () => void) => {
     if (options.speechError) return Promise.reject(Error());
     const done = deferred(); speech.push({ text, signal, started, done }); started(); return done.promise;
@@ -102,7 +102,7 @@ function route(path: "session" | "speech", options: { auth?: boolean; flag?: boo
   const calls: any[] = [];
   const logs: any[] = [];
   const env = { NEXT_PUBLIC_NOA_REALTIME_VOICE: options.flag === false ? "false" : "true", OPENAI_API_KEY: "standard-secret" };
-  const { POST } = compile(`app/api/noa/voice/${path}/route.ts`, { "@/lib/supabase/server": { createClient: async () => ({ auth: { getUser: async () => ({ data: { user: options.auth === false ? null : { id: "user" } } }) } }) } }, {
+  const globals = {
     process: { env }, console: { error: (entry: unknown) => logs.push(entry) }, fetch: async (url: string, init: any) => {
       calls.push({ url, ...init, body: JSON.parse(init.body) });
       if (options.fetchError) throw options.fetchError;
@@ -110,8 +110,16 @@ function route(path: "session" | "speech", options: { auth?: boolean; flag?: boo
       return path === "session" ? Response.json(options.providerBody ?? { value: "ek_ephemeral", expires_at: 123, private: "hidden" }, { status: options.providerStatus ?? 200 })
         : new Response(new Uint8Array([0, 0, 1, 0]), { status: options.providerStatus ?? 200 });
     },
-  });
-  const request = (body?: unknown) => new Request(`https://app.test/api/noa/voice/${path}`, { method: "POST", ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  };
+  const providerConfig = compile("lib/ai/provider-config.ts");
+  const health = compile("lib/ai/provider-health.server.ts", { "server-only": {}, "./provider-config": providerConfig }, globals);
+  const voice = compile("lib/noa/noa-voice-provider.server.ts", { "server-only": {}, "./noa-voice-provider": compile("lib/noa/noa-voice-provider.ts"), "@/lib/ai/provider-health.server": health }, globals);
+  const session = { provider: "openai", token: "v4-test-token" };
+  const { POST } = compile(`app/api/noa/voice/${path}/route.ts`, {
+    "@/lib/supabase/server": { createClient: async () => ({ auth: { getUser: async () => ({ data: { user: options.auth === false ? null : { id: "user" } } }) } }) },
+    "@/lib/noa/noa-voice-provider.server": { ...voice, createVoiceSession: async () => session, verifyVoiceSession: (token: string) => token === session.token ? session : null },
+  }, globals);
+  const request = (body?: unknown) => new Request(`https://app.test/api/noa/voice/${path}`, { method: "POST", ...(body === undefined ? {} : { body: JSON.stringify(path === "speech" && body && typeof body === "object" && !Array.isArray(body) ? { ...body, voiceSession: session.token } : body) }) });
   return { POST, request, calls, env, logs };
 }
 
@@ -160,7 +168,7 @@ test("both routes require auth and flag; session fixed transcription/VAD, epheme
     }
   }
   const h = route("session"); const response = await h.POST(h.request({ model: "malicious", tools: [{}] }));
-  assert.deepEqual(await response.json(), { value: "ek_ephemeral", expires_at: 123 }); assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), { value: "ek_ephemeral", expires_at: 123, voiceSession: { provider: "openai", token: "v4-test-token" } }); assert.equal(response.headers.get("cache-control"), "no-store");
   const body = h.calls[0].body;
   assert.equal(body.session.type, "transcription"); assert.equal(body.expires_after.seconds, 60);
   assert.equal(body.session.audio.input.transcription.model, "gpt-4o-mini-transcribe");
@@ -177,7 +185,7 @@ test("speech validates bytes/plain bounded text/only voiceText and streams exact
   const text = "Five items across two projects. Missing ETA and ETD.";
   const response = await h.POST(h.request({ voiceText: text }));
   assert.equal(response.headers.get("content-type"), "audio/pcm"); assert.equal(response.headers.get("cache-control"), "no-store");
-  assert.deepEqual(h.calls[0].body, { model: "gpt-4o-mini-tts", voice: "marin", input: text, response_format: "pcm" });
+  assert.deepEqual(h.calls[0].body, { model: "gpt-4o-mini-tts", voice: "marin", input: text, instructions: compile("lib/noa/noa-voice-provider.ts").NOA_VOICE_STYLE, response_format: "pcm" });
   assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [0, 0, 1, 0]);
 });
 
@@ -185,7 +193,7 @@ test("provider errors never return credentials or raw provider data; existing ke
   for (const name of ["session", "speech"] as const) {
     const h = route(name, { providerStatus: 500 }); const response = await h.POST(h.request({ voiceText: "Hello" }));
     assert.equal(response.status, 502); assert.doesNotMatch(await response.text(), /secret|hidden|ephemeral/);
-    h.env.OPENAI_API_KEY = ""; assert.equal((await h.POST(h.request({ voiceText: "Hello" }))).status, 503);
+    h.env.OPENAI_API_KEY = ""; assert.equal((await h.POST(h.request({ voiceText: "Hello" }))).status, name === "session" ? 503 : 502);
     Object.assign(h.env, { SOURCE_QA_AI_API_KEY: "legacy-secret" }); await h.POST(h.request({ voiceText: "Hello" }));
     assert.equal(h.calls.at(-1).headers.Authorization, "Bearer legacy-secret");
   }
@@ -433,7 +441,7 @@ test("real WebRTC adapter requests mic only on connect, uses ephemeral SDP and c
   const calls: any[] = [];
   const { createRealtimeTransport } = compile("components/noa/noa-realtime-transport.ts", {}, {
     RTCPeerConnection: Peer, navigator: { mediaDevices: { getUserMedia: async () => { microphone++; return { getTracks: () => [track] }; } } },
-    fetch: async (url: string, init: any) => { calls.push({ url, ...init }); return url.startsWith("/api") ? Response.json({ value: "ek_only" }) : new Response("answer"); },
+    fetch: async (url: string, init: any) => { calls.push({ url, ...init }); return url.startsWith("/api") ? Response.json({ value: "ek_only", voiceSession: { provider: "openai", token: "v4-test-token" } }) : new Response("answer"); },
   });
   const transport = createRealtimeTransport(); assert.equal(microphone, 0);
   const abort = new AbortController(); await transport.connect(abort.signal, () => {});
@@ -463,12 +471,12 @@ test("PCM player starts on incoming chunks and abort stops scheduled audio and f
   }
   const { createStreamingPlayer } = compile("components/noa/noa-realtime-transport.ts", {}, {
     AudioContext: Audio, fetch: async (_url: string, init: any) => {
-      assert.deepEqual(JSON.parse(init.body), { voiceText: "Exact words" }); fetchSignal = init.signal;
+      assert.deepEqual(JSON.parse(init.body), { voiceText: "Exact words", voiceSession: "v4-test-token" }); fetchSignal = init.signal;
       return new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller; init.signal.addEventListener("abort", () => controller.error(new Error("Aborted"))); } }));
     },
   });
   const player = createStreamingPlayer(); await player.unlock(); const abort = new AbortController();
-  const playing = player.play("Exact words", abort.signal, () => began++); await flush();
+  const playing = player.play("Exact words", abort.signal, () => began++, { provider: "openai", token: "v4-test-token" }, () => assert.fail("No fallback on cancellation")); await flush();
   stream.enqueue(new Uint8Array([0])); await flush(); assert.equal(began, 0);
   stream.enqueue(new Uint8Array([64, 0, 128])); await flush(); assert.equal(began, 1); assert.deepEqual(values, [0.5, -1]);
   abort.abort(); await assert.rejects(playing); assert.equal(fetchSignal.aborted, true); assert.ok(stopped > 0);

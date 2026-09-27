@@ -2383,13 +2383,21 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
                     : await fetchNoaPriceCapability(productMessageOverride ?? request.message, request.context, semanticRequest?.domain === "Price" ? { product: semanticRequest.product } : undefined);
 
   if (!capabilityResult.ok) {
+    // CFI2.4: this exact ambiguous Project message is the ONE "please name a Project File" prompt
+    // (noa-project-capability.server.ts's detail-lookup branch) - a narrow immediate follow-up
+    // ("give me the reference", "which projects?", etc.) can continue it into the existing
+    // project-list capability. The OTHER two "ambiguous" Project messages (multiple matches /
+    // missing name-or-code) are deliberately left alone - never marked as this specific clarification.
+    const isProjectReferenceClarification = domain === "Project" && capabilityResult.message === "Please specify the Project File number or reference.";
     // Unauthorized / not-found / ambiguous: return the capability's own safe copy directly,
     // without spending a provider call on something the model can't help with anyway. I5 keeps
     // the previous sanitized reference because a failed read produced no newer authorized result
     // that could safely replace it; flag OFF retains the pre-I5 clearing behavior.
-    const preservedConversationReference = semanticV2FlagEnabled
-      ? sanitizeNoaConversationReference(conversationReference)
-      : undefined;
+    const preservedConversationReference = isProjectReferenceClarification
+      ? { domain: "Project" as const, intent: "project_reference_clarification" }
+      : semanticV2FlagEnabled
+        ? sanitizeNoaConversationReference(conversationReference)
+        : undefined;
     return { conversationReference: preservedConversationReference, domain, sources: [], text: capabilityResult.message };
   }
 
@@ -2533,10 +2541,15 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
   if (configurationAnswer) return withNoaSpokenResponse(configurationAnswer);
 
   const classification = classifyNoaRouteWithStrength(request.message, request.context);
-  const paraphrase = normalizeNoaBusinessParaphrase(request.message, classification.strength === "exact" || classification.strength === "anchored");
+  const sanitizedIncomingReference = sanitizeNoaConversationReference(request.conversationReference);
+  // CFI2.4: gates the prerouter's narrow "give me the reference"/"which projects?" continuation on
+  // the exact stored marker from the ambiguous Project clarification above - never on domain alone.
+  const priorProjectReferenceClarification = sanitizedIncomingReference?.domain === "Project"
+    && sanitizedIncomingReference.intent === "project_reference_clarification";
+  const paraphrase = normalizeNoaBusinessParaphrase(request.message, classification.strength === "exact" || classification.strength === "anchored", priorProjectReferenceClarification);
   if (paraphrase.kind === "clarify") {
     return withNoaSpokenResponse({ domain: "Help", sources: [], text: paraphrase.text, choices: paraphrase.choices,
-      conversationReference: sanitizeNoaConversationReference(request.conversationReference),
+      conversationReference: sanitizedIncomingReference,
       ...(isNoaProductConfigurationReference(request.productConfigurationReference)
         ? { productConfigurationReference: request.productConfigurationReference } : {}),
     });

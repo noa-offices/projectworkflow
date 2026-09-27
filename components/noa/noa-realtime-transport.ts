@@ -1,4 +1,5 @@
 import type { RealtimeTransport, StreamingPlayer, VoiceEvent } from "./use-noa-realtime-voice";
+import { isNoaVoiceSession, NOA_VOICE_FAILOVER_CODES } from "@/lib/noa/noa-voice-provider";
 
 export function createRealtimeTransport(): RealtimeTransport {
   let dispose = () => {};
@@ -38,11 +39,11 @@ export function createRealtimeTransport(): RealtimeTransport {
         peer.onconnectionstatechange = () => {
           if (!closed && ["failed", "disconnected", "closed"].includes(peer.connectionState)) receive({ type: "error" });
         };
-        const setupSignal = AbortSignal.any([signal, AbortSignal.timeout(20_000)]);
+        const setupSignal = AbortSignal.any([signal, AbortSignal.timeout(35_000)]);
         const credential = await fetch("/api/noa/voice/session", { method: "POST", signal: setupSignal });
         if (!credential.ok) throw new Error("Voice unavailable");
-        const { value } = await credential.json() as { value?: string };
-        if (!value) throw new Error("Voice unavailable");
+        const { value, voiceSession } = await credential.json() as { value?: string; voiceSession?: unknown };
+        if (!value || !isNoaVoiceSession(voiceSession)) throw new Error("Voice unavailable");
         const offer = await peer.createOffer();
         await peer.setLocalDescription(offer);
         const answer = await fetch("https://api.openai.com/v1/realtime/calls", {
@@ -69,6 +70,7 @@ export function createRealtimeTransport(): RealtimeTransport {
           if (setupSignal.aborted || closed) aborted();
           else if (channel.readyState === "open") opened();
         });
+        return voiceSession;
       } catch (error) { close(); throw error; }
     },
   };
@@ -86,7 +88,7 @@ export function createStreamingPlayer(): StreamingPlayer {
     },
     stop() { cancel(); },
     dispose() { cancel(); if (context) void context.close().catch(() => {}); context = undefined; },
-    async play(text, signal, started) {
+    async play(text, signal, started, session, replace) {
       cancel();
       const audio = context;
       if (!audio || audio.state !== "running") throw new Error("Audio unavailable");
@@ -101,21 +103,30 @@ export function createStreamingPlayer(): StreamingPlayer {
       signal.addEventListener("abort", stop, { once: true });
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       let finished = false;
+      let providerFailure = false;
       try {
         if (signal.aborted) { stop(); return; }
         const response = await fetch("/api/noa/voice/speech", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ voiceText: text }),
+          body: JSON.stringify({ voiceText: text, voiceSession: session.token }),
           signal: AbortSignal.any([abort.signal, AbortSignal.timeout(60_000)]),
+        }).catch((error: unknown) => {
+          providerFailure = error instanceof TypeError || (error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name));
+          throw new Error("Speech unavailable");
         });
-        if (!response.ok || !response.body) throw new Error("Speech unavailable");
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          providerFailure = response.status === 502 && NOA_VOICE_FAILOVER_CODES.includes(error?.code);
+          throw new Error("Speech unavailable");
+        }
+        if (!response.body) throw new Error("Speech unavailable");
         reader = response.body.getReader();
         let remainder: number | undefined;
         let next = audio.currentTime + 0.04;
         let samples = 0;
         let began = false;
         while (true) {
-          const { value, done } = await reader.read();
+          const { value, done } = await reader.read().catch(() => { providerFailure = true; throw new Error("Speech unavailable"); });
           if (abort.signal.aborted) return;
           if (done) break;
           const bytes = new Uint8Array(value.length + (remainder === undefined ? 0 : 1));
@@ -146,6 +157,13 @@ export function createStreamingPlayer(): StreamingPlayer {
           if (abort.signal.aborted) done();
         });
         finished = true;
+      } catch (error) {
+        // Never replay this utterance. A bounded provider/network failure can advance
+        // only to the next token already authorized by the server at session start.
+        if (providerFailure && !signal.aborted && !abort.signal.aborted && session.next) {
+          stop(); replace(session.next);
+        }
+        throw error;
       } finally {
         signal.removeEventListener("abort", stop);
         if (!finished) stop();

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createVoiceSession, readNoaVoiceProviderPreference } from "@/lib/noa/noa-voice-provider.server";
 
 // gpt-live-transcribe requires client-side VAD + explicit commits. Keep the supported
 // server-VAD model until the client turn protocol is deliberately migrated with it.
@@ -55,7 +56,13 @@ export async function POST(request: Request) {
     }
     const body = await response.json() as { value?: string; expires_at?: number };
     if (!body.value?.startsWith("ek_") || typeof body.expires_at !== "number") throw new Error("Invalid session");
-    return Response.json({ value: body.value, expires_at: body.expires_at }, { headers: { "Cache-Control": "no-store" } });
+    // Part 5: reads the saved System Owner preference (independent of Global AI Provider) only to
+    // REORDER the existing bounded-failover selection - never forced, never resolved from
+    // Global AI Provider, and never applied to an already-active session (this only runs at
+    // Start Voice, right here, before the session is pinned).
+    const preferredVoiceProvider = await readNoaVoiceProviderPreference(supabase);
+    const voiceSession = await createVoiceSession(user.id, preferredVoiceProvider ?? undefined);
+    return Response.json({ value: body.value, expires_at: body.expires_at, voiceSession }, { headers: { "Cache-Control": "no-store" } });
   } catch (error: unknown) {
     if (!failureLogged) {
       // Fixed local failure categories distinguish timeouts/network/schema errors without

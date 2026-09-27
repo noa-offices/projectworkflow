@@ -14,6 +14,7 @@ function compile(path: string, dependencies: Record<string, any> = {}, extra = "
   return compiled.exports;
 }
 const registry = compile("lib/ai/provider-config.ts");
+const catalog = compile("lib/ai/model-catalog.ts", { "./provider-config": registry });
 const agents = compile("lib/ai/agent-registry.ts");
 function actions({ denied = false, fail = "" } = {}) {
   const writes: any[] = [];
@@ -24,8 +25,19 @@ function actions({ denied = false, fail = "" } = {}) {
   } };
   return { writes, ...compile("app/settings/ai/actions.ts", {
     "next/cache": { revalidatePath: () => {} }, "@/lib/ai/agent-registry": agents, "@/lib/ai/provider-config": registry,
+    "@/lib/ai/model-catalog.server": { isSelectableAiModel: async (provider: any, model: string) => registry.isApprovedAiModel(provider, model) },
     "@/lib/auth": { requireSystemOwner: async () => { if (denied) throw new Error("private auth detail"); return { user: { id: "owner" } }; } },
     "@/lib/supabase/server": { createClient: async () => database },
+    // V4.1: mirrors the real saveNoaVoiceProviderPreference contract (closed openai/gemini
+    // validation, then a plain upsert on the same table) without re-implementing it - the real
+    // module already has its own dedicated coverage.
+    "@/lib/noa/noa-voice-provider.server": {
+      saveNoaVoiceProviderPreference: async (supabase: any, userId: string, value: unknown) => {
+        if (value !== "openai" && value !== "gemini") throw new Error("Unsupported voice provider.");
+        const { error } = await supabase.from("ai_agent_settings").upsert({ agent_id: "noa_voice", provider_id: value, model: null, enabled: true, updated_by: userId });
+        if (error) throw new Error("Voice provider preference could not be saved.");
+      },
+    },
   }) };
 }
 function data(provider = "openai", model = "gpt-4.1") { return new Map(Object.entries({ provider_id: provider, default_model: model, enabled: "true", is_default: "true" })) as unknown as FormData; }
@@ -52,19 +64,48 @@ test("registered override saves; unknown target is rejected", async () => {
     input.set("agent_id", "semantic_fake"); assert.equal((await action.saveAiAgentSettings(input)).ok, false);
   }
 });
-const props = { agents: agents.listAiAgents(), agentSettings: [], providerSettings: [], credentialConfigured: { openai: true, anthropic: false, gemini: true }, providers: registry.listAiProviderConfigs().map((p: any) => ({ ...p, models: registry.listApprovedAiModels(p.id) })), runtime: agents.listAiAgents().map((a: any) => ({ agentId: a.id, provider: "openai", model: a.defaultModel, enabled: true })) };
-function form(react = React, refresh = () => {}) { return compile("components/settings/ai-settings-form.tsx", { react, "react/jsx-runtime": jsx, "next/navigation": { useRouter: () => ({ refresh }) }, "@/app/settings/ai/actions": { saveAiProviderSettings: async () => ({ ok: true, message: "Saved" }), saveAiAgentSettings: async () => ({ ok: true, message: "Saved" }) } }, "\nexport { SavePanel, AgentCard };\n"); }
+const props = { agents: agents.listAiAgents(), agentSettings: [], providerSettings: [], credentialConfigured: { openai: true, anthropic: false, gemini: true }, providers: registry.listAiProviderConfigs().map((p: any) => ({ ...p, models: registry.listApprovedAiModels(p.id) })), runtime: agents.listAiAgents().map((a: any) => ({ agentId: a.id, provider: "openai", model: a.defaultModel, enabled: true })), voiceProviderSetting: null };
+const voiceContract = { NOA_VOICE_PROFILES: { openai: { voice: "marin" }, gemini: { voice: "Sulafat" } } };
+function form(react = React, refresh = () => {}) { return compile("components/settings/ai-settings-form.tsx", { react, "react/jsx-runtime": jsx, "next/navigation": { useRouter: () => ({ refresh }) }, "@/lib/ai/model-catalog": catalog, "@/lib/noa/noa-voice-provider": voiceContract, "./ai-provider-operations": { AiProviderOperations: () => null }, "@/app/settings/ai/actions": { saveAiProviderSettings: async () => ({ ok: true, message: "Saved" }), saveAiAgentSettings: async () => ({ ok: true, message: "Saved" }), saveNoaVoiceSettings: async () => ({ ok: true, message: "Saved" }) } }, "\nexport { SavePanel, AgentCard, ModelOptions, VoiceProviderCard };\n"); }
 test("UI exposes only real providers/overrides, safe credential status and runtime notes", () => {
   const html = renderToStaticMarkup(React.createElement(form().AiSettingsForm, props));
-  for (const text of ["OpenAI", "Anthropic", "Google Gemini", "Source QA", "Specification Enrichment", "Final Specification", "NOA Assistant", "Configured", "Missing credential", "Saved runtime:", "Runtime-managed", "Semantic classification uses NOA Assistant", "deterministic plans"]) assert.ok(html.includes(text), text);
+  for (const text of ["OpenAI", "Anthropic", "Google Gemini", "Source QA", "Specification Enrichment", "Final Specification", "NOA Assistant", "Configured", "Missing credential", "Saved runtime:", "NOA Voice", "Primary voice provider", "Semantic classification uses NOA Assistant", "deterministic plans"]) assert.ok(html.includes(text), text);
   assert.doesNotMatch(html, /API_KEY|modelEnv|secret|type="password"/);
   assert.equal((html.match(/aria-label="Global default provider"/g) ?? []).length, 1);
   assert.ok(html.includes("lg:grid-cols-3") && html.includes("min-w-0") && html.includes("min-h-11"));
 });
-test("voice display matches actual routes without adding voice controls", () => {
+test("voice section: OpenAI default selected, correct current/fallback labels, transcription stays read-only text (not a control)", () => {
   const html = renderToStaticMarkup(React.createElement(form().AiSettingsForm, props));
-  const session = readFileSync("app/api/noa/voice/session/route.ts", "utf8"); const speech = readFileSync("app/api/noa/voice/speech/route.ts", "utf8");
-  for (const [text, source] of [["gpt-4o-mini-transcribe", session], ["gpt-4o-mini-tts", speech], ["marin", speech]]) { assert.ok(source.includes(`"${text}"`)); assert.ok(html.includes(text)); }
+  const session = readFileSync("app/api/noa/voice/session/route.ts", "utf8"); const contract = readFileSync("lib/noa/noa-voice-provider.ts", "utf8");
+  for (const [text, source] of [["gpt-4o-mini-transcribe", session], ["gpt-4o-mini-tts", contract], ["marin", contract], ["gemini-3.8-flash-lite-tts", contract], ["Sulafat", contract]]) assert.ok(source.includes(`"${text}"`));
+  assert.ok(html.includes("Save voice settings"));
+  assert.ok(html.includes("OpenAI · gpt-4o-mini-transcribe"));
+  assert.doesNotMatch(html, /<select[^>]*>[\s\S]{0,80}gpt-4o-mini-transcribe/, "transcription must not become a selectable control");
+  assert.match(html, /<option[^>]*value="openai"[^>]*selected=""/, "OpenAI is the default selection with no saved preference");
+  assert.doesNotMatch(html, /Live Agent/i);
+});
+test("voice provider card: current/fallback flip with selection; gemini option disabled and warning shown when its credential is missing", () => {
+  const hook = hooks(); const component = form(hook.react).VoiceProviderCard;
+  const render = (voiceProps: any) => { hook.reset(); return component(voiceProps); };
+  const ddTexts = (tree: any) => elements(tree).filter((e) => e.type === "dd").map((e) => (Array.isArray(e.props.children) ? e.props.children.join("") : e.props.children));
+
+  const configured = { openai: true, anthropic: false, gemini: true };
+  let tree = render({ credentialConfigured: configured, setting: null });
+  assert.equal(elements(tree).find((e) => e.type === "select").props.value, "openai");
+  assert.deepEqual(ddTexts(tree), ["marin", "Google Gemini · Sulafat", "OpenAI · gpt-4o-mini-transcribe", "Pinned per voice session"]);
+
+  elements(tree).find((e) => e.type === "select").props.onChange({ target: { value: "gemini" } });
+  tree = render({ credentialConfigured: configured, setting: null });
+  assert.deepEqual(ddTexts(tree), ["Sulafat", "OpenAI · marin", "OpenAI · gpt-4o-mini-transcribe", "Pinned per voice session"]);
+  assert.ok(!elements(tree).some((e) => e.props?.role === "alert"));
+
+  const missingGemini = { openai: true, anthropic: false, gemini: false };
+  const unavailable = render({ credentialConfigured: missingGemini, setting: { provider_id: "gemini" } });
+  const geminiOption = elements(unavailable).find((e) => e.type === "option" && e.props.value === "gemini");
+  assert.equal(geminiOption.props.disabled, true);
+  assert.ok(elements(unavailable).some((e) => e.props?.role === "alert"));
+  // Part 4: the saved preference is never silently overwritten - the select still reflects it.
+  assert.equal(elements(unavailable).find((e) => e.type === "select").props.value, "gemini");
 });
 function hooks() {
   const states: any[] = []; let index = 0; let held = false; const effects: any[] = [];
@@ -96,7 +137,7 @@ test("agent provider switch clears stale model and bounds choices", () => {
   select.props.onChange({ target: { value: "gemini" } });
   const tree = render(); const modelSelect = elements(tree).filter((e) => e.type === "select")[1];
   assert.equal(modelSelect.props.value, "");
-  const options = elements(modelSelect).filter((e) => e.type === "option").map((e) => e.props.children);
+  const options = elements({ props: { children: form().ModelOptions({ provider: props.providers.find((p: any) => p.id === "gemini") }) } }).filter((e) => e.type === "option").map((e) => e.props.children);
   assert.ok(options.includes("gemini-3.5-flash-lite")); assert.ok(!options.includes("gpt-4.1"));
 });
 test("migration sync contains exactly the applied grants", () => {

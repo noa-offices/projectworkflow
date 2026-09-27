@@ -14,6 +14,10 @@ export function prerouteNoaConversation(message: string): NoaConversationTurn {
   if (/^(?:who are you|what are you|tell me about yourself|what can you do|who is noa)$/.test(text)) {
     return { kind: "assistant_identity", reply: "I'm NOA, the ProjectWorkflow assistant. I can help with products, quotations, Project Files, procurement, activity, analytics, attention items, and supported briefings." };
   }
+  // CFI2.4: a compound acknowledgement + thanks ("OK, thank you.") is still one closed whole-turn
+  // alias - the second word is deliberately limited to thanks/thank you (never ok/okay) so "OK,
+  // OK." keeps matching the plain acknowledgement rule below instead of this one.
+  if (/^(?:ok|okay|alright|perfect|got it) (?:thanks|thank you)$/.test(text)) return { kind: "thanks", reply: "You're welcome." };
   if (/^(?:(?:ok|okay)(?: (?:ok|okay))*|alright|got it)$/.test(text)) return { kind: "acknowledgement", reply: "Got it." };
   if (/^(?:well|hmm)$/.test(text)) return { kind: "acknowledgement", reply: "I'm listening." };
   if (/^(?:thanks|thank you)$/.test(text)) return { kind: "thanks", reply: "You're welcome." };
@@ -29,11 +33,17 @@ export type NoaBusinessParaphrase = { kind: "passthrough" } | { kind: "canonical
 
 // CFI2.2: closed whole-turn aliases only. No substring matching, entity extraction,
 // new calculations, or interpretation of filters. The caller protects stronger routes.
-export function normalizeNoaBusinessParaphrase(message: string, protectedMeaning = false): NoaBusinessParaphrase {
+export function normalizeNoaBusinessParaphrase(message: string, protectedMeaning = false, priorProjectReferenceClarification = false): NoaBusinessParaphrase {
   if (protectedMeaning) return { kind: "passthrough" };
   const text = message.toLowerCase().replace(/[’']/g, "").replace(/[.!?]+$/, "").replace(/\s+/g, " ").trim();
   const canonical = (message: string): NoaBusinessParaphrase => ({ kind: "canonical", message });
   const clarify = (text: string, choices: Array<[string, string]>): NoaBusinessParaphrase => ({ kind: "clarify", text, choices: choices.map(([label, value]) => ({ label, value })) });
+  // CFI2.4: only continues an IMMEDIATELY preceding "Please specify the Project File number or
+  // reference." clarification (the caller gates this on that exact stored marker) - never fires
+  // for these same narrow phrases outside that context, so nothing is ever invented.
+  if (priorProjectReferenceClarification && /^(?:give me the references?|show me the options|which projects|list them|what are the references?)$/.test(text)) {
+    return canonical("show active project files");
+  }
   if (/^(?:whats|what is|give me) todays status$|^how are things today$|^give me an update for today$|^whats (?:going on|happening) today$|^anything i should know today$/.test(text)) {
     return clarify("What would you like to check?", [["Attention items", "what needs my attention"], ["Changes today", "what changed today"], ["My activity today", "show my activity today"], ["Project status", "How are our projects doing?"]]);
   }

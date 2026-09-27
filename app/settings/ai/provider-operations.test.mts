@@ -14,7 +14,8 @@ function compile(path: string, dependencies: Record<string, any> = {}, globals: 
   return compiled.exports;
 }
 const config = compile("lib/ai/provider-config.ts");
-const contract = compile("lib/ai/provider-operations.ts");
+const catalog = compile("lib/ai/model-catalog.ts", { "./provider-config": config });
+const contract = compile("lib/ai/provider-operations.ts", { "../noa/noa-voice-provider": compile("lib/noa/noa-voice-provider.ts") });
 function health(fetch: any, env: any = { OPENAI_API_KEY: "test-secret", ANTHROPIC_API_KEY: "test-secret", GEMINI_API_KEY: "test-secret" }, timer?: any) {
   return compile("lib/ai/provider-health.server.ts", { "server-only": {}, "./provider-config": config }, { fetch, process: { env }, ...(timer ? { setTimeout: timer, clearTimeout: () => {} } : {}) });
 }
@@ -87,12 +88,12 @@ test('manual action reads saved models and checks each provider once',async()=>{
 });
 test('settings read failure cannot dispatch checks',async()=>{const api=action(false,true);assert.equal((await api.refreshProviderStatus()).ok,false);assert.equal(api.calls(),0);});
 function ui(refresh: any, react: any = React) {
- return compile('components/settings/ai-provider-operations.tsx', {react,'react/jsx-runtime':jsx,'@/app/settings/ai/operations-actions':{refreshProviderStatus:refresh},'@/lib/ai/provider-operations':contract});
+ return compile('components/settings/ai-provider-operations.tsx', {react,'react/jsx-runtime':jsx,'@/app/settings/ai/operations-actions':{refreshProviderStatus:refresh},'@/lib/ai/provider-operations':contract,'@/lib/ai/model-catalog':catalog});
 }
 const props={configured:{openai:true,anthropic:false,gemini:true}};
 test('operations render safe missing/configured status, no automatic calls, honest billing and external links',()=>{
  const html=renderToStaticMarkup(React.createElement(ui(()=>assert.fail('automatic refresh')).AiProviderOperations,props));
- for(const text of ['Configured','Missing credential','Not checked yet','Provider usage','Unavailable','Balance unavailable through current integration','NOA Voice Profile','marin','Fallbacks: not configured'])assert.ok(html.includes(text),text);
+ for(const text of ['Configured','Missing credential','Not checked yet','Provider usage','Unavailable','Balance unavailable through current integration','NOA Voice Profile','marin','Fallback:'])assert.ok(html.includes(text),text);
  assert.doesNotMatch(html,/\$0|API_KEY|Bearer|secret|session is pinned/);
  for(const p of Object.values(contract.PROVIDER_PORTALS) as any[]) {assert.ok(html.includes(p.usage));assert.ok(html.includes(p.billing));}
  assert.equal((html.match(/rel="noopener noreferrer"/g)||[]).length,6);
@@ -109,9 +110,9 @@ test('refresh blocks duplicate clicks, shows checking and timestamps, retains re
  assert.ok(elements(render()).some(e=>e.type==='time'&&e.props.dateTime==='2026-09-27T00:00:00.000Z'));
  const next=button(render()).props.onClick();finish({ok:false,message:'Could not refresh.'});await next;assert.ok(elements(render()).some(e=>e.props.role==='alert'));assert.ok(elements(render()).some(e=>e.type==='time'));
 });
-test('voice profile matches unchanged routes and supports only OpenAI',()=>{
- assert.deepEqual(Object.keys(contract.NOA_VOICE_PROFILES),['openai']); const voice=contract.NOA_VOICE_PROFILES.openai;
- const speech=readFileSync('app/api/noa/voice/speech/route.ts','utf8');const session=readFileSync('app/api/noa/voice/session/route.ts','utf8');
+test('voice profile matches provider registry and transcription stays OpenAI',()=>{
+ assert.deepEqual(Object.keys(contract.NOA_VOICE_PROFILES),['openai','gemini']); const voice=contract.NOA_VOICE_PROFILES.openai;
+ const speech=readFileSync('lib/noa/noa-voice-provider.ts','utf8');const session=readFileSync('app/api/noa/voice/session/route.ts','utf8');
  assert.ok(speech.includes(`model: "${voice.model}"`));assert.ok(speech.includes(`voice: "${voice.voice}"`));assert.ok(session.includes(`"${voice.transcriptionModel}"`));
  assert.doesNotMatch(readFileSync('components/settings/ai-provider-operations.tsx','utf8'),/setInterval|useEffect/);
 });

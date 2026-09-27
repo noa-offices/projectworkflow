@@ -2,10 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { getAiAgentConfig } from "@/lib/ai/agent-registry";
-import { getAiProviderConfig, isApprovedAiModel, listAiProviderConfigs } from "@/lib/ai/provider-config";
+import { getAiProviderConfig, listAiProviderConfigs } from "@/lib/ai/provider-config";
+import { isSelectableAiModel, refreshAllProviderModels } from "@/lib/ai/model-catalog.server";
 import type { AiProviderId } from "@/lib/ai/types";
 import { requireSystemOwner } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { saveNoaVoiceProviderPreference } from "@/lib/noa/noa-voice-provider.server";
 
 function value(formData: FormData, name: string) {
   const item = formData.get(name);
@@ -18,9 +20,9 @@ function optionalProvider(value: string): AiProviderId | null {
   return value as AiProviderId;
 }
 
-function optionalModel(providerId: AiProviderId, model: string) {
+async function optionalModel(providerId: AiProviderId, model: string) {
   if (!model) return null;
-  if (!isApprovedAiModel(providerId, model)) throw new Error("Unsupported AI model.");
+  if (!await isSelectableAiModel(providerId, model)) throw new Error("Unsupported AI model. Refresh provider models and choose a compatible model.");
   return model;
 }
 
@@ -32,11 +34,17 @@ async function persistAiProviderSettings(formData: FormData) {
   const enabled = value(formData, "enabled") === "true";
   const isDefault = value(formData, "is_default") === "true";
   if (isDefault && !enabled) throw new Error("The default provider must be enabled.");
-  const defaultModel = optionalModel(provider, value(formData, "default_model"));
-  if (!defaultModel && provider !== "openai") throw new Error("Select an approved model for this provider.");
+  const defaultModel = await optionalModel(provider, value(formData, "default_model"));
+  if (!defaultModel && provider !== "openai") throw new Error("Select a compatible model for this provider.");
   const supabase = await createClient();
 
   if (isDefault) {
+    const { data: inheritedAgents, error: inheritedReadError } = await supabase
+      .from("ai_agent_settings").select("agent_id,model").is("provider_id", null).not("model", "is", null)
+      .returns<Array<{ agent_id: string; model: string | null }>>();
+    if (inheritedReadError) throw new Error("AI provider settings could not be saved.");
+    const compatible = await Promise.all((inheritedAgents ?? []).map((agent) => !agent.model || isSelectableAiModel(provider, agent.model)));
+    if (compatible.includes(false)) throw new Error("Choose compatible inherited agent models before changing the global provider.");
     const { error } = await supabase.from("ai_provider_settings").update({ is_default: false }).neq("provider_id", provider);
     if (error) throw new Error("AI provider settings could not be saved.");
   }
@@ -49,19 +57,6 @@ async function persistAiProviderSettings(formData: FormData) {
     updated_by: user.id,
   }, { onConflict: "provider_id" });
   if (error) throw new Error("AI provider settings could not be saved.");
-  if (isDefault) {
-    const { data: inheritedAgents, error: inheritedReadError } = await supabase
-      .from("ai_agent_settings")
-      .select("agent_id,model")
-      .is("provider_id", null)
-      .not("model", "is", null)
-      .returns<Array<{ agent_id: string; model: string | null }>>();
-    if (inheritedReadError) throw new Error("AI provider settings could not be saved.");
-    const updates = await Promise.all((inheritedAgents ?? [])
-      .filter((agent) => agent.model && !isApprovedAiModel(provider, agent.model))
-      .map((agent) => supabase.from("ai_agent_settings").update({ model: null }).eq("agent_id", agent.agent_id)));
-    if (updates.some((result) => result.error)) throw new Error("AI provider settings could not be saved.");
-  }
   revalidatePath("/settings/ai");
 }
 
@@ -84,7 +79,7 @@ async function persistAiAgentSettings(formData: FormData) {
     effectiveProvider = data?.provider_id ?? null;
   }
   if (modelRaw && !effectiveProvider) throw new Error("Select a global provider before choosing an inherited AI model.");
-  const model = effectiveProvider ? optionalModel(effectiveProvider, modelRaw) : null;
+  const model = effectiveProvider ? await optionalModel(effectiveProvider, modelRaw) : null;
   const { error } = await supabase.from("ai_agent_settings").upsert({
     agent_id: agentId,
     provider_id: providerId,
@@ -97,13 +92,23 @@ async function persistAiAgentSettings(formData: FormData) {
   revalidatePath("/settings/ai");
 }
 
+// V4.1: reuses the ai_agent_settings row this is stored in (agent_id: "noa_voice") but is
+// deliberately NOT persistAiAgentSettings - that path validates against getAiAgentConfig() and can
+// inherit the Global AI Provider, and this setting must never do either (Part 10/Part 5).
+async function persistNoaVoiceSettings(formData: FormData) {
+  const { user } = await requireSystemOwner();
+  const supabase = await createClient();
+  await saveNoaVoiceProviderPreference(supabase, user.id, value(formData, "provider_id"));
+  revalidatePath("/settings/ai");
+}
+
 // Expected failures are returned as bounded UI state, never raw provider/DB errors.
 async function save(action: (data: FormData) => Promise<void>, data: FormData) {
   try {
     await action(data);
     return { ok: true as const, message: "Saved" };
   } catch (error) {
-    const safe = ["Unknown AI provider.", "Unsupported AI model.", "Unknown AI agent.", "The default provider must be enabled.", "Select an approved model for this provider.", "Select a global provider before choosing an inherited AI model."];
+    const safe = ["Unknown AI provider.", "Unsupported AI model. Refresh provider models and choose a compatible model.", "Choose compatible inherited agent models before changing the global provider.", "Unknown AI agent.", "The default provider must be enabled.", "Select a compatible model for this provider.", "Select a global provider before choosing an inherited AI model.", "Unsupported voice provider.", "Voice provider preference could not be saved."];
     return { ok: false as const, message: error instanceof Error && safe.includes(error.message) ? error.message : "Could not save AI settings. Check your access and try again." };
   }
 }
@@ -114,4 +119,15 @@ export async function saveAiProviderSettings(data: FormData) {
 
 export async function saveAiAgentSettings(data: FormData) {
   return save(persistAiAgentSettings, data);
+}
+
+export async function saveNoaVoiceSettings(data: FormData) {
+  return save(persistNoaVoiceSettings, data);
+}
+
+export async function refreshProviderModels() {
+  try {
+    await requireSystemOwner();
+    return { ok: true as const, results: await refreshAllProviderModels() };
+  } catch { return { ok: false as const, message: "Provider models could not be refreshed. Check your access and try again." }; }
 }

@@ -18,10 +18,7 @@ export const PROVIDER_PORTALS = {
   gemini: { label: "Google AI Studio", usage: "https://aistudio.google.com/usage", billing: "https://aistudio.google.com/billing" },
 } as const;
 
-// Display foundation only. Voice routes remain authoritative and do not consume this map.
-export const NOA_VOICE_PROFILES = {
-  openai: { provider: "OpenAI", model: "gpt-4o-mini-tts", voice: "marin", transcriptionModel: "gpt-4o-mini-transcribe" },
-} as const;
+export { NOA_VOICE_PROFILES } from "../noa/noa-voice-provider";
 
 export const HEALTH_MESSAGES: Record<ProviderHealth["message"], string> = {
   metadata_available: "Model metadata is accessible. Inference availability and quota are not tested.",

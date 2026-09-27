@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { NoaVoiceError, NOA_VOICE_PROVIDERS, verifyVoiceSession } from "@/lib/noa/noa-voice-provider.server";
 
 export async function POST(request: Request) {
   if (process.env.NEXT_PUBLIC_NOA_REALTIME_VOICE !== "true") return new Response(null, { status: 404 });
@@ -25,22 +26,19 @@ export async function POST(request: Request) {
     body = JSON.parse(new TextDecoder().decode(bytes));
   } catch { return Response.json({ error: "Invalid voice text" }, { status: 400 }); }
   finally { reader.releaseLock(); }
-  if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((key) => key !== "voiceText") || !("voiceText" in body)) {
+  if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((key) => key !== "voiceText" && key !== "voiceSession") || !("voiceText" in body)) {
     return Response.json({ error: "Invalid voice text" }, { status: 400 });
   }
   const text = body.voiceText;
   if (typeof text !== "string" || text.length > 600 || !/[\p{L}\p{N}]/u.test(text) || /[<>\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) {
     return Response.json({ error: "Invalid voice text" }, { status: 400 });
   }
-  const key = process.env.OPENAI_API_KEY?.trim() || process.env.SOURCE_QA_AI_API_KEY?.trim();
-  if (!key) return Response.json({ error: "Speech unavailable" }, { status: 503 });
+  const session = verifyVoiceSession("voiceSession" in body ? body.voiceSession : undefined, user.id);
+  if (!session) return Response.json({ error: "Invalid voice session" }, { status: 400 });
   try {
-    const response = await fetch("https://api.openai.com/v1/audio/speech", {
-      method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      signal: AbortSignal.any([request.signal, AbortSignal.timeout(60_000)]),
-      body: JSON.stringify({ model: "gpt-4o-mini-tts", voice: "marin", input: text, response_format: "pcm" }),
-    });
-    if (!response.ok || !response.body) throw new Error("Speech unavailable");
-    return new Response(response.body, { headers: { "Content-Type": "audio/pcm", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
-  } catch { return Response.json({ error: "Speech unavailable" }, { status: 502 }); }
+    const audio = await NOA_VOICE_PROVIDERS[session.provider].synthesize(text, request.signal);
+    return new Response(audio, { headers: { "Content-Type": "audio/pcm", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
+  } catch (error) {
+    return Response.json({ error: "Speech unavailable", code: error instanceof NoaVoiceError ? error.code : "unknown" }, { status: 502, headers: { "Cache-Control": "no-store" } });
+  }
 }
