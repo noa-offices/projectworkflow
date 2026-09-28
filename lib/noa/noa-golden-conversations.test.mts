@@ -203,6 +203,34 @@ test("CASE H AMBIGUITY: two plausible sets produce a bounded deterministic clari
   assert.deepEqual(session.shadow(), before);
 });
 
+test("PHASE 2 ACCEPTANCE: full UAT script keeps ResultSet continuity and every trace is closed and leak-free", async () => {
+  const messages = ["What is quotation status?", "Which are the two client confirmed?", "What projects are those for?", "List them.",
+    "Go back to the quotations.", "Tell me about the second one."];
+  const { session } = await caseDThroughProjects([
+    (input) => plan("select", focusedSet(input)),
+    (input) => plan("select", newestOf(input, "quotation")),
+    (input) => plan("select", focusedSet(input), { ordinal: 2 }),
+  ]);
+  const traces = [];
+  for (const message of messages.slice(3)) traces.push((await session.send(message)).trace);
+  assert.deepEqual(traces.map((t) => [t.plannerMode, t.plannerAction, t.referenceBinding, t.resultSetRecency, t.ordinalResolution, t.plannerExecution]), [
+    ["planned", "select", "focused_result", "focused", "not_applicable", "executed"],
+    ["planned", "select", "older_result", "older", "not_applicable", "executed"],
+    ["planned", "select", "ordinal", "focused", "valid", "executed"],
+  ]);
+  assert.deepEqual(traces.map((t) => t.shadowSave), ["skipped", "saved", "saved"]);
+  const state = session.shadow()!.state;
+  const second = NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS[1];
+  const newest = state.resultSets.at(-1)!;
+  assert.deepEqual(newest.kind === "entity" && newest.items, [{ id: second.id }]);
+  const leaks = [...state.resultSets.map((r) => r.handle), session.snapshot().sessionId!, ...NOA_GOLDEN_QUOTATIONS.flatMap((q) => [q.id, q.quotationNo, q.client]),
+    ...RELATED_ORDERS, ...messages, "rs_", "Fixture"];
+  for (const trace of traces) {
+    const json = JSON.stringify(trace);
+    for (const leak of leaks) assert.ok(!json.includes(leak), leak);
+  }
+});
+
 test("CASE D DEGRADED: planner unavailable keeps the legacy generic Project scope", async () => {
   const session = createNoaGoldenSession(); // real boundary + disabled fixture runtime
   await session.send("What is quotation status?");
