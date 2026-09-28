@@ -511,7 +511,7 @@ test("voice parity: 'hey noa' takes the same social path as typed text", async (
   assert.equal(trace.routeDecision, "social");
 });
 
-for (const message of ["how are you today", "changes today", "project status"]) {
+for (const message of ["how are you today", "changes today", "project status", "list them", "go back to the quotations"]) {
   test(`voice parity: '${message}' is untouched by the voice normalizer and enters the same path as typed text`, () => {
     // No voice-only rewriting exists for these (or should exist) - the normalizer only handles the
     // NOA/Nova/Noah name and known product-name mishearings, so lowercase business/social phrasing
