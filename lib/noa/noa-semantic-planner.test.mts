@@ -456,3 +456,113 @@ test("R14. no phrase-specific reference aliases in the planner path", async () =
     assert.doesNotMatch(source, /message(\.toLowerCase\(\))?\.(includes|match|startsWith)\(/, file);
   }
 });
+
+// ── Planner runtime diagnostics (debug-only; behavior unchanged) ─────────────────────────────
+test("planner diagnostics: runtime_disabled, credential_missing, timeout, provider_failed, invalid_json, success", async (t) => {
+  const logs: unknown[] = [];
+  const originalInfo = console.info;
+  const originalEnv = process.env.NOA_DEBUG_ROUTING;
+  console.info = (...args: unknown[]) => { if (args[0] === "[NOA_PLANNER_DIAG]") logs.push(JSON.parse(args[1] as string)); };
+  process.env.NOA_DEBUG_ROUTING = "1";
+  t.after(() => { console.info = originalInfo; if (originalEnv === undefined) delete process.env.NOA_DEBUG_ROUTING; else process.env.NOA_DEBUG_ROUTING = originalEnv; });
+
+  const scenarios: Array<{
+    runtime: { enabled: boolean; apiKeyConfigured: boolean; provider: string; model: string; source: { provider: string; model: string } };
+    run: () => Promise<{ text: string }>;
+    outcome: string;
+  }> = [
+    { runtime: { enabled: false, apiKeyConfigured: false, provider: "openai", model: "gpt-4.1-mini", source: { provider: "registry_default", model: "registry_default" } },
+      run: async () => { throw new Error("must not call provider"); }, outcome: "runtime_disabled" },
+    { runtime: { enabled: true, apiKeyConfigured: false, provider: "gemini", model: "gemini-3.5-flash-lite", source: { provider: "global_default", model: "provider_default" } },
+      run: async () => { throw new Error("must not call provider"); }, outcome: "credential_missing" },
+    { runtime: { enabled: true, apiKeyConfigured: true, provider: "openai", model: "gpt-4.1-mini", source: { provider: "registry_default", model: "registry_default" } },
+      run: async () => { const { AiProviderError } = await import("@/lib/ai/types"); throw new AiProviderError("timed out", "timeout"); }, outcome: "timeout" },
+    { runtime: { enabled: true, apiKeyConfigured: true, provider: "anthropic", model: "claude-sonnet-4-6", source: { provider: "agent_override", model: "agent_override" } },
+      run: async () => { const { AiProviderError } = await import("@/lib/ai/types"); throw new AiProviderError("boom", "provider_failed"); }, outcome: "provider_failed" },
+    { runtime: { enabled: true, apiKeyConfigured: true, provider: "openai", model: "gpt-4.1-mini", source: { provider: "registry_default", model: "registry_default" } },
+      run: async () => ({ text: "not json" }), outcome: "invalid_json" },
+    { runtime: { enabled: true, apiKeyConfigured: true, provider: "openai", model: "gpt-4.1-mini", source: { provider: "registry_default", model: "registry_default" } },
+      run: async () => ({ text: JSON.stringify({ kind: "passthrough", sourceResultSetHandle: null, relation: null, status: null, ordinal: null }) }), outcome: "success" },
+  ];
+
+  for (const scenario of scenarios) {
+    logs.length = 0;
+    runtime = scenario.runtime as never;
+    providerReply = scenario.run;
+    const input = buildNoaPlannerInput(stateWith(quotationList()), { message: "x" });
+    const result = await requestNoaSemanticPlan(input);
+    if (scenario.outcome === "success") assert.deepEqual(result, { kind: "passthrough", sourceResultSetHandle: null, relation: null, status: null, ordinal: null });
+    else assert.equal(result, null);
+    assert.equal(logs.length, 1);
+    const entry = logs[0] as Record<string, unknown>;
+    assert.equal(entry.outcome, scenario.outcome);
+    assert.equal(entry.provider, scenario.runtime.provider);
+    assert.equal(entry.model, scenario.runtime.model);
+    assert.equal(entry.timeoutMs, 4_000);
+    assert.equal(typeof entry.durationMs, "number");
+    if (scenario.outcome === "provider_failed" || scenario.outcome === "timeout") assert.equal(entry.providerErrorKind, scenario.outcome);
+  }
+  runtime = { enabled: false, apiKeyConfigured: false };
+});
+
+test("planner diagnostics: unexpected error still returns null and is classified separately", async (t) => {
+  const logs: unknown[] = [];
+  const originalInfo = console.info;
+  const originalEnv = process.env.NOA_DEBUG_ROUTING;
+  console.info = (...args: unknown[]) => { if (args[0] === "[NOA_PLANNER_DIAG]") logs.push(JSON.parse(args[1] as string)); };
+  process.env.NOA_DEBUG_ROUTING = "1";
+  t.after(() => { console.info = originalInfo; if (originalEnv === undefined) delete process.env.NOA_DEBUG_ROUTING; else process.env.NOA_DEBUG_ROUTING = originalEnv; });
+
+  runtime = { enabled: true, apiKeyConfigured: true, provider: "openai", model: "gpt-4.1-mini", source: { provider: "registry_default", model: "registry_default" } } as never;
+  providerReply = async () => { throw new Error("network exploded"); };
+  const input = buildNoaPlannerInput(stateWith(quotationList()), { message: "x" });
+  assert.equal(await requestNoaSemanticPlan(input), null);
+  assert.equal(logs.length, 1);
+  assert.equal((logs[0] as Record<string, unknown>).outcome, "unexpected_error");
+  assert.equal((logs[0] as Record<string, unknown>).providerErrorKind, undefined);
+  runtime = { enabled: false, apiKeyConfigured: false };
+});
+
+test("planner diagnostics: disabled by default (NOA_DEBUG_ROUTING not set to \"1\")", async (t) => {
+  const logs: unknown[] = [];
+  const originalInfo = console.info;
+  const originalEnv = process.env.NOA_DEBUG_ROUTING;
+  console.info = (...args: unknown[]) => { if (args[0] === "[NOA_PLANNER_DIAG]") logs.push(args); };
+  delete process.env.NOA_DEBUG_ROUTING;
+  t.after(() => { console.info = originalInfo; if (originalEnv === undefined) delete process.env.NOA_DEBUG_ROUTING; else process.env.NOA_DEBUG_ROUTING = originalEnv; });
+
+  runtime = { enabled: true, apiKeyConfigured: true, provider: "openai", model: "gpt-4.1-mini", source: { provider: "registry_default", model: "registry_default" } } as never;
+  providerReply = async () => ({ text: JSON.stringify({ kind: "passthrough", sourceResultSetHandle: null, relation: null, status: null, ordinal: null }) });
+  const input = buildNoaPlannerInput(stateWith(quotationList()), { message: "x" });
+  await requestNoaSemanticPlan(input);
+  assert.equal(logs.length, 0);
+
+  process.env.NOA_DEBUG_ROUTING = "true"; // any value other than exactly "1" stays disabled
+  await requestNoaSemanticPlan(input);
+  assert.equal(logs.length, 0);
+  runtime = { enabled: false, apiKeyConfigured: false };
+});
+
+test("planner diagnostic entries contain no prompt, planner input, handles, user text or secrets", async (t) => {
+  const logs: unknown[] = [];
+  const originalInfo = console.info;
+  const originalEnv = process.env.NOA_DEBUG_ROUTING;
+  console.info = (...args: unknown[]) => { if (args[0] === "[NOA_PLANNER_DIAG]") logs.push(args[1] as string); };
+  process.env.NOA_DEBUG_ROUTING = "1";
+  t.after(() => { console.info = originalInfo; if (originalEnv === undefined) delete process.env.NOA_DEBUG_ROUTING; else process.env.NOA_DEBUG_ROUTING = originalEnv; });
+
+  const state = stateWith(aggregate(), quotationList());
+  const secretMessage = "sensitive user text about secret-marker QN-1234";
+  runtime = { enabled: true, apiKeyConfigured: true, provider: "openai", model: "gpt-4.1-mini", source: { provider: "registry_default", model: "registry_default" } } as never;
+  providerReply = async () => ({ text: JSON.stringify({ kind: "relation", sourceResultSetHandle: state.resultSets[1].handle, relation: "quotation.project_file", status: null, ordinal: null }) });
+  const input = buildNoaPlannerInput(state, { message: secretMessage });
+  await requestNoaSemanticPlan(input);
+  assert.equal(logs.length, 1);
+  const json = logs[0] as string;
+  for (const leak of [secretMessage, "secret-marker", "QN-1234", state.resultSets[0].handle, state.resultSets[1].handle, "rs_", "sourceResultSetHandle", "userContent", "systemInstructions", "PLANNER_INSTRUCTIONS"]) {
+    assert.ok(!json.includes(leak), leak);
+  }
+  const allowedKeys = new Set(["provider", "model", "runtimeEnabled", "apiKeyConfigured", "providerSource", "modelSource", "timeoutMs", "outcome", "durationMs", "providerErrorKind"]);
+  for (const key of Object.keys(JSON.parse(json))) assert.ok(allowedKeys.has(key), key);
+  runtime = { enabled: false, apiKeyConfigured: false };
+});
