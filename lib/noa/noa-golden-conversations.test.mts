@@ -2,9 +2,43 @@
 // Real orchestrator; fixture reads; disabled semantic runtime. See testing/TEST-MODE.md.
 import assert from "node:assert/strict";
 import test, { mock } from "node:test";
-import { createNoaGoldenSession, installNoaGoldenFixtures } from "./testing/noa-golden-harness";
+import { createNoaGoldenSession, installNoaGoldenFixtures, noaGoldenProjectCapabilityCalls, NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS, NOA_GOLDEN_QUOTATIONS } from "./testing/noa-golden-harness";
 import { normalizeNoaVoiceTranscript } from "../../components/noa/use-noa-realtime-voice";
-installNoaGoldenFixtures(mock);
+import type { NoaPlannerInput } from "./noa-semantic-planner";
+installNoaGoldenFixtures(mock, { mockDatabase: false });
+// Offline fake scoped to the Phase 2 relation executor's own reads (auth gate + quotations by id).
+// Every other table stays unseeded, exactly like the harness default.
+mock.module("@/lib/supabase/server", { namedExports: { createClient: async () => ({
+  auth: { getUser: async () => ({ data: { user: { id: "golden-user", user_metadata: {} } } }) },
+  from(table: string) {
+    if (table === "profiles") return { select: () => ({ eq: () => ({ single: async () => ({ data: { id: "golden-user", role: "sales_designer", account_status: "active" }, error: null }) }) }) };
+    if (table !== "quotations") throw new Error("Unseeded database access");
+    let ids: unknown[] = [];
+    const builder = {
+      select: () => builder,
+      in: (_key: string, value: unknown[]) => { ids = value; return builder; },
+      returns: () => builder,
+      then(resolve: (value: unknown) => void) {
+        resolve({ error: null, data: NOA_GOLDEN_QUOTATIONS.filter((q) => ids.includes(q.id)).map((q) => ({ id: q.id,
+          layout_settings: q.projectOrderNo ? { projectFile: { orderNo: q.projectOrderNo, quotationId: q.id, quotationNo: q.quotationNo,
+            clientId: "client", clientName: q.client, reference: q.projectOrderNo, total: 1, currency: "USD", createdAt: "2026-01-01T00:00:00.000Z", createdBy: "u" } } : {} })) });
+      },
+    };
+    return builder;
+  },
+}) } });
+
+// Mocks ONLY the planner provider boundary: a scripted structured plan over the planner's own
+// bounded input. Validation, relation execution, rendering and session persistence stay real.
+function scriptedPlanner(calls: NoaPlannerInput[]) {
+  return async (input: NoaPlannerInput) => {
+    calls.push(structuredClone(input));
+    const focused = input.resultSets.find((result) => result.focused)!;
+    return focused.kind === "aggregate"
+      ? { kind: "aggregate_drilldown", sourceResultSetHandle: focused.handle, relation: null, status: "client_confirmed" }
+      : { kind: "relation", sourceResultSetHandle: focused.handle, relation: "quotation.project_file", status: null };
+  };
+}
 
 function fallback(trace: Awaited<ReturnType<ReturnType<typeof createNoaGoldenSession>["send"]>>["trace"]) {
   assert.equal(trace.errorCode, null);
@@ -47,41 +81,78 @@ test("CASE C CURRENT BASELINE: Project list reference exists but List them does 
   assert.equal(session.snapshot().conversationReference, undefined); // successful fallback clears it
 });
 
-test("CASE D CURRENT BASELINE: related-project request and continuation both use generic active scope", async () => {
-  const session = createNoaGoldenSession();
-  // Real capability returns a status COUNT (aggregate) for this wording; the fixture now mirrors
-  // it, so the row-based resultCount is null rather than the old list-fixture artifact of 5.
+test("CASE D PHASE 2: related-project follow-up binds the focused quotation ResultSet via the Semantic Planner", async () => {
+  const plannerCalls: NoaPlannerInput[] = [];
+  const session = createNoaGoldenSession({ plan: scriptedPlanner(plannerCalls) });
   const status = await session.send("What is quotation status?");
   assert.equal(status.trace.capabilitySelected, "Quotation");
-  assert.equal(status.trace.resultCount, null);
   assert.equal(status.trace.shadowResultKind, "aggregate");
+  assert.equal(status.trace.plannerMode, "skipped"); // no prior quotation scope yet
+
+  // Validated aggregate_drilldown is delegated to the existing authoritative status-list capability.
   const confirmed = await session.send("Which are the two client confirmed?");
+  assert.equal(confirmed.trace.plannerMode, "planned");
+  assert.equal(confirmed.trace.plannerAction, "aggregate_drilldown");
+  assert.equal(confirmed.trace.plannerExecution, "legacy");
   assert.equal(confirmed.trace.capabilitySelected, "Quotation");
   assert.equal(confirmed.trace.resultCount, 2);
-  // Phase 1C proof: shadow state captured aggregate -> list(count 2), while routing below is
-  // still the known-wrong generic Project scope. Shadow state is never read by routing.
   const [aggregate, list] = session.shadow()!.state.resultSets;
   assert.equal(aggregate.kind, "aggregate");
-  assert.equal(aggregate.count, 5);
   assert.equal(list.kind, "list");
   assert.equal(list.entityType, "quotation");
-  assert.equal(list.count, 2);
+  assert.deepEqual(list.kind === "list" && list.items, NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS.map((q) => ({ id: q.id })));
   assert.equal(session.shadow()!.state.focus?.resultSetHandle, list.handle);
-  for (const [message, referenceDomain] of [
-    ["Can you mention the name of the project?", "Quotation"],
-    ["List these two projects.", "Project"],
-  ]) {
-    const { answer, trace } = await session.send(message);
-    assert.ok(answer);
-    assert.equal(trace.errorCode, null);
-    assert.equal(trace.capabilitySelected, "Project");
-    assert.equal(trace.routeDecision, "Project");
-    assert.equal(trace.referenceDomain, referenceDomain);
-    assert.equal(trace.referenceBindingKind, "not_applicable");
-    assert.equal(trace.scopeSource, "generic_query");
-    assert.equal(trace.resultCount, 2);
-    assert.equal(trace.semanticUsed, false);
-  }
+
+  noaGoldenProjectCapabilityCalls.length = 0;
+  const versionBefore = session.shadow()!.version;
+  const { answer, trace } = await session.send("Can you mention the name of the project?");
+  assert.ok(answer);
+  assert.equal(trace.errorCode, null);
+  assert.equal(trace.plannerMode, "planned");
+  assert.equal(trace.plannerAction, "relation");
+  assert.equal(trace.plannerSourceType, "quotation");
+  assert.equal(trace.plannerValidation, "valid");
+  assert.equal(trace.plannerExecution, "executed");
+  assert.equal(trace.scopeSource, "result_set"); // not generic_query
+  assert.equal(trace.capabilitySelected, "Project");
+  assert.equal(trace.resultCount, 2);
+  assert.equal(answer.domain, "Project");
+  // Planner bound the focused quotation list, not the aggregate.
+  assert.equal(plannerCalls.at(-1)!.resultSets.find((result) => result.focused)?.handle, list.handle);
+  // Only exact authorized lookups of the related Project Files ran; the generic active list never did.
+  const related = NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS.map((q) => q.projectOrderNo!);
+  assert.deepEqual(noaGoldenProjectCapabilityCalls, related.map((orderNo) => ({ message: orderNo, entity: orderNo })));
+  for (const orderNo of related) assert.match(answer.text, new RegExp(orderNo));
+  assert.doesNotMatch(answer.text, /CO-0005-001/);
+
+  const persisted = session.shadow()!;
+  assert.equal(persisted.version, versionBefore + 1);
+  assert.equal(persisted.state.resultSets.length, 3);
+  assert.equal(persisted.state.resultSets[1].handle, list.handle); // prior scope preserved
+  const projects = persisted.state.resultSets[2];
+  assert.equal(projects.entityType, "project_file");
+  assert.deepEqual(projects.kind === "list" && projects.items, related.map((orderNo) => ({ orderNo })));
+  assert.equal(persisted.state.focus?.resultSetHandle, projects.handle);
+  assert.equal(trace.shadowSave, "saved");
+
+  // Phase 2 References (out of scope): "these two" over a Project ResultSet is not yet planned.
+  const next = await session.send("List these two projects.");
+  assert.equal(next.trace.plannerMode, "skipped");
+  assert.equal(next.trace.scopeSource, "generic_query");
+});
+
+test("CASE D DEGRADED: planner unavailable keeps the legacy generic Project scope", async () => {
+  const session = createNoaGoldenSession(); // real boundary + disabled fixture runtime
+  await session.send("What is quotation status?");
+  await session.send("Which are the two client confirmed?");
+  const { answer, trace } = await session.send("Can you mention the name of the project?");
+  assert.ok(answer);
+  assert.equal(trace.plannerMode, "unavailable");
+  assert.equal(trace.plannerValidation, "unavailable");
+  assert.equal(trace.plannerExecution, "legacy");
+  assert.equal(trace.capabilitySelected, "Project");
+  assert.equal(trace.scopeSource, "generic_query");
+  assert.equal(trace.semanticUsed, false);
 });
 
 test("CASE E: exact Project identifier selects explicit scope", async () => {
