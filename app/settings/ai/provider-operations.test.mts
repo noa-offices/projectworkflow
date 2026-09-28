@@ -14,6 +14,7 @@ function compile(path: string, dependencies: Record<string, any> = {}, globals: 
   return compiled.exports;
 }
 const config = compile("lib/ai/provider-config.ts");
+const catalog = compile("lib/ai/model-catalog.ts", { "./provider-config": config });
 const contract = compile("lib/ai/provider-operations.ts");
 function health(fetch: any, env: any = { OPENAI_API_KEY: "test-secret", ANTHROPIC_API_KEY: "test-secret", GEMINI_API_KEY: "test-secret" }, timer?: any) {
   return compile("lib/ai/provider-health.server.ts", { "server-only": {}, "./provider-config": config }, { fetch, process: { env }, ...(timer ? { setTimeout: timer, clearTimeout: () => {} } : {}) });
@@ -87,7 +88,7 @@ test('manual action reads saved models and checks each provider once',async()=>{
 });
 test('settings read failure cannot dispatch checks',async()=>{const api=action(false,true);assert.equal((await api.refreshProviderStatus()).ok,false);assert.equal(api.calls(),0);});
 function ui(refresh: any, react: any = React) {
- return compile('components/settings/ai-provider-operations.tsx', {react,'react/jsx-runtime':jsx,'@/app/settings/ai/operations-actions':{refreshProviderStatus:refresh},'@/lib/ai/provider-operations':contract});
+ return compile('components/settings/ai-provider-operations.tsx', {react,'react/jsx-runtime':jsx,'@/app/settings/ai/operations-actions':{refreshProviderStatus:refresh},'@/lib/ai/provider-operations':contract,'@/lib/ai/model-catalog':catalog});
 }
 const props={configured:{openai:true,anthropic:false,gemini:true}};
 test('operations render safe missing/configured status, no automatic calls, honest billing and external links',()=>{

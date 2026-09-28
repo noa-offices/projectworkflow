@@ -4,8 +4,9 @@ import { useRef, useState } from "react";
 import { refreshProviderStatus } from "@/app/settings/ai/operations-actions";
 import { HEALTH_MESSAGES, NOA_VOICE_PROFILES, PROVIDER_PORTALS, type ProviderHealth } from "@/lib/ai/provider-operations";
 import type { AiProviderId } from "@/lib/ai/types";
+import { catalogCounts, registryCatalog, type ProviderCatalog } from "@/lib/ai/model-catalog";
 
-export function AiProviderOperations({ configured }: { configured: Record<AiProviderId, boolean> }) {
+export function AiProviderOperations({ configured, catalogs = [], selectedModels = [] }: { configured: Record<AiProviderId, boolean>; catalogs?: ProviderCatalog[]; selectedModels?: Array<{ provider_id: string; default_model: string | null }> }) {
   const [results, setResults] = useState<ProviderHealth[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -31,17 +32,34 @@ export function AiProviderOperations({ configured }: { configured: Record<AiProv
         const portal = PROVIDER_PORTALS[provider];
         const health = results.find((item) => item.provider === provider);
         const credential = health?.credentialStatus ?? (configured[provider] ? "configured" : "missing");
+        const catalog = catalogs.find((item) => item.provider === provider) ?? registryCatalog(provider);
+        const counts = catalogCounts(catalog);
+        const selected = selectedModels.find((item) => item.provider_id === provider)?.default_model;
+        const current = catalog.models.find((item) => item.id === selected);
+        const catalogLatest = Boolean(catalog.refreshedAt && (!health || catalog.refreshedAt > health.checkedAt));
+        const online = catalogLatest ? catalog.source === "live" ? "Online" : catalog.status === "unavailable" ? "Unavailable" : "Unknown"
+          : health?.reachability === "available" ? "Online" : health?.reachability === "unavailable" ? "Unavailable" : "Unknown";
+        const authentication = credential === "missing" ? "Missing" : catalogLatest ? catalog.source === "live" ? "Valid" : catalog.status === "invalid_credential" ? "Invalid" : "Unknown"
+          : health?.authStatus === "valid" ? "Valid" : health?.authStatus === "invalid" ? "Invalid" : "Unknown";
         return <article key={provider} className="min-w-0 rounded-lg border border-zinc-200 p-4">
           <h3 className="font-semibold text-zinc-950">{portal.label}</h3><p className="mt-1 text-xs font-medium text-zinc-600">{credential === "configured" ? "Configured" : "Missing credential"}</p>
           <dl className="mt-3 grid gap-2 text-sm text-zinc-600">
-            <div><dt className="font-medium text-zinc-900">Metadata endpoint</dt><dd>{health?.reachability ?? "unknown"}</dd></div>
-            <div><dt className="font-medium text-zinc-900">Authentication</dt><dd>{health?.authStatus ?? "unknown"}</dd></div>
-            <div><dt className="font-medium text-zinc-900">Quota</dt><dd>{(health?.quotaStatus ?? "unknown").replaceAll("_", " ")}</dd></div>
-            <div><dt className="font-medium text-zinc-900">Provider model checked</dt><dd className="break-words">{health?.model ?? "No provider model checked"}{health?.model ? ` · ${health.modelStatus.replaceAll("_", " ")}` : ""}</dd></div>
+            <div><dt className="font-medium text-zinc-900">Provider</dt><dd>{credential === "missing" ? "Credential missing" : online} (catalog/metadata access)</dd></div>
+            <div><dt className="font-medium text-zinc-900">Credential</dt><dd>{authentication}</dd></div>
+            <div><dt className="font-medium text-zinc-900">Model catalog</dt><dd>{catalog.source === "live" ? "Live catalog" : "Using registry fallback"}</dd></div>
+            <div><dt className="font-medium text-zinc-900">Discovered models</dt><dd>{counts.discovered ?? "Unknown"}</dd></div>
+            <div><dt className="font-medium text-zinc-900">Compatible text models</dt><dd>{counts.compatible}</dd></div>
+            <div><dt className="font-medium text-zinc-900">Preview/experimental models</dt><dd>{catalog.source === "live" ? counts.preview : "Unknown"}</dd></div>
+            <div><dt className="font-medium text-zinc-900">Voice/TTS models</dt><dd>{catalog.source === "live" ? counts.tts : "Unknown"}</dd></div>
+            <div><dt className="font-medium text-zinc-900">Selected model</dt><dd className="break-words">{selected ?? "Runtime default"}</dd></div>
+            <div><dt className="font-medium text-zinc-900">Selected model available</dt><dd>{!selected || catalog.source !== "live" ? "Unknown" : current?.available ? "Yes" : "No"}</dd></div>
+            <div><dt className="font-medium text-zinc-900">Last model refresh</dt><dd>{catalog.refreshedAt ? <time dateTime={catalog.refreshedAt}>{catalog.refreshedAt}</time> : "Not refreshed"}</dd></div>
+            <div><dt className="font-medium text-zinc-900">Quota</dt><dd>{health?.quotaStatus && health.quotaStatus !== "unknown" ? health.quotaStatus.replaceAll("_", " ") : "Unknown"}</dd></div>
           </dl>
           {health && <p className="mt-3 text-xs text-zinc-600">{HEALTH_MESSAGES[health.message]}</p>}
-          <p className="mt-3 text-xs text-zinc-500">Last checked: {health ? <time dateTime={health.checkedAt}>{new Date(health.checkedAt).toLocaleString()}</time> : "Not checked"}</p>
+          <p className="mt-3 text-xs text-zinc-500">Last health check: {health ? <time dateTime={health.checkedAt}>{new Date(health.checkedAt).toLocaleString()}</time> : "Not checked"}</p>
           <h4 className="mt-4 font-medium text-zinc-900">Provider usage</h4>
+          <p className="mt-1 text-sm text-zinc-600">Billing visibility: Not connected</p>
           <p className="mt-1 text-sm text-zinc-600">Current month usage / cost: Unavailable</p>
           <p className="mt-1 text-xs text-zinc-500">{provider === "gemini" ? "Billing reporting is not connected." : "Admin usage reporting is not connected."}</p>
           <p className="mt-2 text-sm text-zinc-600">Balance unavailable through current integration</p>
