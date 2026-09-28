@@ -71,13 +71,20 @@ function buildCases(): EvalCase[] {
     evalCase("F1", "F ordinal", "Tell me about the second one.", { confirmed: quotations("client_confirmed", [4, 5]) }, "confirmed", select("confirmed", 1)),
     evalCase("F2", "F ordinal", "What about the first one?", { confirmed: quotations("client_confirmed", [4, 5]) }, "confirmed", select("confirmed", 0)),
     evalCase("F3", "F ordinal", "Tell me about the last one.", { confirmed: quotations("client_confirmed", [4, 5]) }, "confirmed", select("confirmed", 1)),
-    // Exact live Vercel UAT failure shape: aggregate + quotation list + focused Project list. A
-    // live run of this case chose the AGGREGATE handle (rejected by validateNoaSemanticPlan as
-    // incompatible_type) instead of the "confirmed" quotation list - see the fix in
-    // noa-semantic-planner.server.ts's PLANNER_INSTRUCTIONS and the new `selectable` input field.
+    // DC and G1 run the SAME synthetic state (aggregate + quotation list + FOCUSED Project list)
+    // with opposite expected reference precedence - two proven, distinct live Vercel UAT
+    // failures over this one state, so they must stay separate cases, never merged/deduplicated:
+    //   - DC: unqualified "List them." must select the FOCUSED Project list. A live run instead
+    //     selected the OLDER quotation list (a valid, executed plan for the wrong ResultSet).
+    //   - G1: "Go back to the quotations." explicitly names a different scope and must select the
+    //     older quotation list. A live run instead chose the AGGREGATE handle (rejected by
+    //     validateNoaSemanticPlan as incompatible_type).
+    // Both are fixed by PLANNER_INSTRUCTIONS in noa-semantic-planner.server.ts (the reference-
+    // precedence rule for DC's case, the `selectable` hint/rule for G1's) - no validator/metadata
+    // schema change.
+    evalCase("DC", "D continuation", "List them.", g(), "projects", select("projects", null)),
     evalCase("G1", "G older set", "Go back to the quotations.", g(), "projects", select("confirmed", null)),
     evalCase("G2", "G older set", "What projects are those for?", g(), "confirmed", relation("confirmed")),
-    evalCase("DC", "D continuation", "List them.", g(), "projects", select("projects", null)),
     // Focus is the status summary (not selectable) and two quotation lists fit "them": must clarify.
     evalCase("H1", "H ambiguity", "Show them.", { confirmed: quotations("client_confirmed", [4, 5]), pending: quotations("draft", [2, 3]),
       aggregate: aggregate() }, "aggregate", { outcome: "plan", kind: "clarify" }),

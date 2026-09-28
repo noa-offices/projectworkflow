@@ -139,8 +139,17 @@ test("CASE D PHASE 2: native drill-down, then the related-project follow-up bind
   assert.equal(session.shadow()!.version, 3);
 });
 
-test("CASE D CONTINUATION: 'List them.' re-shows the focused Project ResultSet, not a generic Project query", async () => {
-  const { session, projectSet } = await caseDThroughProjects([(input) => plan("select", focusedSet(input))]);
+// Live UAT bug: on Vercel, "List them." over exactly this stack (older aggregate, older
+// client-confirmed quotation list, FOCUSED Project list) returned `select` over the OLDER
+// quotation list instead of the focused Project list - a valid, executed plan for the wrong
+// ResultSet (referenceBinding "older_result"/resultSetRecency "older" instead of
+// "focused_result"/"focused"). The fix is a reference-precedence rule in PLANNER_INSTRUCTIONS
+// (unqualified reference -> focused selectable set; an older set only for an explicit different
+// scope, as CASE G below exercises) - not a validator or state change. This scripted plan
+// reproduces the CORRECT precedence end to end; see eval cases "DC" and "G1" for the two live
+// cases side by side over the identical state.
+test("CASE D CONTINUATION: 'List them.' re-shows the FOCUSED Project ResultSet (never the older quotation list), not a generic Project query", async () => {
+  const { session, quotations, projectSet } = await caseDThroughProjects([(input) => plan("select", focusedSet(input))]);
   const version = session.shadow()!.version;
   noaGoldenProjectCapabilityCalls.length = 0;
   const { answer, trace } = await session.send("List them.");
@@ -149,9 +158,12 @@ test("CASE D CONTINUATION: 'List them.' re-shows the focused Project ResultSet, 
   assert.deepEqual(noaGoldenProjectCapabilityCalls, RELATED_ORDERS.map((orderNo) => ({ message: orderNo, entity: orderNo })));
   for (const orderNo of RELATED_ORDERS) assert.match(answer!.text, new RegExp(orderNo));
   assert.doesNotMatch(answer!.text, /CO-0005-001/);
-  // Reference-only: no duplicate set, focus unchanged, nothing saved.
-  assert.equal(session.shadow()!.state.resultSets.length, 3);
-  assert.equal(session.shadow()!.state.focus?.resultSetHandle, projectSet.handle);
+  // Reference-only: no duplicate set, focus unchanged, nothing saved, and the older quotation
+  // list is untouched (still present in history, never focused by this unqualified reference).
+  const state = session.shadow()!.state;
+  assert.equal(state.resultSets.length, 3);
+  assert.deepEqual(state.resultSets[1], quotations);
+  assert.equal(state.focus?.resultSetHandle, projectSet.handle);
   assert.deepEqual([session.shadow()!.version, trace.shadowSave], [version, "skipped"]);
 });
 
