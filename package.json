@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:noa": "node --import tsx --import ./lib/noa/testing/noa-offline.mjs --experimental-test-module-mocks --test \"lib/noa/**/*.test.mts\" \"components/noa/**/*.test.mts\""
+    "test:noa": "node --import tsx --import ./lib/noa/testing/noa-offline.mjs --experimental-test-module-mocks --test \"lib/noa/**/*.test.mts\" \"components/noa/**/*.test.mts\"",
+    "eval:noa-planner": "node --import tsx --experimental-test-module-mocks lib/noa/evals/noa-planner-live.eval.mts"
   },
   "dependencies": {
     "@sparticuz/chromium": "^148.0.0",
