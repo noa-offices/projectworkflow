@@ -14,6 +14,7 @@ function compile(path: string, dependencies: Record<string, any> = {}, extra = "
   return compiled.exports;
 }
 const registry = compile("lib/ai/provider-config.ts");
+const catalog = compile("lib/ai/model-catalog.ts", { "./provider-config": registry });
 const agents = compile("lib/ai/agent-registry.ts");
 function actions({ denied = false, fail = "" } = {}) {
   const writes: any[] = [];
@@ -24,6 +25,7 @@ function actions({ denied = false, fail = "" } = {}) {
   } };
   return { writes, ...compile("app/settings/ai/actions.ts", {
     "next/cache": { revalidatePath: () => {} }, "@/lib/ai/agent-registry": agents, "@/lib/ai/provider-config": registry,
+    "@/lib/ai/model-catalog.server": { isSelectableAiModel: async (provider: any, model: string) => registry.isApprovedAiModel(provider, model) },
     "@/lib/auth": { requireSystemOwner: async () => { if (denied) throw new Error("private auth detail"); return { user: { id: "owner" } }; } },
     "@/lib/supabase/server": { createClient: async () => database },
   }) };
@@ -53,7 +55,7 @@ test("registered override saves; unknown target is rejected", async () => {
   }
 });
 const props = { agents: agents.listAiAgents(), agentSettings: [], providerSettings: [], credentialConfigured: { openai: true, anthropic: false, gemini: true }, providers: registry.listAiProviderConfigs().map((p: any) => ({ ...p, models: registry.listApprovedAiModels(p.id) })), runtime: agents.listAiAgents().map((a: any) => ({ agentId: a.id, provider: "openai", model: a.defaultModel, enabled: true })) };
-function form(react = React, refresh = () => {}) { return compile("components/settings/ai-settings-form.tsx", { react, "react/jsx-runtime": jsx, "next/navigation": { useRouter: () => ({ refresh }) }, "@/app/settings/ai/actions": { saveAiProviderSettings: async () => ({ ok: true, message: "Saved" }), saveAiAgentSettings: async () => ({ ok: true, message: "Saved" }) } }, "\nexport { SavePanel, AgentCard };\n"); }
+function form(react = React, refresh = () => {}) { return compile("components/settings/ai-settings-form.tsx", { react, "react/jsx-runtime": jsx, "next/navigation": { useRouter: () => ({ refresh }) }, "@/lib/ai/model-catalog": catalog, "./ai-provider-operations": { AiProviderOperations: () => null }, "@/app/settings/ai/actions": { saveAiProviderSettings: async () => ({ ok: true, message: "Saved" }), saveAiAgentSettings: async () => ({ ok: true, message: "Saved" }) } }, "\nexport { SavePanel, AgentCard, ModelOptions };\n"); }
 test("UI exposes only real providers/overrides, safe credential status and runtime notes", () => {
   const html = renderToStaticMarkup(React.createElement(form().AiSettingsForm, props));
   for (const text of ["OpenAI", "Anthropic", "Google Gemini", "Source QA", "Specification Enrichment", "Final Specification", "NOA Assistant", "Configured", "Missing credential", "Saved runtime:", "Runtime-managed", "Semantic classification uses NOA Assistant", "deterministic plans"]) assert.ok(html.includes(text), text);
@@ -96,7 +98,7 @@ test("agent provider switch clears stale model and bounds choices", () => {
   select.props.onChange({ target: { value: "gemini" } });
   const tree = render(); const modelSelect = elements(tree).filter((e) => e.type === "select")[1];
   assert.equal(modelSelect.props.value, "");
-  const options = elements(modelSelect).filter((e) => e.type === "option").map((e) => e.props.children);
+  const options = elements({ props: { children: form().ModelOptions({ provider: props.providers.find((p: any) => p.id === "gemini") }) } }).filter((e) => e.type === "option").map((e) => e.props.children);
   assert.ok(options.includes("gemini-3.5-flash-lite")); assert.ok(!options.includes("gpt-4.1"));
 });
 test("migration sync contains exactly the applied grants", () => {
