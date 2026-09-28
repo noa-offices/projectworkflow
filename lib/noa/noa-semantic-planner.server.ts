@@ -3,6 +3,7 @@ import "server-only";
 import { requireQuotationActionUser } from "@/lib/auth";
 import { runAiProvider } from "@/lib/ai/provider-router.server";
 import { resolveAiAgentRuntimeConfig } from "@/lib/ai/resolve-agent-runtime-config.server";
+import { AiProviderError } from "@/lib/ai/types";
 import { fetchNoaProjectCapability } from "@/lib/noa/noa-project-capability.server";
 import { fetchNoaQuotationCapability, quotationStatusDisplayLabel } from "@/lib/noa/noa-quotation-capability.server";
 import { createClient } from "@/lib/supabase/server";
@@ -28,10 +29,48 @@ Pronouns such as them/these/those/it/this usually mean the focused result set; c
 "ordinal" is a 1-based position in the list as it was displayed, or "last"; use null unless the user names a position.
 Use null for fields that do not apply.`;
 
-export async function requestNoaSemanticPlan(input: NoaPlannerInput): Promise<unknown | null> {
+// Debug-only outcome/error taxonomy for the diagnostic below. Never changes what this function
+// returns to its caller - every branch below still resolves to `null` on any failure, exactly as
+// before. See NOA_PLANNER_DIAG_ENV_VALUE for the gate.
+type NoaPlannerDiagOutcome =
+  | "success" | "runtime_disabled" | "credential_missing" | "timeout" | "provider_failed" | "invalid_json" | "unexpected_error";
+
+const NOA_PLANNER_DIAG_ENV_VALUE = "1";
+function isNoaPlannerDiagnosticsEnabled(): boolean {
+  return process.env.NOA_DEBUG_ROUTING === NOA_PLANNER_DIAG_ENV_VALUE;
+}
+
+// Safe, closed metadata only - see the module comment above for exactly what this must never
+// contain (no prompt, no userContent/planner input, no raw provider text, no identifiers/secrets).
+function logNoaPlannerDiagnostic(fields: {
+  provider?: string; model?: string; runtimeEnabled?: boolean; apiKeyConfigured?: boolean;
+  providerSource?: string; modelSource?: string; timeoutMs: number; outcome: NoaPlannerDiagOutcome;
+  durationMs: number; providerErrorKind?: AiProviderError["kind"];
+}): void {
+  if (!isNoaPlannerDiagnosticsEnabled()) return;
   try {
-    const runtime = await resolveAiAgentRuntimeConfig("noa_orchestrator");
-    if (!runtime.enabled || !runtime.apiKeyConfigured) return null;
+    console.info("[NOA_PLANNER_DIAG]", JSON.stringify(fields));
+  } catch { /* diagnostics can never affect planner behavior */ }
+}
+
+export async function requestNoaSemanticPlan(input: NoaPlannerInput): Promise<unknown | null> {
+  const started = performance.now();
+  let runtime: Awaited<ReturnType<typeof resolveAiAgentRuntimeConfig>> | undefined;
+  try {
+    runtime = await resolveAiAgentRuntimeConfig("noa_orchestrator");
+    const common = {
+      provider: runtime.provider, model: runtime.model, runtimeEnabled: runtime.enabled,
+      apiKeyConfigured: runtime.apiKeyConfigured, providerSource: runtime.source?.provider, modelSource: runtime.source?.model,
+      timeoutMs: PLANNER_TIMEOUT_MS,
+    };
+    if (!runtime.enabled) {
+      logNoaPlannerDiagnostic({ ...common, outcome: "runtime_disabled", durationMs: Math.round(performance.now() - started) });
+      return null;
+    }
+    if (!runtime.apiKeyConfigured) {
+      logNoaPlannerDiagnostic({ ...common, outcome: "credential_missing", durationMs: Math.round(performance.now() - started) });
+      return null;
+    }
     const response = await runAiProvider({
       model: runtime.model,
       provider: runtime.provider,
@@ -40,8 +79,32 @@ export async function requestNoaSemanticPlan(input: NoaPlannerInput): Promise<un
       timeoutMs: PLANNER_TIMEOUT_MS,
       userContent: input,
     });
-    return response.text ? JSON.parse(response.text) as unknown : null;
-  } catch {
+    if (!response.text) {
+      logNoaPlannerDiagnostic({ ...common, outcome: "invalid_json", durationMs: Math.round(performance.now() - started) });
+      return null;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(response.text) as unknown;
+    } catch {
+      logNoaPlannerDiagnostic({ ...common, outcome: "invalid_json", durationMs: Math.round(performance.now() - started) });
+      return null;
+    }
+    logNoaPlannerDiagnostic({ ...common, outcome: "success", durationMs: Math.round(performance.now() - started) });
+    return parsed;
+  } catch (error) {
+    const common = runtime ? {
+      provider: runtime.provider, model: runtime.model, runtimeEnabled: runtime.enabled,
+      apiKeyConfigured: runtime.apiKeyConfigured, providerSource: runtime.source?.provider, modelSource: runtime.source?.model,
+      timeoutMs: PLANNER_TIMEOUT_MS,
+    } : { timeoutMs: PLANNER_TIMEOUT_MS };
+    if (error instanceof AiProviderError) {
+      const outcome: NoaPlannerDiagOutcome = error.kind === "timeout" ? "timeout"
+        : error.kind === "not_configured" ? "credential_missing" : "provider_failed";
+      logNoaPlannerDiagnostic({ ...common, outcome, providerErrorKind: error.kind, durationMs: Math.round(performance.now() - started) });
+    } else {
+      logNoaPlannerDiagnostic({ ...common, outcome: "unexpected_error", durationMs: Math.round(performance.now() - started) });
+    }
     return null;
   }
 }
