@@ -71,17 +71,24 @@ function buildCases(): EvalCase[] {
     evalCase("F1", "F ordinal", "Tell me about the second one.", { confirmed: quotations("client_confirmed", [4, 5]) }, "confirmed", select("confirmed", 1)),
     evalCase("F2", "F ordinal", "What about the first one?", { confirmed: quotations("client_confirmed", [4, 5]) }, "confirmed", select("confirmed", 0)),
     evalCase("F3", "F ordinal", "Tell me about the last one.", { confirmed: quotations("client_confirmed", [4, 5]) }, "confirmed", select("confirmed", 1)),
-    // DC and G1 run the SAME synthetic state (aggregate + quotation list + FOCUSED Project list)
-    // with opposite expected reference precedence - two proven, distinct live Vercel UAT
-    // failures over this one state, so they must stay separate cases, never merged/deduplicated:
-    //   - DC: unqualified "List them." must select the FOCUSED Project list. A live run instead
-    //     selected the OLDER quotation list (a valid, executed plan for the wrong ResultSet).
-    //   - G1: "Go back to the quotations." explicitly names a different scope and must select the
-    //     older quotation list. A live run instead chose the AGGREGATE handle (rejected by
-    //     validateNoaSemanticPlan as incompatible_type).
-    // Both are fixed by PLANNER_INSTRUCTIONS in noa-semantic-planner.server.ts (the reference-
-    // precedence rule for DC's case, the `selectable` hint/rule for G1's) - no validator/metadata
-    // schema change.
+    // G0, DC and G1 send the SAME WORDS ("Go back to the quotations." for G0/G1) or the same
+    // unqualified reference (DC's "List them.") over two distinct states, and must NEVER be
+    // merged/deduplicated - three proven, distinct live Vercel UAT failures over the exact
+    // literal wording "Go back to the quotations.":
+    //   - G0: focus is ALREADY the quotation list (older: just the aggregate). The named scope
+    //     ("quotations") already matches focus - must STAY on the focused quotation list, never
+    //     reach into the older aggregate merely because the wording says "go back". A live run
+    //     instead chose the older AGGREGATE handle (rejected by validateNoaSemanticPlan as
+    //     incompatible_type - a "go back" bug even with nothing else to go back TO).
+    //   - DC: focus is the Project list, older is the quotation list. DC's message is unqualified
+    //     ("List them.") and must select the FOCUSED Project list. A live run instead selected the
+    //     OLDER quotation list (a valid, executed plan for the wrong ResultSet).
+    //   - G1: focus is the Project list, older is the quotation list (same state as DC). G1's
+    //     message explicitly names a different scope ("the quotations") than focus, so it must
+    //     select the OLDER quotation list. A live run instead chose the AGGREGATE handle.
+    // All three are fixed by PLANNER_INSTRUCTIONS' 5-point reference-precedence order in
+    // noa-semantic-planner.server.ts - no validator/metadata schema change.
+    evalCase("G0", "G focus match", "Go back to the quotations.", d(), "confirmed", select("confirmed", null)),
     evalCase("DC", "D continuation", "List them.", g(), "projects", select("projects", null)),
     evalCase("G1", "G older set", "Go back to the quotations.", g(), "projects", select("confirmed", null)),
     evalCase("G2", "G older set", "What projects are those for?", g(), "confirmed", relation("confirmed")),
