@@ -117,6 +117,23 @@ test("SOCIAL S1: greeting and 'How are you today?' take the deterministic social
   assert.equal(social.trace.shadowSave, "skipped");
 });
 
+test("SOCIAL S2: 'Noah' is tolerated as the addressed name in a whole-turn greeting, never as a general keyword", async () => {
+  for (const message of ["Hello Noah", "Hello, Noah.", "Hey Noah", "Hi Noah"]) {
+    const session = createNoaGoldenSession();
+    const { answer, trace } = await session.send(message);
+    assert.deepEqual([trace.routeDecision, trace.capabilitySelected, trace.semanticUsed, trace.errorCode],
+      ["social", null, false, null], message);
+    assert.match(answer!.text, /^Hello! How can I help\?$/, message);
+    const state = session.shadow()!.state;
+    assert.deepEqual([state.resultSets.length, state.focus, state.pendingChoice], [0, null, undefined], message);
+  }
+
+  for (const message of ["Ask Noah about the quotation.", "The client contact is Noah.", "Show Noah's project."]) {
+    const { trace } = await createNoaGoldenSession().send(message);
+    assert.notEqual(trace.routeDecision, "social", message);
+  }
+});
+
 test("DAILY D1: today's status creates a session-backed pendingChoice; typing 'Changes today.' resolves and clears it", async () => {
   const session = createNoaGoldenSession();
   const first = await session.send("What is today's status?");
