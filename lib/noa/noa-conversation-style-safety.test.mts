@@ -43,7 +43,7 @@ test("conversation routes are deterministic, concise, and capability-on-demand",
 
 test("the generic Help/out-of-scope fallback is a short clarification, not the old capability-listing intro", () => {
   assert.ok(!orchestrator.includes("I'm NOA, the ProjectWorkflow assistant. I can help with"));
-  assert.match(orchestrator, /I'm not sure what you'd like me to check\./);
+  assert.match(orchestrator, /I couldn't match that to a ProjectWorkflow action\./);
 });
 
 // Deterministic provider-failure fallback ----------------------------------------
@@ -72,4 +72,49 @@ test("who-is-currently-working stays factually accurate: recorded activity is di
   assert.match(activityCapability, /not verified attendance or working hours/);
   assert.ok(!/\bonline now\b/i.test(activityCapability));
   assert.ok(!/"[^"]*\byou are online\b[^"]*"/i.test(activityCapability));
+});
+
+// ── Phase 3B: humanized deterministic response wording ─────────────────────────────────────────
+
+test("16/20. quotation status count wording is grammatical (Oxford-comma join, proper status labels), never a raw persisted key", () => {
+  const quotationCapability = readFileSync("lib/noa/noa-quotation-capability.server.ts", "utf8");
+  assert.ok(quotationCapability.includes('if (key === "senttoclient") return "Sent to Client";')); // no more raw "sent_to_client" leak
+  assert.ok(quotationCapability.includes("function joinNoaCountedList"));
+  assert.ok(quotationCapability.includes("joinNoaCountedList(counts.map"));
+  // Facts (counts) are still computed from the same authorized `counts`/`totalCount` data - only
+  // the prose join changed, never dropped or recomputed here.
+  assert.ok(quotationCapability.includes("totalCount"));
+});
+
+test("17. client-confirmed (and other single-status) list wording reads as a sentence, not '<n> <status>s:'", () => {
+  const quotationCapability = readFileSync("lib/noa/noa-quotation-capability.server.ts", "utf8");
+  assert.ok(quotationCapability.includes("function quotationStatusAdjective"));
+  assert.ok(quotationCapability.includes('return "client-confirmed";'));
+  assert.ok(quotationCapability.includes("These are the ${totalMatching} ${quotationStatusAdjective(statusIntent.statuses[0])} quotations:"));
+  // The old mechanical "<n> <label>s:" pluralization (e.g. "2 client confirmeds:") is gone.
+  assert.ok(!/\$\{sourceStatus\.trim\(\) \|\| "quotation"\}\$\{totalMatching === 1 \? "" : "s"\}/.test(quotationCapability));
+});
+
+test("18. Project list wording omits the redundant 'Showing N.' when nothing was truncated", () => {
+  const projectCapability = readFileSync("lib/noa/noa-project-capability.server.ts", "utf8");
+  assert.ok(projectCapability.includes("rows.length < filtered.length"));
+  assert.ok(!projectCapability.includes("`I found ${filtered.length} ${label} Project File${filtered.length === 1 ? \"\" : \"s\"}.${countOnly ? \"\" : ` Showing ${rows.length}.`}`"));
+});
+
+test("19. the generic fallback names concrete supported topics instead of a vague 'not sure' phrase", () => {
+  assert.match(orchestrator, /I couldn't match that to a ProjectWorkflow action\. You can ask about quotations, projects, products, prices, or recent activity\./);
+});
+
+test("social 'how are you' wording also covers a trailing 'today' by widening the existing bounded pattern, not a new regex list", () => {
+  const prerouter = readFileSync("lib/noa/noa-conversation-prerouter.ts", "utf8");
+  assert.ok(prerouter.includes("how are you(?: doing)?(?: today)?|hows it going(?: today)?"));
+});
+
+test("daily-status options are a single shared source of truth, never duplicated literal strings", () => {
+  const prerouter = readFileSync("lib/noa/noa-conversation-prerouter.ts", "utf8");
+  const shadowTurn = readFileSync("lib/noa/noa-shadow-turn.ts", "utf8");
+  assert.ok(prerouter.includes("export const NOA_DAILY_STATUS_OPTIONS"));
+  assert.ok(prerouter.includes("NOA_DAILY_STATUS_ORDER.map((action) => [NOA_DAILY_STATUS_OPTIONS[action].label, NOA_DAILY_STATUS_OPTIONS[action].value])"));
+  assert.ok(shadowTurn.includes('import { NOA_DAILY_STATUS_OPTIONS, NOA_DAILY_STATUS_ORDER } from "./noa-conversation-prerouter";'));
+  assert.ok(!shadowTurn.includes('"Attention items"')); // no re-declared literal option strings
 });

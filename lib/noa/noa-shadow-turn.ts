@@ -1,16 +1,46 @@
-import { appendNoaResultSet, focusNoaResultSet, isNoaConversationState, type NoaConversationState } from "./noa-conversation-state";
+import {
+  appendNoaResultSet, clearNoaPendingChoice, focusNoaResultSet, isNoaConversationState, setNoaPendingChoice,
+  type NoaConversationState, type NoaPendingChoice, type NoaPendingChoiceAction,
+} from "./noa-conversation-state";
 import { createNoaResultSetHandle, isNoaResultSet, isNoaStateRecord, MAX_NOA_RESULT_SET_ITEMS, type NoaResultSet, type NoaQuotationScopeStatus } from "./noa-result-set";
 import { noaSessionId, type NoaSessionAnswer, type NoaSessionChatRequest } from "./noa-turn-state";
 import type { NoaDecisionTrace, runNoaOrchestrator } from "./noa-orchestrator";
 import type { loadOrCreateNoaSession, saveNoaSession, NoaSession } from "./noa-session.server";
 import type { NoaAnswer, NoaDomain } from "./noa-types";
 import { isNoaConversationReference } from "./noa-conversation-reference";
+import { NOA_DAILY_STATUS_OPTIONS, NOA_DAILY_STATUS_ORDER } from "./noa-conversation-prerouter";
 import {
   buildNoaPlannerClarification, buildNoaPlannerInput, NOA_PLANNER_TRACE_SKIPPED, shouldRunNoaSemanticPlanner, validateNoaSemanticPlan,
   type NoaPlannerInput, type NoaPlannerTrace,
 } from "./noa-semantic-planner";
 import type { NoaRelationResult } from "./noa-relation.server";
 import type { NoaRelationId } from "./noa-relation-registry";
+
+// Phase 3B: daily-status pendingChoice is session-backed real state, not free-text re-matching.
+// Exact closed-token resolution only (Part 3 rule 2/3) - a small case/punctuation-insensitive
+// compare against THIS pendingChoice's own known label/value strings, never a growing regex list.
+function matchNoaPendingChoice(pendingChoice: NoaPendingChoice, message: string): NoaPendingChoiceAction | null {
+  const normalized = message.trim().toLowerCase().replace(/[.!?]+$/, "");
+  if (!normalized) return null;
+  for (const action of pendingChoice.options) {
+    const option = NOA_DAILY_STATUS_OPTIONS[action];
+    if (normalized === option.label.toLowerCase() || normalized === option.value.toLowerCase()) return action;
+  }
+  return null;
+}
+
+// Structural detection only (never parses free text): true iff this answer is exactly the
+// daily-status clarification's own 4 closed {label, value} choices, in order - the ONLY clarify
+// this shadow layer tracks as a pendingChoice. Any other clarify (Project active/completed,
+// quotation pending/list/analytics, etc.) is left entirely to existing legacy handling.
+function isNoaDailyStatusClarifyAnswer(answer: NoaAnswer): boolean {
+  if (!Array.isArray(answer.choices) || answer.choices.length !== NOA_DAILY_STATUS_ORDER.length) return false;
+  return NOA_DAILY_STATUS_ORDER.every((action, index) => {
+    const choice = answer.choices![index];
+    const option = NOA_DAILY_STATUS_OPTIONS[action];
+    return choice?.label === option.label && choice.value === option.value;
+  });
+}
 
 export type NoaShadowTrace = {
   sessionMode: "shadow_loaded" | "shadow_created" | "shadow_replaced" | "shadow_unavailable";
@@ -218,17 +248,45 @@ export async function runNoaShadowTurn(
     }
   } catch { /* Availability/identity details never replace the authoritative answer. */ }
 
+  // Phase 3B: an active pendingChoice is resolved (or expired) BEFORE the planner or legacy
+  // routing sees this turn - deterministic state resolution takes priority, per Part 8, over both.
+  // A resolved choice replaces the outgoing message with its own closed canonical value (typed and
+  // clicked behave identically because both ultimately route through this exact same substitution).
+  // An unmatched turn still clears the pendingChoice (Part 3 rules 4/5: it never traps the user)
+  // and proceeds with the user's OWN original message, unchanged.
+  let effectiveRequest = authoritativeRequest;
+  let pendingChoiceNextState: NoaConversationState | null = null;
+  // A RESOLVED choice skips the planner entirely for this turn - the action is already closed and
+  // known (Part 8), so the planner never gets a chance to reinterpret the stale original wording
+  // against an unrelated focused ResultSet. An EXPIRED (unmatched) choice does not skip it: the
+  // user's own original message still deserves normal planner/legacy routing.
+  let skipPlannerForResolvedChoice = false;
+  if (session?.state.pendingChoice) {
+    const resolvedAction = matchNoaPendingChoice(session.state.pendingChoice, request.message);
+    session = { ...session, state: clearNoaPendingChoice(session.state) };
+    pendingChoiceNextState = session.state;
+    if (resolvedAction) {
+      effectiveRequest = { ...authoritativeRequest, message: NOA_DAILY_STATUS_OPTIONS[resolvedAction].value };
+      skipPlannerForResolvedChoice = true;
+    }
+  }
+
   const planner: NoaPlannerTrace = { ...NOA_PLANNER_TRACE_SKIPPED };
   let result: NoaResultSet | null = null;
   let decision: NoaDecisionTrace | undefined;
   try {
-    const planned = session ? await runNoaPlannerStage(request, session.state, dependencies.planner, planner) : null;
+    const planned = session && !skipPlannerForResolvedChoice ? await runNoaPlannerStage(request, session.state, dependencies.planner, planner) : null;
     if (planned) decision = planned.decision;
-    const answer = planned ? planned.answer : await dependencies.run(authoritativeRequest, (trace) => { decision = { ...trace }; }, (domain, data) => {
+    const answer = planned ? planned.answer : await dependencies.run(effectiveRequest, (trace) => { decision = { ...trace }; }, (domain, data) => {
       try {
         result = buildNoaShadowResultSet(domain, data, { handle: createNoaResultSetHandle(), createdAt: new Date().toISOString() });
       } catch { shadow.shadowSave = "error"; }
     });
+    // A fresh daily-status clarification (no pendingChoice was active this turn) starts one now.
+    // Never a ResultSet: Part 7 - asking the question sets pendingChoice only.
+    if (!planned && session && !pendingChoiceNextState && isNoaDailyStatusClarifyAnswer(answer)) {
+      pendingChoiceNextState = setNoaPendingChoice(session.state, [...NOA_DAILY_STATUS_ORDER]);
+    }
     if (planned) {
       if (planned.produced) {
         shadow.shadowResultKind = planned.produced.kind;
@@ -254,6 +312,12 @@ export async function runNoaShadowTurn(
           shadow.shadowSave = saved.ok ? "saved" : saved.reason === "version_conflict" ? "version_conflict" : "error";
         } catch { shadow.shadowSave = "error"; }
       }
+    } else if (session && pendingChoiceNextState) {
+      // pendingChoice was set or cleared/expired this turn, with no ResultSet either way.
+      try {
+        const saved = await dependencies.save(session.sessionId, session.version, pendingChoiceNextState);
+        shadow.shadowSave = saved.ok ? "saved" : saved.reason === "version_conflict" ? "version_conflict" : "error";
+      } catch { shadow.shadowSave = "error"; }
     }
     // Unsupported/social/clarification results leave the existing stack/focus/pending state intact.
     // Omission on load failure clears the client's stale id on a successful answer.

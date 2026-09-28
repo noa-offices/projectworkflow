@@ -113,7 +113,7 @@ const SUPPORTED_SEMANTIC_INTENTS: ReadonlySet<NoaSemanticIntent> = new Set([
 // (NOA_CAPABILITY_SUMMARY_TEXT); repeating it here on every unclear message was the stale,
 // stiff-feeling fallback this replaces.
 const HELP_ANSWER_TEXT =
-  "I'm not sure what you'd like me to check. Try asking about a product, quotation, project, activity, or another ProjectWorkflow area.";
+  "I couldn't match that to a ProjectWorkflow action. You can ask about quotations, projects, products, prices, or recent activity.";
 
 // C3: narrow, fixed phrase classes for exactly the 2 follow-up shapes wired below (PART 6) - not
 // a growing regex framework, just the deterministic "is this message a follow-up" signal used

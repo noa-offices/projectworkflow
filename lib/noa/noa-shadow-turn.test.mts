@@ -225,11 +225,14 @@ test("16. refs are capped at 50 while the total count is preserved", () => {
   assert.equal(result.count, 60);
 });
 
-test("18. social/help/clarification turns preserve stack and focus (no save)", async () => {
+test("18. social/unrelated-clarification turns preserve stack and focus (no save)", async () => {
+  // Phase 3B: "What is today's status?" now sets a session-backed pendingChoice (its own dedicated
+  // coverage below), so it is deliberately excluded here - this test is about turns that touch
+  // neither ResultSets nor pendingChoice at all.
   const session = createNoaGoldenSession();
   await session.send("List the projects.");
   const before = structuredClone(session.shadow()!);
-  for (const message of ["Hello", "What is today's status?", "List them."]) {
+  for (const message of ["Hello", "Thanks", "List them."]) {
     const { trace } = await session.send(message);
     assert.equal(trace.shadowSave, "skipped", message);
     assert.equal(trace.sessionMode, "shadow_loaded", message);

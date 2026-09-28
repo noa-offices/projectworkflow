@@ -185,7 +185,26 @@ export function quotationStatusDisplayLabel(status: string) {
   const key = persistedStatusKey(status);
   if (key === "draft") return "Pending";
   if (key === "clientconfirmed") return "Client Confirmed";
+  if (key === "senttoclient") return "Sent to Client";
   return status;
+}
+
+// Grammatical (lowercase, hyphenated-compound where needed) form for humanized prose - distinct
+// from quotationStatusDisplayLabel's noun-phrase/label form used in structured data and headings.
+function quotationStatusAdjective(status: string): string {
+  const key = persistedStatusKey(status);
+  if (key === "draft") return "pending";
+  if (key === "clientconfirmed") return "client-confirmed";
+  if (key === "senttoclient") return "sent-to-client";
+  return quotationStatusDisplayLabel(status).toLowerCase();
+}
+
+// Oxford-comma list join for natural multi-item prose ("1 pending, 2 sent to client, and 3
+// client confirmed" rather than a run-on "and ... and ..." chain).
+function joinNoaCountedList(parts: string[]): string {
+  if (parts.length <= 1) return parts.join("");
+  if (parts.length === 2) return parts.join(" and ");
+  return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
 }
 
 // This is deliberately a pure mapping against exact, authorized persisted status keys. Approved
@@ -388,9 +407,15 @@ async function buildQuotationStatusAnswer(
         rows: rows.map((row) => ({ ...row, displayLabel: row.status ? quotationStatusDisplayLabel(row.status) : null, persistedStatus: row.status })),
         truncatedCount: Math.max(0, totalMatching - rows.length),
         emptyMessage: totalMatching === 0 ? `No${sourceStatus} quotations were found.` : null,
+        // Humanized: "These are the 2 client-confirmed quotations: ..." rather than the mechanical
+        // "2 client confirmeds: ...". No status filter keeps the plain "N quotations:" form.
         deterministicText: totalMatching === 0
           ? `No${sourceStatus} quotations were found.`
-          : `${totalMatching} ${sourceStatus.trim() || "quotation"}${totalMatching === 1 ? "" : "s"}: ${rows.map((row) => row.quotationNo ?? row.id).join(", ")}.`,
+          : statusIntent.statuses.length === 1
+            ? (totalMatching === 1
+              ? `This is the ${quotationStatusAdjective(statusIntent.statuses[0])} quotation: ${rows[0].quotationNo ?? rows[0].id}.`
+              : `These are the ${totalMatching} ${quotationStatusAdjective(statusIntent.statuses[0])} quotations: ${rows.map((row) => row.quotationNo ?? row.id).join(", ")}.`)
+            : `${totalMatching} quotation${totalMatching === 1 ? "" : "s"}: ${rows.map((row) => row.quotationNo ?? row.id).join(", ")}.`,
       },
       ok: true,
       sources: [{ label: `Checked${sourceStatus} quotations`, type: "quotation" }],
@@ -404,10 +429,10 @@ async function buildQuotationStatusAnswer(
     count: quotations.filter((quotation) => quotation.status === status).length,
   }));
   const totalCount = statusIntent.statuses.length > 0 ? matching.length : quotations.length;
-  const countText = counts.map(({ count, displayLabel }) => `${count} ${displayLabel}`).join(" and ");
-  const filteredCountText = counts
-    .map(({ count, displayLabel }) => `${count} ${displayLabel} quotation${count === 1 ? "" : "s"}`)
-    .join(" and ");
+  const countText = joinNoaCountedList(counts.map(({ count, displayLabel }) => `${count} ${displayLabel.toLowerCase()}`));
+  const filteredCountText = joinNoaCountedList(
+    counts.map(({ count, displayLabel }) => `${count} ${displayLabel.toLowerCase()} quotation${count === 1 ? "" : "s"}`),
+  );
   return {
     data: {
       kind: "quotation_status_count",

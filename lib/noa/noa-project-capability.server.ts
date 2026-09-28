@@ -375,7 +375,9 @@ async function projectFileAnswer(
       rows,
       totalMatching: filtered.length,
       truncatedCount: Math.max(0, filtered.length - rows.length),
-      deterministicText: `I found ${filtered.length} ${label} Project File${filtered.length === 1 ? "" : "s"}.${countOnly ? "" : ` Showing ${rows.length}.`}`,
+      // Humanized: omit the redundant "Showing N." when every match is already listed; keep it
+      // only when the list is actually truncated.
+      deterministicText: `I found ${filtered.length} ${label} Project File${filtered.length === 1 ? "" : "s"}.${!countOnly && rows.length < filtered.length ? ` Showing ${rows.length}.` : ""}`,
     },
     ok: true,
     sources: [{ label: "Project · Checked Project Files", type: "project_file" }],
