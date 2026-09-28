@@ -69,6 +69,12 @@ export type NoaPlannerResultSetSummary = {
   kind: NoaResultSet["kind"];
   entityType: NoaResultEntityType;
   count: number;
+  // Fix for the live UAT bug where the planner chose an aggregate (status summary) handle for
+  // "select"/"relation" over an older, correctly-typed entity/list handle: a deterministic,
+  // TypeScript-derived hint (never model-reported) so the model does not have to infer selectability
+  // from `kind` on its own. Always `kind !== "aggregate"`; validateNoaSemanticPlan() re-derives and
+  // enforces this independently and never trusts a model's own notion of which handle is selectable.
+  selectable: boolean;
   statusFilter: NoaQuotationScopeStatus | null;
   statusGroups: Array<{ status: NoaQuotationScopeStatus; count: number }> | null;
 };
@@ -105,6 +111,7 @@ export function buildNoaPlannerInput(
       kind: result.kind,
       entityType: result.entityType,
       count: result.count,
+      selectable: result.kind !== "aggregate",
       statusFilter: result.kind !== "entity" && result.querySpec?.capability === "quotation" ? result.querySpec.filters.status ?? null : null,
       statusGroups: result.kind === "aggregate" ? result.groups.map(({ status, count }) => ({ status, count })) : null,
     })),

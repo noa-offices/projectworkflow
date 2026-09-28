@@ -71,6 +71,10 @@ function buildCases(): EvalCase[] {
     evalCase("F1", "F ordinal", "Tell me about the second one.", { confirmed: quotations("client_confirmed", [4, 5]) }, "confirmed", select("confirmed", 1)),
     evalCase("F2", "F ordinal", "What about the first one?", { confirmed: quotations("client_confirmed", [4, 5]) }, "confirmed", select("confirmed", 0)),
     evalCase("F3", "F ordinal", "Tell me about the last one.", { confirmed: quotations("client_confirmed", [4, 5]) }, "confirmed", select("confirmed", 1)),
+    // Exact live Vercel UAT failure shape: aggregate + quotation list + focused Project list. A
+    // live run of this case chose the AGGREGATE handle (rejected by validateNoaSemanticPlan as
+    // incompatible_type) instead of the "confirmed" quotation list - see the fix in
+    // noa-semantic-planner.server.ts's PLANNER_INSTRUCTIONS and the new `selectable` input field.
     evalCase("G1", "G older set", "Go back to the quotations.", g(), "projects", select("confirmed", null)),
     evalCase("G2", "G older set", "What projects are those for?", g(), "confirmed", relation("confirmed")),
     evalCase("DC", "D continuation", "List them.", g(), "projects", select("projects", null)),
