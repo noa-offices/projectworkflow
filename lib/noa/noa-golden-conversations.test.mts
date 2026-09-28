@@ -2,24 +2,29 @@
 // Real orchestrator; fixture reads; disabled semantic runtime. See testing/TEST-MODE.md.
 import assert from "node:assert/strict";
 import test, { mock } from "node:test";
-import { createNoaGoldenSession, installNoaGoldenFixtures, noaGoldenProjectCapabilityCalls, NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS, NOA_GOLDEN_QUOTATIONS } from "./testing/noa-golden-harness";
+import { createNoaGoldenSession, installNoaGoldenFixtures, noaGoldenProjectCapabilityCalls, noaGoldenQuotationCapabilityCalls, NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS, NOA_GOLDEN_QUOTATIONS } from "./testing/noa-golden-harness";
 import { normalizeNoaVoiceTranscript } from "../../components/noa/use-noa-realtime-voice";
 import type { NoaPlannerInput } from "./noa-semantic-planner";
 installNoaGoldenFixtures(mock, { mockDatabase: false });
-// Offline fake scoped to the Phase 2 relation executor's own reads (auth gate + quotations by id).
+// Offline fake scoped to the Phase 2 executors' own reads (auth gate, quotations by id, by status).
 // Every other table stays unseeded, exactly like the harness default.
 mock.module("@/lib/supabase/server", { namedExports: { createClient: async () => ({
   auth: { getUser: async () => ({ data: { user: { id: "golden-user", user_metadata: {} } } }) },
   from(table: string) {
     if (table === "profiles") return { select: () => ({ eq: () => ({ single: async () => ({ data: { id: "golden-user", role: "sales_designer", account_status: "active" }, error: null }) }) }) };
     if (table !== "quotations") throw new Error("Unseeded database access");
-    let ids: unknown[] = [];
+    let ids: unknown[] | null = null;
+    let status: unknown = null;
     const builder = {
       select: () => builder,
       in: (_key: string, value: unknown[]) => { ids = value; return builder; },
+      eq: (_key: string, value: unknown) => { status = value; return builder; },
+      order: () => builder,
+      limit: () => builder,
       returns: () => builder,
       then(resolve: (value: unknown) => void) {
-        resolve({ error: null, data: NOA_GOLDEN_QUOTATIONS.filter((q) => ids.includes(q.id)).map((q) => ({ id: q.id,
+        resolve({ error: null, data: NOA_GOLDEN_QUOTATIONS.filter((q) => (!ids || ids.includes(q.id)) && (status === null || q.status === status)).map((q) => ({
+          id: q.id, quotation_no: q.quotationNo, status: q.status,
           layout_settings: q.projectOrderNo ? { projectFile: { orderNo: q.projectOrderNo, quotationId: q.id, quotationNo: q.quotationNo,
             clientId: "client", clientName: q.client, reference: q.projectOrderNo, total: 1, currency: "USD", createdAt: "2026-01-01T00:00:00.000Z", createdBy: "u" } } : {} })) });
       },
@@ -28,16 +33,59 @@ mock.module("@/lib/supabase/server", { namedExports: { createClient: async () =>
   },
 }) } });
 
-// Mocks ONLY the planner provider boundary: a scripted structured plan over the planner's own
-// bounded input. Validation, relation execution, rendering and session persistence stay real.
-function scriptedPlanner(calls: NoaPlannerInput[]) {
+// Mocks ONLY the planner provider boundary: one scripted structured plan per planned turn, built
+// from the planner's own bounded input (handles by focus/recency/entity type - never item ids).
+// Validation, execution, rendering and session persistence stay real.
+type Summary = NoaPlannerInput["resultSets"][number];
+const plan = (kind: string, source: Summary | null, fields: { relation?: string; status?: string; ordinal?: number | "last" } = {}) => ({
+  kind, sourceResultSetHandle: source?.handle ?? null, relation: fields.relation ?? null, status: fields.status ?? null, ordinal: fields.ordinal ?? null,
+});
+const focusedSet = (input: NoaPlannerInput) => input.resultSets.find((result) => result.focused)!;
+const newestOf = (input: NoaPlannerInput, entityType: string, kind = "list") =>
+  input.resultSets.filter((result) => result.entityType === entityType && result.kind === kind).sort((a, b) => a.recency - b.recency)[0];
+function scriptedPlanner(calls: NoaPlannerInput[], steps: Array<(input: NoaPlannerInput) => unknown>) {
   return async (input: NoaPlannerInput) => {
     calls.push(structuredClone(input));
-    const focused = input.resultSets.find((result) => result.focused)!;
-    return focused.kind === "aggregate"
-      ? { kind: "aggregate_drilldown", sourceResultSetHandle: focused.handle, relation: null, status: "client_confirmed" }
-      : { kind: "relation", sourceResultSetHandle: focused.handle, relation: "quotation.project_file", status: null };
+    const step = steps.shift();
+    assert.ok(step, "unexpected planner call");
+    return step(input);
   };
+}
+const drillConfirmed = (input: NoaPlannerInput) => plan("aggregate_drilldown", focusedSet(input), { status: "client_confirmed" });
+const relateFocused = (input: NoaPlannerInput) => plan("relation", focusedSet(input), { relation: "quotation.project_file" });
+const CONFIRMED_IDS = NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS.map((q) => q.id);
+const RELATED_ORDERS = NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS.map((q) => q.projectOrderNo!);
+
+// Case D turns 1-3 shared by the D continuation and G rebinding cases.
+async function caseDThroughProjects(steps: Array<(input: NoaPlannerInput) => unknown>) {
+  const calls: NoaPlannerInput[] = [];
+  const session = createNoaGoldenSession({ plan: scriptedPlanner(calls, [drillConfirmed, relateFocused, ...steps]) });
+  const status = await session.send("What is quotation status?");
+  assert.equal(status.trace.plannerMode, "skipped"); // no prior quotation scope yet
+  assert.equal(status.trace.shadowResultKind, "aggregate");
+
+  noaGoldenQuotationCapabilityCalls.length = 0;
+  const confirmed = await session.send("Which are the two client confirmed?");
+  // Native drill-down: drillDownNoaAggregate + deterministic renderer, never the legacy status-list route.
+  assert.deepEqual([confirmed.trace.plannerAction, confirmed.trace.plannerExecution, confirmed.trace.scopeSource], ["aggregate_drilldown", "executed", "result_set"]);
+  assert.deepEqual([confirmed.trace.capabilitySelected, confirmed.trace.resultCount], ["Quotation", 2]);
+  assert.deepEqual(noaGoldenQuotationCapabilityCalls, []);
+  for (const q of NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS) assert.match(confirmed.answer!.text, new RegExp(q.quotationNo));
+  const [aggregate, quotations] = session.shadow()!.state.resultSets;
+  assert.equal(aggregate.kind, "aggregate");
+  assert.deepEqual(quotations.kind === "list" && quotations.items, CONFIRMED_IDS.map((id) => ({ id })));
+  assert.equal(session.shadow()!.state.focus?.resultSetHandle, quotations.handle);
+
+  noaGoldenProjectCapabilityCalls.length = 0;
+  const projects = await session.send("Can you mention the name of the project?");
+  assert.deepEqual([projects.trace.plannerAction, projects.trace.referenceBinding, projects.trace.scopeSource, projects.trace.resultCount],
+    ["relation", "focused_result", "result_set", 2]);
+  assert.deepEqual(noaGoldenProjectCapabilityCalls, RELATED_ORDERS.map((orderNo) => ({ message: orderNo, entity: orderNo })));
+  assert.doesNotMatch(projects.answer!.text, /CO-0005-001/);
+  const projectSet = session.shadow()!.state.resultSets[2];
+  assert.deepEqual(projectSet.kind === "list" && projectSet.items, RELATED_ORDERS.map((orderNo) => ({ orderNo })));
+  assert.equal(session.shadow()!.state.focus?.resultSetHandle, projectSet.handle);
+  return { session, calls, quotations, projectSet };
 }
 
 function fallback(trace: Awaited<ReturnType<ReturnType<typeof createNoaGoldenSession>["send"]>>["trace"]) {
@@ -81,64 +129,78 @@ test("CASE C CURRENT BASELINE: Project list reference exists but List them does 
   assert.equal(session.snapshot().conversationReference, undefined); // successful fallback clears it
 });
 
-test("CASE D PHASE 2: related-project follow-up binds the focused quotation ResultSet via the Semantic Planner", async () => {
-  const plannerCalls: NoaPlannerInput[] = [];
-  const session = createNoaGoldenSession({ plan: scriptedPlanner(plannerCalls) });
-  const status = await session.send("What is quotation status?");
-  assert.equal(status.trace.capabilitySelected, "Quotation");
-  assert.equal(status.trace.shadowResultKind, "aggregate");
-  assert.equal(status.trace.plannerMode, "skipped"); // no prior quotation scope yet
+test("CASE D PHASE 2: native drill-down, then the related-project follow-up binds the quotation ResultSet", async () => {
+  const { session } = await caseDThroughProjects([]);
+  assert.equal(session.shadow()!.state.resultSets.length, 3);
+  assert.equal(session.shadow()!.version, 3);
+});
 
-  // Validated aggregate_drilldown is delegated to the existing authoritative status-list capability.
-  const confirmed = await session.send("Which are the two client confirmed?");
-  assert.equal(confirmed.trace.plannerMode, "planned");
-  assert.equal(confirmed.trace.plannerAction, "aggregate_drilldown");
-  assert.equal(confirmed.trace.plannerExecution, "legacy");
-  assert.equal(confirmed.trace.capabilitySelected, "Quotation");
-  assert.equal(confirmed.trace.resultCount, 2);
-  const [aggregate, list] = session.shadow()!.state.resultSets;
-  assert.equal(aggregate.kind, "aggregate");
-  assert.equal(list.kind, "list");
-  assert.equal(list.entityType, "quotation");
-  assert.deepEqual(list.kind === "list" && list.items, NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS.map((q) => ({ id: q.id })));
-  assert.equal(session.shadow()!.state.focus?.resultSetHandle, list.handle);
-
+test("CASE D CONTINUATION: 'List them.' re-shows the focused Project ResultSet, not a generic Project query", async () => {
+  const { session, projectSet } = await caseDThroughProjects([(input) => plan("select", focusedSet(input))]);
+  const version = session.shadow()!.version;
   noaGoldenProjectCapabilityCalls.length = 0;
-  const versionBefore = session.shadow()!.version;
-  const { answer, trace } = await session.send("Can you mention the name of the project?");
-  assert.ok(answer);
-  assert.equal(trace.errorCode, null);
-  assert.equal(trace.plannerMode, "planned");
-  assert.equal(trace.plannerAction, "relation");
-  assert.equal(trace.plannerSourceType, "quotation");
-  assert.equal(trace.plannerValidation, "valid");
-  assert.equal(trace.plannerExecution, "executed");
-  assert.equal(trace.scopeSource, "result_set"); // not generic_query
-  assert.equal(trace.capabilitySelected, "Project");
-  assert.equal(trace.resultCount, 2);
-  assert.equal(answer.domain, "Project");
-  // Planner bound the focused quotation list, not the aggregate.
-  assert.equal(plannerCalls.at(-1)!.resultSets.find((result) => result.focused)?.handle, list.handle);
-  // Only exact authorized lookups of the related Project Files ran; the generic active list never did.
-  const related = NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS.map((q) => q.projectOrderNo!);
-  assert.deepEqual(noaGoldenProjectCapabilityCalls, related.map((orderNo) => ({ message: orderNo, entity: orderNo })));
-  for (const orderNo of related) assert.match(answer.text, new RegExp(orderNo));
-  assert.doesNotMatch(answer.text, /CO-0005-001/);
+  const { answer, trace } = await session.send("List them.");
+  assert.deepEqual([trace.plannerAction, trace.referenceBinding, trace.resultSetRecency, trace.scopeSource, trace.capabilitySelected, trace.resultCount],
+    ["select", "focused_result", "focused", "result_set", "Project", 2]);
+  assert.deepEqual(noaGoldenProjectCapabilityCalls, RELATED_ORDERS.map((orderNo) => ({ message: orderNo, entity: orderNo })));
+  for (const orderNo of RELATED_ORDERS) assert.match(answer!.text, new RegExp(orderNo));
+  assert.doesNotMatch(answer!.text, /CO-0005-001/);
+  // Reference-only: no duplicate set, focus unchanged, nothing saved.
+  assert.equal(session.shadow()!.state.resultSets.length, 3);
+  assert.equal(session.shadow()!.state.focus?.resultSetHandle, projectSet.handle);
+  assert.deepEqual([session.shadow()!.version, trace.shadowSave], [version, "skipped"]);
+});
 
-  const persisted = session.shadow()!;
-  assert.equal(persisted.version, versionBefore + 1);
-  assert.equal(persisted.state.resultSets.length, 3);
-  assert.equal(persisted.state.resultSets[1].handle, list.handle); // prior scope preserved
-  const projects = persisted.state.resultSets[2];
-  assert.equal(projects.entityType, "project_file");
-  assert.deepEqual(projects.kind === "list" && projects.items, related.map((orderNo) => ({ orderNo })));
-  assert.equal(persisted.state.focus?.resultSetHandle, projects.handle);
-  assert.equal(trace.shadowSave, "saved");
+test("CASE G OLDER SET: 'Go back to the quotations.' refocuses the older set; 'those' then relates from it", async () => {
+  const { session, calls, quotations } = await caseDThroughProjects([
+    (input) => plan("select", newestOf(input, "quotation")),
+    relateFocused,
+  ]);
+  const back = await session.send("Go back to the quotations.");
+  assert.deepEqual([back.trace.plannerAction, back.trace.referenceBinding, back.trace.resultSetRecency, back.trace.capabilitySelected],
+    ["select", "older_result", "older", "Quotation"]);
+  for (const q of NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS) assert.match(back.answer!.text, new RegExp(q.quotationNo));
+  assert.equal(session.shadow()!.state.resultSets.length, 3); // selected, not duplicated
+  assert.equal(session.shadow()!.state.focus?.resultSetHandle, quotations.handle);
+  assert.equal(back.trace.shadowSave, "saved");
 
-  // Phase 2 References (out of scope): "these two" over a Project ResultSet is not yet planned.
-  const next = await session.send("List these two projects.");
-  assert.equal(next.trace.plannerMode, "skipped");
-  assert.equal(next.trace.scopeSource, "generic_query");
+  const those = await session.send("What projects are those for?");
+  assert.equal(calls.at(-1)!.resultSets.find((result) => result.focused)?.handle, quotations.handle);
+  assert.deepEqual([those.trace.plannerAction, those.trace.referenceBinding, those.trace.resultCount], ["relation", "focused_result", 2]);
+  const state = session.shadow()!.state;
+  assert.equal(state.resultSets.length, 4);
+  const newest = state.resultSets.at(-1)!;
+  assert.deepEqual(newest.kind === "list" && newest.items, RELATED_ORDERS.map((orderNo) => ({ orderNo })));
+  assert.equal(state.focus?.resultSetHandle, newest.handle);
+});
+
+test("CASE F ORDINAL: 'the second one' resolves the second DISPLAYED quotation only", async () => {
+  const calls: NoaPlannerInput[] = [];
+  const session = createNoaGoldenSession({ plan: scriptedPlanner(calls, [(input) => plan("select", focusedSet(input), { ordinal: 2 })]) });
+  const list = await session.send("Which are the client confirmed quotations?");
+  assert.equal(list.trace.plannerMode, "skipped");
+  assert.equal(list.trace.resultCount, 2);
+  noaGoldenQuotationCapabilityCalls.length = 0;
+  const { answer, trace } = await session.send("Tell me about the second one.");
+  const second = NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS[1];
+  assert.deepEqual([trace.plannerAction, trace.referenceBinding, trace.ordinalResolution, trace.capabilitySelected, trace.resultCount],
+    ["select", "ordinal", "valid", "Quotation", 1]);
+  assert.deepEqual(noaGoldenQuotationCapabilityCalls, [{ message: second.quotationNo, quotationNo: second.quotationNo }]);
+  assert.match(answer!.text, new RegExp(second.quotationNo));
+  assert.doesNotMatch(answer!.text, new RegExp(NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS[0].quotationNo));
+  const state = session.shadow()!.state;
+  const entity = state.resultSets.at(-1)!;
+  assert.deepEqual([entity.kind, entity.kind === "entity" && entity.items], ["entity", [{ id: second.id }]]);
+  assert.equal(state.focus?.resultSetHandle, entity.handle);
+});
+
+test("CASE H AMBIGUITY: two plausible sets produce a bounded deterministic clarification, not a guess", async () => {
+  const { session } = await caseDThroughProjects([() => plan("clarify", null)]);
+  const before = structuredClone(session.shadow()!);
+  const { answer, trace } = await session.send("Tell me more about them.");
+  assert.deepEqual([trace.plannerAction, trace.scopeSource, trace.clarifyReason, trace.capabilitySelected], ["clarify", "clarification", "semantic_clarification", null]);
+  assert.equal(answer!.text, "I could use more than one recent result: the 2 Project Files, the 2 quotations or the quotation status summary. Which do you mean?");
+  assert.deepEqual(session.shadow(), before);
 });
 
 test("CASE D DEGRADED: planner unavailable keeps the legacy generic Project scope", async () => {

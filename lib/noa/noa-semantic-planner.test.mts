@@ -48,7 +48,7 @@ test("1. valid relation plan over the focused quotation list is accepted", () =>
   const state = stateWith(aggregate(), quotationList());
   const handle = state.resultSets[1].handle;
   assert.deepEqual(validateNoaSemanticPlan(relationPlan(handle), state), {
-    ok: true, plan: { kind: "relation", sourceResultSetHandle: handle, relation: "quotation.project_file" }, sourceType: "quotation",
+    ok: true, plan: { kind: "relation", sourceResultSetHandle: handle, relation: "quotation.project_file", itemIndex: null }, sourceType: "quotation",
   });
 });
 
@@ -143,7 +143,7 @@ function harness(initial: NoaConversationState, planner: Partial<NoaPlannerDepen
   const store = createNoaGoldenSessionStore();
   const sessionId = globalThis.crypto.randomUUID();
   store.sessions.set(sessionId, { state: initial, version: 1 });
-  const calls = { legacy: 0, plan: 0, relate: 0 };
+  const calls = { legacy: 0, plan: 0, relate: 0, drillDown: 0 };
   const legacy: NoaAnswer = { domain: "Project", sources: [], text: "legacy" };
   const deps = {
     ...createNoaGoldenSessionRepository(store),
@@ -160,7 +160,14 @@ function harness(initial: NoaConversationState, planner: Partial<NoaPlannerDepen
         assert.ok(state.resultSets.some((result) => result.handle === handle));
         return { ok: true, resultSet: projectList(), sourceCount: 2, matchedCount: 2, resultCount: 2 };
       }),
+      drillDown: planner.drillDown ?? (async (state, handle, status) => {
+        calls.drillDown += 1;
+        assert.equal(state.resultSets.find((result) => result.handle === handle)?.kind, "aggregate");
+        assert.equal(status, "client_confirmed");
+        return { ok: true, resultSet: quotationList(), sourceCount: 2, matchedCount: 2, resultCount: 2 };
+      }),
       describeProjectFiles: planner.describeProjectFiles ?? (async (orderNos) => ({ domain: "Project", sources: [], text: orderNos.join(", ") })),
+      describeQuotations: planner.describeQuotations ?? (async (ids) => ({ domain: "Quotation", sources: [], text: ids.join(", ") })),
     } satisfies NoaPlannerDependencies,
   };
   async function send(message: string, extra: Partial<NoaChatRequest> = {}) {
@@ -172,8 +179,8 @@ function harness(initial: NoaConversationState, planner: Partial<NoaPlannerDepen
 }
 const focusedRelation = async (input: NoaPlannerInput) => relationPlan(input.resultSets.find((result) => result.focused)!.handle);
 
-test("8. no quotation ResultSet in focus: planner skipped, legacy answers", async () => {
-  for (const state of [createEmptyNoaConversationState(), stateWith(quotationList(), projectList())]) {
+test("8. no quotation ResultSet in the stack: planner skipped, legacy answers", async () => {
+  for (const state of [createEmptyNoaConversationState(), stateWith(projectList())]) {
     const h = harness(state, { plan: focusedRelation });
     const { answer, trace } = await h.send("which projects?");
     assert.equal(answer.text, "legacy");
@@ -284,5 +291,168 @@ test("24/25. planner trace is closed metadata and leaks no handles, identifiers 
   const json = JSON.stringify(trace);
   for (const leak of [...state.resultSets.map((result) => result.handle), ...QUOTATION_IDS, "CO-0003", "secret-marker", "rs_"]) {
     assert.ok(!json.includes(leak), leak);
+  }
+});
+
+// ── Phase 2 References ─────────────────────────────────────────────────────────────────────────
+const selectPlan = (handle: string, ordinal: number | "last" | null = null) => ({ kind: "select", sourceResultSetHandle: handle, relation: null, status: null, ordinal });
+const idAt = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const quotationListOf = (ids: string[]): NoaResultSet => ({ handle: createNoaResultSetHandle(), createdAt: T, kind: "list", entityType: "quotation", count: ids.length, items: ids.map((id) => ({ id })) });
+
+test("R1/R2. focused and older ResultSets are both selectable by handle", () => {
+  const state = stateWith(quotationList(), projectList());
+  for (const source of state.resultSets) {
+    assert.deepEqual(validateNoaSemanticPlan(selectPlan(source.handle), state),
+      { ok: true, plan: { kind: "select", sourceResultSetHandle: source.handle, itemIndex: null }, sourceType: source.entityType });
+  }
+  const input = buildNoaPlannerInput(state, { message: "go back" });
+  assert.deepEqual(input.resultSets.map((result) => [result.entityType, result.focused, result.recency]), [["quotation", false, 1], ["project_file", true, 0]]);
+});
+
+test("R3/R4. nonexistent and evicted handles are rejected; evicted sets are never resurrected", () => {
+  const evicted = quotationList();
+  const state = stateWith(evicted, ...Array.from({ length: 5 }, () => projectList()));
+  assert.equal(state.resultSets.length, 5);
+  for (const handle of [evicted.handle, createNoaResultSetHandle()]) {
+    assert.deepEqual(validateNoaSemanticPlan(selectPlan(handle), state), { ok: false, reason: "invalid_handle", action: "select" });
+    assert.deepEqual(validateNoaSemanticPlan(relationPlan(handle), state), { ok: false, reason: "invalid_handle", action: "relation" });
+  }
+});
+
+test("R5. aggregate sets cannot be selected or addressed by ordinal", () => {
+  const state = stateWith(aggregate());
+  const handle = state.resultSets[0].handle;
+  assert.deepEqual(validateNoaSemanticPlan(selectPlan(handle), state), { ok: false, reason: "incompatible_type", action: "select" });
+  assert.deepEqual(validateNoaSemanticPlan(selectPlan(handle, 1), state), { ok: false, reason: "incompatible_type", action: "select" });
+  assert.equal(validateNoaSemanticPlan({ kind: "aggregate_drilldown", sourceResultSetHandle: handle, relation: null, status: "client_confirmed", ordinal: 1 }, state).ok, false);
+});
+
+test("R6-R10. ordinals resolve against stored display order; out-of-range and unsupported values are rejected", () => {
+  const ids = [idAt(9), idAt(3), idAt(7)]; // deliberately not sorted: display order is array order
+  const state = stateWith(quotationListOf(ids));
+  const handle = state.resultSets[0].handle;
+  for (const [ordinal, index] of [[1, 0], [2, 1], [3, 2], ["last", 2]] as const) {
+    const result = validateNoaSemanticPlan(selectPlan(handle, ordinal), state);
+    assert.ok(result.ok && result.plan.kind === "select");
+    assert.equal(result.ok && result.plan.kind === "select" && result.plan.itemIndex, index);
+  }
+  assert.deepEqual(validateNoaSemanticPlan(selectPlan(handle, 4), state), { ok: false, reason: "out_of_range", action: "select" });
+  for (const ordinal of [0, -1, 1.5, "2", "second", 11]) {
+    assert.deepEqual(validateNoaSemanticPlan(selectPlan(handle, ordinal as never), state), { ok: false, reason: "unsupported_operation", action: "select" });
+  }
+  const entity = stateWith({ handle: createNoaResultSetHandle(), createdAt: T, kind: "entity", entityType: "quotation", count: 1, items: [{ id: idAt(1) }] });
+  assert.equal(validateNoaSemanticPlan(selectPlan(entity.resultSets[0].handle, 1), entity).ok, true);
+  assert.equal(validateNoaSemanticPlan(selectPlan(entity.resultSets[0].handle, 2), entity).ok, false);
+});
+
+test("R10/R11. 'the second one' pushes and focuses the second displayed item as entity scope", async () => {
+  const ids = [idAt(9), idAt(3), idAt(7)];
+  const state = stateWith(quotationListOf(ids));
+  const rendered: string[][] = [];
+  const h = harness(state, { plan: async (input) => selectPlan(input.resultSets[0].handle, 2), describeQuotations: async (shown) => {
+    rendered.push(shown); return { domain: "Quotation", sources: [], text: shown.join(", ") };
+  } });
+  const { trace, row } = await h.send("the second one");
+  assert.deepEqual(rendered, [[idAt(3)]]);
+  assert.deepEqual([trace.plannerAction, trace.referenceBinding, trace.ordinalResolution, trace.resultSetRecency, h.calls.legacy], ["select", "ordinal", "valid", "focused", 0]);
+  const entity = row.state.resultSets[1];
+  assert.deepEqual([entity.kind, entity.kind === "entity" && entity.items], ["entity", [{ id: idAt(3) }]]);
+  assert.equal(row.state.focus?.resultSetHandle, entity.handle);
+  assert.deepEqual(row.state.resultSets[0], state.resultSets[0]);
+});
+
+test("R9. out-of-range ordinal gets a bounded clarification, no guess and no state change", async () => {
+  const state = stateWith(quotationList());
+  const h = harness(state, { plan: async (input) => selectPlan(input.resultSets[0].handle, 5) });
+  const { answer, trace, row } = await h.send("the fifth one");
+  assert.equal(h.calls.legacy, 0);
+  assert.equal(answer.text, "That list only has 2 items. Which one do you mean?");
+  assert.deepEqual([trace.plannerMode, trace.plannerValidation, trace.ordinalResolution, trace.scopeSource], ["invalid", "out_of_range", "out_of_range", "clarification"]);
+  assert.deepEqual([row.version, row.state], [1, state]);
+});
+
+test("R12/R19. selecting an older set moves focus to it without duplicating it", async () => {
+  const state = stateWith(aggregate(), quotationList(), projectList());
+  const older = state.resultSets[1];
+  const h = harness(state, { plan: async () => selectPlan(older.handle) });
+  const { answer, trace, row } = await h.send("go back to the quotations");
+  assert.equal(answer.text, QUOTATION_IDS.join(", "));
+  assert.deepEqual([trace.referenceBinding, trace.resultSetRecency, trace.shadowSave], ["older_result", "older", "saved"]);
+  assert.deepEqual(row.state.resultSets, state.resultSets);
+  assert.equal(row.state.focus?.resultSetHandle, older.handle);
+});
+
+test("R11. re-selecting the focused set ('show those again') changes nothing and saves nothing", async () => {
+  const state = stateWith(quotationList(), projectList());
+  const h = harness(state, { plan: async (input) => selectPlan(input.resultSets.find((result) => result.focused)!.handle) });
+  const { answer, trace, row } = await h.send("show those again");
+  assert.equal(answer.text, "CO-0003-001, CO-0004-001");
+  assert.deepEqual([trace.referenceBinding, trace.shadowSave, row.version], ["focused_result", "skipped", 1]);
+  assert.deepEqual(row.state, state);
+});
+
+test("R13. ambiguous reference: deterministic choices from state metadata only", async () => {
+  const state = stateWith(aggregate(), quotationList(), projectList());
+  const h = harness(state, { plan: async () => ({ kind: "clarify", sourceResultSetHandle: null, relation: null, status: null, ordinal: null }) });
+  const { answer, row } = await h.send("them");
+  assert.equal(answer.text, "I could use more than one recent result: the 2 Project Files, the 2 quotations or the quotation status summary. Which do you mean?");
+  assert.deepEqual(row.state, state);
+});
+
+test("R15-R18. aggregate drill-down runs the native executor, pushes/focuses the list, never the legacy route", async () => {
+  const state = stateWith(aggregate());
+  const h = harness(state, { plan: async (input) => ({ kind: "aggregate_drilldown", sourceResultSetHandle: input.resultSets[0].handle, relation: null, status: "client_confirmed", ordinal: null }) });
+  const { answer, trace, row } = await h.send("which are the two client confirmed?");
+  assert.deepEqual([h.calls.drillDown, h.calls.legacy], [1, 0]);
+  assert.equal(answer.text, QUOTATION_IDS.join(", "));
+  assert.deepEqual([trace.plannerAction, trace.plannerExecution, trace.capabilitySelected, trace.resultCount, trace.shadowResultEntityType],
+    ["aggregate_drilldown", "executed", "Quotation", 2, "quotation"]);
+  assert.equal(row.state.resultSets.length, 2);
+  assert.equal(row.state.focus?.resultSetHandle, row.state.resultSets[1].handle);
+});
+
+test("aggregate drill-down executor refusal falls back safely; nothing is pushed", async () => {
+  const state = stateWith(aggregate());
+  const h = harness(state, { plan: async (input) => ({ kind: "aggregate_drilldown", sourceResultSetHandle: input.resultSets[0].handle, relation: null, status: "client_confirmed", ordinal: null }),
+    drillDown: async () => ({ ok: false, reason: "unauthorized" }) });
+  const { answer, row } = await h.send("which are confirmed?");
+  assert.equal(answer.text, "legacy");
+  assert.deepEqual(row.state, state);
+});
+
+test("ordinal relation relates only that displayed item; prior sets preserved", async () => {
+  const ids = [idAt(9), idAt(3)];
+  const state = stateWith(aggregate(), quotationListOf(ids));
+  let related: string[] = [];
+  const h = harness(state, {
+    plan: async (input) => ({ ...relationPlan(input.resultSets[1].handle), ordinal: 1 }),
+    relate: async (relState, handle) => {
+      const source = relState.resultSets.find((result) => result.handle === handle)!;
+      related = source.kind === "entity" && source.entityType === "quotation" ? source.items.map((item) => item.id) : [];
+      return { ok: true, resultSet: { ...projectList(), kind: "entity", count: 1, items: [{ orderNo: "CO-0003-001" }] } as NoaResultSet, sourceCount: 1, matchedCount: 1, resultCount: 1 };
+    },
+  });
+  const { trace, row } = await h.send("what project is the first one for?");
+  assert.deepEqual(related, [idAt(9)]);
+  assert.deepEqual([trace.plannerAction, trace.referenceBinding], ["relation", "ordinal"]);
+  assert.deepEqual(row.state.resultSets.slice(0, 2), state.resultSets);
+  assert.deepEqual(row.state.resultSets.map((result) => [result.kind, result.entityType]), [["aggregate", "quotation"], ["list", "quotation"], ["entity", "quotation"], ["entity", "project_file"]]);
+  assert.equal(row.state.focus?.resultSetHandle, row.state.resultSets[3].handle);
+});
+
+test("R21. the 5-set bound still holds after a planner push", async () => {
+  const state = stateWith(projectList(), projectList(), projectList(), projectList(), quotationList());
+  const h = harness(state, { plan: focusedRelation });
+  const { row } = await h.send("which projects?");
+  assert.equal(row.state.resultSets.length, 5);
+  assert.deepEqual(row.state.resultSets.slice(0, 4), state.resultSets.slice(1));
+});
+
+test("R14. no phrase-specific reference aliases in the planner path", async () => {
+  const { readFile } = await import("node:fs/promises");
+  for (const file of ["noa-semantic-planner.ts", "noa-semantic-planner.server.ts", "noa-shadow-turn.ts"]) {
+    const source = await readFile(new URL(file, import.meta.url), "utf8");
+    assert.doesNotMatch(source, /\/[^/\n]*\b(them|these|those|this|it|first|second|third|last|go back)\b[^/\n]*\/[a-z]*\.test\(/i, file);
+    assert.doesNotMatch(source, /message(\.toLowerCase\(\))?\.(includes|match|startsWith)\(/, file);
   }
 });

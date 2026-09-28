@@ -180,7 +180,8 @@ function persistedStatusKey(status: string) {
   return status.toLowerCase().replace(/[\s_-]+/g, "");
 }
 
-function quotationStatusDisplayLabel(status: string) {
+// Phase 2 References: exported so the planner's deterministic quotation renderer shows the same labels.
+export function quotationStatusDisplayLabel(status: string) {
   const key = persistedStatusKey(status);
   if (key === "draft") return "Pending";
   if (key === "clientconfirmed") return "Client Confirmed";

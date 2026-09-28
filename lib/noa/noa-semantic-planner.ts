@@ -9,12 +9,17 @@ import {
 // interprets language into this closed shape; TypeScript validation below decides whether a plan
 // may execute, and deterministic executors (noa-relation.server.ts) re-authorize and re-fetch.
 // No provider name, prompt, database access or business value lives in this file.
-export const NOA_PLANNER_ACTIONS = ["passthrough", "relation", "aggregate_drilldown", "clarify"] as const;
+export const NOA_PLANNER_ACTIONS = ["passthrough", "select", "relation", "aggregate_drilldown", "clarify"] as const;
 export type NoaPlannerAction = typeof NOA_PLANNER_ACTIONS[number];
+// Phase 2 References: closed 1-based display positions ("the second one") plus "last". The model
+// never sends an item identifier; TypeScript resolves the position against stored display order.
+export const NOA_PLANNER_ORDINALS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, "last"] as const;
 
 export type NoaSemanticPlan =
   | { kind: "passthrough" }
-  | { kind: "relation"; sourceResultSetHandle: NoaResultSetHandle; relation: NoaRelationId }
+  // Reference-only: re-show an existing entity/list ResultSet, or one displayed item of it.
+  | { kind: "select"; sourceResultSetHandle: NoaResultSetHandle; itemIndex: number | null }
+  | { kind: "relation"; sourceResultSetHandle: NoaResultSetHandle; relation: NoaRelationId; itemIndex: number | null }
   | { kind: "aggregate_drilldown"; sourceResultSetHandle: NoaResultSetHandle; status: NoaQuotationScopeStatus }
   | { kind: "clarify" };
 
@@ -23,12 +28,16 @@ export type NoaPlannerTrace = {
   plannerMode: "skipped" | "planned" | "invalid" | "unavailable";
   plannerAction: NoaPlannerAction | "none";
   plannerSourceType: NoaResultEntityType | "none";
-  plannerValidation: "valid" | "invalid_handle" | "incompatible_type" | "unsupported_operation" | "unavailable" | "none";
+  plannerValidation: "valid" | "invalid_handle" | "incompatible_type" | "unsupported_operation" | "out_of_range" | "unavailable" | "none";
   // Whether the validated plan was executed deterministically or handed back to legacy routing.
   plannerExecution: "executed" | "legacy" | "none";
+  referenceBinding: "focused_result" | "older_result" | "ordinal" | "none";
+  resultSetRecency: "focused" | "older" | "none";
+  ordinalResolution: "valid" | "out_of_range" | "not_applicable";
 };
 export const NOA_PLANNER_TRACE_SKIPPED: NoaPlannerTrace = {
   plannerMode: "skipped", plannerAction: "none", plannerSourceType: "none", plannerValidation: "none", plannerExecution: "none",
+  referenceBinding: "none", resultSetRecency: "none", ordinalResolution: "not_applicable",
 };
 
 // Pilot operations: exactly the registry relations whose source is a quotation, plus quotation
@@ -39,22 +48,24 @@ export const NOA_PLANNER_PILOT_RELATIONS: readonly NoaRelationId[] = (Object.key
 // Structural business identifiers keep their existing deterministic route; never an NL phrase list.
 const EXACT_BUSINESS_IDENTIFIER = /\b(?:CO|QN)-\d{3,}(?:-\d+)*\b/i;
 
-// Checkpoint B gate. The planner runs only when the focused ResultSet is quotation scope, no exact
-// business identifier is present, and no Product Configuration task is active. Whether the turn
-// actually depends on that scope is the planner's decision (passthrough otherwise).
+// Checkpoint B gate. The planner runs only when the bounded stack holds quotation (pilot) scope and
+// something is focused, no exact business identifier is present, and no Product Configuration task
+// is active. Phase 2 References widened "focused quotation" to "quotation scope in the stack" so a
+// focused related Project set and older quotation sets stay referable. Whether the turn actually
+// depends on that scope is the planner's decision (passthrough otherwise).
 export function shouldRunNoaSemanticPlanner(
   state: NoaConversationState | undefined,
   request: { message: string; productConfigurationReference?: unknown },
 ): boolean {
   if (!state?.focus || request.productConfigurationReference !== undefined) return false;
   if (EXACT_BUSINESS_IDENTIFIER.test(request.message)) return false;
-  const focused = state.resultSets.find((result) => result.handle === state.focus?.resultSetHandle);
-  return focused?.entityType === "quotation";
+  return state.resultSets.some((result) => result.entityType === "quotation");
 }
 
 export type NoaPlannerResultSetSummary = {
   handle: NoaResultSetHandle;
   focused: boolean;
+  recency: number; // 0 = newest; older sets count up. Stack order only, never business data.
   kind: NoaResultSet["kind"];
   entityType: NoaResultEntityType;
   count: number;
@@ -87,9 +98,10 @@ export function buildNoaPlannerInput(
   return {
     message: request.message.slice(0, MAX_PLANNER_MESSAGE_LENGTH),
     recentUserMessages,
-    resultSets: state.resultSets.map((result) => ({
+    resultSets: state.resultSets.map((result, index) => ({
       handle: result.handle,
       focused: state.focus?.resultSetHandle === result.handle,
+      recency: state.resultSets.length - 1 - index,
       kind: result.kind,
       entityType: result.entityType,
       count: result.count,
@@ -112,12 +124,13 @@ export function buildNoaPlannerSchema(input: NoaPlannerInput): object {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["kind", "sourceResultSetHandle", "relation", "status"],
+    required: ["kind", "sourceResultSetHandle", "relation", "status", "ordinal"],
     properties: {
       kind: { type: "string", enum: [...NOA_PLANNER_ACTIONS] },
       sourceResultSetHandle: { type: ["string", "null"], enum: [...input.resultSets.map((result) => result.handle), null] },
       relation: { type: ["string", "null"], enum: [...NOA_PLANNER_PILOT_RELATIONS, null] },
       status: { type: ["string", "null"], enum: [...NOA_QUOTATION_SCOPE_STATUSES, null] },
+      ordinal: { type: ["integer", "string", "null"], enum: [...NOA_PLANNER_ORDINALS, null] },
     },
   };
 }
@@ -126,7 +139,17 @@ export type NoaPlannerValidation =
   | { ok: true; plan: NoaSemanticPlan; sourceType: NoaResultEntityType | "none" }
   | { ok: false; reason: Exclude<NoaPlannerTrace["plannerValidation"], "valid" | "unavailable" | "none">; action: NoaPlannerAction | "none" };
 
-const PLAN_KEYS = ["kind", "sourceResultSetHandle", "relation", "status"];
+const PLAN_KEYS = ["kind", "sourceResultSetHandle", "relation", "status", "ordinal"];
+
+// Ordinal -> 0-based index into the STORED display order (array position). Only stored, visible
+// references are addressable; a count beyond the stored 50 is never guessed.
+function resolveOrdinal(source: NoaResultSet, ordinal: unknown): { ok: true; itemIndex: number | null } | { ok: false; reason: "unsupported_operation" | "out_of_range" | "incompatible_type" } {
+  if (ordinal === null) return { ok: true, itemIndex: null };
+  if (!NOA_PLANNER_ORDINALS.some((value) => value === ordinal)) return { ok: false, reason: "unsupported_operation" };
+  if (source.kind === "aggregate") return { ok: false, reason: "incompatible_type" };
+  const itemIndex = ordinal === "last" ? source.items.length - 1 : (ordinal as number) - 1;
+  return itemIndex >= 0 && itemIndex < source.items.length ? { ok: true, itemIndex } : { ok: false, reason: "out_of_range" };
+}
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
@@ -139,13 +162,24 @@ export function validateNoaSemanticPlan(raw: unknown, state: NoaConversationStat
   const handle = raw.sourceResultSetHandle ?? null;
   const relation = raw.relation ?? null;
   const status = raw.status ?? null;
+  const ordinal = raw.ordinal ?? null;
   const unsupported = { ok: false as const, reason: "unsupported_operation" as const, action };
 
   if (action === "passthrough" || action === "clarify") {
-    return handle === null && relation === null && status === null ? { ok: true, plan: { kind: action }, sourceType: "none" } : unsupported;
+    return handle === null && relation === null && status === null && ordinal === null
+      ? { ok: true, plan: { kind: action }, sourceType: "none" } : unsupported;
   }
+  // Handle must be in THIS session's current bounded stack: forged, foreign and evicted handles fail.
   const source = typeof handle === "string" ? state.resultSets.find((result) => result.handle === handle) : undefined;
   if (!source) return { ok: false, reason: "invalid_handle", action };
+
+  if (action === "select") {
+    if (relation !== null || status !== null) return unsupported;
+    if (source.kind === "aggregate") return { ok: false, reason: "incompatible_type", action };
+    const position = resolveOrdinal(source, ordinal);
+    if (!position.ok) return { ok: false, reason: position.reason, action };
+    return { ok: true, plan: { kind: "select", sourceResultSetHandle: source.handle, itemIndex: position.itemIndex }, sourceType: source.entityType };
+  }
 
   if (action === "relation") {
     if (status !== null || !NOA_PLANNER_PILOT_RELATIONS.some((id) => id === relation)) return unsupported;
@@ -153,14 +187,34 @@ export function validateNoaSemanticPlan(raw: unknown, state: NoaConversationStat
     if (!validated.ok) {
       return { ok: false, reason: validated.reason === "unsupported_relation" ? "unsupported_operation" : "incompatible_type", action };
     }
-    return { ok: true, plan: { kind: "relation", sourceResultSetHandle: source.handle, relation: validated.relation.id }, sourceType: source.entityType };
+    const position = resolveOrdinal(source, ordinal);
+    if (!position.ok) return { ok: false, reason: position.reason, action };
+    return {
+      ok: true, plan: { kind: "relation", sourceResultSetHandle: source.handle, relation: validated.relation.id, itemIndex: position.itemIndex },
+      sourceType: source.entityType,
+    };
   }
 
-  if (relation !== null || !NOA_QUOTATION_SCOPE_STATUSES.some((value) => value === status)) return unsupported;
+  if (relation !== null || ordinal !== null || !NOA_QUOTATION_SCOPE_STATUSES.some((value) => value === status)) return unsupported;
   if (source.kind !== "aggregate" || source.entityType !== "quotation") return { ok: false, reason: "incompatible_type", action };
   if (!source.groups.some((group) => group.status === status)) return { ok: false, reason: "incompatible_type", action };
   return {
     ok: true, plan: { kind: "aggregate_drilldown", sourceResultSetHandle: source.handle, status: status as NoaQuotationScopeStatus },
     sourceType: "quotation",
   };
+}
+
+// Phase 2 References ambiguity rule: deterministic choices generated from state metadata only
+// (kind/entity type/count, newest first) - never model text and never business names.
+const ENTITY_LABELS: Record<NoaResultEntityType, [string, string]> = { quotation: ["quotation", "quotations"], project_file: ["Project File", "Project Files"] };
+export function describeNoaResultSetChoice(result: NoaResultSet): string {
+  if (result.kind === "aggregate") return `the ${ENTITY_LABELS[result.entityType][0]} status summary`;
+  const [singular, plural] = ENTITY_LABELS[result.entityType];
+  return result.count === 1 ? `that ${singular}` : `the ${result.count} ${plural}`;
+}
+export function buildNoaPlannerClarification(state: NoaConversationState): string {
+  const choices = [...new Set([...state.resultSets].reverse().map(describeNoaResultSetChoice))].slice(0, 3);
+  if (choices.length < 2) return "Which of the earlier results do you mean?";
+  const list = choices.length === 2 ? choices.join(" or ") : `${choices.slice(0, -1).join(", ")} or ${choices.at(-1)}`;
+  return `I could use more than one recent result: ${list}. Which do you mean?`;
 }

@@ -112,6 +112,7 @@ function projectFileDetailData(order: NoaFixtureProjectFile) {
 // Observation only: every fixture Project capability call, so golden cases can prove which scope
 // (exact entity lookups vs the generic active list) a turn actually executed.
 export const noaGoldenProjectCapabilityCalls: Array<{ message: string; entity: string | null }> = [];
+export const noaGoldenQuotationCapabilityCalls: Array<{ message: string; quotationNo: string | null }> = [];
 
 // Installs the fixture-backed capability modules used by the golden conversation suite. Must be
 // called (once per test file, before importing noa-orchestrator.ts / the harness's own
@@ -143,7 +144,16 @@ export function installNoaGoldenFixtures(mock: MockTracker, options: { mockDatab
     namedExports: {
       quotationIdentifierCount: (message: string) => [...message.matchAll(/\bQN-\d{3,}(?:-\d+)*\b/gi)].length,
       quotationStructuredRequest: () => undefined,
-      fetchNoaQuotationCapability: async (message: string) => {
+      // Mirrors the real persisted-status display labels used by the planner's quotation renderer.
+      quotationStatusDisplayLabel: (status: string) => ({ draft: "Pending", client_confirmed: "Client Confirmed" } as Record<string, string>)[status] ?? status,
+      fetchNoaQuotationCapability: async (message: string, _context: unknown, options?: { quotation?: { quotationNo: string } }) => {
+        noaGoldenQuotationCapabilityCalls.push({ message, quotationNo: options?.quotation?.quotationNo ?? null });
+        const exact = options?.quotation && NOA_GOLDEN_QUOTATIONS.find((q) => q.quotationNo === options.quotation!.quotationNo);
+        if (exact) {
+          return { ok: true, sources: [{ label: `Checked quotation ${exact.quotationNo}`, type: "quotation" }], data: {
+            id: exact.id, quotationNo: exact.quotationNo, requestedField: "detail", reference: exact.projectOrderNo ?? exact.quotationNo,
+            client: exact.client, status: exact.status } };
+        }
         const normalized = message.toLowerCase();
         if (isQuotationStatusSummary(message) && !/confirmed|pending/.test(normalized)) {
           return { data: quotationStatusCountData(), ok: true, sources: [{ label: "Checked quotations", type: "quotation" }] };
@@ -282,9 +292,10 @@ export function createNoaGoldenSession(options: NoaGoldenSessionOptions = {}) {
     const collect = (decision: Readonly<NoaDecisionTrace & Partial<NoaShadowTrace & NoaPlannerTrace>>) => { trace = { ...decision, turnId }; };
     try {
       const { runNoaOrchestrator } = await import("@/lib/noa/noa-orchestrator");
-      const { describeNoaRelatedProjectFiles, requestNoaSemanticPlan } = await import("@/lib/noa/noa-semantic-planner.server");
-      const { resolveNoaRelation } = await import("@/lib/noa/noa-relation.server");
-      const planner = { plan: options.plan ?? requestNoaSemanticPlan, relate: resolveNoaRelation, describeProjectFiles: describeNoaRelatedProjectFiles };
+      const { describeNoaQuotations, describeNoaRelatedProjectFiles, requestNoaSemanticPlan } = await import("@/lib/noa/noa-semantic-planner.server");
+      const { drillDownNoaAggregate, resolveNoaRelation } = await import("@/lib/noa/noa-relation.server");
+      const planner = { plan: options.plan ?? requestNoaSemanticPlan, relate: resolveNoaRelation, drillDown: drillDownNoaAggregate,
+        describeProjectFiles: describeNoaRelatedProjectFiles, describeQuotations: describeNoaQuotations };
       const answer = options.execute
         ? await options.execute(request, collect)
         : await runNoaShadowTurn({ ...request, sessionId: state.sessionId }, { ...createNoaGoldenSessionRepository(store), run: runNoaOrchestrator, planner }, collect);
