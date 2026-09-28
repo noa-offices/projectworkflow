@@ -6,7 +6,7 @@ import test, { mock } from "node:test";
 import { appendNoaResultSet, createEmptyNoaConversationState, type NoaConversationState } from "./noa-conversation-state";
 import { createNoaResultSetHandle, type NoaResultSet } from "./noa-result-set";
 import {
-  buildNoaPlannerInput, buildNoaPlannerSchema, shouldRunNoaSemanticPlanner, validateNoaSemanticPlan, type NoaPlannerInput,
+  buildNoaPlannerInput, buildNoaPlannerSchema, NOA_PLANNER_SUPPORTED_ENTITY_TYPES, shouldRunNoaSemanticPlanner, validateNoaSemanticPlan, type NoaPlannerInput,
 } from "./noa-semantic-planner";
 import { runNoaShadowTurn, type NoaPlannerDependencies, type NoaShadowTurnTrace } from "./noa-shadow-turn";
 import { createNoaGoldenSessionRepository, createNoaGoldenSessionStore } from "./testing/noa-golden-harness";
@@ -217,13 +217,13 @@ function harness(initial: NoaConversationState, planner: Partial<NoaPlannerDepen
 }
 const focusedRelation = async (input: NoaPlannerInput) => relationPlan(input.resultSets.find((result) => result.focused)!.handle);
 
-test("8. no quotation ResultSet in the stack: planner skipped, legacy answers", async () => {
-  for (const state of [createEmptyNoaConversationState(), stateWith(projectList())]) {
-    const h = harness(state, { plan: focusedRelation });
-    const { answer, trace } = await h.send("which projects?");
-    assert.equal(answer.text, "legacy");
-    assert.deepEqual([h.calls.plan, trace.plannerMode, trace.plannerAction], [0, "skipped", "none"]);
-  }
+test("8. no supported ResultSet in the stack: planner skipped, legacy answers", async () => {
+  // Phase 3A: a Project-only stack is now planner-eligible (see the Phase 3A tests below), so only
+  // an empty stack is the no-supported-scope case today.
+  const h = harness(createEmptyNoaConversationState(), { plan: focusedRelation });
+  const { answer, trace } = await h.send("which projects?");
+  assert.equal(answer.text, "legacy");
+  assert.deepEqual([h.calls.plan, trace.plannerMode, trace.plannerAction], [0, "skipped", "none"]);
 });
 
 test("9. unrelated Product turn: planner passthrough keeps legacy behavior and state", async () => {
@@ -603,4 +603,100 @@ test("planner diagnostic entries contain no prompt, planner input, handles, user
   const allowedKeys = new Set(["provider", "model", "runtimeEnabled", "apiKeyConfigured", "providerSource", "modelSource", "timeoutMs", "outcome", "durationMs", "providerErrorKind"]);
   for (const key of Object.keys(JSON.parse(json))) assert.ok(allowedKeys.has(key), key);
   runtime = { enabled: false, apiKeyConfigured: false };
+});
+
+// ── Phase 3A: Project File ResultSets are planner-supported scope ─────────────────────────────
+// The planner stage was already entity-generic (select/ordinal/precedence/describe dispatch); Phase
+// 3A only opens the gate to project_file via the closed NOA_PLANNER_SUPPORTED_ENTITY_TYPES set.
+const projectListOf = (orders: string[]): NoaResultSet => ({ handle: createNoaResultSetHandle(), createdAt: T, kind: "list", entityType: "project_file",
+  count: orders.length, items: orders.map((orderNo) => ({ orderNo })), querySpec: { capability: "project", operation: "list", filters: { status: "active" } } });
+const projectEntity = (orderNo: string): NoaResultSet => ({ handle: createNoaResultSetHandle(), createdAt: T, kind: "entity", entityType: "project_file", count: 1, items: [{ orderNo }] });
+
+test("3A-1/3. supported entity types are closed; a Project-only stack is planner-eligible, an empty stack is not", () => {
+  assert.deepEqual([...NOA_PLANNER_SUPPORTED_ENTITY_TYPES], ["quotation", "project_file"]);
+  assert.equal(shouldRunNoaSemanticPlanner(stateWith(projectList()), { message: "list them" }), true);
+  assert.equal(shouldRunNoaSemanticPlanner(stateWith(projectEntity("CO-0003-001")), { message: "tell me about it" }), true);
+  assert.equal(shouldRunNoaSemanticPlanner(stateWith(quotationList()), { message: "list them" }), true); // quotation-only unchanged
+  assert.equal(shouldRunNoaSemanticPlanner(createEmptyNoaConversationState(), { message: "list them" }), false);
+});
+
+test("3A-4/13. exact Project ID and active Product Configuration still bypass the planner over Project scope", () => {
+  const state = stateWith(projectList());
+  assert.equal(shouldRunNoaSemanticPlanner(state, { message: "Tell me about CO-0004-001" }), false);
+  assert.equal(shouldRunNoaSemanticPlanner(state, { message: "list them", productConfigurationReference: { kind: "product_configuration" } }), false);
+});
+
+test("3A-5/6/8. focused and older Project lists validate for select; forged/evicted handles and non-select Project actions are rejected", () => {
+  const evicted = projectList();
+  const state = stateWith(evicted, quotationList(), projectListOf(["CO-0005-001"]), quotationList(), quotationList(), projectList());
+  const [, olderProjects, , , focusedProjects] = state.resultSets; // first append was evicted (5-set bound)
+  assert.equal(state.resultSets.length, 5);
+  for (const source of [olderProjects, focusedProjects]) {
+    assert.deepEqual(validateNoaSemanticPlan(selectPlan(source.handle), state),
+      { ok: true, plan: { kind: "select", sourceResultSetHandle: source.handle, itemIndex: null }, sourceType: "project_file" });
+  }
+  assert.deepEqual(validateNoaSemanticPlan(selectPlan(evicted.handle), state), { ok: false, reason: "invalid_handle", action: "select" });
+  // No project-sourced relation is registered and aggregates are quotation-only: both stay rejected.
+  assert.deepEqual(validateNoaSemanticPlan(relationPlan(focusedProjects.handle), state), { ok: false, reason: "incompatible_type", action: "relation" });
+  assert.deepEqual(validateNoaSemanticPlan({ kind: "aggregate_drilldown", sourceResultSetHandle: focusedProjects.handle, relation: null, status: "draft", ordinal: null }, state),
+    { ok: false, reason: "incompatible_type", action: "aggregate_drilldown" });
+});
+
+test("3A-9/10/11. 'List them.' over a focused Project list re-shows it in display order with no duplicate state", async () => {
+  const orders = ["CO-0005-001", "CO-0003-001", "CO-0004-001"]; // deliberately unsorted: display order is array order
+  const state = stateWith(quotationList(), projectListOf(orders));
+  const rendered: Array<{ orderNos: string[]; framing: unknown }> = [];
+  const h = harness(state, {
+    plan: async (input) => selectPlan(input.resultSets.find((result) => result.focused)!.handle),
+    describeProjectFiles: async (orderNos, _context, framing) => { rendered.push({ orderNos, framing }); return { domain: "Project", sources: [], text: orderNos.join(", ") }; },
+  });
+  const { trace, row } = await h.send("List them.");
+  assert.deepEqual(rendered, [{ orderNos: orders, framing: "selected" }]);
+  assert.deepEqual([trace.plannerAction, trace.plannerSourceType, trace.referenceBinding, trace.resultSetRecency, trace.capabilitySelected, trace.shadowSave, h.calls.legacy],
+    ["select", "project_file", "focused_result", "focused", "Project", "skipped", 0]);
+  assert.deepEqual([row.version, row.state], [1, state]);
+});
+
+test("3A-7. Project ordinal resolves the second DISPLAYED Project File and pushes it as focused entity scope", async () => {
+  const orders = ["CO-0005-001", "CO-0003-001", "CO-0004-001"];
+  const state = stateWith(projectListOf(orders));
+  const rendered: string[][] = [];
+  const h = harness(state, {
+    plan: async (input) => selectPlan(input.resultSets[0].handle, 2),
+    describeProjectFiles: async (orderNos) => { rendered.push(orderNos); return { domain: "Project", sources: [], text: orderNos.join(", ") }; },
+  });
+  const { trace, row } = await h.send("Tell me about the second one.");
+  assert.deepEqual(rendered, [["CO-0003-001"]]);
+  assert.deepEqual([trace.referenceBinding, trace.ordinalResolution, trace.shadowSave], ["ordinal", "valid", "saved"]);
+  const entity = row.state.resultSets[1];
+  assert.deepEqual([entity.kind, entity.entityType, entity.kind === "entity" && entity.items], ["entity", "project_file", [{ orderNo: "CO-0003-001" }]]);
+  assert.equal(row.state.focus?.resultSetHandle, entity.handle);
+});
+
+test("3A-D. 'Tell me about it.' over a focused Project entity re-shows that entity without duplicating it", async () => {
+  const state = stateWith(projectList(), projectEntity("CO-0004-001"));
+  const h = harness(state, { plan: async (input) => selectPlan(input.resultSets.find((result) => result.focused)!.handle) });
+  const { answer, trace, row } = await h.send("Tell me about it.");
+  assert.equal(answer.text, "CO-0004-001");
+  assert.deepEqual([trace.referenceBinding, trace.resultSetRecency, trace.shadowSave], ["focused_result", "focused", "skipped"]);
+  assert.deepEqual(row.state, state);
+});
+
+test("3A-B. 'Go back to the projects.' from a focused quotation list refocuses the older Project list without duplicating it", async () => {
+  const state = stateWith(projectList(), quotationList());
+  const olderProjects = state.resultSets[0];
+  const h = harness(state, { plan: async () => selectPlan(olderProjects.handle) });
+  const { trace, row } = await h.send("Go back to the projects.");
+  assert.deepEqual([trace.plannerSourceType, trace.referenceBinding, trace.resultSetRecency, trace.shadowSave], ["project_file", "older_result", "older", "saved"]);
+  assert.deepEqual(row.state.resultSets, state.resultSets);
+  assert.equal(row.state.focus?.resultSetHandle, olderProjects.handle);
+});
+
+test("3A-12. planner failure over Project scope still falls back to legacy", async () => {
+  for (const plan of [async () => null, async () => { throw new Error("provider down"); }]) {
+    const h = harness(stateWith(projectList()), { plan });
+    const { answer, trace } = await h.send("List them.");
+    assert.equal(answer.text, "legacy");
+    assert.deepEqual([trace.plannerMode, trace.plannerExecution, h.calls.legacy], ["unavailable", "legacy", 1]);
+  }
 });

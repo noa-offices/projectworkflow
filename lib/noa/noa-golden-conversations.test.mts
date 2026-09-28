@@ -291,6 +291,93 @@ test("PHASE 2 ACCEPTANCE: full UAT script keeps ResultSet continuity and every t
   }
 });
 
+// ── Phase 3A: Project File ResultSets are planner-supported scope ──────────────────────────────
+// New Project queries still enter through the existing legacy Project capability (which creates the
+// project_file ResultSet via shadow capture); planner-handled follow-ups then bind that ResultSet.
+const ACTIVE_ORDERS = ["CO-0003-001", "CO-0004-001"]; // fixture display order of the active Project list
+const passthrough = () => plan("passthrough", null);
+
+test("PROJECT P1: 'List them.' after 'List the projects.' re-shows the focused Project ResultSet, no re-query, no duplicate", async () => {
+  const calls: NoaPlannerInput[] = [];
+  const session = createNoaGoldenSession({ plan: scriptedPlanner(calls, [(input) => plan("select", focusedSet(input))]) });
+  const list = await session.send("List the projects.");
+  assert.deepEqual([list.trace.plannerMode, list.trace.capabilitySelected, list.trace.shadowResultEntityType], ["skipped", "Project", "project_file"]);
+  const projects = session.shadow()!.state.resultSets[0];
+  assert.deepEqual(projects.kind === "list" && projects.items, ACTIVE_ORDERS.map((orderNo) => ({ orderNo })));
+  assert.equal(session.shadow()!.state.focus?.resultSetHandle, projects.handle);
+
+  const version = session.shadow()!.version;
+  noaGoldenProjectCapabilityCalls.length = 0;
+  const { answer, trace } = await session.send("List them.");
+  assert.deepEqual([trace.plannerMode, trace.plannerAction, trace.plannerSourceType, trace.referenceBinding, trace.resultSetRecency, trace.scopeSource, trace.capabilitySelected],
+    ["planned", "select", "project_file", "focused_result", "focused", "result_set", "Project"]);
+  // Only exact authorized lookups in display order - never the generic active-Project list query.
+  assert.deepEqual(noaGoldenProjectCapabilityCalls, ACTIVE_ORDERS.map((orderNo) => ({ message: orderNo, entity: orderNo })));
+  for (const orderNo of ACTIVE_ORDERS) assert.match(answer!.text, new RegExp(orderNo));
+  assert.deepEqual([session.shadow()!.state.resultSets.length, session.shadow()!.version, trace.shadowSave], [1, version, "skipped"]);
+});
+
+test("PROJECT P2: 'Tell me about the second one.' then 'Tell me about it.' bind the second displayed Project File", async () => {
+  const calls: NoaPlannerInput[] = [];
+  const session = createNoaGoldenSession({ plan: scriptedPlanner(calls, [
+    (input) => plan("select", focusedSet(input), { ordinal: 2 }),
+    (input) => plan("select", focusedSet(input)),
+  ]) });
+  await session.send("List the projects.");
+  noaGoldenProjectCapabilityCalls.length = 0;
+  const second = await session.send("Tell me about the second one.");
+  assert.deepEqual([second.trace.plannerAction, second.trace.referenceBinding, second.trace.ordinalResolution, second.trace.resultCount],
+    ["select", "ordinal", "valid", 1]);
+  assert.deepEqual(noaGoldenProjectCapabilityCalls, [{ message: ACTIVE_ORDERS[1], entity: ACTIVE_ORDERS[1] }]);
+  assert.match(second.answer!.text, new RegExp(ACTIVE_ORDERS[1]));
+  assert.doesNotMatch(second.answer!.text, new RegExp(ACTIVE_ORDERS[0]));
+  const entity = session.shadow()!.state.resultSets[1];
+  assert.deepEqual([entity.kind, entity.kind === "entity" && entity.items], ["entity", [{ orderNo: ACTIVE_ORDERS[1] }]]);
+  assert.equal(session.shadow()!.state.focus?.resultSetHandle, entity.handle);
+
+  const version = session.shadow()!.version;
+  const it = await session.send("Tell me about it.");
+  assert.deepEqual([it.trace.plannerAction, it.trace.referenceBinding, it.trace.resultSetRecency, it.trace.shadowSave], ["select", "focused_result", "focused", "skipped"]);
+  assert.match(it.answer!.text, new RegExp(ACTIVE_ORDERS[1]));
+  assert.deepEqual([session.shadow()!.state.resultSets.length, session.shadow()!.version], [2, version]);
+  assert.equal(session.shadow()!.state.focus?.resultSetHandle, entity.handle);
+});
+
+test("PROJECT P3: 'Go back to the projects.' from a focused quotation list refocuses the older Project list", async () => {
+  const calls: NoaPlannerInput[] = [];
+  const session = createNoaGoldenSession({ plan: scriptedPlanner(calls, [passthrough, (input) => plan("select", newestSelectableOf(input, "project_file"))]) });
+  await session.send("List the projects.");
+  // A new Quotation question over Project scope: the planner passes through and legacy answers.
+  const quotations = await session.send("Which are the client confirmed quotations?");
+  assert.deepEqual([quotations.trace.plannerAction, quotations.trace.capabilitySelected, quotations.trace.shadowResultEntityType], ["passthrough", "Quotation", "quotation"]);
+  const [projects, quotationSet] = session.shadow()!.state.resultSets;
+  assert.equal(session.shadow()!.state.focus?.resultSetHandle, quotationSet.handle);
+
+  const back = await session.send("Go back to the projects.");
+  assert.deepEqual([back.trace.plannerAction, back.trace.plannerSourceType, back.trace.referenceBinding, back.trace.resultSetRecency, back.trace.shadowSave],
+    ["select", "project_file", "older_result", "older", "saved"]);
+  for (const orderNo of ACTIVE_ORDERS) assert.match(back.answer!.text, new RegExp(orderNo));
+  const state = session.shadow()!.state;
+  assert.equal(state.resultSets.length, 2); // selected, not duplicated
+  assert.equal(state.focus?.resultSetHandle, projects.handle);
+});
+
+test("PROJECT P4: 'List them.' over a focused Project list selects it, not the older quotation list", async () => {
+  const calls: NoaPlannerInput[] = [];
+  const session = createNoaGoldenSession({ plan: scriptedPlanner(calls, [relateFocused, (input) => plan("select", focusedSet(input))]) });
+  await session.send("Which are the client confirmed quotations?");
+  await session.send("What projects are those for?");
+  const [quotationSet, projects] = session.shadow()!.state.resultSets;
+  assert.deepEqual([quotationSet.entityType, projects.entityType], ["quotation", "project_file"]);
+  assert.equal(session.shadow()!.state.focus?.resultSetHandle, projects.handle);
+
+  const { trace } = await session.send("List them.");
+  assert.deepEqual([trace.plannerAction, trace.plannerSourceType, trace.referenceBinding, trace.resultSetRecency, trace.shadowSave],
+    ["select", "project_file", "focused_result", "focused", "skipped"]);
+  assert.deepEqual(session.shadow()!.state.resultSets[0], quotationSet); // older quotation list untouched
+  assert.equal(session.shadow()!.state.focus?.resultSetHandle, projects.handle);
+});
+
 test("CASE D DEGRADED: planner unavailable keeps the legacy generic Project scope", async () => {
   const session = createNoaGoldenSession(); // real boundary + disabled fixture runtime
   await session.send("What is quotation status?");
