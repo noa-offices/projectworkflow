@@ -65,7 +65,8 @@ test("diagnostic collector is isolated, optional, metadata-only and cannot alter
   for (const { trace } of results) {
     assert.deepEqual(Object.keys(trace).sort(), ["turnId", "routeDecision", "semanticUsed", "referenceAvailable", "referenceDomain", "referenceBindingKind", "scopeSource", "capabilitySelected", "resultCount", "clarifyReason", "errorCode", "durationMs",
       "sessionMode", "shadowResultKind", "shadowResultEntityType", "shadowSave",
-      "plannerMode", "plannerAction", "plannerSourceType", "plannerValidation", "plannerExecution"].sort());
+      "plannerMode", "plannerAction", "plannerSourceType", "plannerValidation", "plannerExecution",
+      "referenceBinding", "resultSetRecency", "ordinalResolution"].sort());
     assert.doesNotMatch(JSON.stringify(trace), /CO-0003|fixture|Tell me|ready to help/);
     assert.ok(trace.durationMs >= 0);
   }

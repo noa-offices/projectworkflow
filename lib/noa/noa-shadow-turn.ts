@@ -1,4 +1,4 @@
-import { appendNoaResultSet, isNoaConversationState, type NoaConversationState } from "./noa-conversation-state";
+import { appendNoaResultSet, focusNoaResultSet, isNoaConversationState, type NoaConversationState } from "./noa-conversation-state";
 import { createNoaResultSetHandle, isNoaResultSet, isNoaStateRecord, MAX_NOA_RESULT_SET_ITEMS, type NoaResultSet, type NoaQuotationScopeStatus } from "./noa-result-set";
 import { noaSessionId, type NoaSessionAnswer, type NoaSessionChatRequest } from "./noa-turn-state";
 import type { NoaDecisionTrace, runNoaOrchestrator } from "./noa-orchestrator";
@@ -6,7 +6,7 @@ import type { loadOrCreateNoaSession, saveNoaSession, NoaSession } from "./noa-s
 import type { NoaAnswer, NoaDomain } from "./noa-types";
 import { isNoaConversationReference } from "./noa-conversation-reference";
 import {
-  buildNoaPlannerInput, NOA_PLANNER_TRACE_SKIPPED, shouldRunNoaSemanticPlanner, validateNoaSemanticPlan,
+  buildNoaPlannerClarification, buildNoaPlannerInput, NOA_PLANNER_TRACE_SKIPPED, shouldRunNoaSemanticPlanner, validateNoaSemanticPlan,
   type NoaPlannerInput, type NoaPlannerTrace,
 } from "./noa-semantic-planner";
 import type { NoaRelationResult } from "./noa-relation.server";
@@ -20,12 +20,14 @@ export type NoaShadowTrace = {
 };
 export type NoaShadowTurnTrace = NoaDecisionTrace & NoaShadowTrace & NoaPlannerTrace;
 // Phase 2 Core: the planner's provider boundary (`plan`) plus the deterministic, authorized
-// executors it may reach. Production wires noa-semantic-planner.server.ts/noa-relation.server.ts;
-// offline tests replace only `plan`. Absent planner = unavailable, and legacy routing answers.
+// executors/renderers it may reach. Production wires noa-semantic-planner.server.ts and
+// noa-relation.server.ts; offline tests replace only `plan`. Absent planner = unavailable.
 export type NoaPlannerDependencies = {
   plan: (input: NoaPlannerInput) => Promise<unknown | null>;
   relate: (state: NoaConversationState, sourceHandle: NoaResultSet["handle"], relation: NoaRelationId) => Promise<NoaRelationResult>;
-  describeProjectFiles: (orderNos: string[], context: NoaSessionChatRequest["context"]) => Promise<NoaAnswer>;
+  drillDown: (state: NoaConversationState, sourceHandle: NoaResultSet["handle"], status: NoaQuotationScopeStatus) => Promise<NoaRelationResult>;
+  describeProjectFiles: (orderNos: string[], context: NoaSessionChatRequest["context"], framing?: "related" | "selected") => Promise<NoaAnswer>;
+  describeQuotations: (ids: string[], context: NoaSessionChatRequest["context"]) => Promise<NoaAnswer>;
 };
 export type NoaShadowDependencies = {
   load: typeof loadOrCreateNoaSession;
@@ -34,13 +36,21 @@ export type NoaShadowDependencies = {
   planner?: NoaPlannerDependencies;
 };
 
-const NOA_PLANNER_CLARIFY_TEXT = "Which of the earlier results do you mean? Please ask again naming the quotations or Project Files you want.";
+// `nextState` null = the stack/focus is unchanged by this turn; `produced` feeds shadow trace only.
+type NoaPlannerOutcome = { answer: NoaAnswer; decision: NoaDecisionTrace; nextState: NoaConversationState | null; produced: NoaResultSet | null };
+type NoaItemResultSet = Extract<NoaResultSet, { kind: "entity" | "list" }>;
 
-type NoaPlannerOutcome = { answer: NoaAnswer; decision: NoaDecisionTrace; result: NoaResultSet | null };
+// One displayed item as its own entity scope ("the second one" -> "what project is it for?").
+function itemResultSet(source: NoaItemResultSet, itemIndex: number): NoaItemResultSet {
+  const candidate: unknown = { handle: createNoaResultSetHandle(), createdAt: new Date().toISOString(), kind: "entity",
+    entityType: source.entityType, count: 1, items: [structuredClone(source.items[itemIndex])] };
+  if (!isNoaResultSet(candidate) || candidate.kind === "aggregate") throw new TypeError("Invalid NOA item ResultSet");
+  return candidate;
+}
 
-// Phase 2 Core Quotations pilot - the FIRST consumer allowed to let ResultSet state decide a turn.
+// Phase 2 Quotations pilot - the only consumer allowed to let ResultSet state decide a turn.
 // Returns null whenever legacy routing must answer (gate closed, planner unavailable/invalid,
-// passthrough, drill-down delegated to the existing status-list capability, or executor refusal).
+// passthrough, or an executor refusal). Every identifier is resolved here from validated state.
 async function runNoaPlannerStage(
   request: NoaSessionChatRequest, state: NoaConversationState, planner: NoaPlannerDependencies | undefined,
   trace: NoaPlannerTrace,
@@ -55,43 +65,88 @@ async function runNoaPlannerStage(
     Object.assign(trace, { plannerMode: "unavailable", plannerValidation: "unavailable", plannerExecution: "legacy" });
     return null;
   }
-  const validated = validateNoaSemanticPlan(raw, state);
-  if (!validated.ok) {
-    Object.assign(trace, { plannerMode: "invalid", plannerAction: validated.action, plannerValidation: validated.reason, plannerExecution: "legacy" });
-    return null;
-  }
-  const { plan } = validated;
-  Object.assign(trace, { plannerMode: "planned", plannerAction: plan.kind, plannerSourceType: validated.sourceType, plannerValidation: "valid", plannerExecution: "legacy" });
   const reference = isNoaConversationReference(request.conversationReference) ? request.conversationReference : undefined;
   const decision = (fields: Partial<NoaDecisionTrace>): NoaDecisionTrace => ({
     routeDecision: null, semanticUsed: false, referenceAvailable: Boolean(reference), referenceDomain: reference?.domain ?? null,
     referenceBindingKind: "not_applicable", scopeSource: "result_set", capabilitySelected: null, resultCount: null,
     clarifyReason: null, errorCode: null, durationMs: Math.round(performance.now() - started), ...fields,
   });
-
-  if (plan.kind === "clarify") {
+  // Bounded, deterministic clarification: state and both client references stay untouched.
+  const clarify = (text: string): NoaPlannerOutcome => {
     trace.plannerExecution = "executed";
-    // Clarification keeps the existing stack/focus and both client references untouched.
     return {
-      answer: { domain: "Help", sources: [], text: NOA_PLANNER_CLARIFY_TEXT, voiceText: NOA_PLANNER_CLARIFY_TEXT, conversationReference: reference },
+      answer: { domain: "Help", sources: [], text, voiceText: text, conversationReference: reference },
       decision: decision({ routeDecision: "Help", scopeSource: "clarification", clarifyReason: "semantic_clarification" }),
-      result: null,
+      nextState: null, produced: null,
     };
+  };
+
+  const validated = validateNoaSemanticPlan(raw, state);
+  if (!validated.ok) {
+    Object.assign(trace, { plannerMode: "invalid", plannerAction: validated.action, plannerValidation: validated.reason, plannerExecution: "legacy" });
+    if (validated.reason !== "out_of_range") return null;
+    // A position the user was never shown is answered with a bounded question, never a guess.
+    trace.ordinalResolution = "out_of_range";
+    const source = state.resultSets.find((result) => isNoaStateRecord(raw) && result.handle === raw.sourceResultSetHandle);
+    const shown = source && source.kind !== "aggregate" ? source.items.length : 0;
+    return clarify(`That list only has ${shown} item${shown === 1 ? "" : "s"}. Which one do you mean?`);
   }
-  if (plan.kind !== "relation") return null;
+  const { plan } = validated;
+  Object.assign(trace, { plannerMode: "planned", plannerAction: plan.kind, plannerSourceType: validated.sourceType, plannerValidation: "valid", plannerExecution: "legacy" });
+  if (plan.kind === "passthrough") return null;
+  if (plan.kind === "clarify") return clarify(buildNoaPlannerClarification(state));
+
+  const source = state.resultSets.find((result) => result.handle === plan.sourceResultSetHandle)!;
+  const focused = state.focus?.resultSetHandle === source.handle;
+  const itemIndex = plan.kind === "aggregate_drilldown" ? null : plan.itemIndex;
+  Object.assign(trace, {
+    resultSetRecency: focused ? "focused" : "older",
+    referenceBinding: itemIndex !== null ? "ordinal" : focused ? "focused_result" : "older_result",
+    ordinalResolution: itemIndex !== null ? "valid" : "not_applicable",
+  });
+  const describe = (result: NoaItemResultSet, framing: "related" | "selected") => result.entityType === "quotation"
+    ? planner.describeQuotations(result.items.map((item) => item.id), request.context)
+    : planner.describeProjectFiles(result.items.map((item) => item.orderNo), request.context, framing);
+  const executed = async (answer: NoaAnswer, resultCount: number, nextState: NoaConversationState | null, produced: NoaResultSet | null) => {
+    trace.plannerExecution = "executed";
+    const capability = answer.domain === "Quotation" || answer.domain === "Project" ? answer.domain : null;
+    return { answer, decision: decision({ routeDecision: answer.domain, capabilitySelected: capability, resultCount }), nextState, produced };
+  };
 
   try {
-    const related = await planner.relate(state, plan.sourceResultSetHandle, plan.relation);
-    if (!related.ok) return null; // unauthorized/storage/empty source: legacy decides, nothing guessed
-    const orderNos = related.resultSet.entityType === "project_file" ? related.resultSet.items.map((item) => item.orderNo) : [];
-    const answer = await planner.describeProjectFiles(orderNos, request.context);
-    trace.plannerExecution = "executed";
-    return {
-      answer,
-      decision: decision({ routeDecision: answer.domain, capabilitySelected: "Project", resultCount: related.resultCount }),
+    if (plan.kind === "select") {
+      if (source.kind === "aggregate") return null; // validator already refuses; defense in depth
+      // Whole set, or the sole item of an entity set: re-show and move focus - never duplicate it.
+      if (itemIndex === null || source.kind === "entity") {
+        const answer = await describe(source, "selected");
+        return executed(answer, source.items.length, focused ? null : focusNoaResultSet(state, source.handle), null);
+      }
+      const item = itemResultSet(source, itemIndex);
+      return executed(await describe(item, "selected"), 1, appendNoaResultSet(state, item), item);
+    }
+
+    if (plan.kind === "relation") {
+      if (source.kind === "aggregate") return null;
+      // An ordinal relates only that displayed item; the item becomes scope below the result.
+      const item = itemIndex !== null && source.kind === "list" ? itemResultSet(source, itemIndex) : null;
+      const base = item ? appendNoaResultSet(state, item) : state;
+      const related = await planner.relate(base, item?.handle ?? source.handle, plan.relation);
+      if (!related.ok || related.resultSet.kind === "aggregate") return null; // unauthorized/storage: legacy decides
+      const answer = await describe(related.resultSet, "related");
       // An empty relation answers truthfully but pushes nothing: an empty list is not new scope.
-      result: related.resultCount > 0 ? related.resultSet : null,
-    };
+      return related.resultCount > 0
+        ? executed(answer, related.resultCount, appendNoaResultSet(base, related.resultSet), related.resultSet)
+        : executed(answer, 0, null, null);
+    }
+
+    // Native aggregate drill-down: authoritative rows re-fetched by drillDownNoaAggregate, never
+    // the natural-language legacy status-list route.
+    const drilled = await planner.drillDown(state, source.handle, plan.status);
+    if (!drilled.ok || drilled.resultSet.kind === "aggregate") return null;
+    const answer = await describe(drilled.resultSet, "selected");
+    return drilled.resultCount > 0
+      ? executed(answer, drilled.resultCount, appendNoaResultSet(state, drilled.resultSet), drilled.resultSet)
+      : executed(answer, 0, null, null);
   } catch {
     trace.plannerExecution = "legacy";
     return null;
@@ -168,16 +223,26 @@ export async function runNoaShadowTurn(
   let decision: NoaDecisionTrace | undefined;
   try {
     const planned = session ? await runNoaPlannerStage(request, session.state, dependencies.planner, planner) : null;
-    if (planned) {
-      decision = planned.decision;
-      result = planned.result;
-    }
+    if (planned) decision = planned.decision;
     const answer = planned ? planned.answer : await dependencies.run(authoritativeRequest, (trace) => { decision = { ...trace }; }, (domain, data) => {
       try {
         result = buildNoaShadowResultSet(domain, data, { handle: createNoaResultSetHandle(), createdAt: new Date().toISOString() });
       } catch { shadow.shadowSave = "error"; }
     });
-    if (result !== null) {
+    if (planned) {
+      if (planned.produced) {
+        shadow.shadowResultKind = planned.produced.kind;
+        shadow.shadowResultEntityType = planned.produced.entityType;
+      }
+      // Planner turns persist their own validated next state (push/focus) through the same
+      // optimistic save; a version conflict is traced and never retried or overwritten.
+      if (session && planned.nextState) {
+        try {
+          const saved = await dependencies.save(session.sessionId, session.version, planned.nextState);
+          shadow.shadowSave = saved.ok ? "saved" : saved.reason === "version_conflict" ? "version_conflict" : "error";
+        } catch { shadow.shadowSave = "error"; }
+      }
+    } else if (result !== null) {
       // Assignment occurs inside the synchronous observer; no result data enters diagnostics.
       const captured = result as NoaResultSet;
       shadow.shadowResultKind = captured.kind;

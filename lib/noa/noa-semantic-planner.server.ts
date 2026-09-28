@@ -1,8 +1,11 @@
 import "server-only";
 
+import { requireQuotationActionUser } from "@/lib/auth";
 import { runAiProvider } from "@/lib/ai/provider-router.server";
 import { resolveAiAgentRuntimeConfig } from "@/lib/ai/resolve-agent-runtime-config.server";
 import { fetchNoaProjectCapability } from "@/lib/noa/noa-project-capability.server";
+import { fetchNoaQuotationCapability, quotationStatusDisplayLabel } from "@/lib/noa/noa-quotation-capability.server";
+import { createClient } from "@/lib/supabase/server";
 import { withNoaSpokenResponse } from "@/lib/noa/noa-spoken-response";
 import type { NoaAnswer, NoaPageContext } from "@/lib/noa/noa-types";
 import { buildNoaPlannerSchema, type NoaPlannerInput } from "./noa-semantic-planner";
@@ -16,11 +19,14 @@ const PLANNER_TIMEOUT_MS = 4_000;
 
 const PLANNER_INSTRUCTIONS = `You plan one ProjectWorkflow chat turn against the user's earlier result sets. You never answer, compute facts, or decide access.
 Choose exactly one kind:
-- "relation": the user asks about records related to an earlier result set (use a listed relation and a handle whose entityType/kind the relation accepts).
+- "select": the user refers back to an earlier entity/list result set itself ("list them", "show those again", "go back to the quotations") or to one displayed item of it ("the second one").
+- "relation": the user asks about records related to an earlier result set, or to one displayed item of it (use a listed relation and a handle whose entityType/kind the relation accepts).
 - "aggregate_drilldown": the user asks for the records behind one status group of an earlier quotation status summary (use that aggregate's handle and one of its group statuses).
-- "clarify": the user clearly refers to earlier results but you cannot tell which result set.
+- "clarify": the user refers to earlier results but more than one result set fits, or none can be chosen safely. Never guess between candidates.
 - "passthrough": anything else, including new questions that do not depend on earlier results.
-Prefer the focused result set when the reference is implicit. Use null for fields that do not apply.`;
+Pronouns such as them/these/those/it/this usually mean the focused result set; choose an older one (higher recency) only when the user's words point to its entityType or kind.
+"ordinal" is a 1-based position in the list as it was displayed, or "last"; use null unless the user names a position.
+Use null for fields that do not apply.`;
 
 export async function requestNoaSemanticPlan(input: NoaPlannerInput): Promise<unknown | null> {
   try {
@@ -41,27 +47,75 @@ export async function requestNoaSemanticPlan(input: NoaPlannerInput): Promise<un
 }
 
 // Bounded authorized lookups per answer; the ResultSet itself still holds up to 50 references.
-const MAX_RENDERED_PROJECT_FILES = 10;
+const MAX_RENDERED_ITEMS = 10;
 
 // Deterministic renderer: every fact is re-fetched through the existing authorized Project
 // capability (requireActiveUser + RLS client) one exact order number at a time. Nothing is read
 // from the ResultSet except identifiers, and no names are written back into state.
-export async function describeNoaRelatedProjectFiles(orderNos: string[], context: NoaPageContext): Promise<NoaAnswer> {
+export async function describeNoaRelatedProjectFiles(
+  orderNos: string[], context: NoaPageContext, framing: "related" | "selected" = "related",
+): Promise<NoaAnswer> {
   const lines: string[] = [];
-  for (const orderNo of orderNos.slice(0, MAX_RENDERED_PROJECT_FILES)) {
+  for (const orderNo of orderNos.slice(0, MAX_RENDERED_ITEMS)) {
     const result = await fetchNoaProjectCapability(orderNo, context, { entity: { type: "project_file", text: orderNo } });
     const text = result.ok && typeof result.data === "object" && result.data !== null && "deterministicText" in result.data
       ? result.data.deterministicText : undefined;
     if (typeof text === "string" && text.trim()) lines.push(`- ${text.trim()}`);
   }
-  const hidden = Math.max(0, orderNos.length - MAX_RENDERED_PROJECT_FILES);
+  const hidden = Math.max(0, orderNos.length - MAX_RENDERED_ITEMS);
+  const single = lines.length === 1 && hidden === 0;
+  const heading = framing === "selected"
+    ? (single ? "That Project File" : `These are the ${orderNos.length} Project Files`)
+    : (single ? "That quotation belongs to this Project File" : "Those quotations belong to these Project Files");
   const text = lines.length === 0
-    ? "None of those quotations is linked to a Project File I can show you."
-    : [`${lines.length === 1 && hidden === 0 ? "That quotation belongs to this Project File" : "Those quotations belong to these Project Files"}:`,
+    ? (framing === "selected" ? "I couldn't find any of those Project Files." : "None of those quotations is linked to a Project File I can show you.")
+    : [`${heading}:`,
       ...lines, ...(hidden ? [`…and ${hidden} more.`] : [])].join("\n");
   return withNoaSpokenResponse({
     domain: "Project",
     sources: [{ label: "Project · Checked related Project Files", type: "project_file" }],
     text,
+  });
+}
+
+function isNextRedirectError(error: unknown): boolean {
+  return error instanceof Error && "digest" in error && typeof (error as Error & { digest?: unknown }).digest === "string"
+    && (error as Error & { digest: string }).digest.startsWith("NEXT_REDIRECT");
+}
+
+// Deterministic quotation renderer for planner-selected/drilled-down quotation ResultSets. Ids are
+// hints only: rows are re-fetched through the same auth gate + RLS client as the relation service,
+// in the ResultSet's display order. A single item reuses the existing authorized Quotation detail
+// capability; names/status labels are never written back into state.
+export async function describeNoaQuotations(ids: string[], context: NoaPageContext): Promise<NoaAnswer> {
+  const sources = [{ label: "Checked quotations", type: "quotation" }];
+  try {
+    await requireQuotationActionUser();
+  } catch (error) {
+    if (isNextRedirectError(error)) return withNoaSpokenResponse({ domain: "Quotation", sources: [], text: "You don't have access to quotations." });
+    throw error;
+  }
+  const supabase = await createClient();
+  const shown = ids.slice(0, MAX_RENDERED_ITEMS);
+  const { data } = await supabase.from("quotations").select("id,quotation_no,status").in("id", shown)
+    .returns<Array<{ id: string; quotation_no: string | null; status: string | null }>>();
+  const byId = new Map((data ?? []).map((row) => [row.id, row]));
+  const rows = shown.flatMap((id) => byId.get(id) ?? []);
+  if (rows.length === 0) return withNoaSpokenResponse({ domain: "Quotation", sources, text: "I couldn't find any of those quotations." });
+
+  if (ids.length === 1 && rows[0].quotation_no) {
+    const quotationNo = rows[0].quotation_no;
+    const detail = await fetchNoaQuotationCapability(quotationNo, context, { quotation: { quotationNo, request: "detail" } });
+    const fact = detail.ok && typeof detail.data === "object" && detail.data !== null ? detail.data as Record<string, unknown> : {};
+    const reference = typeof fact.reference === "string" && fact.reference && fact.reference !== quotationNo ? ` (${fact.reference})` : "";
+    const client = typeof fact.client === "string" && fact.client ? ` for ${fact.client}` : "";
+    const status = rows[0].status ? ` is ${quotationStatusDisplayLabel(rows[0].status)}` : "";
+    return withNoaSpokenResponse({ domain: "Quotation", sources: detail.ok ? detail.sources : sources, text: `${quotationNo}${reference}${client}${status}.` });
+  }
+  const lines = rows.map((row) => `- ${row.quotation_no ?? "Quotation"}${row.status ? ` (${quotationStatusDisplayLabel(row.status)})` : ""}`);
+  const hidden = Math.max(0, ids.length - rows.length);
+  return withNoaSpokenResponse({
+    domain: "Quotation", sources,
+    text: [`${ids.length === 1 ? "That quotation" : `These are the ${ids.length} quotations`}:`, ...lines, ...(hidden ? [`…and ${hidden} more.`] : [])].join("\n"),
   });
 }

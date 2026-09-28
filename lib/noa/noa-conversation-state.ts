@@ -149,3 +149,13 @@ export function clearNoaPendingSlot(state: NoaConversationState): NoaConversatio
   delete next.pendingSlot;
   return next;
 }
+
+// Phase 2 References: a reference-only turn ("go back to the quotations") moves focus to an
+// EXISTING ResultSet instead of duplicating it. The handle must still be in the bounded stack;
+// an evicted handle is never resurrected.
+export function focusNoaResultSet(state: NoaConversationState, handle: NoaResultSetHandle): NoaConversationState {
+  if (!isNoaConversationState(state) || !state.resultSets.some((result) => result.handle === handle)) {
+    throw new TypeError("Unknown NOA ResultSet handle");
+  }
+  return structuredClone({ ...state, focus: { resultSetHandle: handle } });
+}
