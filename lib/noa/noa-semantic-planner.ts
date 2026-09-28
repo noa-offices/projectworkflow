@@ -48,18 +48,22 @@ export const NOA_PLANNER_PILOT_RELATIONS: readonly NoaRelationId[] = (Object.key
 // Structural business identifiers keep their existing deterministic route; never an NL phrase list.
 const EXACT_BUSINESS_IDENTIFIER = /\b(?:CO|QN)-\d{3,}(?:-\d+)*\b/i;
 
-// Checkpoint B gate. The planner runs only when the bounded stack holds quotation (pilot) scope and
-// something is focused, no exact business identifier is present, and no Product Configuration task
-// is active. Phase 2 References widened "focused quotation" to "quotation scope in the stack" so a
-// focused related Project set and older quotation sets stay referable. Whether the turn actually
-// depends on that scope is the planner's decision (passthrough otherwise).
+// Phase 3A: the CLOSED set of ResultSet entity types the planner may act on - the single opt-in
+// extension point for new domains, never an open "all domains" switch. Project Files join the
+// Phase 2 quotation pilot here; every other domain stays legacy-routed until it explicitly opts in.
+export const NOA_PLANNER_SUPPORTED_ENTITY_TYPES: readonly NoaResultEntityType[] = ["quotation", "project_file"];
+
+// Checkpoint B gate. The planner runs only when the bounded stack holds supported scope (see
+// NOA_PLANNER_SUPPORTED_ENTITY_TYPES) and something is focused, no exact business identifier is
+// present, and no Product Configuration task is active. Whether the turn actually depends on that
+// scope is the planner's decision (passthrough otherwise).
 export function shouldRunNoaSemanticPlanner(
   state: NoaConversationState | undefined,
   request: { message: string; productConfigurationReference?: unknown },
 ): boolean {
   if (!state?.focus || request.productConfigurationReference !== undefined) return false;
   if (EXACT_BUSINESS_IDENTIFIER.test(request.message)) return false;
-  return state.resultSets.some((result) => result.entityType === "quotation");
+  return state.resultSets.some((result) => NOA_PLANNER_SUPPORTED_ENTITY_TYPES.includes(result.entityType));
 }
 
 export type NoaPlannerResultSetSummary = {

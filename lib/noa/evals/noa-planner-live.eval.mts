@@ -47,6 +47,8 @@ const quotations = (status: "client_confirmed" | "draft", ids: number[]): NoaRes
   querySpec: { capability: "quotation", operation: "status_list", filters: { status } } });
 const projects = (): NoaResultSet => ({ handle: createNoaResultSetHandle(), createdAt: T, kind: "list", entityType: "project_file", count: 2,
   items: [{ orderNo: "CO-0003-001" }, { orderNo: "CO-0004-001" }] });
+const projectEntity = (): NoaResultSet => ({ handle: createNoaResultSetHandle(), createdAt: T, kind: "entity", entityType: "project_file", count: 1,
+  items: [{ orderNo: "CO-0004-001" }] });
 const stack = (...sets: NoaResultSet[]) => sets.reduce(appendNoaResultSet, createEmptyNoaConversationState());
 
 type Expected =
@@ -97,6 +99,14 @@ function buildCases(): EvalCase[] {
       aggregate: aggregate() }, "aggregate", { outcome: "plan", kind: "clarify" }),
     evalCase("P1", "passthrough exact ID", "Tell me about CO-0003-001", d(), "confirmed", { outcome: "skipped" }),
     evalCase("U1", "unrelated domain", "Show me products", d(), "confirmed", { outcome: "plan", kind: "passthrough" }),
+    // Phase 3A: Project File scope (project_file joins quotation in NOA_PLANNER_SUPPORTED_ENTITY_TYPES).
+    evalCase("PR1", "Project focus", "List them.", { projects: projects() }, "projects", select("projects", null)),
+    evalCase("PR2", "Project ordinal", "Tell me about the second one.", { projects: projects() }, "projects", select("projects", 1)),
+    evalCase("PR3", "Project older set", "Go back to the projects.", { projects: projects(), confirmed: quotations("client_confirmed", [4, 5]) }, "confirmed", select("projects", null)),
+    evalCase("PR4", "Project entity", "Tell me about it.", { projects: projects(), project: projectEntity() }, "project", select("project", null)),
+    evalCase("PR5", "Project focus vs history", "List them.", { confirmed: quotations("client_confirmed", [4, 5]), projects: projects() }, "projects", select("projects", null)),
+    evalCase("PU1", "unrelated domain", "Show me products", { projects: projects() }, "projects", { outcome: "plan", kind: "passthrough" }),
+    evalCase("PP1", "passthrough exact ID", "Tell me about CO-0004-001", { projects: projects() }, "projects", { outcome: "skipped" }),
   ];
 }
 
