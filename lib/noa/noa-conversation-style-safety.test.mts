@@ -11,7 +11,15 @@ test("conversation styling keeps profile lookup optional, safe, and fully wired"
   assert.ok(route.includes('.select("full_name")'));
   assert.ok(!/\.select\([^)]*(?:email|phone)/.test(route));
   assert.ok(route.includes('typeof profile?.full_name === "string"'));
-  assert.ok(route.includes("displayName, message, recentMessages"));
+  // Structural check (each field is its own key in the request object literal, now formatted one
+  // per line with an added productConfigurationReference field) rather than pinning the old
+  // single-line "displayName, message, recentMessages" formatting.
+  const chatRequestStart = route.indexOf("const chatRequest: NoaChatRequest = {");
+  const chatRequestEnd = route.indexOf("};", chatRequestStart);
+  const chatRequestBody = route.slice(chatRequestStart, chatRequestEnd);
+  for (const field of ["displayName", "message", "recentMessages"]) {
+    assert.ok(new RegExp(`\\b${field}\\b`).test(chatRequestBody), field);
+  }
   assert.ok(!route.includes("user.email"));
   assert.ok(orchestrator.includes("request.displayName"));
   assert.ok(provider.includes("userDisplayName: request.displayName ?? null"));

@@ -6,7 +6,9 @@ import test from "node:test";
 // resolver outside the Next.js build. Source-level wiring/safety checks, the same convention as
 // every other lib/noa/*-safety.test.mts file.
 
-const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
 const stateSource = readFileSync("lib/products/product-configuration-state.ts", "utf8");
 
 function slice(source: string, startMarker: string, endMarker: string): string {
@@ -66,7 +68,9 @@ test("7. when an option has no priceCurrency, the price is OMITTED from the choi
 // ── PART 4: completion text is unchanged - still tied directly to GPC-1's own aggregate price ──
 
 test("8. the completion answer still reads price directly from state.price.currency/state.price.unit - no separate formatter/arithmetic was introduced", () => {
-  const block = slice(orchestratorSource, "function productConfigurationCompletionAnswer(", "\n}");
+  // The completion answer function was later renamed to productConfigurationSummaryAnswer (see
+  // lib/noa/noa-phase-gpc3-safety.test.mts's "16." test for the same rename).
+  const block = slice(orchestratorSource, "function productConfigurationSummaryAnswer(", "\n}");
   assert.ok(block.includes("state.price.currency"));
   assert.ok(block.includes("state.price.unit"));
   assert.ok(!/roundSourceAmount|toFixed|normalizeCurrency/.test(block));

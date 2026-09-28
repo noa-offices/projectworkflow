@@ -1,3 +1,4 @@
+import { noaRecentMessages } from "./noa-turn-state";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -68,14 +69,24 @@ test("product capability prefers context.productTemplateId before falling back t
 
 test("product search result is bounded to a small maximum", () => {
   assert.match(productCapabilitySource, /const MAX_RESULTS = 5;/);
-  assert.ok(productCapabilitySource.includes(".limit(MAX_RESULTS)"));
+  // A later, unrelated phase added a tighter cap (2) for a structured product qualifier, alongside
+  // the existing MAX_RESULTS bound (`.limit(options?.product?.productText ? 2 : MAX_RESULTS)`) -
+  // the safety property (never unbounded) still holds; check MAX_RESULTS is still referenced by a
+  // `.limit(` call rather than pinning the old, simpler call shape.
+  assert.match(productCapabilitySource, /\.limit\([^)]*MAX_RESULTS[^)]*\)/);
 });
 
 // E. Quotation ---------------------------------------------------------------
 
 test("quotation capability checks context.quotationId before searching by text", () => {
-  const contextIndex = quotationCapabilitySource.indexOf("context.quotationId");
-  const identifierIndex = quotationCapabilitySource.indexOf("extractQuotationIdentifier(message)");
+  // Scoped to fetchNoaQuotationCapability itself (extractQuotationIdentifier is also legitimately
+  // used earlier in the file, for unrelated structured-request/question-kind detection, which
+  // broke a whole-file indexOf comparison without actually changing this function's precedence).
+  const fnStart = quotationCapabilitySource.indexOf("export async function fetchNoaQuotationCapability(");
+  const fnEnd = quotationCapabilitySource.indexOf("\nasync function buildBroadQuotationAnswer", fnStart);
+  const fnBody = quotationCapabilitySource.slice(fnStart, fnEnd);
+  const contextIndex = fnBody.indexOf("context.quotationId");
+  const identifierIndex = fnBody.indexOf("extractQuotationIdentifier(message)");
   assert.ok(contextIndex >= 0 && identifierIndex >= 0 && contextIndex < identifierIndex);
 });
 
@@ -123,7 +134,10 @@ test("route rejects empty/invalid request bodies with 400", () => {
 });
 
 test("a successful request returns the orchestrator's NoaAnswer shape (domain, text, sources) as JSON", () => {
-  assert.ok(routeSource.includes("const answer = await runNoaOrchestrator(chatRequest);"));
+  // Phase 1C: the orchestrator now runs inside the shadow session lifecycle, which returns the
+  // orchestrator's own answer unchanged plus a transport-only sessionId.
+  assert.ok(routeSource.includes("const answer = await runNoaShadowTurn({ ...chatRequest, sessionId }"));
+  assert.ok(routeSource.includes("run: runNoaOrchestrator"));
   assert.ok(routeSource.includes("return NextResponse.json(answer);"));
   assert.ok(orchestratorSource.includes("Promise<NoaAnswer>"));
 });
@@ -145,8 +159,8 @@ test("NoaAssistant posts to /api/noa/chat", () => {
 });
 
 test("only a small bounded recent-message history is sent, not the full session", () => {
-  assert.match(assistantSource, /const RECENT_MESSAGE_LIMIT = 6;/);
-  assert.ok(assistantSource.includes(".slice(-RECENT_MESSAGE_LIMIT)"));
+  const messages = Array.from({ length: 8 }, (_, i) => ({ role: "user" as const, text: String(i) }));
+  assert.deepEqual(noaRecentMessages(messages), messages.slice(2));
 });
 
 test("thinking -> success/error state transitions are preserved around the real request", () => {

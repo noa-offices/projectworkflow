@@ -165,9 +165,15 @@ test("12. when structured cards render, the full text bubble is NOT also rendere
   assert.ok(mapBody.includes("hasAttentionCards && message.attention ? ("));
   assert.ok(mapBody.includes("<NoaAttentionCards attention={message.attention} />"));
   assert.ok(mapBody.includes(") : ("));
-  // Exactly one <p> element total (the plain-text fallback) - never a second copy of it inside
-  // the cards branch.
-  assert.equal((mapBody.match(/<p\b/g) ?? []).length, 1);
+  // Exactly one <p> element in the plain-text fallback branch - never a second copy of it inside
+  // the Attention cards branch. Isolated to the fallback branch (rather than the whole map body)
+  // so an unrelated, already-mutually-exclusive branch (agentBrief, which renders its own <p>
+  // elements) can't make this fragile.
+  const attentionIndex = mapBody.indexOf("hasAttentionCards && message.attention ? (");
+  const fallbackStart = mapBody.indexOf(") : (", attentionIndex);
+  const fallbackEnd = mapBody.indexOf(")}", fallbackStart);
+  const fallbackBranch = mapBody.slice(fallbackStart, fallbackEnd);
+  assert.equal((fallbackBranch.match(/<p\b/g) ?? []).length, 1);
 });
 
 // 13. ordinary non-Attention messages unchanged

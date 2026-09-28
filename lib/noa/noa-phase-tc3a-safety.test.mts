@@ -4,7 +4,9 @@ import test from "node:test";
 
 const semantic = readFileSync("lib/noa/noa-semantic-request.ts", "utf8");
 const extractor = readFileSync("lib/noa/noa-intent-extractor.server.ts", "utf8");
-const orchestrator = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const orchestrator = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
 const project = readFileSync("lib/noa/noa-project-capability.server.ts", "utf8");
 const client = readFileSync("lib/noa/noa-client-capability.server.ts", "utf8");
 const router = readFileSync("lib/noa/noa-intent-router.ts", "utf8");
@@ -90,10 +92,15 @@ test("TC-3A.3 gives only existing narrow Project/Client reference follow-ups pre
   assert.ok(orchestrator.includes('resolveProjectFollowUp(request.message, conversationReference, undefined)'));
   assert.ok(orchestrator.includes('const clientReferenceFollowUp = !projectReferenceFollowUp && conversationReference?.domain === "Client"'));
   assert.ok(orchestrator.includes('resolveClientFollowUp(request.message, conversationReference, undefined)'));
-  assert.ok(orchestrator.includes('quotationIdentifierTotal > 0\n      ? "Quotation"'));
-  assert.ok(orchestrator.includes('projectFileIdentifierTotal > 0\n        ? "Project"'));
+  // Later refactored from a multi-line if/else chain into a single-line ternary - same
+  // identifier-total-driven routing decision.
+  assert.match(orchestrator, /quotationIdentifierTotal > 0[\s\S]{0,20}\? "Quotation"/);
+  assert.match(orchestrator, /projectFileIdentifierTotal > 0[\s\S]{0,20}\? "Project"/);
   assert.ok(orchestrator.includes('const referenceFollowUpRoute = projectReferenceFollowUp ? "Project" : clientReferenceFollowUp ? "Client" : undefined;'));
-  assert.ok(orchestrator.includes('referenceFollowUpRoute ?? classifyNoaRoute'));
+  // Later refactored to store the classifyNoaRoute() result in a named `deterministicRoute`
+  // local first - referenceFollowUpRoute still takes precedence over it.
+  assert.ok(orchestrator.includes("const deterministicRoute = classifyNoaRoute(request.message, request.context);"));
+  assert.ok(orchestrator.includes("referenceFollowUpRoute ?? deterministicRoute"));
   assert.ok(orchestrator.includes('let projectMessageOverride: string | undefined = projectReferenceFollowUp?.rewrittenMessage;'));
   assert.ok(orchestrator.includes('let clientMessageOverride: string | undefined = clientReferenceFollowUp?.rewrittenMessage;'));
 });

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:noa": "node --import tsx --import ./lib/noa/testing/noa-offline.mjs --experimental-test-module-mocks --test \"lib/noa/**/*.test.mts\" \"components/noa/**/*.test.mts\""
   },
   "dependencies": {
     "@sparticuz/chromium": "^148.0.0",
@@ -37,7 +38,9 @@
     "@types/sharp": "^0.31.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "server-only": "^0.0.1",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

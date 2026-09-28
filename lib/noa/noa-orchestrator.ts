@@ -1,4 +1,30 @@
 import "server-only";
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { NoaFollowUpBinding, NoaFollowUpClarifyReason } from "./noa-conversation-reference";
+
+// Internal opt-in diagnostics; never serialized in NoaAnswer or populated with business values.
+export type NoaDecisionTrace = {
+  routeDecision: NoaDomain | "social" | "context" | "greeting" | "capabilities" | null;
+  semanticUsed: boolean; // extractor invoked, including disabled/unclear outcomes
+  referenceAvailable: boolean;
+  referenceDomain: NoaDomain | null;
+  referenceBindingKind: NoaFollowUpBinding["kind"] | "legacy_follow_up" | "finding";
+  scopeSource: "explicit_identifier" | "conversation_reference" | "page_context" | "generic_query" | "clarification" | "none";
+  capabilitySelected: NoaDomain | null;
+  resultCount: number | null;
+  clarifyReason: NoaFollowUpClarifyReason | "business_options" | "semantic_clarification" | null;
+  errorCode: "turn_failed" | "capability_failed" | null;
+  durationMs: number;
+};
+const decisionTrace = new AsyncLocalStorage<NoaDecisionTrace>();
+// Separate from diagnostic metadata. Synchronous observation of successful authorized data only;
+// no session state enters this context, and observer failures cannot change the business answer.
+export type NoaResultObserver = (domain: NoaDomain, data: unknown) => void;
+const resultObserver = new AsyncLocalStorage<NoaResultObserver>();
+function traceDecision(fields: Partial<NoaDecisionTrace>): void {
+  const trace = decisionTrace.getStore();
+  if (trace) Object.assign(trace, fields);
+}
 import { withNoaSpokenResponse } from "./noa-spoken-response";
 import { prerouteNoaConversation, normalizeNoaBusinessParaphrase } from "./noa-conversation-prerouter";
 import { buildNoaPreviousFinding, resolveNoaFindingFollowUp, withoutNoaPreviousFinding } from "./noa-finding-reference.server";
@@ -1823,6 +1849,7 @@ async function runNoaSemanticV2(
 // both for one request): current message + compact page section only - I5 adds NO conversation
 // context, label, identifier, or prior prose to it (PART 19; deterministic binding below owns it).
 async function extractNoaSemanticV2ForRequest(request: NoaChatRequest): Promise<NoaIntentExtractorV2Result> {
+  traceDecision({ semanticUsed: true });
   return await extractNoaSemanticRequestV2({ context: request.context, message: request.message });
 }
 
@@ -1952,6 +1979,10 @@ async function resolveNoaConversationFollowUpTurn(
     reference: bindable,
     semantic: bindingSemantic,
   });
+  traceDecision({ referenceBindingKind: binding.kind,
+    scopeSource: binding.kind === "clarify" ? "clarification" : binding.kind === "not_applicable" ? "none" : ("source" in binding && binding.source === "current_page") || binding.kind === "page_entity_options" ? "page_context" : "conversation_reference",
+    clarifyReason: binding.kind === "clarify" ? binding.reason : null,
+  });
   logNoaReferenceDiagnostics(buildNoaReferenceDiagnostics(bindable, pageEntity, Boolean(extraction), binding));
 
   const resolution = resolveNoaConversationFollowUp(binding);
@@ -1995,6 +2026,7 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
   // PART 5: an out-of-range ordinal never falls through to Help/the provider - it's a fixed,
   // deterministic clarification, answered immediately without a capability call.
   if (quotationOrdinalFollowUp?.kind === "out_of_range") {
+    traceDecision({ scopeSource: "clarification", referenceBindingKind: "clarify", clarifyReason: "ordinal_out_of_range" });
     return {
       domain: "Quotation",
       sources: [],
@@ -2054,6 +2086,10 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
           ? "Quotation"
           : referenceFollowUpRoute ?? deterministicRoute;
 
+  traceDecision({ routeDecision: route });
+  if (identifierRoute || PROCUREMENT_ORDER_TOKEN_PATTERN.test(request.message)) traceDecision({ scopeSource: "explicit_identifier" });
+  else if (recordedQuotationFollowUpFrom || quotationMessageOverride || referenceFollowUpRoute || quotationHistoryFollowUp) traceDecision({ scopeSource: "conversation_reference", referenceBindingKind: "legacy_follow_up" });
+  else if (!conversationDispatch) traceDecision({ scopeSource: routeClassification.strength === "page_context" ? "page_context" : "generic_query" });
   const semanticV2ProtectedReason: NoaSemanticV2ProtectedReason | null = recordedQuotationFollowUpFrom
     ? "recorded_quotation_follow_up"
     : identifierRoute || PROCUREMENT_ORDER_TOKEN_PATTERN.test(request.message)
@@ -2169,6 +2205,7 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
     // extractor either, so V1's semantic UserActivity override can never preempt Catch-Up. Flag
     // off: unchanged.
     const skipV1Extraction = semanticV2Attempted || (semanticV2FlagEnabled && routeClassification.rule === "catch_up");
+    if (!semanticRequest && !skipV1Extraction) traceDecision({ semanticUsed: true });
     const extracted = semanticRequest || skipV1Extraction
       ? { domain: "Unclear" as const, intent: "unsupported" as const }
       : await extractNoaSemanticRequest({ context: request.context, message: request.message });
@@ -2187,6 +2224,7 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
     // still flow through the normal capability auth gate below; nothing here grants access.
     if (conversationReference?.domain === "UserActivity") {
       semanticRequest = resolveUserActivityFollowUp(request.message, conversationReference, extracted.intent);
+      if (semanticRequest) traceDecision({ scopeSource: "conversation_reference", referenceBindingKind: "legacy_follow_up" });
     }
 
     if (!semanticRequest && extracted.domain === "UserActivity" && SUPPORTED_SEMANTIC_INTENTS.has(extracted.intent)) {
@@ -2326,6 +2364,7 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
   // I3 PART 9: a V2 dispatch selects the resolver's own deterministic domain (never "Help", never a
   // model-supplied name); everything else keeps the existing effectiveRoute.
   const dispatchRoute = semanticV2Dispatch ? semanticV2Dispatch.domain : effectiveRoute;
+  traceDecision({ routeDecision: dispatchRoute });
   if (dispatchRoute === "Help") {
     return { domain: "Help", sources: [], text: HELP_ANSWER_TEXT };
   }
@@ -2352,6 +2391,8 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
     request = { ...request, message: semanticV2Dispatch.canonicalMessage };
   }
 
+  traceDecision({ capabilitySelected: domain });
+  if (!conversationDispatch && (projectMessageOverride || clientMessageOverride || procurementMessageOverride || productMessageOverride)) traceDecision({ scopeSource: "conversation_reference", referenceBindingKind: "legacy_follow_up" });
   const capabilityResult = domain === "Product"
     ? await fetchNoaProductCapability(productMessageOverride ?? request.message, request.context, semanticRequest?.domain === "Product" ? { product: semanticRequest.product } : undefined)
     : domain === "Quotation"
@@ -2383,6 +2424,7 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
                     : await fetchNoaPriceCapability(productMessageOverride ?? request.message, request.context, semanticRequest?.domain === "Price" ? { product: semanticRequest.product } : undefined);
 
   if (!capabilityResult.ok) {
+    traceDecision({ errorCode: "capability_failed" });
     // Unauthorized / not-found / ambiguous: return the capability's own safe copy directly,
     // without spending a provider call on something the model can't help with anyway. I5 keeps
     // the previous sanitized reference because a failed read produced no newer authorized result
@@ -2391,6 +2433,12 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
       ? sanitizeNoaConversationReference(conversationReference)
       : undefined;
     return { conversationReference: preservedConversationReference, domain, sources: [], text: capabilityResult.message };
+  }
+
+  try { resultObserver.getStore()?.(domain, capabilityResult.data); } catch { /* shadow-only observation */ }
+  if (decisionTrace.getStore() && capabilityResult.data && typeof capabilityResult.data === "object") {
+    const traceData = capabilityResult.data as { rows?: unknown[]; items?: unknown[]; returnedCount?: number; kind?: string };
+    traceDecision({ resultCount: Array.isArray(traceData.rows) ? traceData.rows.length : Array.isArray(traceData.items) ? traceData.items.length : typeof traceData.returnedCount === "number" && Number.isInteger(traceData.returnedCount) && traceData.returnedCount >= 0 ? traceData.returnedCount : traceData.kind === "project_file_detail" ? 1 : null });
   }
 
   // C3/C4A: built ONLY from this successful, already-authorized capabilityData (PART 2/10) -
@@ -2511,9 +2559,30 @@ async function runNoaOrchestratorCore(request: NoaChatRequest): Promise<NoaAnswe
 // an ordinary unrelated request (PART 15) never silently drops an in-progress configuration. This
 // is the ENTIRE passthrough mechanism: no other line in runNoaOrchestratorCore was touched to
 // achieve it.
-export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAnswer> {
+export async function runNoaOrchestrator(request: NoaChatRequest, collectTrace?: (trace: Readonly<NoaDecisionTrace>) => void, observeResult?: NoaResultObserver): Promise<NoaAnswer> {
+  if (observeResult) return resultObserver.run(observeResult, () => runNoaOrchestrator(request, collectTrace));
+  if (collectTrace) {
+    const reference = sanitizeNoaConversationReference(request.conversationReference);
+    const trace: NoaDecisionTrace = { routeDecision: null, semanticUsed: false, referenceAvailable: Boolean(reference), referenceDomain: reference?.domain ?? null, referenceBindingKind: "not_applicable", scopeSource: "none", capabilitySelected: null, resultCount: null, clarifyReason: null, errorCode: null, durationMs: 0 };
+    const started = performance.now();
+    return decisionTrace.run(trace, async () => {
+      try {
+        const answer = await runNoaOrchestrator(request);
+        trace.routeDecision ??= answer.domain;
+        return answer;
+      } catch (error) {
+        trace.errorCode = "turn_failed";
+        throw error;
+      } finally {
+        trace.durationMs = Math.round(performance.now() - started);
+        // Diagnostic consumer failures cannot change the answer or error.
+        try { collectTrace(Object.freeze({ ...trace })); } catch { /* diagnostics only */ }
+      }
+    });
+  }
   const conversationTurn = prerouteNoaConversation(request.message);
   if (conversationTurn.kind !== "business_passthrough") {
+    traceDecision({ routeDecision: "social" });
     // Social turns create no reference and do not erase an existing useful one.
     return withNoaSpokenResponse({ domain: "Help", sources: [], text: conversationTurn.reply,
       conversationReference: sanitizeNoaConversationReference(request.conversationReference),
@@ -2524,6 +2593,7 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
   // CFI1 is read-only and must precede guided configuration and agent activation.
   const findingAnswer = resolveNoaFindingFollowUp(request.message, request.conversationReference);
   if (findingAnswer) {
+    traceDecision({ scopeSource: "conversation_reference", referenceBindingKind: "finding" });
     if (isNoaProductConfigurationReference(request.productConfigurationReference)) {
       findingAnswer.productConfigurationReference = request.productConfigurationReference;
     }
@@ -2535,6 +2605,7 @@ export async function runNoaOrchestrator(request: NoaChatRequest): Promise<NoaAn
   const classification = classifyNoaRouteWithStrength(request.message, request.context);
   const paraphrase = normalizeNoaBusinessParaphrase(request.message, classification.strength === "exact" || classification.strength === "anchored");
   if (paraphrase.kind === "clarify") {
+    traceDecision({ scopeSource: "clarification", clarifyReason: "business_options" });
     return withNoaSpokenResponse({ domain: "Help", sources: [], text: paraphrase.text, choices: paraphrase.choices,
       conversationReference: sanitizeNoaConversationReference(request.conversationReference),
       ...(isNoaProductConfigurationReference(request.productConfigurationReference)

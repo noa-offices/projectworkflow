@@ -36,6 +36,7 @@ function orchestrator(spies: Record<string, any> = {}) {
   const entry = ast.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "runNoaOrchestrator")!;
   const output = ts.transpileModule(entry.getText(ast).replace("export ", ""), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const dependencies = { prerouteNoaConversation: route, normalizeNoaBusinessParaphrase: paraphrase, classifyNoaRouteWithStrength, sanitizeNoaConversationReference, withNoaSpokenResponse,
+    traceDecision: () => {},
     isNoaProductConfigurationReference: (v: unknown) => v !== undefined,
     resolveNoaFindingFollowUp: () => assert.fail("No finding resolver for social turns"),
     maybeHandleProductConfigurationTurn: () => assert.fail("No configuration engine"),

@@ -4,7 +4,9 @@ import test from "node:test";
 
 const semantic = readFileSync("lib/noa/noa-semantic-request.ts", "utf8");
 const extractor = readFileSync("lib/noa/noa-intent-extractor.server.ts", "utf8");
-const orchestrator = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const orchestrator = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
 const quotation = readFileSync("lib/noa/noa-quotation-capability.server.ts", "utf8");
 
 test("TC-1 defines only bounded Quotation identifier and request arguments", () => {
@@ -24,7 +26,9 @@ test("TC-1 extractor schema and prompt support direct QN quotation requests with
 
 test("TC-1 dispatches validated Quotation arguments without rewriting the raw question", () => {
   assert.ok(orchestrator.includes("...(extracted.quotation ? { quotation: extracted.quotation } : {})"));
-  assert.ok(orchestrator.includes("fetchNoaQuotationCapability(request.message, request.context, {"));
+  // A later, unrelated phase (I5 bound-follow-up canonical phrase swap) added
+  // quotationMessageOverride - the deterministic quotation options object is unchanged.
+  assert.match(orchestrator, /fetchNoaQuotationCapability\([^,]+, request\.context, \{/);
   assert.ok(orchestrator.includes("quotation: deterministicQuotation ?? (semanticRequest?.domain === \"Quotation\" ? semanticRequest.quotation : undefined)"));
   assert.ok(!orchestrator.includes("quotation structured"));
 });
@@ -37,7 +41,9 @@ test("TC-1B fast-path accepts exactly one QN ERP identifier and maps the request
   assert.ok(quotation.includes('/\\bstatus\\b/.test(normalized)'));
   assert.ok(orchestrator.includes('const deterministicQuotation = quotationStructuredRequest(request.message);'));
   assert.ok(orchestrator.includes('const quotationIdentifierTotal = quotationIdentifierCount(request.message);'));
-  assert.ok(orchestrator.includes('quotationIdentifierTotal > 0\n      ? "Quotation"'));
+  // Later refactored from a multi-line if/else chain into a single-line ternary - same
+  // identifier-total-driven routing decision.
+  assert.match(orchestrator, /quotationIdentifierTotal > 0[\s\S]{0,20}\? "Quotation"/);
 });
 
 test("TC-1B routes multiple QNs to Quotation without single-quotation arguments", () => {

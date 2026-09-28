@@ -18,10 +18,14 @@ function branchReturnsBeforeIndex(source: string, branchMarker: string, laterMar
 
 test('12. the "context" (self/page-context) route returns before any capability call or runNoaProvider()', () => {
   const contextBranchIndex = orchestratorSource.indexOf('route === "context"');
-  const firstCapabilityCallIndex = orchestratorSource.indexOf("fetchNoaProductCapability(");
+  // Anchored to the real capability-dispatch block (`const capabilityResult =`, used by the tests
+  // below too) rather than the bare `fetchNoaProductCapability(` name: a later, unrelated Guided
+  // Product Configuration feature added its own earlier call to that same function for its own
+  // purposes, which is not the dispatch this test means to check.
+  const capabilityDispatchIndex = orchestratorSource.indexOf("const capabilityResult =");
   const providerCallIndex = orchestratorSource.indexOf("runNoaProvider(");
-  assert.ok(contextBranchIndex >= 0 && firstCapabilityCallIndex >= 0 && providerCallIndex >= 0);
-  assert.ok(contextBranchIndex < firstCapabilityCallIndex);
+  assert.ok(contextBranchIndex >= 0 && capabilityDispatchIndex >= 0 && providerCallIndex >= 0);
+  assert.ok(contextBranchIndex < capabilityDispatchIndex);
   assert.ok(contextBranchIndex < providerCallIndex);
   // The context branch itself must return synchronously, not await anything.
   const contextBranch = orchestratorSource.slice(contextBranchIndex, orchestratorSource.indexOf("}", contextBranchIndex));
@@ -29,30 +33,27 @@ test('12. the "context" (self/page-context) route returns before any capability 
   assert.ok(!contextBranch.includes("await"));
 });
 
-test("13. the unsupported-domain (Project/Procurement) route returns before any capability call or runNoaProvider()", () => {
-  const unsupportedBranchIndex = orchestratorSource.indexOf('route === "unsupported_project"');
-  const firstCapabilityCallIndex = orchestratorSource.indexOf("fetchNoaProductCapability(");
-  const providerCallIndex = orchestratorSource.indexOf("runNoaProvider(");
-  assert.ok(unsupportedBranchIndex >= 0 && firstCapabilityCallIndex >= 0 && providerCallIndex >= 0);
-  assert.ok(unsupportedBranchIndex < firstCapabilityCallIndex);
-  assert.ok(unsupportedBranchIndex < providerCallIndex);
-  const unsupportedBranch = orchestratorSource.slice(unsupportedBranchIndex, orchestratorSource.indexOf("}", unsupportedBranchIndex));
-  assert.ok(unsupportedBranch.includes("return {"));
-  assert.ok(!unsupportedBranch.includes("await"));
+test("13. Project/Procurement are real, fully-supported domains - the old unsupported-domain placeholder route was retired, not left as a bypassable branch", () => {
+  // Project and Procurement were later promoted to real NoaDomain capabilities (see
+  // lib/noa/noa-phase-b5-safety.test.mts's own "17. Procurement is a real NoaDomain and the
+  // unsupported_procurement route is fully retired") - there is no longer an "unsupported_project"
+  // / "unsupported_procurement" route to check the ordering of; confirm it stays fully removed
+  // rather than silently reintroduced as a bypass around the real capability dispatch.
+  assert.ok(!orchestratorSource.includes("unsupported_project"));
+  assert.ok(!orchestratorSource.includes("unsupported_procurement"));
 });
 
-test("context and unsupported-domain answers are surfaced under the existing Help domain, never a new user-facing domain", () => {
+test("context answers are surfaced under the existing Help domain, never a new user-facing domain", () => {
   assert.match(orchestratorSource, /route === "context"[\s\S]{0,120}domain: "Help"/);
-  assert.match(orchestratorSource, /route === "unsupported_project" \|\| route === "unsupported_procurement"[\s\S]{0,150}domain: "Help"/);
 });
 
-test("Help/context/unsupported are all handled before the Product/Quotation/Price capability dispatch", () => {
-  assert.ok(branchReturnsBeforeIndex(orchestratorSource, 'route === "context"', "const capabilityResult"));
-  assert.ok(branchReturnsBeforeIndex(orchestratorSource, 'route === "unsupported_project"', "const capabilityResult"));
-  assert.ok(branchReturnsBeforeIndex(orchestratorSource, 'route === "Help"', "const capabilityResult"));
+test("Help/context are handled before the Product/Quotation/Price capability dispatch", () => {
+  assert.ok(branchReturnsBeforeIndex(orchestratorSource, 'route === "context"', "const capabilityResult ="));
+  assert.ok(branchReturnsBeforeIndex(orchestratorSource, 'dispatchRoute === "Help"', "const capabilityResult ="));
 });
 
 test("the orchestrator still classifies via the single pure router (classifyNoaRoute), no duplicated routing logic", () => {
-  assert.ok(orchestratorSource.includes('import { classifyNoaRoute, describeNoaPageContext } from "@/lib/noa/noa-intent-router";'));
+  assert.ok(orchestratorSource.includes('classifyNoaRoute,'));
+  assert.ok(orchestratorSource.includes('from "@/lib/noa/noa-intent-router";'));
   assert.equal((orchestratorSource.match(/includesAny\(/g) ?? []).length, 0, "orchestrator must not reimplement keyword matching itself");
 });

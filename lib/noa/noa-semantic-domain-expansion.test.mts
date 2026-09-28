@@ -20,7 +20,9 @@ import type { NoaPageContext } from "./noa-types.js";
 // orchestrator ("server-only" + "@/..." aliases) is checked at source level, like every other
 // lib/noa/*-safety test.
 
-const orchestrator = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const orchestrator = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
 const router = readFileSync("lib/noa/noa-intent-router.ts", "utf8");
 const coreStart = orchestrator.indexOf("async function runNoaOrchestratorCore(");
 const coreBody = orchestrator.slice(coreStart, orchestrator.indexOf("export async function runNoaOrchestrator(", coreStart));
@@ -277,8 +279,11 @@ test("20. CO identifier protected", () => {
 });
 
 test("21. Product Configuration active turn protected (intercepted before the core pipeline)", () => {
+  // A later, unrelated phase (business paraphrase canonicalization) renamed the argument
+  // runNoaOrchestratorCore is called with from `request` to `routedRequest` - the ordering this
+  // test protects (Product Configuration is checked first) is unchanged.
   const wrapper = orchestrator.slice(orchestrator.indexOf("export async function runNoaOrchestrator("));
-  assert.ok(wrapper.indexOf("await maybeHandleProductConfigurationTurn(request);") < wrapper.indexOf("await runNoaOrchestratorCore(request);"));
+  assert.ok(wrapper.indexOf("await maybeHandleProductConfigurationTurn(request);") < wrapper.indexOf("await runNoaOrchestratorCore("));
   const configurationTurn = orchestrator.slice(
     orchestrator.indexOf("async function maybeHandleProductConfigurationTurn("),
     orchestrator.indexOf("// I3: hybrid semantic V2 runtime"),

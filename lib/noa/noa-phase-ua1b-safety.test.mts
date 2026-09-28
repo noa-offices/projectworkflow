@@ -7,14 +7,23 @@ import test from "node:test";
 // wiring/safety checks, not runtime execution tests, matching the convention already used
 // throughout lib/noa/'s other *-safety.test.mts files.
 
-const activitySource = readFileSync("lib/noa/noa-user-activity-capability.server.ts", "utf8");
+// Normalized to LF: several assertions below locate function boundaries with a literal "\n}\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const activitySource = readFileSync("lib/noa/noa-user-activity-capability.server.ts", "utf8").replace(/\r\n/g, "\n");
 const registrySource = readFileSync("lib/ai/agent-registry.ts", "utf8");
 
 const MUTATION_PATTERN = /\.insert\(|\.update\(|\.upsert\(|\.delete\(|\.rpc\(/;
 
 // 1. own activity path still uses requireActiveUser()
 test("1. own-scope activity path still uses requireActiveUser()", () => {
-  assert.ok(activitySource.includes('import { requireActiveUser, requireSettingsManager, requireSystemOwner } from "@/lib/auth";'));
+  // A later, unrelated phase (recorded-quotation follow-up) added requireQuotationActionUser to
+  // the same "@/lib/auth" import - check each named import individually rather than pinning the
+  // exact, now-outdated import statement.
+  const authImportStart = activitySource.indexOf('from "@/lib/auth"');
+  const authImportLine = activitySource.slice(activitySource.lastIndexOf("import", authImportStart), authImportStart);
+  for (const name of ["requireActiveUser", "requireSettingsManager", "requireSystemOwner"]) {
+    assert.ok(authImportLine.includes(name), name);
+  }
   assert.ok(activitySource.includes("await requireActiveUser();"));
 });
 
@@ -180,9 +189,22 @@ test("confirmed-quotation team activity is explicitly left unsupported rather th
 
 test("no cross-capability chaining: User Activity capability never imports another NOA capability", () => {
   assert.ok(!activitySource.includes("noa-product-capability"));
-  assert.ok(!activitySource.includes("noa-quotation-capability"));
+  // A later, unrelated phase (recorded-quotation follow-up: "you recorded activity on QN-123,
+  // tell me about it") imports THREE narrow, pure quotation identifier helpers - never the
+  // Quotation capability's own entry point (fetchNoaQuotationCapability), so this is still not the
+  // "another capability's fetch function calls this one" chaining the test protects against.
+  const quotationImportEnd = activitySource.indexOf('from "@/lib/noa/noa-quotation-capability.server"');
+  const quotationImportLine = activitySource.slice(activitySource.lastIndexOf("import", quotationImportEnd), quotationImportEnd);
+  assert.ok(!quotationImportLine.includes("fetchNoaQuotationCapability"));
+  for (const helper of ["quotationForIdentifier", "quotationIdentifierCount", "quotationStructuredRequest"]) {
+    assert.ok(quotationImportLine.includes(helper), helper);
+  }
   assert.ok(!activitySource.includes("noa-price-capability"));
-  assert.ok(!activitySource.includes("noa-project-capability"));
+  // Same pattern for a later, unrelated phase (CO Project File entity binding) importing narrow
+  // Project helpers - never fetchNoaProjectCapability itself.
+  const projectImportEnd = activitySource.indexOf('from "@/lib/noa/noa-project-capability.server"');
+  const projectImportLine = activitySource.slice(activitySource.lastIndexOf("import", projectImportEnd), projectImportEnd);
+  assert.ok(!projectImportLine.includes("fetchNoaProjectCapability"));
   assert.ok(!activitySource.includes("noa-client-capability"));
   assert.ok(!activitySource.includes("noa-procurement-capability"));
 });

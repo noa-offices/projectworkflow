@@ -1,3 +1,4 @@
+import { applyNoaConversationTurnState } from "./noa-turn-state";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -8,7 +9,9 @@ import { isNoaProductConfigurationReference } from "./noa-product-configuration-
 // convention as every other lib/noa/*-safety.test.mts file. noa-product-configuration-reference.ts
 // is pure/alias-free, so its validator is exercised directly (real execution, not source-assertion).
 
-const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
 const referenceSource = readFileSync("lib/noa/noa-product-configuration-reference.ts", "utf8");
 const typesSource = readFileSync("lib/noa/noa-types.ts", "utf8");
 const routeSource = readFileSync("app/api/noa/chat/route.ts", "utf8");
@@ -156,13 +159,22 @@ test("15. stale selections are GPC-1's own report - resumeProductConfiguration p
 // ── COMPLETION (test 16) ─────────────────────────────────────────────────────────
 
 test("16. no required step remaining returns a deterministic completion marker and RETAINS the reference", () => {
-  const fnStart = orchestratorSource.indexOf("function productConfigurationCompletionAnswer");
-  const fnEnd = orchestratorSource.indexOf("\n// PART 17:", fnStart);
+  // The completion answer function was later renamed/restructured (productConfigurationSummaryAnswer,
+  // now also shared by the post-completion "ask for the price/specification again" intents) - the
+  // properties this test protects (deterministic text, reference retained, price read directly
+  // from state with no separate formatter/arithmetic) still hold under the new name.
+  const fnStart = orchestratorSource.indexOf("function productConfigurationSummaryAnswer");
+  const fnEnd = orchestratorSource.indexOf("\nfunction ", fnStart + 1);
   const fnBody = orchestratorSource.slice(fnStart, fnEnd);
   assert.ok(fnBody.includes("productConfigurationReference: reference,"));
-  assert.ok(fnBody.includes("are complete."));
-  // Only price.unit/currency/dimension/templateName - never a second, richer summary built here.
-  assert.ok(fnBody.includes("state.price.currency") && fnBody.includes("state.price.unit") && fnBody.includes("state.dimension"));
+  assert.ok(fnBody.includes("You can ask me for the final specification."));
+  // Price is read directly from state (no separate formatter/arithmetic); dimension is read
+  // directly from state by the one shared sections-builder this function delegates to.
+  assert.ok(fnBody.includes("state.price.currency") && fnBody.includes("state.price.unit"));
+  assert.ok(fnBody.includes("productConfigurationSummarySections(state, selections)"));
+  const sectionsStart = orchestratorSource.indexOf("function productConfigurationSummarySections");
+  const sectionsEnd = orchestratorSource.indexOf("\nfunction ", sectionsStart + 1);
+  assert.ok(orchestratorSource.slice(sectionsStart, sectionsEnd).includes("state.dimension"));
 });
 
 // ── CONTROL (tests 17-21) ───────────────────────────────────────────────────────
@@ -260,7 +272,8 @@ test("transport: the API route independently validates productConfigurationRefer
 
 test("transport: the client holds productConfigurationReference in its own ref, replacing wholesale from the server response, never rendered to the user", () => {
   assert.ok(assistantSource.includes("const productConfigurationReferenceRef = useRef<NoaProductConfigurationReference | undefined>(undefined);"));
-  assert.ok(assistantSource.includes("productConfigurationReferenceRef.current = answer.productConfigurationReference;"));
+  const reference = { templateId: "fixture", mode: "configuring" as const, selections: {} };
+  assert.equal(applyNoaConversationTurnState({}, { domain: "Product", sources: [], text: "", productConfigurationReference: reference }).productConfigurationReference, reference);
   assert.ok(!assistantSource.includes("productConfigurationReference.selections"));
 });
 

@@ -1,3 +1,4 @@
+import { NOA_GREETING_TEXT } from "../../lib/noa/noa-turn-state";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -60,10 +61,7 @@ test("NoaAssistant's session thread is plain React state (useState), not persist
 // ── Home UX: better introduction + working starter actions ─────────────────────────────────────
 
 test("Home UX 7/8. Greeting is concise and mentions product configuration, without claiming AI/internal-architecture capabilities", () => {
-  const source = readFileSync("components/noa/noa-assistant.tsx", "utf8");
-  const greetingMatch = source.match(/const GREETING_TEXT =\s*\n?\s*"([^;]+)";/);
-  assert.ok(greetingMatch, "GREETING_TEXT constant not found");
-  const greeting = greetingMatch![1];
+  const greeting = NOA_GREETING_TEXT;
   assert.ok(/configure/i.test(greeting), "greeting should mention configuring products");
   assert.ok(greeting.length < 260, "greeting should stay concise");
   for (const forbidden of [/\bAI\b/i, /\bagent(s)?\b/i, /\bdatabase\b/i, /\barchitecture\b/i, /system[- ]owner/i]) {

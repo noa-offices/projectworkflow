@@ -78,10 +78,10 @@ test("actual public orchestrator handles finding chain before any capability, pr
   const node = ast.statements.find((entry) => ts.isFunctionDeclaration(entry) && entry.name?.text === "runNoaOrchestrator");
   assert.ok(node);
   const output = ts.transpileModule(node.getText(ast).replace("export ", ""), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-  const execute = new Function("prerouteNoaConversation", "resolveNoaFindingFollowUp", "withNoaSpokenResponse", "isNoaProductConfigurationReference", "maybeHandleProductConfigurationTurn", "tryNoaAgentBrief", "runNoaOrchestratorCore", `${output}; return runNoaOrchestrator;`)(
+  const execute = new Function("prerouteNoaConversation", "resolveNoaFindingFollowUp", "withNoaSpokenResponse", "isNoaProductConfigurationReference", "maybeHandleProductConfigurationTurn", "tryNoaAgentBrief", "runNoaOrchestratorCore", "traceDecision", `${output}; return runNoaOrchestrator;`)(
     compile("lib/noa/noa-conversation-prerouter.ts").prerouteNoaConversation,
     (message: string, r: unknown) => follow(message, r, now), withNoaSpokenResponse, (value: unknown) => value !== undefined,
-    () => assert.fail("No configuration engine"), () => assert.fail("No agent"), () => assert.fail("No fresh capability/provider read"));
+    () => assert.fail("No configuration engine"), () => assert.fail("No agent"), () => assert.fail("No fresh capability/provider read"), () => {});
   const config = { mode: "configuring", templateId: "existing-configuration" };
   let r = reference();
   for (const message of ["I think you need to configure that.", "How do I fix that?", "Configure that for me."]) {

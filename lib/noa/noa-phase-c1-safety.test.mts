@@ -55,7 +55,12 @@ test("7. any extraction failure (disabled, error, malformed/off-schema JSON) ret
 test("8. the extractor and resolver never import any require*() auth helper or a NOA capability", () => {
   for (const source of [extractorSource, subjectResolverSource, semanticRequestSource]) {
     assert.ok(!/requireActiveUser|requireSystemOwner|requireSettingsManager|requireProductLibraryManager|requireProcurementManager/.test(source));
-    assert.ok(!/noa-.*-capability/.test(source));
+    // noa-semantic-request.ts now documents, in `//` comments, which capability file each closed
+    // enum's values were sourced from ("Sourced from noa-quotation-capability.server.ts's own
+    // ..."). That's documentation, not an import - only a real `from "...noa-*-capability..."`
+    // import statement is a genuine capability dependency.
+    const sourceWithoutLineComments = source.replace(/\/\/.*$/gm, "");
+    assert.ok(!/from\s+["'][^"']*noa-.*-capability/.test(sourceWithoutLineComments));
   }
 });
 

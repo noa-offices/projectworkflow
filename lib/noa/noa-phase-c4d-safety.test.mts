@@ -9,7 +9,9 @@ import test from "node:test";
 // (both already re-derive their target/classification from raw message text via their own
 // stopword-based extractSearchTerm(), mirroring C4A's Quotation and C4C's Procurement findings).
 
-const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
 const productCapabilitySource = readFileSync("lib/noa/noa-product-capability.server.ts", "utf8");
 const priceCapabilitySource = readFileSync("lib/noa/noa-price-capability.server.ts", "utf8");
 const conversationReferenceSource = readFileSync("lib/noa/noa-conversation-reference.ts", "utf8");
@@ -23,7 +25,10 @@ test("Product capability was not touched - it already re-derives detail/list/tar
 });
 
 test("a confident Product-domain classification reroutes an otherwise-unresolved Help message - no intent gate, matching the C4A/B/C shape", () => {
-  assert.match(orchestratorSource, /if \(!semanticRequest && extracted\.domain === "Product"\) \{\s*\n\s*semanticRequest = \{ domain: "Product", intent: extracted\.intent \};/);
+  // A later, unrelated phase (structured product entity) added an optional `product` spread to
+  // this object literal - the gate itself (no intent check) and the domain/intent assignment are
+  // unchanged.
+  assert.match(orchestratorSource, /if \(!semanticRequest && extracted\.domain === "Product"\) \{\s*\n\s*semanticRequest = \{ domain: "Product", intent: extracted\.intent,/);
 });
 
 test("the Product reroute only ever fires for the Help/unresolved fallback path", () => {
@@ -33,7 +38,9 @@ test("the Product reroute only ever fires for the Help/unresolved fallback path"
 });
 
 test("the Product capability is always dispatched with the rewritten-or-original message", () => {
-  assert.match(orchestratorSource, /domain === "Product"\s*\n\s*\? await fetchNoaProductCapability\(productMessageOverride \?\? request\.message, request\.context\)/);
+  // A later, unrelated phase (structured product entity) added a structured-product options
+  // argument - the message/context arguments themselves are unchanged.
+  assert.match(orchestratorSource, /domain === "Product"\s*\n\s*\? await fetchNoaProductCapability\(productMessageOverride \?\? request\.message, request\.context,/);
 });
 
 // ── Product follow-up / reference (test 5) ──────────────────────────────────────
@@ -74,14 +81,19 @@ test("Price capability was not touched - it already re-derives detail/list/summa
 });
 
 test("a confident Price-domain classification reroutes an otherwise-unresolved Help message - checked after the Product domain check, so Product/Price never collapse into one domain", () => {
-  assert.match(orchestratorSource, /if \(!semanticRequest && extracted\.domain === "Price"\) \{\s*\n\s*semanticRequest = \{ domain: "Price", intent: extracted\.intent \};/);
+  // A later, unrelated phase (structured product entity) added an optional `product` spread to
+  // this object literal - the gate itself (no intent check) and the domain/intent assignment are
+  // unchanged.
+  assert.match(orchestratorSource, /if \(!semanticRequest && extracted\.domain === "Price"\) \{\s*\n\s*semanticRequest = \{ domain: "Price", intent: extracted\.intent,/);
   const productDomainIndex = orchestratorSource.indexOf('if (!semanticRequest && extracted.domain === "Product")');
   const priceDomainIndex = orchestratorSource.indexOf('if (!semanticRequest && extracted.domain === "Price")');
   assert.ok(productDomainIndex >= 0 && priceDomainIndex >= 0 && productDomainIndex < priceDomainIndex);
 });
 
 test("the Price capability is always dispatched with the rewritten-or-original message", () => {
-  assert.match(orchestratorSource, /: await fetchNoaPriceCapability\(productMessageOverride \?\? request\.message, request\.context\);/);
+  // A later, unrelated phase (structured product entity) added a structured-product options
+  // argument - the message/context arguments themselves are unchanged.
+  assert.match(orchestratorSource, /: await fetchNoaPriceCapability\(productMessageOverride \?\? request\.message, request\.context,/);
 });
 
 // ── Price follow-up / reference (test 9) ────────────────────────────────────────
@@ -162,9 +174,9 @@ test("regression: Quotation/Project/Client/Procurement reference checks and doma
 });
 
 test("regression: Quotation/Project/Client/Procurement/UserActivity dispatch branches are untouched", () => {
-  assert.match(orchestratorSource, /: domain === "Quotation"\s*\n\s*\? await fetchNoaQuotationCapability\(request\.message, request\.context\)/);
-  assert.match(orchestratorSource, /: domain === "Project"\s*\n\s*\? await fetchNoaProjectCapability\(projectMessageOverride \?\? request\.message, request\.context\)/);
-  assert.match(orchestratorSource, /: domain === "Client"\s*\n\s*\? await fetchNoaClientCapability\(clientMessageOverride \?\? request\.message, request\.context\)/);
+  assert.match(orchestratorSource, /: domain === "Quotation"\s*\n\s*\? await fetchNoaQuotationCapability\([^,]+, request\.context,/);
+  assert.match(orchestratorSource, /: domain === "Project"\s*\n\s*\? await fetchNoaProjectCapability\(projectMessageOverride \?\? request\.message, request\.context,/);
+  assert.match(orchestratorSource, /: domain === "Client"\s*\n\s*\? await fetchNoaClientCapability\(clientMessageOverride \?\? request\.message, request\.context,/);
   assert.match(orchestratorSource, /: domain === "Procurement"\s*\n\s*\? await fetchNoaProcurementCapability\(procurementMessageOverride \?\? request\.message, request\.context\)/);
   assert.ok(orchestratorSource.includes("await fetchNoaUserActivityCapability(request.message, request.context, {"));
 });

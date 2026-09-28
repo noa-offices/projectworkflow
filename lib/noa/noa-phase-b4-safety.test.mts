@@ -61,9 +61,15 @@ test("8. every Client result path emits deterministicText", () => {
 });
 
 // 9. Client counts calculated in code
-test("9. project/quotation counts are computed via bounded head-only count queries, never handed to the model to tally", () => {
+test("9. project/quotation counts are computed via bounded server-side queries, never handed to the model to tally", () => {
+  // ERP-NOA-3 (PART 1, documented in noa-client-capability.server.ts) later reused the same
+  // bounded ERP Project File source (clientProjectFiles(), capped by
+  // CLIENT_PROJECT_FILE_SCAN_LIMIT) for the project count instead of a separate head-only count
+  // query - still bounded, still computed in code, never hitting the model. Quotation count is
+  // untouched (still the original head-only count query).
   assert.ok(clientSource.includes('{ count: "exact", head: true }'));
-  assert.ok(clientSource.includes("const projects = projectCount ?? 0;"));
+  assert.ok(clientSource.includes("const projects = projectFiles.length;"));
+  assert.ok(clientSource.includes("CLIENT_PROJECT_FILE_SCAN_LIMIT"));
   assert.ok(clientSource.includes("const quotations = quotationCount ?? 0;"));
 });
 
@@ -79,15 +85,25 @@ test("10. contact fields (email/phone/website/address/city/country/trn/notes) ar
 test("11. Client capability itself never queries quotation_items or product_templates (no cross-domain duplication)", () => {
   assert.ok(!clientSource.includes('.from("quotation_items")'));
   assert.ok(!clientSource.includes('.from("product_templates")'));
-  // Only a bounded count of quotations for a specific already-resolved client is allowed.
-  const quotationsFromCount = (clientSource.match(/\.from\("quotations"\)/g) ?? []).length;
-  assert.equal(quotationsFromCount, 1, "expected exactly one bounded quotations count query");
+  // Only bounded queries scoped to a specific already-resolved client are allowed. ERP-NOA-3
+  // (PART 1) added a second `quotations` read (clientProjectFiles(), reused for the project
+  // count - see test 9) alongside the original quotation-count query; both are still bounded
+  // (head-only count / .limit(CLIENT_PROJECT_FILE_SCAN_LIMIT)) and scoped by client_id, never an
+  // unbounded or cross-domain scan.
+  const quotationsFromMatches = [...clientSource.matchAll(/\.from\("quotations"\)([\s\S]{0,200}?)(?:\.limit\(|;)/g)];
+  assert.equal(quotationsFromMatches.length, 2, "expected exactly two bounded quotations reads");
+  for (const match of quotationsFromMatches) {
+    assert.ok(match[1].includes("client_id"), "expected every quotations read to be scoped by client_id");
+    assert.ok(match[1].includes("{ count: \"exact\", head: true }") || match[1].includes("CLIENT_PROJECT_FILE_SCAN_LIMIT") || clientSource.slice(clientSource.indexOf(match[0]), clientSource.indexOf(match[0]) + 300).includes("CLIENT_PROJECT_FILE_SCAN_LIMIT"), "expected every quotations read to be bounded");
+  }
 });
 
 // 12. orchestrator dispatches Client
 test("12. orchestrator dispatches to fetchNoaClientCapability for the Client domain", () => {
   assert.ok(orchestratorSource.includes('import { fetchNoaClientCapability } from "@/lib/noa/noa-client-capability.server";'));
-  assert.match(orchestratorSource, /domain === "Client"\s*\n\s*\? await fetchNoaClientCapability\(request\.message, request\.context\)/);
+  // A later, unrelated phase added clientMessageOverride (I5 bound-follow-up canonical phrase
+  // swap) and an options object - the dispatch gate itself (domain === "Client") is unchanged.
+  assert.match(orchestratorSource, /domain === "Client"\s*\n\s*\? await fetchNoaClientCapability\([^,]+, request\.context/);
 });
 
 // 13. unauthorized result prevents provider call

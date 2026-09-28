@@ -7,9 +7,11 @@ import test from "node:test";
 // Source-level wiring/safety checks, same convention as every other lib/noa/*-safety.test.mts
 // file. noa-orchestrator.ts is read only to confirm Conversation Understanding v2 was untouched.
 
-const projectSource = readFileSync("lib/noa/noa-project-capability.server.ts", "utf8");
-const quotationSource = readFileSync("lib/noa/noa-quotation-capability.server.ts", "utf8");
-const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const projectSource = readFileSync("lib/noa/noa-project-capability.server.ts", "utf8").replace(/\r\n/g, "\n");
+const quotationSource = readFileSync("lib/noa/noa-quotation-capability.server.ts", "utf8").replace(/\r\n/g, "\n");
+const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
 const projectFileHelperSource = readFileSync("lib/quotations/project-file.ts", "utf8");
 
 // ── Tests 1-2: ERP Project File lookup by reference / order number ─────────────
@@ -149,5 +151,8 @@ test("14. Client and Procurement capability files were not touched by this phase
 
 test("15. noa-orchestrator.ts preserves the Project and TC-1B Quotation optional inputs", () => {
   assert.match(orchestratorSource, /domain === "Project"\s*\n\s*\? await fetchNoaProjectCapability\(projectMessageOverride \?\? request\.message, request\.context, \{/);
-  assert.match(orchestratorSource, /domain === "Quotation"\s*\n\s*\? await fetchNoaQuotationCapability\(request\.message, request\.context, \{/);
+  // A later, unrelated phase added quotationMessageOverride (I5 bound-follow-up canonical phrase
+  // swap) as the message argument - the invariant this test protects (context.quotationId/entity
+  // options are still passed through) doesn't depend on which message expression is used.
+  assert.match(orchestratorSource, /domain === "Quotation"\s*\n\s*\? await fetchNoaQuotationCapability\([^,]+, request\.context, \{/);
 });

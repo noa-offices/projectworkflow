@@ -1,3 +1,4 @@
+import { applyNoaConversationTurnState } from "./noa-turn-state";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -88,7 +89,10 @@ test("the reference is built ONLY from this result's own capabilityData - never 
 
 test("the summary capability path computes quotation identifiers from rows it already fetched - no extra query", () => {
   const fnStart = activitySource.indexOf("async function summaryAnswer");
-  const fnBody = activitySource.slice(fnStart, activitySource.indexOf("\n// PART 6:", fnStart));
+  // The "// PART 6:" comment this test originally used as the function's end boundary is now far
+  // away (the file grew substantially with unrelated later phases) - bounded to the next top-level
+  // function instead, which is summaryAnswer's real end.
+  const fnBody = activitySource.slice(fnStart, activitySource.indexOf("function formatCanonicalDate(", fnStart));
   assert.ok(fnBody.includes("quotationIdentifierFromAuditTitle"));
   assert.ok(fnBody.includes("quotationIdentifiers"));
   const queryCount = (fnBody.match(/\.from\("/g) ?? []).length;
@@ -99,16 +103,16 @@ test("the client component round-trips the reference: sends it on every request,
   assert.ok(assistantSource.includes("conversationReferenceRef.current"));
   // GPC-3 added a second, independent productConfigurationReference field to the same request
   // body (see the dedicated GPC-3 safety test for that addition) - the literal grew accordingly.
-  assert.match(assistantSource, /body: JSON\.stringify\(\{ context, conversationReference, message, productConfigurationReference, recentMessages \}\)/);
-  assert.ok(assistantSource.includes("conversationReferenceRef.current = answer.conversationReference;"));
-  const catchIndex = assistantSource.indexOf(".catch((error: unknown) => {");
-  const catchBlock = assistantSource.slice(catchIndex, assistantSource.indexOf(".finally(", catchIndex));
-  assert.ok(!catchBlock.includes("conversationReferenceRef.current ="));
+  // Phase 1C adds the transport-only shadow sessionId alongside the unchanged reference fields.
+  assert.match(assistantSource, /body: JSON\.stringify\(\{ context, conversationReference, message, productConfigurationReference, recentMessages, sessionId \}\)/);
+  const previous = { conversationReference: { domain: "Project" as const, intent: "lookup" } };
+  assert.equal(applyNoaConversationTurnState(previous), previous);
+  assert.equal(applyNoaConversationTurnState(previous, { domain: "Help", sources: [], text: "" }).conversationReference, undefined);
 });
 
 test("no server-side persistence was introduced for the conversation reference (no table/cookie/cache write)", () => {
   for (const source of [orchestratorSource, activitySource, routeSource]) {
-    assert.ok(!/\.from\("conversation|\.from\("noa_conversation|cookies\(\)\.set|localStorage|sessionStorage/i.test(source));
+    assert.ok(!/\.from\("conversation|\.from\("noa_conversation|cookies\(\)\.set|\blocalStorage\b|\bsessionStorage\b/i.test(source));
   }
 });
 
@@ -223,5 +227,9 @@ test("no mutation calls and no cross-capability chaining were introduced", () =>
   for (const source of [orchestratorSource, routeSource]) {
     assert.ok(!mutationPattern.test(source.slice(source.indexOf("conversationReference"))));
   }
-  assert.ok(!activitySource.slice(activitySource.indexOf('"quotation_follow_up"')).match(/noa-product-capability|noa-quotation-capability/));
+  // A later, unrelated phase added a `//` comment mentioning noa-quotation-capability.server.ts by
+  // name (to document that a formatter does NOT reuse one of its functions) - documentation, not
+  // an actual cross-capability import/call.
+  const activityWithoutLineComments = activitySource.replace(/\/\/.*$/gm, "");
+  assert.ok(!activityWithoutLineComments.slice(activityWithoutLineComments.indexOf('"quotation_follow_up"')).match(/noa-product-capability|noa-quotation-capability/));
 });

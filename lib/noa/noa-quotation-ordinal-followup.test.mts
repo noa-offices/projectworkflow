@@ -7,7 +7,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const source = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
 
 // Slice out one named function's/const's body up to the next top-level declaration, so assertions
 // stay scoped to just that piece rather than accidentally matching unrelated code elsewhere.
@@ -159,18 +161,28 @@ test("10. Selection always re-dispatches through the EXISTING fetchNoaQuotationC
   assert.ok(source.includes("? buildQuotationConversationReference(capabilityResult.data)"));
 });
 
+// `classifyNoaRoute(request.message, request.context)` was later hoisted out of this ternary
+// chain into an earlier `deterministicRoute` local (computed before recordedQuotationFollowUpFrom
+// is even consulted) - the chain itself now ends with `referenceFollowUpRoute ?? deterministicRoute;`.
+// Both tests below now bound the block on that end marker instead.
+
 test("12. QN deterministic fast path (quotationIdentifierTotal) still wins over the ordinal check", () => {
+  // quotationIdentifierTotal itself now feeds an earlier `identifierRoute` local
+  // (`identifierRoute = quotationIdentifierTotal > 0 ? "Quotation" : ...`) - the precedence this
+  // test protects is now identifierRoute's own precedence over quotationMessageOverride inside
+  // this ternary chain.
+  assert.ok(source.includes('const identifierRoute = quotationIdentifierTotal > 0 ? "Quotation"'));
   const routeStart = source.indexOf("const route = recordedQuotationFollowUpFrom");
-  const routeEnd = source.indexOf(";", source.indexOf("classifyNoaRoute(request.message, request.context)", routeStart));
+  const routeEnd = source.indexOf("referenceFollowUpRoute ?? deterministicRoute;", routeStart);
   const routeBlock = source.slice(routeStart, routeEnd);
-  const quotationIdIndex = routeBlock.indexOf("quotationIdentifierTotal > 0");
+  const identifierRouteIndex = routeBlock.indexOf("identifierRoute &&");
   const ordinalIndex = routeBlock.indexOf("quotationMessageOverride");
-  assert.ok(quotationIdIndex >= 0 && ordinalIndex >= 0 && quotationIdIndex < ordinalIndex);
+  assert.ok(identifierRouteIndex >= 0 && ordinalIndex >= 0 && identifierRouteIndex < ordinalIndex);
 });
 
 test("14. recordedQuotationFollowUpFrom (UserActivity \"which quotation?\") still takes priority over the ordinal check", () => {
   const routeStart = source.indexOf("const route = recordedQuotationFollowUpFrom");
-  const routeEnd = source.indexOf(";", source.indexOf("classifyNoaRoute(request.message, request.context)", routeStart));
+  const routeEnd = source.indexOf("referenceFollowUpRoute ?? deterministicRoute;", routeStart);
   const routeBlock = source.slice(routeStart, routeEnd);
   const recordedIndex = routeBlock.indexOf("recordedQuotationFollowUpFrom");
   const ordinalIndex = routeBlock.indexOf("quotationMessageOverride");
