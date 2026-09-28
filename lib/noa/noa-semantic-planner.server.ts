@@ -26,6 +26,8 @@ Choose exactly one kind:
 - "clarify": the user refers to earlier results but more than one result set fits, or none can be chosen safely. Never guess between candidates.
 - "passthrough": anything else, including new questions that do not depend on earlier results.
 Pronouns such as them/these/those/it/this usually mean the focused result set; choose an older one (higher recency) only when the user's words point to its entityType or kind.
+Every result set has a "selectable" flag. For "select" and for the source of "relation", you MUST choose a handle whose selectable is true. selectable is always false for a result set that is a status summary/aggregate (counts of quotations by status, not the quotations themselves) - NEVER choose an aggregate handle for "select" or "relation", even if it is the only or the most recent quotation-typed result set. If the user's words name or imply a status summary/counts/a status group to drill into, use "aggregate_drilldown" instead (never "select").
+Example: the result sets are a quotation status summary (aggregate, selectable: false) and, more recently, a list of 2 client-confirmed quotations (list, selectable: true), and the currently focused result set is an unrelated list of Project Files. The user says "Go back to the quotations." The quotations the user means are the selectable quotation list, not the status summary - return {"kind":"select","sourceResultSetHandle":"<the quotation list's handle>","relation":null,"status":null,"ordinal":null}, never the aggregate's handle.
 "ordinal" is a 1-based position in the list as it was displayed, or "last"; use null unless the user names a position.
 Use null for fields that do not apply.`;
 

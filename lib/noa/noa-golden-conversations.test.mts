@@ -41,8 +41,12 @@ const plan = (kind: string, source: Summary | null, fields: { relation?: string;
   kind, sourceResultSetHandle: source?.handle ?? null, relation: fields.relation ?? null, status: fields.status ?? null, ordinal: fields.ordinal ?? null,
 });
 const focusedSet = (input: NoaPlannerInput) => input.resultSets.find((result) => result.focused)!;
-const newestOf = (input: NoaPlannerInput, entityType: string, kind = "list") =>
-  input.resultSets.filter((result) => result.entityType === entityType && result.kind === kind).sort((a, b) => a.recency - b.recency)[0];
+// Mirrors the hardened planner instructions' own rule (never noa-semantic-planner.server.ts's prose
+// parsed here - just its "selectable" input field): the newest SELECTABLE (non-aggregate) result
+// set of the given entity type. Used to reproduce the live UAT bug, where the live planner chose an
+// aggregate/status-summary handle instead of the correctly-typed quotation list (see CASE G).
+const newestSelectableOf = (input: NoaPlannerInput, entityType: string) =>
+  input.resultSets.filter((result) => result.selectable && result.entityType === entityType).sort((a, b) => a.recency - b.recency)[0];
 function scriptedPlanner(calls: NoaPlannerInput[], steps: Array<(input: NoaPlannerInput) => unknown>) {
   return async (input: NoaPlannerInput) => {
     calls.push(structuredClone(input));
@@ -151,17 +155,27 @@ test("CASE D CONTINUATION: 'List them.' re-shows the focused Project ResultSet, 
   assert.deepEqual([session.shadow()!.version, trace.shadowSave], [version, "skipped"]);
 });
 
-test("CASE G OLDER SET: 'Go back to the quotations.' refocuses the older set; 'those' then relates from it", async () => {
+// Live UAT bug: on Vercel the planner (Gemini) returned `select` over the QUOTATION AGGREGATE's
+// handle for "Go back to the quotations." instead of the client-confirmed quotation LIST, and was
+// correctly rejected as incompatible_type (see noa-semantic-planner.test.mts's "LIVE BUG" test for
+// the validator-level proof). `newestSelectableOf` mirrors the hardened planner instructions' own
+// rule (prefer a "selectable" - non-aggregate - result set), so this reproduces the exact live
+// stack (older aggregate, older quotation list, focused newer Project list) end to end and proves
+// the older LIST becomes focused, not the aggregate, with no duplicate ResultSet and the aggregate
+// still present in the bounded history.
+test("CASE G OLDER SET: 'Go back to the quotations.' refocuses the older LIST (never the aggregate); 'those' then relates from it", async () => {
   const { session, calls, quotations } = await caseDThroughProjects([
-    (input) => plan("select", newestOf(input, "quotation")),
+    (input) => plan("select", newestSelectableOf(input, "quotation")),
     relateFocused,
   ]);
   const back = await session.send("Go back to the quotations.");
   assert.deepEqual([back.trace.plannerAction, back.trace.referenceBinding, back.trace.resultSetRecency, back.trace.capabilitySelected],
     ["select", "older_result", "older", "Quotation"]);
   for (const q of NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS) assert.match(back.answer!.text, new RegExp(q.quotationNo));
-  assert.equal(session.shadow()!.state.resultSets.length, 3); // selected, not duplicated
-  assert.equal(session.shadow()!.state.focus?.resultSetHandle, quotations.handle);
+  const afterBack = session.shadow()!.state;
+  assert.equal(afterBack.resultSets.length, 3); // selected, not duplicated
+  assert.equal(afterBack.resultSets[0].kind, "aggregate"); // the aggregate is still present in bounded history
+  assert.equal(afterBack.focus?.resultSetHandle, quotations.handle); // focus moved to the LIST, never the aggregate
   assert.equal(back.trace.shadowSave, "saved");
 
   const those = await session.send("What projects are those for?");
@@ -208,7 +222,7 @@ test("PHASE 2 ACCEPTANCE: full UAT script keeps ResultSet continuity and every t
     "Go back to the quotations.", "Tell me about the second one."];
   const { session } = await caseDThroughProjects([
     (input) => plan("select", focusedSet(input)),
-    (input) => plan("select", newestOf(input, "quotation")),
+    (input) => plan("select", newestSelectableOf(input, "quotation")), // never the quotation aggregate - see CASE G
     (input) => plan("select", focusedSet(input), { ordinal: 2 }),
   ]);
   const traces = [];

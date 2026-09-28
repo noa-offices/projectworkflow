@@ -115,6 +115,44 @@ test("planner input is bounded and carries no business identifiers or assistant 
   assert.deepEqual(schema.properties.sourceResultSetHandle.enum, [...state.resultSets.map((result) => result.handle), null]);
 });
 
+test("planner input marks a deterministic 'selectable' hint: false only for aggregate result sets", () => {
+  const state = stateWith(aggregate(), quotationList(), projectList());
+  const input = buildNoaPlannerInput(state, { message: "go back to the quotations" });
+  assert.deepEqual(input.resultSets.map((result) => [result.kind, result.selectable]),
+    [["aggregate", false], ["list", true], ["list", true]]);
+  const entityState = stateWith({ handle: createNoaResultSetHandle(), createdAt: T, kind: "entity", entityType: "quotation", count: 1, items: [{ id: QUOTATION_IDS[0] }] });
+  assert.equal(buildNoaPlannerInput(entityState, { message: "it" }).resultSets[0].selectable, true);
+});
+
+// ── Live UAT bug: older-quotation-ResultSet selection ─────────────────────────────────────────
+// Reproduces the exact live Vercel stack (aggregate/status-summary, then a client-confirmed
+// quotation list, then a focused, newer, unrelated Project list) in which the live Gemini planner
+// returned `select` over the AGGREGATE's handle for "Go back to the quotations.", correctly
+// rejected by validateNoaSemanticPlan() as incompatible_type (plannerMode: "invalid"). The fix is
+// prompt/metadata hardening (the new `selectable` input field), not a validator change - so this
+// proves both halves: validation stays exactly as strict as before, AND a selection strategy that
+// actually reads `selectable` (as the hardened instructions now direct the model to) lands on the
+// quotation LIST, never the aggregate.
+test("LIVE BUG: aggregate handle stays rejected for select; the selectable quotation list is the only valid target", () => {
+  const state = stateWith(aggregate(), quotationList(), projectList());
+  const [aggregateSet, listSet, projectSet] = state.resultSets;
+  // Unchanged, strict rejection - this is the exact live diagnostic (plannerSourceType "none",
+  // plannerValidation "incompatible_type") reproduced offline.
+  assert.deepEqual(validateNoaSemanticPlan({ kind: "select", sourceResultSetHandle: aggregateSet.handle, relation: null, status: null, ordinal: null }, state),
+    { ok: false, reason: "incompatible_type", action: "select" });
+  // The correct target validates.
+  assert.deepEqual(validateNoaSemanticPlan({ kind: "select", sourceResultSetHandle: listSet.handle, relation: null, status: null, ordinal: null }, state),
+    { ok: true, plan: { kind: "select", sourceResultSetHandle: listSet.handle, itemIndex: null }, sourceType: "quotation" });
+
+  const input = buildNoaPlannerInput(state, { message: "Go back to the quotations." });
+  // A selection strategy driven by the new `selectable` hint (as the hardened instructions
+  // require) - never by kind/phrase matching in TypeScript - lands on the list, not the aggregate.
+  const candidates = input.resultSets.filter((result) => result.selectable && result.entityType === "quotation");
+  assert.deepEqual(candidates.map((result) => result.handle), [listSet.handle]);
+  assert.equal(input.resultSets.find((result) => result.handle === aggregateSet.handle)?.selectable, false);
+  assert.equal(input.resultSets.find((result) => result.handle === projectSet.handle)?.entityType, "project_file");
+});
+
 // ── Provider boundary ──────────────────────────────────────────────────────────────────────────
 test("provider boundary: same strict request for every provider; unavailable/invalid output never fabricates a plan", async () => {
   const input = buildNoaPlannerInput(stateWith(quotationList()), { message: "which projects?" });
