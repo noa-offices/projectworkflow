@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const orchestrator = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const orchestrator = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
 const project = readFileSync("lib/noa/noa-project-capability.server.ts", "utf8");
 
 test("TC-2 routes strict CO identifiers directly to Project without semantic extraction", () => {
   assert.ok(project.includes('const PROJECT_FILE_IDENTIFIER_PATTERN = /\\bCO-\\d{3,}(?:-\\d+)*\\b/gi;'));
   assert.ok(orchestrator.includes("const projectFileIdentifierTotal = projectFileIdentifierCount(request.message);"));
-  assert.ok(orchestrator.includes('projectFileIdentifierTotal > 0\n        ? "Project"'));
+  // Later refactored from a multi-line if/else chain into a single-line ternary - same
+  // identifier-total-driven routing decision.
+  assert.match(orchestrator, /projectFileIdentifierTotal > 0[\s\S]{0,20}\? "Project"/);
   assert.equal((orchestrator.match(/extractNoaSemanticRequest\(/g) ?? []).length, 1);
 });
 
@@ -28,6 +32,6 @@ test("TC-2 leaves multi-CO requests raw and keeps them on the ERP Project File s
 });
 
 test("TC-2 preserves QN routing and Project authorization", () => {
-  assert.ok(orchestrator.includes('quotationIdentifierTotal > 0\n      ? "Quotation"'));
+  assert.match(orchestrator, /quotationIdentifierTotal > 0[\s\S]{0,20}\? "Quotation"/);
   assert.ok(project.includes("await requireActiveUser();"));
 });

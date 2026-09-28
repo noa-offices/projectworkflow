@@ -31,7 +31,9 @@ import type { NoaPageContext } from "./noa-types.js";
 // resolver (noa-semantic-resolver.ts) are pure and executed directly; the orchestrator
 // ("server-only" + "@/..." aliases) is checked at source level, like every other lib/noa safety test.
 
-const orchestrator = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const orchestrator = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
 const referenceSource = readFileSync("lib/noa/noa-conversation-reference.ts", "utf8");
 const resolverSource = readFileSync("lib/noa/noa-semantic-resolver.ts", "utf8");
 const extractorSource = readFileSync("lib/noa/noa-intent-extractor.server.ts", "utf8");

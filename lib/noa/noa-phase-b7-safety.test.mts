@@ -159,7 +159,11 @@ test("22. no user-activity/audit-log/attendance reads exist in Insights", () => 
 });
 
 test("Insights is a real NoaDomain", () => {
-  assert.match(typesSource, /export type NoaDomain = "Product" \| "Quotation" \| "Price" \| "Project" \| "Client" \| "Procurement" \| "UserActivity" \| "Admin" \| "Insights" \| "Help";/);
+  // A later, unrelated phase added a further real domain (Attention) to the same union - check
+  // Insights is still one of its members rather than pinning the exact, now-outdated, full
+  // ordered list.
+  const domainUnion = typesSource.slice(typesSource.indexOf("export type NoaDomain ="), typesSource.indexOf(";", typesSource.indexOf("export type NoaDomain =")));
+  assert.ok(domainUnion.includes('"Insights"'));
 });
 
 test("overview never elevates access: a Product/Procurement permission failure inside overviewAnswer is caught, not thrown or bypassed", () => {

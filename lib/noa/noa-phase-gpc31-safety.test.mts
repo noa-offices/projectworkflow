@@ -8,10 +8,12 @@ import test from "node:test";
 // file (including this repo's own prior client-component checks, e.g. C3's assistantSource
 // assertions).
 
-const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
 const typesSource = readFileSync("lib/noa/noa-types.ts", "utf8");
-const assistantSource = readFileSync("components/noa/noa-assistant.tsx", "utf8");
-const drawerSource = readFileSync("components/noa/noa-chat-drawer.tsx", "utf8");
+const assistantSource = readFileSync("components/noa/noa-assistant.tsx", "utf8").replace(/\r\n/g, "\n");
+const drawerSource = readFileSync("components/noa/noa-chat-drawer.tsx", "utf8").replace(/\r\n/g, "\n");
 const messagesSource = readFileSync("components/noa/noa-messages.tsx", "utf8");
 
 // ── SERVER (tests 1-7) ───────────────────────────────────────────────────────────
@@ -126,7 +128,14 @@ test("13. an ambiguous token-reduced answer returns ambiguous, never a guess", (
 
 test("14. an assistant message stores the choices returned WITH that answer", () => {
   assert.ok(assistantSource.includes("choices?: NoaChoice[]"));
-  assert.ok(assistantSource.includes("{ choices: answer.choices, domain: answer.domain, sources: answer.sources }"));
+  // A later, unrelated phase added more transport fields (voiceText/agentBrief/analytics/
+  // attention/catchUp) to the same createMessage(...) call - choices/domain/sources are still all
+  // individually present.
+  const createMessageStart = assistantSource.indexOf('createMessage("assistant", answer.text,');
+  const createMessageArgs = assistantSource.slice(createMessageStart, createMessageStart + 400);
+  for (const field of ["choices: answer.choices", "domain: answer.domain", "sources: answer.sources"]) {
+    assert.ok(createMessageArgs.includes(field), field);
+  }
 });
 
 test("15. clicking the latest assistant message's choice button calls the EXISTING onQuickPrompt/handleSend path - no separate handler", () => {
@@ -141,12 +150,22 @@ test("16. older assistant messages' choices render disabled once the conversatio
 
 test("17. choice buttons are disabled while a request is in flight (isBusy)", () => {
   assert.ok(messagesSource.includes("const choicesEnabled = !isBusy && message.id === latestMessageId;"));
-  assert.ok(drawerSource.includes("<NoaMessages isBusy={isBusy} messages={messages} onQuickPrompt={onSend} />"));
+  // A later, unrelated phase (realtime voice) added a `voice` prop and renamed the send handler
+  // variable to manualSend - the isBusy prop wiring itself is unchanged.
+  const noaMessagesStart = drawerSource.indexOf("<NoaMessages");
+  const noaMessagesEnd = drawerSource.indexOf("/>", noaMessagesStart);
+  assert.ok(drawerSource.slice(noaMessagesStart, noaMessagesEnd).includes("isBusy={isBusy}"));
 });
 
 test("18. no separate mutation/configuration endpoint was introduced - only the existing NOA_CHAT_ENDPOINT request path is used", () => {
-  assert.equal((assistantSource.match(/fetch\(/g) ?? []).length, 1);
+  // A later, unrelated phase added a second fetch for an unrelated, read-only attention-count
+  // badge (NOA_ATTENTION_ENDPOINT, bare GET, no body, failure-swallowed) - GPC configuration
+  // itself still only ever talks to NOA_CHAT_ENDPOINT, never a second/separate endpoint for
+  // configuration or any other write.
+  assert.equal((assistantSource.match(/fetch\(/g) ?? []).length, 2);
   assert.ok(assistantSource.includes("const NOA_CHAT_ENDPOINT = \"/api/noa/chat\";"));
+  const attentionFetchStart = assistantSource.indexOf("fetch(NOA_ATTENTION_ENDPOINT)");
+  assert.ok(attentionFetchStart >= 0, "expected the second fetch to be the bare-GET attention badge call");
 });
 
 test("19. ordinary (non-GPC) messages render unchanged - the choices block is conditional on message.choices?.length and only for assistant messages", () => {

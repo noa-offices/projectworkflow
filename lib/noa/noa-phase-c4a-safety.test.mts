@@ -7,8 +7,10 @@ import test from "node:test";
 // other lib/noa/*-safety.test.mts file. noa-quotation-capability.server.ts and
 // noa-semantic-request.ts are read here only to confirm C4A did NOT need to touch them.
 
-const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
-const quotationCapabilitySource = readFileSync("lib/noa/noa-quotation-capability.server.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
+const quotationCapabilitySource = readFileSync("lib/noa/noa-quotation-capability.server.ts", "utf8").replace(/\r\n/g, "\n");
 const semanticRequestSource = readFileSync("lib/noa/noa-semantic-request.ts", "utf8");
 const conversationReferenceSource = readFileSync("lib/noa/noa-conversation-reference.ts", "utf8");
 

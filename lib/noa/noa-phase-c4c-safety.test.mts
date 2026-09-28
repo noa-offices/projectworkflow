@@ -8,7 +8,9 @@ import test from "node:test";
 // confirm C4C did NOT need to touch it (it already re-derives everything from raw message text
 // via its own bare order-token fallback, mirroring C4A's Quotation finding).
 
-const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
 const clientCapabilitySource = readFileSync("lib/noa/noa-client-capability.server.ts", "utf8");
 const procurementCapabilitySource = readFileSync("lib/noa/noa-procurement-capability.server.ts", "utf8");
 const conversationReferenceSource = readFileSync("lib/noa/noa-conversation-reference.ts", "utf8");
@@ -26,7 +28,10 @@ test("clientQuestionKind/clientTarget recognize the C4C natural phrasings withou
 });
 
 test("a confident Client-domain classification reroutes an otherwise-unresolved Help message - no intent gate, matching the C4A/C4B shape", () => {
-  assert.match(orchestratorSource, /if \(!semanticRequest && extracted\.domain === "Client"\) \{\s*\n\s*semanticRequest = \{ domain: "Client", intent: extracted\.intent \};/);
+  // A later, unrelated phase (entity-scoped semantic reference) added an optional `entity` field
+  // to this object literal - the gate itself (no intent check) and the domain/intent assignment
+  // are unchanged.
+  assert.match(orchestratorSource, /if \(!semanticRequest && extracted\.domain === "Client"\) \{\s*\n\s*semanticRequest = \{\s*\n\s*domain: "Client",\s*\n\s*intent: extracted\.intent,/);
 });
 
 test("the Client reroute only ever fires for the Help/unresolved fallback path", () => {
@@ -46,7 +51,9 @@ test("resolveClientFollowUp only fires against a Client-domain conversationRefer
 });
 
 test("a Client follow-up rewrites the message (pronoun substitution or bare-question append) and always re-dispatches through the unchanged capability", () => {
-  assert.match(orchestratorSource, /: domain === "Client"\s*\n\s*\? await fetchNoaClientCapability\(clientMessageOverride \?\? request\.message, request\.context\)/);
+  // A later, unrelated phase (entity-scoped semantic reference) added an options object as a
+  // third argument - the message/context arguments themselves are unchanged.
+  assert.match(orchestratorSource, /: domain === "Client"\s*\n\s*\? await fetchNoaClientCapability\(clientMessageOverride \?\? request\.message, request\.context,/);
 });
 
 test("buildClientConversationReference reads only the safe display name - never client.id/UUID", () => {
@@ -136,8 +143,8 @@ test("regression: UserActivity/Quotation/Project reference checks and domain che
 });
 
 test("regression: Quotation/Project/UserActivity dispatch branches are untouched", () => {
-  assert.match(orchestratorSource, /: domain === "Quotation"\s*\n\s*\? await fetchNoaQuotationCapability\(request\.message, request\.context\)/);
-  assert.match(orchestratorSource, /: domain === "Project"\s*\n\s*\? await fetchNoaProjectCapability\(projectMessageOverride \?\? request\.message, request\.context\)/);
+  assert.match(orchestratorSource, /: domain === "Quotation"\s*\n\s*\? await fetchNoaQuotationCapability\([^,]+, request\.context,/);
+  assert.match(orchestratorSource, /: domain === "Project"\s*\n\s*\? await fetchNoaProjectCapability\(projectMessageOverride \?\? request\.message, request\.context,/);
   assert.ok(orchestratorSource.includes("await fetchNoaUserActivityCapability(request.message, request.context, {"));
 });
 

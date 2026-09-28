@@ -180,7 +180,7 @@ test("17. the conversion-rate answer is never turned into an analytics payload -
 
 test("18. structured Analytics suppresses the duplicated long prose bubble - mutually exclusive branches, same pattern as Attention/Catch-Up", () => {
   assert.ok(messages.includes("hasAnalyticsCards && message.analytics ? ("));
-  const ternaryStart = messages.indexOf("{hasAttentionCards && message.attention ? (");
+  const ternaryStart = messages.indexOf("hasAttentionCards && message.attention ? (");
   const ternaryBody = messages.slice(ternaryStart, ternaryStart + 1000);
   assert.ok(ternaryBody.includes("hasAnalyticsCards && message.analytics"));
   assert.ok(ternaryBody.includes("{message.text}"));
@@ -191,9 +191,14 @@ test("19. fallback prose works without an analytics payload - hasAnalyticsCards 
 });
 
 test("20. Attention rendering is unchanged - same NoaAttentionCards component, still checked first in priority order", () => {
-  const ternaryStart = messages.indexOf("{hasAttentionCards && message.attention ? (");
-  const ternaryBody = messages.slice(ternaryStart, ternaryStart + 200).replace(/\r\n/g, "\n");
-  assert.ok(ternaryBody.startsWith("{hasAttentionCards && message.attention ? (\n              <NoaAttentionCards attention={message.attention} />"));
+  // Structural ordering (an earlier, unrelated agentBrief branch may legitimately precede this
+  // chain) rather than pinning the exact preceding branch text.
+  const attentionIndex = messages.indexOf("hasAttentionCards && message.attention ? (");
+  const catchUpIndex = messages.indexOf("hasCatchUpTimeline && message.catchUp ? (");
+  const analyticsIndex = messages.indexOf("hasAnalyticsCards && message.analytics ? (");
+  assert.ok(attentionIndex > -1 && catchUpIndex > -1 && analyticsIndex > -1);
+  assert.ok(attentionIndex < catchUpIndex && catchUpIndex < analyticsIndex);
+  assert.ok(messages.includes("<NoaAttentionCards attention={message.attention} />"));
   assert.ok(!attentionCapability.includes("N2C1.1"));
 });
 
@@ -218,7 +223,15 @@ test("23. Catch-Up Added/Cleared use a visible middle-dot separator baked into t
 });
 
 test("24. ordinary (non-Analytics, non-Catch-Up, non-Attention) messages are unchanged - the plain <p> bubble is still the final else branch, and still the only <p> tag", () => {
-  assert.equal((messages.match(/<p\b/g) ?? []).length, 1);
+  // Structured-card branches (Attention/Catch-Up/Analytics) render no <p> at all - only the final
+  // plain-bubble fallback branch does. Isolate that fallback branch rather than counting every
+  // <p> in the whole file, so an unrelated, already-mutually-exclusive branch (agentBrief, which
+  // renders its own <p> elements) can't make this fragile.
+  const analyticsIndex = messages.indexOf("hasAnalyticsCards && message.analytics ? (");
+  const fallbackStart = messages.indexOf(") : (", analyticsIndex);
+  const fallbackEnd = messages.indexOf(")}", fallbackStart);
+  const fallbackBranch = messages.slice(fallbackStart, fallbackEnd);
+  assert.equal((fallbackBranch.match(/<p\b/g) ?? []).length, 1);
 });
 
 test("25. no clickable metric cards/status chips - plain div/span only, never <button> or onClick", () => {

@@ -24,7 +24,11 @@ test("B3 Project capability preserves authorization, read-only access, bounds, a
 test("B3 Project Orders preserve the proven app rules and helper precedence", () => {
   assert.ok(capability.includes("settings?.projectCompletedAt"));
   assert.ok(capability.includes("settings?.projectCancelledAt"));
-  assert.ok(capability.includes("completed ? !completedAt : completedAt || cancelledAt"));
+  // The old two-state boolean formula was later refactored into an explicit three-state status
+  // (active/completed/cancelled) - a strict improvement (cancelled is now a distinguishable status
+  // rather than being folded into "not completed"). The precedence this test protects - cancelled
+  // wins over completed, which wins over active - still holds under the new formula.
+  assert.match(capability, /cancelledAt \? "cancelled" : completedAt \? "completed" : "active"/);
   assert.ok(capability.indexOf("projectFileFromLayoutSettings") < capability.indexOf("clientApprovalDraftFromLayoutSettings(quotation.layout_settings)?.confirmedOrder"));
 });
 

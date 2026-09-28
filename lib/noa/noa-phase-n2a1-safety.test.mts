@@ -14,7 +14,9 @@ function context(overrides: Partial<Parameters<typeof classifyNoaRoute>[1]> = {}
 }
 
 const attentionSource = readFileSync("lib/noa/noa-attention-capability.server.ts", "utf8");
-const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
 const typesSource = readFileSync("lib/noa/noa-types.ts", "utf8");
 const projectCapabilitySource = readFileSync("lib/noa/noa-project-capability.server.ts", "utf8");
 
@@ -48,7 +50,9 @@ test("3. unrelated check/attention-adjacent phrasing does not become Attention",
 
 // 4. orchestrator dispatches Attention capability
 test("4. orchestrator dispatches Attention capability", () => {
-  assert.ok(orchestratorSource.includes('import { fetchNoaAttentionCapability } from "@/lib/noa/noa-attention-capability.server";'));
+  // A later, unrelated phase (N2A2 ClientPayment) added a type-only NoaAttentionItem import to
+  // the same statement - fetchNoaAttentionCapability is still imported from the same module.
+  assert.ok(orchestratorSource.includes('import { fetchNoaAttentionCapability') && orchestratorSource.includes('from "@/lib/noa/noa-attention-capability.server";'));
   assert.ok(orchestratorSource.includes('domain === "Attention"'));
   assert.ok(orchestratorSource.includes("await fetchNoaAttentionCapability(request.message, request.context)"));
 });
@@ -104,7 +108,10 @@ test("11. only needs_check and due statuses create Product Price findings", () =
 // 12. Procurement subsection calls requireProcurementManager() before procurement reads
 test("12. Procurement subsection calls requireProcurementManager() before any procurement read", () => {
   const guardIndex = attentionSource.indexOf("await requireProcurementManager();");
-  const readIndex = attentionSource.indexOf("await procurementFindings(supabase);");
+  // A later, unrelated phase (N2A2) hoisted the shared already-fetched `activeOrders` into
+  // procurementFindings() as a second argument, alongside the existing Client Payment feature that
+  // reuses the same order set - the guard-before-read ordering itself is unchanged.
+  const readIndex = attentionSource.indexOf("await procurementFindings(supabase, activeOrders);");
   assert.ok(guardIndex > -1 && readIndex > -1);
   assert.ok(guardIndex < readIndex);
 });
@@ -154,7 +161,11 @@ test("18. a missing/incomplete progress row creates missing-ETA/missing-ETD find
 
 // 19. no RFQ-stalled logic
 test("19. no RFQ-stage/stalled-duration logic exists", () => {
-  assert.ok(!/active_step|rfq|stalled/i.test(attentionSource));
+  // A later, unrelated phase (N2A2) added a `//` comment mentioning "stalled" only to document
+  // that it is deliberately NOT used ('No "late"/"stalled"/duration wording') - documentation, not
+  // the logic this test bans.
+  const attentionWithoutLineComments = attentionSource.replace(/\/\/.*$/gm, "");
+  assert.ok(!/active_step|rfq|stalled/i.test(attentionWithoutLineComments));
 });
 
 // 20. no stale-quotation logic
@@ -167,14 +178,22 @@ test("21. no quotation source-price-change logic exists", () => {
   assert.ok(!/sourcePrice|currentSourcePriceFromSnapshot|source_component_data/i.test(attentionSource));
 });
 
-// 22. no ClientPayment logic
-test("22. no ClientPayment logic exists", () => {
-  assert.ok(!/clientPayment|client_payment|installment|payment_overdue/i.test(attentionSource));
+// 22. ClientPayment was later, deliberately added by the dedicated N2A2 phase (see
+// lib/noa/noa-phase-n2a2-safety.test.mts / noa-phase-n2a2-1-safety.test.mts, both green) - this
+// N2A1 file's job was only ever Price/Procurement attention, so this is no longer "does not
+// exist" but "is gated exactly the way N2A2 documents/tests it".
+test("22. ClientPayment is gated behind canViewClientPayments(), never enabled unconditionally", () => {
+  assert.ok(attentionSource.includes("canViewClientPayments(profileRole)"));
+  assert.ok(attentionSource.includes('sourceDomain: "ClientPayment"'));
 });
 
 // 23. no severity/priority/rank field
 test("23. the Attention item contract has no severity/priority/rank field", () => {
-  assert.ok(!/severity|priority|\brank\b|\bscore\b/i.test(attentionSource));
+  // A later, unrelated phase (N2A2) added `//` comments documenting that severity/score/priority/
+  // rank are deliberately NOT used ("no severity/score/priority/rank field", "never a severity
+  // ranking") - documentation, not the field this test bans.
+  const attentionWithoutLineComments = attentionSource.replace(/\/\/.*$/gm, "");
+  assert.ok(!/severity|priority|\brank\b|\bscore\b/i.test(attentionWithoutLineComments));
 });
 
 // 24. no service/admin client

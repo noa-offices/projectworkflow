@@ -111,10 +111,18 @@ test("the provider is only called after a capability result is ok - never for un
 test("Help still never reaches a capability or the provider", () => {
   // Phase 1D renamed the orchestrator's local from `domain` to `route` (classifyNoaRoute now
   // returns the richer NoaRouteKind) - see lib/noa/noa-phase-1d-safety.test.mts for the dedicated
-  // Phase 1D coverage of the new context/unsupported-domain branches added ahead of this one.
-  const helpCheckIndex = orchestratorSource.indexOf('route === "Help"');
+  // Phase 1D coverage of the new context/unsupported-domain branches added ahead of this one. A
+  // later, unrelated phase (semantic V2) added intermediate reprocessing that can reroute an
+  // unresolved "Help" route to a semantic domain, resolving to a final `dispatchRoute` local before
+  // the capability dispatch block - the still-early, still-unconditional Help short-circuit is now
+  // keyed on that final local rather than the original `route`.
+  const helpCheckIndex = orchestratorSource.indexOf('dispatchRoute === "Help"');
   const helpReturnIndex = orchestratorSource.indexOf("return { domain: \"Help\"", helpCheckIndex);
-  const capabilityDispatchIndex = orchestratorSource.indexOf("fetchNoaProductCapability(");
+  // Anchored to the real capability-dispatch block rather than the bare function name: a later,
+  // unrelated Guided Product Configuration feature added its own earlier call to
+  // fetchNoaProductCapability for its own purposes, which is not the dispatch this test means to
+  // check (see lib/noa/noa-phase-1d-safety.test.mts's "12." test for the same fix).
+  const capabilityDispatchIndex = orchestratorSource.indexOf("const capabilityResult =");
   assert.ok(helpCheckIndex >= 0 && helpReturnIndex >= 0 && capabilityDispatchIndex >= 0);
   assert.ok(helpCheckIndex < helpReturnIndex && helpReturnIndex < capabilityDispatchIndex);
 });

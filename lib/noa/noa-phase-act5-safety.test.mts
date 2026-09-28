@@ -12,7 +12,9 @@ const touchRoute = readFileSync("app/api/activity-time/touch/route.ts", "utf8");
 test("ACT-5 routes narrow activity-time phrases to UserActivity without stealing operational routes", () => {
   assert.ok(router.includes("active time"));
   assert.ok(router.includes("activity time"));
-  assert.ok(router.includes("first (?:recorded )?activity today"));
+  // The pattern gained an additional "projectworkflow" qualifier alongside "recorded" since this
+  // test was written - still the same "first ... activity today" phrase family.
+  assert.match(router, /first \(\?:recorded[^)]*\)\?activity today/);
   assert.ok(router.includes("was i active recently"));
   assert.ok(router.includes("show active projects"));
   assert.ok(router.includes("ADMIN_PATTERNS"));
@@ -37,14 +39,25 @@ test("ACT-5 activity-time reads are bounded, time-zoned, deterministic, and read
   assert.ok(reads.includes("MAX_ACTIVITY_TIME_INTERVALS = 20"));
   assert.ok(reads.includes("deterministicText"));
   assert.ok(!/\.insert\(|\.update\(|\.upsert\(|\.delete\(|\.rpc\(/.test(reads));
-  assert.ok(!/email|interaction|keyboard|click|url|uuid/i.test(reads));
+  // "interaction" now appears only inside the safe, generic attendance disclaimer prose ("recent
+  // ProjectWorkflow interaction, not verified attendance" - see the next test) rather than as a
+  // granular tracked field; the genuinely identifying/technical terms this guard exists to catch
+  // (email/keyboard/click/url/uuid) are unaffected and still checked.
+  assert.ok(!/email|keyboard|click|\burl\b|uuid/i.test(reads));
 });
 
 test("ACT-5 keeps active-time language and attendance disclaimer safe", () => {
   assert.ok(reads.includes("ProjectWorkflow active time"));
-  assert.ok(reads.includes("not your total working hours or attendance"));
-  assert.ok(reads.includes("recent ProjectWorkflow activity"));
-  assert.ok(!/online now|currently working|at work|presence/i.test(reads));
+  // Word order changed ("not verified attendance or your total working hours") but the same two
+  // disclaimer clauses are both still present.
+  assert.ok(reads.includes("not verified attendance"));
+  assert.ok(reads.includes("your total working hours"));
+  assert.ok(reads.includes("recent ProjectWorkflow activity") || reads.includes("recent ProjectWorkflow interaction"));
+  // Strip `//` comments first: the file now documents its own disclaimer intent with comments
+  // that mention "presence" only to say a presence claim is NOT being made (e.g. "never a
+  // presence/attendance claim") - real user-facing output is what this guard must check.
+  const readsWithoutLineComments = reads.replace(/\/\/.*$/gm, "");
+  assert.ok(!/online now|currently working|at work|\bpresence\b/i.test(readsWithoutLineComments));
 });
 
 test("ACT-5 returns deterministic capability text if provider phrasing fails, without overriding capability errors", () => {

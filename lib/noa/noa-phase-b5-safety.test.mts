@@ -106,7 +106,9 @@ test("13. vendor-steps.ts does not import the 'use client' vendor-controls-panel
 // 14. orchestrator dispatches Procurement
 test("14. orchestrator dispatches to fetchNoaProcurementCapability for the Procurement domain", () => {
   assert.ok(orchestratorSource.includes('import { fetchNoaProcurementCapability } from "@/lib/noa/noa-procurement-capability.server";'));
-  assert.match(orchestratorSource, /domain === "Procurement"\s*\n\s*\? await fetchNoaProcurementCapability\(request\.message, request\.context\)/);
+  // A later, unrelated phase added procurementMessageOverride (I5 bound-follow-up canonical
+  // phrase swap) - the dispatch gate itself (domain === "Procurement") is unchanged.
+  assert.match(orchestratorSource, /domain === "Procurement"\s*\n\s*\? await fetchNoaProcurementCapability\([^,]+, request\.context\)/);
 });
 
 // 15. unauthorized result prevents provider call
@@ -129,7 +131,11 @@ test("16. no cross-capability chaining: Procurement capability never imports ano
 
 // 17. Procurement is a real NoaDomain, "unsupported_procurement" fully retired
 test("17. Procurement is a real NoaDomain and the unsupported_procurement route is fully retired", () => {
-  assert.match(typesSource, /export type NoaDomain = "Product" \| "Quotation" \| "Price" \| "Project" \| "Client" \| "Procurement" \| "Help";/);
+  // Later, unrelated phases added further real domains (UserActivity/Admin/Insights/Attention) to
+  // the same union - check Procurement is still one of its members rather than pinning the exact,
+  // now-outdated, full ordered list.
+  const domainUnion = typesSource.slice(typesSource.indexOf("export type NoaDomain ="), typesSource.indexOf(";", typesSource.indexOf("export type NoaDomain =")));
+  assert.ok(domainUnion.includes('"Procurement"'));
   assert.ok(!typesSource.includes("unsupported_procurement"));
   assert.ok(!routerSource.includes("unsupported_procurement"));
   assert.ok(!orchestratorSource.includes("unsupported_procurement"));

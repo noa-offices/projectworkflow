@@ -7,7 +7,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const types = readFileSync("lib/noa/noa-types.ts", "utf8");
-const orchestrator = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const orchestrator = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
 const assistant = readFileSync("components/noa/noa-assistant.tsx", "utf8");
 const messages = readFileSync("components/noa/noa-messages.tsx", "utf8");
 const attentionCapability = readFileSync("lib/noa/noa-attention-capability.server.ts", "utf8");
@@ -151,7 +153,7 @@ test("17. client does not regroup events - it only maps over the already-grouped
 
 test("18. no duplicate long text list - the timeline card and the full prose bubble are mutually exclusive branches", () => {
   assert.ok(messages.includes("hasCatchUpTimeline && message.catchUp ? ("));
-  const ternaryStart = messages.indexOf("{hasAttentionCards && message.attention ? (");
+  const ternaryStart = messages.indexOf("hasAttentionCards && message.attention ? (");
   const ternaryBody = messages.slice(ternaryStart, ternaryStart + 800);
   assert.ok(ternaryBody.includes("hasCatchUpTimeline && message.catchUp"));
   assert.ok(ternaryBody.includes("{message.text}"));
@@ -162,13 +164,26 @@ test("19. fallback prose remains when the structured payload is missing/empty/in
 });
 
 test("20. Attention card rendering is unchanged - same NoaAttentionCards component, checked first in the priority order", () => {
-  const ternaryStart = messages.indexOf("{hasAttentionCards && message.attention ? (");
-  const ternaryBody = messages.slice(ternaryStart, ternaryStart + 200).replace(/\r\n/g, "\n");
-  assert.ok(ternaryBody.startsWith("{hasAttentionCards && message.attention ? (\n              <NoaAttentionCards attention={message.attention} />"));
+  // Structural ordering (an earlier, unrelated agentBrief branch may legitimately precede this
+  // chain) rather than pinning the exact preceding branch text.
+  const attentionIndex = messages.indexOf("hasAttentionCards && message.attention ? (");
+  const catchUpIndex = messages.indexOf("hasCatchUpTimeline && message.catchUp ? (");
+  assert.ok(attentionIndex > -1 && catchUpIndex > -1 && attentionIndex < catchUpIndex);
+  assert.ok(messages.includes("<NoaAttentionCards attention={message.attention} />"));
 });
 
 test("21. ordinary (non-Catch-Up, non-Attention) messages are unchanged - the plain <p> bubble is still the final else branch", () => {
-  assert.equal((messages.match(/<p\b/g) ?? []).length, 1);
+  // Structured-card branches (Attention/Catch-Up/Analytics) render no <p> at all - only the final
+  // plain-bubble fallback branch does. Isolate that fallback branch rather than counting every
+  // <p> in the whole file, so an unrelated, already-mutually-exclusive branch (agentBrief, which
+  // renders its own <p> elements) can't make this fragile.
+  const lastBranchIndex = messages.lastIndexOf("hasAnalyticsCards && message.analytics ? (") > -1
+    ? messages.lastIndexOf("hasAnalyticsCards && message.analytics ? (")
+    : messages.indexOf("hasCatchUpTimeline && message.catchUp ? (");
+  const fallbackStart = messages.indexOf(") : (", lastBranchIndex);
+  const fallbackEnd = messages.indexOf(")}", fallbackStart);
+  const fallbackBranch = messages.slice(fallbackStart, fallbackEnd);
+  assert.equal((fallbackBranch.match(/<p\b/g) ?? []).length, 1);
 });
 
 test("22. mobile layout contains no table/horizontal-scroll dependency in the new Catch-Up code", () => {

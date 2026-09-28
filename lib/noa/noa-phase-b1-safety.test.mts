@@ -102,7 +102,11 @@ test("existing quotation-snapshot-vs-live-price guard is preserved for detail-ki
 });
 
 test("existing single-template detail lookup paths are untouched (still short-circuit before broad dispatch)", () => {
-  assert.ok(productSource.includes("if (context.productTemplateId) {"));
+  // A later, unrelated phase added a structured-qualifier exception
+  // (`&& !options?.product?.productText`) alongside the existing context.productTemplateId
+  // short-circuit - the guarantee this test protects (a page-context template id short-circuits
+  // before the broad dispatch) still holds in the ordinary, non-qualified case.
+  assert.match(productSource, /if \(context\.productTemplateId[^)]*\) \{/);
   assert.ok(productSource.includes("extractSearchTerm(message)"));
   assert.ok(priceSource.includes("if (context.productTemplateId) {"));
 });

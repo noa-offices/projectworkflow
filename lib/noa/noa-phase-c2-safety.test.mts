@@ -150,7 +150,9 @@ test("no absolute online/attendance claim was introduced", () => {
 // PART 9 - extractor failure never breaks NOA ------------------------------------
 
 test("extraction failure (Unclear / non-UserActivity / unsupported intent) leaves semanticRequest undefined, and the capability's existing fallback classifier still runs", () => {
-  assert.ok(orchestratorSource.includes("let semanticRequest: NoaSemanticRequest | undefined;"));
+  // A later, unrelated phase (Project/Client reference follow-up) gave this declaration an
+  // initializer instead of plain `undefined` - the declaration/type itself is unchanged.
+  assert.ok(orchestratorSource.includes("let semanticRequest: NoaSemanticRequest | undefined ="));
   assert.ok(activitySource.includes("semanticOverride?.kind ?? userActivityQuestionKind(message)"));
 });
 
@@ -174,7 +176,7 @@ test("the extractor call still only sends the current message and compact page c
 // Regression: other clear domains are never touched by the semantic step --------
 
 test("regression: the semantic step is structurally gated behind route checks, so Product/Price/Quotation/Project/Client/Procurement/Admin/Insights/greeting/capabilities/context are never affected", () => {
-  const semanticStepIndex = orchestratorSource.indexOf("let semanticRequest: NoaSemanticRequest | undefined;");
+  const semanticStepIndex = orchestratorSource.indexOf("let semanticRequest: NoaSemanticRequest | undefined =");
   const contextIndex = orchestratorSource.indexOf('if (route === "context")');
   const greetingIndex = orchestratorSource.indexOf('if (route === "greeting")');
   const capabilitiesIndex = orchestratorSource.indexOf('if (route === "capabilities")');

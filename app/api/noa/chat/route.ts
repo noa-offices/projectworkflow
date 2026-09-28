@@ -6,6 +6,10 @@ import { runNoaOrchestrator } from "@/lib/noa/noa-orchestrator";
 import { NoaProviderError } from "@/lib/noa/noa-provider.server";
 import type { NoaChatRequest, NoaPageContext } from "@/lib/noa/noa-types";
 import { createClient } from "@/lib/supabase/server";
+import { loadOrCreateNoaSession, saveNoaSession } from "@/lib/noa/noa-session.server";
+import { runNoaShadowTurn } from "@/lib/noa/noa-shadow-turn";
+import { noaSessionId } from "@/lib/noa/noa-turn-state";
+import { isNoaRouteDiagnosticsEnabled } from "@/lib/noa/noa-intent-router";
 
 const MAX_MESSAGE_LENGTH = 2000;
 const MAX_RECENT_MESSAGES = 6;
@@ -112,7 +116,15 @@ export async function POST(request: Request) {
   };
 
   try {
-    const answer = await runNoaOrchestrator(chatRequest);
+    const sessionId = noaSessionId((body as { sessionId?: unknown }).sessionId);
+    const answer = await runNoaShadowTurn({ ...chatRequest, sessionId }, {
+      load: loadOrCreateNoaSession, save: saveNoaSession, run: runNoaOrchestrator,
+    }, (trace) => {
+      // Closed metadata only; never session/entity identifiers, state or response prose. Same
+      // dev-on / production-opt-in gate as the existing route diagnostics.
+      if (!isNoaRouteDiagnosticsEnabled(process.env.NODE_ENV, process.env.NOA_DEBUG_ROUTING)) return;
+      console.info("[NOA_SHADOW_DIAG]", JSON.stringify(trace));
+    });
     return NextResponse.json(answer);
   } catch (error) {
     logServerActionError("NOA CHAT ERROR", error, { action: "noaChatRoute.POST" });

@@ -8,7 +8,9 @@ import test from "node:test";
 // file.
 
 const clientSource = readFileSync("lib/noa/noa-client-capability.server.ts", "utf8");
-const quotationSource = readFileSync("lib/noa/noa-quotation-capability.server.ts", "utf8");
+// Normalized to LF: test 10 below matches a multi-line literal with an embedded "\n", which a
+// CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const quotationSource = readFileSync("lib/noa/noa-quotation-capability.server.ts", "utf8").replace(/\r\n/g, "\n");
 
 // ── Tests 1-2: Client detail project count uses ERP Project Files ──────────────
 

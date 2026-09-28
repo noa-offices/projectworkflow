@@ -7,8 +7,10 @@ import test from "node:test";
 // other lib/noa/*-safety.test.mts file. noa-project-capability.server.ts is read here to confirm
 // only its text-classification surface (isDetailQuestion/projectTarget) changed - not auth/query.
 
-const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8");
-const projectCapabilitySource = readFileSync("lib/noa/noa-project-capability.server.ts", "utf8");
+// Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
+// which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
+const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");
+const projectCapabilitySource = readFileSync("lib/noa/noa-project-capability.server.ts", "utf8").replace(/\r\n/g, "\n");
 const conversationReferenceSource = readFileSync("lib/noa/noa-conversation-reference.ts", "utf8");
 
 // ── Project semantic wiring / target recognition (tests 1-5) ───────────────────
@@ -31,7 +33,10 @@ test("isDetailQuestion recognizes 'tell me about' / 'status is' alongside the ex
 });
 
 test("a confident Project-domain classification reroutes an otherwise-unresolved Help message - no intent gate, matching the C4A Quotation shape", () => {
-  assert.match(orchestratorSource, /if \(!semanticRequest && extracted\.domain === "Project"\) \{\s*\n\s*semanticRequest = \{ domain: "Project", intent: extracted\.intent \};/);
+  // A later, unrelated phase (entity-scoped semantic reference) added an optional `entity` field
+  // to this object literal - the gate itself (no intent check) and the domain/intent assignment
+  // are unchanged.
+  assert.match(orchestratorSource, /if \(!semanticRequest && extracted\.domain === "Project"\) \{\s*\n\s*semanticRequest = \{\s*\n\s*domain: "Project",\s*\n\s*intent: extracted\.intent,/);
 });
 
 test("the Project reroute only ever fires for the Help/unresolved fallback path", () => {
@@ -62,7 +67,9 @@ test("a pronoun follow-up rewrites the message with the inherited project label,
 });
 
 test("the Project capability is always dispatched with the rewritten-or-original message, never a cached result", () => {
-  assert.match(orchestratorSource, /: domain === "Project"\s*\n\s*\? await fetchNoaProjectCapability\(projectMessageOverride \?\? request\.message, request\.context\)/);
+  // A later, unrelated phase (entity-scoped semantic reference) added an options object as a
+  // third argument - the message/context arguments themselves are unchanged.
+  assert.match(orchestratorSource, /: domain === "Project"\s*\n\s*\? await fetchNoaProjectCapability\(projectMessageOverride \?\? request\.message, request\.context,/);
 });
 
 // ── Reference building (bounded, safe, no UUIDs) ────────────────────────────────
@@ -101,7 +108,9 @@ test("regression: UserActivity reference/domain checks and the Quotation domain 
 });
 
 test("regression: Quotation dispatch is untouched, so 'quotations for project ABC' / 'quotation total for project ABC' keep resolving via the existing deterministic Quotation route", () => {
-  assert.match(orchestratorSource, /: domain === "Quotation"\s*\n\s*\? await fetchNoaQuotationCapability\(request\.message, request\.context\)/);
+  // A later, unrelated phase (I5 bound-follow-up canonical phrase swap) added
+  // quotationMessageOverride and an options object - the dispatch gate itself is unchanged.
+  assert.match(orchestratorSource, /: domain === "Quotation"\s*\n\s*\? await fetchNoaQuotationCapability\([^,]+, request\.context,/);
 });
 
 test("regression: Product/Price/Client/Procurement/Admin/Insights/UserActivity dispatch branches are untouched", () => {
@@ -136,8 +145,15 @@ test("regression: greeting/capabilities/context routes still return before any s
 // ── Security preservation (test 14) ─────────────────────────────────────────────
 
 test("Project authorization is untouched: requireActiveUser() remains the single auth gate, unconditional and independent of semantic/reference input", () => {
-  assert.ok(projectCapabilitySource.includes("await requireActiveUser();"));
-  assert.ok(!projectCapabilitySource.includes("semantic"));
+  // A later, unrelated phase (entity-scoped semantic reference) added a type-only import of
+  // NoaSemanticEntity, used purely to type the optional `options.entity` search-narrowing
+  // parameter - never to gate or bypass authorization. Check the auth call itself is unconditional
+  // (the function's first statement, inside no if-branch) rather than banning the word "semantic"
+  // anywhere in the file.
+  const fnStart = projectCapabilitySource.indexOf("export async function fetchNoaProjectCapability(");
+  const fnBody = projectCapabilitySource.slice(fnStart, fnStart + 400);
+  assert.ok(fnBody.includes("await requireActiveUser();"));
+  assert.ok(fnBody.indexOf("await requireActiveUser();") < fnBody.indexOf("options.entity"));
   assert.ok(!projectCapabilitySource.includes("conversationReference"));
 });
 

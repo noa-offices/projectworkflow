@@ -139,7 +139,11 @@ test("18. every Admin result path emits deterministicText", () => {
 });
 
 test("Admin is a real NoaDomain", () => {
-  assert.match(typesSource, /export type NoaDomain = "Product" \| "Quotation" \| "Price" \| "Project" \| "Client" \| "Procurement" \| "UserActivity" \| "Admin" \| "Help";/);
+  // Later, unrelated phases added further real domains (Insights/Attention) to the same union -
+  // check Admin is still one of its members rather than pinning the exact, now-outdated, full
+  // ordered list.
+  const domainUnion = typesSource.slice(typesSource.indexOf("export type NoaDomain ="), typesSource.indexOf(";", typesSource.indexOf("export type NoaDomain =")));
+  assert.ok(domainUnion.includes('"Admin"'));
 });
 
 test("role/status vocabulary matches the actual AppRole/AccountStatus types, no invented values", () => {

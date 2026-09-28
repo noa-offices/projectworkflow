@@ -1,5 +1,6 @@
 "use client";
 
+import { type NoaSessionAnswer as NoaAnswer, applyNoaConversationTurnState, noaRecentMessages, noaTurnErrorText, NOA_GREETING_TEXT as GREETING_TEXT, NOA_REQUEST_FAILED_TEXT as REQUEST_FAILED_TEXT } from "@/lib/noa/noa-turn-state";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { NoaChatDrawer } from "@/components/noa/noa-chat-drawer";
 import { NoaLauncher } from "@/components/noa/noa-launcher";
@@ -10,7 +11,6 @@ import type { NoaProductConfigurationReference } from "@/lib/noa/noa-product-con
 import { noaStateReducer, type NoaStateEvent } from "@/lib/noa/noa-state-machine";
 import type {
   NoaAnalyticsTransport,
-  NoaAnswer,
   NoaAttentionTransport,
   NoaAuthContext,
   NoaCatchUpTransport,
@@ -22,16 +22,14 @@ import type {
 } from "@/lib/noa/noa-types";
 import { useNoaPageContext } from "@/lib/noa/use-noa-page-context";
 
-const GREETING_TEXT =
-  "Hi, I'm NOA 👋\nI can help you find and configure products, check quotations and pricing, review projects and procurement, and answer questions about ProjectWorkflow. I can also show you what needs attention.";
 // Home UX PART 5: the "Configure product" starter never sends this to the server (GPC requires
 // "configure <product name>", which the starter alone can't supply) - it's shown locally, then the
 // user's NEXT typed message is prefixed with the pending draft (see handleSend below).
 const CONFIGURE_PRODUCT_GUIDANCE_TEXT = "Which product would you like to configure? Type the product name below.\nFor example: MONOLITH or EVERY.";
-const REQUEST_FAILED_TEXT = "I couldn't complete that request right now. Please try again.";
+
 const SETTLE_DELAY_MS = 900;
 // Send only a small bounded slice of prior turns, never the entire session.
-const RECENT_MESSAGE_LIMIT = 6;
+
 const NOA_CHAT_ENDPOINT = "/api/noa/chat";
 // N2A3: a separate, minimal read endpoint - never the chat endpoint via a hidden synthetic turn
 // (PART 2). Its own route (app/api/noa/attention/route.ts) calls the exact same
@@ -76,9 +74,10 @@ async function requestNoaAnswer(
   recentMessages: Array<{ role: "user" | "assistant"; text: string }>,
   conversationReference: NoaConversationReference | undefined,
   productConfigurationReference: NoaProductConfigurationReference | undefined,
+  sessionId: string | undefined,
 ): Promise<NoaAnswer> {
   const response = await fetch(NOA_CHAT_ENDPOINT, {
-    body: JSON.stringify({ context, conversationReference, message, productConfigurationReference, recentMessages }),
+    body: JSON.stringify({ context, conversationReference, message, productConfigurationReference, recentMessages, sessionId }),
     headers: { "Content-Type": "application/json" },
     method: "POST",
   });
@@ -107,8 +106,9 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
   const settleTimerRef = useRef<number | null>(null);
   // C3: the single, ephemeral reference to the immediately previous result - held only in memory
   // (a ref, not state, since it never needs to trigger a render on its own), replaced wholesale by
-  // whatever the server returns after each successful reply, and cleared entirely on error. Never
+  // whatever the server returns after each successful reply, and preserved on error. Never
   // persisted beyond this component instance.
+  const sessionIdRef = useRef<string | undefined>(undefined);
   const conversationReferenceRef = useRef<NoaConversationReference | undefined>(undefined);
   // GPC-3: the same replace-wholesale-from-the-server pattern as conversationReferenceRef above,
   // held independently. Safe to always replace verbatim (never merge) because the ORCHESTRATOR is
@@ -194,24 +194,23 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
     // Typed, manual and realtime turns share one ordered request path and reference pair.
     const result = requestQueueRef.current.then(() => {
       clearSettleTimer();
-      const recentMessages = messagesRef.current
-        .slice(-RECENT_MESSAGE_LIMIT)
-        .map((message) => ({ role: message.role, text: message.text }));
+      const recentMessages = noaRecentMessages(messagesRef.current);
 
       appendMessage(createMessage("user", outgoing));
       setPendingDomain(classifyNoaIntent(outgoing, pageContext));
       dispatch({ type: "SETTLE" });
       dispatch({ type: "SEND" });
 
-      return requestNoaAnswer(outgoing, pageContext, recentMessages, conversationReferenceRef.current, productConfigurationReferenceRef.current)
+      return requestNoaAnswer(outgoing, pageContext, recentMessages, conversationReferenceRef.current, productConfigurationReferenceRef.current, sessionIdRef.current)
         .then((answer) => {
-          // Always replace, never merge/accumulate - a result with no reference of its own
-          // (conversationReference undefined) correctly clears any stale one from before.
-          conversationReferenceRef.current = answer.conversationReference;
-          // Same replace-wholesale rule, but the server (not the client) decides when
-          // undefined truly means "end/cancel configuration" vs. "an unrelated answer that should
-          // leave an active configuration alone" - see noa-orchestrator.ts's passthrough handling.
-          productConfigurationReferenceRef.current = answer.productConfigurationReference;
+          const next = applyNoaConversationTurnState({
+            sessionId: sessionIdRef.current,
+            conversationReference: conversationReferenceRef.current,
+            productConfigurationReference: productConfigurationReferenceRef.current,
+          }, answer);
+          sessionIdRef.current = next.sessionId;
+          conversationReferenceRef.current = next.conversationReference;
+          productConfigurationReferenceRef.current = next.productConfigurationReference;
           appendMessage(
             createMessage("assistant", answer.text, { voiceText: answer.voiceText, agentBrief: answer.agentBrief, analytics: answer.analytics, attention: answer.attention, catchUp: answer.catchUp, choices: answer.choices, domain: answer.domain, sources: answer.sources }),
           );
@@ -221,7 +220,15 @@ export function NoaAssistant({ auth }: { auth: NoaAuthContext | null }) {
         .catch((error: unknown) => {
           // A failed request has nothing new to remember; the previous reference is left as-is
           // rather than guessed at.
-          const errorText = error instanceof Error && error.message ? error.message : REQUEST_FAILED_TEXT;
+          const preserved = applyNoaConversationTurnState({
+            sessionId: sessionIdRef.current,
+            conversationReference: conversationReferenceRef.current,
+            productConfigurationReference: productConfigurationReferenceRef.current,
+          });
+          sessionIdRef.current = preserved.sessionId;
+          conversationReferenceRef.current = preserved.conversationReference;
+          productConfigurationReferenceRef.current = preserved.productConfigurationReference;
+          const errorText = noaTurnErrorText(error);
           appendMessage(createMessage("assistant", errorText));
           dispatch({ type: "RESPONSE_ERROR" });
           return undefined;
