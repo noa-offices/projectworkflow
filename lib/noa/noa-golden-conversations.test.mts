@@ -101,22 +101,104 @@ function fallback(trace: Awaited<ReturnType<ReturnType<typeof createNoaGoldenSes
   assert.equal(trace.semanticUsed, true); // real V1 extractor invoked, disabled runtime returns Unclear
 }
 
-test("CASE A CURRENT BASELINE: social wording falls through to generic Help", async () => {
-  const { answer, trace } = await createNoaGoldenSession().send("Hello NOA, how are you today?");
-  assert.ok(answer);
-  fallback(trace); // future social pre-route must invalidate this baseline
+test("SOCIAL S1: greeting and 'How are you today?' take the deterministic social path - no capability, no ResultSet, no generic business fallback", async () => {
+  const session = createNoaGoldenSession();
+  const greeting = await session.send("Hello NOA.");
+  assert.deepEqual([greeting.trace.routeDecision, greeting.trace.capabilitySelected, greeting.trace.semanticUsed, greeting.trace.errorCode],
+    ["social", null, false, null]);
+  assert.match(greeting.answer!.text, /^Hello! How can I help\?$/);
+
+  const social = await session.send("How are you today?");
+  assert.deepEqual([social.trace.routeDecision, social.trace.capabilitySelected, social.trace.semanticUsed], ["social", null, false]);
+  assert.doesNotMatch(social.answer!.text, /I couldn't match that|I'm not sure/i); // never the generic business fallback
+  assert.match(social.answer!.text, /ready to help/i);
+  const state = session.shadow()!.state;
+  assert.deepEqual([state.resultSets.length, state.focus, state.pendingChoice], [0, null, undefined]);
+  assert.equal(social.trace.shadowSave, "skipped");
 });
 
-test("CASE B CURRENT BASELINE: daily clarification loses continuity on Changes today", async () => {
+test("DAILY D1: today's status creates a session-backed pendingChoice; typing 'Changes today.' resolves and clears it", async () => {
   const session = createNoaGoldenSession();
   const first = await session.send("What is today's status?");
   assert.ok(first.answer?.choices?.length);
   assert.equal(first.trace.scopeSource, "clarification");
   assert.equal(first.trace.clarifyReason, "business_options");
+  const pending = session.shadow()!.state.pendingChoice;
+  assert.deepEqual(pending?.options, ["attention", "changes_today", "my_activity", "project_status"]);
+  assert.equal(first.trace.shadowSave, "saved");
+
   const next = await session.send("Changes today.");
   assert.ok(next.answer);
-  fallback(next.trace);
-  assert.equal(next.trace.referenceAvailable, false);
+  assert.equal(next.trace.errorCode, null);
+  assert.notEqual(next.trace.routeDecision, "Help"); // resolved to the real action, not the fallback
+  assert.equal(session.shadow()!.state.pendingChoice, undefined);
+});
+
+test("DAILY D1b: the clicked-chip value resolves identically to the typed label", async () => {
+  const typed = createNoaGoldenSession();
+  await typed.send("What is today's status?");
+  const typedResult = await typed.send("Changes today.");
+
+  const clicked = createNoaGoldenSession();
+  await clicked.send("What is today's status?");
+  const clickedResult = await clicked.send("what changed today"); // the chip's own value, per NOA_DAILY_STATUS_OPTIONS
+
+  assert.equal(typedResult.trace.routeDecision, clickedResult.trace.routeDecision);
+  assert.equal(typedResult.trace.capabilitySelected, clickedResult.trace.capabilitySelected);
+  assert.equal(typed.shadow()!.state.pendingChoice, undefined);
+  assert.equal(clicked.shadow()!.state.pendingChoice, undefined);
+});
+
+test("DAILY D1c: a resolved pendingChoice bypasses the planner even with a focused ResultSet from an earlier turn", async () => {
+  const session = createNoaGoldenSession();
+  await session.send("List the projects."); // focuses a Project ResultSet before the daily-status ask
+  const projects = session.shadow()!.state.resultSets[0];
+  await session.send("What is today's status?"); // pendingChoice set; the Project ResultSet/focus stay
+  assert.equal(session.shadow()!.state.focus?.resultSetHandle, projects.handle);
+
+  const { trace } = await session.send("Changes today.");
+  // Resolved via the pendingChoice's own canonical value, never the planner re-interpreting the
+  // stale "Changes today." wording against the still-focused Project ResultSet.
+  assert.equal(trace.plannerMode, "skipped");
+  assert.equal(session.shadow()!.state.pendingChoice, undefined);
+  assert.deepEqual(session.shadow()!.state.resultSets, [projects]); // untouched
+});
+
+test("DAILY D2: 'My activity today.' resolves the my_activity_today option", async () => {
+  const session = createNoaGoldenSession();
+  await session.send("What is today's status?");
+  const { trace } = await session.send("My activity today.");
+  assert.equal(trace.errorCode, null);
+  assert.notEqual(trace.routeDecision, "Help");
+  assert.equal(session.shadow()!.state.pendingChoice, undefined);
+});
+
+test("DAILY D3: 'Project status.' resolves the project_status option", async () => {
+  const session = createNoaGoldenSession();
+  await session.send("What is today's status?");
+  const { trace } = await session.send("Project status.");
+  assert.equal(trace.errorCode, null);
+  assert.equal(session.shadow()!.state.pendingChoice, undefined);
+});
+
+test("DAILY D4: an explicit unrelated business request wins over a pending daily-status choice, which expires; exact-ID behavior is unchanged", async () => {
+  const session = createNoaGoldenSession();
+  await session.send("What is today's status?");
+  assert.ok(session.shadow()!.state.pendingChoice);
+  const { answer, trace } = await session.send("Tell me about CO-0003-001");
+  assert.equal(trace.scopeSource, "explicit_identifier"); // exact-ID routing is untouched
+  assert.equal(trace.capabilitySelected, "Project");
+  assert.match(answer!.text, /CO-0003-001/);
+  assert.equal(session.shadow()!.state.pendingChoice, undefined); // expired, not resolved
+});
+
+test("DAILY D5: with no active pendingChoice, wording matching an option label does not hijack routing", async () => {
+  const session = createNoaGoldenSession();
+  const before = await session.send("Changes today.");
+  assert.equal(session.shadow()!.state.pendingChoice, undefined);
+  // Whatever legacy routing already does for this unqualified phrase, it is NOT a resolved
+  // daily-status action (no pendingChoice existed to resolve against).
+  assert.ok(before.answer);
 });
 
 test("CASE C CURRENT BASELINE: Project list reference exists but List them does not bind it", async () => {
@@ -419,6 +501,22 @@ for (const [voice, typed] of [
     // Independent sessions get different transport-only session ids; everything else is equal.
     assert.deepEqual({ ...a.answer, sessionId: undefined }, { ...b.answer, sessionId: undefined });
     assert.equal(a.trace.errorCode, null);
+  });
+}
+
+test("voice parity: 'hey noa' takes the same social path as typed text", async () => {
+  const normalized = normalizeNoaVoiceTranscript("hey noa");
+  assert.equal(normalized, "hey NOA");
+  const { trace } = await createNoaGoldenSession().send(normalized);
+  assert.equal(trace.routeDecision, "social");
+});
+
+for (const message of ["how are you today", "changes today", "project status"]) {
+  test(`voice parity: '${message}' is untouched by the voice normalizer and enters the same path as typed text`, () => {
+    // No voice-only rewriting exists for these (or should exist) - the normalizer only handles the
+    // NOA/Nova/Noah name and known product-name mishearings, so lowercase business/social phrasing
+    // reaches the SAME prerouter/pendingChoice code the typed-text path already exercises above.
+    assert.equal(normalizeNoaVoiceTranscript(message), message);
   });
 }
 

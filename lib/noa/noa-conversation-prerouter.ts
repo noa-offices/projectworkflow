@@ -1,4 +1,17 @@
+import type { NoaPendingChoiceAction } from "./noa-conversation-state";
 import type { NoaChoice } from "./noa-types";
+
+// Single source of truth for the daily-status pendingChoice options: the closed action token, its
+// clicked-chip value (fed back into normal business routing, exactly like any other chip click)
+// and its typed-label equivalent. Shared with noa-shadow-turn.ts so typed/clicked resolution can
+// never drift from what this clarification actually offered.
+export const NOA_DAILY_STATUS_OPTIONS: Record<NoaPendingChoiceAction, { label: string; value: string }> = {
+  attention: { label: "Attention items", value: "what needs my attention" },
+  changes_today: { label: "Changes today", value: "what changed today" },
+  my_activity: { label: "My activity today", value: "show my activity today" },
+  project_status: { label: "Project status", value: "How are our projects doing?" },
+};
+export const NOA_DAILY_STATUS_ORDER: readonly NoaPendingChoiceAction[] = ["attention", "changes_today", "my_activity", "project_status"];
 
 export type NoaConversationKind = "greeting" | "assistant_identity" | "acknowledgement" | "thanks" | "social" | "unclear" | "business_passthrough";
 export type NoaConversationTurn = { kind: Exclude<NoaConversationKind, "business_passthrough">; reply: string } | { kind: "business_passthrough" };
@@ -17,7 +30,7 @@ export function prerouteNoaConversation(message: string): NoaConversationTurn {
   if (/^(?:(?:ok|okay)(?: (?:ok|okay))*|alright|got it)$/.test(text)) return { kind: "acknowledgement", reply: "Got it." };
   if (/^(?:well|hmm)$/.test(text)) return { kind: "acknowledgement", reply: "I'm listening." };
   if (/^(?:thanks|thank you)$/.test(text)) return { kind: "thanks", reply: "You're welcome." };
-  if (/^(?:how are you(?: doing)?|hows it going|nice to hear from you)$/.test(text)) return { kind: "social", reply: "I'm here and ready to help. What would you like to check?" };
+  if (/^(?:how are you(?: doing)?(?: today)?|hows it going(?: today)?|nice to hear from you)$/.test(text)) return { kind: "social", reply: "I'm doing well and ready to help. What would you like to check?" };
   if (!/[\p{L}\p{N}]/u.test(text) || /^(?:um|uh|erm|hmm)(?: (?:um|uh|erm|hmm))+$/.test(text)) {
     return { kind: "unclear", reply: "I didn't catch that. Could you say it another way?" };
   }
@@ -35,7 +48,7 @@ export function normalizeNoaBusinessParaphrase(message: string, protectedMeaning
   const canonical = (message: string): NoaBusinessParaphrase => ({ kind: "canonical", message });
   const clarify = (text: string, choices: Array<[string, string]>): NoaBusinessParaphrase => ({ kind: "clarify", text, choices: choices.map(([label, value]) => ({ label, value })) });
   if (/^(?:whats|what is|give me) todays status$|^how are things today$|^give me an update for today$|^whats (?:going on|happening) today$|^anything i should know today$/.test(text)) {
-    return clarify("What would you like to check?", [["Attention items", "what needs my attention"], ["Changes today", "what changed today"], ["My activity today", "show my activity today"], ["Project status", "How are our projects doing?"]]);
+    return clarify("What would you like to check today?", NOA_DAILY_STATUS_ORDER.map((action) => [NOA_DAILY_STATUS_OPTIONS[action].label, NOA_DAILY_STATUS_OPTIONS[action].value]));
   }
   if (/^(?:anything important today|anything i need to deal with|what do i need to deal with|what should i look at today|is there anything i should check|anything urgent|what needs checking|what needs my attention today)$/.test(text)) return canonical("what needs my attention");
   if (/^(?:whats changed today|what happened today|whats been happening today|any updates today|catch me up on today|whats going on with updates today)$/.test(text)) return canonical("what changed today");

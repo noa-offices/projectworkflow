@@ -67,7 +67,7 @@ test("out-of-scope returns a fixed clarification message, not a per-request gene
   // fallback; it's now shown only for an explicit "what can you do" capability question
   // (NOA_CAPABILITY_SUMMARY_TEXT), and out-of-scope gets a short clarification instead.
   assert.ok(orchestratorSource.includes(
-    "I'm not sure what you'd like me to check. Try asking about a product, quotation, project, activity, or another ProjectWorkflow area.",
+    "I couldn't match that to a ProjectWorkflow action. You can ask about quotations, projects, products, prices, or recent activity.",
   ));
   assert.ok(!orchestratorSource.includes("I'm NOA, the ProjectWorkflow assistant. I can help with"));
 });
