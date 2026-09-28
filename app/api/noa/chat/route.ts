@@ -8,6 +8,8 @@ import type { NoaChatRequest, NoaPageContext } from "@/lib/noa/noa-types";
 import { createClient } from "@/lib/supabase/server";
 import { loadOrCreateNoaSession, saveNoaSession } from "@/lib/noa/noa-session.server";
 import { runNoaShadowTurn } from "@/lib/noa/noa-shadow-turn";
+import { describeNoaRelatedProjectFiles, requestNoaSemanticPlan } from "@/lib/noa/noa-semantic-planner.server";
+import { resolveNoaRelation } from "@/lib/noa/noa-relation.server";
 import { noaSessionId } from "@/lib/noa/noa-turn-state";
 import { isNoaRouteDiagnosticsEnabled } from "@/lib/noa/noa-intent-router";
 
@@ -119,6 +121,7 @@ export async function POST(request: Request) {
     const sessionId = noaSessionId((body as { sessionId?: unknown }).sessionId);
     const answer = await runNoaShadowTurn({ ...chatRequest, sessionId }, {
       load: loadOrCreateNoaSession, save: saveNoaSession, run: runNoaOrchestrator,
+      planner: { plan: requestNoaSemanticPlan, relate: resolveNoaRelation, describeProjectFiles: describeNoaRelatedProjectFiles },
     }, (trace) => {
       // Closed metadata only; never session/entity identifiers, state or response prose. Same
       // dev-on / production-opt-in gate as the existing route diagnostics.

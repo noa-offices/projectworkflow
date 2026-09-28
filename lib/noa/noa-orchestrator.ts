@@ -9,7 +9,7 @@ export type NoaDecisionTrace = {
   referenceAvailable: boolean;
   referenceDomain: NoaDomain | null;
   referenceBindingKind: NoaFollowUpBinding["kind"] | "legacy_follow_up" | "finding";
-  scopeSource: "explicit_identifier" | "conversation_reference" | "page_context" | "generic_query" | "clarification" | "none";
+  scopeSource: "explicit_identifier" | "conversation_reference" | "result_set" | "page_context" | "generic_query" | "clarification" | "none";
   capabilitySelected: NoaDomain | null;
   resultCount: number | null;
   clarifyReason: NoaFollowUpClarifyReason | "business_options" | "semantic_clarification" | null;

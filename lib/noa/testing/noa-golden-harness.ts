@@ -29,9 +29,10 @@ import {
 import type { NoaDecisionTrace } from "../noa-orchestrator";
 import { applyNoaConversationTurnState, noaRecentMessages, noaTurnErrorText, NOA_GREETING_TEXT, type NoaSessionAnswer, type NoaTurnState } from "../noa-turn-state";
 import { runNoaShadowTurn, type NoaShadowDependencies, type NoaShadowTrace } from "../noa-shadow-turn";
+import type { NoaPlannerTrace } from "../noa-semantic-planner";
 import { createEmptyNoaConversationState, parseNoaConversationState, type NoaConversationState } from "../noa-conversation-state";
 // Shadow fields are present on the default (real shadow lifecycle) path, absent under `execute`.
-export type NoaTurnTrace = NoaDecisionTrace & Partial<NoaShadowTrace> & { turnId: number };
+export type NoaTurnTrace = NoaDecisionTrace & Partial<NoaShadowTrace & NoaPlannerTrace> & { turnId: number };
 export type NoaGoldenTurnResult = { answer: NoaSessionAnswer | null; trace: NoaTurnTrace };
 
 // Mirrors the real quotation capability's quotationQuestionKind(): count wording or a bare
@@ -108,6 +109,10 @@ function projectFileDetailData(order: NoaFixtureProjectFile) {
   };
 }
 
+// Observation only: every fixture Project capability call, so golden cases can prove which scope
+// (exact entity lookups vs the generic active list) a turn actually executed.
+export const noaGoldenProjectCapabilityCalls: Array<{ message: string; entity: string | null }> = [];
+
 // Installs the fixture-backed capability modules used by the golden conversation suite. Must be
 // called (once per test file, before importing noa-orchestrator.ts / the harness's own
 // createNoaGoldenSession) with the `mock` tracker from `node:test`, and the process must be run
@@ -164,7 +169,8 @@ export function installNoaGoldenFixtures(mock: MockTracker, options: { mockDatab
           ? { domain: "Project" as const, entity: { type: "project_file" as const, text: match.orderNo } }
           : { domain: "not_found" as const };
       },
-      fetchNoaProjectCapability: async (message: string) => {
+      fetchNoaProjectCapability: async (message: string, _context: unknown, options?: { entity?: { text: string } }) => {
+        noaGoldenProjectCapabilityCalls.push({ message, entity: options?.entity?.text ?? null });
         const identifier = message.match(/\bCO-\d{3,}(?:-\d+)*\b/i)?.[0];
         if (identifier) {
           const match = NOA_GOLDEN_PROJECT_FILES.find((p) => p.orderNo.toLowerCase() === identifier.toLowerCase());
@@ -246,6 +252,10 @@ export type NoaGoldenSessionOptions = {
   displayName?: string;
   initialState?: NoaTurnState;
   store?: NoaGoldenSessionStore;
+  // Phase 2 Core: replaces ONLY the Semantic Planner's provider boundary. Validation, relation
+  // execution and rendering stay real. Default is the real boundary, which the disabled fixture
+  // runtime turns into "unavailable" (legacy routing answers).
+  plan?: NonNullable<NoaShadowDependencies["planner"]>["plan"];
   // Bypasses the shadow lifecycle entirely (direct orchestrator call); used by harness self-tests.
   execute?: (request: NoaChatRequest, collect: (trace: Readonly<NoaDecisionTrace>) => void) => Promise<NoaAnswer>;
 };
@@ -269,12 +279,15 @@ export function createNoaGoldenSession(options: NoaGoldenSessionOptions = {}) {
     };
     recentMessages.push({ role: "user", text: message });
     let trace: NoaTurnTrace | undefined;
-    const collect = (decision: Readonly<NoaDecisionTrace & Partial<NoaShadowTrace>>) => { trace = { ...decision, turnId }; };
+    const collect = (decision: Readonly<NoaDecisionTrace & Partial<NoaShadowTrace & NoaPlannerTrace>>) => { trace = { ...decision, turnId }; };
     try {
       const { runNoaOrchestrator } = await import("@/lib/noa/noa-orchestrator");
+      const { describeNoaRelatedProjectFiles, requestNoaSemanticPlan } = await import("@/lib/noa/noa-semantic-planner.server");
+      const { resolveNoaRelation } = await import("@/lib/noa/noa-relation.server");
+      const planner = { plan: options.plan ?? requestNoaSemanticPlan, relate: resolveNoaRelation, describeProjectFiles: describeNoaRelatedProjectFiles };
       const answer = options.execute
         ? await options.execute(request, collect)
-        : await runNoaShadowTurn({ ...request, sessionId: state.sessionId }, { ...createNoaGoldenSessionRepository(store), run: runNoaOrchestrator }, collect);
+        : await runNoaShadowTurn({ ...request, sessionId: state.sessionId }, { ...createNoaGoldenSessionRepository(store), run: runNoaOrchestrator, planner }, collect);
       state = applyNoaConversationTurnState(state, answer);
       recentMessages.push({ role: "assistant", text: answer.text });
       if (!trace) throw new Error("Missing internal decision trace");
