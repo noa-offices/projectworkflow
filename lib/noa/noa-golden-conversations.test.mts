@@ -167,6 +167,38 @@ test("CASE D CONTINUATION: 'List them.' re-shows the FOCUSED Project ResultSet (
   assert.deepEqual([session.shadow()!.version, trace.shadowSave], [version, "skipped"]);
 });
 
+// Final Phase 2 live UAT bug: with an older quotation aggregate and a FOCUSED quotation list (the
+// list already IS "the quotations"), "Go back to the quotations." on Vercel still selected the
+// older AGGREGATE handle (rejected by validateNoaSemanticPlan as incompatible_type, falling back
+// to legacy) - "go back" pulled the planner into history even though focus already matched the
+// named scope. The fix is PLANNER_INSTRUCTIONS' rule 1 (a named scope that already matches focus
+// wins over "go back"/"again"/"earlier" wording) - not a validator or state change. See CASE G
+// below for the companion case where focus does NOT match ("Go back" correctly reaches history).
+test("CASE 1 FOCUSED SCOPE MATCH: 'Go back to the quotations.' stays on the FOCUSED quotation list (never the older aggregate) when focus already matches", async () => {
+  const calls: NoaPlannerInput[] = [];
+  const session = createNoaGoldenSession({ plan: scriptedPlanner(calls, [drillConfirmed, (input) => plan("select", focusedSet(input))]) });
+  await session.send("What is quotation status?");
+  const confirmed = await session.send("Which are the two client confirmed?");
+  assert.equal(confirmed.trace.plannerAction, "aggregate_drilldown");
+  const quotationsSet = session.shadow()!.state.resultSets[1];
+  assert.equal(quotationsSet.entityType, "quotation");
+  assert.equal(session.shadow()!.state.focus?.resultSetHandle, quotationsSet.handle);
+
+  const version = session.shadow()!.version;
+  const { answer, trace } = await session.send("Go back to the quotations.");
+  assert.deepEqual([trace.plannerMode, trace.plannerAction, trace.plannerValidation, trace.plannerExecution, trace.referenceBinding, trace.resultSetRecency],
+    ["planned", "select", "valid", "executed", "focused_result", "focused"]);
+  assert.equal(trace.capabilitySelected, "Quotation");
+  assert.ok(answer);
+  for (const q of NOA_GOLDEN_CLIENT_CONFIRMED_QUOTATIONS) assert.match(answer!.text, new RegExp(q.quotationNo));
+  // Reference-only: no new ResultSet, nothing saved, focus unchanged, aggregate still in history.
+  const state = session.shadow()!.state;
+  assert.equal(state.resultSets.length, 2);
+  assert.equal(state.resultSets[0].kind, "aggregate");
+  assert.equal(state.focus?.resultSetHandle, quotationsSet.handle);
+  assert.deepEqual([session.shadow()!.version, trace.shadowSave], [version, "skipped"]);
+});
+
 // Live UAT bug: on Vercel the planner (Gemini) returned `select` over the QUOTATION AGGREGATE's
 // handle for "Go back to the quotations." instead of the client-confirmed quotation LIST, and was
 // correctly rejected as incompatible_type (see noa-semantic-planner.test.mts's "LIVE BUG" test for
@@ -174,7 +206,9 @@ test("CASE D CONTINUATION: 'List them.' re-shows the FOCUSED Project ResultSet (
 // rule (prefer a "selectable" - non-aggregate - result set), so this reproduces the exact live
 // stack (older aggregate, older quotation list, focused newer Project list) end to end and proves
 // the older LIST becomes focused, not the aggregate, with no duplicate ResultSet and the aggregate
-// still present in the bounded history.
+// still present in the bounded history. This is the companion case to CASE 1 above: here the
+// focused set is a DIFFERENT scope (Project), so "Go back to the quotations." correctly reaches
+// into history instead of staying on focus.
 test("CASE G OLDER SET: 'Go back to the quotations.' refocuses the older LIST (never the aggregate); 'those' then relates from it", async () => {
   const { session, calls, quotations } = await caseDThroughProjects([
     (input) => plan("select", newestSelectableOf(input, "quotation")),
