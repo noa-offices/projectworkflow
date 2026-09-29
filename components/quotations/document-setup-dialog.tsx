@@ -147,7 +147,7 @@ export function DocumentSetupDialog({
                     <Field name="validity" label="Validity" defaultValue={setup.commercial.validity} />
                     <Field name="delivery_terms" label="Delivery Terms" defaultValue={setup.commercial.deliveryTerms} />
                     <Field name="warranty_terms" label="Warranty" defaultValue={setup.commercial.warrantyTerms} />
-                    <Field name="currency" label="Currency" defaultValue={setup.commercial.currency} />
+                    <ReadOnly label="Currency" value="AED" />
                     <Field name="vat_percent" label="VAT %" defaultValue={setup.commercial.vatPercent} type="number" />
                     <label className="block">
                       <span className="text-xs font-semibold uppercase text-zinc-500">Extra Discount Type</span>

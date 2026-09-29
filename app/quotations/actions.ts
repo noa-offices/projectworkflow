@@ -1012,7 +1012,9 @@ function quotationPayload(formData: FormData, userId?: string) {
     quotation_date: textValue(formData, "quotation_date") || new Date().toISOString().slice(0, 10),
     status: textValue(formData, "status") || "draft",
     layout_mode: textValue(formData, "layout_mode") || "standard_proposal",
-    currency: normalizeCurrency(textValue(formData, "currency") || defaultCurrency),
+    // Quotation OUTPUT currency is fixed at AED (business rule) - submitted currency is
+    // never trusted here. Source/product pricing currencies are untouched elsewhere.
+    currency: defaultCurrency,
     vat_percent: numberValue(formData, "vat_percent", 5),
     overall_discount_type: allowedText(
       formData,
@@ -5049,7 +5051,9 @@ export async function updateQuotationDocumentSetup(formData: FormData) {
 
   const reference = documentSetupText(formData, "reference");
   const quotationPayload = {
-    currency: normalizeCurrency(documentSetupText(formData, "currency") || defaultCurrency),
+    // Quotation OUTPUT currency is fixed at AED (business rule) - submitted currency is
+    // never trusted here. Source/product pricing currencies are untouched elsewhere.
+    currency: defaultCurrency,
     delivery_terms: optionalTextValue(formData, "delivery_terms"),
     legacy_reference: reference || null,
     notes: optionalTextValue(formData, "client_intro_note"),

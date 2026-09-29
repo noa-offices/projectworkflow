@@ -1,5 +1,4 @@
 import { PendingSubmitButton } from "@/components/pending-submit-button";
-import { defaultCurrency, normalizeCurrency, supportedCurrencies } from "@/lib/currencies";
 
 export type QuotationFolderFormClient = { id: string; company_name: string };
 
@@ -191,17 +190,11 @@ export function QuotationFolderForm({
       </label>
       <label className="block">
         <span className="text-xs font-semibold uppercase text-zinc-500">Currency</span>
-        <select
-          name="currency"
-          defaultValue={normalizeCurrency(values?.currency ?? defaultCurrency)}
-          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10"
-        >
-          {supportedCurrencies.map((currency) => (
-            <option key={currency.code} value={currency.code}>
-              {currency.label}
-            </option>
-          ))}
-        </select>
+        <input
+          value="AED"
+          readOnly
+          className="mt-1 h-10 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-500 outline-none"
+        />
       </label>
       <Field name="vat_percent" label="VAT %" type="number" defaultValue={values?.vatPercent ?? 5} />
       <Field name="payment_terms" label="Payment terms" defaultValue={values?.paymentTerms} />
