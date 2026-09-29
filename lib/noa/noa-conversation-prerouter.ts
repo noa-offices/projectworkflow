@@ -20,8 +20,11 @@ export type NoaConversationTurn = { kind: Exclude<NoaConversationKind, "business
 // greeting attached to a business question cannot steal its existing business route.
 export function prerouteNoaConversation(message: string): NoaConversationTurn {
   const normalized = message.toLowerCase().replace(/[’']/g, "").replace(/[.,!?;:…]+/g, " ").replace(/\s+/g, " ").trim();
-  const text = normalized.replace(/^(?:hello|hi|hey) noa\s+/, "");
-  if (/^(?:(?:hello|hi|hey)(?: there| noa)?|good morning|good afternoon|good evening|bonjour)$/.test(normalized)) {
+  // "Noah" is a common voice-transcription spelling of "NOA" - tolerated only as the addressed
+  // name in a whole-turn greeting, never as a general keyword (a longer sentence about a person
+  // named Noah still falls through to business_passthrough below).
+  const text = normalized.replace(/^(?:hello|hi|hey) (?:noa|noah)\s+/, "");
+  if (/^(?:(?:hello|hi|hey)(?: there| noa| noah)?|good morning|good afternoon|good evening|bonjour)$/.test(normalized)) {
     return { kind: "greeting", reply: normalized === "bonjour" ? "Bonjour ! Comment puis-je vous aider ?" : "Hello! How can I help?" };
   }
   if (/^(?:who are you|what are you|tell me about yourself|what can you do|who is noa)$/.test(text)) {
