@@ -6,6 +6,7 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { createAuditLog } from "@/lib/audit-log";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
 import { isVendorReceivingStatus, nextVendorReceivedAt, type VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
+import { normalizeVendorDate } from "@/lib/procurement/vendor-dates";
 
 export type VendorDocRecord = {
   id: string;
@@ -147,13 +148,19 @@ export async function saveVendorProgress(
   orderNo: string,
   vendorKey: string,
   activeStep: number,
-  etd: string,
-  eta: string,
+  etd: string | null,
+  eta: string | null,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const { user, profile } = await requireActiveUser();
 
   if (!canProcureRole(profile?.role)) {
     return { ok: false, error: "Forbidden." };
+  }
+
+  const normalizedEtd = normalizeVendorDate(etd);
+  const normalizedEta = normalizeVendorDate(eta);
+  if (!normalizedEtd.ok || !normalizedEta.ok) {
+    return { ok: false, error: "ETA and ETD must be valid dates in YYYY-MM-DD format, or blank." };
   }
 
   const adminResult = createAdminClient();
@@ -176,8 +183,8 @@ export async function saveVendorProgress(
 
   // N2B3.3 PART 3: the EXACT same normalization the upsert below writes to the database - never
   // a second, divergent comparison (e.g. comparing old null against new "").
-  const nextEtd = etd || null;
-  const nextEta = eta || null;
+  const nextEtd = normalizedEtd.value;
+  const nextEta = normalizedEta.value;
 
   const { error } = await supabase
     .from("procurement_vendor_progress")

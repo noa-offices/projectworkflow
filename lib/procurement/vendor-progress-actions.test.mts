@@ -72,7 +72,7 @@ mock.module("@/lib/supabase/admin", { namedExports: {
   }),
 } });
 
-const { setVendorSupplierConfirmation, setVendorReceivingStatus } = await import("./vendor-docs-action");
+const { saveVendorProgress, setVendorSupplierConfirmation, setVendorReceivingStatus } = await import("./vendor-docs-action");
 
 function reset() {
   role = "procurement_manager";
@@ -80,6 +80,39 @@ function reset() {
   upserts.length = 0;
   auditCalls.length = 0;
 }
+
+test("ETA/ETD valid ISO values survive saves independently, and blanks/null clear", async () => {
+  reset();
+  for (const [etd, eta] of [["2026-10-01", "2026-10-15"], [null, "2026-10-15"], ["2026-10-01", null], ["", ""], [null, null]]) {
+    assert.deepEqual(await saveVendorProgress("CO-0001-001", "acme", 2, etd, eta), { ok: true });
+    assert.equal(upserts.at(-1)!.etd, etd || null);
+    assert.equal(upserts.at(-1)!.eta, eta || null);
+    assert.equal(upserts.at(-1)!.active_step, 2);
+  }
+  const audits = auditCalls.length;
+  await saveVendorProgress("CO-0001-001", "acme", 2, null, null);
+  assert.equal(auditCalls.length, audits); // unchanged no-op audit semantics
+});
+
+test("ETA/ETD invalid input rejects the entire save without writes or audit", async () => {
+  for (const invalid of ["2026-02-30", "15/10/2026", "tomorrow", "2026-1-1"]) {
+    for (const [etd, eta] of [[invalid, "2026-10-15"], ["2026-10-01", invalid]]) {
+      reset();
+      assert.deepEqual(await saveVendorProgress("CO-0001-001", "acme", 2, etd, eta), { ok: false, error: "ETA and ETD must be valid dates in YYYY-MM-DD format, or blank." });
+      assert.equal(upserts.length, 0); assert.equal(auditCalls.length, 0);
+    }
+  }
+});
+
+test("ETA/ETD retain role authorization before validation", async () => {
+  for (const allowed of ["system_owner", "admin_manager", "procurement_manager"]) {
+    reset(); role = allowed;
+    assert.deepEqual(await saveVendorProgress("CO-0001-001", "acme", 2, "", ""), { ok: true });
+  }
+  reset(); role = "sales_designer";
+  assert.deepEqual(await saveVendorProgress("CO-0001-001", "acme", 2, "invalid", ""), { ok: false, error: "Forbidden." });
+  assert.equal(upserts.length, 0);
+});
 
 // SUPPLIER CONFIRMATION -------------------------------------------------------------------
 
