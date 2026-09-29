@@ -1,9 +1,11 @@
 import { redirect } from "next/navigation";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { ProcurementOrdersTable } from "@/components/procurement/procurement-orders-table";
+import { ProcurementSummaryCards } from "@/components/procurement/procurement-summary-cards";
 import { requireActiveUser } from "@/lib/auth";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
+import { loadProcurementSummary } from "@/lib/procurement/procurement-summary";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -56,6 +58,8 @@ export default async function ProcurementOrdersPage() {
     resolvedClientName: clientNameById.get(order.clientId) ?? order.clientName,
   }));
 
+  const summary = await loadProcurementSummary(orders.map((order) => order.orderNo));
+
   return (
     <ErpAppShell
       eyebrow="PROCUREMENT"
@@ -68,6 +72,9 @@ export default async function ProcurementOrdersPage() {
       userRole={profile?.role ?? null}
     >
       <div className="px-5 py-6 sm:px-8">
+        <div className="mb-5">
+          <ProcurementSummaryCards summary={summary} />
+        </div>
         {orders.length === 0 ? (
           <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center xl:px-6 xl:py-16">
             <p className="text-sm text-zinc-500">
