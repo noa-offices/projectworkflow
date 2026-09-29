@@ -6,7 +6,14 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { VendorControlsPanel } from "./vendor-controls-panel";
 import { generatePoAction } from "@/lib/procurement/generate-po-action";
 import type { VendorDocRecord } from "@/lib/procurement/vendor-docs-action";
-import type { VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
+import { vendorStepLabel, vendorReceivingStatusLabel, type VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
+
+const DOC_SLOT_KEYS = ["pi", "oc", "bl"] as const;
+
+function formatShortDate(value: string) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short" }).format(new Date(value));
+}
 
 export type VendorCardItem = {
   id: string;
@@ -87,6 +94,14 @@ export function VendorCard({
     minimumFractionDigits: 2,
   }).format(totalValue);
 
+  // Presence-only summary for the scan header — never a required/optional judgement.
+  const uploadedSlotKeys = new Set((initialDocs ?? []).map((doc) => doc.slot_key));
+  const docsPresentCount = DOC_SLOT_KEYS.filter((key) => uploadedSlotKeys.has(key)).length;
+  const stageLabel = vendorStepLabel(initialStep ?? 0);
+  const receivingStatus: VendorReceivingStatus = initialReceivingStatus ?? "pending";
+  const etdLabel = initialEtd ? formatShortDate(initialEtd) : "—";
+  const etaLabel = initialEta ? formatShortDate(initialEta) : "—";
+
   return (
     <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
 
@@ -104,6 +119,48 @@ export function VendorCard({
               <span className="text-xs uppercase tracking-widest text-zinc-400">{displayType}</span>
               <span className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-600">
                 {items.length} item{items.length === 1 ? "" : "s"}
+              </span>
+            </div>
+
+            {/* Scan row — key procurement state visible without expanding anything */}
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <span className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-800">
+                {stageLabel}
+              </span>
+              <span
+                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                  initialSupplierConfirmedAt
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-amber-200 bg-amber-50 text-amber-800"
+                }`}
+              >
+                {initialSupplierConfirmedAt ? "Confirmed" : "Not confirmed"}
+              </span>
+              <span
+                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                  receivingStatus === "received"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-amber-200 bg-amber-50 text-amber-800"
+                }`}
+              >
+                Receiving: {vendorReceivingStatusLabel(receivingStatus)}
+              </span>
+              <span
+                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                  etdLabel === "—" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-zinc-200 bg-zinc-50 text-zinc-600"
+                }`}
+              >
+                ETD {etdLabel}
+              </span>
+              <span
+                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                  etaLabel === "—" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-zinc-200 bg-zinc-50 text-zinc-600"
+                }`}
+              >
+                ETA {etaLabel}
+              </span>
+              <span className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-600">
+                Docs {docsPresentCount}/{DOC_SLOT_KEYS.length}
               </span>
             </div>
           </div>
@@ -152,6 +209,7 @@ export function VendorCard({
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
             className="col-span-2 inline-flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 xl:col-span-1 xl:h-8"
           >
             {expanded ? (

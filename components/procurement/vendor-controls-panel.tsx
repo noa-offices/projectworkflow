@@ -13,7 +13,7 @@ import {
 } from "@/lib/procurement/vendor-docs-action";
 import { RECEIVING_STATUSES, vendorReceivingStatusLabel, type VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 import { createClient as createBrowserClient } from "@/lib/supabase/client";
-import { Check, FileText as FileIcon } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, FileText as FileIcon } from "lucide-react";
 
 type VendorStep = {
   key: string;
@@ -98,6 +98,7 @@ export function VendorControlsPanel({
   initialReceivingStatus,
   initialReceivedAt,
 }: VendorControlsPanelProps) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [activeStep, setActiveStep] = useState(initialStep ?? 0);
   const [milestoneToast, setMilestoneToast] = useState<string | null>(null);
   const [selectedMilestoneValue, setSelectedMilestoneValue] = useState("");
@@ -277,8 +278,29 @@ export function VendorControlsPanel({
     }
   }
 
+  const clampedStepIndex = Math.max(0, Math.min(activeStep, VENDOR_STEPS.length - 1));
+
   return (
-    <div className="flex min-w-0 flex-col gap-4">
+    <div className="flex min-w-0 flex-col gap-3">
+
+      {/* Compact summary + toggle — full controls stay collapsed until needed */}
+      <div className="flex items-center justify-between gap-2 rounded-md border border-zinc-100 bg-zinc-50 px-2.5 py-1.5">
+        <span className="text-xs font-semibold text-zinc-600">
+          Stage: {VENDOR_STEPS[clampedStepIndex].label}
+        </span>
+        <button
+          type="button"
+          onClick={() => setDetailsOpen((v) => !v)}
+          aria-expanded={detailsOpen}
+          className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-700 transition hover:border-emerald-800 hover:text-emerald-900"
+        >
+          {detailsOpen ? "Hide details" : "Manage details"}
+          {detailsOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+        </button>
+      </div>
+
+      {detailsOpen ? (
+      <>
 
       {/* Step Progress Tracker — driven by milestone dropdown */}
       <div>
@@ -538,6 +560,9 @@ export function VendorControlsPanel({
           })}
         </div>
       </div>
+
+      </>
+      ) : null}
 
     </div>
   );
