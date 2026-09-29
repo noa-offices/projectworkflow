@@ -8,6 +8,7 @@ import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
 import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { vendorReceivingStatusLabel, type VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 
 export const dynamic = "force-dynamic";
 
@@ -151,9 +152,9 @@ export default async function CompletedProcurementDetailPage({
 
   const { data: vendorProgress } = await supabase
     .from("procurement_vendor_progress")
-    .select("vendor_key, active_step, etd, eta")
+    .select("vendor_key, active_step, etd, eta, supplier_confirmed_at, receiving_status, received_at")
     .eq("order_no", decodedOrderNo)
-    .returns<Array<{ vendor_key: string; active_step: number; etd: string | null; eta: string | null }>>();
+    .returns<Array<{ vendor_key: string; active_step: number; etd: string | null; eta: string | null; supplier_confirmed_at: string | null; receiving_status: VendorReceivingStatus; received_at: string | null }>>();
 
   const vendorProgressMap = new Map(
     (vendorProgress ?? []).map((p) => [p.vendor_key, p]),
@@ -242,6 +243,9 @@ export default async function CompletedProcurementDetailPage({
                 const activeStep = progress?.active_step ?? 0;
                 const etd = progress?.etd ?? "";
                 const eta = progress?.eta ?? "";
+                const supplierConfirmedAt = progress?.supplier_confirmed_at ?? null;
+                const receivingStatus = progress?.receiving_status ?? "pending";
+                const receivedAt = progress?.received_at ?? null;
 
                 const groupTotal = group.items.reduce((sum, item) => {
                   const val =
@@ -370,6 +374,27 @@ export default async function CompletedProcurementDetailPage({
                           </div>
                         </div>
                       ) : null}
+
+                      {/* Supplier confirmation + receiving status — read-only text */}
+                      <div className="mb-4 grid grid-cols-2 gap-3">
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                            Supplier Confirmed
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-zinc-800">
+                            {supplierConfirmedAt ? new Date(supplierConfirmedAt).toLocaleDateString("en-GB") : "Not confirmed"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                            Receiving Status
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-zinc-800">
+                            {vendorReceivingStatusLabel(receivingStatus)}
+                            {receivedAt ? ` — ${new Date(receivedAt).toLocaleDateString("en-GB")}` : ""}
+                          </p>
+                        </div>
+                      </div>
 
                       {/* Vendor documents — view links only, no upload */}
                       <div>

@@ -18,6 +18,7 @@ import { ReopenProjectButton } from "@/components/projects/reopen-project-button
 import { NotifyButton } from "@/components/notifications/notify-button";
 import { ProjectFileResponsiveLayout } from "@/components/projects/project-file-responsive-layout";
 import { ProjectVendorOperations, type ProjectVendorOperationsSummary } from "@/components/projects/project-vendor-operations";
+import type { VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 import { ClientPaymentNoAccess, ClientPaymentPanel } from "@/components/projects/client-payment-panel";
 import { formatPaymentMoney, moneyToFils, type ClientPaymentAttachmentRow, type ClientPaymentInstallmentRow, type ClientPaymentReceiptRow, type ClientPaymentScheduleRow } from "@/lib/projects/client-payment-model";
 
@@ -67,7 +68,10 @@ type QuotationItemRow = {
   line_style: string;
 };
 
-type VendorProgressRow = { vendor_key: string; active_step: number; etd: string | null; eta: string | null };
+type VendorProgressRow = {
+  vendor_key: string; active_step: number; etd: string | null; eta: string | null;
+  supplier_confirmed_at: string | null; receiving_status: VendorReceivingStatus; received_at: string | null;
+};
 type ProcurementVendorDocRow = { id: string; vendor_key: string; slot_key: string; file_name: string; public_url: string };
 
 const PROCUREMENT_STAGE_LABELS = [
@@ -180,7 +184,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
 
   const { data: rawVendorProgress } = await supabase
     .from("procurement_vendor_progress")
-    .select("vendor_key, active_step, etd, eta")
+    .select("vendor_key, active_step, etd, eta, supplier_confirmed_at, receiving_status, received_at")
     .eq("order_no", decodedOrderNo)
     .returns<VendorProgressRow[]>();
 
@@ -297,6 +301,9 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
       activeStep,
       etd: progress?.etd ?? null,
       eta: progress?.eta ?? null,
+      supplierConfirmedAt: progress?.supplier_confirmed_at ?? null,
+      receivingStatus: progress?.receiving_status ?? "pending",
+      receivedAt: progress?.received_at ?? null,
     };
   });
   const activityVendors: ProjectActivityVendor[] = vendorOperations.map((vendor) => ({

@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { createAuditLog } from "@/lib/audit-log";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
+import { isVendorReceivingStatus, nextVendorReceivedAt, type VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 
 export type VendorDocRecord = {
   id: string;
@@ -230,6 +231,152 @@ export async function saveVendorProgress(
       title: "Vendor progress updated",
       description: `Procurement progress updated for ${orderNo}.`,
       metadata: { orderNo, vendorKey, changes },
+      createdBy: user.id,
+    });
+  }
+
+  return { ok: true };
+}
+
+export type VendorProgressExtraRecord = VendorProgressRecord & {
+  supplier_confirmed_at: string | null;
+  supplier_confirmed_by: string | null;
+  receiving_status: VendorReceivingStatus;
+  received_at: string | null;
+};
+
+// Task 1 Part 1: explicit supplier confirmation, deliberately independent of active_step - a PO
+// can be "issued" (step 1) with the supplier never having confirmed it. `confirmed: false` clears
+// both fields rather than merely setting a boolean, so a cleared confirmation carries no stale
+// actor/timestamp. Same auth/admin-client/upsert-onConflict pattern as saveVendorProgress above.
+export async function setVendorSupplierConfirmation(
+  orderNo: string,
+  vendorKey: string,
+  confirmed: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { user, profile } = await requireActiveUser();
+
+  if (!canProcureRole(profile?.role)) {
+    return { ok: false, error: "Forbidden." };
+  }
+
+  const adminResult = createAdminClient();
+  if (adminResult.error || !adminResult.client) {
+    return { ok: false, error: adminResult.error ?? "Admin client unavailable" };
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const supabase = adminResult.client as any;
+
+  const { data: previous } = await supabase
+    .from("procurement_vendor_progress")
+    .select("supplier_confirmed_at")
+    .eq("order_no", orderNo)
+    .eq("vendor_key", vendorKey)
+    .maybeSingle();
+
+  // Confirming again preserves the original timestamp instead of resetting it on every save.
+  const nextConfirmedAt = confirmed ? ((previous?.supplier_confirmed_at as string | null) ?? new Date().toISOString()) : null;
+  const nextConfirmedBy = confirmed ? user.id : null;
+
+  const { error } = await supabase
+    .from("procurement_vendor_progress")
+    .upsert(
+      {
+        order_no: orderNo,
+        vendor_key: vendorKey,
+        supplier_confirmed_at: nextConfirmedAt,
+        supplier_confirmed_by: nextConfirmedBy,
+        updated_at: new Date().toISOString(),
+        updated_by: user.id,
+      },
+      { onConflict: "order_no,vendor_key" },
+    );
+
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  if ((previous?.supplier_confirmed_at ?? null) !== nextConfirmedAt) {
+    const auditClient = await createSupabaseClient();
+    await createAuditLog(auditClient, {
+      entityType: "procurement_vendor",
+      entityId: null,
+      parentEntityType: "confirmed_order",
+      parentEntityId: null,
+      action: "vendor_supplier_confirmation_updated",
+      title: confirmed ? "Supplier confirmed" : "Supplier confirmation cleared",
+      description: `Supplier confirmation ${confirmed ? "recorded" : "cleared"} for ${orderNo}.`,
+      metadata: { orderNo, vendorKey, confirmed },
+      createdBy: user.id,
+    });
+  }
+
+  return { ok: true };
+}
+
+// Task 1 Part 2: simple vendor-group receiving status. received_at is derived deterministically
+// via nextVendorReceivedAt() - never set/cleared ad hoc here - so moving away from "received"
+// can never leave a stale timestamp, matching the DB CHECK constraint added in migration 112.
+export async function setVendorReceivingStatus(
+  orderNo: string,
+  vendorKey: string,
+  status: VendorReceivingStatus,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { user, profile } = await requireActiveUser();
+
+  if (!canProcureRole(profile?.role)) {
+    return { ok: false, error: "Forbidden." };
+  }
+  if (!isVendorReceivingStatus(status)) {
+    return { ok: false, error: "Invalid receiving status." };
+  }
+
+  const adminResult = createAdminClient();
+  if (adminResult.error || !adminResult.client) {
+    return { ok: false, error: adminResult.error ?? "Admin client unavailable" };
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const supabase = adminResult.client as any;
+
+  const { data: previous } = await supabase
+    .from("procurement_vendor_progress")
+    .select("receiving_status,received_at")
+    .eq("order_no", orderNo)
+    .eq("vendor_key", vendorKey)
+    .maybeSingle();
+
+  const nextReceivedAtValue = nextVendorReceivedAt(status, (previous?.received_at as string | null) ?? null);
+
+  const { error } = await supabase
+    .from("procurement_vendor_progress")
+    .upsert(
+      {
+        order_no: orderNo,
+        vendor_key: vendorKey,
+        receiving_status: status,
+        received_at: nextReceivedAtValue,
+        updated_at: new Date().toISOString(),
+        updated_by: user.id,
+      },
+      { onConflict: "order_no,vendor_key" },
+    );
+
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  const previousStatus = (previous?.receiving_status as VendorReceivingStatus | null) ?? "pending";
+  if (previousStatus !== status) {
+    const auditClient = await createSupabaseClient();
+    await createAuditLog(auditClient, {
+      entityType: "procurement_vendor",
+      entityId: null,
+      parentEntityType: "confirmed_order",
+      parentEntityId: null,
+      action: "vendor_receiving_status_updated",
+      title: "Receiving status updated",
+      description: `Receiving status set to ${status} for ${orderNo}.`,
+      metadata: { orderNo, vendorKey, previousStatus, status },
       createdBy: user.id,
     });
   }

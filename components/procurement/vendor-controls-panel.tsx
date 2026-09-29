@@ -7,8 +7,11 @@ import {
   saveVendorDocUrl,
   deleteVendorDocById,
   saveVendorProgress,
+  setVendorSupplierConfirmation,
+  setVendorReceivingStatus,
   type VendorDocRecord,
 } from "@/lib/procurement/vendor-docs-action";
+import { RECEIVING_STATUSES, vendorReceivingStatusLabel, type VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 import { createClient as createBrowserClient } from "@/lib/supabase/client";
 import { Check, FileText as FileIcon } from "lucide-react";
 
@@ -77,6 +80,9 @@ type VendorControlsPanelProps = {
   initialStep?: number;
   initialEtd?: string;
   initialEta?: string;
+  initialSupplierConfirmedAt?: string | null;
+  initialReceivingStatus?: VendorReceivingStatus;
+  initialReceivedAt?: string | null;
 };
 
 export function VendorControlsPanel({
@@ -88,6 +94,9 @@ export function VendorControlsPanel({
   initialStep,
   initialEtd,
   initialEta,
+  initialSupplierConfirmedAt,
+  initialReceivingStatus,
+  initialReceivedAt,
 }: VendorControlsPanelProps) {
   const [activeStep, setActiveStep] = useState(initialStep ?? 0);
   const [milestoneToast, setMilestoneToast] = useState<string | null>(null);
@@ -98,6 +107,13 @@ export function VendorControlsPanel({
   const [eta, setEta] = useState(initialEta ?? "");
   const [isSavingProgress, setIsSavingProgress] = useState(false);
   const [dateSavedToast, setDateSavedToast] = useState(false);
+  const [supplierConfirmedAt, setSupplierConfirmedAt] = useState<string | null>(initialSupplierConfirmedAt ?? null);
+  const [isSavingConfirmation, setIsSavingConfirmation] = useState(false);
+  const [confirmationError, setConfirmationError] = useState<string | null>(null);
+  const [receivingStatus, setReceivingStatus] = useState<VendorReceivingStatus>(initialReceivingStatus ?? "pending");
+  const [receivedAt, setReceivedAt] = useState<string | null>(initialReceivedAt ?? null);
+  const [isSavingReceiving, setIsSavingReceiving] = useState(false);
+  const [receivingError, setReceivingError] = useState<string | null>(null);
   const [attachedFiles, setAttachedFiles] = useState<Record<string, AttachedFile[]>>(() => {
     const result: Record<string, AttachedFile[]> = {};
     for (const doc of initialDocs ?? []) {
@@ -226,6 +242,38 @@ export function VendorControlsPanel({
       setTimeout(() => setDateSavedToast(false), 2000);
     } finally {
       setIsSavingProgress(false);
+    }
+  }
+
+  async function handleToggleConfirmation() {
+    const confirming = !supplierConfirmedAt;
+    setIsSavingConfirmation(true);
+    setConfirmationError(null);
+    try {
+      const result = await setVendorSupplierConfirmation(orderNo, vendorKey, confirming);
+      if (!result.ok) {
+        setConfirmationError(result.error);
+        return;
+      }
+      setSupplierConfirmedAt(confirming ? (supplierConfirmedAt ?? new Date().toISOString()) : null);
+    } finally {
+      setIsSavingConfirmation(false);
+    }
+  }
+
+  async function handleReceivingStatusChange(nextStatus: VendorReceivingStatus) {
+    setIsSavingReceiving(true);
+    setReceivingError(null);
+    try {
+      const result = await setVendorReceivingStatus(orderNo, vendorKey, nextStatus);
+      if (!result.ok) {
+        setReceivingError(result.error);
+        return;
+      }
+      setReceivingStatus(nextStatus);
+      setReceivedAt(nextStatus === "received" ? (receivedAt ?? new Date().toISOString()) : null);
+    } finally {
+      setIsSavingReceiving(false);
     }
   }
 
@@ -365,6 +413,56 @@ export function VendorControlsPanel({
           Transit window: {formatDateDisplay(etd)} → {formatDateDisplay(eta)}
         </p>
       ) : null}
+
+      {/* Supplier confirmation — independent of the step tracker above */}
+      <div>
+        <p className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
+          Supplier Confirmation
+        </p>
+        <div className="flex items-center gap-2">
+          <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+            supplierConfirmedAt ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-zinc-200 bg-zinc-50 text-zinc-500"
+          }`}>
+            {supplierConfirmedAt ? `Confirmed ${formatDateDisplay(supplierConfirmedAt.slice(0, 10))}` : "Not confirmed"}
+          </span>
+          <button
+            type="button"
+            disabled={isSavingConfirmation}
+            onClick={handleToggleConfirmation}
+            className="h-8 rounded-md border border-zinc-200 bg-white px-2.5 text-[11px] font-semibold text-zinc-700 transition hover:border-emerald-800 hover:text-emerald-900 disabled:opacity-50"
+          >
+            {isSavingConfirmation ? "Saving…" : supplierConfirmedAt ? "Clear confirmation" : "Mark confirmed"}
+          </button>
+        </div>
+        {confirmationError ? (
+          <p className="mt-1 text-[11px] font-medium text-red-600">{confirmationError}</p>
+        ) : null}
+      </div>
+
+      {/* Receiving status — simple vendor-group grain, never per-line quantity */}
+      <div>
+        <p className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
+          Receiving Status
+        </p>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <select
+            value={receivingStatus}
+            disabled={isSavingReceiving}
+            onChange={(e) => handleReceivingStatusChange(e.target.value as VendorReceivingStatus)}
+            className="h-10 rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-800 outline-none transition focus:border-emerald-800 focus:ring-1 focus:ring-emerald-900/10 xl:h-8"
+          >
+            {RECEIVING_STATUSES.map((status) => (
+              <option key={status} value={status}>{vendorReceivingStatusLabel(status)}</option>
+            ))}
+          </select>
+          {receivedAt ? (
+            <span className="text-[11px] font-medium text-emerald-700">Received {formatDateDisplay(receivedAt.slice(0, 10))}</span>
+          ) : null}
+        </div>
+        {receivingError ? (
+          <p className="mt-1 text-[11px] font-medium text-red-600">{receivingError}</p>
+        ) : null}
+      </div>
 
       {/* Vendor Document Slots */}
       <div>

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { vendorReceivingStatusLabel, type VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 
 export type ProjectVendorOperationsSummary = {
   vendorKey: string;
@@ -12,6 +13,9 @@ export type ProjectVendorOperationsSummary = {
   activeStep: number;
   etd: string | null;
   eta: string | null;
+  supplierConfirmedAt: string | null;
+  receivingStatus: VendorReceivingStatus;
+  receivedAt: string | null;
 };
 
 function formatDate(value: string) {
@@ -66,6 +70,9 @@ export function ProjectVendorOperations({
               ["Progress", `Stage ${selectedVendor.activeStep + 1} of 8`],
               ["Planned ETD", selectedVendor.etd ? formatDate(selectedVendor.etd) : "Not recorded"],
               ["Planned ETA", selectedVendor.eta ? formatDate(selectedVendor.eta) : "Not recorded"],
+              ["Supplier confirmed", selectedVendor.supplierConfirmedAt ? formatDate(selectedVendor.supplierConfirmedAt) : "Not confirmed"],
+              ["Receiving status", vendorReceivingStatusLabel(selectedVendor.receivingStatus)],
+              ["Received on", selectedVendor.receivedAt ? formatDate(selectedVendor.receivedAt) : "Not recorded"],
               ["Delay / risk", "Not recorded in current procurement data"],
             ].map(([label, value]) => (
               <div key={label} className="grid min-w-0 grid-cols-[96px_minmax(0,1fr)] gap-2 border-b border-zinc-100 pb-2">

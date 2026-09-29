@@ -9,6 +9,7 @@ import { formatQuotationMoney } from "@/lib/quotation-pricing";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { type VendorCardItem, type VendorCardProps } from "@/components/procurement/vendor-card";
 import { type VendorDocRecord } from "@/lib/procurement/vendor-docs-action";
+import type { VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 import { NotifyButton } from "@/components/notifications/notify-button";
 import { ProcurementOrderResponsiveLayout } from "@/components/procurement/procurement-order-responsive-layout";
 
@@ -145,9 +146,9 @@ export default async function ProcurementWorkspacePage({
 
   const { data: vendorProgress } = await supabase
     .from("procurement_vendor_progress")
-    .select("vendor_key, active_step, etd, eta")
+    .select("vendor_key, active_step, etd, eta, supplier_confirmed_at, receiving_status, received_at")
     .eq("order_no", decodedOrderNo)
-    .returns<Array<{ vendor_key: string; active_step: number; etd: string | null; eta: string | null }>>();
+    .returns<Array<{ vendor_key: string; active_step: number; etd: string | null; eta: string | null; supplier_confirmed_at: string | null; receiving_status: VendorReceivingStatus; received_at: string | null }>>();
 
   const vendorProgressMap = new Map(
     (vendorProgress ?? []).map((p) => [p.vendor_key, p]),
@@ -192,6 +193,9 @@ export default async function ProcurementWorkspacePage({
       initialStep: vendorProgressMap.get(group.dedupeKey)?.active_step ?? 0,
       initialEtd: vendorProgressMap.get(group.dedupeKey)?.etd ?? "",
       initialEta: vendorProgressMap.get(group.dedupeKey)?.eta ?? "",
+      initialSupplierConfirmedAt: vendorProgressMap.get(group.dedupeKey)?.supplier_confirmed_at ?? null,
+      initialReceivingStatus: vendorProgressMap.get(group.dedupeKey)?.receiving_status ?? "pending",
+      initialReceivedAt: vendorProgressMap.get(group.dedupeKey)?.received_at ?? null,
     };
   });
 

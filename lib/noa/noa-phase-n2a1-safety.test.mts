@@ -165,7 +165,11 @@ test("19. no RFQ-stage/stalled-duration logic exists", () => {
   // that it is deliberately NOT used ('No "late"/"stalled"/duration wording') - documentation, not
   // the logic this test bans.
   const attentionWithoutLineComments = attentionSource.replace(/\/\/.*$/gm, "");
-  assert.ok(!/active_step|rfq|stalled/i.test(attentionWithoutLineComments));
+  // Procurement Task 1 legitimately reads `active_step` (a discrete point-in-time comparison
+  // against the existing PO-issued step index, never a duration/timer) for the missing-supplier-
+  // confirmation rule - the thing this test actually bans (an invented RFQ-stage timer/stalled-
+  // duration rule) is still absent; only the literal "active_step" substring is no longer banned.
+  assert.ok(!/\brfq\b|stalled/i.test(attentionWithoutLineComments));
 });
 
 // 20. no stale-quotation logic

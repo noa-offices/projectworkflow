@@ -30,10 +30,10 @@ test("2/3/4. the deterministicText bullet line for procurement findings (ETA and
   assert.ok(attentionSource.includes('const attentionBulletText = (item: NoaAttentionItem) => item.sourceDomain === "Procurement" && item.detail'));
   assert.ok(attentionSource.includes("`${item.detail} · ${item.title}`"));
   assert.ok(attentionSource.includes("...items.map((item) => `• ${attentionBulletText(item)}.`),"));
-  // ETA, ETD (procurement) and the overdue-payment finding all still carry entityIdentifier:
-  // order.orderNo (unchanged from N2A1/N2A2) - it's just no longer what the Procurement bullet
-  // prefix itself reads from (that's `detail` now).
-  assert.equal((attentionSource.match(/entityIdentifier: order\.orderNo,/g) ?? []).length, 3);
+  // ETA, ETD, the overdue-payment finding, and (Procurement Task 1) missing-supplier-confirmation
+  // all carry entityIdentifier: order.orderNo (unchanged from N2A1/N2A2) - it's just no longer
+  // what the Procurement bullet prefix itself reads from (that's `detail` now).
+  assert.equal((attentionSource.match(/entityIdentifier: order\.orderNo,/g) ?? []).length, 4);
 });
 
 // 5. Product Price wording unchanged

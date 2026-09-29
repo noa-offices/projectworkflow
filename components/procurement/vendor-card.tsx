@@ -6,6 +6,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { VendorControlsPanel } from "./vendor-controls-panel";
 import { generatePoAction } from "@/lib/procurement/generate-po-action";
 import type { VendorDocRecord } from "@/lib/procurement/vendor-docs-action";
+import type { VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 
 export type VendorCardItem = {
   id: string;
@@ -33,6 +34,9 @@ export type VendorCardProps = {
   initialStep?: number;
   initialEtd?: string;
   initialEta?: string;
+  initialSupplierConfirmedAt?: string | null;
+  initialReceivingStatus?: VendorReceivingStatus;
+  initialReceivedAt?: string | null;
 };
 
 export function VendorCard({
@@ -50,6 +54,9 @@ export function VendorCard({
   initialStep,
   initialEtd,
   initialEta,
+  initialSupplierConfirmedAt,
+  initialReceivingStatus,
+  initialReceivedAt,
 }: VendorCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [poNumber, setPoNumber] = useState<string | null>(initialPoNumber ?? null);
@@ -242,6 +249,9 @@ export function VendorCard({
               initialStep={initialStep}
               initialEtd={initialEtd}
               initialEta={initialEta}
+              initialSupplierConfirmedAt={initialSupplierConfirmedAt}
+              initialReceivingStatus={initialReceivingStatus}
+              initialReceivedAt={initialReceivedAt}
             />
           </div>
 
@@ -258,6 +268,9 @@ export function VendorCard({
               initialStep={initialStep}
               initialEtd={initialEtd}
               initialEta={initialEta}
+              initialSupplierConfirmedAt={initialSupplierConfirmedAt}
+              initialReceivingStatus={initialReceivingStatus}
+              initialReceivedAt={initialReceivedAt}
             />
         </div>
       )}

@@ -33,3 +33,34 @@ const DOC_SLOT_LABELS: Readonly<Record<string, string>> = {
 export function vendorDocSlotLabel(slotKey: string): string {
   return DOC_SLOT_LABELS[slotKey] ?? slotKey;
 }
+
+// Task 1: simple vendor-group-level receiving status - never per-line/per-quantity. Closed set,
+// same "safe enum, no invented values" convention as VENDOR_STEP_LABELS above.
+export const RECEIVING_STATUSES = ["pending", "partial", "received"] as const;
+export type VendorReceivingStatus = typeof RECEIVING_STATUSES[number];
+
+export function isVendorReceivingStatus(value: string): value is VendorReceivingStatus {
+  return (RECEIVING_STATUSES as readonly string[]).includes(value);
+}
+
+const RECEIVING_STATUS_LABELS: Readonly<Record<VendorReceivingStatus, string>> = {
+  pending: "Pending",
+  partial: "Partially Received",
+  received: "Received",
+};
+
+export function vendorReceivingStatusLabel(status: VendorReceivingStatus): string {
+  return RECEIVING_STATUS_LABELS[status];
+}
+
+// The one deterministic received_at rule (Task 1 Part 5): a timestamp exists only while status
+// is "received" - moving to "partial"/"pending" always clears it (never a stale leftover), and
+// re-saving "received" preserves the original timestamp instead of resetting the clock each time.
+export function nextVendorReceivedAt(
+  status: VendorReceivingStatus,
+  previousReceivedAt: string | null,
+  now: () => string = () => new Date().toISOString(),
+): string | null {
+  if (status !== "received") return null;
+  return previousReceivedAt ?? now();
+}
