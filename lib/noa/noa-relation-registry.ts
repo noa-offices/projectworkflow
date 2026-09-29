@@ -5,7 +5,7 @@ import type { NoaConversationState } from "./noa-conversation-state";
 // one relation exists today (quotation -> project_file, matching the NoaResultRelation contract
 // noa-result-set.ts already reserved in Phase 1A). No NL message may invoke this yet (PART 12) -
 // only Phase 2's Semantic Planner becomes a conversational consumer.
-export type NoaRelationId = "quotation.project_file";
+export type NoaRelationId = "quotation.project_file" | "client.project_file" | "client.quotation";
 
 export type NoaRelationDefinition = {
   id: NoaRelationId;
@@ -18,6 +18,8 @@ export type NoaRelationDefinition = {
 };
 
 export const NOA_RELATIONS: Readonly<Record<NoaRelationId, NoaRelationDefinition>> = {
+  "client.project_file": { id: "client.project_file", sourceType: "client", targetType: "project_file", allowedSourceKinds: ["entity", "list"] },
+  "client.quotation": { id: "client.quotation", sourceType: "client", targetType: "quotation", allowedSourceKinds: ["entity", "list"] },
   "quotation.project_file": {
     id: "quotation.project_file",
     sourceType: "quotation",

@@ -9,7 +9,7 @@ import { createClient } from "@/lib/supabase/server";
 import { loadOrCreateNoaSession, saveNoaSession } from "@/lib/noa/noa-session.server";
 import { runNoaShadowTurn } from "@/lib/noa/noa-shadow-turn";
 import { lookupNoaQuotationsByContext } from "@/lib/noa/noa-quotation-capability.server";
-import { describeNoaProjectTotal, describeNoaQuotations, describeNoaRelatedProjectFiles, requestNoaSemanticPlan } from "@/lib/noa/noa-semantic-planner.server";
+import { describeNoaClients, lookupNoaClients, describeNoaProjectTotal, describeNoaQuotations, describeNoaRelatedProjectFiles, requestNoaSemanticPlan } from "@/lib/noa/noa-semantic-planner.server";
 import { drillDownNoaAggregate, resolveNoaRelation } from "@/lib/noa/noa-relation.server";
 import { noaSessionId } from "@/lib/noa/noa-turn-state";
 import { isNoaRouteDiagnosticsEnabled } from "@/lib/noa/noa-intent-router";
@@ -123,6 +123,7 @@ export async function POST(request: Request) {
     const answer = await runNoaShadowTurn({ ...chatRequest, sessionId }, {
       load: loadOrCreateNoaSession, save: saveNoaSession, run: runNoaOrchestrator,
       planner: {
+        lookupClients: lookupNoaClients, describeClients: describeNoaClients,
         projectFact: describeNoaProjectTotal, lookupQuotations: lookupNoaQuotationsByContext,
         plan: requestNoaSemanticPlan, relate: resolveNoaRelation, drillDown: drillDownNoaAggregate,
         describeProjectFiles: describeNoaRelatedProjectFiles, describeQuotations: describeNoaQuotations,

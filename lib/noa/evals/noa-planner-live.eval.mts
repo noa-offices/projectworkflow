@@ -53,10 +53,10 @@ const stack = (...sets: NoaResultSet[]) => sets.reduce(appendNoaResultSet, creat
 
 type Expected =
   | { outcome: "plan"; kind: "project_fact"; source: string }
-  | { outcome: "plan"; kind: "quotation_lookup"; lookupText: string }
+  | { outcome: "plan"; kind: "quotation_lookup" | "client_lookup"; lookupText: string | null }
   | { outcome: "skipped" }
   | { outcome: "plan"; kind: "passthrough" | "clarify" }
-  | { outcome: "plan"; kind: "select" | "relation"; source: string; itemIndex: number | null };
+  | { outcome: "plan"; kind: "select" | "relation"; source: string; itemIndex: number | null; relation?: "client.project_file" | "client.quotation" };
 type EvalCase = { id: string; group: string; message: string; state: NoaConversationState; labels: Map<string, string>; expected: Expected };
 
 function evalCase(id: string, group: string, message: string, sets: Record<string, NoaResultSet>, focus: string, expected: Expected): EvalCase {
@@ -65,11 +65,23 @@ function evalCase(id: string, group: string, message: string, sets: Record<strin
   return { id, group, message, state, expected, labels: new Map(Object.entries(sets).map(([label, set]) => [set.handle, label])) };
 }
 function buildCases(): EvalCase[] {
+  const clients = (): NoaResultSet => ({ handle: createNoaResultSetHandle(), createdAt: T, kind: "list", entityType: "client", count: 2, items: [{ id: uuid(20) }, { id: uuid(21) }] });
   const d = () => ({ aggregate: aggregate(), confirmed: quotations("client_confirmed", [4, 5]) });
   const g = () => ({ aggregate: aggregate(), confirmed: quotations("client_confirmed", [4, 5]), projects: projects() });
   const relation = (source: string) => ({ outcome: "plan", kind: "relation", source, itemIndex: null }) as const;
   const select = (source: string, itemIndex: number | null) => ({ outcome: "plan", kind: "select", source, itemIndex }) as const;
   return [
+    evalCase("C1", "Client lookup unique fixture", "Show Apex Luxury Retail.", {}, "", { outcome: "plan", kind: "client_lookup", lookupText: "Apex Luxury Retail" }),
+    evalCase("C2", "Client lookup ambiguous fixture", "Find Apex.", {}, "", { outcome: "plan", kind: "client_lookup", lookupText: "Apex" }),
+    evalCase("C3", "Client list", "List the clients.", {}, "", { outcome: "plan", kind: "client_lookup", lookupText: null }),
+    evalCase("C4", "Client focused", "List them.", { clients: clients() }, "clients", select("clients", null)),
+    evalCase("C5", "Client ordinal", "Tell me about the second one.", { clients: clients() }, "clients", select("clients", 1)),
+    evalCase("C6", "Client older", "Go back to the clients.", { clients: clients(), projects: projects() }, "projects", select("clients", null)),
+    evalCase("C7", "Client Projects", "What projects do they have?", { clients: clients() }, "clients", { outcome: "plan", kind: "relation", source: "clients", itemIndex: null, relation: "client.project_file" }),
+    evalCase("C8", "Client quotations", "What quotations are for this client?", { clients: clients() }, "clients", { outcome: "plan", kind: "relation", source: "clients", itemIndex: null, relation: "client.quotation" }),
+    evalCase("C9", "Client unrelated", "Show me products", { clients: clients() }, "clients", { outcome: "plan", kind: "passthrough" }),
+    evalCase("C10", "Client exact QN", "Show QN-0003", { clients: clients() }, "clients", { outcome: "skipped" }),
+    evalCase("C11", "Client exact CO", "Show CO-0003-001", { clients: clients() }, "clients", { outcome: "skipped" }),
     evalCase("P4A1", "Project total", "What is the total value of this project?", { project: projectEntity() }, "project", { outcome: "plan", kind: "project_fact", source: "project" }),
     evalCase("P4A2", "Project no context", "What is the total value of this project?", {}, "", { outcome: "plan", kind: "project_fact", source: "-" }),
     evalCase("P4A3", "Project older total", "What is the total value of this project?", { project: projectEntity(), quotations: quotations("draft", [2, 3]) }, "quotations", { outcome: "plan", kind: "project_fact", source: "project" }),
@@ -126,10 +138,10 @@ function oracle(cases: EvalCase[]) {
       ? [...match!.labels].find(([, label]) => label === e.source)?.[0] ?? null : null;
     const kind = e?.outcome === "plan" ? e.kind : "passthrough";
     const itemIndex = e?.outcome === "plan" && (e.kind === "select" || e.kind === "relation") ? e.itemIndex : null;
-    return { text: JSON.stringify({ kind, sourceResultSetHandle: handle, relation: kind === "relation" ? "quotation.project_file" : null,
+    return { text: JSON.stringify({ kind, sourceResultSetHandle: handle, relation: e?.outcome === "plan" && e.kind === "relation" ? e.relation ?? "quotation.project_file" : null,
       status: null, ordinal: itemIndex === null ? null : itemIndex + 1,
       fact: kind === "project_fact" ? "total_value" : null,
-      lookupText: e?.outcome === "plan" && e.kind === "quotation_lookup" ? e.lookupText : null }) };
+      lookupText: e?.outcome === "plan" && (e.kind === "quotation_lookup" || e.kind === "client_lookup") ? e.lookupText : null }) };
   };
 }
 
@@ -148,7 +160,8 @@ async function runOnce(c: EvalCase, requestPlan: (input: NoaPlannerInput) => Pro
   const detail = `${plan.kind}:${source}${itemIndex === null ? "" : `#${itemIndex}`}`;
   const e = c.expected;
   const match = e.kind === plan.kind && ("source" in e ? source === e.source && (!("itemIndex" in e) || itemIndex === e.itemIndex) : true)
-    && (e.kind !== "quotation_lookup" || (plan.kind === "quotation_lookup" && plan.lookupText === e.lookupText));
+    && (!("lookupText" in e) || ("lookupText" in plan && plan.lookupText === e.lookupText))
+    && (e.kind !== "relation" || (plan.kind === "relation" && plan.relation === (e.relation ?? "quotation.project_file")));
   if (match) return { outcome: "expected", detail };
   return { outcome: plan.kind === "clarify" ? "clarify_unexpected" : "valid_other", detail };
 }

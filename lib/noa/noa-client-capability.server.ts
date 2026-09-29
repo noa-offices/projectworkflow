@@ -44,8 +44,9 @@ type ClientProjectRow = {
   project_status: string | null;
 };
 
+const CLIENT_ACCESS_MESSAGE = "I couldn't access client records for this account.";
 const UNAUTHORIZED_RESULT: NoaCapabilityResult = {
-  message: "I couldn't access client records for this account.",
+  message: CLIENT_ACCESS_MESSAGE,
   ok: false,
   reason: "unauthorized",
 };
@@ -111,6 +112,55 @@ function safeClientRow(client: ClientRow) {
     id: client.id,
     name: client.company_name,
   };
+}
+
+// Phase 5: structured read operations, independent of legacy phrase classification. IDs are
+// hints only. Every call re-authorizes and re-fetches through the authenticated RLS client.
+export async function readNoaClients(request: { ids: string[] } | { lookupText: string | null }): Promise<{
+  rows: ReturnType<typeof safeClientRow>[]; message?: string;
+}> {
+  try { await requireActiveUser(); }
+  catch (error) {
+    if (isNextRedirectError(error)) return { rows: [], message: CLIENT_ACCESS_MESSAGE };
+    throw error;
+  }
+  const supabase = await createClient();
+  if ("ids" in request) {
+    if (!request.ids.length || request.ids.length > 50 || request.ids.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) {
+      return { rows: [], message: "Please select a client again." };
+    }
+    const { data, error } = await supabase.from("clients").select(CLIENT_SELECT).in("id", request.ids).returns<ClientRow[]>();
+    if (error) throw error;
+    const byId = new Map((data ?? []).map((row) => [row.id, row]));
+    return { rows: request.ids.flatMap((id) => { const row = byId.get(id); return row ? [safeClientRow(row)] : []; }) };
+  }
+  if (request.lookupText === null) {
+    const { data, error } = await supabase.from("clients").select(CLIENT_SELECT).eq("is_active", true)
+      .order("company_name", { ascending: true }).order("id", { ascending: true }).limit(MAX_CLIENT_ROWS).returns<ClientRow[]>();
+    if (error) throw error;
+    return { rows: (data ?? []).map(safeClientRow) };
+  }
+  const normalize = (value: string) => value.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
+  const target = normalize(request.lookupText);
+  if (target.length < 2 || target.length > 120) return { rows: [], message: "Please provide a more specific client name or reference." };
+  // Search each supported field independently with escaped literals, never an interpolated OR
+  // expression. Preserve all plausible matches across fields instead of ranking one as truth.
+  const pattern = `%${target.replace(/[\\%_]/g, "\\$&")}%`;
+  const results = await Promise.all(["company_name", "client_number", "client_code"].map((field) =>
+    supabase.from("clients").select(CLIENT_SELECT).ilike(field, pattern)
+      .order("company_name", { ascending: true }).order("id", { ascending: true }).limit(MAX_CLIENT_ROWS + 1).returns<ClientRow[]>()));
+  const matches = new Map<string, ClientRow>();
+  for (const result of results) {
+    if (result.error) throw result.error;
+    if ((result.data?.length ?? 0) > MAX_CLIENT_ROWS) return { rows: [], message: "More than twenty clients match. Please provide a more specific name or reference." };
+    for (const row of result.data ?? []) matches.set(row.id, row);
+  }
+  if (matches.size > MAX_CLIENT_ROWS) return { rows: [], message: "More than twenty clients match. Please provide a more specific name or reference." };
+  const ordered = [...matches.values()].sort((a, b) => {
+    const left = normalize(a.company_name), right = normalize(b.company_name);
+    return left < right ? -1 : left > right ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  return { rows: ordered.map(safeClientRow) };
 }
 
 function safeClientProjectRow(project: ClientProjectRow) {

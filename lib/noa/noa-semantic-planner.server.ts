@@ -1,4 +1,5 @@
 import "server-only";
+import { readNoaClients } from "./noa-client-capability.server";
 
 import { requireQuotationActionUser } from "@/lib/auth";
 import { runAiProvider } from "@/lib/ai/provider-router.server";
@@ -20,6 +21,8 @@ const PLANNER_TIMEOUT_MS = 4_000;
 
 const PLANNER_INSTRUCTIONS = `You plan one ProjectWorkflow chat turn against the user's earlier result sets. You never answer, compute facts, or decide access.
 Choose exactly one kind:
+- "client_lookup": list active clients (lookupText null), or find a client by a complete name/number/code copied verbatim from the CURRENT message (lookupText 2-120 characters). For example "Show Apex Luxury Retail", "Find Apex Luxury Retail", "Show the client Apex Luxury Retail", or "Tell me about TechCorp Solutions". Never invent a name, shorten it to a coincidental word, or search contact details. All other fields are null. Requests for existing Client results use select, not lookup. Unsupported Client analytics/counts/writes pass through.
+- Client entity/list references use exactly the same select/ordinal/older-scope precedence as quotations and Project Files. "What projects do they have?" from Client scope uses client.project_file; "What quotations are for this client?" uses client.quotation. Choose the SOURCE Client handle (focused if compatible, otherwise most recent compatible older Client); the requested target type is not the source scope. Never substitute a generic Project/Quotation list query.
 - "project_fact": a contextual Project File total-value question. Set fact to "total_value". Use the focused Project File ENTITY, or the most recent compatible older Project File entity when the user explicitly names Project scope. Never use a quotation's value or a list. If no safe entity exists, use a null handle to ask which Project. For an unqualified "its value", do not bind an older differently-typed scope.
 - "quotation_lookup": find quotations by a business name/context explicitly supplied in the CURRENT message, even without earlier results. Copy only the complete business name verbatim into lookupText (2-120 characters); never shorten it to a coincidental word, invent a name, or choose a record. All other fields are null. For example, "Can you check Galleria Mall quotation?", "Show the Galleria Mall quotation.", "Find the quotation for Galleria Mall.", and "Which quotation is for Galleria Mall?" all supply lookupText "Galleria Mall". A reference to earlier quotations without a new business name uses select instead.
 - "select": the user refers back to an earlier entity/list result set itself ("list them", "show those again", "go back to the quotations", "go back to the projects") or to one displayed item of it ("the second one"). Quotation and Project File result sets are handled identically.
@@ -209,4 +212,20 @@ export async function describeNoaProjectTotal(orderNo: string, context: NoaPageC
     ? `This Project File has a total value of ${project.currency} ${(project.total as number).toLocaleString("en-US", { maximumFractionDigits: 2 })}.`
     : "I couldn't retrieve the total value of that Project File. Please select the Project File again.";
   return withNoaSpokenResponse({ domain: "Project", sources: result.ok ? result.sources : [], text });
+}
+export async function lookupNoaClients(lookupText: string | null): Promise<{ ids: string[]; message?: string }> {
+  const result = await readNoaClients({ lookupText });
+  return { ids: result.rows.map((row) => row.id), message: result.message };
+}
+
+export async function describeNoaClients(ids: string[]): Promise<NoaAnswer> {
+  const result = await readNoaClients({ ids });
+  const lines = result.rows.map((row) => {
+    const refs = [...new Set([row.clientNumber, row.clientCode].filter(Boolean))];
+    return `${row.name}${refs.length ? ` (${refs.join(" / ")})` : ""} — ${row.archiveState}`;
+  });
+  const text = result.message ?? (lines.length === 0 ? "I couldn't find those clients."
+    : ids.length === 1 ? `${lines[0]}.`
+    : [`Showing ${lines.length} clients:`, ...lines.map((line) => `- ${line}`)].join("\n"));
+  return withNoaSpokenResponse({ domain: "Client", sources: [{ label: "Checked clients", type: "client_record" }], text });
 }

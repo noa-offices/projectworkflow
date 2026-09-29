@@ -118,7 +118,7 @@ test("Phase 1A: aggregate retains only safe status groups/counts and drill-down 
 
 test("Phase 1A: unsupported kinds, entity types, identifiers, timestamps and counts are rejected", () => {
   for (const override of [
-    { kind: "graph" }, { entityType: "client" }, { handle: "rs_CO-0003-001" }, { handle: "rs_" + "a".repeat(33) },
+    { kind: "graph" }, { entityType: "product" }, { handle: "rs_CO-0003-001" }, { handle: "rs_" + "a".repeat(33) },
     { createdAt: "2026-02-30T08:00:00.000Z" }, { createdAt: "today" },
     { count: -1 }, { count: NaN }, { count: Infinity }, { count: 0.5 }, { count: Number.MAX_SAFE_INTEGER + 1 },
   ]) assert.equal(isNoaResultSet({ ...entity(), ...override }), false);

@@ -11,7 +11,7 @@ import {
 // interprets language into this closed shape; TypeScript validation below decides whether a plan
 // may execute, and deterministic executors (noa-relation.server.ts) re-authorize and re-fetch.
 // No provider name, prompt, database access or business value lives in this file.
-export const NOA_PLANNER_ACTIONS = ["passthrough", "select", "relation", "aggregate_drilldown", "clarify", "project_fact", "quotation_lookup"] as const;
+export const NOA_PLANNER_ACTIONS = ["passthrough", "select", "relation", "aggregate_drilldown", "clarify", "project_fact", "quotation_lookup", "client_lookup"] as const;
 export type NoaPlannerAction = typeof NOA_PLANNER_ACTIONS[number];
 // Phase 2 References: closed 1-based display positions ("the second one") plus "last". The model
 // never sends an item identifier; TypeScript resolves the position against stored display order.
@@ -20,6 +20,7 @@ export const NOA_PLANNER_ORDINALS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, "last"] as c
 export type NoaSemanticPlan =
   | { kind: "project_fact"; sourceResultSetHandle: NoaResultSetHandle | null; fact: "total_value" }
   | { kind: "quotation_lookup"; lookupText: string }
+  | { kind: "client_lookup"; lookupText: string | null }
   | { kind: "passthrough" }
   // Reference-only: re-show an existing entity/list ResultSet, or one displayed item of it.
   | { kind: "select"; sourceResultSetHandle: NoaResultSetHandle; itemIndex: number | null }
@@ -47,7 +48,7 @@ export const NOA_PLANNER_TRACE_SKIPPED: NoaPlannerTrace = {
 // Pilot operations: exactly the registry relations whose source is a quotation, plus quotation
 // aggregate drill-down. Anything else is unsupported for Phase 2 even if registered later.
 export const NOA_PLANNER_PILOT_RELATIONS: readonly NoaRelationId[] = (Object.keys(NOA_RELATIONS) as NoaRelationId[])
-  .filter((id) => NOA_RELATIONS[id].sourceType === "quotation");
+  .filter((id) => NOA_RELATIONS[id].sourceType === "quotation" || NOA_RELATIONS[id].sourceType === "client");
 
 // Structural business identifiers keep their existing deterministic route; never an NL phrase list.
 const EXACT_BUSINESS_IDENTIFIER = /\b(?:CO|QN)-\d{3,}(?:-\d+)*\b/i;
@@ -64,7 +65,7 @@ function hasExactNoaBusinessIdentifier(message: string): boolean {
 // Phase 3A: the CLOSED set of ResultSet entity types the planner may act on - the single opt-in
 // extension point for new domains, never an open "all domains" switch. Project Files join the
 // Phase 2 quotation pilot here; every other domain stays legacy-routed until it explicitly opts in.
-export const NOA_PLANNER_SUPPORTED_ENTITY_TYPES: readonly NoaResultEntityType[] = ["quotation", "project_file"];
+export const NOA_PLANNER_SUPPORTED_ENTITY_TYPES: readonly NoaResultEntityType[] = ["quotation", "project_file", "client"];
 
 // Context-only callers retain the existing gate. With the Phase 4 discovery executor wired,
 // an empty session can also plan a lookup or a no-context fact clarification. Existing social,
@@ -194,7 +195,10 @@ export function validateNoaSemanticPlan(raw: unknown, state: NoaConversationStat
 
   const fact = raw.fact ?? null;
   const lookupText = raw.lookupText ?? null;
-  if (action === "quotation_lookup") {
+  if (action === "quotation_lookup" || action === "client_lookup") {
+    if (action === "client_lookup" && lookupText === null && handle === null && relation === null && status === null && ordinal === null && fact === null) {
+      return { ok: true, plan: { kind: action, lookupText: null }, sourceType: "none" };
+    }
     if (handle !== null || relation !== null || status !== null || ordinal !== null || fact !== null
       || typeof lookupText !== "string" || lookupText.trim().length < 2 || lookupText.length > 120
       || !message.slice(0, 500).toLowerCase().includes(lookupText.toLowerCase())
@@ -252,7 +256,7 @@ export function validateNoaSemanticPlan(raw: unknown, state: NoaConversationStat
 
 // Phase 2 References ambiguity rule: deterministic choices generated from state metadata only
 // (kind/entity type/count, newest first) - never model text and never business names.
-const ENTITY_LABELS: Record<NoaResultEntityType, [string, string]> = { quotation: ["quotation", "quotations"], project_file: ["Project File", "Project Files"] };
+const ENTITY_LABELS: Record<NoaResultEntityType, [string, string]> = { quotation: ["quotation", "quotations"], project_file: ["Project File", "Project Files"], client: ["client", "clients"] };
 export function describeNoaResultSetChoice(result: NoaResultSet): string {
   if (result.kind === "aggregate") return `the ${ENTITY_LABELS[result.entityType][0]} status summary`;
   const [singular, plural] = ENTITY_LABELS[result.entityType];

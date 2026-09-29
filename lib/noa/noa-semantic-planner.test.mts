@@ -613,7 +613,7 @@ const projectListOf = (orders: string[]): NoaResultSet => ({ handle: createNoaRe
 const projectEntity = (orderNo: string): NoaResultSet => ({ handle: createNoaResultSetHandle(), createdAt: T, kind: "entity", entityType: "project_file", count: 1, items: [{ orderNo }] });
 
 test("3A-1/3. supported entity types are closed; a Project-only stack is planner-eligible, an empty stack is not", () => {
-  assert.deepEqual([...NOA_PLANNER_SUPPORTED_ENTITY_TYPES], ["quotation", "project_file"]);
+  assert.deepEqual([...NOA_PLANNER_SUPPORTED_ENTITY_TYPES], ["quotation", "project_file", "client"]);
   assert.equal(shouldRunNoaSemanticPlanner(stateWith(projectList()), { message: "list them" }), true);
   assert.equal(shouldRunNoaSemanticPlanner(stateWith(projectEntity("CO-0003-001")), { message: "tell me about it" }), true);
   assert.equal(shouldRunNoaSemanticPlanner(stateWith(quotationList()), { message: "list them" }), true); // quotation-only unchanged

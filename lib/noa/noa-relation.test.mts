@@ -90,7 +90,7 @@ function quotationAggregate(groups: Array<{ status: "draft" | "sent_to_client" |
 test("1. quotation -> project_file is registered with the closed contract shape", () => {
   const relation = NOA_RELATIONS["quotation.project_file"];
   assert.deepEqual(relation, { id: "quotation.project_file", sourceType: "quotation", targetType: "project_file", allowedSourceKinds: ["entity", "list"] });
-  assert.deepEqual(Object.keys(NOA_RELATIONS), ["quotation.project_file"]); // closed: nothing else registered
+  assert.deepEqual(Object.keys(NOA_RELATIONS).sort(), ["client.project_file", "client.quotation", "quotation.project_file"]); // closed: nothing else registered
 });
 
 test("2. an unsupported relation id is rejected", () => {

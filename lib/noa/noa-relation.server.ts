@@ -77,6 +77,41 @@ export async function resolveNoaRelation(
   const client = await requireNoaRelationClient();
   if (!client.ok) return client;
 
+  if (validated.source.entityType === "client") {
+    // Re-fetch source Clients first. A stored UUID never grants access to its quotations.
+    const { data: sources, error: sourceError } = await client.supabase.from("clients").select("id")
+      .in("id", quotationIds).returns<Array<{ id: string }>>();
+    if (sourceError) return { ok: false, reason: "storage_error" };
+    const authorized = new Set((sources ?? []).map((row) => row.id));
+    const targets: string[] = [];
+    const seen = new Set<string>();
+    let matchedCount = 0;
+    for (const clientId of quotationIds) {
+      if (!authorized.has(clientId)) continue;
+      const { data: quotations, error } = await client.supabase.from("quotations").select("id,layout_settings")
+        .eq("client_id", clientId).order("created_at", { ascending: false }).order("id", { ascending: true })
+        .limit(201).returns<Array<{ id: string; layout_settings: unknown }>>();
+      if (error || (quotations?.length ?? 0) > 200) return { ok: false, reason: "storage_error" };
+      let matched = false;
+      for (const row of quotations ?? []) {
+        const target = relationId === "client.quotation" ? row.id
+          : (projectFileFromLayoutSettings(row.layout_settings) ?? clientApprovalDraftFromLayoutSettings(row.layout_settings)?.confirmedOrder)?.orderNo;
+        if (!target) continue;
+        matched = true;
+        if (!seen.has(target)) { seen.add(target); targets.push(target); }
+      }
+      if (matched) matchedCount++;
+    }
+    // Existing Project/Quotation renderers display at most ten; never store invisible ordinals.
+    const shown = targets.slice(0, 10);
+    const identity = { handle: createNoaResultSetHandle(), createdAt: new Date().toISOString() };
+    const resultSet: NoaResultSet = relationId === "client.project_file" ? buildRelationResultSet("project_file", shown)
+      : shown.length === 1 ? { ...identity, kind: "entity", entityType: "quotation", count: 1, items: [{ id: shown[0] }] }
+      : { ...identity, kind: "list", entityType: "quotation", count: shown.length, items: shown.map((id) => ({ id })) };
+    if (!isNoaResultSet(resultSet)) return { ok: false, reason: "storage_error" };
+    return { ok: true, resultSet, sourceCount: quotationIds.length, matchedCount, resultCount: shown.length };
+  }
+
   const { data, error } = await client.supabase
     .from("quotations")
     .select("id,layout_settings")

@@ -6,7 +6,7 @@ export const MAX_NOA_STATE_JSON_LENGTH = 65536;
 export const NOA_SESSION_IDLE_EXPIRY_MINUTES = 30;
 
 export type NoaResultSetHandle = `rs_${string}`;
-export type NoaResultEntityType = "quotation" | "project_file";
+export type NoaResultEntityType = "quotation" | "project_file" | "client";
 // These are semantic status keys, never SQL. Existing capability calls draft "Pending".
 // A later authorized adapter owns mapping to persisted statuses; no adapter exists in 1A.
 export const NOA_QUOTATION_SCOPE_STATUSES = ["draft", "sent_to_client", "client_confirmed"] as const;
@@ -25,6 +25,7 @@ export type NoaQuerySpec = NoaQuotationQuerySpec | NoaProjectQuerySpec;
 
 type NoaResultSetBase = { handle: NoaResultSetHandle; createdAt: string };
 type NoaEntityItems = {
+  client: { id: string };
   quotation: { id: string }; // authorized quotations.id UUID, never a title or client name
   project_file: { orderNo: string }; // existing CO-... identity, not projects.id or display reference
 };
@@ -36,7 +37,7 @@ type NoaEntityOrListResultSet = {
       count: number; // total matching count; items may contain only the first 50 displayed entries
       // Array position IS display order. Never reorder on reload or treat unstored ordinals as known.
       items: NoaEntityItems[T][];
-      querySpec?: T extends "quotation" ? NoaQuotationQuerySpec & { operation: "status_list" } : NoaProjectQuerySpec;
+      querySpec?: T extends "quotation" ? NoaQuotationQuerySpec & { operation: "status_list" } : T extends "project_file" ? NoaProjectQuerySpec : never;
     }
   )
 }[NoaResultEntityType];
@@ -97,7 +98,7 @@ export function isNoaQuerySpec(value: unknown): value is NoaQuerySpec {
 
 function itemKey(value: unknown, entityType: NoaResultEntityType): string | null {
   if (!isNoaStateRecord(value)) return null;
-  if (entityType === "quotation") {
+  if (entityType === "quotation" || entityType === "client") {
     return hasNoaStateKeys(value, ["id"]) && typeof value.id === "string"
       && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.id) ? value.id.toLowerCase() : null;
   }
@@ -124,7 +125,7 @@ export function isNoaResultSet(value: unknown): value is NoaResultSet {
     }
     return Number.isSafeInteger(count) && count === value.count;
   }
-  if ((value.kind !== "entity" && value.kind !== "list") || (value.entityType !== "quotation" && value.entityType !== "project_file")
+  if ((value.kind !== "entity" && value.kind !== "list") || (value.entityType !== "quotation" && value.entityType !== "project_file" && value.entityType !== "client")
     || !hasNoaStateKeys(value, [...baseKeys, "items"], value.kind === "list" ? ["querySpec"] : [])
     || !Array.isArray(value.items) || value.items.length > MAX_NOA_RESULT_SET_ITEMS || value.count < value.items.length) return false;
   if (value.kind === "entity" && (value.count !== 1 || value.items.length !== 1)) return false;
@@ -132,6 +133,7 @@ export function isNoaResultSet(value: unknown): value is NoaResultSet {
   const keys = Array.from(value.items, (item) => itemKey(item, value.entityType as NoaResultEntityType));
   if (keys.includes(null) || new Set(keys).size !== keys.length) return false;
   if (Object.hasOwn(value, "querySpec")) {
+    if (value.entityType === "client") return false;
     if (!isNoaQuerySpec(value.querySpec)) return false;
     if (value.entityType === "quotation") return value.querySpec.capability === "quotation" && value.querySpec.operation === "status_list";
     return value.querySpec.capability === "project";

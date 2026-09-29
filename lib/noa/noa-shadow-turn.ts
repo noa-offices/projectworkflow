@@ -45,7 +45,7 @@ function isNoaDailyStatusClarifyAnswer(answer: NoaAnswer): boolean {
 export type NoaShadowTrace = {
   sessionMode: "shadow_loaded" | "shadow_created" | "shadow_replaced" | "shadow_unavailable";
   shadowResultKind: "entity" | "list" | "aggregate" | "none";
-  shadowResultEntityType: "quotation" | "project_file" | "none";
+  shadowResultEntityType: "quotation" | "project_file" | "client" | "none";
   shadowSave: "saved" | "version_conflict" | "skipped" | "error";
 };
 export type NoaShadowTurnTrace = NoaDecisionTrace & NoaShadowTrace & NoaPlannerTrace;
@@ -53,6 +53,8 @@ export type NoaShadowTurnTrace = NoaDecisionTrace & NoaShadowTrace & NoaPlannerT
 // executors/renderers it may reach. Production wires noa-semantic-planner.server.ts and
 // noa-relation.server.ts; offline tests replace only `plan`. Absent planner = unavailable.
 export type NoaPlannerDependencies = {
+  lookupClients?: (text: string | null) => Promise<{ ids: string[]; message?: string }>;
+  describeClients?: (ids: string[]) => Promise<NoaAnswer>;
   projectFact?: (orderNo: string, context: NoaSessionChatRequest["context"]) => Promise<NoaAnswer>;
   lookupQuotations?: (text: string) => Promise<{ ids: string[]; message?: string }>;
   plan: (input: NoaPlannerInput) => Promise<unknown | null>;
@@ -87,7 +89,7 @@ async function runNoaPlannerStage(
   request: NoaSessionChatRequest, state: NoaConversationState, planner: NoaPlannerDependencies | undefined,
   trace: NoaPlannerTrace,
 ): Promise<NoaPlannerOutcome | null> {
-  if (!shouldRunNoaSemanticPlanner(state, request, Boolean(planner?.lookupQuotations))) return null;
+  if (!shouldRunNoaSemanticPlanner(state, request, Boolean(planner?.lookupQuotations || planner?.lookupClients))) return null;
   const started = performance.now();
   let raw: unknown = null;
   try {
@@ -128,19 +130,20 @@ async function runNoaPlannerStage(
   if (plan.kind === "passthrough") return null;
   if (plan.kind === "clarify") return clarify(buildNoaPlannerClarification(state));
 
-  if (plan.kind === "quotation_lookup") {
-    if (!planner.lookupQuotations) return null;
+  if (plan.kind === "quotation_lookup" || plan.kind === "client_lookup") {
+    const clients = plan.kind === "client_lookup";
+    if (clients ? !planner.lookupClients || !planner.describeClients : !planner.lookupQuotations) return null;
     try {
-      const found = await planner.lookupQuotations(plan.lookupText);
+      const found = plan.kind === "client_lookup" ? await planner.lookupClients!(plan.lookupText) : await planner.lookupQuotations!(plan.lookupText);
       if (found.message) return clarify(found.message);
-      if (!found.ids.length) return clarify("No matching quotation found.");
+      if (!found.ids.length) return clarify(clients ? "No matching client found." : "No matching quotation found.");
       const candidate = { handle: createNoaResultSetHandle(), createdAt: new Date().toISOString(),
-        kind: found.ids.length === 1 ? "entity" : "list", entityType: "quotation", count: found.ids.length,
+        kind: found.ids.length === 1 ? "entity" : "list", entityType: clients ? "client" : "quotation", count: found.ids.length,
         items: found.ids.map((id) => ({ id })) };
       if (!isNoaResultSet(candidate)) return null;
-      const answer = await planner.describeQuotations(found.ids, request.context);
+      const answer = clients ? await planner.describeClients!(found.ids) : await planner.describeQuotations(found.ids, request.context);
       trace.plannerExecution = "executed";
-      return { answer, decision: decision({ routeDecision: "Quotation", capabilitySelected: "Quotation", resultCount: found.ids.length }),
+      return { answer, decision: decision({ routeDecision: clients ? "Client" : "Quotation", capabilitySelected: clients ? "Client" : "Quotation", resultCount: found.ids.length }),
         nextState: appendNoaResultSet(state, candidate), produced: candidate };
     } catch { return null; }
   }
@@ -164,12 +167,14 @@ async function runNoaPlannerStage(
     referenceBinding: itemIndex !== null ? "ordinal" : focused ? "focused_result" : "older_result",
     ordinalResolution: itemIndex !== null ? "valid" : "not_applicable",
   });
-  const describe = (result: NoaItemResultSet, framing: "related" | "selected") => result.entityType === "quotation"
+  const describe = (result: NoaItemResultSet, framing: "related" | "selected") => result.entityType === "client"
+    ? planner.describeClients ? planner.describeClients(result.items.map((item) => item.id)) : Promise.reject(new Error("Client renderer unavailable"))
+    : result.entityType === "quotation"
     ? planner.describeQuotations(result.items.map((item) => item.id), request.context)
     : planner.describeProjectFiles(result.items.map((item) => item.orderNo), request.context, framing);
   const executed = async (answer: NoaAnswer, resultCount: number, nextState: NoaConversationState | null, produced: NoaResultSet | null) => {
     trace.plannerExecution = "executed";
-    const capability = answer.domain === "Quotation" || answer.domain === "Project" ? answer.domain : null;
+    const capability = answer.domain === "Quotation" || answer.domain === "Project" || answer.domain === "Client" ? answer.domain : null;
     return { answer, decision: decision({ routeDecision: answer.domain, capabilitySelected: capability, resultCount }), nextState, produced };
   };
 
@@ -228,7 +233,12 @@ export function buildNoaShadowResultSet(
 ): NoaResultSet | null {
   if (!isNoaStateRecord(data)) return null;
   let candidate: unknown;
-  if (domain === "Project" && data.kind === "project_file_detail" && isNoaStateRecord(data.projectFile)) {
+  if (domain === "Client" && data.kind === "client_record_detail" && isNoaStateRecord(data.client)) {
+    candidate = { ...identity, kind: "entity", entityType: "client", count: 1, items: [{ id: data.client.id }] };
+  } else if (domain === "Client" && data.kind === "client_list" && Array.isArray(data.rows)) {
+    candidate = { ...identity, kind: "list", entityType: "client", count: data.totalMatching,
+      items: data.rows.slice(0, MAX_NOA_RESULT_SET_ITEMS).map((row: unknown) => ({ id: isNoaStateRecord(row) ? row.id : undefined })) };
+  } else if (domain === "Project" && data.kind === "project_file_detail" && isNoaStateRecord(data.projectFile)) {
     candidate = { ...identity, kind: "entity", entityType: "project_file", count: 1, items: [{ orderNo: data.projectFile.orderNo }] };
   } else if (domain === "Project" && data.kind === "project_order_list" && Array.isArray(data.rows)) {
     candidate = { ...identity, kind: "list", entityType: "project_file", count: data.totalMatching,
