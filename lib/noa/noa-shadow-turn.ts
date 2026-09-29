@@ -53,6 +53,8 @@ export type NoaShadowTurnTrace = NoaDecisionTrace & NoaShadowTrace & NoaPlannerT
 // executors/renderers it may reach. Production wires noa-semantic-planner.server.ts and
 // noa-relation.server.ts; offline tests replace only `plan`. Absent planner = unavailable.
 export type NoaPlannerDependencies = {
+  projectFact?: (orderNo: string, context: NoaSessionChatRequest["context"]) => Promise<NoaAnswer>;
+  lookupQuotations?: (text: string) => Promise<{ ids: string[]; message?: string }>;
   plan: (input: NoaPlannerInput) => Promise<unknown | null>;
   relate: (state: NoaConversationState, sourceHandle: NoaResultSet["handle"], relation: NoaRelationId) => Promise<NoaRelationResult>;
   drillDown: (state: NoaConversationState, sourceHandle: NoaResultSet["handle"], status: NoaQuotationScopeStatus) => Promise<NoaRelationResult>;
@@ -85,7 +87,7 @@ async function runNoaPlannerStage(
   request: NoaSessionChatRequest, state: NoaConversationState, planner: NoaPlannerDependencies | undefined,
   trace: NoaPlannerTrace,
 ): Promise<NoaPlannerOutcome | null> {
-  if (!shouldRunNoaSemanticPlanner(state, request)) return null;
+  if (!shouldRunNoaSemanticPlanner(state, request, Boolean(planner?.lookupQuotations))) return null;
   const started = performance.now();
   let raw: unknown = null;
   try {
@@ -111,7 +113,7 @@ async function runNoaPlannerStage(
     };
   };
 
-  const validated = validateNoaSemanticPlan(raw, state);
+  const validated = validateNoaSemanticPlan(raw, state, request.message);
   if (!validated.ok) {
     Object.assign(trace, { plannerMode: "invalid", plannerAction: validated.action, plannerValidation: validated.reason, plannerExecution: "legacy" });
     if (validated.reason !== "out_of_range") return null;
@@ -126,6 +128,34 @@ async function runNoaPlannerStage(
   if (plan.kind === "passthrough") return null;
   if (plan.kind === "clarify") return clarify(buildNoaPlannerClarification(state));
 
+  if (plan.kind === "quotation_lookup") {
+    if (!planner.lookupQuotations) return null;
+    try {
+      const found = await planner.lookupQuotations(plan.lookupText);
+      if (found.message) return clarify(found.message);
+      if (!found.ids.length) return clarify("No matching quotation found.");
+      const candidate = { handle: createNoaResultSetHandle(), createdAt: new Date().toISOString(),
+        kind: found.ids.length === 1 ? "entity" : "list", entityType: "quotation", count: found.ids.length,
+        items: found.ids.map((id) => ({ id })) };
+      if (!isNoaResultSet(candidate)) return null;
+      const answer = await planner.describeQuotations(found.ids, request.context);
+      trace.plannerExecution = "executed";
+      return { answer, decision: decision({ routeDecision: "Quotation", capabilitySelected: "Quotation", resultCount: found.ids.length }),
+        nextState: appendNoaResultSet(state, candidate), produced: candidate };
+    } catch { return null; }
+  }
+  if (plan.kind === "project_fact") {
+    if (!plan.sourceResultSetHandle) return clarify("Which Project File do you mean? Select a Project File first.");
+    const source = state.resultSets.find((result) => result.handle === plan.sourceResultSetHandle);
+    if (!planner.projectFact || source?.entityType !== "project_file" || source.kind !== "entity") return null;
+    try {
+      const answer = await planner.projectFact(source.items[0].orderNo, request.context);
+      const focused = state.focus?.resultSetHandle === source.handle;
+      Object.assign(trace, { plannerExecution: "executed", referenceBinding: focused ? "focused_result" : "older_result", resultSetRecency: focused ? "focused" : "older" });
+      return { answer, decision: decision({ routeDecision: "Project", capabilitySelected: "Project", resultCount: 1 }),
+        nextState: focused ? null : focusNoaResultSet(state, source.handle), produced: null };
+    } catch { return null; }
+  }
   const source = state.resultSets.find((result) => result.handle === plan.sourceResultSetHandle)!;
   const focused = state.focus?.resultSetHandle === source.handle;
   const itemIndex = plan.kind === "aggregate_drilldown" ? null : plan.itemIndex;

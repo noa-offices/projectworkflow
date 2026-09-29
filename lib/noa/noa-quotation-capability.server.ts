@@ -586,3 +586,31 @@ async function quotationItemCountFor(supabase: Awaited<ReturnType<typeof createC
     .eq("is_active", true);
   return count ?? 0;
 }
+
+// Closed business-context lookup. RLS-filtered rows only; no fuzzy prose search or model ranking.
+// Refuse incomplete scans and oversized choice sets rather than imply a unique/global match.
+export async function lookupNoaQuotationsByContext(text: string): Promise<{ ids: string[]; message?: string }> {
+  try { await requireQuotationActionUser(); }
+  catch (error) {
+    if (isNextRedirectError(error)) return { ids: [], message: "You don't have access to quotation records." };
+    throw error;
+  }
+  const normalize = (value: string) => value.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
+  const query = normalize(text);
+  if (query.length < 2 || query.length > 120) return { ids: [], message: "Please provide a more specific quotation, Project, or client name." };
+  const supabase = await createClient();
+  type LookupRow = QuotationReferenceSource & { id: string; clients: { company_name: string | null } | null; projects: { project_name: string | null } | null };
+  const { data, error } = await supabase.from("quotations")
+    .select("id,quotation_no,title,legacy_reference,layout_settings,clients(company_name),projects(project_name)")
+    .order("created_at", { ascending: false }).order("id", { ascending: true }).limit(201).returns<LookupRow[]>();
+  if (error) throw error;
+  if (!data || data.length > 200) return { ids: [], message: "I couldn't search all quotation records within this lookup limit. Please provide an exact quotation number." };
+  const matches = data.filter((row) => {
+    const order = projectFileFromLayoutSettings(row.layout_settings);
+    const fields = [quotationDisplayReference(row, row.projects?.project_name ?? null), row.projects?.project_name,
+      row.clients?.company_name, order?.clientName, order?.orderNo, row.quotation_no];
+    return fields.some((field) => typeof field === "string" && normalize(field).includes(query));
+  });
+  if (matches.length > MAX_QUOTATION_ROWS) return { ids: [], message: "More than ten quotations match. Please provide a more specific Project, client, or quotation number." };
+  return { ids: matches.map((row) => row.id) };
+}

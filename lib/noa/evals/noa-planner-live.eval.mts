@@ -52,6 +52,8 @@ const projectEntity = (): NoaResultSet => ({ handle: createNoaResultSetHandle(),
 const stack = (...sets: NoaResultSet[]) => sets.reduce(appendNoaResultSet, createEmptyNoaConversationState());
 
 type Expected =
+  | { outcome: "plan"; kind: "project_fact"; source: string }
+  | { outcome: "plan"; kind: "quotation_lookup"; lookupText: string }
   | { outcome: "skipped" }
   | { outcome: "plan"; kind: "passthrough" | "clarify" }
   | { outcome: "plan"; kind: "select" | "relation"; source: string; itemIndex: number | null };
@@ -59,7 +61,7 @@ type EvalCase = { id: string; group: string; message: string; state: NoaConversa
 
 function evalCase(id: string, group: string, message: string, sets: Record<string, NoaResultSet>, focus: string, expected: Expected): EvalCase {
   let state = stack(...Object.values(sets));
-  state = focusNoaResultSet(state, sets[focus].handle);
+  if (sets[focus]) state = focusNoaResultSet(state, sets[focus].handle);
   return { id, group, message, state, expected, labels: new Map(Object.entries(sets).map(([label, set]) => [set.handle, label])) };
 }
 function buildCases(): EvalCase[] {
@@ -68,6 +70,11 @@ function buildCases(): EvalCase[] {
   const relation = (source: string) => ({ outcome: "plan", kind: "relation", source, itemIndex: null }) as const;
   const select = (source: string, itemIndex: number | null) => ({ outcome: "plan", kind: "select", source, itemIndex }) as const;
   return [
+    evalCase("P4A1", "Project total", "What is the total value of this project?", { project: projectEntity() }, "project", { outcome: "plan", kind: "project_fact", source: "project" }),
+    evalCase("P4A2", "Project no context", "What is the total value of this project?", {}, "", { outcome: "plan", kind: "project_fact", source: "-" }),
+    evalCase("P4A3", "Project older total", "What is the total value of this project?", { project: projectEntity(), quotations: quotations("draft", [2, 3]) }, "quotations", { outcome: "plan", kind: "project_fact", source: "project" }),
+    ...["Can you check Galleria Mall quotation?", "Show the Galleria Mall quotation.", "Find the quotation for Galleria Mall.", "Which quotation is for Galleria Mall?"].map((message, index) =>
+      evalCase(`Q4B${index + 1}`, "quotation context lookup", message, {}, "", { outcome: "plan", kind: "quotation_lookup", lookupText: "Galleria Mall" })),
     evalCase("D1", "D relation", "Can you mention the name of the project?", d(), "confirmed", relation("confirmed")),
     evalCase("D2", "D relation", "What projects are these quotations for?", d(), "confirmed", relation("confirmed")),
     evalCase("F1", "F ordinal", "Tell me about the second one.", { confirmed: quotations("client_confirmed", [4, 5]) }, "confirmed", select("confirmed", 1)),
@@ -115,30 +122,33 @@ function oracle(cases: EvalCase[]) {
   return async ({ userContent }: { userContent: NoaPlannerInput }) => {
     const match = cases.find((c) => c.message === userContent.message && JSON.stringify(buildNoaPlannerInput(c.state, { message: c.message }).resultSets) === JSON.stringify(userContent.resultSets));
     const e = match?.expected;
-    const handle = e && e.outcome === "plan" && (e.kind === "select" || e.kind === "relation")
+    const handle = e && e.outcome === "plan" && "source" in e
       ? [...match!.labels].find(([, label]) => label === e.source)?.[0] ?? null : null;
     const kind = e?.outcome === "plan" ? e.kind : "passthrough";
     const itemIndex = e?.outcome === "plan" && (e.kind === "select" || e.kind === "relation") ? e.itemIndex : null;
     return { text: JSON.stringify({ kind, sourceResultSetHandle: handle, relation: kind === "relation" ? "quotation.project_file" : null,
-      status: null, ordinal: itemIndex === null ? null : itemIndex + 1 }) };
+      status: null, ordinal: itemIndex === null ? null : itemIndex + 1,
+      fact: kind === "project_fact" ? "total_value" : null,
+      lookupText: e?.outcome === "plan" && e.kind === "quotation_lookup" ? e.lookupText : null }) };
   };
 }
 
 type Outcome = "expected" | "valid_other" | "clarify_unexpected" | "invalid" | "unavailable" | "skipped_unexpected";
 async function runOnce(c: EvalCase, requestPlan: (input: NoaPlannerInput) => Promise<unknown | null>): Promise<{ outcome: Outcome; detail: string }> {
-  const gated = shouldRunNoaSemanticPlanner(c.state, { message: c.message });
+  const gated = shouldRunNoaSemanticPlanner(c.state, { message: c.message }, true);
   if (!gated) return c.expected.outcome === "skipped" ? { outcome: "expected", detail: "skipped" } : { outcome: "skipped_unexpected", detail: "skipped" };
   if (c.expected.outcome === "skipped") return { outcome: "valid_other", detail: "gate_open" };
   const raw = await requestPlan(buildNoaPlannerInput(c.state, { message: c.message }));
   if (raw === null) return { outcome: "unavailable", detail: "unavailable" };
-  const validated = validateNoaSemanticPlan(raw, c.state);
+  const validated = validateNoaSemanticPlan(raw, c.state, c.message);
   if (!validated.ok) return { outcome: "invalid", detail: `invalid:${validated.reason}` };
   const plan = validated.plan;
-  const source = "sourceResultSetHandle" in plan ? c.labels.get(plan.sourceResultSetHandle) ?? "?" : "-";
+  const source = "sourceResultSetHandle" in plan && plan.sourceResultSetHandle ? c.labels.get(plan.sourceResultSetHandle) ?? "?" : "-";
   const itemIndex = plan.kind === "select" || plan.kind === "relation" ? plan.itemIndex : null;
   const detail = `${plan.kind}:${source}${itemIndex === null ? "" : `#${itemIndex}`}`;
   const e = c.expected;
-  const match = e.kind === plan.kind && ("source" in e ? source === e.source && itemIndex === e.itemIndex : true);
+  const match = e.kind === plan.kind && ("source" in e ? source === e.source && (!("itemIndex" in e) || itemIndex === e.itemIndex) : true)
+    && (e.kind !== "quotation_lookup" || (plan.kind === "quotation_lookup" && plan.lookupText === e.lookupText));
   if (match) return { outcome: "expected", detail };
   return { outcome: plan.kind === "clarify" ? "clarify_unexpected" : "valid_other", detail };
 }

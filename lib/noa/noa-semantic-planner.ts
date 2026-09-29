@@ -1,4 +1,5 @@
 import type { NoaConversationState } from "./noa-conversation-state";
+import { prerouteNoaConversation } from "./noa-conversation-prerouter";
 import { NOA_RELATIONS, validateNoaRelationSource, type NoaRelationId } from "./noa-relation-registry";
 import {
   NOA_QUOTATION_SCOPE_STATUSES, type NoaQuotationScopeStatus, type NoaResultEntityType, type NoaResultSet,
@@ -9,13 +10,15 @@ import {
 // interprets language into this closed shape; TypeScript validation below decides whether a plan
 // may execute, and deterministic executors (noa-relation.server.ts) re-authorize and re-fetch.
 // No provider name, prompt, database access or business value lives in this file.
-export const NOA_PLANNER_ACTIONS = ["passthrough", "select", "relation", "aggregate_drilldown", "clarify"] as const;
+export const NOA_PLANNER_ACTIONS = ["passthrough", "select", "relation", "aggregate_drilldown", "clarify", "project_fact", "quotation_lookup"] as const;
 export type NoaPlannerAction = typeof NOA_PLANNER_ACTIONS[number];
 // Phase 2 References: closed 1-based display positions ("the second one") plus "last". The model
 // never sends an item identifier; TypeScript resolves the position against stored display order.
 export const NOA_PLANNER_ORDINALS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, "last"] as const;
 
 export type NoaSemanticPlan =
+  | { kind: "project_fact"; sourceResultSetHandle: NoaResultSetHandle | null; fact: "total_value" }
+  | { kind: "quotation_lookup"; lookupText: string }
   | { kind: "passthrough" }
   // Reference-only: re-show an existing entity/list ResultSet, or one displayed item of it.
   | { kind: "select"; sourceResultSetHandle: NoaResultSetHandle; itemIndex: number | null }
@@ -53,17 +56,18 @@ const EXACT_BUSINESS_IDENTIFIER = /\b(?:CO|QN)-\d{3,}(?:-\d+)*\b/i;
 // Phase 2 quotation pilot here; every other domain stays legacy-routed until it explicitly opts in.
 export const NOA_PLANNER_SUPPORTED_ENTITY_TYPES: readonly NoaResultEntityType[] = ["quotation", "project_file"];
 
-// Checkpoint B gate. The planner runs only when the bounded stack holds supported scope (see
-// NOA_PLANNER_SUPPORTED_ENTITY_TYPES) and something is focused, no exact business identifier is
-// present, and no Product Configuration task is active. Whether the turn actually depends on that
-// scope is the planner's decision (passthrough otherwise).
+// Context-only callers retain the existing gate. With the Phase 4 discovery executor wired,
+// an empty session can also plan a lookup or a no-context fact clarification. Existing social,
+// exact-identifier and Product Configuration paths still bypass the semantic boundary.
 export function shouldRunNoaSemanticPlanner(
   state: NoaConversationState | undefined,
   request: { message: string; productConfigurationReference?: unknown },
+  discoveryAvailable = false,
 ): boolean {
-  if (!state?.focus || request.productConfigurationReference !== undefined) return false;
+  if (request.productConfigurationReference !== undefined) return false;
+  if (discoveryAvailable && prerouteNoaConversation(request.message).kind !== "business_passthrough") return false;
   if (EXACT_BUSINESS_IDENTIFIER.test(request.message)) return false;
-  return state.resultSets.some((result) => NOA_PLANNER_SUPPORTED_ENTITY_TYPES.includes(result.entityType));
+  return discoveryAvailable || Boolean(state?.focus && state.resultSets.some((result) => NOA_PLANNER_SUPPORTED_ENTITY_TYPES.includes(result.entityType)));
 }
 
 export type NoaPlannerResultSetSummary = {
@@ -135,9 +139,11 @@ export function buildNoaPlannerSchema(input: NoaPlannerInput): object {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["kind", "sourceResultSetHandle", "relation", "status", "ordinal"],
+    required: ["kind", "sourceResultSetHandle", "relation", "status", "ordinal", "fact", "lookupText"],
     properties: {
       kind: { type: "string", enum: [...NOA_PLANNER_ACTIONS] },
+      fact: { type: ["string", "null"], enum: ["total_value", null] },
+      lookupText: { type: ["string", "null"], maxLength: 120 },
       sourceResultSetHandle: { type: ["string", "null"], enum: [...input.resultSets.map((result) => result.handle), null] },
       relation: { type: ["string", "null"], enum: [...NOA_PLANNER_PILOT_RELATIONS, null] },
       status: { type: ["string", "null"], enum: [...NOA_QUOTATION_SCOPE_STATUSES, null] },
@@ -150,7 +156,7 @@ export type NoaPlannerValidation =
   | { ok: true; plan: NoaSemanticPlan; sourceType: NoaResultEntityType | "none" }
   | { ok: false; reason: Exclude<NoaPlannerTrace["plannerValidation"], "valid" | "unavailable" | "none">; action: NoaPlannerAction | "none" };
 
-const PLAN_KEYS = ["kind", "sourceResultSetHandle", "relation", "status", "ordinal"];
+const PLAN_KEYS = ["kind", "sourceResultSetHandle", "relation", "status", "ordinal", "fact", "lookupText"];
 
 // Ordinal -> 0-based index into the STORED display order (array position). Only stored, visible
 // references are addressable; a count beyond the stored 50 is never guessed.
@@ -166,7 +172,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 // Never trusted: shape, handle membership in this session, source type/kind, registry membership,
 // pilot enablement and closed status are all re-checked here. No confidence field is consulted.
-export function validateNoaSemanticPlan(raw: unknown, state: NoaConversationState): NoaPlannerValidation {
+export function validateNoaSemanticPlan(raw: unknown, state: NoaConversationState, message = ""): NoaPlannerValidation {
   if (!isRecord(raw) || Object.keys(raw).some((key) => !PLAN_KEYS.includes(key))
     || !NOA_PLANNER_ACTIONS.some((action) => action === raw.kind)) return { ok: false, reason: "unsupported_operation", action: "none" };
   const action = raw.kind as NoaPlannerAction;
@@ -175,6 +181,25 @@ export function validateNoaSemanticPlan(raw: unknown, state: NoaConversationStat
   const status = raw.status ?? null;
   const ordinal = raw.ordinal ?? null;
   const unsupported = { ok: false as const, reason: "unsupported_operation" as const, action };
+
+  const fact = raw.fact ?? null;
+  const lookupText = raw.lookupText ?? null;
+  if (action === "quotation_lookup") {
+    if (handle !== null || relation !== null || status !== null || ordinal !== null || fact !== null
+      || typeof lookupText !== "string" || lookupText.trim().length < 2 || lookupText.length > 120
+      || !message.slice(0, 500).toLowerCase().includes(lookupText.toLowerCase())
+      || !/[\p{L}\p{N}]/u.test(lookupText)) return unsupported;
+    return { ok: true, plan: { kind: action, lookupText: lookupText.trim() }, sourceType: "none" };
+  }
+  if (action === "project_fact") {
+    if (fact !== "total_value" || lookupText !== null || relation !== null || status !== null || ordinal !== null) return unsupported;
+    if (handle === null) return { ok: true, plan: { kind: action, fact, sourceResultSetHandle: null }, sourceType: "none" };
+    const source = state.resultSets.find((result) => result.handle === handle);
+    if (!source) return { ok: false, reason: "invalid_handle", action };
+    if (source.entityType !== "project_file" || source.kind !== "entity") return { ok: false, reason: "incompatible_type", action };
+    return { ok: true, plan: { kind: action, fact, sourceResultSetHandle: source.handle }, sourceType: "project_file" };
+  }
+  if (fact !== null || lookupText !== null) return unsupported;
 
   if (action === "passthrough" || action === "clarify") {
     return handle === null && relation === null && status === null && ordinal === null
