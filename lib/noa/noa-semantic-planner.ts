@@ -1,4 +1,5 @@
 import type { NoaConversationState } from "./noa-conversation-state";
+import { findNoaBusinessIdentifierVariants } from "./noa-business-identifier";
 import { prerouteNoaConversation } from "./noa-conversation-prerouter";
 import { NOA_RELATIONS, validateNoaRelationSource, type NoaRelationId } from "./noa-relation-registry";
 import {
@@ -51,6 +52,15 @@ export const NOA_PLANNER_PILOT_RELATIONS: readonly NoaRelationId[] = (Object.key
 // Structural business identifiers keep their existing deterministic route; never an NL phrase list.
 const EXACT_BUSINESS_IDENTIFIER = /\b(?:CO|QN)-\d{3,}(?:-\d+)*\b/i;
 
+// Phase 4C: also treats a normalized compact/space/slash QN/CO variant (e.g. "QN0003001") as an
+// exact business identifier, so it bypasses the planner exactly like the existing hyphenated
+// shape above - purely additive, never a new phrase/NL rule (see noa-business-identifier.ts).
+function hasExactNoaBusinessIdentifier(message: string): boolean {
+  return EXACT_BUSINESS_IDENTIFIER.test(message)
+    || findNoaBusinessIdentifierVariants("QN", message).length > 0
+    || findNoaBusinessIdentifierVariants("CO", message).length > 0;
+}
+
 // Phase 3A: the CLOSED set of ResultSet entity types the planner may act on - the single opt-in
 // extension point for new domains, never an open "all domains" switch. Project Files join the
 // Phase 2 quotation pilot here; every other domain stays legacy-routed until it explicitly opts in.
@@ -66,7 +76,7 @@ export function shouldRunNoaSemanticPlanner(
 ): boolean {
   if (request.productConfigurationReference !== undefined) return false;
   if (discoveryAvailable && prerouteNoaConversation(request.message).kind !== "business_passthrough") return false;
-  if (EXACT_BUSINESS_IDENTIFIER.test(request.message)) return false;
+  if (hasExactNoaBusinessIdentifier(request.message)) return false;
   return discoveryAvailable || Boolean(state?.focus && state.resultSets.some((result) => NOA_PLANNER_SUPPORTED_ENTITY_TYPES.includes(result.entityType)));
 }
 

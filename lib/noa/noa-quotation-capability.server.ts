@@ -1,6 +1,7 @@
 import "server-only";
 
 import { requireQuotationActionUser } from "@/lib/auth";
+import { findNoaBusinessIdentifierVariants } from "@/lib/noa/noa-business-identifier";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import type { NoaSemanticQuotation } from "@/lib/noa/noa-semantic-request";
 import type { NoaCapabilityResult, NoaPageContext } from "@/lib/noa/noa-types";
@@ -108,14 +109,22 @@ function extractQuotationIdentifier(message: string): string | null {
 
 // A QN identifier is sufficiently specific to bypass AI classification. It deliberately starts
 // with the existing permissive parser, then narrows only the deterministic fast-path shape.
+// Phase 4C: also counts NEW compact/space/slash variants of the same canonical QN-XXXX-XXX shape
+// (e.g. "QN0003001", "QN 0003 001", "QN/0003/001") - purely additive, the existing hyphenated
+// match above is never altered (see noa-business-identifier.ts for the normalization contract).
 export function quotationIdentifierCount(message: string): number {
-  return [...message.matchAll(/\bQN-\d{3,}(?:-\d+)*\b/gi)].length;
+  return [...message.matchAll(/\bQN-\d{3,}(?:-\d+)*\b/gi)].length + findNoaBusinessIdentifierVariants("QN", message).length;
 }
 
 export function quotationStructuredRequest(message: string): NoaSemanticQuotation | undefined {
   if (quotationIdentifierCount(message) !== 1) return undefined;
-  const quotationNo = extractQuotationIdentifier(message);
-  if (!quotationNo || !/^QN-\d{3,}(?:-\d+)*$/i.test(quotationNo)) return undefined;
+  const extracted = extractQuotationIdentifier(message);
+  // Phase 4C: the existing hyphenated shape is tried first, unchanged; only when it fails does
+  // the single identifier counted above come from a normalized new-shape variant instead.
+  const quotationNo = extracted && /^QN-\d{3,}(?:-\d+)*$/i.test(extracted)
+    ? extracted
+    : findNoaBusinessIdentifierVariants("QN", message)[0];
+  if (!quotationNo) return undefined;
 
   const normalized = message.toLowerCase();
   return {
