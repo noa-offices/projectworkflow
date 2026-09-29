@@ -1,6 +1,7 @@
 import "server-only";
 
 import { requireQuotationActionUser } from "@/lib/auth";
+import { findNoaBusinessIdentifierVariants } from "@/lib/noa/noa-business-identifier";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import type { NoaSemanticQuotation } from "@/lib/noa/noa-semantic-request";
 import type { NoaCapabilityResult, NoaPageContext } from "@/lib/noa/noa-types";
@@ -108,14 +109,22 @@ function extractQuotationIdentifier(message: string): string | null {
 
 // A QN identifier is sufficiently specific to bypass AI classification. It deliberately starts
 // with the existing permissive parser, then narrows only the deterministic fast-path shape.
+// Phase 4C: also counts NEW compact/space/slash variants of the same canonical QN-XXXX-XXX shape
+// (e.g. "QN0003001", "QN 0003 001", "QN/0003/001") - purely additive, the existing hyphenated
+// match above is never altered (see noa-business-identifier.ts for the normalization contract).
 export function quotationIdentifierCount(message: string): number {
-  return [...message.matchAll(/\bQN-\d{3,}(?:-\d+)*\b/gi)].length;
+  return [...message.matchAll(/\bQN-\d{3,}(?:-\d+)*\b/gi)].length + findNoaBusinessIdentifierVariants("QN", message).length;
 }
 
 export function quotationStructuredRequest(message: string): NoaSemanticQuotation | undefined {
   if (quotationIdentifierCount(message) !== 1) return undefined;
-  const quotationNo = extractQuotationIdentifier(message);
-  if (!quotationNo || !/^QN-\d{3,}(?:-\d+)*$/i.test(quotationNo)) return undefined;
+  const extracted = extractQuotationIdentifier(message);
+  // Phase 4C: the existing hyphenated shape is tried first, unchanged; only when it fails does
+  // the single identifier counted above come from a normalized new-shape variant instead.
+  const quotationNo = extracted && /^QN-\d{3,}(?:-\d+)*$/i.test(extracted)
+    ? extracted
+    : findNoaBusinessIdentifierVariants("QN", message)[0];
+  if (!quotationNo) return undefined;
 
   const normalized = message.toLowerCase();
   return {
@@ -585,4 +594,32 @@ async function quotationItemCountFor(supabase: Awaited<ReturnType<typeof createC
     .eq("quotation_id", quotationId)
     .eq("is_active", true);
   return count ?? 0;
+}
+
+// Closed business-context lookup. RLS-filtered rows only; no fuzzy prose search or model ranking.
+// Refuse incomplete scans and oversized choice sets rather than imply a unique/global match.
+export async function lookupNoaQuotationsByContext(text: string): Promise<{ ids: string[]; message?: string }> {
+  try { await requireQuotationActionUser(); }
+  catch (error) {
+    if (isNextRedirectError(error)) return { ids: [], message: "You don't have access to quotation records." };
+    throw error;
+  }
+  const normalize = (value: string) => value.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
+  const query = normalize(text);
+  if (query.length < 2 || query.length > 120) return { ids: [], message: "Please provide a more specific quotation, Project, or client name." };
+  const supabase = await createClient();
+  type LookupRow = QuotationReferenceSource & { id: string; clients: { company_name: string | null } | null; projects: { project_name: string | null } | null };
+  const { data, error } = await supabase.from("quotations")
+    .select("id,quotation_no,title,legacy_reference,layout_settings,clients(company_name),projects(project_name)")
+    .order("created_at", { ascending: false }).order("id", { ascending: true }).limit(201).returns<LookupRow[]>();
+  if (error) throw error;
+  if (!data || data.length > 200) return { ids: [], message: "I couldn't search all quotation records within this lookup limit. Please provide an exact quotation number." };
+  const matches = data.filter((row) => {
+    const order = projectFileFromLayoutSettings(row.layout_settings);
+    const fields = [quotationDisplayReference(row, row.projects?.project_name ?? null), row.projects?.project_name,
+      row.clients?.company_name, order?.clientName, order?.orderNo, row.quotation_no];
+    return fields.some((field) => typeof field === "string" && normalize(field).includes(query));
+  });
+  if (matches.length > MAX_QUOTATION_ROWS) return { ids: [], message: "More than ten quotations match. Please provide a more specific Project, client, or quotation number." };
+  return { ids: matches.map((row) => row.id) };
 }

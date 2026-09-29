@@ -20,11 +20,13 @@ const PLANNER_TIMEOUT_MS = 4_000;
 
 const PLANNER_INSTRUCTIONS = `You plan one ProjectWorkflow chat turn against the user's earlier result sets. You never answer, compute facts, or decide access.
 Choose exactly one kind:
+- "project_fact": a contextual Project File total-value question. Set fact to "total_value". Use the focused Project File ENTITY, or the most recent compatible older Project File entity when the user explicitly names Project scope. Never use a quotation's value or a list. If no safe entity exists, use a null handle to ask which Project. For an unqualified "its value", do not bind an older differently-typed scope.
+- "quotation_lookup": find quotations by a business name/context explicitly supplied in the CURRENT message, even without earlier results. Copy only the complete business name verbatim into lookupText (2-120 characters); never shorten it to a coincidental word, invent a name, or choose a record. All other fields are null. For example, "Can you check Galleria Mall quotation?", "Show the Galleria Mall quotation.", "Find the quotation for Galleria Mall.", and "Which quotation is for Galleria Mall?" all supply lookupText "Galleria Mall". A reference to earlier quotations without a new business name uses select instead.
 - "select": the user refers back to an earlier entity/list result set itself ("list them", "show those again", "go back to the quotations", "go back to the projects") or to one displayed item of it ("the second one"). Quotation and Project File result sets are handled identically.
 - "relation": the user asks about records related to an earlier result set, or to one displayed item of it (use a listed relation and a handle whose entityType/kind the relation accepts).
 - "aggregate_drilldown": the user asks for the records behind one status group of an earlier quotation status summary (use that aggregate's handle and one of its group statuses).
 - "clarify": the user refers to earlier results but more than one result set fits, or none can be chosen safely. Never guess between candidates.
-- "passthrough": anything else, including new questions that do not depend on earlier results.
+- "passthrough": anything else, including other new questions, other domains, and unsupported facts. Never interpret unrelated business requests as quotation lookup.
 Reference precedence (apply in this exact order for "select" and for the source of "relation"):
 1. If the user's words explicitly name an entity type/scope (e.g. "the quotations", "the projects") AND the currently FOCUSED result set already matches that entity type/scope, is selectable, and is compatible with the requested action - ALWAYS use the FOCUSED result set. Words like "go back", "again", or "earlier" do NOT by themselves mean an older result set: check whether the focused result set already satisfies what was named BEFORE looking at history. If it does, stay on it.
 2. Only if the explicitly named entity type/scope does NOT match the focused result set, choose the most recent (lowest recency) selectable, compatible OLDER result set of that named scope instead.
@@ -179,7 +181,9 @@ export async function describeNoaQuotations(ids: string[], context: NoaPageConte
   if (ids.length === 1 && rows[0].quotation_no) {
     const quotationNo = rows[0].quotation_no;
     const detail = await fetchNoaQuotationCapability(quotationNo, context, { quotation: { quotationNo, request: "detail" } });
-    const fact = detail.ok && typeof detail.data === "object" && detail.data !== null ? detail.data as Record<string, unknown> : {};
+    const candidate = detail.ok && typeof detail.data === "object" && detail.data !== null ? detail.data as Record<string, unknown> : {};
+    // The legacy identifier capability uses contains matching. Never borrow another revision's facts.
+    const fact = candidate.id === rows[0].id ? candidate : {};
     const reference = typeof fact.reference === "string" && fact.reference && fact.reference !== quotationNo ? ` (${fact.reference})` : "";
     const client = typeof fact.client === "string" && fact.client ? ` for ${fact.client}` : "";
     const status = rows[0].status ? ` is ${quotationStatusDisplayLabel(rows[0].status)}` : "";
@@ -191,4 +195,18 @@ export async function describeNoaQuotations(ids: string[], context: NoaPageConte
     domain: "Quotation", sources,
     text: [`${ids.length === 1 ? "That quotation" : `These are the ${ids.length} quotations`}:`, ...lines, ...(hidden ? [`…and ${hidden} more.`] : [])].join("\n"),
   });
+}
+
+// Project File confirmed-order total, fetched through the existing authenticated capability.
+// Match the returned identity again: a stale order number must never fall through to a reference match.
+export async function describeNoaProjectTotal(orderNo: string, context: NoaPageContext): Promise<NoaAnswer> {
+  const result = await fetchNoaProjectCapability(orderNo, context, { entity: { type: "project_file", text: orderNo } });
+  const data = result.ok ? result.data as { projectFile?: { orderNo?: unknown; total?: unknown; currency?: unknown } } : null;
+  const project = data?.projectFile;
+  const valid = project?.orderNo === orderNo && typeof project.total === "number" && Number.isFinite(project.total)
+    && typeof project.currency === "string" && project.currency.trim();
+  const text = valid
+    ? `This Project File has a total value of ${project.currency} ${(project.total as number).toLocaleString("en-US", { maximumFractionDigits: 2 })}.`
+    : "I couldn't retrieve the total value of that Project File. Please select the Project File again.";
+  return withNoaSpokenResponse({ domain: "Project", sources: result.ok ? result.sources : [], text });
 }

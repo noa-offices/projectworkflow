@@ -34,7 +34,10 @@ test("TC-1 dispatches validated Quotation arguments without rewriting the raw qu
 });
 
 test("TC-1B fast-path accepts exactly one QN ERP identifier and maps the requested field", () => {
-  assert.ok(quotation.includes("const quotationNo = extractQuotationIdentifier(message);"));
+  // Phase 4C: local var renamed to `extracted` when normalization was added as a fallback for
+  // non-hyphenated variants (noa-business-identifier.ts) - the existing hyphenated extraction
+  // itself, and the exactly-one-identifier gate below, are unchanged.
+  assert.ok(quotation.includes("const extracted = extractQuotationIdentifier(message);"));
   assert.ok(quotation.includes("/^QN-\\d{3,}(?:-\\d+)*$/i"));
   assert.ok(quotation.includes("if (quotationIdentifierCount(message) !== 1) return undefined;"));
   assert.ok(quotation.includes('/\\b(worth|value|total)\\b/.test(normalized)'));
@@ -47,7 +50,10 @@ test("TC-1B fast-path accepts exactly one QN ERP identifier and maps the request
 });
 
 test("TC-1B routes multiple QNs to Quotation without single-quotation arguments", () => {
-  assert.ok(quotation.includes('return [...message.matchAll(/\\bQN-\\d{3,}(?:-\\d+)*\\b/gi)].length;'));
+  // Phase 4C: also adds normalized-variant matches (noa-business-identifier.ts) - purely
+  // additive; the existing hyphenated-match count itself is unchanged.
+  assert.ok(quotation.includes('[...message.matchAll(/\\bQN-\\d{3,}(?:-\\d+)*\\b/gi)].length'));
+  assert.ok(quotation.includes('findNoaBusinessIdentifierVariants("QN", message).length'));
   assert.ok(orchestrator.includes('quotation: deterministicQuotation ?? (semanticRequest?.domain === "Quotation" ? semanticRequest.quotation : undefined)'));
   assert.ok(quotation.includes("const broadAnswer = await buildBroadQuotationAnswer(supabase, message, context);"));
   assert.ok(quotation.includes('if (/\\b(compare|difference between)\\b/.test(normalized))'));

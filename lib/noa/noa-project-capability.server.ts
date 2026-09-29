@@ -1,6 +1,7 @@
 import "server-only";
 
 import { requireActiveUser } from "@/lib/auth";
+import { findNoaBusinessIdentifierVariants } from "@/lib/noa/noa-business-identifier";
 import { clientApprovalDraftFromLayoutSettings } from "@/lib/quotations/client-approval-draft";
 import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { createClient } from "@/lib/supabase/server";
@@ -67,7 +68,10 @@ function statusLabel(status: ProjectStatus) {
 }
 
 function projectTarget(message: string) {
-  const identifiers = [...message.matchAll(PROJECT_FILE_IDENTIFIER_PATTERN)].map((match) => match[0]);
+  // Phase 4C: also considers NEW compact/space/slash CO variants (e.g. "CO0003001"), purely
+  // additive alongside the existing hyphenated match - see noa-business-identifier.ts.
+  const identifiers = [...message.matchAll(PROJECT_FILE_IDENTIFIER_PATTERN)].map((match) => match[0])
+    .concat(findNoaBusinessIdentifierVariants("CO", message));
   if (identifiers.length === 1) return identifiers[0];
 
   const patterns = [
@@ -91,16 +95,20 @@ function projectTarget(message: string) {
   return null;
 }
 
+// Phase 4C: also counts NEW compact/space/slash CO variants of the same canonical CO-XXXX-XXX
+// shape - purely additive, the existing hyphenated match above is never altered (see
+// noa-business-identifier.ts).
 export function projectFileIdentifierCount(message: string): number {
-  return [...message.matchAll(PROJECT_FILE_IDENTIFIER_PATTERN)].length;
+  return [...message.matchAll(PROJECT_FILE_IDENTIFIER_PATTERN)].length + findNoaBusinessIdentifierVariants("CO", message).length;
 }
 
 // N2B2: exported so lib/noa/noa-user-activity-capability.server.ts's Project-File-scoped
 // Catch-Up can extract the same CO identifier shape this file already authoritatively defines -
 // never a second CO regex. Returns the first match only (matches this file's existing single-
-// identifier detail-question assumption).
+// identifier detail-question assumption). Phase 4C: falls back to a normalized new-shape variant
+// only when no existing hyphenated match is present.
 export function projectFileIdentifierFromMessage(message: string): string | null {
-  return message.match(PROJECT_FILE_IDENTIFIER_PATTERN)?.[0] ?? null;
+  return message.match(PROJECT_FILE_IDENTIFIER_PATTERN)?.[0] ?? findNoaBusinessIdentifierVariants("CO", message)[0] ?? null;
 }
 
 function isDetailQuestion(message: string, context: NoaPageContext) {
