@@ -13,6 +13,8 @@ import { DocumentRow, ProjectDocumentsDirectory, type VendorDocEntry } from "@/c
 import { type ProjectDocRecord } from "@/lib/projects/project-doc-action";
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
 import { MarkCompletedButton } from "@/components/projects/mark-completed-button";
+import { ProcurementReadinessSummary } from "@/components/projects/procurement-readiness-summary";
+import { computeProcurementReadiness } from "@/lib/projects/procurement-readiness";
 import { CancelProjectButton } from "@/components/projects/cancel-project-button";
 import { ReopenProjectButton } from "@/components/projects/reopen-project-button";
 import { NotifyButton } from "@/components/notifications/notify-button";
@@ -182,11 +184,14 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
       metadata: unknown;
     }>>();
 
-  const { data: rawVendorProgress } = await supabase
+  const { data: rawVendorProgress, error: vendorProgressError } = await supabase
     .from("procurement_vendor_progress")
     .select("vendor_key, active_step, etd, eta, supplier_confirmed_at, receiving_status, received_at")
     .eq("order_no", decodedOrderNo)
     .returns<VendorProgressRow[]>();
+
+  const procurementReadiness = vendorProgressError || !rawVendorProgress
+    ? null : computeProcurementReadiness(rawVendorProgress);
 
   const layoutSettingsObj = entry.quotationRow.layout_settings as Record<string, unknown> | null;
   const completedAt = typeof layoutSettingsObj?.projectCompletedAt === "string"
@@ -645,6 +650,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
           </div>
         ))}
       </dl>
+      <ProcurementReadinessSummary readiness={procurementReadiness} />
     </section>
   );
 
@@ -685,7 +691,7 @@ export default async function ConfirmedOrderPage({ params, searchParams }: Confi
       </Link>
       {canEditExecutionStatus ? (
         <>
-          <MarkCompletedButton quotationId={entry.quotationId} orderNo={decodedOrderNo} completedAt={completedAt} />
+          <MarkCompletedButton quotationId={entry.quotationId} orderNo={decodedOrderNo} completedAt={completedAt} procurementReadiness={procurementReadiness} />
           <CancelProjectButton quotationId={entry.quotationId} orderNo={decodedOrderNo} />
         </>
       ) : null}

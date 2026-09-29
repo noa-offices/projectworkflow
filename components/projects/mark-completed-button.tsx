@@ -3,11 +3,13 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { markProjectCompletedAction } from "@/lib/projects/mark-project-completed-action";
+import { procurementCompletionWarning, type ProcurementReadiness } from "@/lib/projects/procurement-readiness";
 
 type Props = {
   quotationId: string;
   orderNo: string;
   completedAt: string | null;
+  procurementReadiness?: ProcurementReadiness | null;
 };
 
 function formatDate(iso: string) {
@@ -18,11 +20,12 @@ function formatDate(iso: string) {
   }).format(new Date(iso));
 }
 
-export function MarkCompletedButton({ quotationId, orderNo, completedAt }: Props) {
+export function MarkCompletedButton({ quotationId, orderNo, completedAt, procurementReadiness }: Props) {
   const router = useRouter();
   const [showConfirm, setShowConfirm] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const warning = procurementCompletionWarning(procurementReadiness);
 
   if (completedAt) {
     return (
@@ -38,6 +41,7 @@ export function MarkCompletedButton({ quotationId, orderNo, completedAt }: Props
   if (showConfirm) {
     return (
       <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+        {warning ? <p className="w-full text-xs font-medium text-amber-800">{warning}</p> : null}
         <span className="text-xs font-semibold text-amber-800">
           Mark as completed? Moves to Completed Projects and removes from active Procurement Hub.
         </span>
@@ -77,12 +81,15 @@ export function MarkCompletedButton({ quotationId, orderNo, completedAt }: Props
   }
 
   return (
-    <button
-      type="button"
-      onClick={() => setShowConfirm(true)}
-      className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900/25 hover:text-emerald-900"
-    >
-      Mark as Completed
-    </button>
+    <div className="flex flex-col items-start gap-1">
+      <button
+        type="button"
+        onClick={() => setShowConfirm(true)}
+        className="inline-flex h-10 items-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:border-emerald-900/25 hover:text-emerald-900"
+      >
+        Mark as Completed
+      </button>
+      {warning ? <p className="max-w-sm text-xs text-amber-800">{warning}</p> : null}
+    </div>
   );
 }
