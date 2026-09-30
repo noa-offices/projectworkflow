@@ -13,7 +13,9 @@ import { sendNotificationToRole } from "@/lib/notifications/actions";
 
 export type DashboardStats = {
   activeProjects: number;
+  activeProjectValue: number;
   completedProjects: number;
+  completedProjectValue: number;
   pendingQuotations: number;
   quotationWorkflow: {
     clientApproved: number;
@@ -77,7 +79,9 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     }>>();
 
   let activeProjects = 0;
+  let activeProjectValue = 0;
   let completedProjects = 0;
+  let completedProjectValue = 0;
   const seen = new Set<string>();
   const quotationFolders = new Map<string, NonNullable<typeof quotations>[number]>();
 
@@ -106,10 +110,15 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     if (seen.has(order.orderNo)) continue;
     seen.add(order.orderNo);
 
+    // order.total is guaranteed a finite number here - projectFileFromLayoutSettings/
+    // clientApprovalDraftFromLayoutSettings already return null for the whole snapshot
+    // when total is missing/non-finite, so `order` would be null and skipped above.
     if (typeof settings?.projectCompletedAt === "string") {
       completedProjects++;
+      completedProjectValue += order.total;
     } else if (typeof settings?.projectCancelledAt !== "string") {
       activeProjects++;
+      activeProjectValue += order.total;
     }
     // Cancelled orders count as neither active nor completed.
   }
@@ -144,7 +153,9 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 
   return {
     activeProjects,
+    activeProjectValue,
     completedProjects,
+    completedProjectValue,
     pendingQuotations,
     quotationWorkflow: workflow,
   };

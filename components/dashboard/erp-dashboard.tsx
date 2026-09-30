@@ -7,6 +7,7 @@ import {
   BadgeCheck,
   Bell,
   Building2,
+  CheckCircle2,
   ChevronRight,
   FileText,
   Library,
@@ -14,6 +15,7 @@ import {
   Plus,
   ReceiptText,
   Users,
+  Wallet,
 } from "lucide-react";
 import type { DashboardAlert } from "@/components/dashboard/alerts-panel";
 import { DashboardCard } from "@/components/dashboard/dashboard-card";
@@ -140,6 +142,29 @@ export function ERPDashboard({
     },
   ];
 
+  const projectValueKpis = [
+    {
+      label: "Active Project Value",
+      value: formatAED(stats.activeProjectValue),
+      description: `From ${stats.activeProjects} active project${stats.activeProjects !== 1 ? "s" : ""}.`,
+      trend: "Confirmed project file value",
+      href: "/projects/orders",
+      icon: Wallet,
+      accent: "bg-emerald-100 text-emerald-700",
+      cardBg: "bg-emerald-50",
+    },
+    {
+      label: "Completed Project Value",
+      value: formatAED(stats.completedProjectValue),
+      description: `From ${stats.completedProjects} completed project${stats.completedProjects !== 1 ? "s" : ""}.`,
+      trend: "Confirmed project file value",
+      href: "/procurement/completed",
+      icon: CheckCircle2,
+      accent: "bg-zinc-100 text-zinc-700",
+      cardBg: "bg-zinc-50",
+    },
+  ];
+
   // ── Pipeline filter ───────────────────────────────────────────────────────
   const filteredProjects = projects.filter(
     (p) =>
@@ -224,6 +249,26 @@ export function ERPDashboard({
             />
           </Link>
         ))}
+      </section>
+
+      {/* ── Project Value ───────────────────────────────────────────────── */}
+      <section>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Project Value</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {projectValueKpis.map((kpi) => (
+            <Link key={kpi.label} href={kpi.href} className="group">
+              <KPIWidget
+                label={kpi.label}
+                value={kpi.value}
+                description={kpi.description}
+                trend={kpi.trend}
+                icon={kpi.icon}
+                accent={kpi.accent}
+                cardBg={kpi.cardBg}
+              />
+            </Link>
+          ))}
+        </div>
       </section>
 
       <section
