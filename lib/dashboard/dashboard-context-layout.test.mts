@@ -32,21 +32,25 @@ test("Client fallback (Part 13): no placeholder text is ever rendered for a miss
   assert.ok(!/Unknown Client|No Client|N\/A/.test(dashboardSource));
 });
 
-// ── Upcoming Deliveries Client context (Part 5) - kept compact, combined on one line ──────────
+// ── Upcoming Deliveries Client context - Recent Work + Upcoming Deliveries Context Polish gave
+// Client its own dedicated muted line (previously combined with Project on one line) ───────────
 
-test("Upcoming Delivery rows show Client without adding a row (combined on the existing Project line)", () => {
+test("Upcoming Delivery rows show Client on its own dedicated, safely-omittable line", () => {
   const cardStart = dashboardSource.indexOf("Upcoming Deliveries");
   const cardBlock = dashboardSource.slice(cardStart, cardStart + 2000);
-  assert.ok(cardBlock.includes("delivery.clientName &&"));
-  assert.ok(cardBlock.includes("` · ${delivery.clientName}`"));
+  assert.ok(cardBlock.includes("delivery.clientName && ("));
+  assert.ok(cardBlock.includes("{delivery.clientName}</span>"));
+  assert.ok(!cardBlock.includes("` · ${delivery.clientName}`")); // no longer combined onto the Project line
 });
 
-// ── Recent Work (Part 6): already shows Client - left unchanged ───────────────────────────────
+// ── Recent Work: Client shown on its own line, safely omitted when absent ──────────────────────
 
-test("10. Recent Work already surfaces Client (clientName) on every row - untouched by this task", () => {
+test("10. Recent Work surfaces Client (clientName) on every row, guarded for safe omission", () => {
   const recentWorkStart = dashboardSource.indexOf("Active Project Pipeline");
   const recentWorkBlock = dashboardSource.slice(recentWorkStart, recentWorkStart + 8000);
-  assert.equal((recentWorkBlock.match(/project\.clientName/g) ?? []).length, 2); // mobile row + desktop row
+  // Each of the 2 rows (mobile + desktop) guards clientName with `project.clientName && (...)`,
+  // so the identifier appears twice per row (condition + interpolation) = 4 total.
+  assert.equal((recentWorkBlock.match(/project\.clientName/g) ?? []).length, 4);
 });
 
 // ── No per-row Client query (Part 14 / Part 16 #4/#11) ──────────────────────────────────────
