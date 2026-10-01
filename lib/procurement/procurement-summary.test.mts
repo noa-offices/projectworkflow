@@ -13,6 +13,8 @@ function makeThenable(result: unknown) {
 
 let poCountFixture = 0;
 let progressRowsFixture: Array<{
+  order_no?: string;
+  vendor_key?: string;
   active_step: number;
   supplier_confirmed_at: string | null;
   receiving_status: string;
@@ -60,9 +62,13 @@ test("1. no active orders -> all zero, no query issued (short-circuits before an
     missingEtdCount: 0,
     deliveredNotReceivedCount: 0,
     awaitingConfirmationItems: [],
+    awaitingConfirmationGroupCount: 0,
     missingEtaItems: [],
+    missingEtaGroupCount: 0,
     missingEtdItems: [],
+    missingEtdGroupCount: 0,
     deliveredNotReceivedItems: [],
+    deliveredNotReceivedGroupCount: 0,
   });
   assert.equal(fromCalls.length, 0);
 });
@@ -133,23 +139,35 @@ test("17/18. delivered-not-received counts only delivered_installed vendors whos
   assert.equal(summary.deliveredNotReceivedCount, 2);
 });
 
-test("19/20. attention item rows are bounded to 5 even when far more rows match, and carry orderNo/vendorKey only", async () => {
+test("Project grouping: two vendors on the same order_no both survive bounding, never truncated mid-group", async () => {
   reset();
-  progressRowsFixture = Array.from({ length: 9 }, () => ({
-    active_step: 0,
-    supplier_confirmed_at: null,
-    receiving_status: "pending",
-    eta: null,
-    etd: null,
-  })) as never;
-  // Attach order_no/vendor_key via a locally-typed fixture (the shared fixture type above omits
-  // them to keep the existing count-only tests simple) - this is the one test that needs them.
-  const rowsWithIdentity = progressRowsFixture.map((row, i) => ({ ...row, order_no: `CO-000${i}`, vendor_key: `vendor-${i}` }));
-  progressRowsFixture = rowsWithIdentity as never;
+  progressRowsFixture = [
+    { order_no: "CO-0003-001", vendor_key: "las-mobili", active_step: 0, supplier_confirmed_at: null, receiving_status: "pending", eta: null, etd: null },
+    { order_no: "CO-0003-001", vendor_key: "interstuhl", active_step: 0, supplier_confirmed_at: null, receiving_status: "pending", eta: null, etd: null },
+  ];
+  const summary = await loadProcurementSummary(["CO-0003-001"]);
+  assert.equal(summary.awaitingConfirmationCount, 2); // full vendor-issue tally, unchanged semantics
+  assert.equal(summary.awaitingConfirmationGroupCount, 1); // one distinct Project
+  assert.deepEqual(summary.awaitingConfirmationItems, [
+    { orderNo: "CO-0003-001", vendorKey: "las-mobili" },
+    { orderNo: "CO-0003-001", vendorKey: "interstuhl" },
+  ]);
+});
+
+test("19/20. the bound applies to distinct Projects (max 5), not raw vendor rows - a 6th Project's rows are entirely excluded, never partially", async () => {
+  reset();
+  progressRowsFixture = [];
+  for (let i = 0; i < 7; i++) {
+    progressRowsFixture.push({ order_no: `CO-000${i}`, vendor_key: "vendor-a", active_step: 0, supplier_confirmed_at: null, receiving_status: "pending", eta: null, etd: null });
+    progressRowsFixture.push({ order_no: `CO-000${i}`, vendor_key: "vendor-b", active_step: 0, supplier_confirmed_at: null, receiving_status: "pending", eta: null, etd: null });
+  }
   const summary = await loadProcurementSummary(["CO-0000"]);
-  assert.equal(summary.awaitingConfirmationCount, 9);
-  assert.equal(summary.awaitingConfirmationItems.length, 5);
-  assert.deepEqual(summary.awaitingConfirmationItems[0], { orderNo: "CO-0000", vendorKey: "vendor-0" });
+  assert.equal(summary.awaitingConfirmationCount, 14); // 7 Projects x 2 vendors
+  assert.equal(summary.awaitingConfirmationGroupCount, 7); // true distinct-Project total, before bounding
+  const includedOrderNos = new Set(summary.awaitingConfirmationItems.map((item) => item.orderNo));
+  assert.equal(includedOrderNos.size, 5); // bounded to the first 5 distinct Projects
+  assert.equal(summary.awaitingConfirmationItems.length, 10); // both vendors for each of those 5 - never truncated
+  assert.ok(!includedOrderNos.has("CO-0005") && !includedOrderNos.has("CO-0006"));
 });
 
 test("15. exactly two bounded queries (one per table) - no per-order loop", async () => {

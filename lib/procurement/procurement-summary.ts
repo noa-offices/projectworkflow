@@ -14,7 +14,13 @@ export type ProcurementAttentionItemRow = {
   vendorKey: string;
 };
 
-const MAX_ATTENTION_ITEMS_PER_CATEGORY = 5;
+// Dashboard Attention drill-down refinement: the bound now applies to distinct affected
+// Projects (order_no), not raw vendor rows - a Project with 3 flagged vendors still counts as
+// one group. `XGroupCount` is the true number of distinct Projects matched (before bounding),
+// used by the dashboard to decide whether more groups exist beyond the first
+// MAX_ATTENTION_GROUPS_PER_CATEGORY - independent of `XCount`, which stays the full vendor-issue
+// tally (unchanged badge semantics).
+const MAX_ATTENTION_GROUPS_PER_CATEGORY = 5;
 
 export type ProcurementSummary = {
   openPoCount: number;
@@ -30,9 +36,13 @@ export type ProcurementSummary = {
   missingEtdCount: number;
   deliveredNotReceivedCount: number;
   awaitingConfirmationItems: ProcurementAttentionItemRow[];
+  awaitingConfirmationGroupCount: number;
   missingEtaItems: ProcurementAttentionItemRow[];
+  missingEtaGroupCount: number;
   missingEtdItems: ProcurementAttentionItemRow[];
+  missingEtdGroupCount: number;
   deliveredNotReceivedItems: ProcurementAttentionItemRow[];
+  deliveredNotReceivedGroupCount: number;
 };
 
 const IN_TRANSIT_STEP = VENDOR_STEP_LABELS.findIndex((step) => step.key === "in_transit");
@@ -51,9 +61,13 @@ const EMPTY_SUMMARY: ProcurementSummary = {
   missingEtdCount: 0,
   deliveredNotReceivedCount: 0,
   awaitingConfirmationItems: [],
+  awaitingConfirmationGroupCount: 0,
   missingEtaItems: [],
+  missingEtaGroupCount: 0,
   missingEtdItems: [],
+  missingEtdGroupCount: 0,
   deliveredNotReceivedItems: [],
+  deliveredNotReceivedGroupCount: 0,
 };
 
 type VendorProgressRow = {
@@ -66,8 +80,23 @@ type VendorProgressRow = {
   etd: string | null;
 };
 
-function toItemRows(rows: VendorProgressRow[]): ProcurementAttentionItemRow[] {
-  return rows.slice(0, MAX_ATTENTION_ITEMS_PER_CATEGORY).map((row) => ({ orderNo: row.order_no, vendorKey: row.vendor_key }));
+// Bounds to the first MAX_ATTENTION_GROUPS_PER_CATEGORY distinct order_no values (in first-seen
+// order), then returns ALL vendor rows belonging to those - never a partial vendor list for an
+// already-included Project. groupCount is the true distinct-order total before bounding.
+function toGroupedItemRows(rows: VendorProgressRow[]): { items: ProcurementAttentionItemRow[]; groupCount: number } {
+  const seenOrderNos = new Set<string>();
+  const orderedOrderNos: string[] = [];
+  for (const row of rows) {
+    if (!seenOrderNos.has(row.order_no)) {
+      seenOrderNos.add(row.order_no);
+      orderedOrderNos.push(row.order_no);
+    }
+  }
+  const boundedOrderNos = new Set(orderedOrderNos.slice(0, MAX_ATTENTION_GROUPS_PER_CATEGORY));
+  return {
+    items: rows.filter((row) => boundedOrderNos.has(row.order_no)).map((row) => ({ orderNo: row.order_no, vendorKey: row.vendor_key })),
+    groupCount: orderedOrderNos.length,
+  };
 }
 
 // Takes the caller's already-resolved active order-number list (the same dedup/exclusion
@@ -106,6 +135,11 @@ export async function loadProcurementSummary(activeOrderNos: string[]): Promise<
     (row) => row.active_step === DELIVERED_INSTALLED_STEP && row.receiving_status !== "received",
   );
 
+  const awaitingConfirmationGrouped = toGroupedItemRows(awaitingConfirmationRows);
+  const missingEtaGrouped = toGroupedItemRows(missingEtaRows);
+  const missingEtdGrouped = toGroupedItemRows(missingEtdRows);
+  const deliveredNotReceivedGrouped = toGroupedItemRows(deliveredNotReceivedRows);
+
   return {
     openPoCount: poResult.count ?? 0,
     vendorCount: rows.length,
@@ -115,9 +149,13 @@ export async function loadProcurementSummary(activeOrderNos: string[]): Promise<
     missingEtaCount: missingEtaRows.length,
     missingEtdCount: missingEtdRows.length,
     deliveredNotReceivedCount: deliveredNotReceivedRows.length,
-    awaitingConfirmationItems: toItemRows(awaitingConfirmationRows),
-    missingEtaItems: toItemRows(missingEtaRows),
-    missingEtdItems: toItemRows(missingEtdRows),
-    deliveredNotReceivedItems: toItemRows(deliveredNotReceivedRows),
+    awaitingConfirmationItems: awaitingConfirmationGrouped.items,
+    awaitingConfirmationGroupCount: awaitingConfirmationGrouped.groupCount,
+    missingEtaItems: missingEtaGrouped.items,
+    missingEtaGroupCount: missingEtaGrouped.groupCount,
+    missingEtdItems: missingEtdGrouped.items,
+    missingEtdGroupCount: missingEtdGrouped.groupCount,
+    deliveredNotReceivedItems: deliveredNotReceivedGrouped.items,
+    deliveredNotReceivedGroupCount: deliveredNotReceivedGrouped.groupCount,
   };
 }

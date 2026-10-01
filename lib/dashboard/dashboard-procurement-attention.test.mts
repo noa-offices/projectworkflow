@@ -1,12 +1,12 @@
-// Dashboard Attention Drill-Down: expandable affected-record lists. Real execution against a
-// fake supabase client + fake loadProcurementSummary() for the two data-layer functions in
-// lib/dashboard/actions.ts (getDashboardStats' pendingQuotations group, and
-// getDashboardProcurementAttention), plus source-text checks for app/dashboard/page.tsx (role
-// gating/active-order scope reuse) and components/dashboard/erp-dashboard.tsx (collapsed-by-
-// default, expand-on-click, no-navigate header, zero-row omission, HR/Project-Value rows intact)
-// - both are "use client"/Server Component files with "@/..." aliases not resolvable by Node's
-// plain ESM resolver outside the Next.js build, matching the convention already used throughout
-// this codebase's *-safety.test.mts files.
+// Dashboard Attention Drill-Down refinement: Project/reference names always shown, vendor issues
+// grouped by Project. Real execution against a fake supabase client + fake loadProcurementSummary()
+// for the two data-layer functions in lib/dashboard/actions.ts (getDashboardStats'
+// pendingQuotations group, and getDashboardProcurementAttention), plus source-text checks for
+// app/dashboard/page.tsx (role gating/active-order scope reuse) and
+// components/dashboard/erp-dashboard.tsx (collapsed-by-default, expand-on-click, no-navigate
+// header, grouped-row rendering) - both are "use client"/Server Component files with "@/..."
+// aliases not resolvable by Node's plain ESM resolver outside the Next.js build, matching the
+// convention already used throughout this codebase's *-safety.test.mts files.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test, { mock } from "node:test";
@@ -23,9 +23,13 @@ let summaryFixture: {
   missingEtdCount: number;
   deliveredNotReceivedCount: number;
   awaitingConfirmationItems: Array<{ orderNo: string; vendorKey: string }>;
+  awaitingConfirmationGroupCount: number;
   missingEtaItems: Array<{ orderNo: string; vendorKey: string }>;
+  missingEtaGroupCount: number;
   missingEtdItems: Array<{ orderNo: string; vendorKey: string }>;
+  missingEtdGroupCount: number;
   deliveredNotReceivedItems: Array<{ orderNo: string; vendorKey: string }>;
+  deliveredNotReceivedGroupCount: number;
 };
 function emptySummary() {
   return {
@@ -38,9 +42,13 @@ function emptySummary() {
     missingEtdCount: 0,
     deliveredNotReceivedCount: 0,
     awaitingConfirmationItems: [] as Array<{ orderNo: string; vendorKey: string }>,
+    awaitingConfirmationGroupCount: 0,
     missingEtaItems: [] as Array<{ orderNo: string; vendorKey: string }>,
+    missingEtaGroupCount: 0,
     missingEtdItems: [] as Array<{ orderNo: string; vendorKey: string }>,
+    missingEtdGroupCount: 0,
     deliveredNotReceivedItems: [] as Array<{ orderNo: string; vendorKey: string }>,
+    deliveredNotReceivedGroupCount: 0,
   };
 }
 summaryFixture = emptySummary();
@@ -55,6 +63,7 @@ let quotationsFixture: Array<{
   is_active: boolean;
   approved_salesperson_id: string | null;
   layout_settings: unknown;
+  title?: string | null;
 }> = [];
 const quotationsQueryCalls: string[] = [];
 
@@ -95,93 +104,171 @@ function project(orderNo: string, reference = "Ref", clientName = "Client", crea
   return { orderNo, clientName, reference, createdAt };
 }
 
-// ── getDashboardProcurementAttention: counts + bounded items ──────────────────────────────────
+// ── getDashboardProcurementAttention: grouped by Project (orderNo) ─────────────────────────────
 
 test("1. zero Procurement issues -> all-zero groups with empty item lists", async () => {
   reset();
   const result = await getDashboardProcurementAttention([project("CO-0001")]);
   assert.deepEqual(result, {
-    awaitingSupplierConfirmation: { count: 0, items: [] },
-    missingEta: { count: 0, items: [] },
-    missingEtd: { count: 0, items: [] },
-    deliveredNotReceived: { count: 0, items: [] },
+    awaitingSupplierConfirmation: { count: 0, totalCount: 0, items: [] },
+    missingEta: { count: 0, totalCount: 0, items: [] },
+    missingEtd: { count: 0, totalCount: 0, items: [] },
+    deliveredNotReceived: { count: 0, totalCount: 0, items: [] },
   });
 });
 
-test("8. awaiting-confirmation item list is enriched with exact href + order/vendor display", async () => {
+test("3/4. two affected vendors on the same Project render as one grouped row with both vendor labels", async () => {
   reset();
-  summaryFixture.awaitingConfirmationCount = 1;
-  summaryFixture.awaitingConfirmationItems = [{ orderNo: "CO-0002-003", vendorKey: "las-mobili" }];
-  const result = await getDashboardProcurementAttention([project("CO-0002-003", "Office Fit-out")]);
-  assert.deepEqual(result.awaitingSupplierConfirmation, {
-    count: 1,
-    items: [{ id: "CO-0002-003:las-mobili", primary: "CO-0002-003", secondary: "Office Fit-out · las-mobili", href: "/procurement/orders/CO-0002-003" }],
+  summaryFixture.awaitingConfirmationCount = 2;
+  summaryFixture.awaitingConfirmationGroupCount = 1;
+  summaryFixture.awaitingConfirmationItems = [
+    { orderNo: "CO-0003-001", vendorKey: "LAS MOBILI" },
+    { orderNo: "CO-0003-001", vendorKey: "INTERSTUHL" },
+  ];
+  const result = await getDashboardProcurementAttention([project("CO-0003-001", "Galleria Mall Boutique Refurbishment")]);
+  assert.equal(result.awaitingSupplierConfirmation.items.length, 1);
+  assert.deepEqual(result.awaitingSupplierConfirmation.items[0], {
+    id: "CO-0003-001",
+    primary: "CO-0003-001",
+    secondary: "Galleria Mall Boutique Refurbishment",
+    tertiary: "LAS MOBILI · INTERSTUHL",
+    href: "/procurement/orders/CO-0003-001",
   });
 });
 
-test("9. missing-ETA item list is enriched the same way", async () => {
+test("5. a duplicate vendor label on the same Project is deduped, preserving first-seen order", async () => {
   reset();
-  summaryFixture.missingEtaCount = 1;
-  summaryFixture.missingEtaItems = [{ orderNo: "CO-0003-001", vendorKey: "acme" }];
-  const result = await getDashboardProcurementAttention([project("CO-0003-001", "HQ Fit-out")]);
-  assert.deepEqual(result.missingEta.items[0], { id: "CO-0003-001:acme", primary: "CO-0003-001", secondary: "HQ Fit-out · acme", href: "/procurement/orders/CO-0003-001" });
+  summaryFixture.missingEtaCount = 3;
+  summaryFixture.missingEtaGroupCount = 1;
+  summaryFixture.missingEtaItems = [
+    { orderNo: "CO-0003-001", vendorKey: "LAS MOBILI" },
+    { orderNo: "CO-0003-001", vendorKey: "INTERSTUHL" },
+    { orderNo: "CO-0003-001", vendorKey: "LAS MOBILI" },
+  ];
+  const result = await getDashboardProcurementAttention([project("CO-0003-001", "Showroom")]);
+  assert.equal(result.missingEta.items.length, 1);
+  assert.equal(result.missingEta.items[0].tertiary, "LAS MOBILI · INTERSTUHL");
 });
 
-test("10. missing-ETD item list is enriched the same way", async () => {
+test("6. two different Projects render as two groups, each with its own vendor list", async () => {
   reset();
-  summaryFixture.missingEtdCount = 1;
-  summaryFixture.missingEtdItems = [{ orderNo: "CO-0004-002", vendorKey: "interstuhl" }];
-  const result = await getDashboardProcurementAttention([project("CO-0004-002", "Showroom")]);
-  assert.deepEqual(result.missingEtd.items[0], { id: "CO-0004-002:interstuhl", primary: "CO-0004-002", secondary: "Showroom · interstuhl", href: "/procurement/orders/CO-0004-002" });
+  summaryFixture.missingEtdCount = 3;
+  summaryFixture.missingEtdGroupCount = 2;
+  summaryFixture.missingEtdItems = [
+    { orderNo: "CO-0003-001", vendorKey: "LAS MOBILI" },
+    { orderNo: "CO-0003-001", vendorKey: "INTERSTUHL" },
+    { orderNo: "CO-0005-001", vendorKey: "INTERSTUHL" },
+  ];
+  const result = await getDashboardProcurementAttention([
+    project("CO-0003-001", "Galleria Mall Boutique Refurbishment"),
+    project("CO-0005-001", "HQ Office Server Room Fit-out"),
+  ]);
+  assert.equal(result.missingEtd.items.length, 2);
+  assert.deepEqual(result.missingEtd.items.map((item) => item.primary), ["CO-0003-001", "CO-0005-001"]);
+  assert.equal(result.missingEtd.items[0].tertiary, "LAS MOBILI · INTERSTUHL");
+  assert.equal(result.missingEtd.items[1].tertiary, "INTERSTUHL");
 });
 
-test("11. delivered-not-received item list is enriched the same way", async () => {
+test("7. badge count stays the full vendor-issue count, not the Project-group count", async () => {
   reset();
-  summaryFixture.deliveredNotReceivedCount = 1;
-  summaryFixture.deliveredNotReceivedItems = [{ orderNo: "CO-0005-001", vendorKey: "interstuhl" }];
-  const result = await getDashboardProcurementAttention([project("CO-0005-001", "Lobby")]);
-  assert.deepEqual(result.deliveredNotReceived.items[0], { id: "CO-0005-001:interstuhl", primary: "CO-0005-001", secondary: "Lobby · interstuhl", href: "/procurement/orders/CO-0005-001" });
+  summaryFixture.missingEtaCount = 3; // 2 vendors on Project A + 1 on Project B
+  summaryFixture.missingEtaGroupCount = 2;
+  summaryFixture.missingEtaItems = [
+    { orderNo: "CO-A", vendorKey: "LAS" },
+    { orderNo: "CO-A", vendorKey: "INTERSTUHL" },
+    { orderNo: "CO-B", vendorKey: "LAS" },
+  ];
+  const result = await getDashboardProcurementAttention([project("CO-A"), project("CO-B")]);
+  assert.equal(result.missingEta.count, 3);
+  assert.equal(result.missingEta.items.length, 2);
 });
 
-test("5/6. full count is preserved even though the item list is already pre-bounded upstream (max 5)", async () => {
+test("8. a grouped Project row links to /procurement/orders/[orderNo] - one link per Project, never per vendor", async () => {
+  reset();
+  summaryFixture.deliveredNotReceivedCount = 2;
+  summaryFixture.deliveredNotReceivedGroupCount = 1;
+  summaryFixture.deliveredNotReceivedItems = [
+    { orderNo: "CO-0005-001", vendorKey: "las-mobili" },
+    { orderNo: "CO-0005-001", vendorKey: "interstuhl" },
+  ];
+  const result = await getDashboardProcurementAttention([project("CO-0005-001")]);
+  assert.equal(result.deliveredNotReceived.items.length, 1);
+  assert.equal(result.deliveredNotReceived.items[0].href, "/procurement/orders/CO-0005-001");
+});
+
+test("9. max visible groups remains bounded - totalCount tracks the true distinct-Project total", async () => {
   reset();
   summaryFixture.awaitingConfirmationCount = 12;
+  summaryFixture.awaitingConfirmationGroupCount = 8; // upstream already bounds items to 5 distinct orders
   summaryFixture.awaitingConfirmationItems = Array.from({ length: 5 }, (_, i) => ({ orderNo: `CO-000${i}`, vendorKey: "v" }));
   const result = await getDashboardProcurementAttention([project("CO-0000")]);
   assert.equal(result.awaitingSupplierConfirmation.count, 12);
+  assert.equal(result.awaitingSupplierConfirmation.totalCount, 8);
   assert.equal(result.awaitingSupplierConfirmation.items.length, 5);
 });
 
-test("4. a project not present in the active-order list still gets a usable fallback label", async () => {
+test("10. Project/reference-name fallback is safe when the Project isn't in the active list - orderNo only, no crash", async () => {
   reset();
   summaryFixture.missingEtaCount = 1;
+  summaryFixture.missingEtaGroupCount = 1;
   summaryFixture.missingEtaItems = [{ orderNo: "CO-9999-000", vendorKey: "unknown-vendor" }];
   const result = await getDashboardProcurementAttention([]);
-  assert.deepEqual(result.missingEta.items[0], { id: "CO-9999-000:unknown-vendor", primary: "CO-9999-000", secondary: "unknown-vendor", href: "/procurement/orders/CO-9999-000" });
+  assert.deepEqual(result.missingEta.items[0], {
+    id: "CO-9999-000",
+    primary: "CO-9999-000",
+    secondary: undefined,
+    tertiary: "unknown-vendor",
+    href: "/procurement/orders/CO-9999-000",
+  });
 });
 
-test("16. exactly one delegated loadProcurementSummary() call - no per-order loop", async () => {
+test("14. exactly one delegated loadProcurementSummary() call - no per-Project/vendor query loop", async () => {
   reset();
   await getDashboardProcurementAttention([project("CO-0001"), project("CO-0002")]);
   assert.deepEqual(summaryCalls, [["CO-0001", "CO-0002"]]);
   assert.equal(summaryCalls.length, 1);
 });
 
-// ── getDashboardStats: pendingQuotations becomes a bounded group ─────────────────────────────
+// ── getDashboardStats: pendingQuotations always shows reference/project + client when available ─
 
-test("13. zero pending quotations -> count 0, empty items", async () => {
+test("zero pending quotations -> count 0, empty items", async () => {
   reset();
   quotationsFixture = [];
   const stats = await getDashboardStats();
-  assert.deepEqual(stats.pendingQuotations, { count: 0, items: [] });
+  assert.deepEqual(stats.pendingQuotations, { count: 0, totalCount: 0, items: [] });
 });
 
-test("15. the existing pending-quotation status definition is unchanged - draft/ready_to_send/etc. still count", async () => {
+test("1/2. a pending-quotation row falls back to the `title` column (an existing column, zero new query) when no Project File/approval-draft snapshot exists yet", async () => {
   reset();
   quotationsFixture = [
-    { id: "q1", project_id: null, quotation_no: "QN-0001-001", quotation_date: "2026-01-01", status: "draft", is_active: true, approved_salesperson_id: null, layout_settings: null },
-    { id: "q2", project_id: null, quotation_no: "QN-0002-001", quotation_date: "2026-01-02", status: "sent_to_client", is_active: true, approved_salesperson_id: null, layout_settings: null },
-    { id: "q3", project_id: null, quotation_no: "QN-0003-001", quotation_date: "2026-01-03", status: "client_confirmed", is_active: true, approved_salesperson_id: "u1", layout_settings: null },
+    { id: "q-abc", project_id: null, quotation_no: "QN-0005-001", quotation_date: "2026-01-01", status: "draft", is_active: true, approved_salesperson_id: null, layout_settings: null, title: "HQ Office Server Room Fit-out" },
+  ];
+  const stats = await getDashboardStats();
+  assert.deepEqual(stats.pendingQuotations.items[0], {
+    id: "q-abc",
+    primary: "QN-0005-001",
+    secondary: "HQ Office Server Room Fit-out",
+    tertiary: undefined,
+    href: "/quotations/q-abc",
+  });
+});
+
+test("10b. when neither a Project File snapshot nor a title exists, the row safely falls back to the order number only", async () => {
+  reset();
+  quotationsFixture = [
+    { id: "q-abc", project_id: null, quotation_no: "QN-0005-001", quotation_date: "2026-01-01", status: "draft", is_active: true, approved_salesperson_id: null, layout_settings: null, title: null },
+  ];
+  const stats = await getDashboardStats();
+  assert.equal(stats.pendingQuotations.items[0].primary, "QN-0005-001");
+  assert.equal(stats.pendingQuotations.items[0].secondary, undefined);
+});
+
+test("13. the existing pending-quotation status definition is unchanged - draft/ready_to_send/etc. still count", async () => {
+  reset();
+  quotationsFixture = [
+    { id: "q1", project_id: null, quotation_no: "QN-0001-001", quotation_date: "2026-01-01", status: "draft", is_active: true, approved_salesperson_id: null, layout_settings: null, title: null },
+    { id: "q2", project_id: null, quotation_no: "QN-0002-001", quotation_date: "2026-01-02", status: "sent_to_client", is_active: true, approved_salesperson_id: null, layout_settings: null, title: null },
+    { id: "q3", project_id: null, quotation_no: "QN-0003-001", quotation_date: "2026-01-03", status: "client_confirmed", is_active: true, approved_salesperson_id: "u1", layout_settings: null, title: null },
   ];
   const stats = await getDashboardStats();
   // q3 is client_confirmed with no project file and a salesperson - quotationApprovalDisplay()
@@ -189,21 +276,19 @@ test("15. the existing pending-quotation status definition is unchanged - draft/
   assert.equal(stats.pendingQuotations.count, 3);
 });
 
-test("7. quotation folder dedup is preserved - two revisions of the same folder (QN-0001-001 and its -R1 revision) count once", async () => {
+test("quotation folder dedup is preserved - two revisions of the same folder (QN-0001-001 and its -R1 revision) count once", async () => {
   reset();
   quotationsFixture = [
-    { id: "q1", project_id: null, quotation_no: "QN-0001-001", quotation_date: "2026-01-01", status: "draft", is_active: true, approved_salesperson_id: null, layout_settings: null },
-    { id: "q2", project_id: null, quotation_no: "QN-0001-001-R1", quotation_date: "2026-01-02", status: "draft", is_active: true, approved_salesperson_id: null, layout_settings: null },
+    { id: "q1", project_id: null, quotation_no: "QN-0001-001", quotation_date: "2026-01-01", status: "draft", is_active: true, approved_salesperson_id: null, layout_settings: null, title: null },
+    { id: "q2", project_id: null, quotation_no: "QN-0001-001-R1", quotation_date: "2026-01-02", status: "draft", is_active: true, approved_salesperson_id: null, layout_settings: null, title: null },
   ];
   const stats = await getDashboardStats();
   assert.equal(stats.pendingQuotations.count, 1);
   assert.equal(stats.pendingQuotations.items.length, 1);
-  // The later revision (q2) is kept as the folder's representative row - same untouched logic
-  // as the existing active/completed-project aggregation loop above it.
   assert.equal(stats.pendingQuotations.items[0].id, "q2");
 });
 
-test("4/6. pending-quotation items are bounded to 5 while count stays the full tally", async () => {
+test("9b. pending-quotation items are bounded to 5 while count/totalCount stay the full tally", async () => {
   reset();
   quotationsFixture = Array.from({ length: 8 }, (_, i) => ({
     id: `q${i}`,
@@ -214,26 +299,28 @@ test("4/6. pending-quotation items are bounded to 5 while count stays the full t
     is_active: true,
     approved_salesperson_id: null,
     layout_settings: null,
+    title: null,
   }));
   const stats = await getDashboardStats();
   assert.equal(stats.pendingQuotations.count, 8);
+  assert.equal(stats.pendingQuotations.totalCount, 8);
   assert.equal(stats.pendingQuotations.items.length, 5);
 });
 
-test("4. a pending-quotation item links to its exact quotation page", async () => {
+test("a pending-quotation item links to its exact quotation page", async () => {
   reset();
   quotationsFixture = [
-    { id: "q-abc", project_id: null, quotation_no: "QN-0003-001", quotation_date: "2026-01-01", status: "draft", is_active: true, approved_salesperson_id: null, layout_settings: null },
+    { id: "q-abc", project_id: null, quotation_no: "QN-0003-001", quotation_date: "2026-01-01", status: "draft", is_active: true, approved_salesperson_id: null, layout_settings: null, title: null },
   ];
   const stats = await getDashboardStats();
-  assert.deepEqual(stats.pendingQuotations.items[0], { id: "q-abc", primary: "QN-0003-001", href: "/quotations/q-abc" });
+  assert.equal(stats.pendingQuotations.items[0].href, "/quotations/q-abc");
 });
 
-test("16b. getDashboardStats issues exactly one quotations query, independent of how many pending items exist", async () => {
+test("14b. getDashboardStats issues exactly one quotations query, independent of how many pending items exist", async () => {
   reset();
   quotationsFixture = Array.from({ length: 8 }, (_, i) => ({
     id: `q${i}`, project_id: `p${i}`, quotation_no: `QN-000${i}`, quotation_date: "2026-01-01",
-    status: "draft", is_active: true, approved_salesperson_id: null, layout_settings: null,
+    status: "draft", is_active: true, approved_salesperson_id: null, layout_settings: null, title: null,
   }));
   await getDashboardStats();
   assert.deepEqual(quotationsQueryCalls, ["quotations"]);
@@ -256,46 +343,49 @@ test("the dashboard page derives procurementAttention from the full active-proje
   assert.ok(fnBody.includes("loadProcurementSummary(activeOrderNos)"));
 });
 
-test("12. Procurement attention is only fetched when canAccessProcurement() allows it - no new role logic", () => {
+test("11. Procurement attention is only fetched when canAccessProcurement() allows it - no new role logic", () => {
   assert.ok(pageSource.includes("const canSeeProcurementAttention = canAccessProcurement(profile?.role);"));
   assert.ok(pageSource.includes("canSeeProcurementAttention\n    ? await getDashboardProcurementAttention"));
   assert.ok(pageSource.includes(": null;"));
   assert.ok(!/function\s+canSeeProcurementAttention/.test(pageSource));
   // A null procurementAttention contributes zero drill-down categories - unauthorized roles never
-  // see Procurement rows or their child records.
+  // see Procurement rows, Project groupings, or vendor labels.
   assert.ok(dashboardComponentSource.includes("const procurementAttentionCategories: AttentionCategory[] = procurementAttention"));
 });
 
-test("1/2/3. categories collapse by default, expand on click via a non-navigating button, with aria-expanded", () => {
+test("12. category expand/collapse behavior is unchanged by this refinement", () => {
   const rowStart = dashboardComponentSource.indexOf("function AttentionCategoryRow(");
   const rowBody = dashboardComponentSource.slice(rowStart, dashboardComponentSource.indexOf("\n}\n", rowStart));
   assert.ok(rowBody.includes('<button\n        type="button"\n        aria-expanded={isExpanded}\n        onClick={onToggle}'));
   assert.ok(rowBody.includes("{isExpanded && ("));
+  assert.ok(rowBody.includes('isExpanded ? "rotate-90" : ""'));
   assert.ok(dashboardComponentSource.includes("const [expandedAttentionKey, setExpandedAttentionKey] = useState<string | null>(null);"));
-  // One category open at a time (Part 9) - toggling a key clears any other expanded category.
   assert.ok(dashboardComponentSource.includes("setExpandedAttentionKey((prev) => (prev === category.key ? null : category.key))"));
-});
-
-test("chevron rotates when expanded, and no modal/drawer markup was introduced", () => {
-  assert.ok(dashboardComponentSource.includes('isExpanded ? "rotate-90" : ""'));
   assert.ok(!/role="dialog"|<dialog|Modal|Drawer/.test(dashboardComponentSource));
 });
 
-test("4. each child record renders its own exact link, never the category's broad destination", () => {
+test("each grouped child row renders its own exact link, never one link per vendor", () => {
   const rowStart = dashboardComponentSource.indexOf("function AttentionCategoryRow(");
   const rowBody = dashboardComponentSource.slice(rowStart, dashboardComponentSource.indexOf("\n}\n", rowStart));
   assert.ok(rowBody.includes("href={item.href}"));
+  assert.ok(!/vendors\.map/.test(rowBody));
 });
 
-test("6. 'View all N' only renders when more records exist than are shown, linking to the existing broad destination", () => {
+test("9c. 'View all' uses totalCount (distinct Projects shown), not the raw vendor-issue badge count", () => {
   const rowStart = dashboardComponentSource.indexOf("function AttentionCategoryRow(");
   const rowBody = dashboardComponentSource.slice(rowStart, dashboardComponentSource.indexOf("\n}\n", rowStart));
-  assert.ok(rowBody.includes("const hasMore = category.count > category.items.length;"));
+  assert.ok(rowBody.includes("const hasMore = category.totalCount > category.items.length;"));
   assert.ok(rowBody.includes("href={category.fallbackHref}"));
-  assert.ok(rowBody.includes("View all {category.count}"));
+  assert.ok(rowBody.includes("View all {category.totalCount}"));
 });
 
-test("13b. zero-count categories are omitted entirely from the category list", () => {
+test("the third (tertiary) line renders when present - vendor list for Procurement rows, client name for quotation rows", () => {
+  const rowStart = dashboardComponentSource.indexOf("function AttentionCategoryRow(");
+  const rowBody = dashboardComponentSource.slice(rowStart, dashboardComponentSource.indexOf("\n}\n", rowStart));
+  assert.ok(rowBody.includes("item.tertiary"));
+});
+
+test("zero-count categories are omitted entirely from the category list", () => {
   assert.ok(dashboardComponentSource.includes("procurementAttention.awaitingSupplierConfirmation.count > 0"));
   assert.ok(dashboardComponentSource.includes("procurementAttention.missingEta.count > 0"));
   assert.ok(dashboardComponentSource.includes("procurementAttention.missingEtd.count > 0"));
@@ -303,24 +393,24 @@ test("13b. zero-count categories are omitted entirely from the category list", (
   assert.ok(dashboardComponentSource.includes("stats.pendingQuotations.count > 0"));
 });
 
-test("11b. count>0 with an empty item list shows a safe 'Details unavailable' fallback, never a crash", () => {
+test("count>0 with an empty item list still shows a safe 'Details unavailable' fallback, never a crash", () => {
   const rowStart = dashboardComponentSource.indexOf("function AttentionCategoryRow(");
   const rowBody = dashboardComponentSource.slice(rowStart, dashboardComponentSource.indexOf("\n}\n", rowStart));
   assert.ok(rowBody.includes("Details unavailable."));
 });
 
-test("14. the existing HR alerts row keeps its prior simple navigate-on-click behavior, unchanged", () => {
+test("the existing HR alerts row keeps its prior simple navigate-on-click behavior, unchanged", () => {
   assert.ok(dashboardComponentSource.includes('label: "HR and worker documents nearing expiry", count: hrAlerts.length, href: "/hr"'));
   assert.ok(dashboardComponentSource.includes("hrAttentionItem && ("));
 });
 
-test("the top Attention Items KPI total is unchanged by this task (Option A, carried from the prior dashboard task)", () => {
+test("13b. existing Attention conditions (top KPI total) are unchanged by this refinement", () => {
   assert.ok(dashboardComponentSource.includes(
     "const attentionCount = stats.pendingQuotations.count + (hrAlerts?.length ?? 0);",
   ));
 });
 
-test("17. the existing Active/Completed Project Value KPIs are untouched by this task", () => {
+test("13c. existing Active/Completed Project Value KPIs are untouched by this refinement", () => {
   assert.ok(dashboardComponentSource.includes('label: "Active Project Value",'));
   assert.ok(dashboardComponentSource.includes("value: formatAED(stats.activeProjectValue),"));
   assert.ok(dashboardComponentSource.includes('label: "Completed Project Value",'));

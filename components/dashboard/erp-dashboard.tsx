@@ -60,7 +60,12 @@ function relativeTime(iso: string): string {
 type AttentionCategory = {
   key: string;
   label: string;
+  // Full tally shown on the badge - vendor-issue count for grouped Procurement categories, folder
+  // count for pending quotations. Never used to decide "View all" (see totalCount).
   count: number;
+  // Distinct entries `items` represents before the 5-row bound (e.g. distinct affected Projects
+  // for a grouped Procurement category). Equals `count` for ungrouped categories.
+  totalCount: number;
   items: DashboardAttentionItem[];
   tone: string;
   // Broad existing destination, used only for "View all N" when more records exist than are
@@ -80,7 +85,7 @@ function AttentionCategoryRow({
   isExpanded: boolean;
   onToggle: () => void;
 }) {
-  const hasMore = category.count > category.items.length;
+  const hasMore = category.totalCount > category.items.length;
   return (
     <div>
       <button
@@ -112,6 +117,9 @@ function AttentionCategoryRow({
                   {item.secondary && (
                     <span className="block truncate text-[11px] text-zinc-500">{item.secondary}</span>
                   )}
+                  {item.tertiary && (
+                    <span className="block truncate text-[11px] text-zinc-400">{item.tertiary}</span>
+                  )}
                 </span>
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden="true" />
               </Link>
@@ -122,7 +130,7 @@ function AttentionCategoryRow({
               href={category.fallbackHref}
               className="block py-2 pr-4 text-xs font-semibold text-emerald-700 transition hover:text-emerald-900"
             >
-              View all {category.count} →
+              View all {category.totalCount} →
             </Link>
           )}
         </div>
@@ -294,6 +302,7 @@ export function ERPDashboard({
               key: "procurement-awaiting-confirmation",
               label: "Suppliers awaiting confirmation",
               count: procurementAttention.awaitingSupplierConfirmation.count,
+              totalCount: procurementAttention.awaitingSupplierConfirmation.totalCount,
               items: procurementAttention.awaitingSupplierConfirmation.items,
               tone: "bg-amber-50 text-amber-700",
               fallbackHref: "/procurement/orders",
@@ -304,6 +313,7 @@ export function ERPDashboard({
               key: "procurement-missing-eta",
               label: "Vendors missing ETA",
               count: procurementAttention.missingEta.count,
+              totalCount: procurementAttention.missingEta.totalCount,
               items: procurementAttention.missingEta.items,
               tone: "bg-amber-50 text-amber-700",
               fallbackHref: "/procurement/orders",
@@ -314,6 +324,7 @@ export function ERPDashboard({
               key: "procurement-missing-etd",
               label: "Vendors missing ETD",
               count: procurementAttention.missingEtd.count,
+              totalCount: procurementAttention.missingEtd.totalCount,
               items: procurementAttention.missingEtd.items,
               tone: "bg-amber-50 text-amber-700",
               fallbackHref: "/procurement/orders",
@@ -324,6 +335,7 @@ export function ERPDashboard({
               key: "procurement-delivered-not-received",
               label: "Delivered, not yet received",
               count: procurementAttention.deliveredNotReceived.count,
+              totalCount: procurementAttention.deliveredNotReceived.totalCount,
               items: procurementAttention.deliveredNotReceived.items,
               tone: "bg-amber-50 text-amber-700",
               fallbackHref: "/procurement/orders",
@@ -336,6 +348,7 @@ export function ERPDashboard({
       ? {
           key: "pending-quotations",
           label: "Quotation folders awaiting completion",
+          totalCount: stats.pendingQuotations.totalCount,
           count: stats.pendingQuotations.count,
           items: stats.pendingQuotations.items,
           tone: "bg-amber-50 text-amber-700",
