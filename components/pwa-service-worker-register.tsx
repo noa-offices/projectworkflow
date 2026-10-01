@@ -9,7 +9,7 @@ export function PwaServiceWorkerRegister() {
     }
 
     const registerServiceWorker = () => {
-      void navigator.serviceWorker.register("/sw.js").catch((error: unknown) => {
+      void navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch((error: unknown) => {
         console.warn(
           "PWA service worker registration failed",
           error instanceof Error ? error.message : error,

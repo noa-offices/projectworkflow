@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { startGlobalLoading, stopGlobalLoading } from "@/lib/global-loading";
+import { getHealth, requestReadRefresh } from "@/lib/local-read-cache/runtime";
 
 type RefreshStatus = "idle" | "updated";
 
@@ -40,7 +41,7 @@ export function GlobalRefreshButton({
 
     wasPendingRef.current = false;
     stopGlobalLoading();
-    setStatus("updated");
+    setStatus(getHealth().status === "Online" ? "updated" : "idle");
     resetTimerRef.current = window.setTimeout(() => {
       setStatus("idle");
       resetTimerRef.current = null;
@@ -60,6 +61,8 @@ export function GlobalRefreshButton({
       aria-disabled={isPending}
       aria-label={label}
       onClick={() => {
+        requestReadRefresh();
+        if (!navigator.onLine) return;
         if (resetTimerRef.current !== null) {
           window.clearTimeout(resetTimerRef.current);
           resetTimerRef.current = null;

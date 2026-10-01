@@ -127,7 +127,7 @@ export async function signup(formData: FormData) {
 export async function signOut() {
   const supabase = await createClient();
   await supabase.auth.signOut();
-  redirect("/login");
+  redirect("/login?readCacheReset=1");
 }
 
 export async function requestPasswordReset(formData: FormData) {

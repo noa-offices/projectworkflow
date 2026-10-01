@@ -6,6 +6,7 @@ import { GlobalLoadingIndicator } from "@/components/global-loading-indicator";
 import { NoaAssistant } from "@/components/noa/noa-assistant";
 import { PreserveUiState } from "@/components/preserve-ui-state";
 import { PwaServiceWorkerRegister } from "@/components/pwa-service-worker-register";
+import { LocalReadRuntime } from "@/components/local-read-cache/local-read-runtime";
 import { getProfileForUser } from "@/lib/auth";
 import type { NoaAuthContext } from "@/lib/noa/noa-types";
 import { createClient } from "@/lib/supabase/server";
@@ -98,6 +99,9 @@ export default async function RootLayout({
           <PreserveUiState />
         </Suspense>
         <PwaServiceWorkerRegister />
+        <Suspense fallback={null}>
+          <LocalReadRuntime key={noaAuth?.userId ?? "signed-out"} userId={noaAuth?.userId ?? null} />
+        </Suspense>
         <Suspense fallback={null}>
           <GlobalLoadingIndicator />
         </Suspense>

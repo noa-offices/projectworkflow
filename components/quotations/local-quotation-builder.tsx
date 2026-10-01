@@ -2646,6 +2646,10 @@ export function LocalQuotationBuilder({
   }
 
   async function saveToSoftware() {
+    if (!navigator.onLine) {
+      setSaveMessage("You're offline. Save to Software is unavailable; local editing and JSON backup remain available. Nothing was queued.");
+      return;
+    }
     if (publicationBusyRef.current || !hydrated) return;
     publicationBusyRef.current = true;
     setIsPublishing(true);
