@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Fragment, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ProductLibrarySelector,
   type ProductLibraryBrand,
@@ -23,6 +23,8 @@ import {
   type ProductTemplateMaterialGroupLink,
 } from "@/components/quotations/finish-selections-editor";
 import { getWorkspaceDocument, saveWorkspaceDocument } from "@/lib/local/quotation-db";
+import { acknowledgePublication, beginPublication, publicationMetadata, validateWorkspace, withPublication } from "@/lib/local/quotation-publication";
+import { requestPublication } from "@/lib/local/quotation-publication-request";
 import {
   createEmptyItem,
   createEmptySection,
@@ -414,7 +416,9 @@ function withReindexedSections(
 
 function statusText(workspace: LocalQuotationWorkspace, localDraftSaved: boolean, saveState: string) {
   if (saveState === "saving") return "Saving to software...";
-  if (saveState === "saved") return "Saved to software";
+  if (saveState === "saved") return workspace.has_unsaved_changes ? "Snapshot saved; newer local edits remain" : "Saved to software";
+  if (saveState === "conflict") return "Server conflict - local draft kept";
+  if (saveState === "uncertain") return "Save unconfirmed - retry same attempt";
   if (saveState === "error") return "Save failed / Retry";
   if (workspace.has_unsaved_changes) return localDraftSaved ? "Unsaved local changes" : "Saving local draft...";
   if (workspace.last_saved_to_software_at) return "Saved to software";
@@ -1649,7 +1653,9 @@ export function LocalQuotationBuilder({
   const [historyFuture, setHistoryFuture] = useState<LocalQuotationWorkspace[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [localDraftSaved, setLocalDraftSaved] = useState(false);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error" | "conflict" | "uncertain">("idle");
+  const [localPersistenceError, setLocalPersistenceError] = useState("");
+  const [hydrationRetry, setHydrationRetry] = useState(0);
   const [saveMessage, setSaveMessage] = useState("");
   const [view, setView] = useState<BuilderView>("client");
   const [recentEditedRowId, setRecentEditedRowId] = useState<string | null>(null);
@@ -1680,7 +1686,11 @@ export function LocalQuotationBuilder({
   const [mobileSectionMoreId, setMobileSectionMoreId] = useState<string | null>(null);
   const [copiedRowClipboard, setCopiedRowClipboard] = useState<LocalRowClipboardPayload | null>(null);
   const [copiedRowId, setCopiedRowId] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [isPublishing, setIsPublishing] = useState(false);
+  const isPending = isPublishing;
+  const publicationBusyRef = useRef(false);
+  const hydratedQuotationRef = useRef<string | null>(null);
+  const persistenceChainRef = useRef<Promise<void>>(Promise.resolve());
   const importRef = useRef<HTMLInputElement | null>(null);
   const lastPersistedSignatureRef = useRef<string | null>(null);
   const historyGroupRef = useRef<{ key: string; timestamp: number } | null>(null);
@@ -1706,48 +1716,81 @@ export function LocalQuotationBuilder({
   });
   const currentQuotationFolderNumber = quotationFolderNumberFromQuotationNumber(workspace.quotation_no);
   const workspaceSignature = useMemo(() => stableSerialize(workspace), [workspace]);
+  const currentSignatureRef = useRef(workspaceSignature);
+  currentSignatureRef.current = workspaceSignature;
+
+  // Serialize writes so an older save cannot finish after and replace a newer draft.
+  function persistWorkspace(document: LocalQuotationWorkspace) {
+    const task = persistenceChainRef.current.catch(() => undefined).then(() => saveWorkspaceDocument(document));
+    persistenceChainRef.current = task;
+    return task;
+  }
 
   useEffect(() => {
     let cancelled = false;
 
+    if (hydratedQuotationRef.current === initialWorkspace.server_quotation_id) return;
     void (async () => {
-      const existing = await getWorkspaceDocument(initialWorkspace.server_quotation_id);
+      try {
+        const existing = await getWorkspaceDocument(initialWorkspace.server_quotation_id);
 
-      if (cancelled) return;
+        if (cancelled) return;
 
-      if (existing) {
-        const syncedWorkspace = syncWorkspaceWithServerSnapshot(existing, initialWorkspace);
-        lastPersistedSignatureRef.current = stableSerialize(syncedWorkspace);
-        setWorkspace(syncedWorkspace);
-        setHistoryPast([]);
-        setHistoryFuture([]);
-        historyGroupRef.current = null;
-        setLocalDraftSaved(true);
-      } else {
-        await saveWorkspaceDocument(initialWorkspace);
-        lastPersistedSignatureRef.current = stableSerialize(initialWorkspace);
-        setHistoryPast([]);
-        setHistoryFuture([]);
-        historyGroupRef.current = null;
-        if (!cancelled) setLocalDraftSaved(true);
+        if (existing) {
+          validateWorkspace(existing, initialWorkspace.server_quotation_id);
+          // Dirty drafts and uncertain attempts are never reconciled over by a refresh.
+          const syncedWorkspace = existing.has_unsaved_changes || publicationMetadata(existing).pending
+            ? existing : syncWorkspaceWithServerSnapshot(existing, initialWorkspace);
+          lastPersistedSignatureRef.current = stableSerialize(existing);
+          setWorkspace(syncedWorkspace);
+          setHistoryPast([]);
+          setHistoryFuture([]);
+          historyGroupRef.current = null;
+          setLocalDraftSaved(stableSerialize(existing) === stableSerialize(syncedWorkspace));
+          if (publicationMetadata(existing).pending) {
+            setSaveState("uncertain");
+            setSaveMessage("An earlier save has no durable acknowledgement. Your local draft is kept. Save to Software retries that same attempt.");
+          }
+        } else {
+          await persistWorkspace(initialWorkspace);
+          if (cancelled) return;
+          lastPersistedSignatureRef.current = stableSerialize(initialWorkspace);
+          setHistoryPast([]);
+          setHistoryFuture([]);
+          historyGroupRef.current = null;
+          setLocalDraftSaved(true);
+        }
+
+        if (!cancelled) {
+          hydratedQuotationRef.current = initialWorkspace.server_quotation_id;
+          setLocalPersistenceError("");
+          setHydrated(true);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setLocalDraftSaved(false);
+          setLocalPersistenceError(`Could not open/save the local draft. Existing storage has not been replaced. ${error instanceof Error ? error.message : "Storage unavailable."}`);
+        }
       }
-
-      if (!cancelled) setHydrated(true);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [initialWorkspace]);
+  }, [initialWorkspace, hydrationRetry]);
 
   useEffect(() => {
     if (!hydrated) return;
     if (workspaceSignature === lastPersistedSignatureRef.current) return;
 
     const timeout = window.setTimeout(() => {
-      void saveWorkspaceDocument(workspace).then(() => {
+      void persistWorkspace(workspace).then(() => {
         lastPersistedSignatureRef.current = workspaceSignature;
-        setLocalDraftSaved(true);
+        setLocalDraftSaved(currentSignatureRef.current === workspaceSignature);
+        setLocalPersistenceError("");
+      }).catch((error) => {
+        setLocalDraftSaved(false);
+        setLocalPersistenceError(`Not saved locally. Keep this page open and export a JSON backup. ${error instanceof Error ? error.message : "Storage unavailable."}`);
       });
     }, 200);
 
@@ -1756,14 +1799,14 @@ export function LocalQuotationBuilder({
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!workspace.has_unsaved_changes) return;
+      if (!workspace.has_unsaved_changes && !publicationMetadata(workspace).pending && localDraftSaved && !localPersistenceError) return;
       event.preventDefault();
       event.returnValue = "";
     };
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [workspace.has_unsaved_changes]);
+  }, [workspace, localDraftSaved, localPersistenceError]);
 
   useEffect(() => {
     function syncClipboard() {
@@ -2137,6 +2180,10 @@ export function LocalQuotationBuilder({
     next: LocalQuotationWorkspace | ((current: LocalQuotationWorkspace) => LocalQuotationWorkspace),
     options: HistoryCommitOptions = {},
   ) {
+    if (!hydrated) {
+      setLocalPersistenceError("Finish local storage recovery before editing; the stored draft has not been replaced.");
+      return;
+    }
     setLocalDraftSaved(false);
     const mode = options.mode ?? "push";
     const now = Date.now();
@@ -2169,20 +2216,21 @@ export function LocalQuotationBuilder({
       const stamped = { ...resolved, has_unsaved_changes: true, updated_at: localNow() };
       return recalculateWorkspace(stamped);
     });
-    setSaveState("idle");
+    setSaveState((state) => state === "saved" ? "idle" : state);
     setSaveMessage("");
   }
 
   function restoreWorkspaceFromHistory(nextWorkspace: LocalQuotationWorkspace) {
+    if (!hydrated) return;
     historyGroupRef.current = null;
     setLocalDraftSaved(false);
-    setSaveState("idle");
+    setSaveState((state) => state === "saved" ? "idle" : state);
     setSaveMessage("");
-    setWorkspace(recalculateWorkspace({
+    setWorkspace((current) => withPublication(recalculateWorkspace({
       ...cloneUnknown(nextWorkspace),
       has_unsaved_changes: true,
       updated_at: localNow(),
-    }));
+    }), publicationMetadata(current)));
   }
 
   function undoLastChange() {
@@ -2207,13 +2255,19 @@ export function LocalQuotationBuilder({
   }
 
   async function saveLocalDraftNow(rowId?: string) {
+    if (!hydrated) {
+      setLocalPersistenceError("Local storage recovery must finish before replacing any stored draft.");
+      return;
+    }
     try {
-      await saveWorkspaceDocument(workspace);
+      await persistWorkspace(workspace);
       lastPersistedSignatureRef.current = workspaceSignature;
-      setLocalDraftSaved(true);
+      setLocalDraftSaved(currentSignatureRef.current === workspaceSignature);
+      setLocalPersistenceError("");
       if (rowId) setRecentEditedRowId(rowId);
     } catch (error) {
-      setSaveMessage(error instanceof Error ? error.message : "Local draft save failed.");
+      setLocalDraftSaved(false);
+      setLocalPersistenceError(error instanceof Error ? error.message : "Local draft save failed. Export a JSON backup.");
     }
   }
 
@@ -2573,62 +2627,64 @@ export function LocalQuotationBuilder({
   }
 
   async function importBackup(file: File) {
-    const text = await file.text();
-    const parsed = JSON.parse(text) as LocalQuotationWorkspace;
-    commit(syncWorkspaceWithServerSnapshot({
-      ...parsed,
-      local_id: workspace.local_id,
-      server_quotation_id: workspace.server_quotation_id,
-      project_id: workspace.project_id,
-      client_id: workspace.client_id,
-      quotation_no: workspace.quotation_no,
-    }, initialWorkspace));
+    if (!hydrated || publicationBusyRef.current) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as LocalQuotationWorkspace;
+      validateWorkspace(parsed, parsed.server_quotation_id);
+      commit(withPublication(syncWorkspaceWithServerSnapshot({
+        ...parsed,
+        local_id: workspace.local_id,
+        server_quotation_id: workspace.server_quotation_id,
+        project_id: workspace.project_id,
+        client_id: workspace.client_id,
+        quotation_no: workspace.quotation_no,
+      }, initialWorkspace), {}));
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "Backup could not be imported. Current draft was kept.");
+    }
   }
 
-  function saveToSoftware() {
-    startTransition(() => {
+  async function saveToSoftware() {
+    if (publicationBusyRef.current || !hydrated) return;
+    publicationBusyRef.current = true;
+    setIsPublishing(true);
+    let sent = false;
+    try {
+      const attempt = beginPublication(workspace);
+      const pending = withPublication(workspace, { ...publicationMetadata(workspace), pending: attempt });
       setSaveState("saving");
       setSaveMessage("");
-
-      void fetch(`/api/quotations/${workspace.server_quotation_id}/local-workspace`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspace }),
-      })
-        .then(async (response) => {
-          if (!response.ok) {
-            const error = await response.json().catch(() => ({ error: "Save failed." })) as {
-              code?: string;
-              details?: string;
-              error?: string;
-              hint?: string;
-            };
-            const detailParts = [error.details, error.hint, error.code ? `code=${error.code}` : ""].filter(Boolean);
-            throw new Error(
-              detailParts.length
-                ? `${error.error || "Save failed."} ${detailParts.join(" | ")}`
-                : (error.error || "Save failed."),
-            );
-          }
-
-          const result = await response.json() as { message?: string; savedAt: string };
-          const nextWorkspace = {
-            ...workspace,
-            has_unsaved_changes: false,
-            last_saved_to_software_at: result.savedAt,
-            updated_at: localNow(),
-          };
-          historyGroupRef.current = null;
-          setWorkspace(nextWorkspace);
-          await saveWorkspaceDocument(nextWorkspace);
-          setSaveState("saved");
-          setSaveMessage(result.message ?? "Saved to software");
-        })
-        .catch((error) => {
-          setSaveState("error");
-          setSaveMessage(error instanceof Error ? error.message : "Save failed.");
-        });
-      });
+      setLocalDraftSaved(false);
+      setWorkspace((current) => withPublication(current, { ...publicationMetadata(current), pending: attempt }));
+      // Persist the immutable attempt BEFORE it can reach the server.
+      await persistWorkspace(pending);
+      sent = true;
+      const result = await requestPublication(workspace.server_quotation_id, attempt);
+      if (!result.ok) {
+        setSaveState(result.state);
+        setSaveMessage(result.error);
+        return;
+      }
+      historyGroupRef.current = null;
+      setLocalDraftSaved(false);
+      // The functional update sees B even when the response belongs to A.
+      setWorkspace((current) => acknowledgePublication(current, attempt, result));
+      setSaveState("saved");
+      setSaveMessage("Snapshot saved to software. Any newer local edits remain ready for your next save.");
+    } catch (error) {
+      setSaveState(sent ? "uncertain" : "error");
+      setSaveMessage(sent
+        ? "Server outcome is unknown. Your draft and original save attempt are retained. Use Save to Software to retry that same attempt."
+        : (error instanceof Error ? error.message : "Save could not start."));
+      if (!sent && publicationMetadata(workspace).baseVersion) {
+        setLocalDraftSaved(false);
+        setLocalPersistenceError("Could not persist the save attempt. Nothing was sent. Keep this page open and export a JSON backup.");
+      }
+    } finally {
+      publicationBusyRef.current = false;
+      setIsPublishing(false);
+    }
   }
 
   function renderRowDetailsModalContent(item: LocalQuotationItem) {
@@ -4192,8 +4248,15 @@ export function LocalQuotationBuilder({
       />
 
       <main className="mx-auto max-w-[1900px] px-4 py-5">
+        {localPersistenceError ? (
+          <div role="alert" className="mb-4 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-950">
+            <p>{localPersistenceError}</p>
+            <button type="button" onClick={() => hydrated ? void saveLocalDraftNow() : setHydrationRetry((value) => value + 1)} className="mt-2 underline">Retry local storage</button>
+            <button type="button" onClick={exportBackup} className="ml-4 mt-2 underline">Export in-memory JSON backup</button>
+          </div>
+        ) : null}
         {saveMessage ? (
-          <div className="mb-4 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">{saveMessage}</div>
+          <div role="status" className={`mb-4 rounded border px-3 py-2 text-sm ${saveState === "saved" ? "border-emerald-200 bg-emerald-50 text-emerald-950" : "border-amber-300 bg-amber-50 text-amber-950"}`}>{saveMessage}</div>
         ) : null}
 
         <nav aria-label="Local builder views" className="mb-3 grid grid-cols-3 border border-zinc-300 bg-white text-xs font-semibold xl:hidden">

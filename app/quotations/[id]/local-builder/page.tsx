@@ -24,6 +24,7 @@ import {
   productTemplatePriceCheckState,
 } from "@/lib/product-price-check";
 import { createWorkspaceFromServerSnapshot } from "@/lib/local/quotation-workspace";
+import { withPublication } from "@/lib/local/quotation-publication";
 import { resolveDocumentSetup } from "@/lib/quotations/document-setup";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
@@ -76,6 +77,9 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
   const canManageProductLibrary = canUseProductLibrary(profile?.role);
   const supabase = await createSupabaseClient();
 
+  // Missing migration must never fall back to unversioned publication.
+  const { data: baselineStart } = await supabase.from("quotations").select("workspace_version").eq("id", id).maybeSingle();
+
   const { data: quotation, error: quotationError } = await supabase
     .from("quotations")
     .select("id,client_id,project_id,quotation_no,legacy_reference,option_no,revision_no,title,status,quotation_date,currency,vat_percent,layout_mode,layout_settings,overall_discount_type,overall_discount_value")
@@ -84,22 +88,22 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
 
   if (quotationError || !quotation) notFound();
 
-  const { data: client } = await supabase
+  const { data: client, error: clientError } = await supabase
     .from("clients")
     .select("id,client_number,company_name")
     .eq("id", quotation.client_id)
     .maybeSingle<Client>();
 
   const projectId = validUuidOrNull(quotation.project_id);
-  const { data: project } = projectId
+  const { data: project, error: projectError } = projectId
     ? await supabase
         .from("projects")
         .select("id,project_name,project_number,project_code,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
         .eq("id", projectId)
         .maybeSingle<Project>()
-    : { data: null };
+    : { data: null, error: null };
 
-  const { data: sections } = await supabase
+  const { data: sections, error: sectionsError } = await supabase
     .from("quotation_sections")
     .select("id,quotation_id,section_title,section_notes,section_type,parent_section_id,section_kind,title_align,title_bold,title_bg,title_size,row_height,sort_order,is_active")
     .eq("quotation_id", id)
@@ -107,7 +111,7 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
     .order("sort_order", { ascending: true })
     .returns<QuotationSection[]>();
 
-  const { data: items } = await supabase
+  const { data: items, error: itemsError } = await supabase
     .from("quotation_items")
     .select("id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,allow_material_continuation_page,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,parent_item_id,include_in_total,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,is_active,notes,created_at,updated_at")
     .eq("quotation_id", id)
@@ -278,13 +282,17 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
         project_address: resolvedDocumentSetup.header.projectAddress,
         project_name: resolvedDocumentSetup.header.reference,
       };
-  const initialWorkspace = createWorkspaceFromServerSnapshot({
+  if (sectionsError || itemsError || clientError || projectError) throw new Error("The server workspace could not be loaded safely. Local drafts have not been changed.");
+  const { data: baselineEnd } = await supabase.from("quotations").select("workspace_version").eq("id", id).maybeSingle();
+  const baseVersion = typeof baselineStart?.workspace_version === "string" &&
+    baselineStart.workspace_version === baselineEnd?.workspace_version ? baselineStart.workspace_version : undefined;
+  const initialWorkspace = withPublication(createWorkspaceFromServerSnapshot({
     quotation,
     client: client ?? null,
     project: workspaceProject,
     sections: sections ?? [],
     items: items ?? [],
-  });
+  }), { baseVersion });
 
   return (
     <>
