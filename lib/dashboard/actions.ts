@@ -318,6 +318,68 @@ export async function getDashboardProcurementAttention(
   };
 }
 
+// ─── 2c. getDashboardUpcomingDeliveries ────────────────────────────────────────
+// Management Dashboard "What is arriving next?" summary. One shallow, bounded, server-ordered
+// query against procurement_vendor_progress (order_no, vendor_key, eta only - never
+// items_snapshot/documents/pricing/quotation items), scoped to the caller's already-resolved
+// active-order list (the same scope getActiveProjects() already established - never a second
+// "active" definition). Each row is a distinct vendor arrival (Part 9: same Project with two
+// vendors legitimately renders as two rows) - (orderNo, vendorKey) dedupe is defensive only,
+// since that pair is already the table's own unique key.
+
+export type UpcomingDelivery = {
+  orderNo: string;
+  projectName: string;
+  vendorLabel: string;
+  eta: string;
+  href: string;
+};
+
+const MAX_UPCOMING_DELIVERIES = 5;
+
+export async function getDashboardUpcomingDeliveries(
+  activeProjects: DashboardProject[],
+): Promise<UpcomingDelivery[]> {
+  await requireActiveUser();
+  if (activeProjects.length === 0) return [];
+
+  const supabase = await createClient();
+  const activeOrderNos = activeProjects.map((project) => project.orderNo);
+  const projectByOrderNo = new Map(activeProjects.map((project) => [project.orderNo, project]));
+  // Date-only comparison (ETA is a date column, no timezone conversion) - matches the server
+  // process's own local calendar date, the same convention getHrExpiryAlerts() already uses.
+  const today = new Date().toISOString().slice(0, 10);
+
+  const { data } = await supabase
+    .from("procurement_vendor_progress")
+    .select("order_no, vendor_key, eta")
+    .in("order_no", activeOrderNos)
+    .not("eta", "is", null)
+    .gte("eta", today)
+    .order("eta", { ascending: true })
+    .limit(MAX_UPCOMING_DELIVERIES)
+    .returns<Array<{ order_no: string; vendor_key: string; eta: string }>>();
+
+  const seen = new Set<string>();
+  const deliveries: UpcomingDelivery[] = [];
+  for (const row of data ?? []) {
+    const dedupeKey = `${row.order_no}:${row.vendor_key}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    const project = projectByOrderNo.get(row.order_no);
+    deliveries.push({
+      orderNo: row.order_no,
+      projectName: project?.reference || row.order_no,
+      vendorLabel: row.vendor_key,
+      eta: row.eta,
+      href: `/procurement/orders/${encodeURIComponent(row.order_no)}`,
+    });
+  }
+
+  return deliveries;
+}
+
 // ─── 3. getProjectRecentActivity ──────────────────────────────────────────────
 // Called client-side when a pipeline row is expanded.
 // Uses metadata->>orderNo text extraction — confirmed syntax from project page:

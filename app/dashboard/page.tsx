@@ -13,7 +13,9 @@ import {
   getMonthlySalesData,
   getHrExpiryAlerts,
   getDashboardProcurementAttention,
+  getDashboardUpcomingDeliveries,
   type DashboardProcurementAttention,
+  type UpcomingDelivery,
 } from "@/lib/dashboard/actions";
 
 export const dynamic = "force-dynamic";
@@ -33,12 +35,12 @@ export default async function DashboardPage() {
     isManager ? getHrExpiryAlerts() : Promise.resolve([]),
   ]);
 
-  // Reuses the exact same active-order scope getActiveProjects() already established above -
-  // no second "active" definition, and gated by the existing canAccessProcurement role check
-  // (same convention as the isManager gate on HR alerts) rather than new role logic.
-  const procurementAttention: DashboardProcurementAttention | null = canSeeProcurementAttention
-    ? await getDashboardProcurementAttention(projects)
-    : null;
+  // Both reuse the exact same active-order scope getActiveProjects() already established above -
+  // no second "active" definition, and both are gated by the existing canAccessProcurement role
+  // check (same convention as the isManager gate on HR alerts) rather than new role logic.
+  const [procurementAttention, upcomingDeliveries]: [DashboardProcurementAttention | null, UpcomingDelivery[]] = canSeeProcurementAttention
+    ? await Promise.all([getDashboardProcurementAttention(projects), getDashboardUpcomingDeliveries(projects)])
+    : [null, []];
 
   return (
     <ErpAppShell
@@ -62,6 +64,7 @@ export default async function DashboardPage() {
         canManageProducts={canManageProductLibrary(profile?.role)}
         canSendNotifications={canSendNotifications(profile?.role)}
         procurementAttention={procurementAttention}
+        upcomingDeliveries={upcomingDeliveries}
       />
     </ErpAppShell>
   );

@@ -345,8 +345,10 @@ test("the dashboard page derives procurementAttention from the full active-proje
 
 test("11. Procurement attention is only fetched when canAccessProcurement() allows it - no new role logic", () => {
   assert.ok(pageSource.includes("const canSeeProcurementAttention = canAccessProcurement(profile?.role);"));
-  assert.ok(pageSource.includes("canSeeProcurementAttention\n    ? await getDashboardProcurementAttention"));
-  assert.ok(pageSource.includes(": null;"));
+  // getDashboardUpcomingDeliveries() (added by the Upcoming Deliveries task) now runs alongside
+  // getDashboardProcurementAttention() in the same Promise.all, under the same gate.
+  assert.ok(pageSource.includes("canSeeProcurementAttention\n    ? await Promise.all([getDashboardProcurementAttention(projects), getDashboardUpcomingDeliveries(projects)])"));
+  assert.ok(pageSource.includes(": [null, []];"));
   assert.ok(!/function\s+canSeeProcurementAttention/.test(pageSource));
   // A null procurementAttention contributes zero drill-down categories - unauthorized roles never
   // see Procurement rows, Project groupings, or vendor labels.
