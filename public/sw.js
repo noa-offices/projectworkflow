@@ -1,4 +1,4 @@
-const SHELL = "projectworkflow-shell-v1";
+const SHELL = "projectworkflow-shell-v2";
 const STATIC = "projectworkflow-static-v1";
 const ASSETS = ["/offline.html", "/offline.js", "/offline.css"];
 const STATIC_LIMIT = 80;

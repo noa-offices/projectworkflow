@@ -10,6 +10,22 @@ const db = new ReadCacheDb();
 const row: ReadRow = { id: "1", title: "Company", code: "CL-1", subtitle: "", status: "Active", href: "/sales/clients" };
 beforeEach(async () => { await clearReadBoundary(db); });
 after(() => { db.close(); quotationWorkspaceDb().close(); });
+for (const key of ["products:management", "brands:list", "materials:library"] as const) {
+  test(key + " reuses durable isolated leases; refresh succeeds, failure preserves, logout revokes", async () => {
+    const owner = await activateUser("A", db);
+    await storeSnapshot(owner, key, [row], Date.now() - 1, db);
+    db.close(); await db.open();
+    assert.equal((await readSnapshot(owner, key, db))?.data[0].title, "Company");
+    assert.equal(await readSnapshot({ ...owner, userId: "B" }, key, db), undefined);
+    const send: typeof fetch = async () => Response.json({ ok: true, userId: "A", entity: key, data: [{ ...row, title: "Fresh" }], fetchedAt: Date.now() });
+    assert.equal((await fetchReadProjection(owner, key, send, db))?.data[0].title, "Fresh");
+    await assert.rejects(fetchReadProjection(owner, key, async () => Response.json({}, { status: 503 }), db));
+    assert.equal((await readSnapshot(owner, key, db))?.data[0].title, "Fresh");
+    await clearReadBoundary(db);
+    assert.equal(await readSnapshot(owner, key, db), undefined);
+    assert.equal(await storeSnapshot(owner, key, [row], Date.now(), db), false);
+  });
+}
 test("separate cache contract; Builder DB/version/key remain unchanged", () => {
   assert.equal(db.name, "projectworkflow-read-cache"); assert.equal(db.verno, 1);
   assert.equal(db.snapshots.schema.primKey.name, "[userId+key]");
@@ -101,9 +117,9 @@ test("server account mismatch cannot persist another user's payload", async () =
   await assert.rejects(fetchReadProjection(owner, "clients", async () => Response.json({ ok: true, userId: "B", entity: "clients", data: [row], fetchedAt: Date.now() }), db));
   assert.equal(await db.snapshots.count(), 0);
 });
-test("only target list routes use fast read surface, never management or financial routes", () => {
+test("only target list routes use fast read surface, never editors or financial routes", () => {
   assert.equal(readEntity("/products"), "products");
-  assert.equal(readEntity("/products/templates", "?manage=1"), null);
+  assert.equal(readEntity("/products/templates", "?manage=1"), "products:management");
   assert.equal(readEntity("/products/templates", "?template=1"), null);
   assert.equal(readEntity("/sales/quotations"), "quotations");
   assert.equal(readEntity("/projects/orders"), "projects");

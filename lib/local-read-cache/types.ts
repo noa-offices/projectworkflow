@@ -1,6 +1,6 @@
-export const entities = ["products", "quotations", "projects", "completed", "clients"] as const;
+export const entities = ["products", "quotations", "projects", "completed", "clients", "products:management", "brands:list", "materials:library"] as const;
 export type ReadEntity = typeof entities[number];
-export const limits: Record<ReadEntity, number> = { products: 500, quotations: 200, projects: 200, completed: 200, clients: 500 };
+export const limits: Record<ReadEntity, number> = { products: 500, quotations: 200, projects: 200, completed: 200, clients: 500, "products:management": 500, "brands:list": 250, "materials:library": 1000 };
 export const schemaVersion = 1;
 export const retentionMs = 30 * 24 * 60 * 60 * 1000;
 export type ReadRow = {
@@ -8,17 +8,28 @@ export type ReadRow = {
   date?: string; currency?: string; total?: number; thumbnail?: string;
   brand?: string; category?: string; clientId?: string; projectId?: string; year?: string;
   archived?: boolean; count?: number;
+  group?: string; groupId?: string; brandId?: string; groupOnly?: boolean;
 };
 export type ReadSnapshot = {
   userId: string; key: ReadEntity; entityType: ReadEntity; data: ReadRow[];
   fetchedAt: number; expiresAt: number; schemaVersion: number;
 };
 export type CacheLease = { key: "active"; userId: string; generation: string };
+export function isProductEditor(path: string, search = "") {
+  const params = new URLSearchParams(search);
+  return ["/products", "/products/templates", "/products/manage", "/products/management"].includes(path) &&
+    ["template", "addTemplate", "editTemplate", "quoteImportMode", "quoteImportDraft"].some(k => params.has(k));
+}
 export function readEntity(path: string, search = ""): ReadEntity | null {
   const params = new URLSearchParams(search);
+  if (isProductEditor(path, search)) return null;
+  if (path === "/products/manage" || path === "/products/management") return params.has("priceStatus") ? null : "products:management";
   if (path === "/products" || path === "/products/templates") {
-    return ["manage", "template", "addTemplate", "editTemplate", "quoteImportMode", "priceStatus"].some(k => params.has(k)) ? null : "products";
+    if (params.has("priceStatus")) return null;
+    return params.get("manage") === "1" ? "products:management" : params.has("manage") ? null : "products";
   }
+  if (path === "/products/brands") return ["addBrand", "editBrand", "category"].some(k => params.has(k)) ? null : "brands:list";
+  if (path === "/products/materials") return "materials:library";
   if (path === "/quotations" || path === "/sales/quotations") return "quotations";
   if (path === "/projects/orders") return "projects";
   if (path === "/projects/completed") return "completed";
@@ -47,6 +58,12 @@ export function minimizedRows(entity: ReadEntity, rows: ReadRow[]): ReadRow[] {
     if (typeof r.total === "number" && Number.isFinite(r.total)) row.total = r.total;
     if (typeof r.count === "number" && Number.isFinite(r.count)) row.count = r.count;
     if (typeof r.archived === "boolean") row.archived = r.archived;
+    if (entity === "materials:library") {
+      for (const key of ["group", "groupId", "brandId"] as const) {
+        if (typeof r[key] === "string") row[key] = r[key].slice(0, 200);
+      }
+      if (typeof r.groupOnly === "boolean") row.groupOnly = r.groupOnly;
+    }
     return row;
   });
 }

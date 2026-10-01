@@ -1,10 +1,18 @@
 /* Public read-only recovery shell. No tokens, roles, mutations, or draft writes. */
 (() => {
-  const names = { products: "Product Library", quotations: "Quotations", projects: "Active Projects", completed: "Completed Projects", clients: "Clients", drafts: "Local Builder drafts" };
+  const names = { products: "Product Library", quotations: "Quotations", projects: "Active Projects", completed: "Completed Projects", clients: "Clients", "products:management": "Product Management", "brands:list": "Brands", "materials:library": "Material Library", drafts: "Local Builder drafts" };
+  const productLists = ["products:management", "brands:list", "materials:library"];
+  const params = new URLSearchParams(location.search);
+  const editorRequested = ["/products", "/products/templates", "/products/manage", "/products/management"].includes(location.pathname) &&
+    ["template", "addTemplate", "editTemplate", "quoteImportMode", "quoteImportDraft"].some(k => params.has(k));
   let lease, entity = "products", rows = [], draft;
   const el = id => document.getElementById(id);
   const status = message => { el("status").textContent = message; };
   const node = (tag, text) => { const value = document.createElement(tag); if (text !== undefined) value.textContent = String(text ?? ""); return value; };
+  const inactive = node("input"); inactive.type = "checkbox";
+  const inactiveLabel = node("label"); inactiveLabel.hidden = true;
+  inactiveLabel.append(inactive, document.createTextNode(" Include inactive / archived"));
+  el("search").after(inactiveLabel); inactive.onchange = () => render();
   function openExisting(name) {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(name);
@@ -53,6 +61,8 @@
   }
   async function load(next) {
     entity = next; draft = undefined; rows = [];
+    inactiveLabel.hidden = !productLists.includes(entity);
+    inactive.checked = false;
     el("title").textContent = names[entity]; el("search").value = ""; el("results").className = entity === "products" ? "products" : "";
     const active = await read("boundary", "active");
     if (!lease || active?.generation !== lease.generation || active.userId !== lease.userId) { await clearReads(); return; }
@@ -83,9 +93,15 @@
   function render() {
     const query = el("search").value.toLowerCase();
     const result = el("results"); result.replaceChildren();
-    for (const r of rows.filter(r => [r.title, r.code, r.subtitle, r.status, r.brand, r.category].some(v => String(v ?? "").toLowerCase().includes(query)))) {
+    let previousGroup, previousCategory;
+    for (const r of rows.filter(r => (!productLists.includes(entity) || !r.archived || inactive.checked) &&
+      [r.title, r.code, r.subtitle, r.status, r.brand, r.category, r.group].some(v => String(v ?? "").toLowerCase().includes(query)))) {
+      if (entity === "materials:library" && (r.groupId !== previousGroup || r.category !== previousCategory)) {
+        result.append(node("h3", [r.brand, r.group, r.category].filter(Boolean).join(" / ")));
+        previousGroup = r.groupId; previousCategory = r.category;
+      }
       const card = node("article");
-      if (entity === "products" && /^(https?:\/\/|\/)/.test(r.thumbnail ?? "")) {
+      if ((entity === "products" || productLists.includes(entity)) && /^(https?:\/\/|\/)/.test(r.thumbnail ?? "")) {
         const image = node("img"); image.src = r.thumbnail; image.alt = ""; image.loading = "lazy"; image.onerror = () => image.remove(); card.append(image);
       }
       card.append(node("small", r.code), node("h3", r.title), node("p", [r.brand, r.category, r.subtitle].filter(Boolean).join(" · ")), node("p", r.status));
@@ -132,8 +148,8 @@
       lease = await read("boundary", "active");
       if (!lease?.userId) { el("unlock").disabled = true; status("No saved account boundary. Sign in online and visit the target page first."); return; }
       status("Saved data belongs to the last signed-in account (" + lease.userId.slice(-8) + "). Session has not been verified.");
-      const paths = { "/products": "products", "/products/templates": "products", "/quotations": "quotations", "/sales/quotations": "quotations", "/projects/orders": "projects", "/projects/completed": "completed", "/sales/clients": "clients" };
-      entity = paths[location.pathname] ?? (/local-builder$/.test(location.pathname) || new URLSearchParams(location.search).has("draft") ? "drafts" : "products");
+      const paths = { "/products": params.get("manage") === "1" ? "products:management" : "products", "/products/templates": params.get("manage") === "1" ? "products:management" : "products", "/products/manage": "products:management", "/products/management": "products:management", "/products/brands": "brands:list", "/products/materials": "materials:library", "/quotations": "quotations", "/sales/quotations": "quotations", "/projects/orders": "projects", "/projects/completed": "completed", "/sales/clients": "clients" };
+      entity = paths[location.pathname] ?? (/local-builder$/.test(location.pathname) || params.has("draft") ? "drafts" : "products");
     } catch { el("unlock").disabled = true; status("No saved reads, or device storage is unavailable. Existing Builder storage has not been changed."); }
   }
   el("unlock").onclick = async () => {
@@ -143,6 +159,7 @@
     el("boundary").hidden = true; el("views").hidden = false;
     status(verified ? "Online — read-only saved snapshot. Use Refresh to open authoritative data." : "Offline/stale — saved data; session unverified. No server writes.");
     await load(entity).catch(() => status("Saved data could not be read. Stored records were not changed."));
+    if (editorRequested) status("Product Template editor is online-only and NOT CACHED. Recovery shows read-only list metadata, never editor data.");
   };
   for (const [key, title] of Object.entries(names)) {
     const button = node("button", title); button.onclick = () => { void load(key).catch(() => status("Device read failed. Stored data was kept.")); }; el("nav").append(button);
@@ -150,7 +167,7 @@
   el("search").oninput = render;
   el("clear").onclick = () => { void clearReads().catch(() => status("Could not clear saved reads. Close this app before switching accounts.")); };
   el("refresh").onclick = async () => {
-    if (await verify()) location.assign(entity === "drafts" && draft ? "/quotations/" + encodeURIComponent(draft.server_quotation_id) + "/local-builder" : ({ products: "/products", quotations: "/sales/quotations", projects: "/projects/orders", completed: "/projects/completed", clients: "/sales/clients" }[entity] ?? "/dashboard"));
+    if (await verify()) location.assign(entity === "drafts" && draft ? "/quotations/" + encodeURIComponent(draft.server_quotation_id) + "/local-builder" : ({ products: "/products", "products:management": "/products/manage", "brands:list": "/products/brands", "materials:library": "/products/materials", quotations: "/sales/quotations", projects: "/projects/orders", completed: "/projects/completed", clients: "/sales/clients" }[entity] ?? "/dashboard"));
     else if (lease) status("Offline or service unavailable. Saved data kept; reconnect to refresh.");
   };
   window.addEventListener("online", () => { status("Reconnected. Verifying session…"); void verify().then(ok => { if (ok) status("Online — session verified. Refresh to open authoritative data."); }); });

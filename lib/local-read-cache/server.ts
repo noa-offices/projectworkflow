@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { canManageProductLibrary } from "@/lib/auth";
 import { entities, minimizedRows, type ReadEntity, type ReadRow } from "@/lib/local-read-cache/types";
 import { projectSummaries, quotationGroupCondition, quotationGroupKey, quotationSummaries, type SummaryQuotation } from "@/lib/local-read-cache/projections";
+import { managementRows, brandRows, materialRows } from "./product-projections";
 
 const headers = { "Cache-Control": "private, no-store", Vary: "Cookie" };
 function failure(status: number, code: string) { return Response.json({ ok: false, code }, { status, headers }); }
@@ -16,7 +17,7 @@ export async function readProjection(request: Request, entity: string, createDb:
     const { data: profile, error: profileError } = await db.from("profiles").select("role,account_status").eq("id", user.id).single();
     if (profileError) return failure(503, "UNAVAILABLE");
     if (profile?.account_status !== "active") return failure(403, "FORBIDDEN");
-    if (entity === "products" && !canManageProductLibrary(profile.role)) return failure(403, "FORBIDDEN");
+    if (["products", "products:management", "brands:list", "materials:library"].includes(entity) && !canManageProductLibrary(profile.role)) return failure(403, "FORBIDDEN");
     if (entity === "session") return Response.json({ ok: true, userId: user.id }, { headers });
     if (entity === "builder") {
       const id = new URL(request.url).searchParams.get("id") ?? "";
@@ -26,7 +27,41 @@ export async function readProjection(request: Request, entity: string, createDb:
       return Response.json({ ok: true, userId: user.id, quotationId: data.id }, { headers });
     }
     let rows: ReadRow[] = [];
-    if (entity === "clients") {
+    if (entity === "products:management") {
+      const { data, error } = await db.from("product_templates")
+        .select("id,template_name,template_code,item_code,brand_id,main_category_id,sub_category_id,default_image_url,is_active,lifecycle_status")
+        .order("brand_id").order("template_name").limit(500);
+      if (error) return failure(503, "REFRESH_FAILED");
+      const brandIds = [...new Set((data ?? []).map(t => t.brand_id).filter(Boolean))];
+      const categoryIds = [...new Set((data ?? []).flatMap(t => [t.main_category_id, t.sub_category_id]).filter(Boolean))];
+      const [brands, categories] = await Promise.all([
+        brandIds.length ? db.from("brands").select("id,name,is_active").in("id", brandIds) : Promise.resolve({ data: [], error: null }),
+        categoryIds.length ? db.from("product_categories").select("id,name").in("id", categoryIds) : Promise.resolve({ data: [], error: null }),
+      ]);
+      if (brands.error || categories.error) return failure(503, "REFRESH_FAILED");
+      rows = managementRows(data ?? [], brands.data ?? [], categories.data ?? []);
+    } else if (entity === "brands:list" || entity === "materials:library") {
+      const { data: brands, error } = await db.from("brands")
+        .select("id,name,code,origin,is_active").order("name").limit(250);
+      if (error) return failure(503, "REFRESH_FAILED");
+      const ids = (brands ?? []).map(b => b.id);
+      if (entity === "brands:list") {
+        const categories = ids.length ? await db.from("product_categories")
+          .select("id,brand_id,parent_id,is_active").in("brand_id", ids).limit(10001) : { data: [], error: null };
+        if (categories.error || (categories.data?.length ?? 0) > 10000) return failure(503, "REFRESH_FAILED");
+        rows = brandRows(brands ?? [], categories.data ?? []);
+      } else {
+        const [groups, materials] = await Promise.all([
+          ids.length ? db.from("brand_material_groups").select("id,brand_id,group_name,sort_order,is_active")
+            .in("brand_id", ids).order("sort_order").order("group_name").limit(1001) : Promise.resolve({ data: [], error: null }),
+          ids.length ? db.from("brand_materials")
+            .select("id,brand_id,material_group_id,material_name,material_code,material_category,material_collection,image_url,sort_order,is_active")
+            .in("brand_id", ids).order("material_group_id").order("sort_order").order("material_name").limit(1000) : Promise.resolve({ data: [], error: null }),
+        ]);
+        if (groups.error || materials.error || (groups.data?.length ?? 0) > 1000) return failure(503, "REFRESH_FAILED");
+        rows = materialRows(brands ?? [], groups.data ?? [], materials.data ?? []);
+      }
+    } else if (entity === "clients") {
       const { data, error } = await db.from("clients").select("id,company_name,client_number,client_code,is_active").order("company_name").limit(500);
       if (error) return failure(503, "REFRESH_FAILED");
       rows = (data ?? []).map(r => ({

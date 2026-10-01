@@ -41,7 +41,7 @@ function fixture(fail = false, online = true) {
 }
 test("SW install stores only public recovery assets", async () => {
   const f = fixture(); await f.lifecycle("install");
-  assert.deepEqual([...f.stores.get("projectworkflow-shell-v1")!.keys()], ["/offline.html", "/offline.js", "/offline.css"]);
+  assert.deepEqual([...f.stores.get("projectworkflow-shell-v2")!.keys()], ["/offline.html", "/offline.js", "/offline.css"]);
 });
 test("POST/auth/API/RSC requests never enter service-worker cache path", async () => {
   const f = fixture(); await f.lifecycle("install");

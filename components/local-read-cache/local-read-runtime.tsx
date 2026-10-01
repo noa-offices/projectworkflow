@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { readCacheDb, readSnapshot, rememberDraftAccess } from "@/lib/local-read-cache/db";
-import { readEntity, type CacheLease, type ReadEntity, type ReadSnapshot } from "@/lib/local-read-cache/types";
+import { isProductEditor, readEntity, type CacheLease, type ReadEntity, type ReadSnapshot } from "@/lib/local-read-cache/types";
 import { clearReadSession, establishReadSession, fetchReadProjection, notifyReadCache, ReadFailure, setReadHealth } from "@/lib/local-read-cache/runtime";
 import { CachedReadSurface } from "./read-surface";
 
@@ -58,7 +58,7 @@ export function LocalReadRuntime({ userId }: { userId: string | null }) {
         setReadHealth("Online");
         performance.measure("pw:read-refresh:" + entity, { start: started, end: performance.now() });
         notifyReadCache(entity);
-        setPreview(current => current?.entity === entity ? { ...current, snapshot, message: "Fresh server result · opening full page" } : current);
+        setPreview(current => current?.entity === entity ? { ...current, snapshot, message: "Fresh server result" } : current);
       } catch (error) {
         if (leaseRef.current?.generation !== owner.generation) return;
         const boundary = await readCacheDb().boundary.get("active").catch(() => undefined);
@@ -180,6 +180,12 @@ export function LocalReadRuntime({ userId }: { userId: string | null }) {
       if (!anchor || anchor.target || anchor.hasAttribute("download")) return;
       const url = new URL(anchor.href, window.location.href);
       if (url.origin !== window.location.origin) return;
+      if (!navigator.onLine && isProductEditor(url.pathname, url.search)) {
+        event.preventDefault(); event.stopPropagation();
+        setReadHealth("Offline — saved data", "Product Template editors require an online authoritative read. Nothing was queued.");
+        setPreview(current => current ? { ...current, message: "Offline — Product Template editors are unavailable. Saved list retained." } : current);
+        return;
+      }
       if (!navigator.onLine && /^\/quotations\/[^/]+\/local-builder$/.test(url.pathname)) {
         event.preventDefault(); event.stopPropagation();
         window.location.assign("/offline.html?draft=" + encodeURIComponent(url.pathname.split("/")[2])); return;
