@@ -433,6 +433,106 @@ export function ERPDashboard({
         </div>
       </section>
 
+      {/* ── Commercial Performance ──────────────────────────────────────── */}
+      <section>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Commercial Performance</p>
+        <div className="grid gap-4 lg:grid-cols-3">
+          {/* Sales Performance */}
+          <DashboardCard className="overflow-hidden lg:col-span-2">
+            <div className="border-b border-zinc-100 px-4 py-3">
+              <p className="text-sm font-semibold text-zinc-950">Sales Performance</p>
+              <p className="mt-0.5 text-xs text-zinc-500">
+                Confirmed quotations this year, by salesperson
+              </p>
+            </div>
+
+            {salesData.salesByPerson.length === 0 ? (
+              <p className="px-4 py-6 text-center text-xs text-zinc-400">
+                No confirmed quotations this year yet.
+              </p>
+            ) : (
+              <ul className="grid gap-x-8 px-4 py-1 sm:grid-cols-2">
+                {salesData.salesByPerson.map((person) => {
+                  const isUnattributed = person.salesperson_id === null;
+                  const initials = person.full_name
+                    .trim()
+                    .split(" ")
+                    .map((w) => w.charAt(0).toUpperCase())
+                    .slice(0, 2)
+                    .join("");
+                  const barPct = maxTotal > 0 ? (person.total / maxTotal) * 100 : 0;
+
+                  return (
+                    <li
+                      key={person.salesperson_id ?? "__unattributed__"}
+                      className={`border-b border-zinc-50 py-3 ${isUnattributed ? "opacity-70" : ""}`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        {/* Avatar bubble */}
+                        <span
+                          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                            isUnattributed
+                              ? "border border-dashed border-zinc-300 bg-zinc-100 text-zinc-400"
+                              : "bg-emerald-700 text-white"
+                          }`}
+                        >
+                          {isUnattributed ? "—" : initials || "?"}
+                        </span>
+
+                        {/* Name + deal count */}
+                        <div className="min-w-0 flex-1">
+                          <p
+                            className={`truncate text-xs font-medium ${
+                              isUnattributed ? "italic text-zinc-400" : "text-zinc-800"
+                            }`}
+                          >
+                            {person.full_name}
+                          </p>
+                          <p className="text-[10px] text-zinc-400">
+                            {person.deal_count} deal{person.deal_count !== 1 ? "s" : ""}
+                          </p>
+                        </div>
+
+                        {/* Total */}
+                        <p className="shrink-0 text-xs font-semibold text-zinc-700">
+                          {formatAED(person.total)}
+                        </p>
+                      </div>
+
+                      {/* Progress bar */}
+                      <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-zinc-100">
+                        <div
+                          className={`h-1 rounded-full transition-all ${
+                            isUnattributed ? "bg-zinc-300" : "bg-emerald-500"
+                          }`}
+                          style={{ width: `${barPct}%` }}
+                        />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </DashboardCard>
+
+          {/* Yearly Turnover */}
+          <DashboardCard className="overflow-hidden p-4">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+              Yearly Turnover ({new Date().getFullYear()})
+            </p>
+            <p className="mt-1.5 text-2xl font-bold text-zinc-950">
+              {formatAED(salesData.yearlyTurnover)}
+            </p>
+            <div className="mt-3 -mx-4">
+              <MonthlyBarChart data={monthlyData} color="#10b981" />
+            </div>
+            <p className="mt-1 text-xs text-zinc-500">
+              From {salesData.dealCount} client-confirmed quotation{salesData.dealCount !== 1 ? "s" : ""}
+            </p>
+          </DashboardCard>
+        </div>
+      </section>
+
       <section
         id="attention-required"
         tabIndex={-1}
@@ -493,38 +593,32 @@ export function ERPDashboard({
         </DashboardCard>
       </section>
 
-      {/* ── Main content + sidebar ────────────────────────────────────────── */}
-      {/* Columns start together at `lg` (1024px) - the previous `2xl` (1536px) breakpoint meant
-          the two columns stacked full-width on virtually every standard laptop screen. `items-start`
-          is explicit here (CSS Grid's default is `stretch`, which would otherwise force the shorter
-          column to grow to match the taller one's height, producing a trailing gap instead of letting
-          each column size to its own content) - this is a structural grid property, not a spacer,
-          fixed height, or margin hack. Quick Actions and Recent Work are siblings inside the SAME
-          left-column `div`, so Recent Work always follows Quick Actions directly within this one
-          grid - the right rail (`aside`) is the only other child, starting at the same row. */}
+      {/* ── Quick Actions ─────────────────────────────────────────────────── */}
+      <section>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Quick Actions</p>
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+          {quickActions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <Link
+                key={action.label}
+                href={action.href}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 shadow-sm transition hover:border-emerald-300 hover:text-emerald-800 sm:justify-start"
+              >
+                <Icon className="h-4 w-4" aria-hidden="true" />
+                {action.label}
+              </Link>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* ── Workspace: Recent Work + operational shortcuts ─────────────────── */}
+      {/* Commercial widgets moved up, so this rail now holds only the two operational cards and
+          stays short. `items-start` keeps each column at its own content height (no stretch). */}
       <section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
 
         <div className="grid gap-5">
-
-          {/* ── Module shortcuts ──────────────────────────────────────────── */}
-          <section>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Quick Actions</p>
-            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-              {quickActions.map((action) => {
-                const Icon = action.icon;
-                return (
-                  <Link
-                    key={action.label}
-                    href={action.href}
-                    className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 shadow-sm transition hover:border-emerald-300 hover:text-emerald-800 sm:justify-start"
-                  >
-                    <Icon className="h-4 w-4" aria-hidden="true" />
-                    {action.label}
-                  </Link>
-                );
-              })}
-            </div>
-          </section>
 
           {/* ── Active Project Pipeline ──────────────────────────────────── */}
           <DashboardCard className="overflow-hidden">
@@ -728,100 +822,6 @@ export function ERPDashboard({
               )}
             </DashboardCard>
           )}
-
-          {/* Yearly Turnover */}
-          <DashboardCard className="overflow-hidden p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-              Yearly Turnover ({new Date().getFullYear()})
-            </p>
-            <p className="mt-1.5 text-2xl font-bold text-zinc-950">
-              {formatAED(salesData.yearlyTurnover)}
-            </p>
-            <div className="mt-3 -mx-4">
-              <MonthlyBarChart data={monthlyData} color="#10b981" />
-            </div>
-            <p className="mt-1 text-xs text-zinc-500">
-              From {salesData.dealCount} client-confirmed quotation{salesData.dealCount !== 1 ? "s" : ""}
-            </p>
-          </DashboardCard>
-
-          {/* Sales Performance */}
-          <DashboardCard className="overflow-hidden">
-            <div className="border-b border-zinc-100 px-4 py-3">
-              <p className="text-sm font-semibold text-zinc-950">Sales Performance</p>
-              <p className="mt-0.5 text-xs text-zinc-500">
-                Confirmed quotations this year, by salesperson
-              </p>
-            </div>
-
-            {salesData.salesByPerson.length === 0 ? (
-              <p className="px-4 py-6 text-center text-xs text-zinc-400">
-                No confirmed quotations this year yet.
-              </p>
-            ) : (
-              <ul className="divide-y divide-zinc-50 px-4 py-1">
-                {salesData.salesByPerson.map((person) => {
-                  const isUnattributed = person.salesperson_id === null;
-                  const initials = person.full_name
-                    .trim()
-                    .split(" ")
-                    .map((w) => w.charAt(0).toUpperCase())
-                    .slice(0, 2)
-                    .join("");
-                  const barPct = maxTotal > 0 ? (person.total / maxTotal) * 100 : 0;
-
-                  return (
-                    <li
-                      key={person.salesperson_id ?? "__unattributed__"}
-                      className={`py-3 ${isUnattributed ? "opacity-70" : ""}`}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        {/* Avatar bubble */}
-                        <span
-                          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
-                            isUnattributed
-                              ? "border border-dashed border-zinc-300 bg-zinc-100 text-zinc-400"
-                              : "bg-emerald-700 text-white"
-                          }`}
-                        >
-                          {isUnattributed ? "—" : initials || "?"}
-                        </span>
-
-                        {/* Name + deal count */}
-                        <div className="min-w-0 flex-1">
-                          <p
-                            className={`truncate text-xs font-medium ${
-                              isUnattributed ? "italic text-zinc-400" : "text-zinc-800"
-                            }`}
-                          >
-                            {person.full_name}
-                          </p>
-                          <p className="text-[10px] text-zinc-400">
-                            {person.deal_count} deal{person.deal_count !== 1 ? "s" : ""}
-                          </p>
-                        </div>
-
-                        {/* Total */}
-                        <p className="shrink-0 text-xs font-semibold text-zinc-700">
-                          {formatAED(person.total)}
-                        </p>
-                      </div>
-
-                      {/* Progress bar */}
-                      <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-zinc-100">
-                        <div
-                          className={`h-1 rounded-full transition-all ${
-                            isUnattributed ? "bg-zinc-300" : "bg-emerald-500"
-                          }`}
-                          style={{ width: `${barPct}%` }}
-                        />
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </DashboardCard>
         </aside>
       </section>
     </div>

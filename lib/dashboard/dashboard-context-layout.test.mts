@@ -69,32 +69,70 @@ test("4. the one Client fallback query that does exist (quotations without a Pro
 
 // ── Layout: main content grid starts together at `lg`, removing the dead space (Part 7-9) ──────
 
-test("9/12/13. Recent Work is inside the wide column of the SAME grid as the right rail - both start together, no artificial top gap", () => {
-  // `items-start` is explicit (CSS Grid's default `align-items: stretch` would otherwise force
-  // the shorter column to grow to match the taller one, which is what produced the trailing void -
-  // this is a structural grid property, never a spacer/fixed-height/margin hack).
-  assert.ok(dashboardSource.includes('<section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">'));
+// ── Executive composition (Dashboard Executive UI Composition Pass) ─────────────────────────
+
+const headingIndex = (text: string) => dashboardSource.indexOf(`>${text}</p>`);
+
+test("executive hierarchy: KPIs -> Project Value -> Commercial -> Attention/Workflow -> Quick Actions -> Workspace", () => {
+  const order = [
+    dashboardSource.indexOf("{/* ── KPI Row"),
+    headingIndex("Project Value"),
+    headingIndex("Commercial Performance"),
+    headingIndex("Attention Required"),
+    headingIndex("Quotation Workflow"),
+    headingIndex("Quick Actions"),
+    headingIndex("Recent Work"),
+    headingIndex("Procurement Workspace"),
+    headingIndex("Upcoming Deliveries"),
+  ];
+  assert.ok(order.every((i) => i !== -1), `missing section: ${JSON.stringify(order)}`);
+  for (let i = 1; i < order.length; i++) assert.ok(order[i - 1] < order[i], `out of order at ${i}`);
+});
+
+test("1/2/3. Sales Performance and Yearly Turnover share one commercial row, rendered before Attention Required", () => {
+  const commercialStart = headingIndex("Commercial Performance");
+  const attention = headingIndex("Attention Required");
+  const sales = dashboardSource.indexOf(">Sales Performance</p>");
+  const turnover = dashboardSource.indexOf("Yearly Turnover ({new Date().getFullYear()})");
+  assert.ok(commercialStart < sales && sales < turnover && turnover < attention);
+  // Sales Performance takes 2/3 and Turnover 1/3 at `lg`, stacking below it.
+  const commercialBlock = dashboardSource.slice(commercialStart, attention);
+  assert.ok(commercialBlock.includes('<div className="grid gap-4 lg:grid-cols-3">'));
+  assert.ok(commercialBlock.includes('<DashboardCard className="overflow-hidden lg:col-span-2">'));
+  // Each commercial widget appears exactly once - moved, not duplicated.
+  assert.equal((dashboardSource.match(/>Sales Performance<\/p>/g) ?? []).length, 1);
+  assert.equal((dashboardSource.match(/Yearly Turnover \(\{new Date\(\)\.getFullYear\(\)\}\)/g) ?? []).length, 1);
+});
+
+test("10. commercial widgets still read the same unchanged data contract (no metric prop changed)", () => {
+  assert.ok(dashboardSource.includes("{formatAED(salesData.yearlyTurnover)}"));
+  assert.ok(dashboardSource.includes('<MonthlyBarChart data={monthlyData} color="#10b981" />'));
+  assert.ok(dashboardSource.includes("salesData.salesByPerson.map((person) =>"));
+  assert.ok(dashboardSource.includes("const barPct = maxTotal > 0 ? (person.total / maxTotal) * 100 : 0;"));
+});
+
+test("9/12/13. Workspace grid: Recent Work and the (now short) operational rail start together; Quick Actions is its own row above it", () => {
+  // `items-start` keeps each column at its own content height (CSS Grid's default `stretch` would
+  // force the shorter column to match the taller one) - a structural grid property, not a hack.
+  const gridTag = '<section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">';
+  assert.ok(dashboardSource.includes(gridTag));
   assert.ok(!dashboardSource.includes("2xl:grid-cols-[minmax(0,1fr)_360px]"));
-  const mainGridStart = dashboardSource.indexOf('<section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">');
-  const leftColumnStart = dashboardSource.indexOf('<div className="grid gap-5">', mainGridStart);
-  const asideStart = dashboardSource.indexOf("<aside", mainGridStart);
-  const quickActionsIndex = dashboardSource.indexOf("Quick Actions", mainGridStart);
-  const recentWorkIndex = dashboardSource.indexOf("Active Project Pipeline", mainGridStart);
-  // Quick Actions and Recent Work are both inside the one left-column `div`, which in turn is a
-  // direct child of the main grid `section` (not a separate row above/outside it) - and `aside`
-  // (the right rail) is that same grid's other direct child, not nested inside the left column.
-  assert.ok(leftColumnStart !== -1 && leftColumnStart < quickActionsIndex);
-  assert.ok(quickActionsIndex < recentWorkIndex && recentWorkIndex < asideStart);
-  // Recent Work is the direct next sibling after Quick Actions in the wide column - no spacer
-  // element, fixed height, or extra margin was introduced between them.
-  const between = dashboardSource.slice(quickActionsIndex, recentWorkIndex);
-  assert.ok(!/style=\{\{/.test(between)); // no inline fixed-height/spacer styling
-  assert.ok(!/<div className="h-\d/.test(between)); // no spacer div
-  // The right rail (sidebar) is still present with all four of its existing cards (10/11/12/13).
-  assert.ok(dashboardSource.includes("Procurement Workspace"));
-  assert.ok(dashboardSource.includes("Upcoming Deliveries"));
-  assert.ok(dashboardSource.includes("Yearly Turnover"));
-  assert.ok(dashboardSource.includes("Sales Performance"));
+  const gridStart = dashboardSource.indexOf(gridTag);
+  assert.ok(headingIndex("Quick Actions") < gridStart); // standalone row, not inside the grid
+  const asideStart = dashboardSource.indexOf("<aside", gridStart);
+  const asideEnd = dashboardSource.indexOf("</aside>", asideStart);
+  const recentWork = headingIndex("Recent Work");
+  assert.ok(gridStart < recentWork && recentWork < asideStart);
+  // The rail now holds only the two operational cards - no tall commercial stack.
+  const rail = dashboardSource.slice(asideStart, asideEnd);
+  assert.ok(rail.includes("Procurement Workspace"));
+  assert.ok(rail.includes("Upcoming Deliveries"));
+  assert.ok(!rail.includes("Sales Performance"));
+  assert.ok(!rail.includes("Yearly Turnover"));
+  // No spacer/fixed-height element between Quick Actions and Recent Work.
+  const between = dashboardSource.slice(headingIndex("Quick Actions"), recentWork);
+  assert.ok(!/style=\{\{/.test(between));
+  assert.ok(!/<div className="h-\d/.test(between));
 });
 
 test("14. no fixed-height/negative-margin/absolute-position layout hack was introduced, and responsive stacking is a valid standard Tailwind pattern", () => {
