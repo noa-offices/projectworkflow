@@ -131,6 +131,7 @@ test("3/4. two affected vendors on the same Project render as one grouped row wi
     id: "CO-0003-001",
     primary: "CO-0003-001",
     secondary: "Galleria Mall Boutique Refurbishment",
+    clientName: "Client",
     tertiary: "LAS MOBILI · INTERSTUHL",
     href: "/procurement/orders/CO-0003-001",
   });
@@ -217,6 +218,7 @@ test("10. Project/reference-name fallback is safe when the Project isn't in the 
     id: "CO-9999-000",
     primary: "CO-9999-000",
     secondary: undefined,
+    clientName: undefined,
     tertiary: "unknown-vendor",
     href: "/procurement/orders/CO-9999-000",
   });
@@ -248,9 +250,46 @@ test("1/2. a pending-quotation row falls back to the `title` column (an existing
     id: "q-abc",
     primary: "QN-0005-001",
     secondary: "HQ Office Server Room Fit-out",
-    tertiary: undefined,
+    clientName: undefined,
     href: "/quotations/q-abc",
   });
+});
+
+test("1. a pending-quotation row shows Client when a Project File/approval-draft snapshot is already available", async () => {
+  reset();
+  quotationsFixture = [
+    {
+      id: "q-xyz",
+      project_id: null,
+      quotation_no: "QN-0005-001",
+      quotation_date: "2026-01-01",
+      status: "draft",
+      is_active: true,
+      approved_salesperson_id: null,
+      title: null,
+      layout_settings: {
+        projectFile: {
+          orderNo: "CO-0005-001",
+          quotationId: "q-xyz",
+          quotationNo: "QN-0005-001",
+          folderNo: "0005",
+          opportunityNo: null,
+          clientId: "client-1",
+          clientName: "TechCorp Solutions FZ-LLC",
+          reference: "HQ Office Server Room Fit-out",
+          total: 1000,
+          currency: "AED",
+          status: "Confirmed",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          createdBy: "u1",
+          source: "quotation_layout_settings",
+        },
+      },
+    },
+  ];
+  const stats = await getDashboardStats();
+  assert.equal(stats.pendingQuotations.items[0].secondary, "HQ Office Server Room Fit-out");
+  assert.equal(stats.pendingQuotations.items[0].clientName, "TechCorp Solutions FZ-LLC");
 });
 
 test("10b. when neither a Project File snapshot nor a title exists, the row safely falls back to the order number only", async () => {

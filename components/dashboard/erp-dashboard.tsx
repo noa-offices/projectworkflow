@@ -127,8 +127,11 @@ function AttentionCategoryRow({
                   {item.secondary && (
                     <span className="block truncate text-[11px] text-zinc-500">{item.secondary}</span>
                   )}
+                  {item.clientName && (
+                    <span className="block truncate text-[11px] text-zinc-400">{item.clientName}</span>
+                  )}
                   {item.tertiary && (
-                    <span className="block truncate text-[11px] text-zinc-400">{item.tertiary}</span>
+                    <span className="block truncate text-[10px] text-zinc-400">{item.tertiary}</span>
                   )}
                 </span>
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden="true" />
@@ -433,7 +436,7 @@ export function ERPDashboard({
       <section
         id="attention-required"
         tabIndex={-1}
-        className="scroll-mt-5 grid gap-4 rounded-lg outline-none transition target:ring-2 target:ring-amber-400 target:ring-offset-2 2xl:grid-cols-2"
+        className="scroll-mt-5 grid gap-4 rounded-lg outline-none transition target:ring-2 target:ring-amber-400 target:ring-offset-2 lg:grid-cols-2"
       >
         <DashboardCard className="overflow-hidden">
           <div className="border-b border-zinc-100 px-4 py-3">
@@ -491,7 +494,10 @@ export function ERPDashboard({
       </section>
 
       {/* ── Main content + sidebar ────────────────────────────────────────── */}
-      <section className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_360px]">
+      {/* Columns start together at `lg` (1024px) - the previous `2xl` (1536px) breakpoint meant
+          the two columns stacked full-width on virtually every standard laptop screen, which is
+          what produced the dead space below Quick Actions: the right rail never sat beside it. */}
+      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
 
         <div className="grid gap-5">
 
@@ -649,7 +655,7 @@ export function ERPDashboard({
         </div>
 
         {/* ── Sidebar ──────────────────────────────────────────────────────── */}
-        <aside className="grid gap-4 2xl:content-start">
+        <aside className="grid gap-4 lg:content-start">
           {canAccessProcurement ? (
             <Link href="/procurement/orders">
               <DashboardCard className="p-4 transition hover:border-blue-200 hover:shadow-md">
@@ -704,7 +710,10 @@ export function ERPDashboard({
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-xs font-semibold text-zinc-800">{delivery.vendorLabel}</span>
-                          <span className="block truncate text-[11px] text-zinc-500">{delivery.projectName}</span>
+                          <span className="block truncate text-[11px] text-zinc-500">
+                            {delivery.projectName}
+                            {delivery.clientName && ` · ${delivery.clientName}`}
+                          </span>
                         </span>
                         <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden="true" />
                       </Link>

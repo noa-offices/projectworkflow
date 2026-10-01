@@ -12,14 +12,16 @@ import { sendNotificationToRole } from "@/lib/notifications/actions";
 import { loadProcurementSummary, type ProcurementAttentionItemRow } from "@/lib/procurement/procurement-summary";
 // ─── Exported types ───────────────────────────────────────────────────────────
 
-// Dashboard Attention drill-down: a bounded, safe display item - never full records. `secondary`/
-// `tertiary` are optional: a pending-quotation row uses them for Project/reference name and
-// client name (when available); a grouped Procurement row uses them for Project/reference name
-// and the joined, deduped vendor label list.
+// Dashboard Attention drill-down: a bounded, safe display item - never full records. Hierarchy:
+// primary (identifier) -> secondary (Project/reference) -> clientName (Client company name,
+// when cheaply available) -> tertiary (Procurement rows only: the joined, deduped vendor label
+// list). All three context fields are optional and simply omitted when genuinely unavailable -
+// never a placeholder, never a new per-row lookup to fill one in.
 export type DashboardAttentionItem = {
   id: string;
   primary: string;
   secondary?: string;
+  clientName?: string;
   tertiary?: string;
   href: string;
 };
@@ -185,7 +187,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
           id: quotation.id,
           primary: quotation.quotation_no ?? quotation.id,
           secondary: reference,
-          tertiary: order?.clientName,
+          clientName: order?.clientName,
           href: `/quotations/${quotation.id}`,
         });
       }
@@ -295,6 +297,9 @@ function toAttentionGroup(
         id: orderNo,
         primary: orderNo,
         secondary: project?.reference,
+        // DashboardProject.clientName is already in memory from the same active-project list
+        // used for `reference` above - zero new query.
+        clientName: project?.clientName,
         tertiary: vendorsByOrderNo.get(orderNo)!.join(" · "),
         href: `/procurement/orders/${encodeURIComponent(orderNo)}`,
       };
@@ -330,6 +335,9 @@ export async function getDashboardProcurementAttention(
 export type UpcomingDelivery = {
   orderNo: string;
   projectName: string;
+  // From the same already-fetched active-project list as projectName (DashboardProject) - zero
+  // new query. Omitted (never a placeholder) when the Project isn't in that list.
+  clientName?: string;
   vendorLabel: string;
   eta: string;
   href: string;
@@ -371,6 +379,7 @@ export async function getDashboardUpcomingDeliveries(
     deliveries.push({
       orderNo: row.order_no,
       projectName: project?.reference || row.order_no,
+      clientName: project?.clientName,
       vendorLabel: row.vendor_key,
       eta: row.eta,
       href: `/procurement/orders/${encodeURIComponent(row.order_no)}`,

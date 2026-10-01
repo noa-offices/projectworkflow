@@ -163,6 +163,24 @@ test("10. the same Project with two vendors renders two distinct rows (never gro
   assert.ok(result.every((d) => d.projectName === "HQ Office Server Room Fit-out"));
 });
 
+// ── Client context (Dashboard Context + Layout Polish) ──────────────────────────────────────
+
+test("5. an upcoming delivery shows Client name when the Project is in the active-project list", async () => {
+  reset();
+  progressRowsFixture = [{ order_no: "CO-0002-003", vendor_key: "LAS MOBILI", eta: isoDaysFromToday(1) }];
+  const result = await getDashboardUpcomingDeliveries([project("CO-0002-003", "HQ Office Server Room Fit-out", "TechCorp Solutions FZ-LLC")]);
+  assert.equal(result[0].clientName, "TechCorp Solutions FZ-LLC");
+});
+
+test("6. an upcoming delivery still renders when Client is missing (no new lookup triggered)", async () => {
+  reset();
+  progressRowsFixture = [{ order_no: "CO-9999", vendor_key: "v1", eta: isoDaysFromToday(1) }];
+  // CO-9999 itself isn't in the active-project list - mirrors a row whose Project lookup misses.
+  const result = await getDashboardUpcomingDeliveries([project("CO-0001")]);
+  assert.equal(result[0].clientName, undefined);
+  assert.equal(result[0].orderNo, "CO-9999");
+});
+
 // ── 11. duplicate (orderNo, vendorKey) deduped ──────────────────────────────────────────────
 
 test("11. a duplicate (orderNo, vendorKey) pair is deduped defensively", async () => {
