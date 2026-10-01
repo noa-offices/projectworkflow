@@ -169,7 +169,10 @@ test("19. no RFQ-stage/stalled-duration logic exists", () => {
   // against the existing PO-issued step index, never a duration/timer) for the missing-supplier-
   // confirmation rule - the thing this test actually bans (an invented RFQ-stage timer/stalled-
   // duration rule) is still absent; only the literal "active_step" substring is no longer banned.
-  assert.ok(!/\brfq\b|stalled/i.test(attentionWithoutLineComments));
+  // Maturity audit Part 4 legitimately compares against the existing "delivered_installed" step
+  // key (a discrete equality check, never a duration/timer) - "installed" contains "stalled" as a
+  // substring, so the ban is now word-boundaried to the actual banned word, not that collision.
+  assert.ok(!/\brfq\b|\bstalled\b/i.test(attentionWithoutLineComments));
 });
 
 // 20. no stale-quotation logic

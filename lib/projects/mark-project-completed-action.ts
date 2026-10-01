@@ -2,13 +2,14 @@
 
 import { requireActiveUser } from "@/lib/auth";
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
+import { createAuditLog } from "@/lib/audit-log";
 import { revalidatePath } from "next/cache";
 
 export async function markProjectCompletedAction(
   quotationId: string,
   orderNo: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { profile } = await requireActiveUser();
+  const { user, profile } = await requireActiveUser();
 
   const canEdit =
     profile?.role === "system_owner" || profile?.role === "admin_manager";
@@ -39,6 +40,18 @@ export async function markProjectCompletedAction(
   if (updateError) {
     return { ok: false, error: "Failed to mark project as completed." };
   }
+
+  await createAuditLog(supabase, {
+    entityType: "confirmed_order",
+    entityId: null,
+    parentEntityType: null,
+    parentEntityId: null,
+    action: "project_completed",
+    title: "Project marked completed",
+    description: `Project ${orderNo} marked as completed.`,
+    metadata: { orderNo, quotationId, completedAt: updated.projectCompletedAt },
+    createdBy: user.id,
+  });
 
   revalidatePath("/projects/orders");
   revalidatePath(`/projects/orders/${encodeURIComponent(orderNo)}`);

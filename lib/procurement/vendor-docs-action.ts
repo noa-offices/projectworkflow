@@ -76,6 +76,19 @@ export async function saveVendorDocUrl(
     };
   }
 
+  const auditClient = await createSupabaseClient();
+  await createAuditLog(auditClient, {
+    entityType: "procurement_vendor",
+    entityId: null,
+    parentEntityType: "confirmed_order",
+    parentEntityId: null,
+    action: "vendor_document_uploaded",
+    title: "Vendor document uploaded",
+    description: `Document uploaded for ${orderNo}.`,
+    metadata: { orderNo, vendorKey, slotKey, fileName },
+    createdBy: user.id,
+  });
+
   return { ok: true, id: data.id as string };
 }
 
@@ -85,7 +98,7 @@ export async function deleteVendorDoc(
   slotKey: string,
   storagePath: string,
 ): Promise<ActionResult> {
-  const { profile } = await requireActiveUser();
+  const { user, profile } = await requireActiveUser();
 
   if (!canProcureRole(profile?.role)) {
     return { ok: false, error: "Forbidden." };
@@ -131,6 +144,19 @@ export async function deleteVendorDoc(
       error: formatSafeActionError("Failed to delete document record", dbErr),
     };
   }
+
+  const auditClient = await createSupabaseClient();
+  await createAuditLog(auditClient, {
+    entityType: "procurement_vendor",
+    entityId: null,
+    parentEntityType: "confirmed_order",
+    parentEntityId: null,
+    action: "vendor_document_deleted",
+    title: "Vendor document deleted",
+    description: `Document deleted for ${orderNo}.`,
+    metadata: { orderNo, vendorKey, slotKey },
+    createdBy: user.id,
+  });
 
   return { ok: true };
 }
@@ -395,7 +421,7 @@ export async function deleteVendorDocById(
   id: string,
   storagePath: string,
 ): Promise<ActionResult> {
-  const { profile } = await requireActiveUser();
+  const { user, profile } = await requireActiveUser();
 
   if (!canProcureRole(profile?.role)) {
     return { ok: false, error: "Forbidden." };
@@ -407,6 +433,15 @@ export async function deleteVendorDocById(
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const adminClient = adminResult.client as any;
+
+  // Pre-read, for audit metadata only (never for authorization or storage/delete decisions) -
+  // this call site otherwise only ever receives the raw id/storagePath, with no order/vendor
+  // context of its own.
+  const { data: docRow } = await adminClient
+    .from("procurement_vendor_docs")
+    .select("order_no,vendor_key,slot_key,file_name")
+    .eq("id", id)
+    .maybeSingle();
 
   const { error: storageErr } = await adminClient.storage
     .from("project-documents")
@@ -439,6 +474,24 @@ export async function deleteVendorDocById(
       error: formatSafeActionError("Failed to delete document record", dbErr),
     };
   }
+
+  const auditClient = await createSupabaseClient();
+  await createAuditLog(auditClient, {
+    entityType: "procurement_vendor",
+    entityId: null,
+    parentEntityType: "confirmed_order",
+    parentEntityId: null,
+    action: "vendor_document_deleted",
+    title: "Vendor document deleted",
+    description: `Document deleted for ${docRow?.order_no ?? "unknown order"}.`,
+    metadata: {
+      orderNo: docRow?.order_no ?? null,
+      vendorKey: docRow?.vendor_key ?? null,
+      slotKey: docRow?.slot_key ?? null,
+      fileName: docRow?.file_name ?? null,
+    },
+    createdBy: user.id,
+  });
 
   return { ok: true };
 }

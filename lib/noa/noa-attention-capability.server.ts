@@ -8,7 +8,7 @@ import {
   productTemplatePriceCheckState,
 } from "@/lib/product-price-check";
 import { buildEffectiveDocumentGroups } from "@/lib/quotations/document-grouping";
-import { VENDOR_STEP_LABELS } from "@/lib/procurement/vendor-steps";
+import { VENDOR_STEP_LABELS, type VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 import { allProjectFiles } from "@/lib/noa/noa-project-capability.server";
 import {
   calculateClientPaymentSummary,
@@ -33,7 +33,7 @@ const MAX_ATTENTION_ITEMS = 10; // bounded structured items + deterministicText 
 // N2A2: "ClientPayment" is an Attention-LOCAL source category only - never added to the global
 // NoaDomain (that stays Product/Quotation/Price/.../Attention, unchanged).
 type NoaAttentionSourceDomain = "Price" | "Procurement" | "ClientPayment";
-type NoaAttentionKind = "price_needs_check" | "price_due" | "procurement_missing_eta" | "procurement_missing_etd" | "procurement_missing_confirmation" | "payment_overdue";
+type NoaAttentionKind = "price_needs_check" | "price_due" | "procurement_missing_eta" | "procurement_missing_etd" | "procurement_missing_confirmation" | "procurement_delivered_not_received" | "payment_overdue";
 type NoaAttentionEntityType = "product_template" | "vendor" | "installment";
 
 // PART 3: the small, local Attention finding contract - deliberately no severity/score/priority/
@@ -155,10 +155,14 @@ async function productPriceFindings(
 
 type ActiveProjectFile = Awaited<ReturnType<typeof allProjectFiles>>[number];
 type ActiveOrderItemRow = { brand_name_snapshot: string | null; quotation_id: string; supplier_name_snapshot: string | null };
-type VendorProgressRow = { active_step: number; eta: string | null; etd: string | null; order_no: string; supplier_confirmed_at: string | null; vendor_key: string };
+type VendorProgressRow = { active_step: number; eta: string | null; etd: string | null; order_no: string; receiving_status: VendorReceivingStatus | null; supplier_confirmed_at: string | null; vendor_key: string };
 // Task 1 Part 8: "PO issued" is the step at which a missing supplier confirmation becomes
 // worth flagging - derived from the existing step list, never a second hardcoded index.
 const PROCUREMENT_PO_ISSUED_STEP = VENDOR_STEP_LABELS.findIndex((step) => step.key === "po_issued");
+// Maturity audit Part 4: "delivered & installed" is the step at which progress contradicts a
+// receiving status that isn't "received" yet - derived from the same existing step list, never
+// a second hardcoded index.
+const PROCUREMENT_DELIVERED_INSTALLED_STEP = VENDOR_STEP_LABELS.findIndex((step) => step.key === "delivered_installed");
 
 // N2A2 PART 3: hoisted out of procurementFindings() so the Procurement and Client Payment
 // subsections share this ONE bounded ERP Project File read instead of each doing their own -
@@ -198,7 +202,7 @@ async function procurementFindings(
       .returns<ActiveOrderItemRow[]>(),
     supabase
       .from("procurement_vendor_progress")
-      .select("order_no,vendor_key,eta,etd,active_step,supplier_confirmed_at")
+      .select("order_no,vendor_key,eta,etd,active_step,supplier_confirmed_at,receiving_status")
       .in("order_no", orderNos)
       .returns<VendorProgressRow[]>(),
   ]);
@@ -265,6 +269,21 @@ async function procurementFindings(
           sourceDomain: "Procurement",
           kind: "procurement_missing_confirmation",
           title: `${group.displayLabel} — supplier confirmation missing`,
+          detail,
+          entityType: "vendor",
+          entityLabel: group.displayLabel,
+          entityIdentifier: order.orderNo,
+        });
+      }
+      // Maturity audit Part 4: progress says delivered/installed while receiving isn't "received"
+      // yet - a deterministic, advisory-only contradiction between two independent fields. Never
+      // auto-corrects either value.
+      if (progress?.active_step === PROCUREMENT_DELIVERED_INSTALLED_STEP && progress.receiving_status !== "received") {
+        findings.push({
+          key: `procurement_delivered_not_received:${order.orderNo}:${group.dedupeKey}`,
+          sourceDomain: "Procurement",
+          kind: "procurement_delivered_not_received",
+          title: `${group.displayLabel} — delivered but not received`,
           detail,
           entityType: "vendor",
           entityLabel: group.displayLabel,
