@@ -19,6 +19,8 @@ let progressRowsFixture: Array<{
   eta: string | null;
   etd: string | null;
 }> = [];
+const DELIVERED_INSTALLED_STEP = 7;
+const IN_TRANSIT_STEP_FIXTURE = 6;
 const fromCalls: string[] = [];
 
 mock.module("@/lib/supabase/server", { namedExports: {
@@ -56,6 +58,7 @@ test("1. no active orders -> all zero, no query issued (short-circuits before an
     receiving: { pending: 0, partial: 0, received: 0 },
     missingEtaCount: 0,
     missingEtdCount: 0,
+    deliveredNotReceivedCount: 0,
   });
   assert.equal(fromCalls.length, 0);
 });
@@ -112,6 +115,18 @@ test("10/11. missing ETA and missing ETD are counted independently", async () =>
   const summary = await loadProcurementSummary(["CO-0001"]);
   assert.equal(summary.missingEtaCount, 2);
   assert.equal(summary.missingEtdCount, 2);
+});
+
+test("17/18. delivered-not-received counts only delivered_installed vendors whose receiving isn't 'received', using the canonical step index", async () => {
+  reset();
+  progressRowsFixture = [
+    { active_step: DELIVERED_INSTALLED_STEP, supplier_confirmed_at: null, receiving_status: "pending", eta: null, etd: null },
+    { active_step: DELIVERED_INSTALLED_STEP, supplier_confirmed_at: null, receiving_status: "partial", eta: null, etd: null },
+    { active_step: DELIVERED_INSTALLED_STEP, supplier_confirmed_at: null, receiving_status: "received", eta: null, etd: null },
+    { active_step: IN_TRANSIT_STEP_FIXTURE, supplier_confirmed_at: null, receiving_status: "pending", eta: null, etd: null },
+  ];
+  const summary = await loadProcurementSummary(["CO-0001"]);
+  assert.equal(summary.deliveredNotReceivedCount, 2);
 });
 
 test("15. exactly two bounded queries (one per table) - no per-order loop", async () => {

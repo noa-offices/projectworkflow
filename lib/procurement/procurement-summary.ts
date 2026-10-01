@@ -17,9 +17,14 @@ export type ProcurementSummary = {
   };
   missingEtaCount: number;
   missingEtdCount: number;
+  deliveredNotReceivedCount: number;
 };
 
 const IN_TRANSIT_STEP = VENDOR_STEP_LABELS.findIndex((step) => step.key === "in_transit");
+// Dashboard Attention Summary: the same canonical step index the delivered-vs-received
+// consistency rule already uses in lib/noa/noa-attention-capability.server.ts - never a second
+// Attention engine, just the same deterministic comparison exposed as a plain aggregate count.
+const DELIVERED_INSTALLED_STEP = VENDOR_STEP_LABELS.findIndex((step) => step.key === "delivered_installed");
 
 const EMPTY_SUMMARY: ProcurementSummary = {
   openPoCount: 0,
@@ -29,6 +34,7 @@ const EMPTY_SUMMARY: ProcurementSummary = {
   receiving: { pending: 0, partial: 0, received: 0 },
   missingEtaCount: 0,
   missingEtdCount: 0,
+  deliveredNotReceivedCount: 0,
 };
 
 type VendorProgressRow = {
@@ -76,5 +82,8 @@ export async function loadProcurementSummary(activeOrderNos: string[]): Promise<
     receiving,
     missingEtaCount: rows.filter((row) => !row.eta).length,
     missingEtdCount: rows.filter((row) => !row.etd).length,
+    deliveredNotReceivedCount: rows.filter(
+      (row) => row.active_step === DELIVERED_INSTALLED_STEP && row.receiving_status !== "received",
+    ).length,
   };
 }

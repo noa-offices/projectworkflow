@@ -9,6 +9,7 @@ import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
 import type { AlertIconKey, DashboardAlert } from "@/components/dashboard/alerts-panel";
 import { sendNotificationToRole } from "@/lib/notifications/actions";
+import { loadProcurementSummary } from "@/lib/procurement/procurement-summary";
 // ─── Exported types ───────────────────────────────────────────────────────────
 
 export type DashboardStats = {
@@ -196,6 +197,34 @@ export async function getActiveProjects(): Promise<DashboardProject[]> {
     .filter((p, i, all) => all.findIndex((q) => q.orderNo === p.orderNo) === i)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 50);
+}
+
+// ─── 2b. getDashboardProcurementAttention ─────────────────────────────────────
+// Management Dashboard Attention Summary: thin wrapper over the existing, already-bounded
+// loadProcurementSummary() aggregate - never a second query layer or a per-order loop. Caller
+// passes the same active-order scope already established by getActiveProjects() (completed/
+// cancelled excluded, orderNo-deduped); this function does not re-derive "active" itself, and is
+// only ever called from the dashboard page behind its existing canAccessProcurement gate (the
+// same convention getHrExpiryAlerts() already follows there) - no new role logic here.
+
+export type DashboardProcurementAttention = {
+  awaitingSupplierConfirmation: number;
+  missingEta: number;
+  missingEtd: number;
+  deliveredNotReceived: number;
+};
+
+export async function getDashboardProcurementAttention(
+  activeOrderNos: string[],
+): Promise<DashboardProcurementAttention> {
+  await requireActiveUser();
+  const summary = await loadProcurementSummary(activeOrderNos);
+  return {
+    awaitingSupplierConfirmation: summary.awaitingConfirmationCount,
+    missingEta: summary.missingEtaCount,
+    missingEtd: summary.missingEtdCount,
+    deliveredNotReceived: summary.deliveredNotReceivedCount,
+  };
 }
 
 // ─── 3. getProjectRecentActivity ──────────────────────────────────────────────

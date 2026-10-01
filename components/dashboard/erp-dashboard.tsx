@@ -25,6 +25,7 @@ import type { AppRole } from "@/lib/supabase/types";
 import {
   getProjectRecentActivity,
   type ActivityEntry,
+  type DashboardProcurementAttention,
   type DashboardProject,
   type DashboardSalesData,
   type DashboardStats,
@@ -67,6 +68,7 @@ type Props = {
   canAccessProcurement: boolean;
   canManageProducts: boolean;
   canSendNotifications: boolean;
+  procurementAttention: DashboardProcurementAttention | null;
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -81,6 +83,7 @@ export function ERPDashboard({
   canAccessProcurement,
   canManageProducts,
   canSendNotifications,
+  procurementAttention,
 }: Props) {
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedOrderNo, setExpandedOrderNo] = useState<string | null>(null);
@@ -199,6 +202,46 @@ export function ERPDashboard({
     { label: "Send Notification", href: "/notifications", icon: Bell, visible: canSendNotifications },
     { label: "Client Approvals", href: "/sales/approvals", icon: ReceiptText, visible: true },
   ].filter((action) => action.visible);
+  // Management Dashboard Attention Summary: rows sourced from the existing, already-bounded
+  // Procurement aggregate (via getDashboardProcurementAttention -> loadProcurementSummary) -
+  // never a second Attention engine. Zero-count rows are omitted entirely, matching the panel's
+  // existing "nothing urgent" convention below.
+  const procurementAttentionItems = procurementAttention
+    ? [
+        procurementAttention.awaitingSupplierConfirmation > 0
+          ? {
+              label: "Suppliers awaiting confirmation",
+              count: procurementAttention.awaitingSupplierConfirmation,
+              href: "/procurement/orders",
+              tone: "bg-amber-50 text-amber-700",
+            }
+          : null,
+        procurementAttention.missingEta > 0
+          ? {
+              label: "Vendors missing ETA",
+              count: procurementAttention.missingEta,
+              href: "/procurement/orders",
+              tone: "bg-amber-50 text-amber-700",
+            }
+          : null,
+        procurementAttention.missingEtd > 0
+          ? {
+              label: "Vendors missing ETD",
+              count: procurementAttention.missingEtd,
+              href: "/procurement/orders",
+              tone: "bg-amber-50 text-amber-700",
+            }
+          : null,
+        procurementAttention.deliveredNotReceived > 0
+          ? {
+              label: "Delivered, not yet received",
+              count: procurementAttention.deliveredNotReceived,
+              href: "/procurement/orders",
+              tone: "bg-amber-50 text-amber-700",
+            }
+          : null,
+      ].filter((item): item is NonNullable<typeof item> => item !== null)
+    : [];
   const attentionItems = [
     stats.pendingQuotations > 0
       ? {
@@ -208,6 +251,7 @@ export function ERPDashboard({
           tone: "bg-amber-50 text-amber-700",
         }
       : null,
+    ...procurementAttentionItems,
     hrAlerts && hrAlerts.length > 0
       ? {
           label: "HR and worker documents nearing expiry",
