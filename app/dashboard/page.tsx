@@ -37,7 +37,7 @@ export default async function DashboardPage() {
   // no second "active" definition, and gated by the existing canAccessProcurement role check
   // (same convention as the isManager gate on HR alerts) rather than new role logic.
   const procurementAttention: DashboardProcurementAttention | null = canSeeProcurementAttention
-    ? await getDashboardProcurementAttention(projects.map((project) => project.orderNo))
+    ? await getDashboardProcurementAttention(projects)
     : null;
 
   return (

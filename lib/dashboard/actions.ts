@@ -9,15 +9,32 @@ import { projectFileFromLayoutSettings } from "@/lib/quotations/project-file";
 import { quotationFolderNumberFromQuotationNumber } from "@/lib/projectworkflow-numbering";
 import type { AlertIconKey, DashboardAlert } from "@/components/dashboard/alerts-panel";
 import { sendNotificationToRole } from "@/lib/notifications/actions";
-import { loadProcurementSummary } from "@/lib/procurement/procurement-summary";
+import { loadProcurementSummary, type ProcurementAttentionItemRow } from "@/lib/procurement/procurement-summary";
 // ─── Exported types ───────────────────────────────────────────────────────────
+
+// Dashboard Attention drill-down: a bounded, safe display item - never full records. `secondary`
+// is optional since not every category has a cheaply-available second line (e.g. a pending
+// quotation folder's client name isn't selected by the existing getDashboardStats() query).
+export type DashboardAttentionItem = {
+  id: string;
+  primary: string;
+  secondary?: string;
+  href: string;
+};
+
+export type DashboardAttentionGroup = {
+  count: number;
+  items: DashboardAttentionItem[];
+};
+
+const MAX_ATTENTION_ITEMS_PER_CATEGORY = 5;
 
 export type DashboardStats = {
   activeProjects: number;
   activeProjectValue: number;
   completedProjects: number;
   completedProjectValue: number;
-  pendingQuotations: number;
+  pendingQuotations: DashboardAttentionGroup;
   quotationWorkflow: {
     clientApproved: number;
     clientConfirmedPending: number;
@@ -132,17 +149,28 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     readyToSend: 0,
     sentToClient: 0,
   };
-  let pendingQuotations = 0;
+  let pendingQuotationsCount = 0;
+  const pendingQuotationItems: DashboardAttentionItem[] = [];
 
   for (const quotation of quotationFolders.values()) {
     if (!quotation.is_active) continue;
     const approvalDisplay = quotationApprovalDisplay(quotation);
-    if (
+    const isPending =
       PENDING_STATUSES.includes(quotation.status) ||
       approvalDisplay?.state === "project_file_pending" ||
-      approvalDisplay?.state === "owner_attribution_pending"
-    ) {
-      pendingQuotations++;
+      approvalDisplay?.state === "owner_attribution_pending";
+    if (isPending) {
+      pendingQuotationsCount++;
+      // Bounded drill-down list (Part 1/6): count stays the full tally above; only the first
+      // MAX_ATTENTION_ITEMS_PER_CATEGORY folders get a display item. No client/reference name is
+      // selected by this query, so `secondary` is left out rather than guessed or newly fetched.
+      if (pendingQuotationItems.length < MAX_ATTENTION_ITEMS_PER_CATEGORY) {
+        pendingQuotationItems.push({
+          id: quotation.id,
+          primary: quotation.quotation_no ?? quotation.id,
+          href: `/quotations/${quotation.id}`,
+        });
+      }
     }
     if (quotation.status === "draft") workflow.draft++;
     if (quotation.status === "ready_to_send") workflow.readyToSend++;
@@ -157,7 +185,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     activeProjectValue,
     completedProjects,
     completedProjectValue,
-    pendingQuotations,
+    pendingQuotations: { count: pendingQuotationsCount, items: pendingQuotationItems },
     quotationWorkflow: workflow,
   };
 }
@@ -208,22 +236,47 @@ export async function getActiveProjects(): Promise<DashboardProject[]> {
 // same convention getHrExpiryAlerts() already follows there) - no new role logic here.
 
 export type DashboardProcurementAttention = {
-  awaitingSupplierConfirmation: number;
-  missingEta: number;
-  missingEtd: number;
-  deliveredNotReceived: number;
+  awaitingSupplierConfirmation: DashboardAttentionGroup;
+  missingEta: DashboardAttentionGroup;
+  missingEtd: DashboardAttentionGroup;
+  deliveredNotReceived: DashboardAttentionGroup;
 };
 
+// Enriches the safe orderNo/vendorKey identifiers from loadProcurementSummary() with a display
+// label and exact href, using only the already-fetched active-project list (clientName/reference)
+// already in memory - no second query, no quotation-item fetch, no vendor-document join.
+function toAttentionGroup(
+  count: number,
+  rows: ProcurementAttentionItemRow[],
+  projectByOrderNo: Map<string, DashboardProject>,
+): DashboardAttentionGroup {
+  return {
+    count,
+    items: rows.map((row) => {
+      const project = projectByOrderNo.get(row.orderNo);
+      return {
+        id: `${row.orderNo}:${row.vendorKey}`,
+        primary: row.orderNo,
+        secondary: project ? `${project.reference} · ${row.vendorKey}` : row.vendorKey,
+        href: `/procurement/orders/${encodeURIComponent(row.orderNo)}`,
+      };
+    }),
+  };
+}
+
 export async function getDashboardProcurementAttention(
-  activeOrderNos: string[],
+  activeProjects: DashboardProject[],
 ): Promise<DashboardProcurementAttention> {
   await requireActiveUser();
+  const activeOrderNos = activeProjects.map((project) => project.orderNo);
   const summary = await loadProcurementSummary(activeOrderNos);
+  const projectByOrderNo = new Map(activeProjects.map((project) => [project.orderNo, project]));
+
   return {
-    awaitingSupplierConfirmation: summary.awaitingConfirmationCount,
-    missingEta: summary.missingEtaCount,
-    missingEtd: summary.missingEtdCount,
-    deliveredNotReceived: summary.deliveredNotReceivedCount,
+    awaitingSupplierConfirmation: toAttentionGroup(summary.awaitingConfirmationCount, summary.awaitingConfirmationItems, projectByOrderNo),
+    missingEta: toAttentionGroup(summary.missingEtaCount, summary.missingEtaItems, projectByOrderNo),
+    missingEtd: toAttentionGroup(summary.missingEtdCount, summary.missingEtdItems, projectByOrderNo),
+    deliveredNotReceived: toAttentionGroup(summary.deliveredNotReceivedCount, summary.deliveredNotReceivedItems, projectByOrderNo),
   };
 }
 

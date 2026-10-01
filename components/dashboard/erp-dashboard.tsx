@@ -25,6 +25,7 @@ import type { AppRole } from "@/lib/supabase/types";
 import {
   getProjectRecentActivity,
   type ActivityEntry,
+  type DashboardAttentionItem,
   type DashboardProcurementAttention,
   type DashboardProject,
   type DashboardSalesData,
@@ -52,6 +53,82 @@ function relativeTime(iso: string): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+// ─── Attention drill-down ─────────────────────────────────────────────────────
+
+type AttentionCategory = {
+  key: string;
+  label: string;
+  count: number;
+  items: DashboardAttentionItem[];
+  tone: string;
+  // Broad existing destination, used only for "View all N" when more records exist than are
+  // shown, and as a safe fallback link if `items` is unexpectedly empty for a count > 0.
+  fallbackHref: string;
+};
+
+// Inline expand/collapse row (Part 7/8/9): a plain button toggles visibility - never navigates -
+// and each child record keeps its own exact link. One category open at a time (via the parent's
+// single `expandedKey` state) keeps this the smallest implementation, no state library involved.
+function AttentionCategoryRow({
+  category,
+  isExpanded,
+  onToggle,
+}: {
+  category: AttentionCategory;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const hasMore = category.count > category.items.length;
+  return (
+    <div>
+      <button
+        type="button"
+        aria-expanded={isExpanded}
+        onClick={onToggle}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-zinc-50 focus-visible:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-600"
+      >
+        <span className={`rounded-md px-2 py-1 text-xs font-semibold ${category.tone}`}>{category.count}</span>
+        <span className="flex-1 text-sm font-medium text-zinc-800">{category.label}</span>
+        <ChevronRight
+          className={`h-4 w-4 shrink-0 text-zinc-400 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+          aria-hidden="true"
+        />
+      </button>
+      {isExpanded && (
+        <div className="divide-y divide-zinc-100 bg-zinc-50/70 pl-4">
+          {category.items.length === 0 ? (
+            <p className="px-4 py-2 text-xs text-zinc-400">Details unavailable.</p>
+          ) : (
+            category.items.map((item) => (
+              <Link
+                key={item.id}
+                href={item.href}
+                className="flex items-center gap-2 py-2 pr-4 transition hover:text-emerald-800"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-semibold text-zinc-800">{item.primary}</span>
+                  {item.secondary && (
+                    <span className="block truncate text-[11px] text-zinc-500">{item.secondary}</span>
+                  )}
+                </span>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden="true" />
+              </Link>
+            ))
+          )}
+          {hasMore && (
+            <Link
+              href={category.fallbackHref}
+              className="block py-2 pr-4 text-xs font-semibold text-emerald-700 transition hover:text-emerald-900"
+            >
+              View all {category.count} →
+            </Link>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── Module shortcuts ─────────────────────────────────────────────────────────
@@ -89,6 +166,7 @@ export function ERPDashboard({
   const [expandedOrderNo, setExpandedOrderNo] = useState<string | null>(null);
   const [expandedActivity, setExpandedActivity] = useState<ActivityEntry[] | null>(null);
   const [activityLoading, setActivityLoading] = useState(false);
+  const [expandedAttentionKey, setExpandedAttentionKey] = useState<string | null>(null);
 
   function handleAttentionNavigation(event: MouseEvent<HTMLAnchorElement>) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -101,7 +179,7 @@ export function ERPDashboard({
   }
 
   // ── KPI sparkline data ───────────────────────────────────────────────────
-  const attentionCount = stats.pendingQuotations + (hrAlerts?.length ?? 0);
+  const attentionCount = stats.pendingQuotations.count + (hrAlerts?.length ?? 0);
   const kpis = [
     {
       label: "Active Projects",
@@ -115,7 +193,7 @@ export function ERPDashboard({
     },
     {
       label: "Pending Quotations",
-      value: String(stats.pendingQuotations),
+      value: String(stats.pendingQuotations.count),
       description: "Active folders awaiting completion.",
       trend: "Counts each quotation folder once",
       href: "/sales/quotations",
@@ -202,65 +280,77 @@ export function ERPDashboard({
     { label: "Send Notification", href: "/notifications", icon: Bell, visible: canSendNotifications },
     { label: "Client Approvals", href: "/sales/approvals", icon: ReceiptText, visible: true },
   ].filter((action) => action.visible);
-  // Management Dashboard Attention Summary: rows sourced from the existing, already-bounded
-  // Procurement aggregate (via getDashboardProcurementAttention -> loadProcurementSummary) -
-  // never a second Attention engine. Zero-count rows are omitted entirely, matching the panel's
-  // existing "nothing urgent" convention below.
-  const procurementAttentionItems = procurementAttention
+  // Management Dashboard Attention drill-down: categories sourced from the existing, already-
+  // bounded aggregates (getDashboardStats()'s pendingQuotations group, and
+  // getDashboardProcurementAttention() -> loadProcurementSummary) - never a second Attention
+  // engine. Zero-count categories are omitted entirely, matching the panel's existing "nothing
+  // urgent" convention below. Procurement categories only exist at all when `procurementAttention`
+  // is non-null (the page only fetches it behind canAccessProcurement) - unauthorized roles never
+  // see these rows or their child records.
+  const procurementAttentionCategories: AttentionCategory[] = procurementAttention
     ? [
-        procurementAttention.awaitingSupplierConfirmation > 0
+        procurementAttention.awaitingSupplierConfirmation.count > 0
           ? {
+              key: "procurement-awaiting-confirmation",
               label: "Suppliers awaiting confirmation",
-              count: procurementAttention.awaitingSupplierConfirmation,
-              href: "/procurement/orders",
+              count: procurementAttention.awaitingSupplierConfirmation.count,
+              items: procurementAttention.awaitingSupplierConfirmation.items,
               tone: "bg-amber-50 text-amber-700",
+              fallbackHref: "/procurement/orders",
             }
           : null,
-        procurementAttention.missingEta > 0
+        procurementAttention.missingEta.count > 0
           ? {
+              key: "procurement-missing-eta",
               label: "Vendors missing ETA",
-              count: procurementAttention.missingEta,
-              href: "/procurement/orders",
+              count: procurementAttention.missingEta.count,
+              items: procurementAttention.missingEta.items,
               tone: "bg-amber-50 text-amber-700",
+              fallbackHref: "/procurement/orders",
             }
           : null,
-        procurementAttention.missingEtd > 0
+        procurementAttention.missingEtd.count > 0
           ? {
+              key: "procurement-missing-etd",
               label: "Vendors missing ETD",
-              count: procurementAttention.missingEtd,
-              href: "/procurement/orders",
+              count: procurementAttention.missingEtd.count,
+              items: procurementAttention.missingEtd.items,
               tone: "bg-amber-50 text-amber-700",
+              fallbackHref: "/procurement/orders",
             }
           : null,
-        procurementAttention.deliveredNotReceived > 0
+        procurementAttention.deliveredNotReceived.count > 0
           ? {
+              key: "procurement-delivered-not-received",
               label: "Delivered, not yet received",
-              count: procurementAttention.deliveredNotReceived,
-              href: "/procurement/orders",
+              count: procurementAttention.deliveredNotReceived.count,
+              items: procurementAttention.deliveredNotReceived.items,
               tone: "bg-amber-50 text-amber-700",
+              fallbackHref: "/procurement/orders",
             }
           : null,
-      ].filter((item): item is NonNullable<typeof item> => item !== null)
+      ].filter((category): category is AttentionCategory => category !== null)
     : [];
-  const attentionItems = [
-    stats.pendingQuotations > 0
+  const attentionCategories: AttentionCategory[] = [
+    stats.pendingQuotations.count > 0
       ? {
+          key: "pending-quotations",
           label: "Quotation folders awaiting completion",
-          count: stats.pendingQuotations,
-          href: "/sales/quotations",
+          count: stats.pendingQuotations.count,
+          items: stats.pendingQuotations.items,
           tone: "bg-amber-50 text-amber-700",
+          fallbackHref: "/sales/quotations",
         }
       : null,
-    ...procurementAttentionItems,
+    ...procurementAttentionCategories,
+  ].filter((category): category is AttentionCategory => category !== null);
+  // HR alerts intentionally keep their prior simple navigate-on-click behavior (Part 5/10: "keep
+  // HR alerts where they already belong") - this task's drill-down is scoped to Quotation/
+  // Procurement categories only.
+  const hrAttentionItem =
     hrAlerts && hrAlerts.length > 0
-      ? {
-          label: "HR and worker documents nearing expiry",
-          count: hrAlerts.length,
-          href: "/hr",
-          tone: "bg-red-50 text-red-700",
-        }
-      : null,
-  ].filter((item): item is NonNullable<typeof item> => item !== null);
+      ? { label: "HR and worker documents nearing expiry", count: hrAlerts.length, href: "/hr", tone: "bg-red-50 text-red-700" }
+      : null;
   const workflowStages = [
     { label: "Draft", count: stats.quotationWorkflow.draft, status: "draft" },
     { label: "Ready to Send", count: stats.quotationWorkflow.readyToSend, status: "ready_to_send" },
@@ -325,21 +415,30 @@ export function ERPDashboard({
             <p className="text-sm font-semibold text-zinc-950">Attention Required</p>
             <p className="mt-0.5 text-xs text-zinc-500">Verified items that need follow-up.</p>
           </div>
-          {attentionItems.length ? (
+          {attentionCategories.length || hrAttentionItem ? (
             <div className="divide-y divide-zinc-100">
-              {attentionItems.map((item) => (
+              {attentionCategories.map((category) => (
+                <AttentionCategoryRow
+                  key={category.key}
+                  category={category}
+                  isExpanded={expandedAttentionKey === category.key}
+                  onToggle={() =>
+                    setExpandedAttentionKey((prev) => (prev === category.key ? null : category.key))
+                  }
+                />
+              ))}
+              {hrAttentionItem && (
                 <Link
-                  key={item.label}
-                  href={item.href}
+                  href={hrAttentionItem.href}
                   className="flex items-center gap-3 px-4 py-3 transition hover:bg-zinc-50 focus-visible:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-600"
                 >
-                  <span className={`rounded-md px-2 py-1 text-xs font-semibold ${item.tone}`}>
-                    {item.count}
+                  <span className={`rounded-md px-2 py-1 text-xs font-semibold ${hrAttentionItem.tone}`}>
+                    {hrAttentionItem.count}
                   </span>
-                  <span className="flex-1 text-sm font-medium text-zinc-800">{item.label}</span>
+                  <span className="flex-1 text-sm font-medium text-zinc-800">{hrAttentionItem.label}</span>
                   <ChevronRight className="h-4 w-4 text-zinc-400" />
                 </Link>
-              ))}
+              )}
             </div>
           ) : (
             <p className="px-4 py-5 text-sm text-zinc-500">No urgent items requiring attention.</p>

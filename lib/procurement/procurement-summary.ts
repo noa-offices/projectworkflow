@@ -5,6 +5,17 @@
 import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 import { VENDOR_STEP_LABELS, RECEIVING_STATUSES, type VendorReceivingStatus } from "@/lib/procurement/vendor-steps";
 
+// Dashboard Attention drill-down: a bounded identifier only - orderNo + vendorKey, never prices,
+// notes, contacts, document URLs, or the items_snapshot. Enrichment into a display label/href
+// happens one layer up (lib/dashboard/actions.ts), which already has the active-order list with
+// client/reference names in memory - never a second query here.
+export type ProcurementAttentionItemRow = {
+  orderNo: string;
+  vendorKey: string;
+};
+
+const MAX_ATTENTION_ITEMS_PER_CATEGORY = 5;
+
 export type ProcurementSummary = {
   openPoCount: number;
   vendorCount: number;
@@ -18,6 +29,10 @@ export type ProcurementSummary = {
   missingEtaCount: number;
   missingEtdCount: number;
   deliveredNotReceivedCount: number;
+  awaitingConfirmationItems: ProcurementAttentionItemRow[];
+  missingEtaItems: ProcurementAttentionItemRow[];
+  missingEtdItems: ProcurementAttentionItemRow[];
+  deliveredNotReceivedItems: ProcurementAttentionItemRow[];
 };
 
 const IN_TRANSIT_STEP = VENDOR_STEP_LABELS.findIndex((step) => step.key === "in_transit");
@@ -35,15 +50,25 @@ const EMPTY_SUMMARY: ProcurementSummary = {
   missingEtaCount: 0,
   missingEtdCount: 0,
   deliveredNotReceivedCount: 0,
+  awaitingConfirmationItems: [],
+  missingEtaItems: [],
+  missingEtdItems: [],
+  deliveredNotReceivedItems: [],
 };
 
 type VendorProgressRow = {
+  order_no: string;
+  vendor_key: string;
   active_step: number;
   supplier_confirmed_at: string | null;
   receiving_status: VendorReceivingStatus;
   eta: string | null;
   etd: string | null;
 };
+
+function toItemRows(rows: VendorProgressRow[]): ProcurementAttentionItemRow[] {
+  return rows.slice(0, MAX_ATTENTION_ITEMS_PER_CATEGORY).map((row) => ({ orderNo: row.order_no, vendorKey: row.vendor_key }));
+}
 
 // Takes the caller's already-resolved active order-number list (the same dedup/exclusion
 // logic /procurement/orders already applies for its table) so this helper never re-derives
@@ -62,7 +87,7 @@ export async function loadProcurementSummary(activeOrderNos: string[]): Promise<
       .in("order_no", activeOrderNos),
     supabase
       .from("procurement_vendor_progress")
-      .select("active_step, supplier_confirmed_at, receiving_status, eta, etd")
+      .select("order_no, vendor_key, active_step, supplier_confirmed_at, receiving_status, eta, etd")
       .in("order_no", activeOrderNos)
       .returns<VendorProgressRow[]>(),
   ]);
@@ -74,16 +99,25 @@ export async function loadProcurementSummary(activeOrderNos: string[]): Promise<
     receiving[status] = rows.filter((row) => row.receiving_status === status).length;
   }
 
+  const awaitingConfirmationRows = rows.filter((row) => !row.supplier_confirmed_at);
+  const missingEtaRows = rows.filter((row) => !row.eta);
+  const missingEtdRows = rows.filter((row) => !row.etd);
+  const deliveredNotReceivedRows = rows.filter(
+    (row) => row.active_step === DELIVERED_INSTALLED_STEP && row.receiving_status !== "received",
+  );
+
   return {
     openPoCount: poResult.count ?? 0,
     vendorCount: rows.length,
-    awaitingConfirmationCount: rows.filter((row) => !row.supplier_confirmed_at).length,
+    awaitingConfirmationCount: awaitingConfirmationRows.length,
     inTransitCount: rows.filter((row) => row.active_step === IN_TRANSIT_STEP).length,
     receiving,
-    missingEtaCount: rows.filter((row) => !row.eta).length,
-    missingEtdCount: rows.filter((row) => !row.etd).length,
-    deliveredNotReceivedCount: rows.filter(
-      (row) => row.active_step === DELIVERED_INSTALLED_STEP && row.receiving_status !== "received",
-    ).length,
+    missingEtaCount: missingEtaRows.length,
+    missingEtdCount: missingEtdRows.length,
+    deliveredNotReceivedCount: deliveredNotReceivedRows.length,
+    awaitingConfirmationItems: toItemRows(awaitingConfirmationRows),
+    missingEtaItems: toItemRows(missingEtaRows),
+    missingEtdItems: toItemRows(missingEtdRows),
+    deliveredNotReceivedItems: toItemRows(deliveredNotReceivedRows),
   };
 }

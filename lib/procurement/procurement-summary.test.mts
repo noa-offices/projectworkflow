@@ -59,6 +59,10 @@ test("1. no active orders -> all zero, no query issued (short-circuits before an
     missingEtaCount: 0,
     missingEtdCount: 0,
     deliveredNotReceivedCount: 0,
+    awaitingConfirmationItems: [],
+    missingEtaItems: [],
+    missingEtdItems: [],
+    deliveredNotReceivedItems: [],
   });
   assert.equal(fromCalls.length, 0);
 });
@@ -127,6 +131,25 @@ test("17/18. delivered-not-received counts only delivered_installed vendors whos
   ];
   const summary = await loadProcurementSummary(["CO-0001"]);
   assert.equal(summary.deliveredNotReceivedCount, 2);
+});
+
+test("19/20. attention item rows are bounded to 5 even when far more rows match, and carry orderNo/vendorKey only", async () => {
+  reset();
+  progressRowsFixture = Array.from({ length: 9 }, () => ({
+    active_step: 0,
+    supplier_confirmed_at: null,
+    receiving_status: "pending",
+    eta: null,
+    etd: null,
+  })) as never;
+  // Attach order_no/vendor_key via a locally-typed fixture (the shared fixture type above omits
+  // them to keep the existing count-only tests simple) - this is the one test that needs them.
+  const rowsWithIdentity = progressRowsFixture.map((row, i) => ({ ...row, order_no: `CO-000${i}`, vendor_key: `vendor-${i}` }));
+  progressRowsFixture = rowsWithIdentity as never;
+  const summary = await loadProcurementSummary(["CO-0000"]);
+  assert.equal(summary.awaitingConfirmationCount, 9);
+  assert.equal(summary.awaitingConfirmationItems.length, 5);
+  assert.deepEqual(summary.awaitingConfirmationItems[0], { orderNo: "CO-0000", vendorKey: "vendor-0" });
 });
 
 test("15. exactly two bounded queries (one per table) - no per-order loop", async () => {
