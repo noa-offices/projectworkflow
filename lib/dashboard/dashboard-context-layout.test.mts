@@ -49,45 +49,65 @@ test("10. Recent Work already surfaces Client (clientName) on every row - untouc
   assert.equal((recentWorkBlock.match(/project\.clientName/g) ?? []).length, 2); // mobile row + desktop row
 });
 
-// ── No per-row Client query (Part 14 / Part 16 #11) ─────────────────────────────────────────
+// ── No per-row Client query (Part 14 / Part 16 #4/#11) ──────────────────────────────────────
 
-test("11. Client context is propagated entirely from data already in memory - no new clients/projects table query", () => {
-  assert.ok(!actionsSource.includes('.from("clients")'));
+test("4/11. Procurement/Upcoming-Delivery Client context is still propagated entirely from data already in memory - no clients/projects query there", () => {
   assert.ok(!actionsSource.includes('.from("projects")'));
-  // clientName is read from the existing order snapshot / DashboardProject map only.
-  assert.ok(actionsSource.includes("clientName: order?.clientName"));
+  // clientName for grouped Procurement items and Upcoming Deliveries both read from the existing
+  // DashboardProject map only - no query at all for those two paths.
   assert.ok(actionsSource.includes("clientName: project?.clientName"));
+});
+
+test("4. the one Client fallback query that does exist (quotations without a Project File snapshot) is bounded to distinct client_ids, never per-row", () => {
+  const fnStart = actionsSource.indexOf("export async function getDashboardStats(");
+  const fnBody = actionsSource.slice(fnStart, actionsSource.indexOf("\nexport async function getActiveProjects", fnStart));
+  assert.ok(fnBody.includes('.from("clients")'));
+  assert.ok(fnBody.includes('.in("id", missingClientIds)'));
+  // Only ONE .from("clients") call site in the whole function - never inside the per-quotation loop.
+  assert.equal((fnBody.match(/\.from\("clients"\)/g) ?? []).length, 1);
 });
 
 // ── Layout: main content grid starts together at `lg`, removing the dead space (Part 7-9) ──────
 
-test("12/13. the main content grid and sidebar start together at `lg` - no artificial top gap before Recent Work, right rail still present", () => {
-  assert.ok(dashboardSource.includes('<section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">'));
+test("9/12/13. Recent Work is inside the wide column of the SAME grid as the right rail - both start together, no artificial top gap", () => {
+  // `items-start` is explicit (CSS Grid's default `align-items: stretch` would otherwise force
+  // the shorter column to grow to match the taller one, which is what produced the trailing void -
+  // this is a structural grid property, never a spacer/fixed-height/margin hack).
+  assert.ok(dashboardSource.includes('<section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">'));
   assert.ok(!dashboardSource.includes("2xl:grid-cols-[minmax(0,1fr)_360px]"));
+  const mainGridStart = dashboardSource.indexOf('<section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">');
+  const leftColumnStart = dashboardSource.indexOf('<div className="grid gap-5">', mainGridStart);
+  const asideStart = dashboardSource.indexOf("<aside", mainGridStart);
+  const quickActionsIndex = dashboardSource.indexOf("Quick Actions", mainGridStart);
+  const recentWorkIndex = dashboardSource.indexOf("Active Project Pipeline", mainGridStart);
+  // Quick Actions and Recent Work are both inside the one left-column `div`, which in turn is a
+  // direct child of the main grid `section` (not a separate row above/outside it) - and `aside`
+  // (the right rail) is that same grid's other direct child, not nested inside the left column.
+  assert.ok(leftColumnStart !== -1 && leftColumnStart < quickActionsIndex);
+  assert.ok(quickActionsIndex < recentWorkIndex && recentWorkIndex < asideStart);
   // Recent Work is the direct next sibling after Quick Actions in the wide column - no spacer
   // element, fixed height, or extra margin was introduced between them.
-  const quickActionsIndex = dashboardSource.indexOf("Quick Actions");
-  const recentWorkIndex = dashboardSource.indexOf("Active Project Pipeline");
   const between = dashboardSource.slice(quickActionsIndex, recentWorkIndex);
   assert.ok(!/style=\{\{/.test(between)); // no inline fixed-height/spacer styling
   assert.ok(!/<div className="h-\d/.test(between)); // no spacer div
-  // The right rail (sidebar) is still present with all four of its existing cards.
+  // The right rail (sidebar) is still present with all four of its existing cards (10/11/12/13).
   assert.ok(dashboardSource.includes("Procurement Workspace"));
   assert.ok(dashboardSource.includes("Upcoming Deliveries"));
   assert.ok(dashboardSource.includes("Yearly Turnover"));
   assert.ok(dashboardSource.includes("Sales Performance"));
 });
 
-test("14. responsive stacking is a valid, standard Tailwind pattern - `lg:` columns, single-column below it, no fixed desktop width", () => {
-  assert.ok(dashboardSource.includes('<aside className="grid gap-4 lg:content-start">'));
-  // The main content grid declares its column split only via the `lg:grid-cols-[...]` Tailwind
-  // class (no separate inline style on that section) - the 360px right-rail width is pre-existing
-  // and unchanged, only the breakpoint moved. (The pre-existing Sales Performance progress-bar
-  // inline width is unrelated per-row data styling, not a layout hack, and is untouched.)
-  const mainGridStart = dashboardSource.indexOf('<section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">');
+test("14. no fixed-height/negative-margin/absolute-position layout hack was introduced, and responsive stacking is a valid standard Tailwind pattern", () => {
+  assert.ok(dashboardSource.includes('<aside className="grid gap-4">'));
+  // The main content grid declares its column split only via `items-start` + `lg:grid-cols-[...]`
+  // Tailwind classes (no separate inline style on that section) - the 360px right-rail width is
+  // pre-existing and unchanged, only the breakpoint moved. (The pre-existing Sales Performance
+  // progress-bar inline width is unrelated per-row data styling, not a layout hack, untouched.)
+  const mainGridStart = dashboardSource.indexOf('<section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">');
   const mainGridTag = dashboardSource.slice(mainGridStart, mainGridStart + 200);
   assert.ok(!mainGridTag.includes("style={{"));
-  assert.ok(!/absolute|fixed\s+inset/.test(dashboardSource));
+  assert.ok(!/-m[trblxy]?-\d|margin:\s*-/.test(dashboardSource.slice(mainGridStart, mainGridStart + 4000))); // no negative margin near the grid
+  assert.ok(!/absolute|fixed\s+inset|min-h-screen|100vh/.test(dashboardSource));
 });
 
 test("Attention Required / Quotation Workflow top row also starts together at the same `lg` breakpoint, consistent with the main grid", () => {

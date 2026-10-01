@@ -495,9 +495,14 @@ export function ERPDashboard({
 
       {/* ── Main content + sidebar ────────────────────────────────────────── */}
       {/* Columns start together at `lg` (1024px) - the previous `2xl` (1536px) breakpoint meant
-          the two columns stacked full-width on virtually every standard laptop screen, which is
-          what produced the dead space below Quick Actions: the right rail never sat beside it. */}
-      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+          the two columns stacked full-width on virtually every standard laptop screen. `items-start`
+          is explicit here (CSS Grid's default is `stretch`, which would otherwise force the shorter
+          column to grow to match the taller one's height, producing a trailing gap instead of letting
+          each column size to its own content) - this is a structural grid property, not a spacer,
+          fixed height, or margin hack. Quick Actions and Recent Work are siblings inside the SAME
+          left-column `div`, so Recent Work always follows Quick Actions directly within this one
+          grid - the right rail (`aside`) is the only other child, starting at the same row. */}
+      <section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
 
         <div className="grid gap-5">
 
@@ -655,7 +660,7 @@ export function ERPDashboard({
         </div>
 
         {/* ── Sidebar ──────────────────────────────────────────────────────── */}
-        <aside className="grid gap-4 lg:content-start">
+        <aside className="grid gap-4">
           {canAccessProcurement ? (
             <Link href="/procurement/orders">
               <DashboardCard className="p-4 transition hover:border-blue-200 hover:shadow-md">

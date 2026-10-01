@@ -57,6 +57,7 @@ const summaryCalls: string[][] = [];
 let quotationsFixture: Array<{
   id: string;
   project_id: string | null;
+  client_id?: string | null;
   quotation_no: string | null;
   quotation_date: string;
   status: string;
@@ -65,6 +66,7 @@ let quotationsFixture: Array<{
   layout_settings: unknown;
   title?: string | null;
 }> = [];
+let clientsFixture: Array<{ id: string; company_name: string | null }> = [];
 const quotationsQueryCalls: string[] = [];
 
 mock.module("server-only", { defaultExport: {} });
@@ -75,13 +77,24 @@ mock.module("@/lib/supabase/server", { namedExports: {
   createClient: async () => ({
     from: (table: string) => {
       quotationsQueryCalls.push(table);
-      assert.equal(table, "quotations");
-      const builder = {
-        select: () => builder,
-        returns: () => builder,
-        then: (resolve: (v: unknown) => void) => resolve({ data: quotationsFixture, error: null }),
-      };
-      return builder;
+      if (table === "quotations") {
+        const builder = {
+          select: () => builder,
+          returns: () => builder,
+          then: (resolve: (v: unknown) => void) => resolve({ data: quotationsFixture, error: null }),
+        };
+        return builder;
+      }
+      if (table === "clients") {
+        const builder = {
+          select: () => builder,
+          in: () => builder,
+          returns: () => builder,
+          then: (resolve: (v: unknown) => void) => resolve({ data: clientsFixture, error: null }),
+        };
+        return builder;
+      }
+      throw new Error(`Unexpected table: ${table}`);
     },
   }),
 } });
@@ -97,6 +110,7 @@ function reset() {
   summaryFixture = emptySummary();
   summaryCalls.length = 0;
   quotationsFixture = [];
+  clientsFixture = [];
   quotationsQueryCalls.length = 0;
 }
 
@@ -290,6 +304,65 @@ test("1. a pending-quotation row shows Client when a Project File/approval-draft
   const stats = await getDashboardStats();
   assert.equal(stats.pendingQuotations.items[0].secondary, "HQ Office Server Room Fit-out");
   assert.equal(stats.pendingQuotations.items[0].clientName, "TechCorp Solutions FZ-LLC");
+});
+
+// ── Corrective pass: Client via the authoritative quotation -> client relation ────────────────
+
+test("1/2/3. a pending quotation with NO Project File snapshot still shows Client, via its own client_id -> clients.company_name", async () => {
+  reset();
+  quotationsFixture = [
+    {
+      id: "q-abc",
+      project_id: null,
+      client_id: "client-9",
+      quotation_no: "QN-0005-001",
+      quotation_date: "2026-01-01",
+      status: "draft",
+      is_active: true,
+      approved_salesperson_id: null,
+      title: "Exquitech Dbayeh Office - Lebanon",
+      layout_settings: null,
+    },
+  ];
+  clientsFixture = [{ id: "client-9", company_name: "Exquitech Group" }];
+  const stats = await getDashboardStats();
+  assert.equal(stats.pendingQuotations.items[0].primary, "QN-0005-001");
+  assert.equal(stats.pendingQuotations.items[0].secondary, "Exquitech Dbayeh Office - Lebanon");
+  assert.equal(stats.pendingQuotations.items[0].clientName, "Exquitech Group");
+});
+
+test("4. the Client fallback query is scoped to exactly the client_ids still needed - never one query per row", async () => {
+  reset();
+  quotationsFixture = Array.from({ length: 4 }, (_, i) => ({
+    id: `q${i}`,
+    project_id: null,
+    client_id: `client-${i % 2}`, // only 2 distinct clients across 4 quotations
+    quotation_no: `QN-000${i}`,
+    quotation_date: "2026-01-01",
+    status: "draft",
+    is_active: true,
+    approved_salesperson_id: null,
+    title: null,
+    layout_settings: null,
+  }));
+  clientsFixture = [
+    { id: "client-0", company_name: "Client Zero LLC" },
+    { id: "client-1", company_name: "Client One LLC" },
+  ];
+  await getDashboardStats();
+  // One "quotations" call + one "clients" call - never 4 separate client lookups.
+  assert.deepEqual(quotationsQueryCalls, ["quotations", "clients"]);
+});
+
+test("5. when the Client genuinely cannot be resolved (no snapshot, no client_id), only that line is omitted - no crash, no placeholder", async () => {
+  reset();
+  quotationsFixture = [
+    { id: "q-orphan", project_id: null, client_id: null, quotation_no: "QN-9999", quotation_date: "2026-01-01", status: "draft", is_active: true, approved_salesperson_id: null, title: "Untitled Project", layout_settings: null },
+  ];
+  const stats = await getDashboardStats();
+  assert.equal(stats.pendingQuotations.items[0].secondary, "Untitled Project");
+  assert.equal(stats.pendingQuotations.items[0].clientName, undefined);
+  assert.deepEqual(quotationsQueryCalls, ["quotations"]); // no clients query when there's no id to look up
 });
 
 test("10b. when neither a Project File snapshot nor a title exists, the row safely falls back to the order number only", async () => {

@@ -94,11 +94,12 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   // stored in layout_settings.projectCompletedAt, not projects.project_status.
   const { data: quotations } = await supabase
     .from("quotations")
-    .select("id, project_id, quotation_no, quotation_date, status, is_active, approved_salesperson_id, layout_settings, title")
+    .select("id, project_id, client_id, quotation_no, quotation_date, status, is_active, approved_salesperson_id, layout_settings, title")
     .returns<Array<{
       approved_salesperson_id: string | null;
       id: string;
       project_id: string | null;
+      client_id: string | null;
       quotation_no: string | null;
       quotation_date: string;
       status: string;
@@ -162,6 +163,11 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   };
   let pendingQuotationsCount = 0;
   const pendingQuotationItems: DashboardAttentionItem[] = [];
+  // Corrective pass (Part 5): a quotation that hasn't reached a Project File/approval-draft
+  // snapshot yet has no `order`, so `order?.clientName` is genuinely unavailable - parallel to
+  // `pendingQuotationItems`, tracks the quotation's own `client_id` only for the items that still
+  // need a Client name resolved below. `null` means "already resolved, skip".
+  const pendingItemFallbackClientIds: Array<string | null> = [];
 
   for (const quotation of quotationFolders.values()) {
     if (!quotation.is_active) continue;
@@ -175,9 +181,8 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       // Bounded drill-down list (Part 1/6): count stays the full tally above; only the first
       // MAX_ATTENTION_ITEMS_PER_CATEGORY folders get a display item. Reference/project name
       // prefers the same Project File/approval-draft snapshot getActiveProjects() already reads
-      // (never a new query) - `title` (an existing column, now selected above) is the fallback
-      // for a quotation that hasn't reached that snapshot yet. Order number alone is the last
-      // resort, per Part 5, and should be exceptional.
+      // (never a new query) - `title` (an existing column) is the fallback for a quotation that
+      // hasn't reached that snapshot yet. Order number alone is the last resort, per Part 5.
       if (pendingQuotationItems.length < MAX_ATTENTION_ITEMS_PER_CATEGORY) {
         const pf = projectFileFromLayoutSettings(quotation.layout_settings);
         const draft = !pf ? clientApprovalDraftFromLayoutSettings(quotation.layout_settings) : null;
@@ -190,6 +195,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
           clientName: order?.clientName,
           href: `/quotations/${quotation.id}`,
         });
+        pendingItemFallbackClientIds.push(order?.clientName ? null : quotation.client_id);
       }
     }
     if (quotation.status === "draft") workflow.draft++;
@@ -198,6 +204,29 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     if (approvalDisplay?.state === "project_file_pending") workflow.clientConfirmedPending++;
     if (approvalDisplay?.state === "owner_attribution_pending") workflow.ownerAttributionPending++;
     if (approvalDisplay?.state === "approved") workflow.clientApproved++;
+  }
+
+  // Corrective pass (Part 5/6): resolve Client company name for the bounded display items that
+  // have no Project File/approval-draft snapshot yet, via the quotation's own `client_id` ->
+  // `clients.company_name` - the authoritative quotation/client relation already used elsewhere
+  // (app/quotations/page.tsx). ONE bounded query, scoped to just the distinct ids still needed
+  // for these <=5 items - never per-row, and skipped entirely when nothing is missing.
+  const missingClientIds = Array.from(
+    new Set(pendingItemFallbackClientIds.filter((id): id is string => Boolean(id))),
+  );
+  if (missingClientIds.length > 0) {
+    const { data: clientRows } = await supabase
+      .from("clients")
+      .select("id, company_name")
+      .in("id", missingClientIds)
+      .returns<Array<{ id: string; company_name: string | null }>>();
+    const companyNameByClientId = new Map((clientRows ?? []).map((row) => [row.id, row.company_name]));
+    pendingQuotationItems.forEach((item, index) => {
+      const fallbackClientId = pendingItemFallbackClientIds[index];
+      if (!fallbackClientId) return;
+      const companyName = companyNameByClientId.get(fallbackClientId);
+      if (companyName) item.clientName = companyName;
+    });
   }
 
   return {

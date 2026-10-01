@@ -10,6 +10,7 @@ import test, { mock } from "node:test";
 type QuotationFixtureRow = {
   id: string;
   project_id: string | null;
+  client_id?: string | null;
   quotation_no: string | null;
   quotation_date: string;
   status: string;
@@ -19,6 +20,7 @@ type QuotationFixtureRow = {
 };
 
 let quotationsFixture: QuotationFixtureRow[] = [];
+const clientsFixture: Array<{ id: string; company_name: string | null }> = [];
 
 mock.module("@/lib/auth", { namedExports: {
   requireActiveUser: async () => ({ user: { id: "user-1" }, profile: { role: "system_owner" }, displayName: "Fixture User" }),
@@ -32,12 +34,23 @@ mock.module("@/lib/notifications/actions", { namedExports: {
 mock.module("@/lib/supabase/server", { namedExports: {
   createClient: async () => ({
     from: (table: string) => {
-      assert.equal(table, "quotations");
-      return {
-        select: () => ({
-          returns: () => ({ then: (resolve: (v: unknown) => void) => resolve({ data: quotationsFixture }) }),
-        }),
-      };
+      if (table === "quotations") {
+        return {
+          select: () => ({
+            returns: () => ({ then: (resolve: (v: unknown) => void) => resolve({ data: quotationsFixture }) }),
+          }),
+        };
+      }
+      if (table === "clients") {
+        return {
+          select: () => ({
+            in: () => ({
+              returns: () => ({ then: (resolve: (v: unknown) => void) => resolve({ data: clientsFixture }) }),
+            }),
+          }),
+        };
+      }
+      throw new Error(`Unexpected table: ${table}`);
     },
   }),
 } });
