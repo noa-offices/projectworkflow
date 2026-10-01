@@ -13,7 +13,7 @@ function context(overrides: Partial<Parameters<typeof classifyNoaRoute>[1]> = {}
   return { pathname: "/dashboard", section: "dashboard" as const, ...overrides };
 }
 
-const attentionSource = readFileSync("lib/noa/noa-attention-capability.server.ts", "utf8");
+const attentionSource = readFileSync("lib/noa/noa-attention-capability.server.ts", "utf8").replace(/\r\n/g, "\n");
 // Normalized to LF: several assertions below match multi-line literals with an embedded "\n",
 // which a CRLF checkout (core.autocrlf=true on Windows) would otherwise silently break.
 const orchestratorSource = readFileSync("lib/noa/noa-orchestrator.ts", "utf8").replace(/\r\n/g, "\n");

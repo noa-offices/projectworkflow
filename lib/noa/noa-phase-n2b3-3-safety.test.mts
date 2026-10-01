@@ -44,14 +44,19 @@ test("4. missing existing row maps old values to null via optional chaining + ??
   assert.ok(fnBody.includes("previous?.eta ?? null"));
 });
 
+// Baseline test recovery: ETA/ETD were later hardened from weak `etd || null` text semantics to
+// proper date semantics via normalizeVendorDate() (valid ISO YYYY-MM-DD, blank -> null, impossible/
+// locale dates rejected - see lib/procurement/vendor-dates.ts and the ETA/ETD tests in
+// vendor-progress-actions.test.mts). These two checks still assert the pre-hardening literal and
+// are updated to match that already-legitimate, already-covered behavior - not a weakening.
 test("5. ETD normalization matches the persisted value written to the database", () => {
-  assert.ok(fnBody.includes("const nextEtd = etd || null;"));
+  assert.ok(fnBody.includes("const nextEtd = normalizedEtd.value;"));
   assert.ok(fnBody.includes("etd: nextEtd,"));
   assert.ok(fnBody.includes("(previous?.etd ?? null) !== nextEtd"));
 });
 
 test("6. ETA normalization matches the persisted value written to the database", () => {
-  assert.ok(fnBody.includes("const nextEta = eta || null;"));
+  assert.ok(fnBody.includes("const nextEta = normalizedEta.value;"));
   assert.ok(fnBody.includes("eta: nextEta,"));
   assert.ok(fnBody.includes("(previous?.eta ?? null) !== nextEta"));
 });

@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const attentionSource = readFileSync("lib/noa/noa-attention-capability.server.ts", "utf8");
+const attentionSource = readFileSync("lib/noa/noa-attention-capability.server.ts", "utf8").replace(/\r\n/g, "\n");
 const typesSource = readFileSync("lib/noa/noa-types.ts", "utf8");
 const paymentModelSource = readFileSync("lib/projects/client-payment-model.ts", "utf8");
 const authSource = readFileSync("lib/auth.ts", "utf8");
