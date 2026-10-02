@@ -8,7 +8,7 @@ import {
   type ModularRole,
 } from "./modular-pricing";
 import { parseNullablePricingNumber } from "./nullable-pricing";
-import { explicitCategoryPriceValue, explicitPricingCategoryLabels, manualDefaultPriceCategories } from "./pricing-category-columns";
+import { explicitCategoryPriceValue, explicitPricingCategoryLabels, manualDefaultPriceCategories, pricingColumns, PricingColumnIdentityError } from "./pricing-category-columns";
 
 /**
  * Rebuilds the save-ready `category_pricing` column from submitted Category/Matrix and Modular
@@ -138,9 +138,10 @@ export function categoryPricingValue(rawValue: string, modularRawValue: string, 
         : "Finish Category Pricing",
       sort_order: Number.isFinite(Number(group.sort_order)) ? Number(group.sort_order) : groupIndex,
       is_active: group.is_active !== false,
-      price_categories: explicitPricingCategoryLabels(group.price_categories),
+      price_categories: pricingColumns(group).map((column) => column.id),
+      price_columns: pricingColumns(group),
       items: (group.items ?? [])
-        .map((item, itemIndex) => normalizeCategoryRow(item as Record<string, unknown>, itemIndex, explicitPricingCategoryLabels(group.price_categories)))
+        .map((item, itemIndex) => normalizeCategoryRow(item as Record<string, unknown>, itemIndex, pricingColumns(group).map((column) => column.id)))
         .filter((row) =>
           row.variant_name || row.display_name || row.supplier_price_list_code || row.dimension || Object.values(row.prices).some((price) => price !== null) || row.specification,
         ),
@@ -150,7 +151,11 @@ export function categoryPricingValue(rawValue: string, modularRawValue: string, 
       .filter((row) => row?.pricing_type === MODULAR_GROUP_PRICING_TYPE)
       .map((group, groupIndex) => {
         const isDirect = group.modular_pricing_mode === "direct";
-        const priceCategories = isDirect ? [] : explicitPricingCategoryLabels(group.price_categories);
+        const legacyCategories = !group.price_columns && !explicitPricingCategoryLabels(group.price_categories).length
+          ? [...manualDefaultPriceCategories, ...(Array.isArray(group.items) ? group.items.flatMap((item) => Object.keys(item?.prices ?? {})) : [])]
+          : group.price_categories;
+        const priceColumns = isDirect ? [] : pricingColumns({ ...group, price_categories: legacyCategories });
+        const priceCategories = isDirect ? [] : priceColumns.map((column) => column.id);
         // Composition (starter/intermediate cardinality) is generic and applies to both Direct and
         // Matrix Modular groups; only the scalar-price `modular_pricing_mode: "direct"` marker itself
         // stays exclusive to Direct Modular.
@@ -177,6 +182,7 @@ export function categoryPricingValue(rawValue: string, modularRawValue: string, 
           sort_order: Number.isFinite(Number(group.sort_order)) ? Number(group.sort_order) : groupIndex,
           is_active: group.is_active !== false,
           price_categories: priceCategories,
+          ...(!isDirect ? { price_columns: priceColumns } : {}),
           ...(isDirect ? { modular_pricing_mode: "direct" as const } : {}),
           ...(composition ? { modular_composition: composition } : {}),
           ...(selectionFamily ? { modular_selection_family: selectionFamily } : {}),
@@ -227,7 +233,8 @@ export function categoryPricingValue(rawValue: string, modularRawValue: string, 
     }
 
     return [...standardGroups, ...modularGroups, ...rows];
-  } catch {
+  } catch (error) {
+    if (error instanceof PricingColumnIdentityError) throw error;
     return [];
   }
 }

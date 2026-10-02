@@ -1,6 +1,7 @@
 import type { ManufacturerFieldPatch, ManufacturerFieldPatchState } from "./manufacturer-field-patches";
 import { applyManufacturerFieldPatches } from "./manufacturer-field-patches";
 import type { ManufacturerNewCandidate, ManufacturerNotFoundItem, ManufacturerPricingType } from "./manufacturer-update-diff";
+import { pricingColumns } from "./pricing-category-columns";
 
 type JsonRow = Record<string, unknown>;
 export type ManufacturerNewItemAction = { kind: "add"; candidate: ManufacturerNewCandidate; destination: ManufacturerPricingType; target: "existing" | "new"; groupId: string; groupName: string; subgroupId: string | null; accessoryRole?: "accessory" | "conditional_option" | "companion"; accessorySelection?: "unrestricted" | "exactly_one" | "at_least_one" | "choose_multiple"; accessoryModel?: { groupId: string; rowId: string }; fixedQuantity?: number };
@@ -51,6 +52,9 @@ export function applyManufacturerUpdateActions(snapshot: Record<string, string>,
       group = { id: localGroupId, group_name: action.groupName, is_active: true, items: [], ...(action.destination === "base_model" ? { pricing_type: "base_model_group" } : {}), ...(action.destination === "modular" ? { pricing_type: "modular_group", price_categories: action.candidate.columns.map((column) => column.label ?? column.id) } : {}), ...(action.destination === "category_matrix" ? { price_categories: action.candidate.columns.map((column) => column.label ?? column.id) } : {}), ...(action.destination === "accessory" ? { group_is_required: action.accessoryRole === "companion", conditional_configuration: { role: action.accessoryRole ?? "accessory", selection: action.accessorySelection ?? "unrestricted", applicability: [] } } : {}) }; arrays(state, action.destination).push(group);
     }
     if (!group) { errors.push(`Destination group '${action.groupId}' no longer exists.`); return; }
+    if (action.destination === "category_matrix" || action.destination === "modular") {
+      try { group.price_columns = pricingColumns(group); } catch (error) { errors.push(error instanceof Error ? error.message : "Invalid price column identity."); return; }
+    }
     const columns = Array.isArray(group.price_categories) ? group.price_categories.filter((item): item is string => typeof item === "string") : [];
     const id = makeId(); if (!id || ids.has(id)) { errors.push("Could not generate a unique local item ID."); return; } ids.add(id);
     const row = rowFor(action.candidate, action.destination, id, columns); if (!row) { errors.push(`Incoming matrix columns are incompatible with '${action.groupName}'.`); return; }

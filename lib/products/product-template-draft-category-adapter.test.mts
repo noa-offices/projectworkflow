@@ -13,11 +13,12 @@ test("category draft mapping preserves source-driven columns, order, null, and z
     },
     optionGroups: [], materialSuggestions: [], linkedFamilySuggestions: [], extractionWarnings: [], confidence: null, sources: [],
   });
-  assert.deepEqual(result.groups[0].price_categories, ["COM / S", "T", "M", "F", "L", "P", "PX"]);
-  assert.equal(result.groups[0].items[0].prices?.["COM / S"], null);
-  assert.equal(result.groups[0].items[0].prices?.T, 0);
-  assert.equal(result.groups[0].items[0].prices?.M, 125);
-  assert.deepEqual(result.groups[0].items[0].unavailable_categories, ["COM / S"]);
+  assert.deepEqual(result.groups[0].price_categories, ["com-s", "t", "m", "f", "l", "p", "px"]);
+  assert.deepEqual(result.groups[0].price_columns.map((column) => column.label), ["COM / S", "T", "M", "F", "L", "P", "PX"]);
+  assert.equal(result.groups[0].items[0].prices?.["com-s"], null);
+  assert.equal(result.groups[0].items[0].prices?.t, 0);
+  assert.equal(result.groups[0].items[0].prices?.m, 125);
+  assert.deepEqual(result.groups[0].items[0].unavailable_categories, ["com-s"]);
 });
 
 test("direct-price matrices are excluded while ambiguous one-column matrices remain with warnings", () => {

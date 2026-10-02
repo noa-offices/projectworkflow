@@ -86,7 +86,7 @@ import type { ManufacturerFieldPatch } from "@/lib/products/manufacturer-field-p
 import type { ManufacturerItemAction } from "@/lib/products/manufacturer-item-actions";
 import type { ManufacturerPriceDifference, ManufacturerUpdateWorkspace } from "@/lib/products/manufacturer-update-diff";
 
-const currencies: ProductTemplateDraftCurrency[] = ["AED", "USD", "EUR", "GBP", "SAR", "QAR", "KWD", "BHD", "OMR"];
+const currencies: ProductTemplateDraftCurrency[] = ["AED", "USD", "EUR"];
 const inputClass = "h-9 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm outline-none focus:border-emerald-700";
 const textareaClass = "min-h-20 w-full rounded-md border border-zinc-300 bg-white p-2 text-sm outline-none focus:border-emerald-700";
 

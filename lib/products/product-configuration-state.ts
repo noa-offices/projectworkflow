@@ -64,6 +64,7 @@ import {
   type ProductSpecificationAccessoryInput,
 } from "../quotations/product-template-snapshot";
 import { normalizeCurrency } from "../currencies";
+import { pricingColumnLabel } from "./pricing-category-columns";
 
 // ── Input types (bounded to configuration-relevant fields only - never the full selector shape) ─
 
@@ -608,7 +609,7 @@ export function resolveProductConfigurationState(
             multi: false,
             options: columns.map((category) => ({
               id: category,
-              label: category,
+              label: pricingColumnLabel(resolvedCategoryGroup!, category),
               priceContribution: roundSourceAmount(numberValue(resolvedCategoryRow!.prices?.[category])),
               priceCurrency: rowCurrency(resolvedCategoryRow as Record<string, unknown>, template),
             })),

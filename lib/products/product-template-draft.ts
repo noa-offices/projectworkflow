@@ -22,24 +22,12 @@ import {
   type StructuralSupportCompatibleTargetKind,
 } from "./accessory-conditional-configuration";
 import { LEGACY_BASE_MODEL_GROUP_ID } from "./base-model-pricing-groups";
+import { parseSupportedCurrency, type SupportedCurrency } from "../currencies";
 
 export const PRODUCT_TEMPLATE_DRAFT_VERSION = 1 as const;
 
-const supportedCurrencies = new Set([
-  "AED", "USD", "EUR", "GBP", "SAR", "QAR", "KWD", "BHD", "OMR",
-]);
-
 export type ProductTemplateDraftPrice = number | null;
-export type ProductTemplateDraftCurrency =
-  | "AED"
-  | "USD"
-  | "EUR"
-  | "GBP"
-  | "SAR"
-  | "QAR"
-  | "KWD"
-  | "BHD"
-  | "OMR";
+export type ProductTemplateDraftCurrency = SupportedCurrency;
 
 export type ProductTemplateDraftDimension = {
   width: number | null;
@@ -113,6 +101,7 @@ export type ProductTemplateDraftWorkstationRow = ProductTemplateDraftPricedRow &
 };
 
 export type ProductTemplateDraftMatrixColumn = {
+  dimensionCode?: string;
   id: string;
   label: string | null;
 };
@@ -353,8 +342,8 @@ function price(value: unknown, path: string, issues: IssueCollector): ProductTem
 function currency(value: unknown, path: string, issues: IssueCollector): ProductTemplateDraftCurrency | null {
   const text = nullableText(value, path, issues);
   if (!text) return null;
-  const normalized = text.toUpperCase();
-  if (!supportedCurrencies.has(normalized)) {
+  const normalized = parseSupportedCurrency(text);
+  if (!normalized) {
     error(issues, path, "Unsupported currency code.");
     return null;
   }
@@ -496,6 +485,7 @@ function matrix(value: unknown, path: string, issues: IssueCollector): ProductTe
     return {
       id: requiredId(item.id, `${path}.columns[${index}].id`, issues),
       label: nullableText(item.label, `${path}.columns[${index}].label`, issues),
+      ...(typeof item.dimensionCode === "string" ? { dimensionCode: item.dimensionCode } : {}),
     };
   });
   uniqueIds(columns.map((column) => column.id), `${path}.columns`, issues);

@@ -1,4 +1,5 @@
 import { analyzeDraftModularCompatibility } from "./draft-modular-compatibility";
+import { pricingColumns } from "./pricing-category-columns";
 import {
   DIRECT_MODULAR_PRICING_MODE,
   MODULAR_GROUP_PRICING_TYPE,
@@ -22,7 +23,8 @@ export function mapDraftModularPricing(draft: ProductTemplateDraft) {
     return { compatible: false as const, groups: [], priceCategories: [], warnings, errors: analysis.errors };
   }
 
-  const priceCategories = analysis.sharedColumns.map((column) => column.label ?? column.id);
+  const priceCategories = analysis.sharedColumns.map((column) => column.id);
+  const priceColumns = pricingColumns({ price_columns: analysis.sharedColumns.map((column) => ({ id: column.id, label: column.label ?? column.id, ...(column.dimensionCode ? { dimension_code: column.dimensionCode } : {}) })) });
   const directGroups = analysis.directGroups.map((group, groupIndex) => ({
     id: group.id,
     group_name: group.label ?? group.id,
@@ -63,6 +65,7 @@ export function mapDraftModularPricing(draft: ProductTemplateDraft) {
     id: group.id,
     group_name: group.label ?? group.id,
     price_categories: priceCategories,
+    price_columns: priceColumns,
     pricing_type: MODULAR_GROUP_PRICING_TYPE,
     ...(group.composition ? { modular_composition: { min_starters: group.composition.minStarters, max_starters: group.composition.maxStarters } } : {}),
     is_active: group.isActive !== false,

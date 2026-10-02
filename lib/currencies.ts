@@ -16,6 +16,13 @@ const supportedCurrencyCodes = new Set<string>(
   supportedCurrencies.map((currency) => currency.code),
 );
 
+/** Strict source-price validation; absence is handled explicitly by the caller. */
+export function parseSupportedCurrency(value: unknown): SupportedCurrency | null {
+  if (typeof value !== "string") return null;
+  const code = value.trim().toUpperCase();
+  return supportedCurrencyCodes.has(code) ? code as SupportedCurrency : null;
+}
+
 export function normalizeCurrency(value: string | null | undefined) {
   const code = value?.trim().toUpperCase() ?? "";
 

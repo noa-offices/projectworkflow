@@ -2,12 +2,14 @@ import {
   isModularItemPricingRow,
   isModularMetaPricingRow,
 } from "@/lib/products/modular-pricing";
+import { pricingColumns, type PricingColumn } from "./pricing-category-columns";
 
 export type CategoryPricingGroupLike<TItem> = {
   id?: string;
   group_name?: string;
   items?: TItem[];
   price_categories?: string[];
+  price_columns?: PricingColumn[];
   is_active?: boolean;
   sort_order?: number;
 };
@@ -75,10 +77,8 @@ export function groupedStandardCategoryPricingRows<TItem extends StandardCategor
           group_name: group.group_name?.trim() || "Finish Category Pricing",
         }));
 
-      const priceCategories = Array.from(new Set([
-        ...((group.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean)),
-        ...items.flatMap((item) => Object.keys(item.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean)),
-      ]));
+      const priceColumns = pricingColumns({ ...group, items });
+      const priceCategories = priceColumns.map((column) => column.id);
 
       return {
         id: group.id ?? `finish-group-${index}`,
@@ -86,6 +86,7 @@ export function groupedStandardCategoryPricingRows<TItem extends StandardCategor
         is_active: group.is_active !== false,
         sort_order: numberValue(group.sort_order ?? index),
         price_categories: priceCategories,
+        price_columns: priceColumns,
         items,
       };
     })
@@ -106,7 +107,8 @@ export function groupedStandardCategoryPricingRows<TItem extends StandardCategor
       group_name: "Finish Category Pricing",
       is_active: true,
       sort_order: groups.length,
-      price_categories: Array.from(new Set(flatRows.flatMap((item) => Object.keys(item.prices ?? {}).map(normalizeCategoryPriceLabel).filter(Boolean)))),
+      price_categories: pricingColumns({ items: flatRows }).map((column) => column.id),
+      price_columns: pricingColumns({ items: flatRows }),
       items: flatRows,
     });
   }

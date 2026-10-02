@@ -17,9 +17,11 @@ test("compatible modular groups map separately and preserve shared price semanti
   const columns = [{ id: "b", label: "Cat B" }, { id: "c", label: "Cat C" }, { id: "d", label: "Cat D" }];
   const result = mapDraftModularPricing(draftWith([columns, [...columns].reverse()]));
   assert.equal(result.compatible, true);
-  assert.deepEqual(result.priceCategories, ["Cat B", "Cat C", "Cat D"]);
+  assert.deepEqual(result.priceCategories, ["b", "c", "d"]);
   assert.equal(result.groups.length, 2);
-  assert.deepEqual(result.groups[1].items[0].prices, { "Cat B": 355, "Cat C": 0, "Cat D": null });
+  assert.deepEqual(result.groups[1].items[0].prices, { b: 355, c: 0, d: null });
+  assert.ok("price_columns" in result.groups[1]);
+  assert.deepEqual(result.groups[1].price_columns.map((column) => column.label), ["Cat B", "Cat C", "Cat D"]);
   assert.deepEqual(result.groups[1].items[0].unavailable_categories, []);
   assert.match(result.warnings[0], /only the primary code/);
 });

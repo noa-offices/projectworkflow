@@ -61,6 +61,7 @@ import {
   updateBaseModelPricingRow,
 } from "@/lib/products/base-model-pricing-ui-state";
 import { hasMeaningfulCategoryPricing } from "@/lib/products/category-pricing-state";
+import { pricingColumns, pricingColumnLabel, type PricingColumn } from "@/lib/products/pricing-category-columns";
 import { hasMeaningfulModularPricing } from "@/lib/products/modular-pricing-state";
 import { hasMeaningfulAccessoryPricing } from "@/lib/products/accessory-pricing-state";
 import { accessoryPricingReferenceIssues } from "@/lib/products/accessory-pricing-parser";
@@ -111,6 +112,7 @@ export type VariantPricingRow = {
 };
 
 export type CategoryPricingRow = {
+  price_columns?: PricingColumn[];
   id?: string;
   group_id?: string;
   group_name?: string;
@@ -495,7 +497,7 @@ function normalizeCategoryGroup(
   index: number,
   includeDefaultPriceCategories = true,
 ): CategoryPricingRow {
-  const explicitCategories = explicitPricingCategoryLabels(row.price_categories);
+  const explicitCategories = row.price_columns ? pricingColumns(row).map((column) => column.id) : explicitPricingCategoryLabels(row.price_categories);
   const priceCategories = Array.from(new Set([
     ...(explicitCategories.length ? explicitCategories : includeDefaultPriceCategories ? defaultPriceCategories : []),
     ...(explicitCategories.length ? [] : (row.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean)),
@@ -509,6 +511,7 @@ function normalizeCategoryGroup(
     id: row.id || `category-group-${index}`,
     group_name: row.group_name?.trim() || "Finish Category Pricing",
     price_categories: priceCategories,
+    price_columns: pricingColumns({ ...row, price_categories: priceCategories }),
     is_active: row.is_active !== false,
     sort_order: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : index,
     items,
@@ -520,7 +523,7 @@ function normalizeModularGroups(rows?: CategoryPricingRow[] | null, includeDefau
   return modularItemPricingGroups(rows).map((group, groupIndex) => {
     const sourceGroup = group as CategoryPricingRow;
     const direct = isDirectModularPricingGroup(sourceGroup);
-    const explicitCategories = explicitPricingCategoryLabels(sourceGroup.price_categories);
+    const explicitCategories = sourceGroup.price_columns ? pricingColumns(sourceGroup).map((column) => column.id) : explicitPricingCategoryLabels(sourceGroup.price_categories);
     const priceCategories = Array.from(new Set([
       ...(direct ? [] : explicitCategories.length ? explicitCategories : includeDefaultPriceCategories ? defaultPriceCategories : []),
       ...(explicitCategories.length ? [] : (sourceGroup.price_categories ?? []).map(normalizeCategoryPriceLabel).filter(Boolean)),
@@ -534,6 +537,7 @@ function normalizeModularGroups(rows?: CategoryPricingRow[] | null, includeDefau
       is_active: sourceGroup.is_active !== false,
       pricing_type: MODULAR_GROUP_PRICING_TYPE,
       price_categories: direct ? [] : priceCategories,
+      ...(!direct ? { price_columns: pricingColumns({ ...sourceGroup, price_categories: priceCategories }) } : {}),
       ...(direct ? { modular_pricing_mode: "direct" } : {}),
       ...(direct && sourceGroup.modular_composition ? { modular_composition: sourceGroup.modular_composition } : {}),
       sort_order: Number.isFinite(Number(sourceGroup.sort_order)) ? Number(sourceGroup.sort_order) : groupIndex,
@@ -548,7 +552,7 @@ function normalizeModularGroups(rows?: CategoryPricingRow[] | null, includeDefau
 
 function modularPriceCategories(groups: CategoryPricingRow[], includeDefaultPriceCategories = true) {
   const matrixGroups = groups.filter((group) => !isDirectModularPricingGroup(group));
-  const declared = matrixGroups.flatMap((group) => explicitPricingCategoryLabels(group.price_categories));
+  const declared = matrixGroups.flatMap((group) => group.price_columns ? pricingColumns(group).map((column) => column.id) : explicitPricingCategoryLabels(group.price_categories));
   return Array.from(new Set([
     ...(declared.length || !matrixGroups.length ? [] : includeDefaultPriceCategories ? defaultPriceCategories : []),
     ...matrixGroups.flatMap((group) => [
@@ -1125,12 +1129,20 @@ export function CategoryPricingTable({
       return;
     }
 
+    let columns: PricingColumn[];
+    try {
+      columns = pricingColumns({ ...group, price_categories: [...groupPriceCategories, normalizedCategory] });
+    } catch (error) {
+      setGroupActionNotices((current) => ({ ...current, [groupId]: error instanceof Error ? error.message : "Conflicting pricing column." }));
+      return;
+    }
     updateGroup(groupIndex, {
+      price_columns: columns,
       price_categories: [...groupPriceCategories, normalizedCategory],
       items: (group.items ?? []).map((row) => ({
         ...row,
         prices: {
-          ...normalizedPriceMap(row.prices, false),
+          ...row.prices,
           [normalizedCategory]: parseNullablePricingNumber(row.prices?.[normalizedCategory]),
         },
       })),
@@ -1246,7 +1258,7 @@ export function CategoryPricingTable({
                       <th className="px-2 py-2">Display Name</th>
                       <th className="px-2 py-2">Supplier / Price List Code</th>
                       <th className="px-2 py-2">Dimension</th>
-                      {groupPriceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
+                      {groupPriceCategories.map((category) => <th key={category} className="px-2 py-2">{pricingColumnLabel(group, category)}</th>)}
                       <th className="px-2 py-2">Currency</th>
                       <th className="px-2 py-2">Details</th>
                       <th className="px-2 py-2">Active</th>
@@ -1353,7 +1365,7 @@ export function ModularItemPricingTable({
           // price_categories here made the server fall back to the generic Cat A-D defaults and merge
           // them into every row's saved prices (lib/products/category-pricing-value.ts), which is how
           // stale/default columns survived a Smart Setup replace/import.
-          ...(isDirectModularPricingGroup(group) ? { modular_pricing_mode: "direct", price_categories: [] } : { price_categories: priceCategories }),
+          ...(isDirectModularPricingGroup(group) ? { modular_pricing_mode: "direct", price_categories: [] } : { price_categories: priceCategories, price_columns: pricingColumns({ ...group, price_categories: priceCategories }) }),
           // Composition (starter/intermediate cardinality) applies to both Direct and Matrix Modular groups.
           ...(group.modular_composition ? { modular_composition: group.modular_composition } : {}),
           ...(group.modular_selection_family?.trim() ? { modular_selection_family: group.modular_selection_family.trim() } : {}),
@@ -1476,6 +1488,12 @@ export function ModularItemPricingTable({
       return;
     }
 
+    try {
+      groups.filter((group) => !isDirectModularPricingGroup(group)).forEach((group) => pricingColumns({ ...group, price_categories: [...priceCategories, normalizedCategory] }));
+    } catch (error) {
+      setGroupActionNotices(Object.fromEntries(groups.map((group, index) => [group.id ?? `modular-group-${index}`, error instanceof Error ? error.message : "Conflicting pricing column."])));
+      return;
+    }
     setPriceCategories((current) => [...current, normalizedCategory]);
     setGroups((current) =>
       current.map((group) => ({
@@ -1483,7 +1501,7 @@ export function ModularItemPricingTable({
         items: (group.items ?? []).map((row) => ({
           ...row,
           prices: {
-            ...normalizedPriceMap(row.prices, false),
+            ...row.prices,
             [normalizedCategory]: parseNullablePricingNumber(row.prices?.[normalizedCategory]),
           },
         })),
@@ -1654,7 +1672,7 @@ export function ModularItemPricingTable({
                           <th className="px-2 py-2">Display name</th>
                           <th className="px-2 py-2">Supplier / Price List Code</th>
                           <th className="px-2 py-2">Dimension</th>
-                          {directGroup ? <th className="px-2 py-2">Direct Price</th> : priceCategories.map((category) => <th key={category} className="px-2 py-2">{category}</th>)}
+                          {directGroup ? <th className="px-2 py-2">Direct Price</th> : priceCategories.map((category) => <th key={category} className="px-2 py-2">{pricingColumnLabel(group, category)}</th>)}
                           <th className="px-2 py-2">Role</th>
                           <th className="px-2 py-2">Currency</th>
                           <th className="px-2 py-2">Details</th>
