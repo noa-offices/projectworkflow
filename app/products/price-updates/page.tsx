@@ -2,7 +2,7 @@ import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PriceUpdatesReview, type PriceUpdatesReviewRow } from "@/components/products/price-updates-review";
 import { requireProductPricingManager } from "@/lib/auth";
 import { formatMoney } from "@/lib/currencies";
-import { brandPriceBaselineDate, latestBrandPriceListUpdate, productTemplatePriceCheckState } from "@/lib/product-price-check";
+import { brandPriceBaselineDate, latestBrandPriceListUpdate, scheduledBrandPriceListUpdate, productTemplatePriceCheckState } from "@/lib/product-price-check";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +35,7 @@ type Category = {
 };
 
 type ProductTemplate = {
+  creation_legacy: boolean;
   id: string;
   brand_id: string;
   created_at: string | null;
@@ -52,6 +53,7 @@ type ProductTemplate = {
 };
 
 type BrandPriceListUpdate = {
+  coverage_mode: string;
   id: string;
   brand_id: string;
   created_at: string | null;
@@ -120,7 +122,7 @@ export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPag
 
   const { data: templates, error: templatesError } = await supabase
     .from("product_templates")
-    .select("id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at")
+    .select("creation_legacy,id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at")
     .eq("is_active", true)
     .order("brand_id", { ascending: true })
     .order("template_name", { ascending: true })
@@ -128,7 +130,7 @@ export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPag
 
   const { data: priceListUpdates, error: priceListUpdatesError } = await supabase
     .from("brand_price_list_updates")
-    .select("id,brand_id,title,effective_from,received_at,created_at,status")
+    .select("coverage_mode,id,brand_id,title,effective_from,received_at,created_at,status")
     .in("status", ["draft", "active"])
     .order("effective_from", { ascending: false, nullsFirst: false })
     .order("received_at", { ascending: false, nullsFirst: false })
@@ -167,6 +169,8 @@ export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPag
     const subCategory = template.sub_category_id ? categoryById.get(template.sub_category_id)?.name ?? "" : "";
     const categoryName = [mainCategory, subCategory].filter(Boolean).join(" / ") || "No category";
     const status = productTemplatePriceCheckState({
+      brandPriceCheckIntervalDays: brand?.price_list_check_interval_days,
+      scheduledBrandPriceListUpdate: scheduledBrandPriceListUpdate(priceListUpdateList.filter((update) => update.brand_id === template.brand_id)),
       brandPriceBaselineAt: brandPriceBaselineByBrand.get(template.brand_id),
       formatDate,
       latestBrandPriceListUpdate: latestPriceListUpdateByBrand.get(template.brand_id),

@@ -3,6 +3,7 @@ import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import type { AccountStatus, AppRole } from "@/lib/supabase/types";
 import { isClientPaymentAttachmentManager } from "@/lib/projects/client-payment-attachment-permissions";
+import { canReviewBrandPrices } from "@/lib/products/brand-price-permissions";
 
 export type UserProfile = {
   id: string;
@@ -83,6 +84,14 @@ export async function requireSystemOwner(): Promise<AuthenticatedUser> {
     redirect("/dashboard");
   }
 
+  return authenticatedUser;
+}
+
+export async function requireBrandPriceReviewer(): Promise<AuthenticatedUser> {
+  const authenticatedUser = await requireActiveUser();
+  if (!canReviewBrandPrices(authenticatedUser.profile?.role, authenticatedUser.profile?.account_status)) {
+    redirect("/products/templates");
+  }
   return authenticatedUser;
 }
 

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { formatSafeActionError, logServerActionError } from "@/lib/action-errors";
-import { requireProductLibraryManager } from "@/lib/auth";
+import { requireBrandPriceReviewer, requireProductLibraryManager } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit-log";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
 import { assertProductPricingCurrencies, expectedPricingVersion, pricingConflictMessage, requireProductPricingCurrency } from "@/lib/products/pricing-write-version";
@@ -26,7 +26,7 @@ import { saveProductTemplateRowReference } from "@/app/products/templates/row-re
 import { saveProductTemplateSubgroupReference } from "@/app/products/templates/subgroup-reference-actions";
 import { persistedProductTemplateSubgroupKeys, reconcileStaleProductTemplateSubgroupReferences, resolveProductTemplateSubgroupIdentity, type ProductTemplateSubgroupReferenceRow } from "@/lib/products/product-template-subgroup-references";
 import { bulkDeleteResultMessage, bulkLifecycleResultMessage } from "@/lib/products/product-management-bulk-lifecycle";
-import { brandPriceBaselineDate, latestBrandPriceListUpdate } from "@/lib/product-price-check";
+import { brandPriceBaselineDate, latestBrandPriceListUpdate, scheduledBrandPriceListUpdate } from "@/lib/product-price-check";
 import { createClient } from "@/lib/supabase/server";
 
 const allowedOptionTypes = new Set([
@@ -584,7 +584,7 @@ function safeBrandLabel(brandName: string | null | undefined) {
 }
 
 const productLibraryTemplateSelect =
-  "pricing_version,id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,material_suggestions,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,image_settings,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,unit_label,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at,price_notes";
+  "creation_legacy,pricing_version,id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,material_suggestions,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,image_settings,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,unit_label,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at,price_notes";
 
 type ProductTemplateModalActionResult = {
   message: string;
@@ -608,9 +608,9 @@ async function fetchProductLibraryTemplateForClient(
 
   const { data: brand, error: brandError } = await supabase
     .from("brands")
-    .select("id,last_price_list_checked_at")
+    .select("id,last_price_list_checked_at,price_list_check_interval_days")
     .eq("id", template.brand_id)
-    .maybeSingle<{ id: string; last_price_list_checked_at: string | null }>();
+    .maybeSingle<{ id: string; last_price_list_checked_at: string | null; price_list_check_interval_days: number | null }>();
 
   if (brandError) {
     throw brandError;
@@ -618,7 +618,7 @@ async function fetchProductLibraryTemplateForClient(
 
   const { data: updates, error: updatesError } = await supabase
     .from("brand_price_list_updates")
-    .select("title,effective_from,received_at,created_at,status")
+    .select("coverage_mode,title,effective_from,received_at,created_at,status")
     .eq("brand_id", template.brand_id)
     .in("status", ["draft", "active"])
     .order("effective_from", { ascending: false, nullsFirst: false })
@@ -632,6 +632,8 @@ async function fetchProductLibraryTemplateForClient(
 
   return {
     ...template,
+    brand_price_check_interval_days: brand?.price_list_check_interval_days ?? null,
+    scheduled_brand_price_list_update: scheduledBrandPriceListUpdate(updates ?? []),
     brand_latest_price_list_at: brandPriceBaselineDate({
       fallbackCheckedAt: brand?.last_price_list_checked_at ?? null,
       latestBrandPriceListUpdate: latestUpdate ?? null,
@@ -3069,7 +3071,7 @@ export async function markBrandTemplatesPriceChecked(formData: FormData) {
 }
 
 export async function createBrandPriceListUpdate(formData: FormData) {
-  const { user, displayName } = await requireProductLibraryManager();
+  const { user, displayName } = await requireBrandPriceReviewer();
   const brandId = textValue(formData, "brand_id");
   const title = textValue(formData, "title");
 
@@ -3093,6 +3095,7 @@ export async function createBrandPriceListUpdate(formData: FormData) {
   const updatePayload = {
     brand_id: brandId,
     title,
+    coverage_mode: "partial",
     reference_no: optionalTextValue(formData, "reference_no"),
     currency: optionalTextValue(formData, "currency"),
     effective_from: optionalTextValue(formData, "effective_from"),
@@ -3133,7 +3136,7 @@ export async function createBrandPriceListUpdate(formData: FormData) {
 }
 
 export async function updateBrandPriceListUpdate(formData: FormData) {
-  const { user, displayName } = await requireProductLibraryManager();
+  const { user, displayName } = await requireBrandPriceReviewer();
   const id = textValue(formData, "id");
   const title = textValue(formData, "title");
 
@@ -3193,7 +3196,7 @@ export async function updateBrandPriceListUpdate(formData: FormData) {
 }
 
 export async function archiveBrandPriceListUpdate(formData: FormData) {
-  const { user, displayName } = await requireProductLibraryManager();
+  const { user, displayName } = await requireBrandPriceReviewer();
   const id = textValue(formData, "id");
 
   if (!id) {

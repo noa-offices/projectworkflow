@@ -36,6 +36,7 @@ import { ProductLibraryBrowseControls } from "@/components/products/product-libr
 import { TemplateMaterialGroupSelectionPanel } from "@/components/products/template-material-group-selection-panel";
 import { ProductTemplateForm } from "@/components/products/product-template-form";
 import { requireProductLibraryManager } from "@/lib/auth";
+import { canReviewBrandPrices } from "@/lib/products/brand-price-permissions";
 import {
   defaultCurrency,
   formatMoney,
@@ -44,6 +45,7 @@ import {
 import {
   brandPriceBaselineDate,
   latestBrandPriceListUpdate,
+  scheduledBrandPriceListUpdate,
   productTemplatePriceCheckState,
 } from "@/lib/product-price-check";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
@@ -116,6 +118,7 @@ type Brand = {
 type PriceSummaryKey = "current" | "needs_check" | "due" | "no_price_list_date" | "scheduled" | "checked";
 
 type BrandPriceListUpdate = {
+  coverage_mode: string;
   id: string;
   brand_id: string;
   title: string;
@@ -259,6 +262,9 @@ type ProductTemplateImageSettings = {
 };
 
 type ProductTemplate = {
+  creation_legacy?: boolean;
+  brand_price_check_interval_days?: number | null;
+  scheduled_brand_price_list_update?: BrandPriceListUpdate | null;
   pricing_version: number | string;
   id: string;
   brand_id: string;
@@ -1283,7 +1289,7 @@ function PriceCheckStatus({
       <span className={className}>{status.label}</span>
       <p className="text-xs text-zinc-500">
         {status.key === "checked" && template.last_price_checked_at
-          ? `Price checked by ${actorDisplayName(actorNameById, template.last_price_checked_by)} on ${formatDate(template.last_price_checked_at)}`
+          ? `Price checked by ${actorDisplayName(actorNameById, template.last_price_checked_by)} on ${formatDate(template.last_price_checked_at)}${status.scheduledEffectiveFrom ? `; new complete price list scheduled for ${formatDate(status.scheduledEffectiveFrom)}` : ""}`
           : status.detail}
       </p>
       {template.price_check_note ? (
@@ -1565,6 +1571,7 @@ function DetailPriceRow({
 
 export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps) {
   const { user, profile, displayName } = await requireProductLibraryManager();
+  const canManageBrandPriceLists = canReviewBrandPrices(profile?.role, profile?.account_status);
   const params = (await searchParams) ?? {};
   const message = stringParam(params.message);
   const isManagementView = stringParam(params.manage) === "1";
@@ -1624,7 +1631,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
   const { data: templates, error: templatesError } = await supabase
     .from("product_templates")
     .select(
-      "pricing_version,id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,material_suggestions,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price,is_active,lifecycle_status,last_price_checked_at,last_price_checked_by,price_check_interval_days,price_check_note,price_notes,created_at",
+      "creation_legacy,pricing_version,id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,material_suggestions,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price,is_active,lifecycle_status,last_price_checked_at,last_price_checked_by,price_check_interval_days,price_check_note,price_notes,created_at",
     )
     .order("brand_id", { ascending: true })
     .order("template_name", { ascending: true })
@@ -1689,7 +1696,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
 
   const { data: brandPriceListUpdates, error: brandPriceListUpdatesError } = await supabase
     .from("brand_price_list_updates")
-    .select("id,brand_id,title,reference_no,currency,effective_from,received_at,status,notes,attachment_url,created_by,created_at,updated_at")
+    .select("coverage_mode,id,brand_id,title,reference_no,currency,effective_from,received_at,status,notes,attachment_url,created_by,created_at,updated_at")
     .order("brand_id", { ascending: true })
     .order("effective_from", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
@@ -1857,6 +1864,12 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
     if (baselineDate) {
       brandPriceBaselineByBrand.set(brand.id, baselineDate);
     }
+  }
+
+  // Runtime-only inheritance: never write Brand intervals into Template records.
+  for (const template of templateList) {
+    template.brand_price_check_interval_days = brandList.find((brand) => brand.id === template.brand_id)?.price_list_check_interval_days ?? null;
+    template.scheduled_brand_price_list_update = scheduledBrandPriceListUpdate(priceListUpdatesByBrand.get(template.brand_id) ?? []);
   }
 
   for (const template of activeTemplateList) {
@@ -2088,6 +2101,9 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
   );
   const selectedBrand =
     brandList.find((brand) => brand.id === selectedPanelBrandId) ?? null;
+  const selectedBrandLatestRecord = selectedBrand
+    ? (priceListUpdatesByBrand.get(selectedBrand.id) ?? []).find((update) => update.status === "draft" || update.status === "active")
+    : undefined;
   const selectedMainCategory =
     mainCategories.find((category) => category.id === selectedPanelMainId) ?? null;
   const selectedSubCategory =
@@ -2798,15 +2814,15 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                         Price list updates
                       </summary>
                       <div className="mt-3 space-y-3 text-xs leading-5 text-zinc-600">
-                        <details data-state-key={`template-library-price-updates-add-${selectedBrand.id}`}>
+                        {canManageBrandPriceLists ? <details data-state-key={`template-library-price-updates-add-${selectedBrand.id}`}>
                           <summary className="cursor-pointer rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50">
                             Add update
                           </summary>
                           <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
                             <BrandPriceListUpdateForm brandId={selectedBrand.id} />
                           </div>
-                        </details>
-                        {(latestPriceListUpdateByBrand.get(selectedBrand.id) ?? null) ? (
+                        </details> : null}
+                        {canManageBrandPriceLists && selectedBrandLatestRecord ? (
                           <>
                             <details data-state-key={`template-library-price-updates-edit-${selectedBrand.id}`}>
                               <summary className="cursor-pointer rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50">
@@ -2815,13 +2831,13 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                               <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
                                 <BrandPriceListUpdateForm
                                   brandId={selectedBrand.id}
-                                  update={latestPriceListUpdateByBrand.get(selectedBrand.id) ?? undefined}
+                                  update={selectedBrandLatestRecord}
                                 />
                               </div>
                             </details>
-                            {(latestPriceListUpdateByBrand.get(selectedBrand.id) ?? null)?.status !== "archived" ? (
+                            {selectedBrandLatestRecord.status !== "archived" ? (
                               <form action={archiveBrandPriceListUpdate}>
-                                <input type="hidden" name="id" value={(latestPriceListUpdateByBrand.get(selectedBrand.id) ?? null)?.id ?? ""} />
+                                <input type="hidden" name="id" value={selectedBrandLatestRecord.id} />
                                 <ConfirmSubmitButton
                                   message="Archive this price list update?"
                                   className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50"
@@ -2832,7 +2848,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                             ) : null}
                           </>
                         ) : (
-                          <p>No price list updates recorded yet.</p>
+                          <p>{selectedBrandLatestRecord ? "Price list records available; management requires a Brand price reviewer." : "No active or draft price list updates recorded yet."}</p>
                         )}
                       </div>
                     </details>
