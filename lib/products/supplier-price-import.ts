@@ -58,7 +58,7 @@ export function commercialSupplierIdentities(cells: SourceCell[], profile: Suppl
       const fullCodes = new Map<string, Set<number | null>>();
       for (const cell of group) { const values = fullCodes.get(cell.raw_code) ?? new Set(); values.add(cell.price); fullCodes.set(cell.raw_code, values); }
       if ([...fullCodes.values()].some((values) => values.size > 1) || (prices.size > 1 && !hasFinish)) issues.push("conflicting_source_prices");
-      result.push({ key: JSON.stringify([first.code, first.price_field, dimension]), code: first.code, price_field: first.price_field, dimension, raw_dimension: first.dimension, finishes: tiers.length > 1 ? finishes : [], price: new Set(tier.map((cell) => cell.price)).size === 1 ? first.price : null, currency: profile.currency, row_keys: [...new Set(tier.map((cell) => cell.row_key))], companion_notes: [...new Set(tier.map((cell) => cell.companion_note).filter((note): note is string => Boolean(note)))], issues });
+      result.push({ key: JSON.stringify([first.code, first.price_field, dimension]), code: first.code, price_field: first.price_field, dimension, raw_dimension: first.dimension, finishes, price: new Set(tier.map((cell) => cell.price)).size === 1 ? first.price : null, currency: profile.currency, row_keys: [...new Set(tier.map((cell) => cell.row_key))], companion_notes: [...new Set(tier.map((cell) => cell.companion_note).filter((note): note is string => Boolean(note)))], issues });
     }
   }
   return result;

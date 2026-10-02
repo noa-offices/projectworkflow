@@ -33,6 +33,7 @@ test("numeric code cells flagged, scientific-looking text / leading zeros / punc
 });
 test("finish collapse is whole-source, equal-price only; differing finish prices remain explicit tiers", () => {
   const equal = identities([row(), row("111001145"), row("111001146")]); assert.equal(equal.length, 1); assert.equal(equal[0].dimension, ""); assert.equal(equal[0].row_keys.length, 3);
+  assert.deepEqual(equal[0].finishes, ["144", "145", "146"]); assert.equal(equal[0].price, 152);
   const varied = identities([row("146514144", "146514", 2046), row("146514145", "146514", 2046), row("146514999", "146514", 2436)]);
   assert.equal(varied.length, 2); assert.deepEqual(varied.map((identity) => identity.price), [2046, 2436]); assert.deepEqual(varied[0].finishes, ["144", "145"]); assert.ok(varied.every((identity) => identity.dimension));
   const conflict = identities([row(), { ...row(), unit_key: "other", values: { ...row().values, PREZZO_UNITARIO: 153 } }]); assert.ok(conflict.every((identity) => identity.issues.includes("conflicting_source_prices")));
@@ -99,4 +100,34 @@ test("duplicate/shared bindings and baseline drift; selected scope only filters 
   const drift = [targets[0], { ...targets[1], price: 155 }]; assert.equal(sharedBaselineDrift(drift), true); assert.equal(matchSupplierPrices([source()], drift, [], [binding])[0].classification, "baseline_drift");
   const alias = { ...binding, code: "NEW-CODE", kind: "alias" as const, target_keys: [targets[0].key] }; assert.equal(matchSupplierPrices([source({ code: "NEW-CODE" })], targets, [], [alias])[0].classification, "increased");
   assert.ok(supplierMatchChunks(ambiguous).every((chunk) => chunk.length <= 500));
+});
+
+test("collapsed blank-dimension finishes resolve explicit vocabulary and compare 81 against 92 as decreased", () => {
+  const original = identities([row("103801170", "103801", 81), row("103801220", "103801", 81), row("103801331", "103801", 81)]);
+  assert.equal(original.length, 1); assert.equal(original[0].dimension, ""); assert.deepEqual(original[0].finishes, ["170", "220", "331"]);
+  const target = { ...brandPriceTargets([template({ item_code: "103801", default_unit_price: 92 })])[0], dimension: "melamine", column_id: "melamine-column" };
+  const rule = { id: "melamine", brand_id: "brand", raw_labels: [], finish_codes: ["170", "220", "331"], dimension_code: "melamine" };
+  const before = structuredClone({ original, target });
+  const match = matchSupplierPrices(original, [target], [rule])[0];
+  assert.equal(match.classification, "decreased"); assert.equal(match.comparison, "decreased"); assert.equal(match.targets[0].key, target.key);
+  assert.deepEqual({ original, target }, before);
+  assert.equal(matchSupplierPrices([{ ...original[0], finishes: [] }], [target], [rule])[0].classification, "needs_dimension_mapping");
+  assert.equal(matchSupplierPrices(original, [target], [{ ...rule, finish_codes: ["170", "220"] }])[0].classification, "needs_dimension_mapping");
+  assert.equal(matchSupplierPrices(original, [target], [{ ...rule, brand_id: "another-brand" }])[0].classification, "needs_dimension_mapping");
+  assert.equal(matchSupplierPrices(original, [target], [{ ...rule, template_id: "another-template" }])[0].classification, "needs_dimension_mapping");
+  assert.equal(matchSupplierPrices(original, [target], [{ ...rule, group_id: "another-group" }])[0].classification, "needs_dimension_mapping");
+  assert.equal(matchSupplierPrices(original, [target], [rule, { ...rule, id: "conflict", dimension_code: "other" }])[0].classification, "needs_dimension_mapping");
+  assert.equal(matchSupplierPrices(original, [target], [{ ...rule, dimension_code: "other" }, { ...rule, template_id: target.template_id, group_id: target.group_id }])[0].classification, "decreased");
+});
+
+test("label mappings remain eligible for collapsed finish evidence; price tiers still need finish evidence rules", () => {
+  const cell = identities([row("111001170", "111001", 152, { CATEGORIA_TESSUTO: "B" }), row("111001220", "111001", 152, { CATEGORIA_TESSUTO: "B" })])[0];
+  const target = { ...brandPriceTargets([template()])[0], dimension: "cat_b", column_id: "column-b" };
+  const rule = { id: "B", brand_id: "brand", raw_labels: ["B"], finish_codes: [], dimension_code: "cat_b" };
+  assert.equal(matchSupplierPrices([cell], [target], [rule])[0].classification, "increased");
+  const tiers = identities([row("111001170", "111001", 152, { CATEGORIA_TESSUTO: "B" }), row("111001220", "111001", 190, { CATEGORIA_TESSUTO: "B" })]);
+  assert.ok(tiers.every((tier) => matchSupplierPrices([tier], [target], [rule])[0].classification === "needs_dimension_mapping"));
+  assert.equal(matchSupplierPrices([cell], brandPriceTargets([template()]))[0].classification, "needs_dimension_mapping");
+  const scalar = identities([row(), row("111001145")])[0];
+  assert.equal(matchSupplierPrices([scalar], brandPriceTargets([template()]))[0].classification, "increased");
 });

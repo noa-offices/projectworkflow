@@ -4,8 +4,11 @@ export function sharedBaselineDrift(targets: PriceTarget[]) {
   return targets.some((target) => target.price === null) || new Set(targets.map((target) => JSON.stringify([target.price, target.currency, target.dimension, target.price_field]))).size !== 1;
 }
 function mappedDimension(source: SourceIdentity, target: PriceTarget, rules: DimensionRule[]): string | null {
-  if (!source.dimension) return "";
-  const matching = rules.filter((rule) => rule.brand_id === target.brand_id && (!rule.template_id || rule.template_id === target.template_id) && (!rule.group_id || rule.group_id === target.group_id) && (!rule.raw_labels.length || rule.raw_labels.includes(source.raw_dimension ?? source.dimension)) && (rule.finish_codes.length ? source.finishes.length > 0 && source.finishes.every((finish) => rule.finish_codes.includes(finish)) : !source.finishes.length) && (rule.raw_labels.length > 0 || rule.finish_codes.length > 0));
+  if (!source.dimension && !source.finishes.length) return "";
+  // Retained physical finishes are evidence, not automatically a price tier.
+  const finishTier = source.finishes.length > 0 && source.dimension !== (source.raw_dimension ?? source.dimension);
+  const matching = rules.filter((rule) => rule.brand_id === target.brand_id && (!rule.template_id || rule.template_id === target.template_id) && (!rule.group_id || rule.group_id === target.group_id) && (!rule.raw_labels.length || rule.raw_labels.includes(source.raw_dimension ?? source.dimension)) && (rule.finish_codes.length ? source.finishes.length > 0 && source.finishes.every((finish) => rule.finish_codes.includes(finish)) : !finishTier) && (rule.raw_labels.length > 0 || rule.finish_codes.length > 0));
+  if (!matching.length && !source.dimension) return "";
   const specificity = Math.max(-1, ...matching.map((rule) => (rule.template_id ? 2 : 0) + (rule.group_id ? 1 : 0)));
   const dimensions = new Set(matching.filter((rule) => (rule.template_id ? 2 : 0) + (rule.group_id ? 1 : 0) === specificity).map((rule) => rule.dimension_code));
   return dimensions.size === 1 ? [...dimensions][0] : null;

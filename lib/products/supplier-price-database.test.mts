@@ -8,11 +8,12 @@ import { matchSupplierPrices } from "./supplier-price-matching.js";
 import type { RawSupplierRow, SourceIdentity, SupplierProfile } from "./supplier-price-contracts.js";
 
 const migration = await readFile(new URL("../../supabase/migrations/20261002082357_supplier_price_source_review.sql", import.meta.url), "utf8");
+const finishMigration = await readFile(new URL("../../supabase/migrations/20261002124625_supplier_source_finish_evidence.sql", import.meta.url), "utf8");
 const brand = "00000000-0000-0000-0000-000000000001";
 const user = "00000000-0000-0000-0000-000000000002";
 const templateId = "00000000-0000-0000-0000-000000000003";
 const profile: SupplierProfile = { full_code_column: "CODE", article_code_column: "NOME_FILE", strategy: "article_plus_finish", article_length: 6, finish_length: 3, currency: "EUR", basis: "unknown", price_columns: [{ column: "PRICE", price_field: "unit_price" }] };
-async function fixture() {
+async function fixture(applyFinishMigration = true) {
   const db = new PGlite();
   await db.exec(`create role authenticated; create role anon; create schema auth; create schema storage;
     create function auth.uid() returns uuid language sql as $$select '${user}'::uuid$$;
@@ -27,7 +28,7 @@ async function fixture() {
     create function current_user_can_review_brand_prices() returns boolean language sql stable as $$select coalesce(current_setting('test.status',true)='active' and current_setting('test.role',true) in ('system_owner','admin_manager','procurement_manager','designer'),false)$$;
     create function current_user_can_approve_brand_prices() returns boolean language sql stable as $$select coalesce(current_setting('test.status',true)='active' and current_setting('test.role',true) in ('system_owner','admin_manager','procurement_manager'),false)$$;
     select set_config('test.status','active',false),set_config('test.role','system_owner',false);`);
-  await db.exec(migration); return db;
+  await db.exec(migration); if (applyFinishMigration) await db.exec(finishMigration); return db;
 }
 async function write(db: PGlite, operation: string, payload: Record<string, unknown>) { return (await db.query<{ result: { id: string } }>("select supplier_price_review_write($1,$2::jsonb) result", [operation, JSON.stringify(payload)])).rows[0].result; }
 async function sourceFixture(db: PGlite, count = 3) {
@@ -50,6 +51,7 @@ test("atomic source lifecycle, retry equality, completeness, immutable finalized
     await write(db, "finalize_source", { source_id: id });
     const s = (await db.query<{ status: string; stored_rows: number; identity_count: number }>("select status,stored_rows,identity_count from supplier_source_versions")).rows[0]; assert.equal(s.status, "imported"); assert.equal(s.stored_rows, 3); assert.equal(s.identity_count, 1);
     const identity = (await db.query<{ data: SourceIdentity }>("select data from supplier_source_identities")).rows[0].data; assert.equal(identity.price, 152); assert.equal(identity.row_keys.length, 3); assert.equal(identity.dimension, "");
+    assert.deepEqual(identity.finishes, ["144", "145", "146"]);
     assert.deepEqual((await db.query<{ raw_extras: Record<string, unknown> }>("select raw_extras from supplier_source_rows limit 1")).rows[0].raw_extras.ECOTAXE, 99);
     await assert.rejects(write(db, "chunk", chunk(id, 0)), /immutable/);
     await assert.rejects(db.exec("set role authenticated; update supplier_source_versions set status='imported'"), /permission denied/); await db.exec("reset role");
@@ -189,5 +191,33 @@ test("SQL baseline locators verify every pricing architecture without any Produc
     for (const target of targets) await assert.rejects(write(db, "bindings", { bindings: [{ brand_id: brand, code: target.code, price_field: target.price_field, source_dimension: target.dimension, kind: "alias", baseline_snapshot: [{ ...target, price: 999 }] }] }), /changed or forged/);
     const after = (await db.query("select row_to_json(t) data from product_templates t union all select row_to_json(c) from product_components c")).rows;
     assert.deepEqual(after, before);
+  } finally { await db.close(); }
+});
+
+test("forward migration preserves imported snapshots and privileges; same-file new-title reimport retains finishes", async () => {
+  const db = await fixture(false); try {
+    const oldId = await sourceFixture(db);
+    await write(db, "chunk", chunk(oldId, 0)); await write(db, "chunk", chunk(oldId, 1, rows.slice(2))); await write(db, "finalize_source", { source_id: oldId });
+    const snapshot = async () => (await db.query("select row_to_json(s) data from supplier_source_versions s where id=$1 union all select row_to_json(i) from supplier_source_identities i where source_id=$1", [oldId])).rows;
+    const oldSnapshot = await snapshot();
+    assert.deepEqual((await db.query<{ data: SourceIdentity }>("select data from supplier_source_identities where source_id=$1", [oldId])).rows[0].data.finishes, []);
+    const privileges = async () => (await db.query("select proowner,proacl,prosecdef,proconfig from pg_proc where oid='public.supplier_price_review_write(text,jsonb)'::regprocedure")).rows;
+    const permissionsBefore = await privileges();
+    const pricesBefore = (await db.query("select row_to_json(t) data from product_templates t union all select row_to_json(c) from product_components c union all select row_to_json(b) from brands b union all select row_to_json(q) from quotations q union all select row_to_json(u) from brand_price_list_updates u")).rows;
+    await db.exec(finishMigration); await db.exec(finishMigration);
+    assert.deepEqual(await snapshot(), oldSnapshot); assert.deepEqual(await privileges(), permissionsBefore);
+    await write(db, "finalize_source", { source_id: oldId }); assert.deepEqual(await snapshot(), oldSnapshot);
+    assert.equal(await sourceFixture(db), oldId); // Same commercial version is still reused, never silently corrected.
+    const p = await write(db, "profile", { brand_id: brand, title: "LAS", config: profile });
+    const payload = { profile_id: p.id, expected_profile: profile, title: "Version 1 — corrected finish evidence", filename: "source.xlsx", source_type: "xlsx", file_hash: "a".repeat(64), expected_rows: 3, expected_cells: 3, expected_chunks: 2 };
+    const fresh = await write(db, "source", payload); assert.notEqual(fresh.id, oldId); assert.equal((await write(db, "source", payload)).id, fresh.id);
+    await write(db, "chunk", chunk(fresh.id, 0)); await write(db, "chunk", chunk(fresh.id, 1, rows.slice(2))); await write(db, "finalize_source", { source_id: fresh.id });
+    const identity = (await db.query<{ data: SourceIdentity }>("select data from supplier_source_identities where source_id=$1", [fresh.id])).rows[0].data;
+    assert.deepEqual(identity.finishes, ["144", "145", "146"]); assert.equal(identity.dimension, ""); assert.equal(identity.price, 152);
+    const target = { ...brandPriceTargets([{ id: templateId, brand_id: brand, template_name: "Existing", pricing_version: 4, item_code: "111001", default_unit_price: 150, currency: "EUR" }])[0], dimension: "melamine" };
+    assert.equal(matchSupplierPrices([identity], [target], [{ id: "rule", brand_id: brand, raw_labels: [], finish_codes: ["144", "145", "146"], dimension_code: "melamine" }])[0].classification, "increased");
+    assert.deepEqual(await snapshot(), oldSnapshot);
+    const pricesAfter = (await db.query("select row_to_json(t) data from product_templates t union all select row_to_json(c) from product_components c union all select row_to_json(b) from brands b union all select row_to_json(q) from quotations q union all select row_to_json(u) from brand_price_list_updates u")).rows;
+    assert.deepEqual(pricesAfter, pricesBefore);
   } finally { await db.close(); }
 });
