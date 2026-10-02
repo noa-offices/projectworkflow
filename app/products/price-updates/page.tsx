@@ -1,7 +1,9 @@
+import Link from "next/link";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { PriceUpdatesReview, type PriceUpdatesReviewRow } from "@/components/products/price-updates-review";
 import { requireProductPricingManager } from "@/lib/auth";
 import { formatMoney } from "@/lib/currencies";
+import { canReviewBrandPrices } from "@/lib/products/brand-price-permissions";
 import { brandPriceBaselineDate, latestBrandPriceListUpdate, scheduledBrandPriceListUpdate, productTemplatePriceCheckState } from "@/lib/product-price-check";
 import { createClient } from "@/lib/supabase/server";
 
@@ -206,6 +208,7 @@ export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPag
       userAvatarUrl={profile?.avatar_url ?? null}
       userRole={profile?.role ?? null}
     >
+      {canReviewBrandPrices(profile?.role, profile?.account_status) ? <Link href="/products/price-updates/supplier-sources" className="mb-4 inline-flex rounded border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold">Supplier Sources / Price Review</Link> : null}
       <PriceUpdatesReview
         initialFilters={{
           brand: selectedBrand,
