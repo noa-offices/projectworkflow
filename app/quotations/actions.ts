@@ -13,6 +13,7 @@ import {
 import { createAuditLog } from "@/lib/audit-log";
 import { nextClientNumber } from "@/lib/clients/client-numbering";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
+import { expectedPricingVersion, pricingConflictMessage, requireProductPricingCurrency } from "@/lib/products/pricing-write-version";
 import {
   flattenStandardCategoryPricingRows,
   groupedStandardCategoryPricingRows,
@@ -2557,13 +2558,14 @@ export async function saveQuotationItemToProductLibrary(formData: FormData) {
 
     const { data: existingTemplate, error: existingTemplateError } = await supabase
       .from("product_templates")
-      .select("id,template_name,variant_pricing,is_active")
+      .select("id,template_name,variant_pricing,is_active,pricing_version")
       .eq("id", existingTemplateId)
       .maybeSingle<{
         id: string;
         template_name: string;
         variant_pricing: unknown;
         is_active: boolean;
+        pricing_version: number | string;
       }>();
 
     if (existingTemplateError || !existingTemplate || !existingTemplate.is_active) {
@@ -2572,6 +2574,8 @@ export async function saveQuotationItemToProductLibrary(formData: FormData) {
     }
 
     const dimension = optionalTextValue(formData, "dimension");
+    const expectedVersion = expectedPricingVersion(existingTemplate.pricing_version);
+    if (expectedVersion === null) redirectWithMessage(redirectPath, pricingConflictMessage);
     const normalizedVariantPricing = normalizeBaseModelPricing<VariantPricingRow>(existingTemplate.variant_pricing ?? []);
     if (normalizedVariantPricing.issues.length) {
       redirectWithMessage(redirectPath, "Selected product family has invalid Base / Model pricing data.");
@@ -2606,7 +2610,7 @@ export async function saveQuotationItemToProductLibrary(formData: FormData) {
         variant_name: variantName,
         dimension: dimension ?? undefined,
         price: numberValue(formData, "variant_price", manualSourcePricing?.price ?? quotationItem.unit_price),
-        currency: normalizeCurrency(
+        currency: requireProductPricingCurrency(
           textValue(formData, "variant_currency") || manualSourcePricing?.currency || quotationItem.currency || defaultCurrency,
         ),
         specification: variantSpecification || undefined,
@@ -2624,15 +2628,19 @@ export async function saveQuotationItemToProductLibrary(formData: FormData) {
       redirectWithMessage(redirectPath, "Save and organize the Product Template Base / Model groups before adding this variant.");
     }
 
-    const { error: updateTemplateError } = await supabase
+    const { data: savedTemplate, error: updateTemplateError } = await supabase
       .from("product_templates")
       .update({ variant_pricing: nextVariantPricing })
-      .eq("id", existingTemplate.id);
+      .eq("id", existingTemplate.id)
+      .eq("pricing_version", expectedVersion)
+      .select("id,pricing_version")
+      .maybeSingle();
 
     if (updateTemplateError) {
       console.error("SAVE QUOTATION ITEM TO EXISTING FAMILY UPDATE ERROR", updateTemplateError.message);
       redirectWithMessage(redirectPath, "Product variant could not be saved to the Product Library.");
     }
+    if (!savedTemplate) redirectWithMessage(redirectPath, pricingConflictMessage);
 
     await createAuditLog(supabase, {
       entityType: "product_template",
@@ -2705,7 +2713,7 @@ export async function saveQuotationItemToProductLibrary(formData: FormData) {
       proposed_image_url_1: initialTemplateImageValue,
       reference_image_url: initialReferenceImageValue,
       unit_label: textValue(formData, "unit_label") || quotationItem.unit_label || "Pc",
-      currency: normalizeCurrency(
+      currency: requireProductPricingCurrency(
         textValue(formData, "currency") || manualSourcePricing?.currency || quotationItem.currency || defaultCurrency,
       ),
       default_unit_price: numberValue(

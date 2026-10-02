@@ -15,6 +15,7 @@ type TemplateFormShellProps = {
   onCancel?: () => void;
   pendingMessage: string;
   pendingLabel: string;
+  preventReset?: () => boolean;
   submitLabel: string;
 };
 
@@ -124,6 +125,7 @@ export function TemplateFormShell({
   onCancel,
   pendingMessage,
   pendingLabel,
+  preventReset,
   submitLabel,
 }: TemplateFormShellProps) {
   const [validationNotice, setValidationNotice] = useState<string | null>(null);
@@ -131,6 +133,7 @@ export function TemplateFormShell({
   return (
     <form
       action={action}
+      onReset={(event) => { if (preventReset?.()) event.preventDefault(); }}
       className="space-y-4 pb-28"
       onInput={() => {
         if (validationNotice) {

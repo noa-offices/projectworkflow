@@ -165,6 +165,7 @@ type AccessoryPricingRow = {
 };
 
 type ProductTemplate = {
+  pricing_version?: number | string;
   id: string;
   brand_id: string;
   main_category_id: string | null;
@@ -229,7 +230,7 @@ type ProductTemplateFormProps = {
   initialMessage?: string;
   mode?: SubmitMode;
   onCancel?: () => void;
-  onSubmitAction?: (formData: FormData) => void | Promise<void>;
+  onSubmitAction?: (formData: FormData) => void | { ok: boolean; message: string } | Promise<void | { ok: boolean; message: string }>;
   returnTo?: string;
   template?: ProductTemplate;
 };
@@ -449,6 +450,8 @@ export function ProductTemplateForm({
   returnTo = "/products/templates",
   template,
 }: ProductTemplateFormProps) {
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const preserveFailedSave = useRef(false);
   const templateId = useMemo(() => template?.id ?? fallbackTemplateId(), [template?.id]);
   const pricingRef = useRef<HTMLDivElement | null>(null);
   // Tracks which AI extraction focus the user last selected in "Copy AI Extraction Prompt", so
@@ -731,6 +734,8 @@ export function ProductTemplateForm({
 
   const baseSubmitAction = onSubmitAction ?? (submitMode === "update" ? updateProductTemplate : createProductTemplate);
   const submitWithPendingImages = async (formData: FormData) => {
+    preserveFailedSave.current = true;
+    setSaveError(null);
     // Re-validate the exact final "accessory_pricing" payload the hidden input submitted - the same
     // shared check the server parser uses - so a dangling option_item Required Companion reference is
     // blocked here instead of round-tripping to the server. Never auto-fixed; nothing is stripped or
@@ -758,7 +763,13 @@ export function ProductTemplateForm({
     formData.set("pending_row_references", JSON.stringify(metadata));
     const subgroupMetadata = Object.values(pendingSubgroupImagesRef.current).map((image, index) => { const field = `pending_subgroup_reference_file_${index}`; formData.append(field, image.file, image.file.name); return { field, pricingType: image.pricingType, groupId: image.groupId, subgroupId: image.subgroupId }; });
     formData.set("pending_subgroup_references", JSON.stringify(subgroupMetadata));
-    await baseSubmitAction(formData);
+    const result = await baseSubmitAction(formData);
+    if (result && !result.ok) {
+      preserveFailedSave.current = true;
+      setSaveError(result.message);
+      return;
+    }
+    preserveFailedSave.current = false;
     if (smartSourcePdfMeta?.sourcePdfStoragePath) {
       const cleanup = await deleteTemporaryProductSource(smartSourcePdfMeta.sourcePdfStoragePath);
       if (cleanup.ok) setSmartSourcePdfMeta(null);
@@ -769,6 +780,7 @@ export function ProductTemplateForm({
   return (
     <TemplateFormShell
       action={submitWithPendingImages}
+      preventReset={() => preserveFailedSave.current}
       cancelHref={onCancel ? undefined : returnTo}
       initialMessage={initialMessage}
       onInvalidFieldName={handleInvalidFieldName}
@@ -778,6 +790,8 @@ export function ProductTemplateForm({
       submitLabel={submitMode === "update" ? "Save template" : "Add template"}
     >
       <input type="hidden" name="id" value={templateId} />
+      {template ? <input type="hidden" name="expected_pricing_version" value={template.pricing_version ?? ""} /> : null}
+      {saveError ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">{saveError}</p> : null}
       <input type="hidden" name="return_to" value={returnTo} />
       {extraHiddenFields}
       <FormSection

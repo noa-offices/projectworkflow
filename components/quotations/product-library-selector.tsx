@@ -97,6 +97,7 @@ export type ProductLibraryCategory = {
 };
 
 export type ProductLibraryTemplate = {
+  pricing_version?: number | string;
   id: string;
   brand_id: string;
   main_category_id: string | null;
@@ -5151,7 +5152,7 @@ export function ProductLibrarySelector({
                         ...current,
                         [templateEditor.templateId]: result.message,
                       }));
-                      return;
+                      return { ok: false, message: result.message };
                     }
 
                     updateTemplateRecord(result.template as ProductLibraryTemplate);

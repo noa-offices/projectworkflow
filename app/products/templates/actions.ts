@@ -6,6 +6,7 @@ import { formatSafeActionError, logServerActionError } from "@/lib/action-errors
 import { requireProductLibraryManager } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit-log";
 import { defaultCurrency, normalizeCurrency } from "@/lib/currencies";
+import { assertProductPricingCurrencies, expectedPricingVersion, pricingConflictMessage, requireProductPricingCurrency } from "@/lib/products/pricing-write-version";
 import { categoryPricingValue as categoryPricingValueImpl } from "@/lib/products/category-pricing-value";
 import { materialDisplayCategoryLabel } from "@/lib/products/material-classification";
 import { manufacturerFinishGuidanceFromForm } from "@/lib/products/manufacturer-finish-guidance";
@@ -583,7 +584,7 @@ function safeBrandLabel(brandName: string | null | undefined) {
 }
 
 const productLibraryTemplateSelect =
-  "id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,material_suggestions,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,image_settings,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,unit_label,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at,price_notes";
+  "pricing_version,id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,material_suggestions,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,image_settings,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,unit_label,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at,price_notes";
 
 type ProductTemplateModalActionResult = {
   message: string;
@@ -1079,6 +1080,14 @@ async function normalizeTemplateImagePayload<
 }
 
 function templatePayload(formData: FormData, userId?: string) {
+  for (const field of ["variant_pricing", "category_pricing", "modular_item_pricing", "desking_size_pricing", "accessory_pricing"]) {
+    const raw = formData.get(field);
+    if (typeof raw === "string" && raw) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(raw); } catch { continue; } // Existing parsers own malformed JSON errors.
+      assertProductPricingCurrencies(parsed);
+    }
+  }
   const proposedImageValues = Object.fromEntries(
     imageFields.map((field) => [field, optionalTextValue(formData, field)]),
   ) as Record<(typeof imageFields)[number], string | null>;
@@ -1107,7 +1116,7 @@ function templatePayload(formData: FormData, userId?: string) {
     category_pricing: categoryPricing,
     accessory_pricing: accessoryPricingValue(formData, variantPricing, categoryPricing, workstationPricing),
     unit_label: textValue(formData, "unit_label") || "Pc",
-    currency: normalizeCurrency(textValue(formData, "currency") || defaultCurrency),
+    currency: requireProductPricingCurrency(textValue(formData, "currency")),
     default_unit_price: numberValue(formData, "default_unit_price", 0),
     price_notes: optionalTextValue(formData, "price_notes"),
   };
@@ -1181,7 +1190,7 @@ function componentPayload(formData: FormData, userId?: string) {
     qty: numberValue(formData, "qty", 1),
     unit_label: textValue(formData, "unit_label") || "Pc",
     unit_price: numberValue(formData, "unit_price", 0),
-    currency: normalizeCurrency(textValue(formData, "currency") || defaultCurrency),
+    currency: requireProductPricingCurrency(textValue(formData, "currency")),
     is_optional: boolValue(formData, "is_optional"),
     is_default_selected: boolValue(formData, "is_default_selected"),
     sort_order: Math.trunc(numberValue(formData, "sort_order", 0)),
@@ -1273,6 +1282,8 @@ export async function createProductTemplate(formData: FormData) {
 
 export async function updateProductTemplate(formData: FormData) {
   const { user, displayName } = await requireProductLibraryManager();
+  const expectedVersion = expectedPricingVersion(formData.get("expected_pricing_version"));
+  if (expectedVersion === null) return { ok: false, message: pricingConflictMessage };
   const id = textValue(formData, "id");
   const submittedImageSettings = templateImageMetadataValue(formData);
   const redirectPath = returnPath(formData);
@@ -1281,7 +1292,7 @@ export async function updateProductTemplate(formData: FormData) {
     initialPayload = templatePayload(formData);
   } catch (error) {
     if (error instanceof AccessoryPricingContractError) redirectWithMessageToPath(redirectPath, accessoryPricingErrorMessage(error.issues[0]));
-    throw error;
+    return { ok: false, message: actionErrorMessage("Product template could not be saved", error) };
   }
 
   if (!id || !initialPayload.brand_id || !initialPayload.template_name) {
@@ -1330,13 +1341,16 @@ export async function updateProductTemplate(formData: FormData) {
 
   const safeImageSettings = normalizedImageSettingsValue(nextImageSettings);
 
-  const { error } = await supabase
+  const { data: savedTemplate, error } = await supabase
     .from("product_templates")
     .update({
       ...payload,
       image_settings: safeImageSettings,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("pricing_version", expectedVersion)
+    .select("id,pricing_version")
+    .maybeSingle();
 
   if (error) {
     logServerActionError("PRODUCT TEMPLATE UPDATE ERROR", error, {
@@ -1348,6 +1362,8 @@ export async function updateProductTemplate(formData: FormData) {
     });
     redirectWithMessageToPath(redirectPath, actionErrorMessage("Product template could not be updated", error));
   }
+
+  if (!savedTemplate) return { ok: false, message: pricingConflictMessage };
 
   await reconcileSavedProductTemplateGroupReferences({
     accessoryPricing: payload.accessory_pricing,
@@ -1382,6 +1398,8 @@ export async function updateProductTemplate(formData: FormData) {
 export async function updateProductTemplateForQuotationModal(formData: FormData): Promise<ProductTemplateModalActionResult> {
   try {
     const { user, displayName } = await requireProductLibraryManager();
+    const expectedVersion = expectedPricingVersion(formData.get("expected_pricing_version"));
+    if (expectedVersion === null) return { ok: false, message: pricingConflictMessage };
     const id = textValue(formData, "id");
     const initialPayload = templatePayload(formData);
     const submittedImageSettings = templateImageMetadataValue(formData);
@@ -1431,13 +1449,16 @@ export async function updateProductTemplateForQuotationModal(formData: FormData)
       }
     }
 
-    const { error } = await supabase
+    const { data: savedTemplate, error } = await supabase
       .from("product_templates")
       .update({
         ...payload,
         image_settings: normalizedImageSettingsValue(nextImageSettings),
       })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("pricing_version", expectedVersion)
+      .select("id,pricing_version")
+      .maybeSingle();
 
     if (error) {
       logServerActionError("PRODUCT TEMPLATE UPDATE ERROR", error, {
@@ -1450,6 +1471,8 @@ export async function updateProductTemplateForQuotationModal(formData: FormData)
         message: actionErrorMessage("Product template could not be updated", error),
       };
     }
+
+    if (!savedTemplate) return { ok: false, message: pricingConflictMessage };
 
     await reconcileSavedProductTemplateGroupReferences({
       accessoryPricing: payload.accessory_pricing,
@@ -1590,9 +1613,11 @@ export async function createProductTemplateForQuotationModal(formData: FormData)
 export async function updateProductTemplateDefaultPrice(formData: FormData) {
   const { user, displayName } = await requireProductLibraryManager();
   const redirectPath = returnPath(formData);
+  const expectedVersion = expectedPricingVersion(formData.get("expected_pricing_version"));
+  if (expectedVersion === null) redirectWithMessageToPath(redirectPath, pricingConflictMessage);
   const productTemplateId = textValue(formData, "product_template_id");
   const newDefaultUnitPrice = numberValue(formData, "new_default_unit_price", Number.NaN);
-  const currency = normalizeCurrency(textValue(formData, "currency") || defaultCurrency);
+  const currency = requireProductPricingCurrency(textValue(formData, "currency"));
   const brandPriceListUpdateId = optionalTextValue(formData, "brand_price_list_update_id");
   const effectiveFrom = optionalTextValue(formData, "effective_from");
   const note = optionalTextValue(formData, "note");
@@ -1632,35 +1657,16 @@ export async function updateProductTemplateDefaultPrice(formData: FormData) {
     }
   }
 
-  const { error: historyError } = await supabase.from("product_template_price_history").insert({
-    product_template_id: template.id,
-    brand_id: template.brand_id,
-    brand_price_list_update_id: brandPriceListUpdateId,
-    old_default_unit_price: template.default_unit_price,
-    new_default_unit_price: newDefaultUnitPrice,
-    currency,
-    effective_from: effectiveFrom,
-    note,
-    changed_by: user.id,
+  const { error: updateError } = await supabase.rpc("write_product_price_with_history_at_version", {
+    p_template_id: template.id,
+    p_expected_version: expectedVersion,
+    p_mode: "default",
+    p_payload: { default_unit_price: newDefaultUnitPrice, currency },
+    p_history: { brand_price_list_update_id: brandPriceListUpdateId, effective_from: effectiveFrom, note },
   });
 
-  if (historyError) {
-    console.error("PRODUCT TEMPLATE PRICE HISTORY ERROR", historyError.message);
-    redirectWithMessageToPath(redirectPath, "Product template price history could not be saved.");
-  }
-
-  const { error: updateError } = await supabase
-    .from("product_templates")
-    .update({
-      default_unit_price: newDefaultUnitPrice,
-      currency,
-      last_price_checked_at: new Date().toISOString(),
-      last_price_checked_by: user.id,
-      ...(note ? { price_check_note: note } : {}),
-    })
-    .eq("id", template.id);
-
   if (updateError) {
+    if (updateError.code === "P0001") redirectWithMessageToPath(redirectPath, pricingConflictMessage);
     console.error("PRODUCT TEMPLATE PRICE UPDATE ERROR", updateError.message);
     redirectWithMessageToPath(redirectPath, "Product template source price could not be updated.");
   }
@@ -1700,6 +1706,8 @@ export async function updateProductTemplateDefaultPrice(formData: FormData) {
 export async function updateProductTemplateDetailPrice(formData: FormData) {
   const { user, displayName } = await requireProductLibraryManager();
   const redirectPath = returnPath(formData);
+  const expectedVersion = expectedPricingVersion(formData.get("expected_pricing_version"));
+  if (expectedVersion === null) redirectWithMessageToPath(redirectPath, pricingConflictMessage);
   const productTemplateId = textValue(formData, "product_template_id");
   const sourceTable = detailPriceSourceValue(textValue(formData, "source_table"));
   const sourceRecordId = textValue(formData, "source_record_id");
@@ -1721,7 +1729,7 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
     redirectWithMessageToPath(redirectPath, "Template, source row, price field, and valid new price are required.");
   }
 
-  const normalizedCurrency = currency ? normalizeCurrency(currency) : null;
+  const normalizedCurrency = currency ? requireProductPricingCurrency(currency) : null;
   const supabase = await createClient();
   const { data: template, error: templateError } = await supabase
     .from("product_templates")
@@ -1806,46 +1814,21 @@ export async function updateProductTemplateDetailPrice(formData: FormData) {
     updatePayload = { [jsonColumn]: updated.rows };
   }
 
-  const { error: historyError } = await supabase.from("product_template_detail_price_history").insert({
-    product_template_id: template.id,
-    brand_id: template.brand_id,
-    brand_price_list_update_id: brandPriceListUpdateId,
-    source_table: sourceTable,
-    source_record_id: sourceRecordId,
-    price_field: priceField,
-    old_price: oldPrice,
-    new_price: newPrice,
-    currency: normalizedCurrency,
-    effective_from: effectiveFrom,
-    note,
-    changed_by: user.id,
+  assertProductPricingCurrencies(updatePayload);
+  const { error: priceWriteError } = await supabase.rpc("write_product_price_with_history_at_version", {
+    p_template_id: template.id,
+    p_expected_version: expectedVersion,
+    p_mode: "detail",
+    p_payload: updatePayload,
+    p_history: {
+      brand_price_list_update_id: brandPriceListUpdateId, source_table: sourceTable, source_record_id: sourceRecordId,
+      price_field: priceField, old_price: oldPrice, new_price: newPrice, currency: normalizedCurrency, effective_from: effectiveFrom, note,
+    },
   });
-
-  if (historyError) {
-    console.error("DETAIL PRICE HISTORY ERROR", historyError.message);
-    redirectWithMessageToPath(redirectPath, "Detail price history could not be saved.");
-  }
-
-  if (sourceTable === "product_components") {
-    const { error: componentUpdateError } = await supabase
-      .from("product_components")
-      .update(updatePayload)
-      .eq("id", componentSourceId);
-
-    if (componentUpdateError) {
-      console.error("DETAIL PRICE COMPONENT UPDATE ERROR", componentUpdateError.message);
-      redirectWithMessageToPath(redirectPath, "Component source price could not be updated.");
-    }
-  } else {
-    const { error: jsonUpdateError } = await supabase
-      .from("product_templates")
-      .update(updatePayload)
-      .eq("id", template.id);
-
-    if (jsonUpdateError) {
-      console.error("DETAIL PRICE JSON UPDATE ERROR", jsonUpdateError.message);
-      redirectWithMessageToPath(redirectPath, "Template detail source price could not be updated.");
-    }
+  if (priceWriteError) {
+    if (priceWriteError.code === "P0001") redirectWithMessageToPath(redirectPath, pricingConflictMessage);
+    logServerActionError("DETAIL PRICE ATOMIC WRITE ERROR", priceWriteError, { recordId: template.id });
+    redirectWithMessageToPath(redirectPath, "Template detail source price and history could not be updated.");
   }
 
   await createAuditLog(supabase, {
@@ -2674,6 +2657,8 @@ export async function updateProductTemplateImageSettings(formData: FormData) {
 
 export async function createProductComponent(formData: FormData) {
   const { user } = await requireProductLibraryManager();
+  const expectedVersion = expectedPricingVersion(formData.get("expected_pricing_version"));
+  if (expectedVersion === null) redirectWithMessage(pricingConflictMessage);
   const payload = componentPayload(formData, user.id);
 
   if (
@@ -2707,10 +2692,13 @@ export async function createProductComponent(formData: FormData) {
     redirectWithMessage("Template was not found.");
   }
 
-  const { error } = await supabase.from("product_components").insert(payload);
+  const { error } = await supabase.rpc("write_product_component_at_version", {
+    p_template_id: payload.template_id, p_expected_version: expectedVersion, p_operation: "create", p_payload: payload,
+  });
 
   if (error) {
     console.error("CREATE PRODUCT COMPONENT ERROR", error.message);
+    if (error.code === "P0001") redirectWithMessage(pricingConflictMessage);
     redirectWithMessage("Template option could not be created.");
   }
 
@@ -2720,6 +2708,8 @@ export async function createProductComponent(formData: FormData) {
 
 export async function updateProductComponent(formData: FormData) {
   await requireProductLibraryManager();
+  const expectedVersion = expectedPricingVersion(formData.get("expected_pricing_version"));
+  if (expectedVersion === null) redirectWithMessage(pricingConflictMessage);
   const id = textValue(formData, "id");
   const payload = componentPayload(formData);
 
@@ -2740,13 +2730,13 @@ export async function updateProductComponent(formData: FormData) {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("product_components")
-    .update(payload)
-    .eq("id", id);
+  const { error } = await supabase.rpc("write_product_component_at_version", {
+    p_template_id: payload.template_id, p_expected_version: expectedVersion, p_operation: "update", p_component_id: id, p_payload: payload,
+  });
 
   if (error) {
     console.error("PRODUCT COMPONENT UPDATE ERROR", error.message);
+    if (error.code === "P0001") redirectWithMessage(pricingConflictMessage);
     redirectWithMessage("Template option could not be updated.");
   }
 
@@ -2756,20 +2746,23 @@ export async function updateProductComponent(formData: FormData) {
 
 export async function deactivateProductComponent(formData: FormData) {
   await requireProductLibraryManager();
+  const expectedVersion = expectedPricingVersion(formData.get("expected_pricing_version"));
+  if (expectedVersion === null) redirectWithMessage(pricingConflictMessage);
+  const templateId = textValue(formData, "template_id");
   const id = textValue(formData, "id");
 
-  if (!id) {
+  if (!id || !templateId) {
     redirectWithMessage("Option id is required.");
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("product_components")
-    .update({ is_active: false })
-    .eq("id", id);
+  const { error } = await supabase.rpc("write_product_component_at_version", {
+    p_template_id: templateId, p_expected_version: expectedVersion, p_operation: "deactivate", p_component_id: id,
+  });
 
   if (error) {
     console.error("PRODUCT COMPONENT DEACTIVATE ERROR", error.message);
+    if (error.code === "P0001") redirectWithMessage(pricingConflictMessage);
     redirectWithMessage("Template option could not be deactivated.");
   }
 
@@ -2779,6 +2772,8 @@ export async function deactivateProductComponent(formData: FormData) {
 
 export async function deactivateProductComponentGroup(formData: FormData) {
   await requireProductLibraryManager();
+  const expectedVersion = expectedPricingVersion(formData.get("expected_pricing_version"));
+  if (expectedVersion === null) redirectWithMessage(pricingConflictMessage);
   const templateId = textValue(formData, "template_id");
   const optionType = textValue(formData, "option_type");
   const componentGroup = textValue(formData, "component_group");
@@ -2788,16 +2783,14 @@ export async function deactivateProductComponentGroup(formData: FormData) {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("product_components")
-    .update({ is_active: false })
-    .eq("template_id", templateId)
-    .eq("option_type", optionType)
-    .eq("component_group", componentGroup)
-    .eq("is_active", true);
+  const { error } = await supabase.rpc("write_product_component_at_version", {
+    p_template_id: templateId, p_expected_version: expectedVersion, p_operation: "deactivate_group",
+    p_payload: { option_type: optionType, component_group: componentGroup },
+  });
 
   if (error) {
     console.error("PRODUCT COMPONENT GROUP DEACTIVATE ERROR", error.message);
+    if (error.code === "P0001") redirectWithMessage(pricingConflictMessage);
     redirectWithMessage("Template option group could not be deactivated.");
   }
 

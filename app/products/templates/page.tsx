@@ -259,6 +259,7 @@ type ProductTemplateImageSettings = {
 };
 
 type ProductTemplate = {
+  pricing_version: number | string;
   id: string;
   brand_id: string;
   main_category_id: string | null;
@@ -941,9 +942,11 @@ function OptionTypeSelect({ defaultValue }: { defaultValue?: string | null }) {
 
 function ComponentForm({
   templateId,
+  pricingVersion,
   component,
 }: {
   templateId: string;
+  pricingVersion: number | string;
   component?: ProductComponent;
 }) {
   return (
@@ -953,6 +956,7 @@ function ComponentForm({
     >
       {component ? <input type="hidden" name="id" value={component.id} /> : null}
       <input type="hidden" name="template_id" value={templateId} />
+      <input type="hidden" name="expected_pricing_version" value={pricingVersion} />
       <FormSection title="Option Identity">
         <OptionTypeSelect defaultValue={component?.option_type} />
         <Field
@@ -1404,7 +1408,8 @@ function ProductTemplatePriceUpdateForm({
   const activeUpdates = priceListUpdates.filter((update) => update.status === "active");
 
   return (
-    <form action={updateProductTemplateDefaultPrice} className="grid gap-2">
+    <form key={template.pricing_version} action={updateProductTemplateDefaultPrice} className="grid gap-2">
+      <input type="hidden" name="expected_pricing_version" value={template.pricing_version} />
       <input type="hidden" name="product_template_id" value={template.id} />
       <input type="hidden" name="return_to" value={returnTo} />
       <div className="rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-600">
@@ -1455,6 +1460,7 @@ function DetailPriceUpdateForm({
   priceField,
   priceListUpdates,
   productTemplateId,
+  pricingVersion,
   returnTo,
   sourceRecordId,
   sourceTable,
@@ -1465,6 +1471,7 @@ function DetailPriceUpdateForm({
   priceField: string;
   priceListUpdates: BrandPriceListUpdate[];
   productTemplateId: string;
+  pricingVersion: number | string;
   returnTo: string;
   sourceRecordId?: string | null;
   sourceTable: string;
@@ -1484,11 +1491,13 @@ function DetailPriceUpdateForm({
     <details
       className="mt-2"
       data-state-key={`template-detail-price-form-${productTemplateId}-${sourceRecordId}-${priceField}`}
+      key={pricingVersion}
     >
       <summary className="inline-flex cursor-pointer rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-900 transition hover:border-emerald-700">
         Update price
       </summary>
       <form action={updateProductTemplateDetailPrice} className="mt-2 grid gap-2 rounded-md border border-zinc-200 bg-white p-3">
+        <input type="hidden" name="expected_pricing_version" value={pricingVersion} />
         <input type="hidden" name="product_template_id" value={productTemplateId} />
         <input type="hidden" name="return_to" value={returnTo} />
         <input type="hidden" name="source_table" value={sourceTable} />
@@ -1615,7 +1624,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
   const { data: templates, error: templatesError } = await supabase
     .from("product_templates")
     .select(
-      "id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,material_suggestions,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price,is_active,lifecycle_status,last_price_checked_at,last_price_checked_by,price_check_interval_days,price_check_note,price_notes,created_at",
+      "pricing_version,id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,material_suggestions,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price,is_active,lifecycle_status,last_price_checked_at,last_price_checked_by,price_check_interval_days,price_check_note,price_notes,created_at",
     )
     .order("brand_id", { ascending: true })
     .order("template_name", { ascending: true })
@@ -3256,6 +3265,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                           defaultMainCategoryId={templateFormDefaultMainCategoryId}
                           defaultSubCategoryId={templateFormDefaultSubCategoryId}
                           existingImportDraft={quoteImportMode === "existing" ? quoteImportDraft as ClientQuotationRowImportDraft | null : null}
+                          key={template.pricing_version}
                           importDraft={quoteImportMode === "existing" ? quoteImportDraft : null}
                           importMode={quoteImportMode === "existing" ? "existing" : ""}
                           returnTo={returnTo || withHash(
@@ -3313,6 +3323,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                                         priceField="unit_price"
                                         priceListUpdates={templateBrandPriceListUpdates}
                                         productTemplateId={template.id}
+                                        pricingVersion={template.pricing_version}
                                         returnTo={templatePriceUpdatesReturnTo}
                                         sourceRecordId={component.id}
                                         sourceTable="product_components"
@@ -3346,6 +3357,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                                           priceField="default_price"
                                           priceListUpdates={templateBrandPriceListUpdates}
                                           productTemplateId={template.id}
+                                          pricingVersion={template.pricing_version}
                                           returnTo={templatePriceUpdatesReturnTo}
                                           sourceRecordId={row.id}
                                           sourceTable="product_templates.desking_size_pricing"
@@ -3357,6 +3369,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                                           priceField="additional_price"
                                           priceListUpdates={templateBrandPriceListUpdates}
                                           productTemplateId={template.id}
+                                          pricingVersion={template.pricing_version}
                                           returnTo={templatePriceUpdatesReturnTo}
                                           sourceRecordId={row.id}
                                           sourceTable="product_templates.desking_size_pricing"
@@ -3390,6 +3403,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                                         priceField="price"
                                         priceListUpdates={templateBrandPriceListUpdates}
                                         productTemplateId={template.id}
+                                        pricingVersion={template.pricing_version}
                                         returnTo={templatePriceUpdatesReturnTo}
                                         sourceRecordId={row.id}
                                         sourceTable="product_templates.variant_pricing"
@@ -3432,6 +3446,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                                               priceField={`prices.${category}`}
                                               priceListUpdates={templateBrandPriceListUpdates}
                                               productTemplateId={template.id}
+                                              pricingVersion={template.pricing_version}
                                               returnTo={templatePriceUpdatesReturnTo}
                                               sourceRecordId={row.id}
                                               sourceTable="product_templates.category_pricing"
@@ -3472,6 +3487,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                                             priceField="price"
                                             priceListUpdates={templateBrandPriceListUpdates}
                                             productTemplateId={template.id}
+                                            pricingVersion={template.pricing_version}
                                             returnTo={templatePriceUpdatesReturnTo}
                                             sourceRecordId={item.id}
                                             sourceTable="product_templates.accessory_pricing"
@@ -3767,7 +3783,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                             + Add Advanced Option
                           </summary>
                           <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 p-4 shadow-sm">
-                            <ComponentForm templateId={template.id} />
+                            <ComponentForm key={template.pricing_version} templateId={template.id} pricingVersion={template.pricing_version} />
                           </div>
                         </details>
                         <div className="space-y-4">
@@ -3789,6 +3805,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                                 </span>
                               </div>
                               <DeactivateGroupForm
+                                pricingVersion={template.pricing_version}
                                 componentGroup={groupName}
                                 optionType={optionType}
                                 templateId={template.id}
@@ -3839,7 +3856,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                                           Mark checked
                                         </PendingSubmitButton>
                                       </form>
-                                      <DeactivateOptionForm id={component.id} />
+                                      <DeactivateOptionForm id={component.id} templateId={template.id} pricingVersion={template.pricing_version} />
                                     </div>
                                   </div>
                                   <details className="mt-3">
@@ -3848,6 +3865,8 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
                                     </summary>
                                     <div className="mt-3">
                                       <ComponentForm
+                                        key={template.pricing_version}
+                                        pricingVersion={template.pricing_version}
                                         templateId={template.id}
                                         component={component}
                                       />
