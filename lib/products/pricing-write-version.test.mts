@@ -6,12 +6,13 @@ import { assertProductPricingCurrencies, expectedPricingVersion, pricingConflict
 
 const foundation = await readFile(new URL("../../supabase/migrations/20261002060146_pricing_identity_version_foundation.sql", import.meta.url), "utf8");
 const corrective = await readFile(new URL("../../supabase/migrations/20261002065310_pricing_writer_concurrency.sql", import.meta.url), "utf8");
+const supplierDefault = await readFile(new URL("../../supabase/migrations/20261003141259_supplier_default_price_writer.sql", import.meta.url), "utf8");
 const a = "00000000-0000-0000-0000-000000000001";
 const b = "00000000-0000-0000-0000-000000000002";
 const c = "00000000-0000-0000-0000-000000000003";
 const conflict = /This Product Template changed\. Reload before saving\./;
 
-async function fixture() {
+async function fixture(includeSupplierDefault = true) {
   const db = new PGlite();
   await db.exec(`
     create role authenticated; create schema auth;
@@ -37,6 +38,7 @@ async function fixture() {
   `);
   await db.exec(foundation);
   await db.exec(corrective);
+  if (includeSupplierDefault) await db.exec(supplierDefault);
   return db;
 }
 async function version(db: PGlite, id = a) {
@@ -116,9 +118,145 @@ test("a failed default mutation cannot produce history", async () => {
   } finally { await db.close(); }
 });
 
+async function seedPriceCheckMetadata(db: PGlite) {
+  await db.query("update product_templates set last_price_checked_at='2026-01-02T03:04:05Z',last_price_checked_by=$1,price_check_note='Previously checked' where id=$2", [b,a]);
+  await db.query("update brands set last_price_list_checked_at='2026-01-01T00:00:00Z' where id=$1", [a]);
+}
+async function priceCheckMetadata(db: PGlite) {
+  return (await db.query<{ last_price_checked_at: Date | null; last_price_checked_by: string | null; price_check_note: string | null }>("select last_price_checked_at,last_price_checked_by,price_check_note from product_templates where id=$1", [a])).rows[0];
+}
+async function brandReviewState(db: PGlite) {
+  return (await db.query("select row_to_json(b) as data from brands b union all select row_to_json(u) from brand_price_list_updates u")).rows;
+}
+
+test("supplier_default writes one atomic history row and preserves Product and Brand review metadata", async () => {
+  const db = await fixture();
+  try {
+    await seedPriceCheckMetadata(db);
+    const checked = await priceCheckMetadata(db), brandState = await brandReviewState(db);
+    const history = { brand_price_list_update_id:c, effective_from:"2026-10-03", note:"Supplier source: verified list; batch: batch; match: match" };
+    assert.equal(await manual(db,0,"supplier_default",{default_unit_price:20,currency:"USD"},history),1);
+    assert.equal(await version(db),1);
+    assert.deepEqual((await db.query("select default_unit_price::int,currency from product_templates where id=$1",[a])).rows[0],{default_unit_price:20,currency:"USD"});
+    assert.deepEqual(await priceCheckMetadata(db),checked);
+    assert.deepEqual(await brandReviewState(db),brandState);
+    assert.equal(await historyCount(db),1);
+    assert.deepEqual((await db.query("select product_template_id,brand_id,brand_price_list_update_id,old_default_unit_price::int,new_default_unit_price::int,currency,effective_from::text,note,changed_by from product_template_price_history")).rows[0],{
+      product_template_id:a,brand_id:a,brand_price_list_update_id:c,old_default_unit_price:10,new_default_unit_price:20,currency:"USD",effective_from:"2026-10-03",note:history.note,changed_by:a,
+    });
+    assert.equal(await historyCount(db,true),0);
+  } finally { await db.close(); }
+});
+
+test("manual default still updates check metadata and preserves its empty-note behavior", async () => {
+  const db = await fixture();
+  try {
+    await seedPriceCheckMetadata(db);
+    const before = await priceCheckMetadata(db);
+    assert.equal(await manual(db,0,"default",{default_unit_price:20,currency:"EUR"},{note:"Manual review"}),1);
+    const after = await priceCheckMetadata(db);
+    assert.notDeepEqual(after.last_price_checked_at,before.last_price_checked_at);
+    assert.equal(after.last_price_checked_by,a);
+    assert.equal(after.price_check_note,"Manual review");
+    await manual(db,1,"default",{default_unit_price:30,currency:"EUR"},{note:""});
+    assert.equal((await priceCheckMetadata(db)).price_check_note,"Manual review");
+    await manual(db,2,"default",{default_unit_price:40,currency:"EUR"});
+    assert.equal((await priceCheckMetadata(db)).price_check_note,"Manual review");
+    assert.equal(await historyCount(db),3);
+  } finally { await db.close(); }
+});
+
+test("supplier_default rejects missing/stale versions including repeat application without another history row", async () => {
+  const db = await fixture();
+  try {
+    await seedPriceCheckMetadata(db);
+    const before = await priceCheckMetadata(db);
+    for (const expected of [null,99]) await assert.rejects(manual(db,expected,"supplier_default"),conflict);
+    assert.equal(await version(db),0);
+    assert.equal(await historyCount(db),0);
+    assert.equal((await db.query<{price:number}>("select default_unit_price::int as price from product_templates where id=$1",[a])).rows[0].price,10);
+    assert.equal(await manual(db,0,"supplier_default"),1);
+    await assert.rejects(manual(db,0,"supplier_default",{default_unit_price:30,currency:"EUR"}),conflict);
+    assert.equal(await version(db),1);
+    assert.equal(await historyCount(db),1);
+    assert.equal((await db.query<{price:number}>("select default_unit_price::int as price from product_templates where id=$1",[a])).rows[0].price,20);
+    assert.deepEqual(await priceCheckMetadata(db),before);
+  } finally { await db.close(); }
+});
+
+test("supplier_default validates currency, amount, object shape, extra fields and Brand-list ownership", async () => {
+  const db = await fixture();
+  try {
+    const invalid = [null,[],{}, {default_unit_price:20}, {currency:"EUR"}, {default_unit_price:null,currency:"EUR"}, {default_unit_price:-1,currency:"EUR"}, {default_unit_price:"NaN",currency:"EUR"}, {default_unit_price:"Infinity",currency:"EUR"}, {default_unit_price:"20",currency:"EUR"}, {default_unit_price:20,currency:null}, {default_unit_price:20,currency:"GBP"}, {default_unit_price:20,currency:"eur"}, {default_unit_price:20,currency:"EUR",last_price_checked_at:"2026-10-03"}];
+    for (const payload of invalid) await assert.rejects(manual(db,0,"supplier_default",payload),/Invalid/);
+    await db.query("insert into brand_price_list_updates values($1,$2,'active')",[b,b]);
+    await assert.rejects(manual(db,0,"supplier_default",{default_unit_price:20,currency:"EUR"},{brand_price_list_update_id:b}),/could not be loaded/);
+    assert.equal(await version(db),0);
+    assert.equal(await historyCount(db),0);
+    for (const currency of ["AED","EUR","USD"]) {
+      const current = await version(db);
+      assert.equal(await manual(db,current,"supplier_default",{default_unit_price:20+current,currency}),current+1);
+    }
+    const history = (await db.query<{ brand_price_list_update_id: string | null; effective_from: string | null }>("select brand_price_list_update_id,effective_from from product_template_price_history")).rows;
+    assert.ok(history.every((row: { brand_price_list_update_id: string | null; effective_from: string | null }) => row.brand_price_list_update_id === null && row.effective_from === null));
+  } finally { await db.close(); }
+});
+
+test("supplier_default history failure rolls back price, version and metadata", async () => {
+  const db = await fixture();
+  try {
+    await seedPriceCheckMetadata(db);
+    const before = (await db.query("select row_to_json(t) as data from product_templates t where id=$1",[a])).rows;
+    await assert.rejects(manual(db,0,"supplier_default",{default_unit_price:20,currency:"EUR"},{note:"block"}),/check constraint/);
+    assert.deepEqual((await db.query("select row_to_json(t) as data from product_templates t where id=$1",[a])).rows,before);
+    assert.equal(await historyCount(db),0);
+  } finally { await db.close(); }
+});
+
+test("supplier_default keeps active-user and invoker/RLS enforcement", async () => {
+  const db = await fixture();
+  try {
+    await db.exec("create or replace function public.current_user_is_active() returns boolean language sql as 'select false';");
+    await assert.rejects(manual(db,0,"supplier_default"),/insufficient_privilege/);
+    await db.exec(`create or replace function public.current_user_is_active() returns boolean language sql as 'select true';
+      grant usage on schema auth to authenticated;
+      grant select,update on product_templates to authenticated;
+      grant select,insert on product_template_price_history to authenticated;
+      alter table product_templates enable row level security;
+      alter table product_template_price_history enable row level security;
+      create policy template_read on product_templates for select to authenticated using(true);
+      create policy template_write on product_templates for update to authenticated using(true) with check(true);
+      create policy history_read on product_template_price_history for select to authenticated using(true);
+      create policy history_write on product_template_price_history for insert to authenticated with check(false);
+      set role authenticated;`);
+    await assert.rejects(manual(db,0,"supplier_default"),/row-level security/);
+    assert.equal(await version(db),0);
+    assert.equal(await historyCount(db),0);
+    await db.exec("reset role; alter policy history_write on product_template_price_history with check(true); set role authenticated;");
+    assert.equal(await manual(db,0,"supplier_default"),1);
+    await db.exec("reset role");
+  } finally { await db.close(); }
+});
+
+test("forward writer migration preserves function identity, permissions and data and can be reapplied", async () => {
+  const db = await fixture(false);
+  try {
+    await seedPriceCheckMetadata(db);
+    const state = async () => (await db.query("select row_to_json(t) as data from product_templates t union all select row_to_json(c) from product_components c union all select row_to_json(b) from brands b union all select row_to_json(u) from brand_price_list_updates u union all select row_to_json(h) from product_template_price_history h union all select row_to_json(h) from product_template_detail_price_history h")).rows;
+    const contract = async () => (await db.query("select oid,proowner,proacl,prosecdef,proconfig,pg_get_function_identity_arguments(oid) as arguments,pg_get_function_result(oid) as result from pg_proc where oid='public.write_product_price_with_history_at_version(uuid,bigint,text,jsonb,jsonb)'::regprocedure")).rows;
+    const beforeState = await state(), beforeContract = await contract();
+    await db.exec(supplierDefault);
+    await db.exec(supplierDefault);
+    assert.deepEqual(await state(),beforeState);
+    assert.deepEqual(await contract(),beforeContract);
+  } finally { await db.close(); }
+});
+
 test("JSON detail writers guard all four columns and commit history together", async () => {
   const db = await fixture();
   try {
+    await seedPriceCheckMetadata(db);
+    const checked = await priceCheckMetadata(db), brandState = await brandReviewState(db);
     for (const column of ["variant_pricing","category_pricing","desking_size_pricing","accessory_pricing"]) {
       const v = await version(db);
       const rows = [{id:"group",items:[{id:"row",currency:"EUR",price:20,prices:{"Cat A":20}}]}];
@@ -131,6 +269,8 @@ test("JSON detail writers guard all four columns and commit history together", a
       assert.deepEqual((await db.query<Record<string, unknown>>(`select ${column} from product_templates where id=$1`,[a])).rows[0][column],rows);
     }
     assert.equal(await historyCount(db,true),4);
+    assert.deepEqual(await priceCheckMetadata(db),checked);
+    assert.deepEqual(await brandReviewState(db),brandState);
   } finally { await db.close(); }
 });
 
