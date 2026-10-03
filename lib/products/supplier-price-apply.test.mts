@@ -11,7 +11,7 @@ import type { PriceMatch, SourceIdentity, SourceVersion, ReviewBatch } from "./s
 
 const a = "00000000-0000-0000-0000-000000000001", b = "00000000-0000-0000-0000-000000000002", c = "00000000-0000-0000-0000-000000000003";
 const fresh = /This Product Template changed\. Build a fresh Supplier comparison before applying\./;
-const migrations = await Promise.all(["20261002060146_pricing_identity_version_foundation.sql", "20261002065310_pricing_writer_concurrency.sql", "20261003141259_supplier_default_price_writer.sql"].map((name) => readFile(new URL(`../../supabase/migrations/${name}`, import.meta.url), "utf8")));
+const migrations = await Promise.all(["20261002060146_pricing_identity_version_foundation.sql", "20261002065310_pricing_writer_concurrency.sql", "20261003141259_supplier_default_price_writer.sql", "20261003154849_detail_history_dynamic_price_fields.sql", "20261003170000_supplier_shared_price_writer.sql"].map((name) => readFile(new URL(`../../supabase/migrations/${name}`, import.meta.url), "utf8")));
 const detailHistory = await readFile(new URL("../../supabase/migrations/038_product_template_detail_price_history.sql", import.meta.url), "utf8");
 const dynamicHistoryFields = await readFile(new URL("../../supabase/migrations/20261003154849_detail_history_dynamic_price_fields.sql", import.meta.url), "utf8");
 
@@ -55,8 +55,7 @@ async function fixture(includeDynamicHistoryFields = true) {
     insert into product_templates(id,brand_id,template_name,item_code,last_price_checked_at,last_price_checked_by,price_check_note) values('${a}','${a}','Existing','SIMPLE','2026-01-02','${b}','Earlier review');`);
   // Use the actual production history schema so constraint regressions cannot be hidden.
   await db.exec(detailHistory);
-  for (const sql of migrations) await db.exec(sql);
-  if (includeDynamicHistoryFields) await db.exec(dynamicHistoryFields);
+  for (const sql of migrations.filter((sql) => includeDynamicHistoryFields || !sql.includes("price_field_check check ("))) await db.exec(sql);
   await db.exec("update brands set stored_price_basis='list'");
   const source: SourceVersion = { id: b, brand_id: a, title: "Supplier list", status: "imported", currency: "EUR", basis: "list", effective_from: "2026-10-03", profile: { full_code_column: "CODE", strategy: "exact", currency: "EUR", basis: "list", price_columns: [{ column: "PRICE", price_field: "unit_price" }] }, filename: "source.csv", file_hash: "a".repeat(64), source_type: "csv", expected_rows: 1, expected_cells: 1, expected_chunks: 1, stored_rows: 1, stored_cells: 1, identity_count: 1, original_reference: null, working_reference: null, received_at: null };
   const identity: SourceIdentity = { key: "source-key", code: "SIMPLE", price_field: "unit_price", dimension: "", finishes: [], price: 110, currency: "EUR", row_keys: ["row"], issues: [] };
@@ -64,6 +63,7 @@ async function fixture(includeDynamicHistoryFields = true) {
     match: { batch_id: c, key: "match-key", data: { key: "match-key", source: structuredClone(identity), targets: [], classification: "increased", candidate_shared: false }, supplier_price_decisions: { decision: "reviewed" } }, identity: { source_id: b, key: identity.key, data: identity } };
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   let beforeRpc: (() => Promise<void>) | undefined;
+  const bindings: Array<Record<string, unknown>> = [];
   // Test transport: authoritative Product reads and writer RPC execute in real PostgreSQL.
   // Supplier records are immutable fixtures; filters implement the action's ownership lookups.
   const client = {
@@ -75,6 +75,7 @@ async function fixture(includeDynamicHistoryFields = true) {
         else if (table === "supplier_source_versions") rows = [state.source];
         else if (table === "supplier_price_matches") rows = [state.match];
         else if (table === "supplier_source_identities") rows = [state.identity];
+        else if (table === "supplier_price_bindings") rows = bindings;
         else if (table === "product_components") rows = (await db.query<Record<string, unknown>>("select c.*,t.brand_id as \"product_templates.brand_id\" from product_components c join product_templates t on t.id=c.template_id order by c.id")).rows;
         else if (["product_templates", "brands"].includes(table)) rows = (await db.query<Record<string, unknown>>(`select * from ${table} order by id`)).rows;
         else throw Error(`Unexpected table: ${table}`);
@@ -91,6 +92,10 @@ async function fixture(includeDynamicHistoryFields = true) {
     },
     async rpc(name: string, args: Record<string, unknown>) {
       calls.push({ name, args }); if (beforeRpc) await beforeRpc();
+      if (name === "apply_supplier_shared_price_at_versions") {
+        try { return { data: (await db.query<{ result: unknown }>("select public.apply_supplier_shared_price_at_versions($1) result", [JSON.stringify(args.p_operations)])).rows[0].result, error: null }; }
+        catch (error) { return { data: null, error: { message: (error as Error).message } }; }
+      }
       assert.equal(name, "write_product_price_with_history_at_version");
       try { const result = await db.query<{ version: number }>("select public.write_product_price_with_history_at_version($1,$2,$3,$4,$5) version", [args.p_template_id, args.p_expected_version, args.p_mode, JSON.stringify(args.p_payload), JSON.stringify(args.p_history)]); return { data: result.rows[0].version, error: null }; }
       catch (error) { return { data: null, error: { message: (error as Error).message } }; }
@@ -105,7 +110,7 @@ async function fixture(includeDynamicHistoryFields = true) {
   const apply = () => supplierApplyReviewedPrice(client, c, "match-key");
   const version = async () => (await db.query<{ pricing_version: number }>("select pricing_version from product_templates where id=$1", [a])).rows[0].pricing_version;
   const untouched = async () => (await db.query("select jsonb_build_object('checked_at',last_price_checked_at,'checked_by',last_price_checked_by,'note',price_check_note) data from product_templates union all select to_jsonb(b) from brands b union all select to_jsonb(u) from brand_price_list_updates u union all select to_jsonb(q) from quotations q")).rows;
-  return { db, state, client, calls, compare, apply, version, untouched, beforeRpc(work: () => Promise<void>) { beforeRpc = work; } };
+  return { db, state, client, calls, bindings, compare, apply, version, untouched, beforeRpc(work: () => Promise<void>) { beforeRpc = work; } };
 }
 
 test("all eligibility and ownership failures refuse the writer without changing Products", async () => {
@@ -224,7 +229,7 @@ test("component Apply changes only price and advances its parent once with detai
     await f.compare("COMP"); const version = await f.version(), before = await f.untouched();
     const component = (await f.db.query<Record<string, unknown>>("select * from product_components")).rows[0];
     await f.apply(); assert.equal(await f.version(), version + 1);
-    assert.deepEqual((await f.db.query("select * from product_components")).rows[0], { ...component, unit_price: "110" });
+    assert.deepEqual((await f.db.query("select * from product_components")).rows[0], { ...(component as object), unit_price: "110" });
     const history = (await f.db.query("select old_price::int,new_price::int,source_table,source_record_id,price_field,currency from product_template_detail_price_history")).rows[0];
     assert.deepEqual(history, { old_price: 100, new_price: 110, source_table: "product_components", source_record_id: b, price_field: "unit_price", currency: "EUR" });
     assert.deepEqual(await f.untouched(), before); await assert.rejects(f.apply(), fresh);
@@ -331,5 +336,149 @@ test("review UI shows explicit basis blocks and reserves Apply for one reviewed 
     assert.doesNotMatch(render({ matches: [{ ...match, decision: undefined }] }), />Apply price</);
     assert.doesNotMatch(render({ matches: [{ ...match, targets: [...match.targets, match.targets[0]] }] }), />Apply price</);
     for (const classification of ["unchanged", "shared", "ambiguous", "baseline_drift", "needs_dimension_mapping", "unmatched", "referenced_companion", "invalid_source", "target_not_represented"] as const) assert.doesNotMatch(render({ matches: [{ ...match, classification }] }), />Apply price</, classification);
+  } finally { await f.db.close(); }
+});
+
+// ---- Phase 2B: intentional shared Apply through the transactional multi-target RPC ----
+const d = "00000000-0000-0000-0000-000000000004", e = "00000000-0000-0000-0000-000000000005";
+type SharedOp = { template_id: string; expected_version: string; mode: string; payload: Record<string, unknown>; history: Record<string, unknown> };
+type Fixture = Awaited<ReturnType<typeof fixture>>;
+const matrixRoots = (code: string, columns = ["c1"]) => [{ id: "g", price_columns: columns.map((id) => ({ id, label: id, dimension_code: id })), items: [{ id: "r", supplier_price_list_code: code, prices: { ...Object.fromEntries(columns.map((id) => [id, 100])), keep: 7 }, note: "keep" }] }];
+async function sharedFixture(code: string, setup: (f: Fixture) => Promise<void> = async () => {}) {
+  const f = await fixture();
+  await f.db.exec(`update product_templates set item_code='${code}'`);
+  await f.db.exec(`insert into product_templates(id,brand_id,template_name,item_code) values('${d}','${a}','Second','${code}')`);
+  await setup(f);
+  const { targets } = await supplierBrandTargets(f.client, a);
+  const picked = targets.filter((target) => target.code === code);
+  f.state.identity.data.code = code; f.state.identity.data.price_field = "unit_price"; f.state.match.data.source = structuredClone(f.state.identity.data);
+  f.state.match.data.targets = picked; f.state.match.data.classification = "shared"; f.state.match.data.comparison = "increased";
+  f.bindings.push({ id: c, brand_id: a, code, price_field: "unit_price", source_dimension: "", kind: "shared", confirmed: true, target_keys: picked.map((target) => target.key) });
+  return { f, picked };
+}
+const sharedCalls = (f: Fixture) => f.calls.filter((call) => call.name === "apply_supplier_shared_price_at_versions");
+
+test("shared Apply refuses every ineligible binding, basis, currency, stale and forged case before any write", async () => {
+  const { f, picked } = await sharedFixture("SHARED");
+  try {
+    const original = structuredClone(f.state), bindings = structuredClone(f.bindings), before = await f.untouched();
+    const cases: Array<[string, () => Promise<void> | void, RegExp]> = [
+      ["missing binding", () => { f.bindings.length = 0; }, /confirmed durable shared binding/],
+      ["binding kind", () => { f.bindings[0].kind = "alias"; }, /confirmed durable shared binding/],
+      ["disambiguation kind", () => { f.bindings[0].kind = "disambiguation"; }, /confirmed durable shared binding/],
+      ["unconfirmed", () => { f.bindings[0].confirmed = false; }, /confirmed durable shared binding/],
+      ["different dimension binding", () => { f.bindings[0].source_dimension = "other"; }, /confirmed durable shared binding/],
+      ["binding has an extra target", () => { (f.bindings[0].target_keys as string[]).push("extra"); }, /no longer matches/],
+      ["binding is missing a target", () => { (f.bindings[0].target_keys as string[]).pop(); }, /no longer matches/],
+      ["binding repeats a target", () => { f.bindings[0].target_keys = [picked[0].key, picked[0].key]; }, /no longer matches/],
+      ["forged snapshot target set", () => { f.state.match.data.targets = [picked[0], { ...picked[1], key: "forged" }]; }, /no longer matches/],
+      ["duplicate snapshot target", () => { f.state.match.data.targets = [picked[0], picked[0]]; }, /must be unique/],
+      ["single shared target", () => { f.state.match.data.targets = [picked[0]]; }, /Only changed/],
+      ["unknown source basis", () => { f.state.source.basis = "unknown"; }, /basis must be confirmed/],
+      ["unknown Brand basis", async () => { await f.db.exec("update brands set stored_price_basis='unknown'"); }, /basis must be confirmed/],
+      ["basis mismatch", () => { f.state.source.basis = "net"; }, /does not match/],
+      ["one currency mismatch", () => { f.state.match.data.targets = [picked[0], { ...picked[1], currency: "USD" }]; }, /currencies must match/],
+      ["not reviewed", () => { f.state.match.supplier_price_decisions = { decision: "skip" }; }, /Review this Supplier/],
+      ["one stale pricing_version", () => { f.state.match.data.targets = [picked[0], { ...picked[1], pricing_version: "9" }]; }, fresh],
+      ["one stale price", () => { f.state.match.data.targets = [picked[0], { ...picked[1], price: 99 }]; }, fresh],
+    ];
+    for (const [name, change, message] of cases) {
+      Object.assign(f.state, structuredClone(original)); f.bindings.splice(0, f.bindings.length, ...structuredClone(bindings)); await f.db.exec("update brands set stored_price_basis='list'");
+      await change(); await assert.rejects(f.apply(), message, name); assert.equal(f.calls.length, 0, name);
+    }
+    await f.db.exec("update brands set stored_price_basis='list'");
+    assert.deepEqual(await f.untouched(), before);
+    assert.equal((await f.db.query("select * from product_template_price_history")).rows.length, 0);
+  } finally { await f.db.close(); }
+});
+
+test("two cross-Template targets build operations, call the RPC once, and reject a repeat", async () => {
+  const { f } = await sharedFixture("SHARED");
+  try {
+    const before = await f.untouched(), snapshots = structuredClone(f.state);
+    const result = await f.apply();
+    assert.equal(result.message, "Shared price applied to 2 targets. Build a fresh comparison to continue reviewing these targets.");
+    assert.equal(f.calls.length, 1); assert.equal(sharedCalls(f).length, 1);
+    const operations = sharedCalls(f)[0].args.p_operations as SharedOp[];
+    assert.deepEqual(Object.keys(sharedCalls(f)[0].args), ["p_operations"]);
+    assert.deepEqual(operations.map((operation) => [operation.template_id, operation.mode, operation.payload]), [[a, "supplier_default", { default_unit_price: 110, currency: "EUR" }], [d, "supplier_default", { default_unit_price: 110, currency: "EUR" }]]);
+    assert.ok(operations.every((operation) => operation.history.note === "Supplier source: Supplier list; batch: " + c + "; match: match-key; shared apply" && operation.history.brand_price_list_update_id === c && operation.history.effective_from === "2026-10-03"));
+    assert.deepEqual((await f.db.query("select id,default_unit_price::int price,pricing_version from product_templates order by id")).rows, [{ id: a, price: 110, pricing_version: 1 }, { id: d, price: 110, pricing_version: 1 }]);
+    assert.equal((await f.db.query("select * from product_template_price_history")).rows.length, 2);
+    assert.deepEqual(await f.untouched(), before); assert.deepEqual(f.state, snapshots);
+    await assert.rejects(f.apply(), fresh); assert.equal(f.calls.length, 1);
+    assert.equal((await f.db.query("select * from product_template_price_history")).rows.length, 2);
+  } finally { await f.db.close(); }
+});
+
+test("two matrix targets on one Template build cumulative payloads from one baseline version", async () => {
+  const { f } = await sharedFixture("MAT", async (setup) => {
+    await setup.db.exec("update product_templates set item_code=null");
+    await setup.db.query("update product_templates set category_pricing=$1 where id=$2", [JSON.stringify(matrixRoots("MAT", ["c1", "c2"])), a]);
+    await setup.db.exec(`delete from product_templates where id='${d}'`);
+  });
+  try {
+    const before = await f.untouched(), baseline = await f.version();
+    await f.apply();
+    const [first, second] = sharedCalls(f)[0].args.p_operations as SharedOp[];
+    assert.equal(first.expected_version, second.expected_version);
+    const prices = (operation: SharedOp) => (operation.payload.category_pricing as Array<{ items: Array<{ prices: unknown }> }>)[0].items[0].prices;
+    assert.deepEqual(prices(first), { c1: 110, c2: 100, keep: 7 }); assert.deepEqual(prices(second), { c1: 110, c2: 110, keep: 7 });
+    assert.deepEqual([first.history.price_field, second.history.price_field], ["prices.c1", "prices.c2"]);
+    assert.deepEqual((await f.db.query<{ category_pricing: Array<{ items: unknown[] }> }>("select category_pricing from product_templates where id=$1", [a])).rows[0].category_pricing[0].items[0], { id: "r", supplier_price_list_code: "MAT", prices: { c1: 110, c2: 110, keep: 7 }, note: "keep" });
+    assert.equal(await f.version(), baseline + 2);
+    assert.deepEqual((await f.db.query("select price_field,old_price::int old,new_price::int new from product_template_detail_price_history order by price_field")).rows, [{ price_field: "prices.c1", old: 100, new: 110 }, { price_field: "prices.c2", old: 100, new: 110 }]);
+    assert.deepEqual(await f.untouched(), before);
+    await assert.rejects(f.apply(), fresh); assert.equal(sharedCalls(f).length, 1);
+  } finally { await f.db.close(); }
+});
+
+test("scalar + matrix + component targets apply atomically; a final history failure rolls all back", async () => {
+  const { f } = await sharedFixture("MIX", async (setup) => {
+    await setup.db.query("update product_templates set category_pricing=$1 where id=$2", [JSON.stringify(matrixRoots("MIX")), d]);
+    await setup.db.exec(`update product_templates set item_code=null where id='${d}'`);
+    await setup.db.query("insert into product_components values($1,$2,'other','Options','MIX','Component','Keep',2,'Pc',100,'EUR',true,false,4,true,'Keep note','{}',$2)", [e, a]);
+  });
+  try {
+    const stable = async () => (await f.untouched()).map((row) => JSON.stringify(row)).sort(), before = await stable(), component = (await f.db.query("select * from product_components")).rows[0], baseline = await f.version();
+    assert.deepEqual(f.state.match.data.targets.map((target) => target.architecture).sort(), ["category_pricing", "product_components", "simple"]);
+    await f.db.exec("alter table product_template_detail_price_history add constraint deny_detail check(false)");
+    await assert.rejects(f.apply(), /check constraint/);
+    assert.equal(await f.version(), baseline); assert.equal((await f.db.query("select * from product_template_price_history")).rows.length, 0);
+    assert.equal((await f.db.query<{ price: number }>("select default_unit_price::int price from product_templates where id=$1", [a])).rows[0].price, 100);
+    assert.deepEqual(await stable(), before); // Row order is unspecified; compare content.
+    await f.db.exec("alter table product_template_detail_price_history drop constraint deny_detail");
+    const result = await f.apply(); assert.match(result.message, /applied to 3 targets/);
+    assert.equal(sharedCalls(f).length, 2);
+    assert.deepEqual((await f.db.query("select * from product_components")).rows[0], { ...(component as object), unit_price: "110" });
+    assert.equal(await f.version(), baseline + 2);
+    assert.deepEqual((await f.db.query<{ category_pricing: Array<{ items: Array<{ prices: unknown }> }> }>("select category_pricing from product_templates where id=$1", [d])).rows[0].category_pricing[0].items[0].prices, { c1: 110, keep: 7 });
+    assert.equal((await f.db.query("select * from product_template_detail_price_history")).rows.length, 2);
+    assert.equal((await f.db.query("select * from product_template_price_history")).rows.length, 1);
+    assert.deepEqual(await stable(), before); // Row order is unspecified; compare content.
+  } finally { await f.db.close(); }
+});
+
+test("review UI offers Apply shared price only to approvers for reviewed confirmed shared matches", async () => {
+  const { f } = await sharedFixture("SHARED");
+  try {
+    const { createElement } = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { SupplierReviewControls } = await loadTestModule<typeof import("../../components/products/supplier-price-workspace-controls.js")>("../../components/products/supplier-price-workspace-controls.tsx", {
+      "next/navigation": { useRouter() { return { refresh() {}, push() {} }; } },
+      "@/lib/supabase/client": { createClient() { assert.fail("Rendering review controls must not create a database client."); } },
+      "@/app/products/price-updates/supplier-sources/actions": {},
+    });
+    const match: PriceMatch = { ...f.state.match.data, decision: "reviewed" };
+    const props = { batchId: c, brandId: a, matches: [match], approver: true, sourceProfile: f.state.source.profile, sourceBasis: "list", brandBasis: "list", sourceStatus: "imported", batchStatus: "review" };
+    const render = (changes: Partial<typeof props> = {}) => renderToStaticMarkup(createElement(SupplierReviewControls, { ...props, ...changes }));
+    const html = render();
+    assert.match(html, />Apply shared price<\/button>/); assert.match(html, /Applies this Supplier price to 2 confirmed Product targets\./);
+    assert.match(html, /Confirmed targets/); assert.doesNotMatch(html, />Apply price</);
+    assert.match(render({ sourceBasis: "unknown" }), /<button[^>]*disabled=""[^>]*>Apply shared price<\/button>/);
+    assert.doesNotMatch(render({ approver: false }), />Apply shared price</);
+    assert.doesNotMatch(render({ matches: [{ ...match, decision: undefined }] }), />Apply shared price</);
+    assert.doesNotMatch(render({ matches: [{ ...match, targets: [match.targets[0]] }] }), />Apply shared price</);
+    assert.doesNotMatch(render({ matches: [{ ...match, classification: "ambiguous" }] }), />Apply shared price</);
   } finally { await f.db.close(); }
 });

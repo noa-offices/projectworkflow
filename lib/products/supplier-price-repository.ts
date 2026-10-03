@@ -82,6 +82,25 @@ function supplierDetailPayload(template: ProductPriceInput, target: PriceTarget,
   return { [architecture]: roots };
 }
 
+/** Builds one writer operation (mode, payload, history) for a target against the given Template copies. */
+function supplierTargetWrite(current: PriceTarget, templates: Map<string, ProductPriceInput>, price: number, currency: string, base: Record<string, unknown>) {
+  if (current.architecture === "simple" && current.physical_field === "default_unit_price") {
+    return { mode: "supplier_default" as const, payload: { default_unit_price: price, currency } as Record<string, unknown>, history: base };
+  }
+  let payload: Record<string, unknown>;
+  if (current.architecture === "product_components") {
+    if (current.physical_field !== "unit_price") throw Error("Unsupported Supplier component target.");
+    payload = { unit_price: price, currency };
+  } else {
+    const template = templates.get(current.template_id);
+    if (!template) throw Error(freshSupplierComparison);
+    payload = supplierDetailPayload(template, current, price);
+  }
+  return { mode: "detail" as const, payload, history: { ...base, source_table: current.architecture === "product_components" ? "product_components" : `product_templates.${current.architecture}`,
+    source_record_id: current.row_id, price_field: current.physical_field === "prices" ? `prices.${current.column_id}` : current.physical_field,
+    old_price: current.price, new_price: price, currency } };
+}
+
 /** Called only after the server action's existing approver guard. No browser baseline is accepted. */
 export async function supplierApplyReviewedPrice(client: SupabaseClient, batchId: string, matchKey: string) {
   if (typeof batchId !== "string" || !batchId || typeof matchKey !== "string" || !matchKey) throw Error("Supplier batch and match required.");
@@ -97,8 +116,9 @@ export async function supplierApplyReviewedPrice(client: SupabaseClient, batchId
   if (matchResult.error || !matchResult.data) throw Error(matchResult.error?.message ?? "Supplier match unavailable in this batch.");
   const stored = matchResult.data, match = stored.data;
   if (stored.key !== matchKey || match.key !== matchKey) throw Error("Supplier match does not belong to this batch.");
-  if (match.classification === "shared" || match.targets.length !== 1) throw Error("Phase 2A does not support shared or multiple-target Apply.");
-  if (!["increased", "decreased", "changed"].includes(match.classification)) throw Error("Only changed Supplier prices may be applied.");
+  const shared = match.classification === "shared";
+  if (!shared && match.targets.length !== 1) throw Error("Phase 2A does not support shared or multiple-target Apply.");
+  if (shared ? match.targets.length < 2 : !["increased", "decreased", "changed"].includes(match.classification)) throw Error("Only changed Supplier prices may be applied.");
   if (stored.supplier_price_decisions?.decision !== "reviewed") throw Error("Review this Supplier price before applying.");
   if (!match.source || match.source.price === null || !Number.isFinite(match.source.price) || match.source.price < 0 || match.source.issues.length) throw Error("Supplier source price is invalid.");
   // Reload the identity from this immutable source, rather than relying on a match's embedded price.
@@ -112,35 +132,43 @@ export async function supplierApplyReviewedPrice(client: SupabaseClient, batchId
   const brand = brandResult.data;
   if (!["list", "net"].includes(source.basis) || !["list", "net"].includes(brand.stored_price_basis)) throw Error("Supplier price basis must be confirmed before applying.");
   if (source.basis !== brand.stored_price_basis) throw Error("Supplier price basis does not match the Brand stored price basis.");
-  const baseline = match.targets[0];
-  if (baseline.brand_id !== batch.brand_id) throw Error("Supplier target does not belong to this Brand.");
+  const baselines = match.targets;
+  if (baselines.some((baseline) => baseline.brand_id !== batch.brand_id)) throw Error("Supplier target does not belong to this Brand.");
   if (!["AED", "EUR", "USD"].includes(source.currency) || identity.currency !== source.currency) throw Error("Unsupported Supplier currency. Use AED, EUR, or USD.");
-  if (source.currency !== baseline.currency) throw Error("Supplier and Product currencies must match before applying.");
-  const { targets, templates } = await supplierBrandTargets(client, batch.brand_id);
-  const current = targets.find((target) => target.key === baseline.key);
-  const baselineFields = ["key", "brand_id", "template_id", "pricing_version", "price", "currency", "raw_code", "code", "architecture", "group_id", "row_id", "column_id", "physical_field", "price_field", "dimension"] as const;
-  if (!current || baselineFields.some((field) => current[field] !== baseline[field]) || current.price === identity.price || expectedPricingVersion(current.pricing_version) === null) throw Error(freshSupplierComparison);
-  const history = { brand_price_list_update_id: batch.brand_price_list_update_id ?? null, effective_from: source.effective_from ?? null,
-    note: `Supplier source: ${source.title}; batch: ${batch.id}; match: ${match.key}` };
-  let mode: "supplier_default" | "detail", payload: Record<string, unknown>, detail = {};
-  if (current.architecture === "simple" && current.physical_field === "default_unit_price") {
-    mode = "supplier_default"; payload = { default_unit_price: identity.price, currency: source.currency };
-  } else {
-    mode = "detail";
-    if (current.architecture === "product_components") {
-      if (current.physical_field !== "unit_price") throw Error("Unsupported Supplier component target.");
-      payload = { unit_price: identity.price, currency: source.currency };
-    } else {
-      const template = templates.find((item) => item.id === current.template_id);
-      if (!template) throw Error(freshSupplierComparison);
-      payload = supplierDetailPayload(template, current, identity.price!);
-    }
-    detail = { source_table: current.architecture === "product_components" ? "product_components" : `product_templates.${current.architecture}`,
-      source_record_id: current.row_id, price_field: current.physical_field === "prices" ? `prices.${current.column_id}` : current.physical_field,
-      old_price: current.price, new_price: identity.price, currency: source.currency };
+  if (baselines.some((baseline) => source.currency !== baseline.currency)) throw Error("Supplier and Product currencies must match before applying.");
+  if (new Set(baselines.map((baseline) => baseline.key)).size !== baselines.length) throw Error("Supplier shared targets must be unique.");
+  if (shared) {
+    // The durable binding, not the review snapshot, is the authority for the shared target set.
+    const bindings = await supplierRows<DurableBinding>(client, "supplier_price_bindings", "*", { brand_id: batch.brand_id, code: identity.code, price_field: identity.price_field, source_dimension: identity.dimension });
+    const binding = bindings.length === 1 ? bindings[0] : null;
+    if (!binding || binding.kind !== "shared" || binding.confirmed !== true) throw Error("A confirmed durable shared binding is required before shared Apply.");
+    const bound = [...binding.target_keys].sort(), reviewed = baselines.map((baseline) => baseline.key).sort();
+    if (new Set(bound).size !== bound.length || bound.length !== reviewed.length || bound.some((key, index) => key !== reviewed[index])) throw Error("The durable shared binding no longer matches the reviewed targets. Build a fresh Supplier comparison.");
   }
+  const { targets, templates } = await supplierBrandTargets(client, batch.brand_id);
+  const baselineFields = ["key", "brand_id", "template_id", "pricing_version", "price", "currency", "raw_code", "code", "architecture", "group_id", "row_id", "column_id", "physical_field", "price_field", "dimension"] as const;
+  const currents = baselines.map((baseline) => {
+    const current = targets.find((target) => target.key === baseline.key);
+    if (!current || baselineFields.some((field) => current[field] !== baseline[field]) || current.price === identity.price || expectedPricingVersion(current.pricing_version) === null) throw Error(freshSupplierComparison);
+    return current;
+  });
+  const history = { brand_price_list_update_id: batch.brand_price_list_update_id ?? null, effective_from: source.effective_from ?? null,
+    note: `Supplier source: ${source.title}; batch: ${batch.id}; match: ${match.key}${shared ? "; shared apply" : ""}` };
+  // Same-Template detail targets accumulate into one working copy so each later payload includes earlier changes.
+  const working = new Map(templates.map((template) => [template.id, structuredClone(template)]));
+  const operations = currents.map((current) => {
+    const write = supplierTargetWrite(current, working, identity.price!, source.currency, history);
+    if (write.mode === "detail" && current.architecture !== "product_components") working.get(current.template_id)![current.architecture] = write.payload[current.architecture];
+    return { template_id: current.template_id, expected_version: current.pricing_version, mode: write.mode, payload: write.payload, history: write.history };
+  });
+  if (shared) {
+    const { data, error } = await client.rpc("apply_supplier_shared_price_at_versions", { p_operations: operations });
+    if (error) throw Error(error.message.includes(pricingConflictMessage) ? freshSupplierComparison : error.message);
+    return { pricing_version: null, message: `Shared price applied to ${(data as { applied_count: number }).applied_count} targets. Build a fresh comparison to continue reviewing these targets.` };
+  }
+  const [operation] = operations;
   const { data, error } = await client.rpc("write_product_price_with_history_at_version", {
-    p_template_id: current.template_id, p_expected_version: current.pricing_version, p_mode: mode, p_payload: payload, p_history: { ...history, ...detail },
+    p_template_id: operation.template_id, p_expected_version: operation.expected_version, p_mode: operation.mode, p_payload: operation.payload, p_history: operation.history,
   });
   if (error) throw Error(error.message.includes(pricingConflictMessage) ? freshSupplierComparison : error.message);
   return { pricing_version: data, message: "Price applied. Build a fresh comparison to continue reviewing this target." };
