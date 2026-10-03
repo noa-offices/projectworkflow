@@ -7,7 +7,7 @@ import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { assertSupplierProfile, type RawSupplierRow, type SourceScope, type SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import { normalizeSupplierRows } from "@/lib/products/supplier-price-import";
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
-import { supplierBrandMatches, supplierBrandTargets, supplierMatchChunks, supplierSource, supplierWrite } from "@/lib/products/supplier-price-repository";
+import { supplierApplyReviewedPrice, supplierBrandMatches, supplierBrandTargets, supplierMatchChunks, supplierSource, supplierWrite } from "@/lib/products/supplier-price-repository";
 
 const workspacePath = "/products/price-updates/supplier-sources";
 async function reviewer() { const auth = await requireBrandPriceReviewer(); return { auth, client: await createClient() }; }
@@ -52,6 +52,13 @@ export async function createSupplierReviewBatch(sourceId: string, scope: SourceS
 export async function saveSupplierDecision(batchId: string, key: string, decision: string, note: string, proposedKeys: string[] = []) {
   const { client } = await reviewer(); if (!["reviewed", "skip", "reject", "mapping_proposed"].includes(decision) || note.length > 4000 || proposedKeys.length > 500) throw Error("Invalid review decision.");
   await supplierWrite(client, "decision", { batch_id: batchId, key, decision, note, proposed_target_keys: proposedKeys }); revalidatePath(workspacePath);
+}
+export async function applySupplierReviewedPrice(batchId: string, matchKey: string) {
+  const { client } = await approver();
+  const result = await supplierApplyReviewedPrice(client, batchId, matchKey);
+  revalidatePath(workspacePath);
+  revalidatePath("/products/templates");
+  return result;
 }
 export async function saveSupplierDimension(rule: { brand_id: string; template_id?: string; group_id?: string; raw_labels: string[]; finish_codes: string[]; dimension_code: string }) {
   const { client } = await approver();
