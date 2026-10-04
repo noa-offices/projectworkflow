@@ -304,8 +304,8 @@ test("UI shows completion only for Complete approver reviews and exclusion only 
       "@/app/products/price-updates/supplier-sources/actions": {},
     });
     const completion = (props: Record<string, unknown>) => renderToStaticMarkup(createElement(ui.SupplierCompletionControls, { batchId: batch, scope: "complete", status: "review", approver: true, ...props } as never));
-    assert.match(completion({}), /Complete Brand price-list review<\/h3>/); assert.match(completion({}), /Excluded targets will remain Needs price check after this Brand baseline is activated\./);
-    assert.match(completion({}), /<button[^>]*disabled=""[^>]*>Complete Brand price-list review<\/button>/);
+    assert.match(completion({}), /Complete Review<\/h3>/); assert.match(completion({}), /Excluded targets will remain Needs price check after this Brand baseline is activated\./);
+    assert.match(completion({}), /<button[^>]*disabled=""[^>]*>Complete Brand Review<\/button>/);
     for (const scope of ["partial", "selected_templates"]) { const html = completion({ scope }); assert.match(html, /cannot activate a Brand-wide baseline because coverage is not Complete/); assert.doesNotMatch(html, /<button/); }
     assert.equal(completion({ approver: false }), "");
     assert.match(completion({ status: "completed" }), /review is completed/); assert.doesNotMatch(completion({ status: "completed" }), /<button/);

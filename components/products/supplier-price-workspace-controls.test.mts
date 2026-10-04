@@ -12,18 +12,18 @@ const controlsSource = readFileSync(new URL("./supplier-price-workspace-controls
 const pageSource = readFileSync(new URL("../../app/products/price-updates/supplier-sources/page.tsx", import.meta.url), "utf8");
 
 // Render only this UI module, without loading server actions or database clients.
-function loadControls(scope = "partial") {
+function loadControls(scope = "complete") {
   let stateIndex = 0;
   const messages: string[] = [];
   const calls: string[] = [];
   type UiComponent = (props: Record<string, unknown>) => React.ReactElement;
-  const sandboxModule = { exports: {} as { SupplierSourceControls: UiComponent; SupplierReviewControls: UiComponent } };
+  const sandboxModule = { exports: {} as { SupplierAdvancedImportSettings: UiComponent; SupplierStartReview: UiComponent; SupplierReviewControls: UiComponent } };
   const code = ts.transpileModule(controlsSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText;
   runInNewContext(code, {
     module: sandboxModule, exports: sandboxModule.exports,
     FormData: class { constructor(form: FormData) { return form; } },
     require: (name: string) => {
-      if (name === "react") return { ...React, useState: (initial: unknown) => { const index = stateIndex++; return [initial === "partial" ? scope : initial, (value: unknown) => { if (index === 1) messages.push(String(value)); }]; } };
+      if (name === "react") return { ...React, useState: (initial: unknown) => { const index = stateIndex++; return [initial === "complete" ? scope : initial, (value: unknown) => { if (index === 1) messages.push(String(value)); }]; } };
       if (name === "react/jsx-runtime") return require(name);
       if (name === "next/navigation") return { useRouter: () => ({ refresh() {}, push() {} }) };
       return new Proxy({}, { get: (_, action: string) => () => { calls.push(action); return Promise.resolve({ id: "batch" }); } });
@@ -40,7 +40,7 @@ function elements(node: React.ReactNode): React.ReactElement<Record<string, unkn
 }
 
 test("LAS editable profile example uses verified structured headers and current basis", () => {
-  const ui = loadControls().SupplierSourceControls(sourceProps);
+  const ui = loadControls().SupplierAdvancedImportSettings(sourceProps);
   const textarea = elements(ui).find((element) => element.props.name === "config")!;
   const example = JSON.parse(String(textarea.props.defaultValue));
   assert.equal(example.full_code_column, "CODICE_ARTICOLO");
@@ -51,31 +51,33 @@ test("LAS editable profile example uses verified structured headers and current 
   assert.equal(example.price_columns[0].column, "PREZZO_UNITARIO");
   assert.equal(example.currency, "EUR");
   assert.equal(example.basis, sourceProps.basis);
-  const generic = elements(loadControls().SupplierSourceControls({ ...sourceProps, brandName: "Other" })).find((element) => element.props.name === "config")!;
+  const generic = elements(loadControls().SupplierAdvancedImportSettings({ ...sourceProps, brandName: "Other" })).find((element) => element.props.name === "config")!;
   assert.equal(JSON.parse(String(generic.props.defaultValue)).full_code_column, "SET_EXACT_CODE_HEADER");
 });
 
-test("Selected Templates is disabled and muted outside selected_templates scope", () => {
+test("Start Review defaults to Complete Brand and shows the Family chooser only for Selected Families", () => {
   for (const scope of ["partial", "complete", "selected_templates"]) {
-    const ui = loadControls(scope).SupplierSourceControls(sourceProps);
-    const select = elements(ui).find((element) => element.props.name === "templates")!;
-    assert.equal(select.props.disabled, scope !== "selected_templates");
-    assert.equal(select.props.required, scope === "selected_templates");
-    assert.match(String(select.props.className), /disabled:bg-zinc-100/);
-    assert.match(renderToStaticMarkup(ui), /Only used when scope is Selected Templates\. Matching always remains Brand-wide\./);
+    const ui = loadControls(scope).SupplierStartReview(sourceProps);
+    const select = elements(ui).find((element) => element.props.name === "templates");
+    const html = renderToStaticMarkup(ui);
+    assert.equal(Boolean(select), scope === "selected_templates");
+    if (select) assert.equal(select.props.required, true);
+    assert.match(html, /Complete Brand \(recommended\)/); assert.match(html, /Review the full active Product range for this Brand\./);
+    assert.doesNotMatch(html, /declaration only; no activation/);
+    assert.ok(elements(ui).filter((element) => element.props.name === "scope").every((radio) => radio.props.checked === (radio.props.value === scope)), scope);
   }
 });
 
-test("empty Selected Templates submission stops before creating a review batch", () => {
+test("empty Selected Families submission stops before creating a review batch", () => {
   const controls = loadControls("selected_templates");
-  const ui = controls.SupplierSourceControls(sourceProps);
+  const ui = controls.SupplierStartReview(sourceProps);
   const form = elements(ui).find((element) => element.type === "form" && elements(element).some((child) => child.props.name === "scope"))!;
   const formData = new FormData();
   formData.set("scope", "selected_templates");
   let prevented = false;
   (form.props.onSubmit as (event: unknown) => void)({ preventDefault() { prevented = true; }, currentTarget: formData });
   assert.equal(prevented, true);
-  assert.match(controls.messages.at(-1)!, /Choose at least one Template/);
+  assert.match(controls.messages.at(-1)!, /Choose at least one Family/);
   assert.deepEqual(controls.calls, []);
 });
 

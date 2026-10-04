@@ -265,7 +265,7 @@ test("bulk Exclude missing needs one reason, applies it to every row, and never 
     assert.equal(result.message, "2 items excluded from this Supplier source.");
     assert.deepEqual(await f.decisions(), { "m-g0": "excluded_from_source:Not in this edition", "m-g1": "excluded_from_source:Not in this edition" });
     assert.deepEqual(await f.snapshot(), before);
-    assert.deepEqual((await supplierFamilyOverview(f.client, batch)).families.find((family) => family.template_id === gamma), { template_id: gamma, template_name: "GAMMA", items: 2, changed: 0, same: 0, missing: 0, attention: 0, done: 2, status: "ready" });
+    assert.deepEqual((await supplierFamilyOverview(f.client, batch)).families.find((family) => family.template_id === gamma), { template_id: gamma, template_name: "GAMMA", items: 2, changed: 0, same: 0, missing: 0, attention: 0, done: 2, excluded: 2, status: "ready" });
   } finally { await f.db.close(); }
 });
 

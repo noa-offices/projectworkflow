@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { parseSupplierFile } from "@/lib/products/supplier-price-file";
@@ -11,6 +12,7 @@ import { applySupplierReviewedPrice, completeSupplierPriceReview, confirmSupplie
 
 const input = "rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm";
 const button = "rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium disabled:opacity-50";
+const primary = "rounded border border-zinc-800 bg-zinc-800 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50";
 const readable = (value: string) => { const label = value.replaceAll("_", " "); return label.charAt(0).toUpperCase() + label.slice(1); };
 const badge = "inline-flex rounded-full border px-2 py-0.5 text-xs font-medium";
 const classificationTone = (value: string) => ["increased", "ambiguous", "needs_dimension_mapping", "baseline_drift", "invalid_source"].includes(value) ? "border-amber-200 bg-amber-50 text-amber-800" : value === "decreased" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-zinc-200 bg-zinc-50 text-zinc-700";
@@ -21,15 +23,68 @@ function CodeSet({ label, codes }: { label: string; codes: string[] }) {
 }
 type ProfileOption = { id: string; title: string; config: SupplierProfile };
 
-export function SupplierSourceControls({ brandId, brandName, basis, profiles, approver, sourceId, templates, dimensions = [] }: { brandId: string; brandName: string; basis: string; profiles: ProfileOption[]; approver: boolean; sourceId?: string; templates: Array<{ id: string; template_name: string }>; dimensions?: DimensionRule[] }) {
+/** Step 1: one simple card. The approved import format is chosen automatically; currency and basis come from that format. */
+export function SupplierImportCard({ brandId, brandName, profiles, suggestedTitle, advancedHref }: { brandId: string; brandName: string; profiles: ProfileOption[]; suggestedTitle: string; advancedHref: string }) {
   const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
-  const [scope, setScope] = useState<SourceScope>("partial");
+  const [profileId, setProfileId] = useState(profiles.length === 1 ? profiles[0].id : "");
+  const chosen = profiles.find((profile) => profile.id === profileId);
+  async function run(work: () => Promise<void>) { setBusy(true); setMessage(""); try { await work(); } catch (error) { setMessage(error instanceof Error ? error.message : "Import failed."); } finally { setBusy(false); } }
+  if (!profiles.length) return <section className="space-y-2 rounded border border-zinc-300 bg-white p-4"><h3 className="text-base font-semibold">Import Supplier Price List</h3>
+    <p className="text-sm">This Brand needs an import format before price lists can be uploaded.</p><Link href={advancedHref} className={button + " inline-block"}>Configure import format</Link></section>;
+  return <form className="space-y-3 rounded border border-zinc-300 bg-white p-4" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const file = form.get("file"); void run(async () => {
+    if (!(file instanceof File) || !file.size) throw Error("Choose the price list file.");
+    if (!profileId) throw Error("Choose an import format.");
+    const profile = await supplierProfileForImport(profileId);
+    setMessage("Reading the price list. Codes stay exactly as written.");
+    const rows = await parseSupplierFile(file, profile.sheet_names);
+    if (!rows.length) throw Error("The price list has no data rows.");
+    const headers = rows[0].values;
+    const required = [profile.full_code_column, ...profile.price_columns.map((column) => column.column), ...(profile.article_code_column ? [profile.article_code_column] : []), ...(profile.category_column ? [profile.category_column] : []), ...(profile.companion_note_column ? [profile.companion_note_column] : [])];
+    if (required.some((header) => !Object.hasOwn(headers, header))) throw Error("This file does not match the import format. Check the file, or change the import format in Advanced import settings.");
+    const chunks = supplierImportChunks(rows, 500, 600_000, profile);
+    const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer())), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const sourceType = file.name.split(".").pop()!.toLowerCase();
+    const result = await createSupplierSource({ profile_id: profileId, expected_profile: profile, title: String(form.get("title")), filename: file.name, file_hash: hash, source_type: sourceType, expected_rows: rows.length, expected_cells: rows.length * profile.price_columns.length, expected_chunks: chunks.length, original_reference: String(form.get("original") ?? ""), effective_from: String(form.get("effective")), received_at: String(form.get("received")) });
+    if (result.status !== "imported") {
+      const path = `${brandId}/${result.id}/${hash}.${sourceType}`;
+      const { error } = await createClient().storage.from("supplier-price-sources").upload(path, file, { upsert: false });
+      if (error && !("statusCode" in error && ["409", "400"].includes(String(error.statusCode)))) throw Error(error.message);
+      await attachSupplierWorkingFile(result.id, path);
+      for (let index = 0; index < chunks.length; index++) { setMessage(`Uploading part ${index + 1} of ${chunks.length}. Do not close this page.`); await uploadSupplierChunk(result.id, index, chunks[index]); }
+      await finalizeSupplierSource(result.id);
+    }
+    router.push(`/products/price-updates/supplier-sources?brand=${brandId}&source=${result.id}&view=summary`); router.refresh();
+  }); }}>
+    <h3 className="text-base font-semibold">Import Supplier Price List</h3>
+    <p role="status" aria-live="polite" className="text-sm text-amber-800">{message}</p>
+    <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-1 text-xs"><span className="font-medium">Brand</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{brandName}</span></div>
+      <label className="grid gap-1 text-xs"><span className="font-medium">Price list file</span><input name="file" type="file" accept=".xlsx,.csv,.json" required className={input} /></label>
+      <label className="grid gap-1 text-xs"><span className="font-medium">Price list name</span><input name="title" required defaultValue={suggestedTitle} className={input} /></label>
+      {profiles.length === 1 ? <div className="grid gap-1 text-xs"><span className="font-medium">Import format</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{profiles[0].title} <span className="text-emerald-800">· Ready</span></span></div>
+        : <label className="grid gap-1 text-xs"><span className="font-medium">Import format</span><select value={profileId} onChange={(event) => setProfileId(event.target.value)} required className={input}><option value="">Choose import format</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.title}</option>)}</select></label>}
+      <div className="grid gap-1 text-xs"><span className="font-medium">Currency</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{chosen ? chosen.config.currency : "Set by the import format"}</span></div>
+      <div className="grid gap-1 text-xs"><span className="font-medium">Price basis</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{chosen ? (chosen.config.basis === "list" ? "List" : chosen.config.basis === "net" ? "Net" : "Not set") : "Set by the import format"}</span></div>
+      <label className="grid gap-1 text-xs"><span className="font-medium">Received date (optional)</span><input name="received" type="date" className={input} /></label>
+      <label className="grid gap-1 text-xs"><span className="font-medium">Effective date (optional)</span><input name="effective" type="date" className={input} /></label>
+    </div>
+    <details className="text-xs"><summary className="cursor-pointer">More options</summary><label className="mt-2 grid gap-1"><span className="font-medium">Original file reference (optional)</span><input name="original" className={input} /></label></details>
+    <p className="text-xs text-zinc-600">Currency and price basis come from the import format. To change them, use <Link href={advancedHref} className="underline">Advanced import settings</Link>. Importing the same file again resumes an unfinished import.</p>
+    <button disabled={busy || !profileId} className={primary}>Import price list</button>
+  </form>;
+}
+
+/** Technical import tools, collapsed by default and approver-only as before. */
+export function SupplierAdvancedImportSettings({ brandId, brandName, basis, approver, templates, dimensions = [], open = false }: { brandId: string; brandName: string; basis: string; approver: boolean; templates: Array<{ id: string; template_name: string }>; dimensions?: DimensionRule[]; open?: boolean }) {
+  const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
   async function run(work: () => Promise<void>) { setBusy(true); setMessage(""); try { await work(); router.refresh(); } catch (error) { setMessage(error instanceof Error ? error.message : "Operation failed."); } finally { setBusy(false); } }
   const las = brandName === "LAS MOBILI";
   const example = { strategy: las ? "article_plus_finish" : "exact", full_code_column: las ? "CODICE_ARTICOLO" : "SET_EXACT_CODE_HEADER", ...(las ? { article_code_column: "NOME_FILE", article_length: 6, finish_length: 3, validated_article_fallback: true, category_column: "CATEGORIA_TESSUTO" } : {}), price_columns: [{ column: las ? "PREZZO_UNITARIO" : "PRICE", price_field: "unit_price" }], currency: "EUR", basis };
-  return <div className="space-y-3">
-    <p role="status" aria-live="polite" className="text-sm text-amber-800">{message}</p>
-    {approver ? <details className="rounded border border-zinc-200 p-3"><summary className="cursor-pointer text-sm font-semibold">Import profiles & canonical dimensions (approver)</summary>
+  if (!approver) return null;
+  return <details id="advanced" open={open} className="rounded border border-zinc-200 p-3"><summary className="cursor-pointer text-sm font-semibold">Advanced import settings</summary>
+    <p role="status" aria-live="polite" className="mt-2 text-sm text-amber-800">{message}</p>
+    <p className="mt-1 text-xs text-zinc-600">Import formats, canonical size / option codes, finish-code rules and group IDs. Most price lists never need these.</p>
+    {approver ? <details open className="mt-2 rounded border border-zinc-200 p-3"><summary className="cursor-pointer text-sm font-semibold">Import formats & canonical dimensions</summary>
       <form className="mt-3 grid gap-2" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); void run(async () => { await saveSupplierProfile(brandId, String(form.get("title")), JSON.parse(String(form.get("config")))); setMessage("Authoritative profile saved. Existing source snapshots are unchanged."); }); }}>
         <label className="grid gap-1 text-xs">Profile title<input name="title" required defaultValue={las ? "LAS article + finish" : "Structured source"} className={input} /></label>
         <p className="text-xs text-zinc-600">Profiles are reusable import definitions. Saving a profile does not alter previously imported source versions.</p>
@@ -51,50 +106,23 @@ export function SupplierSourceControls({ brandId, brandName, basis, profiles, ap
         <div className="flex flex-wrap items-center justify-between gap-2"><span className={`${badge} border-zinc-200 bg-zinc-50`}>{rule.template_id ? `Template override: ${templates.find((template) => template.id === rule.template_id)?.template_name ?? rule.template_id}` : "Brand"}{rule.group_id ? ` · Group ${rule.group_id}` : ""}</span><button type="button" disabled={busy} className={button} onClick={() => void run(async () => { await archiveSupplierDimension(rule.id); setMessage("Vocabulary rule archived; historical review snapshots retained."); })}>Archive rule</button></div>
       </div>)}</div>
     </details> : null}
-    <details className="rounded border border-zinc-200 p-3"><summary className="cursor-pointer text-sm font-semibold">Import / resume Supplier Master Source</summary>
-      <form className="mt-3 grid gap-2" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const file = form.get("file"); void run(async () => {
-        if (!(file instanceof File) || !file.size) throw Error("Choose a structured source file.");
-        const profileId = String(form.get("profile")); const profile = await supplierProfileForImport(profileId);
-        setMessage("Reading structured file; code cells remain typed text.");
-        const rows = await parseSupplierFile(file, profile.sheet_names);
-        if (!rows.length) throw Error("Source has no data rows.");
-        const headers = rows[0].values;
-        const required = [profile.full_code_column, ...profile.price_columns.map((column) => column.column), ...(profile.article_code_column ? [profile.article_code_column] : []), ...(profile.category_column ? [profile.category_column] : []), ...(profile.companion_note_column ? [profile.companion_note_column] : [])];
-        if (required.some((header) => !Object.hasOwn(headers, header))) throw Error("Profile column missing. Confirm the exact supplier headers before importing.");
-        const chunks = supplierImportChunks(rows, 500, 600_000, profile);
-        const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer())), (byte) => byte.toString(16).padStart(2, "0")).join("");
-        const sourceType = file.name.split(".").pop()!.toLowerCase();
-        const result = await createSupplierSource({ profile_id: profileId, expected_profile: profile, title: String(form.get("title")), filename: file.name, file_hash: hash, source_type: sourceType, expected_rows: rows.length, expected_cells: rows.length * profile.price_columns.length, expected_chunks: chunks.length, original_reference: String(form.get("original")), effective_from: String(form.get("effective")), received_at: String(form.get("received")) });
-        if (result.status !== "imported") {
-          const path = `${brandId}/${result.id}/${hash}.${sourceType}`;
-          const { error } = await createClient().storage.from("supplier-price-sources").upload(path, file, { upsert: false });
-          if (error && !("statusCode" in error && ["409", "400"].includes(String(error.statusCode)))) throw Error(error.message);
-          await attachSupplierWorkingFile(result.id, path);
-          for (let index = 0; index < chunks.length; index++) { setMessage(`Uploading/resuming chunk ${index + 1}/${chunks.length}. Partial imports cannot be matched.`); await uploadSupplierChunk(result.id, index, chunks[index]); }
-          await finalizeSupplierSource(result.id);
-        }
-        router.push(`/products/price-updates/supplier-sources?brand=${brandId}&source=${result.id}`); setMessage("Source finalized/reused. No Product prices or check dates changed.");
-      }); }}>
-        <label className="grid text-xs">Approved import profile<select name="profile" required className={input}><option value="">Choose profile</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.title}</option>)}</select></label>
-        <label className="grid text-xs">Source version title<input name="title" required className={input} placeholder="Feb 2026 Rev 02" /></label>
-        <label className="grid text-xs">Structured file<input name="file" type="file" accept=".xlsx,.csv,.json" required className={input} /></label>
-        <label className="grid text-xs">Original PDF/file reference (optional; no PDF extraction)<input name="original" className={input} placeholder="Existing original file URL/reference" /></label>
-        <label className="grid text-xs">Received date<input name="received" type="date" className={input} /></label>
-        <label className="grid text-xs">Intended effective date<input name="effective" type="date" className={input} /></label>
-        <p className="text-xs text-zinc-600">Retry with the same file/profile to resume chunks. Codes are never numerically repaired. Unknown/mismatched basis remains NOT APPLY-READY.</p>
-        <button disabled={busy || !profiles.length} className={button}>Import / resume source</button>
-      </form>
-    </details>
-    {sourceId ? <form className="grid gap-2 rounded border border-zinc-200 p-3" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); if (form.get("scope") === "selected_templates" && !form.getAll("templates").length) { setMessage("Choose at least one Template for Selected Templates scope."); return; } void run(async () => { const result = await createSupplierReviewBatch(sourceId, String(form.get("scope")) as SourceScope, form.getAll("templates").map(String), String(form.get("brand_list")) || undefined); router.push(`/products/price-updates/supplier-sources?brand=${brandId}&source=${sourceId}&batch=${result.id}`); }); }}>
-      <h3 className="text-sm font-semibold">Review against this imported source</h3>
-      <label className="grid text-xs">Explicit coverage scope<select name="scope" value={scope} onChange={(event) => setScope(event.target.value as SourceScope)} className={input}><option value="partial">Partial / unspecified</option><option value="complete">Complete Brand (declaration only; no activation)</option><option value="selected_templates">Selected Templates</option></select></label>
-      <label className={`grid text-xs ${scope !== "selected_templates" ? "text-zinc-500" : ""}`}>Selected Templates<select name="templates" multiple size={5} disabled={scope !== "selected_templates"} required={scope === "selected_templates"} aria-describedby="selected-templates-help" className={`${input} disabled:bg-zinc-100 disabled:opacity-60`}>{templates.map((template) => <option key={template.id} value={template.id}>{template.template_name}</option>)}</select></label>
-      <p id="selected-templates-help" className="text-xs text-zinc-600">Only used when scope is Selected Templates. Matching always remains Brand-wide.</p>
-      <label className="grid text-xs">Existing Brand-list record ID (optional metadata link)<input name="brand_list" className={input} /></label>
-      <p className="text-xs text-zinc-600">Duplicate/shared-code detection always covers the whole Brand. Selected Templates limit review only. A fresh batch preserves earlier decisions/snapshots.</p>
-      <div className="flex gap-2"><button disabled={busy} className={button}>Build Brand-wide comparison</button><button type="button" disabled={busy} className={button} onClick={() => void run(async () => { await archiveSupplierSource(sourceId); setMessage("Source archived; historical data retained."); })}>Archive source</button></div>
-    </form> : null}
-  </div>;
+  </details>;
+}
+
+/** Step 2 entry: choose what to review. Complete Brand is the recommended default. */
+export function SupplierStartReview({ brandId, sourceId, templates }: { brandId: string; sourceId: string; templates: Array<{ id: string; template_name: string }> }) {
+  const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
+  const [scope, setScope] = useState<SourceScope>("complete");
+  async function run(work: () => Promise<void>) { setBusy(true); setMessage(""); try { await work(); } catch (error) { setMessage(error instanceof Error ? error.message : "Could not start the review."); } finally { setBusy(false); } }
+  const options: Array<[SourceScope, string, string]> = [["complete", "Complete Brand (recommended)", "Review the full active Product range for this Brand."], ["selected_templates", "Selected Families", "Review only the Product families you choose."], ["partial", "Partial / Other", "Advanced use. This review cannot activate a Brand-wide baseline."]];
+  return <form className="space-y-3 rounded border border-zinc-300 bg-white p-4" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); if (form.get("scope") === "selected_templates" && !form.getAll("templates").length) { setMessage("Choose at least one Family for Selected Families."); return; } void run(async () => { const result = await createSupplierReviewBatch(sourceId, String(form.get("scope")) as SourceScope, form.getAll("templates").map(String), String(form.get("brand_list") ?? "") || undefined); router.push(`/products/price-updates/supplier-sources?brand=${brandId}&source=${sourceId}&batch=${result.id}&view=family`); router.refresh(); }); }}>
+    <h3 className="text-base font-semibold">Start Review</h3>
+    <p role="status" aria-live="polite" className="text-sm text-amber-800">{message}</p>
+    <fieldset className="space-y-2"><legend className="text-xs font-medium">Coverage</legend>{options.map(([value, label, help]) => <label key={value} className="flex items-start gap-2 text-sm"><input type="radio" name="scope" value={value} checked={scope === value} onChange={() => setScope(value)} className="mt-1" /><span><span className="font-medium">{label}</span><br /><span className="text-xs text-zinc-600">{help}</span></span></label>)}</fieldset>
+    {scope === "selected_templates" ? <label className="grid gap-1 text-xs"><span className="font-medium">Families to review</span><select name="templates" multiple size={6} required aria-describedby="selected-families-help" className={input}>{templates.map((template) => <option key={template.id} value={template.id}>{template.template_name}</option>)}</select><span id="selected-families-help" className="text-zinc-600">Hold Ctrl or Cmd to choose several. Matching always covers the whole Brand; this limits what you review.</span></label> : null}
+    <details className="text-xs"><summary className="cursor-pointer">Link to an existing price-list record (optional)</summary><label className="mt-2 grid gap-1"><span className="font-medium">Record ID</span><input name="brand_list" className={input} /></label></details>
+    <div className="flex flex-wrap gap-2"><button disabled={busy} className={primary}>Start review</button><button type="button" disabled={busy} className={button} onClick={() => void run(async () => { await archiveSupplierSource(sourceId); router.push(`/products/price-updates/supplier-sources?brand=${brandId}`); router.refresh(); })}>Archive this price list</button></div>
+  </form>;
 }
 
 export function SupplierReviewControls({ batchId, brandId, matches, approver, sourceProfile, sourceBasis, brandBasis, sourceStatus, batchStatus }: { batchId: string; brandId: string; matches: PriceMatch[]; approver: boolean; sourceProfile?: SupplierProfile; sourceBasis: string; brandBasis: string; sourceStatus: string; batchStatus: string }) {
@@ -152,21 +180,27 @@ const completionLabels: Array<[SupplierCompletionCount, string]> = [
   ["excluded_from_source", "Excluded from source"], ["unmatched", "Unmatched source items (not blocking)"], ["referenced_companion", "Referenced companions (not blocking)"], ["resolved", "Resolved"],
 ];
 
-export function SupplierCompletionControls({ batchId, scope, status, approver }: { batchId: string; scope: string; status: string; approver: boolean }) {
+export function SupplierCompletionControls({ batchId, scope, status, approver, reviewHref }: { batchId: string; scope: string; status: string; approver: boolean; reviewHref?: string }) {
   const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
-  const [readiness, setReadiness] = useState<SupplierCompletionReadiness | null>(null);
+  const [readiness, setReadiness] = useState<SupplierCompletionReadiness | null>(null); const [checked, setChecked] = useState(false);
+  const live = approver && scope === "complete" && status === "review";
+  // The server answers the same readiness question as the final click; the button only enables when it says ready.
+  useEffect(() => { if (!live) return; let current = true; supplierCompletionStatus(batchId).then((result) => { if (current) { setReadiness(result); setChecked(true); } }, () => { if (current) setChecked(true); }); return () => { current = false; }; }, [batchId, live]);
   async function run(work: () => Promise<void>) { setBusy(true); setMessage(""); try { await work(); } catch (error) { setMessage(error instanceof Error ? error.message : "Completion failed."); } finally { setBusy(false); } }
   const statusLine = <p role="status" aria-live="polite" className="text-sm text-amber-800">{message}</p>;
-  if (status === "completed") return <div className="space-y-1 rounded border border-emerald-200 bg-emerald-50 p-3 text-sm">{statusLine}<p>This Supplier price-list review is completed. Its snapshot and decisions are retained as history; no further Apply, confirmation or exclusion is possible.</p></div>;
+  if (status === "completed") return <div className="space-y-1 rounded border border-emerald-200 bg-emerald-50 p-3 text-sm">{statusLine}<p>This price-list review is completed. Its results are kept as history; no further changes are possible.</p></div>;
   if (scope !== "complete") return <p className="rounded border border-zinc-200 bg-zinc-50 p-3 text-sm">This review cannot activate a Brand-wide baseline because coverage is not Complete.</p>;
   if (!approver || status !== "review") return null;
-  return <section className="space-y-2 rounded border border-zinc-300 p-3">
-    <h3 className="text-sm font-semibold">Complete Brand price-list review</h3>
+  return <section className="space-y-2 rounded border border-zinc-300 p-3" aria-label="Complete review">
+    <h3 className="text-sm font-semibold">Complete Review</h3>
     <p className="text-xs text-zinc-600">Excluded targets will remain Needs price check after this Brand baseline is activated. Unmatched Supplier items do not block completion and create no Products.</p>
     {statusLine}
-    <button type="button" disabled={busy} className={button} onClick={() => void run(async () => { setReadiness(await supplierCompletionStatus(batchId)); })}>Check completion readiness</button>
-    {readiness ? <><details><summary className="cursor-pointer text-xs">View technical readiness details</summary><dl className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">{completionLabels.map(([key, label]) => <div key={key} className={`rounded border p-2 ${readiness.counts[key] > 0 && !["resolved", "excluded_from_source", "unmatched", "referenced_companion"].includes(key) ? "border-amber-300 bg-amber-50" : "border-zinc-200"}`}><dt>{label}</dt><dd className="font-semibold tabular-nums">{readiness.counts[key]}</dd></div>)}</dl></details>
-      {readiness.issue ? <p className="text-xs text-amber-800">{readiness.issue}</p> : null}<p className="text-xs">{readiness.ready ? `Ready: ${readiness.checkedTemplates} Templates will be marked checked; ${readiness.excludedTemplates} stay unchecked because of source exclusions.` : `${readiness.blocking} blocking rows must be resolved before completion.`}</p></> : null}
-    <button type="button" disabled={busy || !readiness?.ready} className={button} onClick={() => void run(async () => { const result = await completeSupplierPriceReview(batchId); setReadiness(null); setMessage(`${result.message} ${result.title} · baseline ${result.baseline_date ?? "not dated"} · ${result.checked_templates} Templates marked checked · ${result.excluded_templates} left unchecked because of source exclusions.`); router.refresh(); })}>Complete Brand price-list review</button>
+    {!checked ? <p className="text-xs text-zinc-600">Checking whether this review can be completed…</p> : readiness?.issue ? <p className="text-xs text-amber-800">{readiness.issue}</p> : readiness && !readiness.ready ? <p className="text-xs text-amber-800">{readiness.blocking} {readiness.blocking === 1 ? "item needs" : "items need"} attention before you can complete.{reviewHref ? <> <Link href={reviewHref} className="underline">Review items</Link></> : null}</p>
+      : readiness ? <p className="text-xs text-emerald-800">Ready: {readiness.checkedTemplates} {readiness.checkedTemplates === 1 ? "family" : "families"} will be marked checked; {readiness.excludedTemplates} stay unchecked because of source exclusions.</p> : <p className="text-xs text-amber-800">Readiness could not be checked. Try again.</p>}
+    <div className="flex flex-wrap gap-2">
+      <button type="button" disabled={busy || !readiness?.ready} className={primary} onClick={() => void run(async () => { const result = await completeSupplierPriceReview(batchId); setReadiness(null); setMessage(`${result.message} ${result.title} · baseline ${result.baseline_date ?? "not dated"} · ${result.checked_templates} Templates marked checked · ${result.excluded_templates} left unchecked because of source exclusions.`); router.refresh(); })}>Complete Brand Review</button>
+      <button type="button" disabled={busy} className={button} onClick={() => void run(async () => { setReadiness(await supplierCompletionStatus(batchId)); setChecked(true); })}>Check again</button>
+    </div>
+    {readiness ? <details><summary className="cursor-pointer text-xs">View technical readiness details</summary><dl className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">{completionLabels.map(([key, label]) => <div key={key} className={`rounded border p-2 ${readiness.counts[key] > 0 && !["resolved", "excluded_from_source", "unmatched", "referenced_companion"].includes(key) ? "border-amber-300 bg-amber-50" : "border-zinc-200"}`}><dt>{label}</dt><dd className="font-semibold tabular-nums">{readiness.counts[key]}</dd></div>)}</dl></details> : null}
   </section>;
 }

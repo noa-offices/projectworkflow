@@ -61,15 +61,15 @@ export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, 
   const canAct = approver && batchOpen && section !== "attention" && selectable.length > 0;
   async function run(work: () => Promise<{ message: string }>) { setBusy(true); setMessage(""); try { const result = await work(); setSelected([]); setAsking(false); setReason(""); setMessage(result.message); router.refresh(); } catch (error) { setMessage(error instanceof Error ? error.message : "Action failed."); } finally { setBusy(false); } }
   const act = {
-    changed: { label: "Apply selected prices", go: () => run(() => bulkApplySupplierChangedPrices(batchId, selected)) },
-    same: { label: "Confirm unchanged", go: () => run(() => bulkConfirmSupplierUnchanged(batchId, selected)) },
-    missing: { label: "Exclude selected from this source", go: () => setAsking(true) },
+    changed: { label: `Apply ${selected.length} price${selected.length === 1 ? "" : "s"}`, go: () => run(() => bulkApplySupplierChangedPrices(batchId, selected)) },
+    same: { label: `Confirm ${selected.length} unchanged`, go: () => run(() => bulkConfirmSupplierUnchanged(batchId, selected)) },
+    missing: { label: `Exclude ${selected.length} from this source`, go: () => setAsking(true) },
     attention: null,
   }[section];
   const pick = selectAllKeys(selectable, limit);
   const columns = section === "attention" ? ["Code", "Item", "Issue", "Recommended action", ""] : ["Code", "Item / size", "Current", "Supplier", "Change"];
   return <div className="space-y-2">
-    <div className="flex flex-wrap items-baseline justify-between gap-2"><div><Link href={backHref} className="text-xs underline">← Back to Family Review</Link><h3 className="text-base font-semibold">{familyName}</h3></div><Link href={detailsHref} className="text-xs underline">Advanced / Technical Review</Link></div>
+    <div className="flex flex-wrap items-baseline justify-between gap-2"><div><Link href={backHref} className="text-xs underline">← Back to Family Review</Link><h3 className="text-base font-semibold">{familyName}</h3><p className="text-xs text-zinc-600">{tabs[0].count} Changed · {tabs[1].count} Same · {tabs[2].count} Missing{tabs[3].count ? ` · ${tabs[3].count} Needs attention` : ""}</p></div><Link href={detailsHref} className="text-xs underline">Advanced / Technical Review</Link></div>
     <nav aria-label="Family sections" className="flex flex-wrap gap-1">{tabs.map((tab) => <Link key={tab.section} href={tab.href} aria-current={tab.section === section ? "page" : undefined} className={`rounded border px-3 py-1.5 text-sm ${tab.section === section ? "border-zinc-800 bg-zinc-800 font-medium text-white" : "border-zinc-300 bg-white"}`}>{tab.label} <span className="tabular-nums">{tab.count}</span></Link>)}</nav>
     <p role="status" aria-live="polite" className="text-sm text-amber-800">{message}</p>
     {!approver && section !== "attention" && rows.length ? <p className="text-xs text-zinc-600">An approver applies, confirms or excludes items.</p> : null}
@@ -87,7 +87,7 @@ export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, 
       {asking ? <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); if (!reason.trim()) { setMessage("Enter a reason before excluding."); return; } void run(() => bulkExcludeSupplierMissing(batchId, selected, reason)); }}>
         <label className="grid gap-1 text-xs">Reason for excluding {selected.length} selected item{selected.length === 1 ? "" : "s"}<input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={4000} required className={`${input} w-72`} /></label>
         <button type="button" className={button} disabled={busy} onClick={() => { setAsking(false); setReason(""); }}>Cancel</button><button className={primary} disabled={busy}>Exclude {selected.length} item{selected.length === 1 ? "" : "s"}</button></form>
-        : <><span className="text-sm tabular-nums">{selected.length} selected</span><button type="button" className={primary} disabled={busy} onClick={() => void act.go()}>{act.label} ({selected.length})</button></>}
+        : <><span className="text-sm tabular-nums">{selected.length} selected</span><button type="button" className={primary} disabled={busy} onClick={() => void act.go()}>{act.label}</button><button type="button" className={button} disabled={busy} onClick={() => setSelected([])}>Clear</button></>}
     </div> : null}
   </div>;
 }

@@ -357,11 +357,12 @@ export function familyRowState(match: PriceMatch, decision: string | undefined, 
   return intact ? { section: "changed", done: false, issue: "", action: "", kind: "changed" } : attention("changed_after");
 }
 
-export type FamilySummary = { template_id: string; template_name: string; items: number; changed: number; same: number; missing: number; attention: number; done: number; status: "ready" | "needs_review" | "needs_attention" | "completed" };
+export type FamilySummary = { template_id: string; template_name: string; items: number; changed: number; same: number; missing: number; attention: number; done: number; excluded: number; status: "ready" | "needs_review" | "needs_attention" | "completed" };
 export type FamilyOverview = {
   batch: { id: string; status: string; scope: string };
   families: FamilySummary[];
   totals: { families: number; ready: number; changed: number; same: number; missing: number; attention: number };
+  finished: { applied: number; confirmed: number; excluded: number };
   supplierOnly: { unmatched: number; companions: number };
 };
 export type FamilyRow = { key: string; code: string; item: string; current: string; supplier: string; change: string; issue: string; action: string; classification: string; selectable: boolean };
@@ -397,16 +398,19 @@ export async function supplierFamilyOverview(client: SupabaseClient, batchId: st
   for (const row of rows) {
     if (!row.state.section) continue;
     for (const target of new Map(row.match.targets.map((item) => [item.template_id, item])).values()) {
-      const family = families.get(target.template_id) ?? { template_id: target.template_id, template_name: target.template_name, items: 0, changed: 0, same: 0, missing: 0, attention: 0, done: 0, status: "ready" as const };
+      const family = families.get(target.template_id) ?? { template_id: target.template_id, template_name: target.template_name, items: 0, changed: 0, same: 0, missing: 0, attention: 0, done: 0, excluded: 0, status: "ready" as const };
       family.items++;
-      if (row.state.done) family.done++; else family[row.state.section]++;
+      if (row.state.done) { family.done++; if (row.state.section === "missing") family.excluded++; } else family[row.state.section]++;
       families.set(target.template_id, family);
     }
   }
   const list = [...families.values()].sort((a, b) => a.template_name.localeCompare(b.template_name)).map((family): FamilySummary => ({ ...family,
     status: batch.status === "completed" ? "completed" : family.attention ? "needs_attention" : family.changed || family.same || family.missing ? "needs_review" : "ready" }));
+  const finished = { applied: 0, confirmed: 0, excluded: 0 };
+  for (const row of rows) if (row.state.done) { if (row.state.section === "changed") finished.applied++; else if (row.state.section === "same") finished.confirmed++; else if (row.state.section === "missing") finished.excluded++; }
   const sum = (field: "changed" | "same" | "missing" | "attention") => list.reduce((total, family) => total + family[field], 0);
   return { batch: { id: batch.id, status: batch.status, scope: batch.scope }, families: list, supplierOnly,
+    finished,
     totals: { families: list.length, ready: list.filter((family) => family.status === "ready" || family.status === "completed").length, changed: sum("changed"), same: sum("same"), missing: sum("missing"), attention: sum("attention") } };
 }
 

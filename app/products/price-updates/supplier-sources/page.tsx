@@ -1,11 +1,13 @@
+import type React from "react";
 import Link from "next/link";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { SupplierBrandProgress, SupplierFamilyList, SupplierFamilyTable } from "@/components/products/supplier-family-review";
-import { SupplierCompletionControls, SupplierReviewControls, SupplierSourceControls } from "@/components/products/supplier-price-workspace-controls";
+import { SupplierAdvancedImportSettings, SupplierCompletionControls, SupplierImportCard, SupplierReviewControls, SupplierStartReview } from "@/components/products/supplier-price-workspace-controls";
+import { SupplierCompleteSummary, SupplierFinishScreen, SupplierImportDetails, SupplierImportSummary, SupplierPriceListHistory, SupplierWorkflowHeader, type WorkflowStep } from "@/components/products/supplier-price-workflow";
 import { requireBrandPriceReviewer } from "@/lib/auth";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { createClient } from "@/lib/supabase/server";
-import { SUPPLIER_BULK_LIMIT, familySections, supplierFamilyOverview, supplierFamilyRows, supplierRows, type FamilyOverview, type FamilyRow, type FamilySection } from "@/lib/products/supplier-price-repository";
+import { SUPPLIER_BULK_LIMIT, familySections, supplierBrandMatches, supplierFamilyOverview, supplierFamilyRows, supplierRows, type FamilyOverview, type FamilyRow, type FamilySection } from "@/lib/products/supplier-price-repository";
 import type { DimensionRule, PriceMatch, ReviewBatch, SourceVersion, SupplierProfile } from "@/lib/products/supplier-price-contracts";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +17,6 @@ const offset = (value: string | string[] | undefined) => Math.min(1_000_000, Mat
 const statusOptions = ["increased", "decreased", "unchanged", "changed", "unmatched", "referenced_companion", "ambiguous", "shared", "needs_dimension_mapping", "baseline_drift", "invalid_source", "target_not_represented"];
 const readable = (value: string) => { const label = value.replaceAll("_", " "); return label.charAt(0).toUpperCase() + label.slice(1); };
 const badge = "inline-flex rounded-full border px-2 py-0.5 text-xs font-medium";
-const sourceTone = (status: string) => status === "imported" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : status === "failed" ? "border-red-200 bg-red-50 text-red-800" : "border-zinc-200 bg-zinc-100 text-zinc-600";
 
 export default async function SupplierSourcesPage({ searchParams }: { searchParams?: Promise<Params> }) {
   const { profile, user, displayName } = await requireBrandPriceReviewer();
@@ -25,6 +26,9 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
   const base = "/products/price-updates/supplier-sources";
   const href = (changes: Record<string, string>) => { const query = new URLSearchParams(Object.fromEntries(Object.entries(params).map(([key, value]) => [key, text(value)]))); if (brand) query.set("brand", brand.id); for (const [key, value] of Object.entries(changes)) query.set(key, value); return `${base}?${query}`; };
   const sourceOffset = offset(params.sourceOffset), batchOffset = offset(params.batchOffset), from = offset(params.offset);
+  const requestedView = text(params.view);
+  const technicalDeepLink = !requestedView && ["status", "code", "template", "offset", "unitOffset"].some((key) => text(params[key]) !== "");
+  const view = technicalDeepLink ? "advanced" : (["advanced", "summary", "details", "complete", "start"].includes(requestedView) ? requestedView : "family");
   let profileReadError = "";
   const [sourceResult, profileList, templates] = brand ? await Promise.all([
     client.from("supplier_source_versions").select("*").eq("brand_id", brand.id).order("created_at", { ascending: false }).order("id").range(sourceOffset, sourceOffset + 19).returns<SourceVersion[]>(),
@@ -42,8 +46,8 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
   if (!batch && source && text(params.batch)) { const result = await client.from("supplier_price_batches").select("*").eq("source_id", source.id).eq("id", text(params.batch)).maybeSingle<ReviewBatch>(); batch = result.data ?? undefined; }
   let matches: PriceMatch[] = []; let units: Array<{ template_id: string; template_name: string; matched: number; changed: number; unchanged: number; unresolved: number; state: string }> = [];
   const templateFilter = text(params.template); const classification = text(params.status); const code = text(params.code).slice(0, 120);
-  // Family Review is the default; the technical workspace is loaded only on request.
-  const view = text(params.view) === "advanced" ? "advanced" : "family";
+  // A review opens in Family Review by default; the technical workspace is loaded only on request.
+  if (!batch && source && !["start", "summary", "details"].includes(view)) batch = batchResult.data?.find((item) => item.status === "review") ?? batchResult.data?.[0];
   if (batch?.status === "review" && view === "advanced") {
     const unitResult = await client.from("supplier_template_review_units").select("*").eq("batch_id", batch.id).order("template_id").range(offset(params.unitOffset), offset(params.unitOffset) + 49).returns<typeof units>();
     units = unitResult.data ?? []; errorMessage ||= unitResult.error?.message ?? "";
@@ -68,47 +72,34 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
   const approver = canApproveBrandPrices(profile?.role, profile?.account_status);
   const familyId = text(params.family); const requested = text(params.section) as FamilySection; const section: FamilySection = familySections.includes(requested) ? requested : "changed";
   let overview: FamilyOverview | null = null; let familyRows: { rows: FamilyRow[]; truncated: boolean } = { rows: [], truncated: false };
-  if (batch && view === "family") {
+  if (batch && (view === "family" || view === "complete")) {
     try {
       overview = await supplierFamilyOverview(client, batch.id);
-      if (familyId && overview.families.some((item) => item.template_id === familyId)) familyRows = await supplierFamilyRows(client, batch.id, familyId, section);
+      if (view === "family" && familyId && overview.families.some((item) => item.template_id === familyId)) familyRows = await supplierFamilyRows(client, batch.id, familyId, section);
     } catch (error) { errorMessage ||= error instanceof Error ? error.message : "Family Review unavailable"; }
   }
   const family = overview?.families.find((item) => item.template_id === familyId);
+  const summary: { families: number | null; warnings: number | null } = { families: null, warnings: null };
+  if (source?.status === "imported" && view === "summary") {
+    try {
+      const found = await supplierBrandMatches(client, source.id);
+      summary.families = new Set(found.matches.flatMap((match) => match.targets.map((target) => target.template_id))).size;
+      summary.warnings = found.matches.filter((match) => match.classification === "invalid_source").length;
+    } catch { /* The summary still shows the stored import counts. */ }
+  }
+  let baselineDate: string | null = null;
+  if (batch?.status === "completed") {
+    const listId = (batch as ReviewBatch & { brand_price_list_update_id?: string | null }).brand_price_list_update_id;
+    const list = listId ? await client.from("brand_price_list_updates").select("effective_from,received_at,created_at").eq("id", listId).maybeSingle<{ effective_from: string | null; received_at: string | null; created_at: string | null }>() : null;
+    baselineDate = list?.data?.effective_from ?? list?.data?.received_at ?? list?.data?.created_at?.slice(0, 10) ?? source?.effective_from ?? source?.received_at ?? null;
+  }
   const familyTabs = (["changed", "same", "missing", "attention"] as const).map((key) => ({ section: key, label: { changed: "Changed", same: "Same", missing: "Missing from Supplier source", attention: "Needs attention" }[key], count: family?.[key] ?? 0, href: href({ view: "family", family: familyId, section: key }) }));
   const workingFile = source?.working_reference ? await client.storage.from("supplier-price-sources").createSignedUrl(source.working_reference, 300) : null;
   const visibleTotals = units.reduce((totals, unit) => ({ matched: totals.matched + unit.matched, changed: totals.changed + unit.changed, unchanged: totals.unchanged + unit.unchanged, unresolved: totals.unresolved + unit.unresolved }), { matched: 0, changed: 0, unchanged: 0, unresolved: 0 });
   const clearFiltersHref = href({ source: source?.id ?? "", batch: batch?.id ?? "", template: "", status: "", code: "", offset: "0" });
-  return <ErpAppShell title="Supplier Price Sources / Review" description="Reusable Supplier Master Sources, resumable Template review and individual reviewed price application." role={profile?.role ?? null} userDisplayName={displayName} userEmail={user.email} userAvatarUrl={profile?.avatar_url ?? null} userRole={profile?.role ?? null}>
-    <div className="space-y-4 text-sm"><Link href="/products/price-updates" className="underline">Price-check monitoring</Link>
-      {errorMessage ? <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3">{errorMessage}. The Phase 1b migration must be deployed before using this workspace.</p> : null}
-      <form className="flex gap-2"><label>Brand <select name="brand" defaultValue={brand?.id} className="rounded border p-2">{brands.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button className="rounded border px-3">Open Brand</button></form>
-      {brand ? <div className="grid gap-4 lg:grid-cols-[minmax(260px,340px)_1fr]"><aside className="space-y-3">
-        <h2 className="font-semibold">{brand.name} — Supplier Sources</h2>
-        <table className="w-full text-left text-xs"><tbody>{sources.map((item) => <tr key={item.id} className={`border-b ${source?.id === item.id ? "bg-zinc-100 ring-1 ring-inset ring-zinc-300" : ""}`}><td className="space-y-1 p-2"><div className="flex flex-wrap items-center justify-between gap-2"><Link href={href({ source: item.id, batch: "", offset: "0", batchOffset: "0" })} aria-current={source?.id === item.id ? "true" : undefined} className="font-semibold underline">{item.title}</Link><span className={`${badge} ${sourceTone(item.status)}`}>{readable(item.status)}</span></div><div>{item.source_type.toUpperCase()} · {item.currency} · {item.basis}</div><div className="text-zinc-600">{item.stored_rows.toLocaleString("en-US")}/{item.expected_rows.toLocaleString("en-US")} rows · {item.identity_count.toLocaleString("en-US")} commercial identities</div>{source?.id === item.id ? <div className="font-medium">Selected source</div> : null}</td></tr>)}</tbody></table>
-        <div className="flex justify-between text-xs"><Link href={href({ sourceOffset: String(Math.max(0, sourceOffset - 20)) })}>Previous sources</Link><Link href={href({ sourceOffset: String(sourceOffset + 20) })}>Next sources</Link></div>
-        <SupplierSourceControls key={brand.id} brandId={brand.id} brandName={brand.name} basis={brand.stored_price_basis} profiles={profileList} approver={approver} sourceId={source?.status === "imported" ? source.id : undefined} templates={templates} dimensions={vocabularyResult.data ?? []} />
-        <div className="flex justify-between text-xs"><Link href={href({ vocabularyOffset: String(Math.max(0, offset(params.vocabularyOffset) - 50)) })}>Previous vocabulary</Link><Link href={href({ vocabularyOffset: String(offset(params.vocabularyOffset) + 50) })}>Next vocabulary</Link></div>
-      </aside><section className="min-w-0 space-y-3">
-        {source ? <><div className="space-y-3 rounded-lg border border-zinc-200 bg-white p-4">
-          <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><h2 className="text-lg font-semibold">{source.title}</h2><p className="break-words text-xs text-zinc-600">{source.filename}</p></div><span className={`${badge} ${sourceTone(source.status)}`}>{readable(source.status)}</span></div>
-          <dl className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-3">{[["Currency", source.currency], ["Basis", source.basis], ["Raw rows", source.stored_rows.toLocaleString("en-US")], ["Price cells", source.stored_cells.toLocaleString("en-US")], ["Commercial identities", source.identity_count.toLocaleString("en-US")], ...(source.effective_from ? [["Effective date", source.effective_from]] : []), ...(source.received_at ? [["Received date", source.received_at]] : [])].map(([label, value]) => <div key={label}><dt className="text-zinc-500">{label}</dt><dd className="font-semibold">{value}</dd></div>)}</dl>
-          {workingFile?.data?.signedUrl ? <a className="inline-block text-xs font-medium underline" href={workingFile.data.signedUrl} target="_blank" rel="noopener noreferrer">Download retained working source</a> : null}
-          <p className="break-words text-xs text-zinc-500">SHA-256 {source.file_hash}. Raw codes, dimensions, context, extras and physical row references are retained. {source.original_reference ? `Original reference: ${source.original_reference}` : ""}</p>
-          </div>
-          <h3 className="font-semibold">Review batches</h3>
-          <div className="flex flex-wrap gap-2">{batchResult.data?.map((item) => <Link key={item.id} aria-current={batch?.id === item.id ? "true" : undefined} className={`space-y-1 rounded border p-2 ${batch?.id === item.id ? "border-zinc-400 bg-zinc-100 ring-1 ring-zinc-300" : "border-zinc-200 bg-white"}`} href={href({ batch: item.id, offset: "0", template: "", status: "" })}><div className="font-semibold">{item.title}</div><div className="flex flex-wrap items-center gap-2 text-xs"><span>Scope: {readable(item.scope)}</span><span className={`${badge} border-zinc-200 bg-zinc-50`}>{readable(item.status)}</span>{batch?.id === item.id ? <span className="font-medium">Selected batch</span> : null}</div></Link>)}</div>
-          <div className="flex justify-between text-xs"><Link href={href({ batchOffset: String(Math.max(0, batchOffset - 20)) })}>Previous batches</Link><Link href={href({ batchOffset: String(batchOffset + 20) })}>Next batches</Link></div>
-        </> : <p>Select a stored source version or import a structured source.</p>}
-        {batch ? view === "family" ? <>
-          {overview ? family ? <SupplierFamilyTable key={`${batch.id}:${family.template_id}:${section}`} batchId={batch.id} familyName={family.template_name} section={section} tabs={familyTabs} rows={familyRows.rows} truncated={familyRows.truncated} approver={approver} batchOpen={batch.status === "review"} limit={SUPPLIER_BULK_LIMIT}
-              backHref={href({ view: "family", family: "", section: "" })} detailsHref={href({ view: "advanced", family: "", section: "", template: family.template_id })} />
-            : <><SupplierBrandProgress overview={overview} />
-              <SupplierFamilyList overview={overview} links={overview.families.map((item) => ({ template_id: item.template_id, href: href({ view: "family", family: item.template_id, section: item.attention && !item.changed ? "attention" : "changed" }) }))}
-                approverNote={approver ? undefined : "An approver applies, confirms or excludes items."} advancedHref={href({ view: "advanced", family: "", section: "" })} supplierOnlyHref={href({ view: "advanced", family: "", section: "", status: "unmatched" })} />
-              <SupplierCompletionControls key={batch.id} batchId={batch.id} scope={batch.scope} status={batch.status} approver={approver} /></>
-            : <p className="rounded border border-zinc-200 bg-zinc-50 p-6 text-center text-sm text-zinc-600">Family Review is unavailable for this comparison. Use Advanced / Technical Review.</p>}
-        </> : <><p className="text-xs"><Link href={href({ view: "family", status: "", code: "", template: "" })} className="underline">← Back to Family Review</Link></p><p className="rounded border border-amber-300 bg-amber-50 p-2 font-medium">{batch.basis_warning} Apply one reviewed changed price at a time after confirming source and Brand price basis. Build a fresh comparison after applying.</p>
+  const completed = batch?.status === "completed";
+  const importCard = brand ? <SupplierImportCard key={brand.id} brandId={brand.id} brandName={brand.name} profiles={profileList} suggestedTitle={`${brand.name} — ${new Date().toLocaleString("en-US", { month: "long", year: "numeric" })}`} advancedHref={href({ advanced: "1" }) + "#advanced"} /> : null;
+  const advancedReview = batch ? <><p className="text-xs"><Link href={href({ view: "family", status: "", code: "", template: "" })} className="underline">← Back to Family Review</Link></p><p className="rounded border border-amber-300 bg-amber-50 p-2 font-medium">{batch.basis_warning} Apply one reviewed changed price at a time after confirming source and Brand price basis. Build a fresh comparison after applying.</p>
           <SupplierCompletionControls key={batch.id} batchId={batch.id} scope={batch.scope} status={batch.status} approver={approver} />
           <div className="space-y-2"><h3 className="font-semibold">Visible Template totals</h3><p className="text-xs text-zinc-500">From the {units.length} Template review units loaded on this page.</p><dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">{Object.entries(visibleTotals).map(([label, total]) => <div key={label} className={`rounded border p-3 ${total > 0 && (label === "changed" || label === "unresolved") ? "border-amber-200 bg-amber-50" : "border-zinc-200 bg-zinc-50"}`}><dt className="text-xs text-zinc-600">{readable(label)}</dt><dd className="text-xl font-semibold tabular-nums">{total.toLocaleString("en-US")}</dd></div>)}</dl></div>
           <h3 className="font-semibold">Template review units</h3>
@@ -118,8 +109,39 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
           <p className="text-xs text-zinc-600">Unmatched / referenced companion / ambiguous / missing dimension / invalid source queues are available through Status. Companion notes require an explicit profile column; no ownership is inferred. Not represented ≠ discontinued.</p>
           <SupplierReviewControls key={`${batch.id}:${from}:${templateFilter}:${classification}:${code}`} batchId={batch.id} brandId={brand.id} matches={matches} approver={approver} sourceProfile={source?.profile} sourceBasis={source?.basis ?? "unknown"} brandBasis={brand.stored_price_basis} sourceStatus={source?.status ?? ""} batchStatus={batch.status} />
           <div className="flex justify-between"><Link href={href({ offset: String(Math.max(0, from - 50)) })}>Previous comparisons</Link><span>{matches.length ? `${from + 1}–${from + matches.length}` : "0 comparisons"}</span><Link href={href({ offset: String(from + 50) })}>Next comparisons</Link></div>
-        </> : null}
-      </section></div> : <p>No active Brands available.</p>}
+        </> : null;
+  const familyReview = batch ? <>
+          {overview ? family ? <SupplierFamilyTable key={`${batch.id}:${family.template_id}:${section}`} batchId={batch.id} familyName={family.template_name} section={section} tabs={familyTabs} rows={familyRows.rows} truncated={familyRows.truncated} approver={approver} batchOpen={batch.status === "review"} limit={SUPPLIER_BULK_LIMIT}
+              backHref={href({ view: "family", family: "", section: "" })} detailsHref={href({ view: "advanced", family: "", section: "", template: family.template_id })} />
+            : <><SupplierBrandProgress overview={overview} />
+              <SupplierFamilyList overview={overview} links={overview.families.map((item) => ({ template_id: item.template_id, href: href({ view: "family", family: item.template_id, section: item.attention && !item.changed ? "attention" : "changed" }) }))}
+                approverNote={approver ? undefined : "An approver applies, confirms or excludes items."} advancedHref={href({ view: "advanced", family: "", section: "" })} supplierOnlyHref={href({ view: "advanced", family: "", section: "", status: "unmatched" })} />
+              <p><Link href={href({ view: "complete" })} className="inline-block rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium">Continue to Complete Review</Link></p></>
+            : <p className="rounded border border-zinc-200 bg-zinc-50 p-6 text-center text-sm text-zinc-600">Family Review is unavailable for this comparison. Use Advanced / Technical Review.</p>}
+        </> : null;
+  const finishScreen = batch && source && brand ? <SupplierFinishScreen brandName={brand.name} title={source.title} baselineDate={baselineDate} overview={overview} priceUpdatesHref="/products/price-updates" summaryHref={href({ view: "complete" })} /> : null;
+  let main: React.ReactNode;
+  if (!source || !brand) main = importCard;
+  else if (source.status === "archived") main = <><p className="rounded border border-zinc-200 bg-zinc-50 p-3">This price list is archived. Import a new price list to continue.</p>{importCard}</>;
+  else if (source.status !== "imported") main = <><SupplierImportSummary brandName={brand.name} source={source} families={null} warnings={null} continueHref="" detailsHref={href({ view: "details" })} uploading />{importCard}</>;
+  else if (view === "summary" || view === "details") main = <><SupplierImportSummary brandName={brand.name} source={source} families={summary.families} warnings={summary.warnings} continueHref={href({ view: batchResult.data?.length ? "family" : "start", batch: "" })} detailsHref={href({ view: "details" })} />{view === "details" ? <SupplierImportDetails source={source} workingFileUrl={workingFile?.data?.signedUrl} /> : null}</>;
+  else if (!batch || view === "start") main = <SupplierStartReview key={source.id} brandId={brand.id} sourceId={source.id} templates={templates} />;
+  else if (view === "advanced") main = advancedReview;
+  else if (view === "complete") main = completed ? finishScreen : overview ? <><SupplierCompleteSummary overview={overview} reviewHref={href({ view: "family", family: "", section: "" })} /><SupplierCompletionControls key={batch.id} batchId={batch.id} scope={batch.scope} status={batch.status} approver={approver} reviewHref={href({ view: "family", family: "", section: "" })} /></> : <p>Complete Review is unavailable for this comparison.</p>;
+  else main = <>{completed ? finishScreen : null}{familyReview}</>;
+  const step: WorkflowStep = !source || view === "summary" || view === "details" || source.status !== "imported" ? 1 : view === "complete" ? 3 : 2;
+  return <ErpAppShell title="Supplier Price Sources / Review" description="Import a Supplier price list, review it by Product family, then complete the review." role={profile?.role ?? null} userDisplayName={displayName} userEmail={user.email} userAvatarUrl={profile?.avatar_url ?? null} userRole={profile?.role ?? null}>
+    <div className="space-y-4 text-sm"><Link href="/products/price-updates" className="underline">Price-check monitoring</Link>
+      {errorMessage ? <p role="alert" className="rounded border border-amber-300 bg-amber-50 p-3">{errorMessage}. The Phase 1b migration must be deployed before using this workspace.</p> : null}
+      <form className="flex gap-2"><label>Brand <select name="brand" defaultValue={brand?.id} className="rounded border p-2">{brands.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button className="rounded border px-3">Open Brand</button></form>
+      {brand ? <div className="space-y-4">
+        <SupplierWorkflowHeader brandName={brand.name} source={source} batch={batch} step={step} links={{ steps: [href({ source: "", batch: "", view: "", family: "", section: "", status: "", code: "", template: "", offset: "0" }), href({ view: "family", family: "", section: "" }), href({ view: "complete" })], history: "#history", advanced: "#advanced" }} />
+        {main}
+        <SupplierPriceListHistory sources={sources} reviews={batchResult.data ?? []} currentSourceId={source?.id} currentBatchId={batch?.id} sourceHref={(id) => href({ source: id, batch: "", view: "family", offset: "0", batchOffset: "0" })} reviewHref={(id) => href({ batch: id, view: "family", offset: "0", template: "", status: "" })} newReviewHref={source?.status === "imported" ? href({ view: "start" }) : undefined}
+          pagerHrefs={{ previous: href({ sourceOffset: String(Math.max(0, sourceOffset - 20)) }), next: href({ sourceOffset: String(sourceOffset + 20) }) }} />
+        <SupplierAdvancedImportSettings key={`${brand.id}:${text(params.advanced)}`} brandId={brand.id} brandName={brand.name} basis={brand.stored_price_basis} approver={approver} templates={templates} dimensions={vocabularyResult.data ?? []} open={text(params.advanced) === "1"} />
+        {approver ? <div className="flex justify-between text-xs"><Link href={href({ vocabularyOffset: String(Math.max(0, offset(params.vocabularyOffset) - 50)) })}>Previous vocabulary</Link><Link href={href({ vocabularyOffset: String(offset(params.vocabularyOffset) + 50) })}>Next vocabulary</Link></div> : null}
+      </div> : <p>No active Brands available.</p>}
     </div>
   </ErpAppShell>;
 }
