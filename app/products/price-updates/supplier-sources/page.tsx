@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
+import { SupplierBrandProgress, SupplierFamilyList, SupplierFamilyTable } from "@/components/products/supplier-family-review";
 import { SupplierCompletionControls, SupplierReviewControls, SupplierSourceControls } from "@/components/products/supplier-price-workspace-controls";
 import { requireBrandPriceReviewer } from "@/lib/auth";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { createClient } from "@/lib/supabase/server";
-import { supplierRows } from "@/lib/products/supplier-price-repository";
+import { SUPPLIER_BULK_LIMIT, familySections, supplierFamilyOverview, supplierFamilyRows, supplierRows, type FamilyOverview, type FamilyRow, type FamilySection } from "@/lib/products/supplier-price-repository";
 import type { DimensionRule, PriceMatch, ReviewBatch, SourceVersion, SupplierProfile } from "@/lib/products/supplier-price-contracts";
 
 export const dynamic = "force-dynamic";
@@ -41,7 +42,9 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
   if (!batch && source && text(params.batch)) { const result = await client.from("supplier_price_batches").select("*").eq("source_id", source.id).eq("id", text(params.batch)).maybeSingle<ReviewBatch>(); batch = result.data ?? undefined; }
   let matches: PriceMatch[] = []; let units: Array<{ template_id: string; template_name: string; matched: number; changed: number; unchanged: number; unresolved: number; state: string }> = [];
   const templateFilter = text(params.template); const classification = text(params.status); const code = text(params.code).slice(0, 120);
-  if (batch?.status === "review") {
+  // Family Review is the default; the technical workspace is loaded only on request.
+  const view = text(params.view) === "advanced" ? "advanced" : "family";
+  if (batch?.status === "review" && view === "advanced") {
     const unitResult = await client.from("supplier_template_review_units").select("*").eq("batch_id", batch.id).order("template_id").range(offset(params.unitOffset), offset(params.unitOffset) + 49).returns<typeof units>();
     units = unitResult.data ?? []; errorMessage ||= unitResult.error?.message ?? "";
     let query = client.from("supplier_price_matches").select("key,data,supplier_price_decisions(decision,note,proposed_target_keys)").eq("batch_id", batch.id).order("key").range(from, from + 49);
@@ -63,6 +66,16 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
     }
   }
   const approver = canApproveBrandPrices(profile?.role, profile?.account_status);
+  const familyId = text(params.family); const requested = text(params.section) as FamilySection; const section: FamilySection = familySections.includes(requested) ? requested : "changed";
+  let overview: FamilyOverview | null = null; let familyRows: { rows: FamilyRow[]; truncated: boolean } = { rows: [], truncated: false };
+  if (batch && view === "family") {
+    try {
+      overview = await supplierFamilyOverview(client, batch.id);
+      if (familyId && overview.families.some((item) => item.template_id === familyId)) familyRows = await supplierFamilyRows(client, batch.id, familyId, section);
+    } catch (error) { errorMessage ||= error instanceof Error ? error.message : "Family Review unavailable"; }
+  }
+  const family = overview?.families.find((item) => item.template_id === familyId);
+  const familyTabs = (["changed", "same", "missing", "attention"] as const).map((key) => ({ section: key, label: { changed: "Changed", same: "Same", missing: "Missing from Supplier source", attention: "Needs attention" }[key], count: family?.[key] ?? 0, href: href({ view: "family", family: familyId, section: key }) }));
   const workingFile = source?.working_reference ? await client.storage.from("supplier-price-sources").createSignedUrl(source.working_reference, 300) : null;
   const visibleTotals = units.reduce((totals, unit) => ({ matched: totals.matched + unit.matched, changed: totals.changed + unit.changed, unchanged: totals.unchanged + unit.unchanged, unresolved: totals.unresolved + unit.unresolved }), { matched: 0, changed: 0, unchanged: 0, unresolved: 0 });
   const clearFiltersHref = href({ source: source?.id ?? "", batch: batch?.id ?? "", template: "", status: "", code: "", offset: "0" });
@@ -87,7 +100,15 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
           <div className="flex flex-wrap gap-2">{batchResult.data?.map((item) => <Link key={item.id} aria-current={batch?.id === item.id ? "true" : undefined} className={`space-y-1 rounded border p-2 ${batch?.id === item.id ? "border-zinc-400 bg-zinc-100 ring-1 ring-zinc-300" : "border-zinc-200 bg-white"}`} href={href({ batch: item.id, offset: "0", template: "", status: "" })}><div className="font-semibold">{item.title}</div><div className="flex flex-wrap items-center gap-2 text-xs"><span>Scope: {readable(item.scope)}</span><span className={`${badge} border-zinc-200 bg-zinc-50`}>{readable(item.status)}</span>{batch?.id === item.id ? <span className="font-medium">Selected batch</span> : null}</div></Link>)}</div>
           <div className="flex justify-between text-xs"><Link href={href({ batchOffset: String(Math.max(0, batchOffset - 20)) })}>Previous batches</Link><Link href={href({ batchOffset: String(batchOffset + 20) })}>Next batches</Link></div>
         </> : <p>Select a stored source version or import a structured source.</p>}
-        {batch ? <><p className="rounded border border-amber-300 bg-amber-50 p-2 font-medium">{batch.basis_warning} Apply one reviewed changed price at a time after confirming source and Brand price basis. Build a fresh comparison after applying.</p>
+        {batch ? view === "family" ? <>
+          {overview ? family ? <SupplierFamilyTable key={`${batch.id}:${family.template_id}:${section}`} batchId={batch.id} familyName={family.template_name} section={section} tabs={familyTabs} rows={familyRows.rows} truncated={familyRows.truncated} approver={approver} batchOpen={batch.status === "review"} limit={SUPPLIER_BULK_LIMIT}
+              backHref={href({ view: "family", family: "", section: "" })} detailsHref={href({ view: "advanced", family: "", section: "", template: family.template_id })} />
+            : <><SupplierBrandProgress overview={overview} />
+              <SupplierFamilyList overview={overview} links={overview.families.map((item) => ({ template_id: item.template_id, href: href({ view: "family", family: item.template_id, section: item.attention && !item.changed ? "attention" : "changed" }) }))}
+                approverNote={approver ? undefined : "An approver applies, confirms or excludes items."} advancedHref={href({ view: "advanced", family: "", section: "" })} supplierOnlyHref={href({ view: "advanced", family: "", section: "", status: "unmatched" })} />
+              <SupplierCompletionControls key={batch.id} batchId={batch.id} scope={batch.scope} status={batch.status} approver={approver} /></>
+            : <p className="rounded border border-zinc-200 bg-zinc-50 p-6 text-center text-sm text-zinc-600">Family Review is unavailable for this comparison. Use Advanced / Technical Review.</p>}
+        </> : <><p className="text-xs"><Link href={href({ view: "family", status: "", code: "", template: "" })} className="underline">← Back to Family Review</Link></p><p className="rounded border border-amber-300 bg-amber-50 p-2 font-medium">{batch.basis_warning} Apply one reviewed changed price at a time after confirming source and Brand price basis. Build a fresh comparison after applying.</p>
           <SupplierCompletionControls key={batch.id} batchId={batch.id} scope={batch.scope} status={batch.status} approver={approver} />
           <div className="space-y-2"><h3 className="font-semibold">Visible Template totals</h3><p className="text-xs text-zinc-500">From the {units.length} Template review units loaded on this page.</p><dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">{Object.entries(visibleTotals).map(([label, total]) => <div key={label} className={`rounded border p-3 ${total > 0 && (label === "changed" || label === "unresolved") ? "border-amber-200 bg-amber-50" : "border-zinc-200 bg-zinc-50"}`}><dt className="text-xs text-zinc-600">{readable(label)}</dt><dd className="text-xl font-semibold tabular-nums">{total.toLocaleString("en-US")}</dd></div>)}</dl></div>
           <h3 className="font-semibold">Template review units</h3>

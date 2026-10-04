@@ -7,7 +7,7 @@ import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { assertSupplierProfile, type RawSupplierRow, type SourceScope, type SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import { normalizeSupplierRows } from "@/lib/products/supplier-price-import";
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
-import { supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBrandMatches, supplierBrandTargets, supplierMatchChunks, supplierSource, supplierWrite } from "@/lib/products/supplier-price-repository";
+import { supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierBulkExcludeMissing, supplierBrandMatches, supplierBrandTargets, supplierMatchChunks, supplierSource, supplierWrite } from "@/lib/products/supplier-price-repository";
 
 const workspacePath = "/products/price-updates/supplier-sources";
 async function reviewer() { const auth = await requireBrandPriceReviewer(); return { auth, client: await createClient() }; }
@@ -81,6 +81,26 @@ export async function completeSupplierPriceReview(batchId: string) {
 export async function excludeSupplierTargetFromSource(batchId: string, matchKey: string, note: string) {
   const { client } = await approver();
   const result = await supplierExcludeTargetFromSource(client, batchId, matchKey, note);
+  revalidatePath(workspacePath);
+  return result;
+}
+// Bulk Family actions: the browser sends only the batch id, match keys and (for exclusion) a reason.
+export async function bulkApplySupplierChangedPrices(batchId: string, matchKeys: string[]) {
+  const { client } = await approver();
+  const result = await supplierBulkApplyChanged(client, batchId, matchKeys);
+  revalidatePath(workspacePath);
+  revalidatePath("/products/templates");
+  return result;
+}
+export async function bulkConfirmSupplierUnchanged(batchId: string, matchKeys: string[]) {
+  const { client } = await approver();
+  const result = await supplierBulkConfirmUnchanged(client, batchId, matchKeys);
+  revalidatePath(workspacePath);
+  return result;
+}
+export async function bulkExcludeSupplierMissing(batchId: string, matchKeys: string[], reason: string) {
+  const { client } = await approver();
+  const result = await supplierBulkExcludeMissing(client, batchId, matchKeys, reason);
   revalidatePath(workspacePath);
   return result;
 }
