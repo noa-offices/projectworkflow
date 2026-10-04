@@ -7,7 +7,7 @@ import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { assertSupplierProfile, type RawSupplierRow, type SourceScope, type SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import { normalizeSupplierRows } from "@/lib/products/supplier-price-import";
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
-import { supplierApplyReviewedPrice, supplierConfirmUnchangedPrice, supplierBrandMatches, supplierBrandTargets, supplierMatchChunks, supplierSource, supplierWrite } from "@/lib/products/supplier-price-repository";
+import { supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBrandMatches, supplierBrandTargets, supplierMatchChunks, supplierSource, supplierWrite } from "@/lib/products/supplier-price-repository";
 
 const workspacePath = "/products/price-updates/supplier-sources";
 async function reviewer() { const auth = await requireBrandPriceReviewer(); return { auth, client: await createClient() }; }
@@ -63,6 +63,24 @@ export async function applySupplierReviewedPrice(batchId: string, matchKey: stri
 export async function confirmSupplierUnchangedPrice(batchId: string, matchKey: string) {
   const { client } = await approver();
   const result = await supplierConfirmUnchangedPrice(client, batchId, matchKey);
+  revalidatePath(workspacePath);
+  return result;
+}
+export async function supplierCompletionStatus(batchId: string) {
+  const { client } = await approver();
+  return supplierCompletionReadiness(client, batchId);
+}
+export async function completeSupplierPriceReview(batchId: string) {
+  const { client } = await approver();
+  const result = await supplierCompleteReview(client, batchId);
+  revalidatePath(workspacePath);
+  revalidatePath("/products/price-updates");
+  revalidatePath("/products/templates");
+  return result;
+}
+export async function excludeSupplierTargetFromSource(batchId: string, matchKey: string, note: string) {
+  const { client } = await approver();
+  const result = await supplierExcludeTargetFromSource(client, batchId, matchKey, note);
   revalidatePath(workspacePath);
   return result;
 }

@@ -213,3 +213,97 @@ export async function supplierConfirmUnchangedPrice(client: SupabaseClient, batc
   await supplierWrite(client, "decision", { batch_id: batch.id, key: matchKey, decision: "confirmed_unchanged", note: stored.supplier_price_decisions?.note ?? "", proposed_target_keys: [] });
   return { message: "Unchanged price confirmed." };
 }
+
+export type SupplierCompletionReadiness = {
+  scope: string; status: string; issue: string; ready: boolean; blocking: number; checkedTemplates: number; excludedTemplates: number;
+  counts: Record<SupplierCompletionCount, number>; templateVersions: Record<string, string>;
+};
+export type SupplierCompletionCount = "resolved" | "unresolved_changed" | "unresolved_shared" | "unchanged_not_confirmed" | "changed_after_review" | "skipped" | "rejected" | "mapping_proposed"
+  | "ambiguous" | "needs_dimension_mapping" | "baseline_drift" | "invalid_source" | "target_not_represented" | "targets_added_after_comparison" | "excluded_from_source" | "unmatched" | "referenced_companion";
+const informationalCounts = new Set<SupplierCompletionCount>(["resolved", "excluded_from_source", "unmatched", "referenced_companion"]);
+
+/** Read-only preview of the locked Complete-review resolution matrix. The completion RPC re-enforces every rule. */
+export async function supplierCompletionReadiness(client: SupabaseClient, batchId: string): Promise<SupplierCompletionReadiness> {
+  if (typeof batchId !== "string" || !batchId) throw Error("Supplier batch required.");
+  const batchResult = await client.from("supplier_price_batches").select("*").eq("id", batchId).single<ReviewBatch>();
+  if (batchResult.error || !batchResult.data) throw Error(batchResult.error?.message ?? "Supplier batch unavailable.");
+  const batch = batchResult.data;
+  const counts = Object.fromEntries(["resolved", "unresolved_changed", "unresolved_shared", "unchanged_not_confirmed", "changed_after_review", "skipped", "rejected", "mapping_proposed", "ambiguous", "needs_dimension_mapping", "baseline_drift", "invalid_source", "target_not_represented", "targets_added_after_comparison", "excluded_from_source", "unmatched", "referenced_companion"].map((key) => [key, 0])) as Record<SupplierCompletionCount, number>;
+  const empty = { scope: batch.scope, status: batch.status, issue: "", ready: false, blocking: 0, checkedTemplates: 0, excludedTemplates: 0, counts, templateVersions: {} };
+  if (batch.scope !== "complete" || batch.status !== "review") return empty;
+  const source = await supplierSource(client, batch.source_id);
+  const brandResult = await client.from("brands").select("id,stored_price_basis").eq("id", batch.brand_id).single<{ id: string; stored_price_basis: string }>();
+  if (brandResult.error || !brandResult.data) throw Error(brandResult.error?.message ?? "Supplier Brand unavailable.");
+  const brandBasis = brandResult.data.stored_price_basis;
+  const issue = source.id !== batch.source_id || source.brand_id !== batch.brand_id ? "Supplier source does not belong to this batch and Brand."
+    : source.status !== "imported" ? "Supplier source must be imported before completing."
+    : !["list", "net"].includes(source.basis) || !["list", "net"].includes(brandBasis) ? "Supplier price basis must be confirmed before completing."
+    : source.basis !== brandBasis ? "Supplier price basis does not match the Brand stored price basis." : "";
+  if (issue) return { ...empty, issue };
+  const [matches, decisions, { targets, templates }] = await Promise.all([
+    supplierRows<{ key: string; data: PriceMatch }>(client, "supplier_price_matches", "key,data", { batch_id: batch.id }, "key"),
+    supplierRows<{ key: string; decision: NonNullable<PriceMatch["decision"]> }>(client, "supplier_price_decisions", "key,decision", { batch_id: batch.id }, "key"),
+    supplierBrandTargets(client, batch.brand_id),
+  ]);
+  const decided = new Map(decisions.map((row) => [row.key, row.decision]));
+  const live = new Map(targets.map((target) => [target.key, target]));
+  const reviewedKeys = new Set<string>(), covered = new Set<string>(), excluded = new Set<string>();
+  const add = (key: SupplierCompletionCount) => { counts[key]++; };
+  for (const { key, data: match } of matches) {
+    match.targets.forEach((target) => reviewedKeys.add(target.key));
+    const decision = decided.get(key);
+    if (match.classification === "unmatched" || match.classification === "referenced_companion") { add(match.classification); continue; }
+    if (decision === "skip") { add("skipped"); continue; }
+    if (decision === "reject") { add("rejected"); continue; }
+    if (decision === "mapping_proposed") { add("mapping_proposed"); continue; }
+    if (match.classification === "target_not_represented") {
+      if (decision === "excluded_from_source") { add("excluded_from_source"); match.targets.forEach((target) => excluded.add(target.template_id)); } else add("target_not_represented");
+      continue;
+    }
+    if (!["increased", "decreased", "changed", "unchanged", "shared"].includes(match.classification)) { add(match.classification as SupplierCompletionCount); continue; }
+    if (match.classification === "unchanged" && decision !== "confirmed_unchanged") { add("unchanged_not_confirmed"); continue; }
+    const price = match.source?.price;
+    const settled = price !== null && price !== undefined && match.targets.length > 0 && match.targets.every((target) => {
+      const current = live.get(target.key);
+      return current && current.price === price && current.currency === match.source!.currency && current.raw_code === target.raw_code;
+    });
+    if (settled) { add("resolved"); match.targets.forEach((target) => covered.add(target.template_id)); }
+    else add(match.classification === "unchanged" ? "changed_after_review" : match.classification === "shared" ? "unresolved_shared" : "unresolved_changed");
+  }
+  // Complete coverage must account for every current target; new targets need a fresh comparison.
+  counts.targets_added_after_comparison = targets.filter((target) => !reviewedKeys.has(target.key)).length;
+  const blocking = Object.entries(counts).reduce((total, [key, value]) => informationalCounts.has(key as SupplierCompletionCount) ? total : total + value, 0);
+  const versions = new Map(templates.map((template) => [template.id, String(template.pricing_version)]));
+  const checked = [...covered].filter((id) => !excluded.has(id));
+  return { ...empty, ready: blocking === 0, blocking, checkedTemplates: checked.length, excludedTemplates: excluded.size,
+    templateVersions: Object.fromEntries(checked.flatMap((id) => versions.has(id) ? [[id, versions.get(id)!]] : [])) };
+}
+
+/** Called only after the server action's approver guard. One atomic RPC activates the baseline and marks checks. */
+export async function supplierCompleteReview(client: SupabaseClient, batchId: string) {
+  const readiness = await supplierCompletionReadiness(client, batchId);
+  if (readiness.status === "completed") throw Error("This Supplier review is already completed.");
+  if (readiness.scope !== "complete") throw Error("This review cannot activate a Brand-wide baseline because coverage is not Complete.");
+  if (readiness.status !== "review") throw Error("Supplier batch must be in review before completing.");
+  if (readiness.issue) throw Error(readiness.issue);
+  if (!readiness.ready) throw Error(`Supplier review has ${readiness.blocking} unresolved rows. Resolve them before completing this price list.`);
+  const { data, error } = await client.rpc("complete_supplier_price_review", { p_batch_id: batchId, p_template_versions: readiness.templateVersions });
+  if (error) throw Error(error.message);
+  const result = data as { price_list_update_id: string; title: string; baseline_date: string | null; checked_templates: number; excluded_templates: number };
+  return { ...result, message: "Supplier price-list review completed and Brand baseline activated." };
+}
+
+/** Approver-only durable exclusion of a target missing from this source. Never writes Product data. */
+export async function supplierExcludeTargetFromSource(client: SupabaseClient, batchId: string, matchKey: string, note: string) {
+  if (typeof batchId !== "string" || !batchId || typeof matchKey !== "string" || !matchKey) throw Error("Supplier batch and match required.");
+  const reason = typeof note === "string" ? note.trim() : "";
+  if (!reason || reason.length > 4000) throw Error("A reason is required to exclude a target from this source.");
+  const batchResult = await client.from("supplier_price_batches").select("*").eq("id", batchId).single<ReviewBatch>();
+  if (batchResult.error || !batchResult.data) throw Error(batchResult.error?.message ?? "Supplier batch unavailable.");
+  if (batchResult.data.status !== "review") throw Error("Supplier batch must be in review before excluding targets.");
+  const matchResult = await client.from("supplier_price_matches").select("key,data").eq("batch_id", batchId).eq("key", matchKey).single<{ key: string; data: PriceMatch }>();
+  if (matchResult.error || !matchResult.data) throw Error(matchResult.error?.message ?? "Supplier match unavailable in this batch.");
+  if (matchResult.data.data.classification !== "target_not_represented") throw Error("Only a target missing from this source can be excluded.");
+  await supplierWrite(client, "decision", { batch_id: batchId, key: matchKey, decision: "excluded_from_source", note: reason, proposed_target_keys: [] });
+  return { message: "Target excluded from this source. It will remain Needs price check after completion." };
+}
