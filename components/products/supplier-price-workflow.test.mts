@@ -137,3 +137,14 @@ test("Import card separates the file type from the saved import profile", () => 
   assert.match(none, /This Brand needs an import profile before price lists can be imported\./); assert.match(none, /Set up import profile/);
   assert.doesNotMatch(one + many + none, /<textarea|full_code_column|<pre/);
 });
+
+test("normal Import card never asks to pick a profile when only one exists; currency and basis follow the profile", () => {
+  const net = { ...profile("p1", "LAS MOBILI — Standard XLSX"), config: { ...profile("p1", "x").config, currency: "USD", basis: "net" } };
+  const single = html(controls.SupplierImportCard, { ...importProps, profiles: [net] });
+  assert.doesNotMatch(single, /<select|Choose import profile/); assert.match(single, /LAS MOBILI — Standard XLSX <span[^>]*>· Ready<\/span>/);
+  assert.match(single, /<span[^>]*>Currency<\/span><span[^>]*>USD<\/span>/); assert.match(single, /<span[^>]*>Price basis<\/span><span[^>]*>Net<\/span>/); // read-only, from the auto-selected profile
+  assert.match(single, /<span[^>]*>File type<\/span>/); assert.match(single, /type="file"/); assert.match(single, /name="title"/); assert.match(single, />Import price list<\/button>/);
+  assert.doesNotMatch(single, /Change import profile/); // the change option lives only in Advanced import settings
+  const advanced = html(controls.SupplierAdvancedImportSettings, { brandId: "b", brandName: "LAS MOBILI", basis: "list", approver: true, templates: [], profiles: [net] });
+  assert.match(advanced, /Change import profile/); assert.match(advanced, /Profile JSON/); assert.match(single, /use <a[^>]*>Advanced import settings<\/a>/);
+});

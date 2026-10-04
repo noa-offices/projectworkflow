@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { DimensionRule, DurableBinding, PriceMatch, PriceTarget, ProductPriceInput, ReviewBatch, SourceIdentity, SourceVersion } from "./supplier-price-contracts";
 import { expectedPricingVersion, pricingConflictMessage } from "./pricing-write-version";
 import { brandPriceTargets } from "./supplier-price-targets";
-import { matchSupplierPrices } from "./supplier-price-matching";
+import { comparisonCode, matchSupplierPrices } from "./supplier-price-matching";
 
 export async function supplierRows<T>(client: SupabaseClient, table: string, columns: string, filters: Record<string, string | boolean> = {}, order = "id"): Promise<T[]> {
   const rows: T[] = [];
@@ -139,7 +139,9 @@ export async function supplierApplyReviewedPrice(client: SupabaseClient, batchId
   if (new Set(baselines.map((baseline) => baseline.key)).size !== baselines.length) throw Error("Supplier shared targets must be unique.");
   if (shared) {
     // The durable binding, not the review snapshot, is the authority for the shared target set.
-    const bindings = await supplierRows<DurableBinding>(client, "supplier_price_bindings", "*", { brand_id: batch.brand_id, code: identity.code, price_field: identity.price_field, source_dimension: identity.dimension });
+    // Same comparison rule as the matcher: the binding is found by compact code, whatever whitespace it was stored with.
+    const bindings = (await supplierRows<DurableBinding>(client, "supplier_price_bindings", "*", { brand_id: batch.brand_id, price_field: identity.price_field, source_dimension: identity.dimension }))
+      .filter((row) => comparisonCode(row.code) === comparisonCode(identity.code));
     const binding = bindings.length === 1 ? bindings[0] : null;
     if (!binding || binding.kind !== "shared" || binding.confirmed !== true) throw Error("A confirmed durable shared binding is required before shared Apply.");
     const bound = [...binding.target_keys].sort(), reviewed = baselines.map((baseline) => baseline.key).sort();

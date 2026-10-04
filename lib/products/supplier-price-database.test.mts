@@ -9,6 +9,7 @@ import type { RawSupplierRow, SourceIdentity, SupplierProfile } from "./supplier
 
 const migration = await readFile(new URL("../../supabase/migrations/20261002082357_supplier_price_source_review.sql", import.meta.url), "utf8");
 const finishMigration = await readFile(new URL("../../supabase/migrations/20261002124625_supplier_source_finish_evidence.sql", import.meta.url), "utf8");
+const deskingMigration = await readFile(new URL("../../supabase/migrations/20261004170000_supplier_desking_additional_price_comparison.sql", import.meta.url), "utf8");
 const brand = "00000000-0000-0000-0000-000000000001";
 const user = "00000000-0000-0000-0000-000000000002";
 const templateId = "00000000-0000-0000-0000-000000000003";
@@ -28,7 +29,7 @@ async function fixture(applyFinishMigration = true) {
     create function current_user_can_review_brand_prices() returns boolean language sql stable as $$select coalesce(current_setting('test.status',true)='active' and current_setting('test.role',true) in ('system_owner','admin_manager','procurement_manager','sales_coordinator','designer'),false)$$;
     create function current_user_can_approve_brand_prices() returns boolean language sql stable as $$select coalesce(current_setting('test.status',true)='active' and current_setting('test.role',true) in ('system_owner','admin_manager','procurement_manager','sales_coordinator','designer'),false)$$;
     select set_config('test.status','active',false),set_config('test.role','system_owner',false);`);
-  await db.exec(migration); if (applyFinishMigration) await db.exec(finishMigration); return db;
+  await db.exec(migration); if (applyFinishMigration) await db.exec(finishMigration); await db.exec(deskingMigration); return db;
 }
 async function write(db: PGlite, operation: string, payload: Record<string, unknown>) { return (await db.query<{ result: { id: string } }>("select supplier_price_review_write($1,$2::jsonb) result", [operation, JSON.stringify(payload)])).rows[0].result; }
 async function sourceFixture(db: PGlite, count = 3) {

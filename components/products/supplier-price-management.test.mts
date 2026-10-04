@@ -101,7 +101,7 @@ test("Wizard starts from a sample upload, shows no JSON, and is approver-only; s
 test("Advanced settings keep the technical tools and expose generated JSON read-only", () => {
   const profiles = [{ id: "p", title: "LAS standard price list", config: wizard.buildImportProfile(choices) }];
   const advanced = html(controls.SupplierAdvancedImportSettings, { brandId: "b", brandName: "LAS MOBILI", basis: "list", approver: true, templates: [], dimensions: [], profiles });
-  assert.match(advanced, /<details id="advanced"(?![^>]*open)/); assert.match(advanced, /View generated JSON — LAS standard price list/); assert.match(advanced, /<pre aria-label="Generated JSON for LAS standard price list \(read-only\)"/);
+  assert.match(advanced, /<details id="advanced"(?![^>]*open)/); assert.match(advanced, /Change import profile/); assert.match(advanced, /View generated JSON — LAS standard price list/); assert.match(advanced, /<pre aria-label="Generated JSON for LAS standard price list \(read-only\)"/);
   assert.match(advanced, /Profile JSON/); assert.match(advanced, /Brand dimension vocabulary/); assert.match(advanced, /Stored group ID/); // editing tools stay where they were, approver-only
   assert.equal(html(controls.SupplierAdvancedImportSettings, { brandId: "b", brandName: "LAS MOBILI", basis: "list", approver: false, templates: [], profiles }), "");
 });

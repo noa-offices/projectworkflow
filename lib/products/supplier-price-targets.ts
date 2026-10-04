@@ -51,7 +51,7 @@ export function brandPriceTargets(templates: ProductPriceInput[], components: Re
           const row = record(rawRow);
           if (architecture === "desking_size_pricing") {
             add(architecture, group, { ...row, supplier_price_list_code: row.base_supplier_price_list_code ?? row.supplier_price_list_code }, "default_price");
-            if (text(row.additional_supplier_price_list_code)) add(architecture, group, { ...row, supplier_price_list_code: row.additional_supplier_price_list_code }, "additional_price", "additional_price");
+            if (text(row.additional_supplier_price_list_code)) add(architecture, group, { ...row, supplier_price_list_code: row.additional_supplier_price_list_code }, "additional_price");
           } else if (columns.length) {
             for (const column of columns) if (Object.hasOwn(record(row.prices), column.id)) add(architecture, group, row, "prices", "unit_price", column);
           } else add(architecture, group, row, "price");
