@@ -517,7 +517,8 @@ test("Confirm unchanged refuses every ineligible, stale or drifted case without 
       ["currency mismatch", (s) => { s.match.data.targets[0].currency = "USD"; }, /currencies must match/],
       ["unsupported currency", (s) => { Object.assign(s.source, { currency: "GBP" }); Object.assign(s.identity.data, { currency: "GBP" }); Object.assign(s.match.data.source!, { currency: "GBP" }); }, /Unsupported Supplier/],
       ["forged snapshot price", (s) => { s.match.data.source!.price = 900; }, /does not match this source/],
-      ["stale pricing_version", (s) => { s.match.data.targets[0].pricing_version = "9"; }, confirmFresh],
+      ["stale row_id", (s) => { s.match.data.targets[0].row_id = "moved"; }, confirmFresh],
+      ["stale currency", (s) => { s.match.data.targets[0].currency = "USD"; s.source.currency = "USD"; Object.assign(s.identity.data, { currency: "USD" }); Object.assign(s.match.data.source!, { currency: "USD" }); }, confirmFresh],
       ["stale code", (s) => { s.match.data.targets[0].raw_code = "OTHER"; }, confirmFresh],
       ["snapshot price differs from source", (s) => { s.match.data.targets[0].price = 99; }, confirmFresh],
     ];
