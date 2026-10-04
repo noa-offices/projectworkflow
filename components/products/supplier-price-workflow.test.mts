@@ -36,16 +36,16 @@ const batch = { id: "r1", brand_id: "b", source_id: "s1", scope: "complete", sta
 const importProps = { brandId: "b", brandName: "LAS MOBILI", suggestedTitle: "LAS MOBILI — February 2026", advancedHref: "/x?advanced=1#advanced", setupHref: "/x?setup=1" };
 const advancedProps = { brandId: "b", brandName: "LAS MOBILI", basis: "list", approver: true, templates: [{ id: "t", template_name: "Screen" }], dimensions: [] };
 
-test("Import step: one simple card, auto-selected import format, no technical tools", () => {
+test("Import step: one simple card, auto-selected import profile, no technical tools", () => {
   const one = html(controls.SupplierImportCard, { ...importProps, profiles: [profile("p1", "LAS standard price list")] });
   for (const text of ["Import Supplier Price List", "LAS standard price list", "Ready", "Price list file", "Price list name", "Currency", "Price basis", "Received date (optional)", "Effective date (optional)", "Import price list", "LAS MOBILI — February 2026"]) assert.ok(one.includes(text), text);
   assert.doesNotMatch(one, /<textarea/); assert.doesNotMatch(one, /Profile JSON|canonical|vocabulary|Stored group|full_code_column/i);
   assert.match(one, /<span[^>]*>EUR<\/span>/); assert.match(one, /<span[^>]*>List<\/span>/);
   assert.doesNotMatch(one, /<select/); // one obvious format needs no choice
   const many = html(controls.SupplierImportCard, { ...importProps, profiles: [profile("p1", "LAS standard price list"), profile("p2", "LAS alternate")] });
-  assert.match(many, /<select[^>]*>[\s\S]*Choose import format[\s\S]*LAS alternate/);
+  assert.match(many, /<select[^>]*>[\s\S]*Choose import profile[\s\S]*LAS alternate/);
   const none = html(controls.SupplierImportCard, { ...importProps, profiles: [] });
-  assert.match(none, /This Brand needs an import format before price lists can be imported\./); assert.match(none, /Set up import format/); assert.match(none, /href="\/x\?setup=1"/);
+  assert.match(none, /This Brand needs an import profile before price lists can be imported\./); assert.match(none, /Set up import profile/); assert.match(none, /href="\/x\?setup=1"/);
   assert.doesNotMatch(none, /type="file"/);
 });
 
@@ -123,4 +123,17 @@ test("page wiring: Family Review by default, Advanced Technical Review and techn
   assert.match(pageSource, /canApproveBrandPrices\(profile\?\.role, profile\?\.account_status\)/);
   assert.doesNotMatch(pageSource, /lg:grid-cols-\[minmax\(260px,340px\)_1fr\]/); // no narrow permanent controls sidebar
   assert.doesNotMatch(pageSource, /Review batches|Selected batch|declaration only; no activation/);
+});
+
+test("Import card separates the file type from the saved import profile", () => {
+  const one = html(controls.SupplierImportCard, { ...importProps, profiles: [profile("p1", "LAS MOBILI — Standard XLSX")] });
+  assert.match(one, /<span[^>]*>Import profile<\/span><span[^>]*>LAS MOBILI — Standard XLSX <span[^>]*>· Ready<\/span>/); // single profile: shown, not a dropdown
+  assert.doesNotMatch(one, /<select/); assert.doesNotMatch(one, /Import format|import format/);
+  assert.match(one, /<span[^>]*>File type<\/span><span[^>]*>XLSX, CSV or JSON \(taken from the file\)<\/span>/); // read-only, derived from the chosen file
+  assert.match(one, /accept="\.xlsx,\.csv,\.json"/); assert.doesNotMatch(one, /PDF|\.pdf/i); // only what the importer supports
+  const many = html(controls.SupplierImportCard, { ...importProps, profiles: [profile("p1", "LAS MOBILI — Standard XLSX"), profile("p2", "LAS article + finish")] });
+  assert.match(many, /<span[^>]*>Import profile<\/span><select[^>]*>[\s\S]*Choose import profile[\s\S]*LAS article \+ finish/);
+  const none = html(controls.SupplierImportCard, { ...importProps, profiles: [] });
+  assert.match(none, /This Brand needs an import profile before price lists can be imported\./); assert.match(none, /Set up import profile/);
+  assert.doesNotMatch(one + many + none, /<textarea|full_code_column|<pre/);
 });

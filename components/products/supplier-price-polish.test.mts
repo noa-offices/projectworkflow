@@ -95,7 +95,7 @@ test("Complete review and finish state use summary cards and restrained success 
 
 test("Advanced settings accordion stays collapsed; wizard keeps its markup and JSON stays hidden; price health badges unchanged", () => {
   const advanced = html(controls.SupplierAdvancedImportSettings, { brandId: "b", brandName: "LAS", basis: "list", approver: true, templates: [] });
-  assert.match(advanced, /<details id="advanced"(?![^>]*open)[^>]*class="[^"]*group[^"]*"/); assert.match(advanced, /Advanced import settings/); assert.match(advanced, /Import format, vocabulary and technical mapping tools\./); assert.match(advanced, /▸/);
+  assert.match(advanced, /<details id="advanced"(?![^>]*open)[^>]*class="[^"]*group[^"]*"/); assert.match(advanced, /Advanced import settings/); assert.match(advanced, /Import profile, vocabulary and technical mapping tools\./); assert.match(advanced, /▸/);
   const start = html(wizard.SupplierImportFormatWizard, { brandName: "LAS MOBILI", brandId: "b", approver: true, doneHref: "/done" });
   for (const text of ["Upload sample", "Map columns", "Price settings", "Test import", "step 1 of 4", 'type="file"']) assert.ok(start.includes(text), text);
   assert.match(start, /aria-current="step"[^>]*>(<span[^>]*>.<\/span>)?Upload sample/); assert.doesNotMatch(start, /<textarea|JSON|full_code_column|<pre/);

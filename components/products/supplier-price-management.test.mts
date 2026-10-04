@@ -91,10 +91,10 @@ test("Test import reports friendly counts from the real normalisation", () => {
 
 test("Wizard starts from a sample upload, shows no JSON, and is approver-only; saved formats become the auto-selected default", () => {
   const start = html(wizard.SupplierImportFormatWizard, { brandName: "LAS MOBILI", brandId: "b", approver: true, doneHref: "/done" });
-  assert.match(start, /Set up import format/); assert.match(start, /type="file"/); assert.match(start, /step 1 of 4/); assert.doesNotMatch(start, /<textarea|JSON|full_code_column|<pre/);
+  assert.match(start, /Set up import profile/); assert.match(start, /type="file"/); assert.match(start, /step 1 of 4/); assert.doesNotMatch(start, /<textarea|JSON|full_code_column|<pre/);
   const reviewer = html(wizard.SupplierImportFormatWizard, { brandName: "LAS MOBILI", brandId: "b", approver: false, doneHref: "/done" });
-  assert.match(reviewer, /An approver sets up import formats/); assert.doesNotMatch(reviewer, /type="file"/);
-  assert.match(pageSource, /text\(params\.setup\) === "1" \? <SupplierImportFormatWizard/); // setup is reached from the Import card's "Set up import format"
+  assert.match(reviewer, /An approver sets up import profiles/); assert.doesNotMatch(reviewer, /type="file"/);
+  assert.match(pageSource, /text\(params\.setup\) === "1" \? <SupplierImportFormatWizard/); // setup is reached from the Import card's "Set up import profile"
   assert.match(pageSource, /setupHref=\{href\(\{ tab: "import", setup: "1" \}\)\}/);
 });
 

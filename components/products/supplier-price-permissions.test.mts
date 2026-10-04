@@ -33,7 +33,7 @@ test("Supplier price role matrix: five editors, everyone else read-only, inactiv
 const permissionError = /approver permission required|price-review access required/;
 async function actionsFor(role: string) {
   const calls: string[] = [];
-  const repository = new Proxy({}, { get: (_, name: string) => async (..._args: unknown[]) => { calls.push(name); return name === "supplierBrandTargets" ? { targets: [], templates: [] } : name === "supplierBrandMatches" ? { matches: [], targets: [], templates: [], source: {} } : { id: "x", message: "ok", title: "t" }; } });
+  const repository = new Proxy({}, { get: (_, name: string) => async () => { calls.push(name); return name === "supplierBrandTargets" ? { targets: [], templates: [] } : name === "supplierBrandMatches" ? { matches: [], targets: [], templates: [], source: {} } : { id: "x", message: "ok", title: "t" }; } });
   const actions = await load<Record<string, (...args: unknown[]) => Promise<unknown>>>("../../app/products/price-updates/supplier-sources/actions.ts", {
     "next/cache": { revalidatePath() {} },
     "@/lib/auth": { async requireBrandPriceReviewer() { if (!canReviewBrandPrices(role as AppRole, "active")) throw Error("price-review access required"); return { profile: { role, account_status: "active" } }; } },

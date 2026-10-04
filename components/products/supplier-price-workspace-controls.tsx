@@ -25,24 +25,24 @@ function CodeSet({ label, codes }: { label: string; codes: string[] }) {
 }
 type ProfileOption = { id: string; title: string; config: SupplierProfile };
 
-/** Step 1: one simple card. The approved import format is chosen automatically; currency and basis come from that format. */
+/** Step 1: one simple card. The approved import profile is chosen automatically; currency and basis come from that format. */
 export function SupplierImportCard({ brandId, brandName, profiles, suggestedTitle, advancedHref, setupHref }: { brandId: string; brandName: string; profiles: ProfileOption[]; suggestedTitle: string; advancedHref: string; setupHref: string }) {
-  const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
+  const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState(""); const [fileType, setFileType] = useState("");
   const [profileId, setProfileId] = useState(profiles.length === 1 ? profiles[0].id : "");
   const chosen = profiles.find((profile) => profile.id === profileId);
   async function run(work: () => Promise<void>) { setBusy(true); setMessage(""); try { await work(); } catch (error) { setMessage(error instanceof Error ? error.message : "Import failed."); } finally { setBusy(false); } }
   if (!profiles.length) return <section className={`${card} space-y-2 p-4`}><h3 className="text-base font-semibold text-zinc-950">Import Supplier Price List</h3>
-    <p className="text-sm">This Brand needs an import format before price lists can be imported.</p><Link href={setupHref} className={button + " inline-block"}>Set up import format</Link></section>;
+    <p className="text-sm">This Brand needs an import profile before price lists can be imported.</p><Link href={setupHref} className={button + " inline-block"}>Set up import profile</Link></section>;
   return <form className={`${card} space-y-4 p-4`} onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const file = form.get("file"); void run(async () => {
     if (!(file instanceof File) || !file.size) throw Error("Choose the price list file.");
-    if (!profileId) throw Error("Choose an import format.");
+    if (!profileId) throw Error("Choose an import profile.");
     const profile = await supplierProfileForImport(profileId);
     setMessage("Reading the price list. Codes stay exactly as written.");
     const rows = await parseSupplierFile(file, profile.sheet_names);
     if (!rows.length) throw Error("The price list has no data rows.");
     const headers = rows[0].values;
     const required = [profile.full_code_column, ...profile.price_columns.map((column) => column.column), ...(profile.article_code_column ? [profile.article_code_column] : []), ...(profile.category_column ? [profile.category_column] : []), ...(profile.companion_note_column ? [profile.companion_note_column] : [])];
-    if (required.some((header) => !Object.hasOwn(headers, header))) throw Error("This file does not match the import format. Check the file, or change the import format in Advanced import settings.");
+    if (required.some((header) => !Object.hasOwn(headers, header))) throw Error("This file does not match the import profile. Check the file, or change the import profile in Advanced import settings.");
     const chunks = supplierImportChunks(rows, 500, 600_000, profile);
     const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer())), (byte) => byte.toString(16).padStart(2, "0")).join("");
     const sourceType = file.name.split(".").pop()!.toLowerCase();
@@ -57,21 +57,22 @@ export function SupplierImportCard({ brandId, brandName, profiles, suggestedTitl
     }
     router.push(`/products/price-updates/supplier-sources?brand=${brandId}&source=${result.id}&view=summary`); router.refresh();
   }); }}>
-    <div><h3 className="text-base font-semibold text-zinc-950">Import Supplier Price List</h3><p className="text-xs text-zinc-500">Choose the file and name. Currency and price basis come from the import format.</p></div>
+    <div><h3 className="text-base font-semibold text-zinc-950">Import Supplier Price List</h3><p className="text-xs text-zinc-500">Choose the file and name. Currency and price basis come from the import profile.</p></div>
     <p role="status" aria-live="polite" className="text-sm text-amber-800">{message}</p>
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       <div className="grid gap-1 text-xs"><span className="font-medium">Brand</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{brandName}</span></div>
-      <label className="grid gap-1 text-xs"><span className="font-medium">Price list file</span><input name="file" type="file" accept=".xlsx,.csv,.json" required className={input} /></label>
+      <label className="grid gap-1 text-xs"><span className="font-medium">Price list file</span><input name="file" type="file" accept=".xlsx,.csv,.json" required className={input} onChange={(event) => setFileType((event.target.files?.[0]?.name.split(".").pop() ?? "").toLowerCase())} /></label>
+      <div className="grid gap-1 text-xs"><span className="font-medium">File type</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{["xlsx", "csv", "json"].includes(fileType) ? fileType.toUpperCase() : fileType ? "Not supported — use XLSX, CSV or JSON" : "XLSX, CSV or JSON (taken from the file)"}</span></div>
       <label className="grid gap-1 text-xs"><span className="font-medium">Price list name</span><input name="title" required defaultValue={suggestedTitle} className={input} /></label>
-      {profiles.length === 1 ? <div className="grid gap-1 text-xs"><span className="font-medium">Import format</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{profiles[0].title} <span className="text-emerald-800">· Ready</span></span></div>
-        : <label className="grid gap-1 text-xs"><span className="font-medium">Import format</span><select value={profileId} onChange={(event) => setProfileId(event.target.value)} required className={input}><option value="">Choose import format</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.title}</option>)}</select></label>}
-      <div className="grid gap-1 text-xs"><span className="font-medium">Currency</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{chosen ? chosen.config.currency : "Set by the import format"}</span></div>
-      <div className="grid gap-1 text-xs"><span className="font-medium">Price basis</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{chosen ? (chosen.config.basis === "list" ? "List" : chosen.config.basis === "net" ? "Net" : "Not set") : "Set by the import format"}</span></div>
+      {profiles.length === 1 ? <div className="grid gap-1 text-xs"><span className="font-medium">Import profile</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{profiles[0].title} <span className="text-emerald-800">· Ready</span></span></div>
+        : <label className="grid gap-1 text-xs"><span className="font-medium">Import profile</span><select value={profileId} onChange={(event) => setProfileId(event.target.value)} required className={input}><option value="">Choose import profile</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.title}</option>)}</select></label>}
+      <div className="grid gap-1 text-xs"><span className="font-medium">Currency</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{chosen ? chosen.config.currency : "Set by the import profile"}</span></div>
+      <div className="grid gap-1 text-xs"><span className="font-medium">Price basis</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{chosen ? (chosen.config.basis === "list" ? "List" : chosen.config.basis === "net" ? "Net" : "Not set") : "Set by the import profile"}</span></div>
       <label className="grid gap-1 text-xs"><span className="font-medium">Received date (optional)</span><input name="received" type="date" className={input} /></label>
       <label className="grid gap-1 text-xs"><span className="font-medium">Effective date (optional)</span><input name="effective" type="date" className={input} /></label>
     </div>
     <details className="text-xs"><summary className="cursor-pointer">More options</summary><label className="mt-2 grid gap-1"><span className="font-medium">Original file reference (optional)</span><input name="original" className={input} /></label></details>
-    <p className="text-xs text-zinc-600">Currency and price basis come from the import format. To change them, use <Link href={advancedHref} className="underline">Advanced import settings</Link>. Importing the same file again resumes an unfinished import.</p>
+    <p className="text-xs text-zinc-600">Currency and price basis come from the import profile. To change them, use <Link href={advancedHref} className="underline">Advanced import settings</Link>. Importing the same file again resumes an unfinished import.</p>
     <button disabled={busy || !profileId} className={primary}>Import price list</button>
   </form>;
 }
@@ -83,11 +84,11 @@ export function SupplierAdvancedImportSettings({ brandId, brandName, basis, appr
   const las = brandName === "LAS MOBILI";
   const example = { strategy: las ? "article_plus_finish" : "exact", full_code_column: las ? "CODICE_ARTICOLO" : "SET_EXACT_CODE_HEADER", ...(las ? { article_code_column: "NOME_FILE", article_length: 6, finish_length: 3, validated_article_fallback: true, category_column: "CATEGORIA_TESSUTO" } : {}), price_columns: [{ column: las ? "PREZZO_UNITARIO" : "PRICE", price_field: "unit_price" }], currency: "EUR", basis };
   if (!approver) return null;
-  return <details id="advanced" open={open} className="group rounded-lg border border-zinc-200 bg-zinc-50 p-4"><summary className="flex cursor-pointer list-none items-center justify-between gap-2"><span><span className="block text-sm font-semibold text-zinc-950">Advanced import settings</span><span className="block text-xs text-zinc-500">Import format, vocabulary and technical mapping tools.</span></span><span aria-hidden="true" className="text-zinc-500 transition group-open:rotate-90">▸</span></summary>
+  return <details id="advanced" open={open} className="group rounded-lg border border-zinc-200 bg-zinc-50 p-4"><summary className="flex cursor-pointer list-none items-center justify-between gap-2"><span><span className="block text-sm font-semibold text-zinc-950">Advanced import settings</span><span className="block text-xs text-zinc-500">Import profile, vocabulary and technical mapping tools.</span></span><span aria-hidden="true" className="text-zinc-500 transition group-open:rotate-90">▸</span></summary>
     <p role="status" aria-live="polite" className="mt-2 text-sm text-amber-800">{message}</p>
-    <p className="mt-1 text-xs text-zinc-600">Import formats, canonical size / option codes, finish-code rules and group IDs. Most price lists never need these.</p>
+    <p className="mt-1 text-xs text-zinc-600">Import profiles, canonical size / option codes, finish-code rules and group IDs. Most price lists never need these.</p>
     {profiles.length ? <div className="mt-2 space-y-1 text-xs">{profiles.map((profile) => <details key={profile.id} className="rounded border border-zinc-200 p-2"><summary className="cursor-pointer">View generated JSON — {profile.title}</summary><pre aria-label={`Generated JSON for ${profile.title} (read-only)`} className="mt-1 overflow-x-auto whitespace-pre-wrap rounded bg-zinc-50 p-2 font-mono">{JSON.stringify(profile.config, null, 2)}</pre></details>)}</div> : null}
-    {approver ? <details open className="mt-2 rounded border border-zinc-200 p-3"><summary className="cursor-pointer text-sm font-semibold">Import formats & canonical dimensions</summary>
+    {approver ? <details open className="mt-2 rounded border border-zinc-200 p-3"><summary className="cursor-pointer text-sm font-semibold">Import profiles & canonical dimensions</summary>
       <form className="mt-3 grid gap-2" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); void run(async () => { await saveSupplierProfile(brandId, String(form.get("title")), JSON.parse(String(form.get("config")))); setMessage("Authoritative profile saved. Existing source snapshots are unchanged."); }); }}>
         <label className="grid gap-1 text-xs">Profile title<input name="title" required defaultValue={las ? "LAS article + finish" : "Structured source"} className={input} /></label>
         <p className="text-xs text-zinc-600">Profiles are reusable import definitions. Saving a profile does not alter previously imported source versions.</p>
