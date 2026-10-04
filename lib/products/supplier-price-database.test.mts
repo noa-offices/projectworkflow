@@ -25,8 +25,8 @@ async function fixture(applyFinishMigration = true) {
     create table brand_price_list_updates(id uuid primary key,brand_id uuid,status text,coverage_mode text);insert into brand_price_list_updates values('${templateId}','${brand}','draft','partial');
     create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint);
     create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text);alter table storage.objects enable row level security;grant usage on schema storage to authenticated;grant select,insert on storage.objects to authenticated;
-    create function current_user_can_review_brand_prices() returns boolean language sql stable as $$select coalesce(current_setting('test.status',true)='active' and current_setting('test.role',true) in ('system_owner','admin_manager','procurement_manager','designer'),false)$$;
-    create function current_user_can_approve_brand_prices() returns boolean language sql stable as $$select coalesce(current_setting('test.status',true)='active' and current_setting('test.role',true) in ('system_owner','admin_manager','procurement_manager'),false)$$;
+    create function current_user_can_review_brand_prices() returns boolean language sql stable as $$select coalesce(current_setting('test.status',true)='active' and current_setting('test.role',true) in ('system_owner','admin_manager','procurement_manager','sales_coordinator','designer'),false)$$;
+    create function current_user_can_approve_brand_prices() returns boolean language sql stable as $$select coalesce(current_setting('test.status',true)='active' and current_setting('test.role',true) in ('system_owner','admin_manager','procurement_manager','sales_coordinator','designer'),false)$$;
     select set_config('test.status','active',false),set_config('test.role','system_owner',false);`);
   await db.exec(migration); if (applyFinishMigration) await db.exec(finishMigration); return db;
 }
@@ -86,10 +86,10 @@ test("SQL authoritative role sets; inactive and unauthorized roles cannot import
     for (const role of ["system_owner", "admin_manager", "procurement_manager", "designer", "sales_designer", "sales_coordinator", "viewer"]) for (const status of ["active", "disabled", "pending"]) {
       await db.query("select set_config('test.role',$1,false),set_config('test.status',$2,false)", [role, status]);
       await db.exec("set role authenticated");
-      const allowed = status === "active" && ["system_owner", "admin_manager", "procurement_manager", "designer"].includes(role);
+      const allowed = status === "active" && ["system_owner", "admin_manager", "procurement_manager", "sales_coordinator", "designer"].includes(role);
       if (allowed) { await write(db, "chunk", chunk(id, 0)); assert.ok((await db.query("select id from supplier_source_versions")).rows.length); }
       else await assert.rejects(write(db, "chunk", chunk(id, 0)), /insufficient_privilege/);
-      const approve = status === "active" && ["system_owner", "admin_manager", "procurement_manager"].includes(role);
+      const approve = status === "active" && ["system_owner", "admin_manager", "procurement_manager", "sales_coordinator", "designer"].includes(role);
       if (approve) await write(db, "profile", { brand_id: brand, title: "Updated", config: profile });
       else await assert.rejects(write(db, "profile", { brand_id: brand, title: "Updated", config: profile }), /insufficient_privilege/);
       await db.exec("reset role");

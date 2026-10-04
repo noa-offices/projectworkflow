@@ -205,3 +205,39 @@ export function productTemplatePriceCheckState({
     reason: "No explicit template check against the current baseline.",
   });
 }
+
+export type FriendlyPriceHealth = {
+  key: "current" | "needs_check" | "no_price_list" | "scheduled";
+  label: string;
+  helper: string;
+  tone: ProductPriceCheckState["tone"];
+};
+
+/**
+ * Plain-language wording over the existing productTemplatePriceCheckState result.
+ * It adds no calculation: the state key decides everything, the baseline title is only used for the helper text.
+ */
+export function friendlyPriceHealth(
+  state: Pick<ProductPriceCheckState, "key" | "tone" | "detail">,
+  baseline?: Pick<BrandPriceListUpdateForCheck, "title"> | null,
+  context: "library" | "quotation" = "library",
+): FriendlyPriceHealth {
+  if (state.key === "checked" || state.key === "current") {
+    const title = baseline?.title?.trim();
+    return { key: "current", label: "✓ Price current", tone: "ok", helper: `Checked against ${title || "the latest Supplier price list"}` };
+  }
+  if (state.key === "no_price_list_date") {
+    return { key: "no_price_list", label: "No current price list", tone: "neutral", helper: "This Brand has no active complete Supplier price list." };
+  }
+  if (state.key === "scheduled") {
+    return { key: "scheduled", label: "Price list scheduled", tone: "notice", helper: state.detail };
+  }
+  return state.key === "due"
+    ? { key: "needs_check", label: context === "quotation" ? "⚠ Price needs verification" : "⚠ Needs price check", tone: "warning", helper: "Its scheduled price recheck is due." }
+    : {
+        key: "needs_check",
+        label: context === "quotation" ? "⚠ Price needs verification" : "⚠ Needs price check",
+        tone: "warning",
+        helper: context === "quotation" ? "This Product has not been checked against the latest Supplier price list." : "A newer Supplier price list is available.",
+      };
+}

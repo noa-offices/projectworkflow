@@ -75,9 +75,9 @@ test("truthful check intervals: Template > Brand > 90 default", () => {
   assert.equal(status({ ...checked, creation_legacy: true }, { brandPriceCheckIntervalDays: 30 }).key, "due");
 });
 
-const roles: AppRole[] = ["system_owner", "admin_manager", "procurement_manager", "designer", "sales_designer", "sales_coordinator", "viewer"];
-const reviewers = roles.slice(0, 4);
-const approvers = roles.slice(0, 3);
+const roles: AppRole[] = ["system_owner", "admin_manager", "procurement_manager", "designer", "sales_coordinator", "sales_designer", "viewer"];
+const reviewers = roles.slice(0, 5); // review and approve are the same five editable roles
+const approvers = roles.slice(0, 5);
 for (const role of roles) test(`${role} reviewer/approver and inactive protection`, () => {
   assert.equal(canReviewBrandPrices(role, "active"), reviewers.includes(role));
   assert.equal(canApproveBrandPrices(role, "active"), approvers.includes(role));
@@ -179,6 +179,10 @@ test("local migration: SQL role parity, active-account INSERT/UPDATE RLS and unc
     const migration = await readFile(new URL("../../supabase/migrations/20261002074032_brand_price_status_roles.sql", import.meta.url), "utf8");
     await db.exec(migration);
     await db.exec(migration);
+    // Phase: Supplier price editors. The forward migration widens both helpers to the same five roles and keeps the policies.
+    const editors = await readFile(new URL("../../supabase/migrations/20261004150000_supplier_price_editor_roles.sql", import.meta.url), "utf8");
+    await db.exec(editors);
+    await db.exec(editors);
     assert.deepEqual((await db.query("select policyname,qual from pg_policies where tablename='brand_price_list_updates' and cmd='SELECT' order by policyname")).rows, before);
     assert.equal((await db.query<{ coverage_mode: string }>("select coverage_mode from brand_price_list_updates where title='Historical'")).rows[0].coverage_mode, "legacy");
     for (const role of roles) for (const state of ["active", "disabled", "pending"] as AccountStatus[]) {

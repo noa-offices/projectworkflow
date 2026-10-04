@@ -27,14 +27,13 @@ const common = {
 };
 type Component = (props: Record<string, unknown>) => React.ReactElement | null;
 const controls = await load<Record<"SupplierImportCard" | "SupplierAdvancedImportSettings" | "SupplierStartReview" | "SupplierCompletionControls", Component>>("./supplier-price-workspace-controls.tsx", common);
-const workflow = await load<Record<"SupplierWorkflowHeader" | "SupplierImportSummary" | "SupplierImportDetails" | "SupplierPriceListHistory" | "SupplierFinishScreen" | "SupplierCompleteSummary", Component>>("./supplier-price-workflow.tsx", { "next/link": link });
+const workflow = await load<Record<"SupplierWorkflowHeader" | "SupplierImportSummary" | "SupplierImportDetails" | "SupplierTabs" | "SupplierCurrentPriceList" | "SupplierHistoryTable" | "SupplierFinishScreen" | "SupplierCompleteSummary", Component>>("./supplier-price-workflow.tsx", { "next/link": link });
 const html = (component: Component, props: Record<string, unknown>) => renderToStaticMarkup(React.createElement(component as never, props as never));
 
 const profile = (id: string, title: string) => ({ id, title, config: { full_code_column: "CODE", strategy: "exact", currency: "EUR", basis: "list", price_columns: [{ column: "PRICE", price_field: "unit_price" }] } });
 const source = { id: "s1", brand_id: "b", title: "LAS MOBILI — February 2026", filename: "las.xlsx", file_hash: "a".repeat(64), source_type: "xlsx", currency: "EUR", basis: "list", status: "imported", stored_rows: 46108, stored_cells: 46108, identity_count: 3479, expected_rows: 46108, effective_from: "2026-02-01", received_at: null, original_reference: null };
-const old = { ...source, id: "s0", title: "LAS MOBILI — November 2025" };
 const batch = { id: "r1", brand_id: "b", source_id: "s1", scope: "complete", status: "review", selected_template_ids: [], basis_warning: "", title: "Review" };
-const importProps = { brandId: "b", brandName: "LAS MOBILI", suggestedTitle: "LAS MOBILI — February 2026", advancedHref: "/x?advanced=1#advanced" };
+const importProps = { brandId: "b", brandName: "LAS MOBILI", suggestedTitle: "LAS MOBILI — February 2026", advancedHref: "/x?advanced=1#advanced", setupHref: "/x?setup=1" };
 const advancedProps = { brandId: "b", brandName: "LAS MOBILI", basis: "list", approver: true, templates: [{ id: "t", template_name: "Screen" }], dimensions: [] };
 
 test("Import step: one simple card, auto-selected import format, no technical tools", () => {
@@ -46,7 +45,7 @@ test("Import step: one simple card, auto-selected import format, no technical to
   const many = html(controls.SupplierImportCard, { ...importProps, profiles: [profile("p1", "LAS standard price list"), profile("p2", "LAS alternate")] });
   assert.match(many, /<select[^>]*>[\s\S]*Choose import format[\s\S]*LAS alternate/);
   const none = html(controls.SupplierImportCard, { ...importProps, profiles: [] });
-  assert.match(none, /This Brand needs an import format before price lists can be uploaded\./); assert.match(none, /Configure import format/); assert.match(none, /href="\/x\?advanced=1#advanced"/);
+  assert.match(none, /This Brand needs an import format before price lists can be imported\./); assert.match(none, /Set up import format/); assert.match(none, /href="\/x\?setup=1"/);
   assert.doesNotMatch(none, /type="file"/);
 });
 
@@ -79,12 +78,6 @@ test("Import summary shows friendly results and only actionable warnings; detail
   assert.match(details, /SHA-256 a{64}/); assert.match(details, /Commercial identities/); assert.match(details, /Download retained working source/);
 });
 
-test("older price lists and reviews live in collapsed history; no raw batch ids", () => {
-  const history = html(workflow.SupplierPriceListHistory, { sources: [source, old], reviews: [batch, { ...batch, id: "r0", scope: "partial", status: "archived" }], currentSourceId: "s1", currentBatchId: "r1", sourceHref: (id: string) => `/s/${id}`, reviewHref: (id: string) => `/r/${id}`, newReviewHref: "/new", pagerHrefs: { previous: "/p", next: "/n" } });
-  assert.match(history, /<details id="history"(?![^>]*open)/); assert.match(history, /November 2025/); assert.match(history, /href="\/s\/s0"/);
-  assert.match(history, /Complete Brand Review/); assert.match(history, /In progress/); assert.match(history, /Partial Review/); assert.match(history, /Previous review/); assert.match(history, /Start a new review/);
-  assert.doesNotMatch(history, />r1<|>r0<|batch/i);
-});
 
 test("Start Review is the entry to Step 2 with Complete Brand as the recommended default", () => {
   const start = html(controls.SupplierStartReview, { brandId: "b", sourceId: "s1", templates: [{ id: "t", template_name: "Screen" }] });

@@ -32,7 +32,7 @@ import {
   type ImagePreviewZoomMode,
 } from "@/lib/quotations/image-preview-zoom";
 import { createLocalId, localNow, type LocalQuotationItem } from "@/lib/local/quotation-workspace";
-import { productTemplatePriceCheckState } from "@/lib/product-price-check";
+import { friendlyPriceHealth, productTemplatePriceCheckState } from "@/lib/product-price-check";
 import {
   groupedStandardCategoryPricingRows,
   standardCategoryPriceColumns as groupedCategoryPriceColumns,
@@ -462,6 +462,8 @@ function PriceCheckBadge({
   template: ProductLibraryTemplate;
 }) {
   const status = priceCheckState(template);
+  // Same state as before, in plain words. Selecting a Product is never blocked by its health.
+  const health = friendlyPriceHealth(status, template.latest_brand_price_list_update, "quotation");
   const badgeClass = status.tone === "ok"
     ? "inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-900"
     : status.tone === "notice"
@@ -472,8 +474,8 @@ function PriceCheckBadge({
 
   return (
     <span className={compact ? "mt-1 block" : "grid gap-1"}>
-      <span className={badgeClass}>{status.label}</span>
-      {!compact ? <span className="block text-[11px] font-medium text-zinc-500">{status.detail}</span> : null}
+      <span className={badgeClass}>{health.label}</span>
+      {!compact ? <span className="block text-[11px] font-medium text-zinc-500">{health.helper}</span> : null}
     </span>
   );
 }

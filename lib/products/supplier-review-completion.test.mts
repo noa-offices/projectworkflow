@@ -274,7 +274,7 @@ async function loadTestModule<T>(path: string, dependencies: Record<string, unkn
 }
 
 test("completion and exclusion actions are approver-only and take only batch/match identifiers", async () => {
-  let role = "designer"; const calls: unknown[][] = [];
+  let role = "sales_designer"; const calls: unknown[][] = [];
   const actions = await loadTestModule<typeof import("../../app/products/price-updates/supplier-sources/actions.js")>("../../app/products/price-updates/supplier-sources/actions.ts", {
     "next/cache": { revalidatePath() {} },
     "@/lib/auth": { async requireBrandPriceReviewer() { return { profile: { role, account_status: "active" } }; } },

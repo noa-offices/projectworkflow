@@ -10,9 +10,11 @@ import type { DimensionRule, PriceMatch, SourceScope, SupplierProfile } from "@/
 import type { SupplierCompletionCount, SupplierCompletionReadiness } from "@/lib/products/supplier-price-repository";
 import { applySupplierReviewedPrice, completeSupplierPriceReview, confirmSupplierUnchangedPrice, excludeSupplierTargetFromSource, supplierCompletionStatus, archiveSupplierDimension, archiveSupplierSource, attachSupplierWorkingFile, confirmSupplierBindings, createSupplierReviewBatch, createSupplierSource, finalizeSupplierSource, saveSupplierDecision, saveSupplierDimension, saveSupplierProfile, supplierMappingTargets, supplierProfileForImport, uploadSupplierChunk } from "@/app/products/price-updates/supplier-sources/actions";
 
-const input = "rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm";
-const button = "rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium disabled:opacity-50";
-const primary = "rounded border border-zinc-800 bg-zinc-800 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50";
+// ProjectWorkflow patterns: white card, light border and shadow, emerald primary, zinc secondary.
+const card = "rounded-lg border border-zinc-200 bg-white shadow-sm";
+const input = "h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10";
+const button = "inline-flex h-9 items-center justify-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800 disabled:opacity-50";
+const primary = "inline-flex h-9 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800 disabled:opacity-50";
 const readable = (value: string) => { const label = value.replaceAll("_", " "); return label.charAt(0).toUpperCase() + label.slice(1); };
 const badge = "inline-flex rounded-full border px-2 py-0.5 text-xs font-medium";
 const classificationTone = (value: string) => ["increased", "ambiguous", "needs_dimension_mapping", "baseline_drift", "invalid_source"].includes(value) ? "border-amber-200 bg-amber-50 text-amber-800" : value === "decreased" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-zinc-200 bg-zinc-50 text-zinc-700";
@@ -24,14 +26,14 @@ function CodeSet({ label, codes }: { label: string; codes: string[] }) {
 type ProfileOption = { id: string; title: string; config: SupplierProfile };
 
 /** Step 1: one simple card. The approved import format is chosen automatically; currency and basis come from that format. */
-export function SupplierImportCard({ brandId, brandName, profiles, suggestedTitle, advancedHref }: { brandId: string; brandName: string; profiles: ProfileOption[]; suggestedTitle: string; advancedHref: string }) {
+export function SupplierImportCard({ brandId, brandName, profiles, suggestedTitle, advancedHref, setupHref }: { brandId: string; brandName: string; profiles: ProfileOption[]; suggestedTitle: string; advancedHref: string; setupHref: string }) {
   const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
   const [profileId, setProfileId] = useState(profiles.length === 1 ? profiles[0].id : "");
   const chosen = profiles.find((profile) => profile.id === profileId);
   async function run(work: () => Promise<void>) { setBusy(true); setMessage(""); try { await work(); } catch (error) { setMessage(error instanceof Error ? error.message : "Import failed."); } finally { setBusy(false); } }
-  if (!profiles.length) return <section className="space-y-2 rounded border border-zinc-300 bg-white p-4"><h3 className="text-base font-semibold">Import Supplier Price List</h3>
-    <p className="text-sm">This Brand needs an import format before price lists can be uploaded.</p><Link href={advancedHref} className={button + " inline-block"}>Configure import format</Link></section>;
-  return <form className="space-y-3 rounded border border-zinc-300 bg-white p-4" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const file = form.get("file"); void run(async () => {
+  if (!profiles.length) return <section className={`${card} space-y-2 p-4`}><h3 className="text-base font-semibold text-zinc-950">Import Supplier Price List</h3>
+    <p className="text-sm">This Brand needs an import format before price lists can be imported.</p><Link href={setupHref} className={button + " inline-block"}>Set up import format</Link></section>;
+  return <form className={`${card} space-y-4 p-4`} onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const file = form.get("file"); void run(async () => {
     if (!(file instanceof File) || !file.size) throw Error("Choose the price list file.");
     if (!profileId) throw Error("Choose an import format.");
     const profile = await supplierProfileForImport(profileId);
@@ -55,9 +57,9 @@ export function SupplierImportCard({ brandId, brandName, profiles, suggestedTitl
     }
     router.push(`/products/price-updates/supplier-sources?brand=${brandId}&source=${result.id}&view=summary`); router.refresh();
   }); }}>
-    <h3 className="text-base font-semibold">Import Supplier Price List</h3>
+    <div><h3 className="text-base font-semibold text-zinc-950">Import Supplier Price List</h3><p className="text-xs text-zinc-500">Choose the file and name. Currency and price basis come from the import format.</p></div>
     <p role="status" aria-live="polite" className="text-sm text-amber-800">{message}</p>
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       <div className="grid gap-1 text-xs"><span className="font-medium">Brand</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{brandName}</span></div>
       <label className="grid gap-1 text-xs"><span className="font-medium">Price list file</span><input name="file" type="file" accept=".xlsx,.csv,.json" required className={input} /></label>
       <label className="grid gap-1 text-xs"><span className="font-medium">Price list name</span><input name="title" required defaultValue={suggestedTitle} className={input} /></label>
@@ -75,15 +77,16 @@ export function SupplierImportCard({ brandId, brandName, profiles, suggestedTitl
 }
 
 /** Technical import tools, collapsed by default and approver-only as before. */
-export function SupplierAdvancedImportSettings({ brandId, brandName, basis, approver, templates, dimensions = [], open = false }: { brandId: string; brandName: string; basis: string; approver: boolean; templates: Array<{ id: string; template_name: string }>; dimensions?: DimensionRule[]; open?: boolean }) {
+export function SupplierAdvancedImportSettings({ brandId, brandName, basis, approver, templates, dimensions = [], open = false, profiles = [] }: { brandId: string; brandName: string; basis: string; approver: boolean; templates: Array<{ id: string; template_name: string }>; dimensions?: DimensionRule[]; open?: boolean; profiles?: ProfileOption[] }) {
   const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
   async function run(work: () => Promise<void>) { setBusy(true); setMessage(""); try { await work(); router.refresh(); } catch (error) { setMessage(error instanceof Error ? error.message : "Operation failed."); } finally { setBusy(false); } }
   const las = brandName === "LAS MOBILI";
   const example = { strategy: las ? "article_plus_finish" : "exact", full_code_column: las ? "CODICE_ARTICOLO" : "SET_EXACT_CODE_HEADER", ...(las ? { article_code_column: "NOME_FILE", article_length: 6, finish_length: 3, validated_article_fallback: true, category_column: "CATEGORIA_TESSUTO" } : {}), price_columns: [{ column: las ? "PREZZO_UNITARIO" : "PRICE", price_field: "unit_price" }], currency: "EUR", basis };
   if (!approver) return null;
-  return <details id="advanced" open={open} className="rounded border border-zinc-200 p-3"><summary className="cursor-pointer text-sm font-semibold">Advanced import settings</summary>
+  return <details id="advanced" open={open} className="group rounded-lg border border-zinc-200 bg-zinc-50 p-4"><summary className="flex cursor-pointer list-none items-center justify-between gap-2"><span><span className="block text-sm font-semibold text-zinc-950">Advanced import settings</span><span className="block text-xs text-zinc-500">Import format, vocabulary and technical mapping tools.</span></span><span aria-hidden="true" className="text-zinc-500 transition group-open:rotate-90">▸</span></summary>
     <p role="status" aria-live="polite" className="mt-2 text-sm text-amber-800">{message}</p>
     <p className="mt-1 text-xs text-zinc-600">Import formats, canonical size / option codes, finish-code rules and group IDs. Most price lists never need these.</p>
+    {profiles.length ? <div className="mt-2 space-y-1 text-xs">{profiles.map((profile) => <details key={profile.id} className="rounded border border-zinc-200 p-2"><summary className="cursor-pointer">View generated JSON — {profile.title}</summary><pre aria-label={`Generated JSON for ${profile.title} (read-only)`} className="mt-1 overflow-x-auto whitespace-pre-wrap rounded bg-zinc-50 p-2 font-mono">{JSON.stringify(profile.config, null, 2)}</pre></details>)}</div> : null}
     {approver ? <details open className="mt-2 rounded border border-zinc-200 p-3"><summary className="cursor-pointer text-sm font-semibold">Import formats & canonical dimensions</summary>
       <form className="mt-3 grid gap-2" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); void run(async () => { await saveSupplierProfile(brandId, String(form.get("title")), JSON.parse(String(form.get("config")))); setMessage("Authoritative profile saved. Existing source snapshots are unchanged."); }); }}>
         <label className="grid gap-1 text-xs">Profile title<input name="title" required defaultValue={las ? "LAS article + finish" : "Structured source"} className={input} /></label>
@@ -115,10 +118,10 @@ export function SupplierStartReview({ brandId, sourceId, templates }: { brandId:
   const [scope, setScope] = useState<SourceScope>("complete");
   async function run(work: () => Promise<void>) { setBusy(true); setMessage(""); try { await work(); } catch (error) { setMessage(error instanceof Error ? error.message : "Could not start the review."); } finally { setBusy(false); } }
   const options: Array<[SourceScope, string, string]> = [["complete", "Complete Brand (recommended)", "Review the full active Product range for this Brand."], ["selected_templates", "Selected Families", "Review only the Product families you choose."], ["partial", "Partial / Other", "Advanced use. This review cannot activate a Brand-wide baseline."]];
-  return <form className="space-y-3 rounded border border-zinc-300 bg-white p-4" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); if (form.get("scope") === "selected_templates" && !form.getAll("templates").length) { setMessage("Choose at least one Family for Selected Families."); return; } void run(async () => { const result = await createSupplierReviewBatch(sourceId, String(form.get("scope")) as SourceScope, form.getAll("templates").map(String), String(form.get("brand_list") ?? "") || undefined); router.push(`/products/price-updates/supplier-sources?brand=${brandId}&source=${sourceId}&batch=${result.id}&view=family`); router.refresh(); }); }}>
-    <h3 className="text-base font-semibold">Start Review</h3>
+  return <form className={`${card} space-y-4 p-4`} onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); if (form.get("scope") === "selected_templates" && !form.getAll("templates").length) { setMessage("Choose at least one Family for Selected Families."); return; } void run(async () => { const result = await createSupplierReviewBatch(sourceId, String(form.get("scope")) as SourceScope, form.getAll("templates").map(String), String(form.get("brand_list") ?? "") || undefined); router.push(`/products/price-updates/supplier-sources?brand=${brandId}&source=${sourceId}&batch=${result.id}&view=family`); router.refresh(); }); }}>
+    <h3 className="text-base font-semibold text-zinc-950">Start Review</h3>
     <p role="status" aria-live="polite" className="text-sm text-amber-800">{message}</p>
-    <fieldset className="space-y-2"><legend className="text-xs font-medium">Coverage</legend>{options.map(([value, label, help]) => <label key={value} className="flex items-start gap-2 text-sm"><input type="radio" name="scope" value={value} checked={scope === value} onChange={() => setScope(value)} className="mt-1" /><span><span className="font-medium">{label}</span><br /><span className="text-xs text-zinc-600">{help}</span></span></label>)}</fieldset>
+    <fieldset className="space-y-2"><legend className="text-xs font-medium">Coverage</legend>{options.map(([value, label, help]) => <label key={value} className={`flex items-start gap-2 rounded-md border p-3 text-sm transition ${scope === value ? "border-emerald-800 bg-emerald-50" : "border-zinc-200 hover:bg-zinc-50"}`}><input type="radio" name="scope" value={value} checked={scope === value} onChange={() => setScope(value)} className="mt-1 accent-emerald-900" /><span><span className="font-semibold text-zinc-950">{label}</span><br /><span className="text-xs text-zinc-600">{help}</span></span></label>)}</fieldset>
     {scope === "selected_templates" ? <label className="grid gap-1 text-xs"><span className="font-medium">Families to review</span><select name="templates" multiple size={6} required aria-describedby="selected-families-help" className={input}>{templates.map((template) => <option key={template.id} value={template.id}>{template.template_name}</option>)}</select><span id="selected-families-help" className="text-zinc-600">Hold Ctrl or Cmd to choose several. Matching always covers the whole Brand; this limits what you review.</span></label> : null}
     <details className="text-xs"><summary className="cursor-pointer">Link to an existing price-list record (optional)</summary><label className="mt-2 grid gap-1"><span className="font-medium">Record ID</span><input name="brand_list" className={input} /></label></details>
     <div className="flex flex-wrap gap-2"><button disabled={busy} className={primary}>Start review</button><button type="button" disabled={busy} className={button} onClick={() => void run(async () => { await archiveSupplierSource(sourceId); router.push(`/products/price-updates/supplier-sources?brand=${brandId}`); router.refresh(); })}>Archive this price list</button></div>
@@ -188,19 +191,29 @@ export function SupplierCompletionControls({ batchId, scope, status, approver, r
   useEffect(() => { if (!live) return; let current = true; supplierCompletionStatus(batchId).then((result) => { if (current) { setReadiness(result); setChecked(true); } }, () => { if (current) setChecked(true); }); return () => { current = false; }; }, [batchId, live]);
   async function run(work: () => Promise<void>) { setBusy(true); setMessage(""); try { await work(); } catch (error) { setMessage(error instanceof Error ? error.message : "Completion failed."); } finally { setBusy(false); } }
   const statusLine = <p role="status" aria-live="polite" className="text-sm text-amber-800">{message}</p>;
-  if (status === "completed") return <div className="space-y-1 rounded border border-emerald-200 bg-emerald-50 p-3 text-sm">{statusLine}<p>This price-list review is completed. Its results are kept as history; no further changes are possible.</p></div>;
-  if (scope !== "complete") return <p className="rounded border border-zinc-200 bg-zinc-50 p-3 text-sm">This review cannot activate a Brand-wide baseline because coverage is not Complete.</p>;
+  if (status === "completed") return <div className="space-y-1 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">{statusLine}<p>This price-list review is completed. Its results are kept as history; no further changes are possible.</p></div>;
+  if (scope !== "complete") return <p className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-700">This review cannot activate a Brand-wide baseline because coverage is not Complete.</p>;
   if (!approver || status !== "review") return null;
-  return <section className="space-y-2 rounded border border-zinc-300 p-3" aria-label="Complete review">
-    <h3 className="text-sm font-semibold">Complete Review</h3>
+  return <section className={`${card} space-y-3 p-4`} aria-label="Complete review">
+    <h3 className="text-base font-semibold text-zinc-950">Complete Review</h3>
     <p className="text-xs text-zinc-600">Excluded targets will remain Needs price check after this Brand baseline is activated. Unmatched Supplier items do not block completion and create no Products.</p>
     {statusLine}
-    {!checked ? <p className="text-xs text-zinc-600">Checking whether this review can be completed…</p> : readiness?.issue ? <p className="text-xs text-amber-800">{readiness.issue}</p> : readiness && !readiness.ready ? <p className="text-xs text-amber-800">{readiness.blocking} {readiness.blocking === 1 ? "item needs" : "items need"} attention before you can complete.{reviewHref ? <> <Link href={reviewHref} className="underline">Review items</Link></> : null}</p>
-      : readiness ? <p className="text-xs text-emerald-800">Ready: {readiness.checkedTemplates} {readiness.checkedTemplates === 1 ? "family" : "families"} will be marked checked; {readiness.excludedTemplates} stay unchecked because of source exclusions.</p> : <p className="text-xs text-amber-800">Readiness could not be checked. Try again.</p>}
+    {!checked ? <p className="text-xs text-zinc-600">Checking whether this review can be completed…</p> : readiness?.issue ? <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">{readiness.issue}</p> : readiness && !readiness.ready ? <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">{readiness.blocking} {readiness.blocking === 1 ? "item needs" : "items need"} attention before you can complete.{reviewHref ? <> <Link href={reviewHref} className="underline">Review items</Link></> : null}</p>
+      : readiness ? <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">Ready: {readiness.checkedTemplates} {readiness.checkedTemplates === 1 ? "family" : "families"} will be marked checked; {readiness.excludedTemplates} stay unchecked because of source exclusions.</p> : <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">Readiness could not be checked. Try again.</p>}
     <div className="flex flex-wrap gap-2">
       <button type="button" disabled={busy || !readiness?.ready} className={primary} onClick={() => void run(async () => { const result = await completeSupplierPriceReview(batchId); setReadiness(null); setMessage(`${result.message} ${result.title} · baseline ${result.baseline_date ?? "not dated"} · ${result.checked_templates} Templates marked checked · ${result.excluded_templates} left unchecked because of source exclusions.`); router.refresh(); })}>Complete Brand Review</button>
       <button type="button" disabled={busy} className={button} onClick={() => void run(async () => { setReadiness(await supplierCompletionStatus(batchId)); setChecked(true); })}>Check again</button>
     </div>
     {readiness ? <details><summary className="cursor-pointer text-xs">View technical readiness details</summary><dl className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">{completionLabels.map(([key, label]) => <div key={key} className={`rounded border p-2 ${readiness.counts[key] > 0 && !["resolved", "excluded_from_source", "unmatched", "referenced_companion"].includes(key) ? "border-amber-300 bg-amber-50" : "border-zinc-200"}`}><dt>{label}</dt><dd className="font-semibold tabular-nums">{readiness.counts[key]}</dd></div>)}</dl></details> : null}
   </section>;
+}
+
+/** Archive keeps all history and provenance; it only hides the price list from the default list. */
+export function SupplierArchiveButton({ sourceId, title }: { sourceId: string; title: string }) {
+  const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
+  return <span className="inline-flex flex-col"><button type="button" disabled={busy} className="block w-full rounded px-2 py-1 text-left text-zinc-700 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800 disabled:opacity-50" aria-label={`Archive price list ${title}`} onClick={() => {
+    if (!window.confirm(`Archive "${title}"? It stays in history and can no longer be used for new reviews.`)) return;
+    setBusy(true); setMessage("");
+    archiveSupplierSource(sourceId).then(() => router.refresh(), (error: unknown) => setMessage(error instanceof Error ? error.message : "Could not archive.")).finally(() => setBusy(false));
+  }}>Archive</button>{message ? <span role="alert" className="text-amber-800">{message}</span> : null}</span>;
 }

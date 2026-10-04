@@ -301,7 +301,7 @@ test("real legacy constraint rolls back LAS matrix Apply; forward migration perm
 });
 
 test("server action rejects non-approvers and exposes only batchId plus matchKey", async () => {
-  let role = "designer", calls = 0;
+  let role = "sales_designer", calls = 0;
   const { applySupplierReviewedPrice } = await loadTestModule<typeof import("../../app/products/price-updates/supplier-sources/actions.js")>("../../app/products/price-updates/supplier-sources/actions.ts", {
     "next/cache": { revalidatePath() {} },
     "@/lib/auth": { async requireBrandPriceReviewer() { return { profile: { role, account_status: "active" } }; } },
@@ -562,7 +562,7 @@ test("Confirm unchanged persists only the decision, is idempotent, and writes no
 });
 
 test("Confirm unchanged action is approver-only, takes only batchId plus matchKey, and the UI separates it from Reviewed", async () => {
-  let role = "designer", calls = 0;
+  let role = "sales_designer", calls = 0;
   const actions = await loadTestModule<typeof import("../../app/products/price-updates/supplier-sources/actions.js")>("../../app/products/price-updates/supplier-sources/actions.ts", {
     "next/cache": { revalidatePath() {} },
     "@/lib/auth": { async requireBrandPriceReviewer() { return { profile: { role, account_status: "active" } }; } },

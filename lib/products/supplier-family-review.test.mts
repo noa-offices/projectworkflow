@@ -298,7 +298,7 @@ async function loadTestModule<T>(path: string, dependencies: Record<string, unkn
 }
 
 test("bulk actions are approver-only and the browser sends only batch id, match keys and a reason", async () => {
-  let role = "designer"; const calls: unknown[][] = [];
+  let role = "sales_designer"; const calls: unknown[][] = [];
   const spy = (name: string) => async (...args: unknown[]) => { calls.push([name, ...args.slice(1)]); return { message: "ok" }; };
   const actions = await loadTestModule<typeof import("../../app/products/price-updates/supplier-sources/actions.js")>("../../app/products/price-updates/supplier-sources/actions.ts", {
     "next/cache": { revalidatePath() {} },
