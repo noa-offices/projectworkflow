@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { PGlite } from "@electric-sql/pglite";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { supplierApplyReviewedPrice, supplierBrandTargets } from "./supplier-price-repository.js";
+import { supplierApplyReviewedPrice, supplierBrandTargets, supplierConfirmUnchangedPrice } from "./supplier-price-repository.js";
 import type { PriceMatch, SourceIdentity, SourceVersion, ReviewBatch } from "./supplier-price-contracts.js";
 
 const a = "00000000-0000-0000-0000-000000000001", b = "00000000-0000-0000-0000-000000000002", c = "00000000-0000-0000-0000-000000000003";
@@ -92,6 +92,11 @@ async function fixture(includeDynamicHistoryFields = true) {
     },
     async rpc(name: string, args: Record<string, unknown>) {
       calls.push({ name, args }); if (beforeRpc) await beforeRpc();
+      if (name === "supplier_price_review_write") {
+        // Decision upsert emulation; the real database guard is covered by the migration test.
+        const payload = args.p_payload as { key: string; decision: string; note: string };
+        state.match.supplier_price_decisions = { decision: payload.decision, note: payload.note } as never; return { data: { id: c }, error: null };
+      }
       if (name === "apply_supplier_shared_price_at_versions") {
         try { return { data: (await db.query<{ result: unknown }>("select public.apply_supplier_shared_price_at_versions($1) result", [JSON.stringify(args.p_operations)])).rows[0].result, error: null }; }
         catch (error) { return { data: null, error: { message: (error as Error).message } }; }
@@ -108,9 +113,10 @@ async function fixture(includeDynamicHistoryFields = true) {
   }
   await compare();
   const apply = () => supplierApplyReviewedPrice(client, c, "match-key");
+  const confirm = () => supplierConfirmUnchangedPrice(client, c, "match-key");
   const version = async () => (await db.query<{ pricing_version: number }>("select pricing_version from product_templates where id=$1", [a])).rows[0].pricing_version;
   const untouched = async () => (await db.query("select jsonb_build_object('checked_at',last_price_checked_at,'checked_by',last_price_checked_by,'note',price_check_note) data from product_templates union all select to_jsonb(b) from brands b union all select to_jsonb(u) from brand_price_list_updates u union all select to_jsonb(q) from quotations q")).rows;
-  return { db, state, client, calls, bindings, compare, apply, version, untouched, beforeRpc(work: () => Promise<void>) { beforeRpc = work; } };
+  return { db, state, client, calls, bindings, confirm, compare, apply, version, untouched, beforeRpc(work: () => Promise<void>) { beforeRpc = work; } };
 }
 
 test("all eligibility and ownership failures refuse the writer without changing Products", async () => {
@@ -480,5 +486,113 @@ test("review UI offers Apply shared price only to approvers for reviewed confirm
     assert.doesNotMatch(render({ matches: [{ ...match, decision: undefined }] }), />Apply shared price</);
     assert.doesNotMatch(render({ matches: [{ ...match, targets: [match.targets[0]] }] }), />Apply shared price</);
     assert.doesNotMatch(render({ matches: [{ ...match, classification: "ambiguous" }] }), />Apply shared price</);
+  } finally { await f.db.close(); }
+});
+
+// ---- Phase 2C: Confirm unchanged ----
+const confirmFresh = /This Product Template changed\. Build a fresh Supplier comparison before confirming\./;
+async function unchangedFixture() {
+  const f = await fixture();
+  f.state.identity.data.price = 100; f.state.match.data.source = structuredClone(f.state.identity.data);
+  await f.compare(); f.state.match.data.classification = "unchanged"; f.state.match.data.comparison = "unchanged";
+  f.state.match.supplier_price_decisions = { decision: "reviewed", note: "kept note" } as never;
+  return f;
+}
+
+test("Confirm unchanged refuses every ineligible, stale or drifted case without any write", async () => {
+  const f = await unchangedFixture();
+  try {
+    const original = structuredClone(f.state), before = await f.untouched(), version = await f.version();
+    const cases: Array<[string, (state: State) => Promise<void> | void, RegExp]> = [
+      ["source incomplete", (s) => { s.source.status = "uploading"; }, /must be imported/],
+      ["batch not review", (s) => { s.batch.status = "building"; }, /must be in review/],
+      ...(["increased", "decreased", "changed", "shared", "ambiguous", "unmatched", "baseline_drift", "invalid_source", "target_not_represented"] as const).map((classification): [string, (state: State) => void, RegExp] =>
+        [classification, (s) => { s.match.data.classification = classification; }, /Only unchanged/]),
+      ["missing source", (s) => { s.match.data.source = null; }, /price is invalid/],
+      ["invalid source price", (s) => { s.match.data.source!.price = null; }, /price is invalid/],
+      ["multiple targets", (s) => { s.match.data.targets.push(structuredClone(s.match.data.targets[0])); }, /exactly one target/],
+      ["unknown source basis", (s) => { s.source.basis = "unknown"; }, /basis must be confirmed/],
+      ["unknown Brand basis", async () => { await f.db.exec("update brands set stored_price_basis='unknown'"); }, /basis must be confirmed/],
+      ["basis mismatch", (s) => { s.source.basis = "net"; }, /does not match/],
+      ["currency mismatch", (s) => { s.match.data.targets[0].currency = "USD"; }, /currencies must match/],
+      ["unsupported currency", (s) => { Object.assign(s.source, { currency: "GBP" }); Object.assign(s.identity.data, { currency: "GBP" }); Object.assign(s.match.data.source!, { currency: "GBP" }); }, /Unsupported Supplier/],
+      ["forged snapshot price", (s) => { s.match.data.source!.price = 900; }, /does not match this source/],
+      ["stale pricing_version", (s) => { s.match.data.targets[0].pricing_version = "9"; }, confirmFresh],
+      ["stale code", (s) => { s.match.data.targets[0].raw_code = "OTHER"; }, confirmFresh],
+      ["snapshot price differs from source", (s) => { s.match.data.targets[0].price = 99; }, confirmFresh],
+    ];
+    for (const [name, change, message] of cases) {
+      Object.assign(f.state, structuredClone(original)); await f.db.exec("update brands set stored_price_basis='list'"); await change(f.state);
+      await assert.rejects(f.confirm(), message, name);
+    }
+    assert.equal(f.calls.length, 0); await f.db.exec("update brands set stored_price_basis='list'");
+    assert.equal(await f.version(), version); assert.deepEqual(await f.untouched(), before);
+    assert.deepEqual(f.state.match.supplier_price_decisions, { decision: "reviewed", note: "kept note" });
+  } finally { await f.db.close(); }
+});
+
+test("Confirm unchanged rejects when the live Product price moved after the batch was built", async () => {
+  const f = await unchangedFixture();
+  try {
+    await f.db.exec("update product_templates set default_unit_price=101");
+    await assert.rejects(f.confirm(), confirmFresh);
+    assert.equal(f.calls.length, 0); assert.equal(f.state.match.supplier_price_decisions?.decision, "reviewed");
+  } finally { await f.db.close(); }
+});
+
+test("Confirm unchanged persists only the decision, is idempotent, and writes no Product, Brand or quotation data", async () => {
+  const f = await unchangedFixture();
+  try {
+    const before = await f.untouched(), version = await f.version(), snapshots = structuredClone({ ...f.state, match: { ...f.state.match, supplier_price_decisions: null } });
+    const productRows = async () => (await f.db.query("select to_jsonb(t) data from product_templates t")).rows;
+    const products = await productRows();
+    const result = await f.confirm();
+    assert.equal(result.message, "Unchanged price confirmed.");
+    assert.deepEqual(f.calls.map((call) => [call.name, (call.args.p_payload as Record<string, unknown>).decision, (call.args.p_payload as Record<string, unknown>).note]), [["supplier_price_review_write", "confirmed_unchanged", "kept note"]]);
+    assert.deepEqual(f.state.match.supplier_price_decisions, { decision: "confirmed_unchanged", note: "kept note" });
+    await f.confirm(); // Repeat is safe: same single upsert, no Product work.
+    assert.equal(f.calls.length, 2); assert.ok(f.calls.every((call) => call.name === "supplier_price_review_write"));
+    assert.deepEqual(await productRows(), products); assert.equal(await f.version(), version);
+    assert.equal((await f.db.query("select * from product_template_price_history")).rows.length, 0);
+    assert.equal((await f.db.query("select * from product_template_detail_price_history")).rows.length, 0);
+    assert.deepEqual(await f.untouched(), before);
+    assert.deepEqual({ ...f.state, match: { ...f.state.match, supplier_price_decisions: null } }, snapshots);
+  } finally { await f.db.close(); }
+});
+
+test("Confirm unchanged action is approver-only, takes only batchId plus matchKey, and the UI separates it from Reviewed", async () => {
+  let role = "designer", calls = 0;
+  const actions = await loadTestModule<typeof import("../../app/products/price-updates/supplier-sources/actions.js")>("../../app/products/price-updates/supplier-sources/actions.ts", {
+    "next/cache": { revalidatePath() {} },
+    "@/lib/auth": { async requireBrandPriceReviewer() { return { profile: { role, account_status: "active" } }; } },
+    "@/lib/supabase/server": { async createClient() { return {}; } },
+    "@/lib/products/supplier-price-repository": {
+      async supplierConfirmUnchangedPrice(_client: unknown, batchId: string, matchKey: string, ...extra: unknown[]) { calls++; assert.equal(batchId, c); assert.equal(matchKey, "match-key"); assert.equal(extra.length, 0); return { message: "Unchanged price confirmed." }; },
+      supplierApplyReviewedPrice() {}, supplierBrandMatches() {}, supplierBrandTargets() {}, supplierMatchChunks() {}, supplierSource() {}, supplierWrite() {},
+    },
+  });
+  await assert.rejects(actions.confirmSupplierUnchangedPrice(c, "match-key"), /approver permission required/); assert.equal(calls, 0);
+  role = "procurement_manager";
+  await (actions.confirmSupplierUnchangedPrice as (...args: unknown[]) => Promise<unknown>)(c, "match-key", { price: 9999, target: "forged", pricing_version: 999, classification: "unchanged" });
+  assert.equal(calls, 1);
+  const f = await unchangedFixture();
+  try {
+    const { createElement } = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { SupplierReviewControls } = await loadTestModule<typeof import("../../components/products/supplier-price-workspace-controls.js")>("../../components/products/supplier-price-workspace-controls.tsx", {
+      "next/navigation": { useRouter() { return { refresh() {}, push() {} }; } },
+      "@/lib/supabase/client": { createClient() { assert.fail("Rendering review controls must not create a database client."); } },
+      "@/app/products/price-updates/supplier-sources/actions": {},
+    });
+    const match: PriceMatch = { ...f.state.match.data, decision: "reviewed" };
+    const props = { batchId: c, brandId: a, matches: [match], approver: true, sourceProfile: f.state.source.profile, sourceBasis: "list", brandBasis: "list", sourceStatus: "imported", batchStatus: "review" };
+    const render = (changes: Partial<typeof props> = {}) => renderToStaticMarkup(createElement(SupplierReviewControls, { ...props, ...changes }));
+    assert.match(render(), />Confirm unchanged<\/button>/); assert.match(render(), /Decision: Reviewed/); assert.doesNotMatch(render(), />Apply price</);
+    assert.match(render({ sourceBasis: "unknown" }), /<button[^>]*disabled=""[^>]*>Confirm unchanged<\/button>/);
+    assert.doesNotMatch(render({ approver: false }), />Confirm unchanged</);
+    const confirmed = render({ matches: [{ ...match, decision: "confirmed_unchanged" }] });
+    assert.match(confirmed, /Decision: Confirmed unchanged/); assert.doesNotMatch(confirmed, />Confirm unchanged</); assert.doesNotMatch(confirmed, />Apply price</);
+    assert.doesNotMatch(render({ matches: [{ ...match, classification: "increased" }] }), />Confirm unchanged</);
+    assert.doesNotMatch(render({ matches: [{ ...match, targets: [match.targets[0], match.targets[0]] }] }), />Confirm unchanged</);
   } finally { await f.db.close(); }
 });

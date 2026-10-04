@@ -173,3 +173,43 @@ export async function supplierApplyReviewedPrice(client: SupabaseClient, batchId
   if (error) throw Error(error.message.includes(pricingConflictMessage) ? freshSupplierComparison : error.message);
   return { pricing_version: data, message: "Price applied. Build a fresh comparison to continue reviewing this target." };
 }
+
+const freshBeforeConfirming = "This Product Template changed. Build a fresh Supplier comparison before confirming.";
+/** Called only after the server action's approver guard. Persists a durable decision only; never writes Product pricing. */
+export async function supplierConfirmUnchangedPrice(client: SupabaseClient, batchId: string, matchKey: string) {
+  if (typeof batchId !== "string" || !batchId || typeof matchKey !== "string" || !matchKey) throw Error("Supplier batch and match required.");
+  const batchResult = await client.from("supplier_price_batches").select("*").eq("id", batchId).single<ReviewBatch>();
+  if (batchResult.error || !batchResult.data) throw Error(batchResult.error?.message ?? "Supplier batch unavailable.");
+  const batch = batchResult.data;
+  if (batch.status !== "review") throw Error("Supplier batch must be in review before confirming.");
+  const source = await supplierSource(client, batch.source_id);
+  if (source.id !== batch.source_id || source.brand_id !== batch.brand_id) throw Error("Supplier source does not belong to this batch and Brand.");
+  if (source.status !== "imported") throw Error("Supplier source must be imported before confirming.");
+  const matchResult = await client.from("supplier_price_matches").select("key,data,supplier_price_decisions(decision,note)")
+    .eq("batch_id", batch.id).eq("key", matchKey).single<{ key: string; data: PriceMatch; supplier_price_decisions: { decision: string; note: string } | null }>();
+  if (matchResult.error || !matchResult.data) throw Error(matchResult.error?.message ?? "Supplier match unavailable in this batch.");
+  const stored = matchResult.data, match = stored.data;
+  if (stored.key !== matchKey || match.key !== matchKey) throw Error("Supplier match does not belong to this batch.");
+  if (match.classification !== "unchanged") throw Error("Only unchanged Supplier prices can be confirmed unchanged.");
+  if (match.targets.length !== 1) throw Error("Confirm unchanged supports exactly one target.");
+  if (!match.source || match.source.price === null || !Number.isFinite(match.source.price) || match.source.price < 0 || match.source.issues.length) throw Error("Supplier source price is invalid.");
+  const identityResult = await client.from("supplier_source_identities").select("data").eq("source_id", source.id).eq("key", match.source.key).single<{ data: SourceIdentity }>();
+  if (identityResult.error || !identityResult.data) throw Error(identityResult.error?.message ?? "Supplier price unavailable in this source.");
+  const identity = identityResult.data.data;
+  if (["key", "code", "price_field", "price", "currency"].some((field) => identity[field as keyof SourceIdentity] !== match.source![field as keyof SourceIdentity]) || identity.issues.length) throw Error("Supplier match source does not match this source version.");
+  const brandResult = await client.from("brands").select("id,stored_price_basis").eq("id", batch.brand_id).single<{ id: string; stored_price_basis: string }>();
+  if (brandResult.error || !brandResult.data || brandResult.data.id !== batch.brand_id) throw Error(brandResult.error?.message ?? "Supplier Brand unavailable.");
+  if (!["list", "net"].includes(source.basis) || !["list", "net"].includes(brandResult.data.stored_price_basis)) throw Error("Supplier price basis must be confirmed before confirming.");
+  if (source.basis !== brandResult.data.stored_price_basis) throw Error("Supplier price basis does not match the Brand stored price basis.");
+  const baseline = match.targets[0];
+  if (baseline.brand_id !== batch.brand_id) throw Error("Supplier target does not belong to this Brand.");
+  if (!["AED", "EUR", "USD"].includes(source.currency) || identity.currency !== source.currency) throw Error("Unsupported Supplier currency. Use AED, EUR, or USD.");
+  if (source.currency !== baseline.currency) throw Error("Supplier and Product currencies must match before confirming.");
+  const { targets } = await supplierBrandTargets(client, batch.brand_id);
+  const current = targets.find((target) => target.key === baseline.key);
+  const baselineFields = ["key", "brand_id", "template_id", "pricing_version", "price", "currency", "raw_code", "code", "architecture", "group_id", "row_id", "column_id", "physical_field", "price_field", "dimension"] as const;
+  if (!current || baselineFields.some((field) => current[field] !== baseline[field]) || current.price !== identity.price || current.currency !== source.currency) throw Error(freshBeforeConfirming);
+  // Same decision path and upsert as every review decision; a repeat rewrites the one row. The reviewer's note is kept.
+  await supplierWrite(client, "decision", { batch_id: batch.id, key: matchKey, decision: "confirmed_unchanged", note: stored.supplier_price_decisions?.note ?? "", proposed_target_keys: [] });
+  return { message: "Unchanged price confirmed." };
+}
