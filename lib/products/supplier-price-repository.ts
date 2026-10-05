@@ -4,6 +4,63 @@ import { expectedPricingVersion, pricingConflictMessage } from "./pricing-write-
 import { brandPriceTargets } from "./supplier-price-targets";
 import { comparisonCode, matchSupplierPrices } from "./supplier-price-matching";
 
+export type SupplierSourceInspectorRow = {
+  key: string; code: string; price: number | null; currency: string; priceField: string; dimension: string; finishes: string[]; sourceRowCount: number; warnings: string[]; multiplePriceIdentities?: boolean;
+};
+/** Clean read-only view over retained source rows; original source values are never altered. */
+export type SupplierNormalizedWorkingRow = { articleCode: string; fullCode: string; description: string; finishCode: string; price: number | null; currency: string; priceField: string; dimension: string; sourceRowNumber: number; sheet: string; validationWarnings: string[] };
+export type SupplierSourceInspectorEvidence = SupplierNormalizedWorkingRow;
+export type SupplierSourceInspectorDetail = SupplierSourceInspectorRow & { fullCodes: string[]; evidence: SupplierSourceInspectorEvidence[]; moreEvidence: number };
+
+const inspectorLimit = 50;
+const inspectorText = (value: unknown) => typeof value === "string" || typeof value === "number" ? String(value) : "";
+const inspectorRow = (identity: SourceIdentity): SupplierSourceInspectorRow => ({
+  key: identity.key, code: identity.code, price: identity.price, currency: identity.currency, priceField: identity.price_field, dimension: identity.raw_dimension || identity.dimension, finishes: identity.finishes, sourceRowCount: identity.row_keys.length, warnings: identity.issues,
+});
+function normalizedSupplierWorkingRow(source: SourceVersion, identity: SourceIdentity, row: { row_number: number; sheet: string; raw_extras: Record<string, unknown> }): SupplierNormalizedWorkingRow {
+  const fullCode = inspectorText(row.raw_extras[source.profile.full_code_column]);
+  const finishCode = source.profile.strategy === "article_plus_finish" && source.profile.finish_length && fullCode.length >= source.profile.finish_length ? fullCode.slice(-source.profile.finish_length) : "";
+  return { articleCode: identity.code, fullCode, description: source.profile.description_column ? inspectorText(row.raw_extras[source.profile.description_column]) : "", finishCode, price: identity.price, currency: identity.currency, priceField: identity.price_field, dimension: identity.raw_dimension || identity.dimension, sourceRowNumber: row.row_number, sheet: row.sheet, validationWarnings: identity.issues };
+}
+
+/** Read-only, source-scoped identity search. Exact canonical code matches always precede browse matches. */
+export async function supplierSourceInspectorSearch(client: SupabaseClient, sourceId: string, query: string, offset = 0, limit = inspectorLimit) {
+  const source = await supplierSource(client, sourceId);
+  if (source.status !== "imported") throw Error("Supplier source is not available for inspection.");
+  const search = typeof query === "string" ? query.trim().slice(0, 120) : "";
+  const canonical = comparisonCode(search);
+  const start = Math.max(0, Math.floor(offset)); const take = Math.min(inspectorLimit, Math.max(1, Math.floor(limit)));
+  const exactQuery = canonical ? client.from("supplier_source_identities").select("key,data", { count: "exact" }).eq("source_id", source.id).eq("code", canonical).order("key", { ascending: true }) : null;
+  const exactResult = exactQuery ? await exactQuery : { data: [], error: null, count: 0 };
+  if (exactResult.error) throw Error(exactResult.error.message);
+  const exactCount = exactResult.count ?? 0;
+  let rows: Array<{ key: string; data: SourceIdentity }> = [];
+  if (start < exactCount) {
+    const result = await client.from("supplier_source_identities").select("key,data").eq("source_id", source.id).eq("code", canonical).order("key", { ascending: true }).range(start, start + take - 1);
+    if (result.error) throw Error(result.error.message); rows = (result.data ?? []) as Array<{ key: string; data: SourceIdentity }>;
+  } else {
+    let browse = client.from("supplier_source_identities").select("key,data").eq("source_id", source.id).order("key", { ascending: true });
+    if (canonical) browse = browse.ilike("code", `%${canonical.replace(/[\\%_]/g, "\\$&")}%`).neq("code", canonical);
+    const result = await browse.range(Math.max(0, start - exactCount), Math.max(0, start - exactCount) + take - 1);
+    if (result.error) throw Error(result.error.message); rows = (result.data ?? []) as Array<{ key: string; data: SourceIdentity }>;
+  }
+  return { source: { id: source.id, title: source.title }, rows: rows.map((row) => ({ ...inspectorRow(row.data), multiplePriceIdentities: Boolean(canonical && exactCount > 1) })), exactCount, hasMore: rows.length === take };
+}
+
+/** The detail endpoint deliberately returns only five human-readable provenance rows, never raw source JSON. */
+export async function supplierSourceInspectorDetail(client: SupabaseClient, sourceId: string, identityKey: string): Promise<SupplierSourceInspectorDetail> {
+  const source = await supplierSource(client, sourceId);
+  if (source.status !== "imported") throw Error("Supplier source is not available for inspection.");
+  const identityResult = await client.from("supplier_source_identities").select("key,data").eq("source_id", source.id).eq("key", identityKey).single<{ key: string; data: SourceIdentity }>();
+  if (identityResult.error || !identityResult.data) throw Error(identityResult.error?.message ?? "Extracted identity unavailable.");
+  const identity = identityResult.data.data; const rowKeys = identity.row_keys;
+  const provenance = rowKeys.length ? await client.from("supplier_source_rows").select("unit_key,row_number,sheet,raw_extras").eq("source_id", source.id).in("unit_key", rowKeys.slice(0, 5)).order("row_number", { ascending: true }).returns<Array<{ unit_key: string; row_number: number; sheet: string; raw_extras: Record<string, unknown> }>>() : { data: [], error: null };
+  if (provenance.error) throw Error(provenance.error.message);
+  const evidence = (provenance.data ?? []).map((row) => normalizedSupplierWorkingRow(source, identity, row));
+  const fullCodes = [...new Set(evidence.map((row) => row.fullCode).filter(Boolean))];
+  return { ...inspectorRow(identity), fullCodes, evidence, moreEvidence: Math.max(0, rowKeys.length - evidence.length) };
+}
+
 export async function supplierRows<T>(client: SupabaseClient, table: string, columns: string, filters: Record<string, string | boolean> = {}, order = "id"): Promise<T[]> {
   const rows: T[] = [];
   for (let from = 0; ; from += 500) {

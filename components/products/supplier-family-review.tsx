@@ -71,7 +71,7 @@ export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, 
     attention: null,
   }[section];
   const pick = selectAllKeys(selectable, limit);
-  const columns = section === "attention" ? ["Code", "Item", "Issue", "Recommended action", ""] : ["Code", "Item / size", "Current", "Supplier", "Change"];
+  const columns = section === "attention" ? ["Code", "Item", "Issue", "Recommended action", ""] : section === "missing" ? ["Code", "Item / size", "Current", "Supplier", "Change", ""] : ["Code", "Item / size", "Current", "Supplier", "Change"];
   return <div className="space-y-3">
     <div className={`${card} flex flex-wrap items-start justify-between gap-3 p-4`}>
       <div><Link href={backHref} className="text-xs font-semibold text-zinc-600 underline-offset-2 hover:underline">← Back to Family Review</Link><h3 className="mt-1 text-base font-semibold text-zinc-950">{familyName}</h3>
@@ -91,6 +91,7 @@ export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, 
           <td className="px-3 py-2 font-mono text-xs font-semibold text-zinc-950">{row.code}</td><td className="px-3 py-2 text-zinc-700">{row.item}</td>
           {section === "attention" ? <><td className="px-3 py-2"><span className={`${badge} border-amber-200 bg-amber-50 text-amber-900`}><span aria-hidden="true">⚠</span>{row.issue}</span></td><td className="px-3 py-2 text-xs text-zinc-600">{row.action}</td><td className="px-3 py-2 text-right"><Link className={secondary} href={`${detailsHref}&status=${row.classification}&code=${encodeURIComponent(row.code)}`}>Review details</Link></td></>
             : <><td className="px-3 py-2 text-right tabular-nums text-zinc-700">{row.current}</td><td className="px-3 py-2 text-right tabular-nums text-zinc-950">{row.supplier}</td><td className={`px-3 py-2 text-right tabular-nums ${section === "changed" && !row.selectable ? "font-semibold text-emerald-800" : section === "changed" ? "font-semibold text-zinc-950" : "text-zinc-500"}`}>{row.change}</td></>}
+          {section === "missing" ? <td className="px-3 py-2 text-right"><button type="button" className={secondary} onClick={() => window.dispatchEvent(new CustomEvent("supplier-source-inspector", { detail: { code: row.code } }))}>Check source</button></td> : null}
         </tr>)}</tbody></table>{truncated ? <p className="border-t border-zinc-200 px-3 py-2 text-xs text-zinc-500">Showing the first 500 items. Apply or confirm these, then refresh for the rest.</p> : null}</div>
         : <p className="px-4 py-10 text-center text-sm text-zinc-500">{{ changed: "No price changes waiting in this Family.", same: "No unchanged prices waiting for confirmation.", missing: "Nothing missing from the Supplier source.", attention: "Nothing needs attention in this Family." }[section]}</p>}
     </section>

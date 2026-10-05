@@ -27,7 +27,8 @@ const common = {
 };
 type Component = (props: Record<string, unknown>) => React.ReactElement | null;
 const controls = await load<Record<"SupplierImportCard" | "SupplierAdvancedImportSettings" | "SupplierStartReview" | "SupplierCompletionControls", Component>>("./supplier-price-workspace-controls.tsx", common);
-const workflow = await load<Record<"SupplierWorkflowHeader" | "SupplierImportSummary" | "SupplierImportDetails" | "SupplierTabs" | "SupplierCurrentPriceList" | "SupplierHistoryTable" | "SupplierFinishScreen" | "SupplierCompleteSummary", Component>>("./supplier-price-workflow.tsx", { "next/link": link });
+const inspector = { SupplierSourceInspector: () => React.createElement("button", { type: "button" }, "View extracted data") };
+const workflow = await load<Record<"SupplierWorkflowHeader" | "SupplierImportSummary" | "SupplierImportDetails" | "SupplierTabs" | "SupplierCurrentPriceList" | "SupplierHistoryTable" | "SupplierFinishScreen" | "SupplierCompleteSummary", Component>>("./supplier-price-workflow.tsx", { "next/link": link, "@/components/products/supplier-source-inspector": inspector });
 const html = (component: Component, props: Record<string, unknown>) => renderToStaticMarkup(React.createElement(component as never, props as never));
 
 const profile = (id: string, title: string) => ({ id, title, config: { full_code_column: "CODE", strategy: "exact", currency: "EUR", basis: "list", price_columns: [{ column: "PRICE", price_field: "unit_price" }] } });

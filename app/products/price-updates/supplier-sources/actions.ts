@@ -7,11 +7,23 @@ import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { assertSupplierProfile, type RawSupplierRow, type SourceScope, type SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import { normalizeSupplierRows } from "@/lib/products/supplier-price-import";
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
-import { supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierBulkExcludeMissing, supplierBrandMatches, supplierBrandTargets, supplierMatchChunks, supplierSource, supplierWrite } from "@/lib/products/supplier-price-repository";
+import { supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierBulkExcludeMissing, supplierBrandMatches, supplierBrandTargets, supplierMatchChunks, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
 
 const workspacePath = "/products/price-updates/supplier-sources";
 async function reviewer() { const auth = await requireBrandPriceReviewer(); return { auth, client: await createClient() }; }
 async function approver() { const context = await reviewer(); if (!canApproveBrandPrices(context.auth.profile?.role, context.auth.profile?.account_status)) throw Error("Brand price approver permission required."); return context; }
+
+/** Read-only inspector actions use the same authenticated reviewer access as Supplier Pricing. */
+export async function searchSupplierSourceInspector(sourceId: string, query = "", offset = 0) {
+  const { client } = await reviewer();
+  if (typeof sourceId !== "string" || !sourceId || typeof query !== "string") throw Error("Supplier source and search text are required.");
+  return supplierSourceInspectorSearch(client, sourceId, query, offset, 50);
+}
+export async function supplierSourceInspectorDetails(sourceId: string, identityKey: string) {
+  const { client } = await reviewer();
+  if (typeof sourceId !== "string" || !sourceId || typeof identityKey !== "string" || !identityKey) throw Error("Supplier source identity is required.");
+  return supplierSourceInspectorDetail(client, sourceId, identityKey);
+}
 
 export async function saveSupplierProfile(brandId: string, title: string, config: unknown) {
   const { client } = await approver(); assertSupplierProfile(config);

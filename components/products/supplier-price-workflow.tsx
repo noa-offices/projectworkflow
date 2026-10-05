@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReviewBatch, SourceVersion } from "@/lib/products/supplier-price-contracts";
 import type { FamilyOverview } from "@/lib/products/supplier-price-repository";
 import { SupplierArchiveButton } from "@/components/products/supplier-price-workspace-controls";
+import { SupplierSourceInspector } from "@/components/products/supplier-source-inspector";
 
 const card = "rounded-lg border border-zinc-200 bg-white shadow-sm";
 const badge = "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold";
@@ -35,7 +36,7 @@ export function SupplierWorkflowHeader({ brandName, source, batch, step, links }
     {source ? <div className="flex flex-wrap items-start justify-between gap-3 border-t border-zinc-100 pt-3">
       <div className="min-w-0"><h2 className="text-base font-semibold text-zinc-950">{title}</h2>
         <p className="mt-0.5 text-xs text-zinc-500">{source.currency} · {source.basis === "list" ? "List" : source.basis === "net" ? "Net" : "Basis not set"} · {source.status === "imported" ? "Imported" : source.status === "archived" ? "Archived" : "Import not finished"}{batch ? ` · ${coverageLabel(batch.scope)}` : ""}</p></div>
-      <p className="flex gap-2"><a href={links.history} className={smallButton}>Price list history</a><a href={links.advanced} className={smallButton}>Advanced tools</a></p>
+      <p className="flex gap-2"><a href={links.history} className={smallButton}>Price list history</a><SupplierSourceInspector sourceId={source.id} brandName={brandName} sourceTitle={source.title} /><a href={links.advanced} className={smallButton}>Advanced tools</a></p>
     </div> : null}
   </header>;
 }
