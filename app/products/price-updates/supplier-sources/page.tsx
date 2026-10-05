@@ -7,10 +7,11 @@ import { SupplierBrandProgress, SupplierFamilyList, SupplierFamilyTable } from "
 import { SupplierAdvancedImportSettings, SupplierCompletionControls, SupplierImportCard, SupplierReviewControls, SupplierStartReview } from "@/components/products/supplier-price-workspace-controls";
 import { SupplierCompleteSummary, SupplierFinishScreen, SupplierImportDetails, SupplierCurrentPriceList, SupplierHistoryTable, SupplierImportSummary, SupplierTabs, SupplierWorkflowHeader, type CurrentPriceList, type HistoryRow, type PriceListTab, type WorkflowStep } from "@/components/products/supplier-price-workflow";
 import { SupplierCoverageContext, SupplierCoverageSetup, SupplierFamilyCoverageSetup, SupplierSourceSummary, SupplierSourcesOverview, type OtherCoverage } from "@/components/products/supplier-coverage";
+import { SupplierCapacityPanel } from "@/components/products/supplier-capacity";
 import { requireBrandPriceReviewer } from "@/lib/auth";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { createClient } from "@/lib/supabase/server";
-import { SUPPLIER_BULK_LIMIT, familySections, supplierBrandMatches, supplierCoverageOverview, supplierFamilyCoverageSetup, supplierFamilyOverview, supplierFamilyRows, supplierRows, supplierSourceCoverageSuggestion, type FamilyOverview, type FamilyRow, type FamilySection, type SupplierCoverageOverview, type SupplierFamilyCoverageRow } from "@/lib/products/supplier-price-repository";
+import { SUPPLIER_BULK_LIMIT, canManageSupplierCapacity, familySections, supplierBrandMatches, supplierCoverageOverview, supplierFamilyCoverageSetup, supplierFamilyOverview, supplierFamilyRows, supplierRows, supplierSourceCoverageSuggestion, type FamilyOverview, type FamilyRow, type FamilySection, type SupplierCoverageOverview, type SupplierFamilyCoverageRow } from "@/lib/products/supplier-price-repository";
 import type { DimensionRule, PriceMatch, ReviewBatch, SourceVersion, SupplierCoverageSuggestionRow, SupplierProfile } from "@/lib/products/supplier-price-contracts";
 
 export const dynamic = "force-dynamic";
@@ -210,6 +211,7 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
             {sourceSummary}
             {main}
           </>}
+        {canManageSupplierCapacity(profile?.role, profile?.account_status) ? <SupplierCapacityPanel /> : null}
         <SupplierAdvancedImportSettings key={`${brand.id}:${text(params.advanced)}`} brandId={brand.id} brandName={brand.name} basis={brand.stored_price_basis} approver={approver} templates={templates} dimensions={vocabularyResult.data ?? []} profiles={profileList} open={text(params.advanced) === "1"} />
         {approver ? <div className="flex justify-between text-xs"><Link href={href({ vocabularyOffset: String(Math.max(0, offset(params.vocabularyOffset) - 50)) })}>Previous vocabulary</Link><Link href={href({ vocabularyOffset: String(offset(params.vocabularyOffset) + 50) })}>Next vocabulary</Link></div> : null}
       </div> : <p>No active Brands available.</p>}

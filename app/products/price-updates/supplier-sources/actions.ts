@@ -9,7 +9,7 @@ import { normalizeSupplierRows } from "@/lib/products/supplier-price-import";
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
 import { supplierCreateReviewBatch, supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierBulkExcludeMissing, supplierBrandTargets, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
 
-import { supplierAssignFamiliesToSource, supplierAssignFamilyToSource, supplierConfirmCoverage, supplierCreateSourceDefinition, supplierDeleteSourceDefinition, supplierLinkSourceDefinition, supplierResolveCoverageConflict, supplierUpdateSourceDefinition } from "@/lib/products/supplier-price-repository";
+import { canManageSupplierCapacity, supplierCapacityReport, supplierAssignFamiliesToSource, supplierAssignFamilyToSource, supplierConfirmCoverage, supplierCreateSourceDefinition, supplierDeleteSourceDefinition, supplierLinkSourceDefinition, supplierResolveCoverageConflict, supplierUpdateSourceDefinition } from "@/lib/products/supplier-price-repository";
 
 const workspacePath = "/products/price-updates/supplier-sources";
 async function reviewer() { const auth = await requireBrandPriceReviewer(); return { auth, client: await createClient() }; }
@@ -35,7 +35,7 @@ export async function saveSupplierProfile(brandId: string, title: string, config
 export async function createSupplierSource(payload: { profile_id: string; expected_profile: SupplierProfile; title: string; filename: string; file_hash: string; source_type: string; expected_rows: number; expected_cells: number; expected_chunks: number; original_reference?: string; effective_from?: string; received_at?: string }) {
   const { client } = await reviewer();
   if (!payload.title.trim() || !/^[a-f0-9]{64}$/.test(payload.file_hash) || !["xlsx", "csv", "json"].includes(payload.source_type)) throw Error("Source title, hash and structured format required.");
-  const result = await supplierWrite(client, "source", payload); const source = await supplierSource(client, result.id); revalidatePath(workspacePath); return { ...result, status: source.status };
+  const result = await supplierWrite(client, "source", payload); const source = await supplierSource(client, result.id); revalidatePath(workspacePath); return { ...result, status: source.status, existing: source.status === "imported" };
 }
 export async function attachSupplierWorkingFile(sourceId: string, path: string) {
   const { client } = await reviewer(); await supplierWrite(client, "attach_file", { source_id: sourceId, path });
@@ -182,4 +182,10 @@ export async function assignFamiliesToSupplierSource(brandId: string, target: { 
   const { client } = await approver();
   if (!Array.isArray(templateIds) || templateIds.some((id) => typeof id !== "string")) throw Error("Select the Families to assign.");
   const result = await supplierAssignFamiliesToSource(client, brandId, target, templateIds); revalidatePath(workspacePath); return result;
+}
+/** Read-only capacity report; the database function enforces System Owner again. */
+export async function loadSupplierCapacityReport() {
+  const { auth, client } = await reviewer();
+  if (!canManageSupplierCapacity(auth.profile?.role, auth.profile?.account_status)) throw Error("Only the System Owner can view Supplier database capacity.");
+  return supplierCapacityReport(client);
 }

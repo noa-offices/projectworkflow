@@ -801,3 +801,22 @@ export async function supplierAssignFamiliesToSource(client: SupabaseClient, bra
   const name = (await supplierRows<{ name: string }>(client, "supplier_source_definitions", "name", { id: definitionId })).at(0)?.name ?? "this source";
   return { definitionId, name, count: new Set(templateIds).size };
 }
+
+// ---- Supplier capacity (read-only). The database function is System Owner-only and recomputes everything itself. ----
+export type SupplierCapacityMember = { source_id: string; filename: string; title: string; status: string; created_at: string; classification: string; rows: number; cells: number; identities: number; chunks: number; chunk_payload_bytes: number; batches: number; review_batches: number; matches: number; review_units: number; decisions: number; decision_set: string[]; completed_batches: number; linked_source_definition: boolean; brand_bindings: number; working_reference: string | null; storage_shared: boolean; estimated_bytes: number };
+export type SupplierCapacityReport = {
+  generated_at: string; database_bytes: number; supplier_bytes: number;
+  tables: Array<{ name: string; total_bytes: number; table_bytes: number; index_bytes: number; rows: number | null }>;
+  protected_sources: Array<{ source_id: string; brand: string; filename: string; status: string; rows: number; reason: string }>;
+  duplicate_groups: Array<{ brand: string; brand_id: string; file_hash: string; classification: string; canonical_source_id: string; members: SupplierCapacityMember[]; reclaimable_bytes: number }>;
+  batches: Array<{ batch_id: string; source_id: string; status: string; scope: string; created_at: string; matches: number; match_chunk_payload_bytes: number; review_units: number; decisions: number; retention: string; estimated_bytes: number }>;
+  compaction: { source_chunk_bytes: number; match_chunk_bytes: number };
+  reclaimable: { duplicate_sources_bytes: number; superseded_batches_bytes: number; superseded_match_rows: number };
+};
+export async function supplierCapacityReport(client: SupabaseClient): Promise<SupplierCapacityReport> {
+  const { data, error } = await client.rpc("supplier_capacity_report");
+  if (error) throw Error(/permission|privilege/i.test(error.message) ? "Only the System Owner can view Supplier database capacity." : error.message);
+  return data as SupplierCapacityReport;
+}
+/** Capacity diagnostics and future cleanup are System Owner-only; Supplier reviewers and approvers do not get them. */
+export function canManageSupplierCapacity(role: string | null | undefined, accountStatus: string | null | undefined) { return role === "system_owner" && accountStatus === "active"; }

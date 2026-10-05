@@ -60,6 +60,7 @@ export function SupplierImportCard({ brandId, brandName, profiles, suggestedTitl
       for (let index = 0; index < chunks.length; index++) { setMessage(`Uploading part ${index + 1} of ${chunks.length}. Do not close this page.`); await uploadSupplierChunk(result.id, index, chunks[index]); }
       await finalizeSupplierSource(result.id);
     }
+    if (result.existing) setMessage("Supplier source already exists. Opening the existing price list instead of importing the same file again.");
     router.push(`/products/price-updates/supplier-sources?brand=${brandId}&source=${result.id}&view=summary`); router.refresh();
   }); }}>
     <div><h3 className="text-base font-semibold text-zinc-950">Import Supplier Price List</h3><p className="text-xs text-zinc-500">Choose the file and name. Currency and price basis come from the import profile.</p></div>
