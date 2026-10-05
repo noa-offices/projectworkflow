@@ -10,7 +10,8 @@ function mappedDimension(source: SourceIdentity, target: PriceTarget, rules: Dim
   if (!source.dimension && !source.finishes.length) return "";
   // Retained physical finishes are evidence, not automatically a price tier.
   const finishTier = source.finishes.length > 0 && source.dimension !== (source.raw_dimension ?? source.dimension);
-  const matching = rules.filter((rule) => rule.brand_id === target.brand_id && (!rule.template_id || rule.template_id === target.template_id) && (!rule.group_id || rule.group_id === target.group_id) && (!rule.raw_labels.length || rule.raw_labels.includes(source.raw_dimension ?? source.dimension)) && (rule.finish_codes.length ? source.finishes.length > 0 && source.finishes.every((finish) => rule.finish_codes.includes(finish)) : !finishTier) && (rule.raw_labels.length > 0 || rule.finish_codes.length > 0));
+  // A finish-set rule resolves a price tier; a target with no dimension has no tier to resolve, so it must not remap the source.
+  const matching = rules.filter((rule) => rule.brand_id === target.brand_id && (!rule.finish_codes.length || Boolean(target.dimension)) && (!rule.template_id || rule.template_id === target.template_id) && (!rule.group_id || rule.group_id === target.group_id) && (!rule.raw_labels.length || rule.raw_labels.includes(source.raw_dimension ?? source.dimension)) && (rule.finish_codes.length ? source.finishes.length > 0 && source.finishes.every((finish) => rule.finish_codes.includes(finish)) : !finishTier) && (rule.raw_labels.length > 0 || rule.finish_codes.length > 0));
   if (!matching.length && !source.dimension) return "";
   const specificity = Math.max(-1, ...matching.map((rule) => (rule.template_id ? 2 : 0) + (rule.group_id ? 1 : 0)));
   const dimensions = new Set(matching.filter((rule) => (rule.template_id ? 2 : 0) + (rule.group_id ? 1 : 0) === specificity).map((rule) => rule.dimension_code));
@@ -26,9 +27,11 @@ export function matchSupplierPrices(sources: SourceIdentity[], targets: PriceTar
   const represented = new Set<string>();
   const matches = sources.map<PriceMatch>((source) => {
     const base = { key: source.key, source, targets: [] as PriceTarget[], candidate_shared: false };
+    const candidates = index.get(JSON.stringify([comparisonCode(source.code), source.price_field])) ?? [];
+    // Missing means no Supplier identity exists for the code: any identity with this code represents its Products, whatever mapping remains unresolved.
+    candidates.forEach((target) => represented.add(target.key));
     if (source.issues.length || source.price === null) return { ...base, classification: "invalid_source" };
     const binding = bindingIndex.get(JSON.stringify([comparisonCode(source.code), source.price_field, source.dimension]));
-    const candidates = index.get(JSON.stringify([comparisonCode(source.code), source.price_field])) ?? [];
     let found: PriceTarget[];
     if (binding) {
       found = binding.target_keys.flatMap((key) => byKey.has(key) ? [byKey.get(key)!] : []);
