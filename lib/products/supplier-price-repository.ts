@@ -820,3 +820,22 @@ export async function supplierCapacityReport(client: SupabaseClient): Promise<Su
 }
 /** Capacity diagnostics and future cleanup are System Owner-only; Supplier reviewers and approvers do not get them. */
 export function canManageSupplierCapacity(role: string | null | undefined, accountStatus: string | null | undefined) { return role === "system_owner" && accountStatus === "active"; }
+
+// ---- Phase E: previous price list lifecycle and source-row storage (database functions re-check every rule). ----
+export type SupplierPreviousSource = { source_id: string; current_source_id: string; title: string; status: string; created_at: string; batches: number; protected_reviews: string[]; reasons: string[]; safe_to_delete: boolean; storage_shared: boolean; storage_object_candidate: string | null; rows: number };
+export async function supplierPreviousSources(client: SupabaseClient, currentSourceId: string): Promise<SupplierPreviousSource[]> {
+  const { data, error } = await client.rpc("supplier_previous_source_state", { p_current: currentSourceId });
+  if (error) throw Error(error.message);
+  return ((data as { previous?: SupplierPreviousSource[] } | null)?.previous ?? []);
+}
+export async function supplierDeletePreviousSource(client: SupabaseClient, currentSourceId: string, previousSourceId: string) {
+  const { data, error } = await client.rpc("cleanup_previous_supplier_source", { p_current_source: currentSourceId, p_previous_source: previousSourceId, p_dry_run: false });
+  if (error) throw Error(/review history that must be retained/.test(error.message) ? "This previous price list contains review history that must be retained." : error.message);
+  return data as { deleted: Record<string, number>; storage_object_candidate: string | null };
+}
+export type SupplierSourceStorageRow = { source_id: string; title: string; status: string; created_at: string; definition: string | null; current_for_definition: boolean; rows: number; raw_extras_bytes: number; estimated_saving_bytes: number; compactable: boolean };
+export async function supplierSourceStorage(client: SupabaseClient): Promise<SupplierSourceStorageRow[]> {
+  const { data, error } = await client.rpc("supplier_capacity_source_storage");
+  if (error) throw Error(error.message);
+  return data as SupplierSourceStorageRow[];
+}

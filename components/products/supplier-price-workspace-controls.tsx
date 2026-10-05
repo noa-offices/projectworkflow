@@ -58,7 +58,8 @@ export function SupplierImportCard({ brandId, brandName, profiles, suggestedTitl
       if (error && !("statusCode" in error && ["409", "400"].includes(String(error.statusCode)))) throw Error(error.message);
       await attachSupplierWorkingFile(result.id, path);
       for (let index = 0; index < chunks.length; index++) { setMessage(`Uploading part ${index + 1} of ${chunks.length}. Do not close this page.`); await uploadSupplierChunk(result.id, index, chunks[index]); }
-      await finalizeSupplierSource(result.id);
+      // Finalizing runs in bounded steps so very large price lists stay within the database time limit; it resumes where it stopped.
+      for (let step = 1; ; step++) { const progress = await finalizeSupplierSource(result.id); if (progress.done) break; setMessage(`Building Supplier price identities (step ${step}, ${progress.remaining_codes} codes left). Do not close this page.`); }
     }
     if (result.existing) setMessage("Supplier source already exists. Opening the existing price list instead of importing the same file again.");
     router.push(`/products/price-updates/supplier-sources?brand=${brandId}&source=${result.id}&view=summary`); router.refresh();

@@ -9,7 +9,7 @@ import { normalizeSupplierRows } from "@/lib/products/supplier-price-import";
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
 import { supplierCreateReviewBatch, supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierBulkExcludeMissing, supplierBrandTargets, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
 
-import { canManageSupplierCapacity, supplierCapacityReport, supplierAssignFamiliesToSource, supplierAssignFamilyToSource, supplierConfirmCoverage, supplierCreateSourceDefinition, supplierDeleteSourceDefinition, supplierLinkSourceDefinition, supplierResolveCoverageConflict, supplierUpdateSourceDefinition } from "@/lib/products/supplier-price-repository";
+import { canManageSupplierCapacity, supplierCapacityReport, supplierDeletePreviousSource, supplierSourceStorage, supplierAssignFamiliesToSource, supplierAssignFamilyToSource, supplierConfirmCoverage, supplierCreateSourceDefinition, supplierDeleteSourceDefinition, supplierLinkSourceDefinition, supplierResolveCoverageConflict, supplierUpdateSourceDefinition } from "@/lib/products/supplier-price-repository";
 
 const workspacePath = "/products/price-updates/supplier-sources";
 async function reviewer() { const auth = await requireBrandPriceReviewer(); return { auth, client: await createClient() }; }
@@ -47,8 +47,14 @@ export async function uploadSupplierChunk(sourceId: string, chunkIndex: number, 
   const cells = normalizeSupplierRows(rows, source.profile);
   return supplierWrite(client, "chunk", { source_id: sourceId, chunk_index: chunkIndex, rows, cells });
 }
+/** One bounded finalize step (whole codes, about 20,000 cells). The caller repeats until done; each step fits the database statement timeout. */
 export async function finalizeSupplierSource(sourceId: string) {
-  const { client } = await reviewer(); const result = await supplierWrite(client, "finalize_source", { source_id: sourceId }); revalidatePath(workspacePath); return result;
+  const { client } = await reviewer();
+  const { data, error } = await client.rpc("supplier_finalize_source_step", { p_source_id: sourceId });
+  if (error) throw Error(error.message);
+  const result = data as { id: string; done: boolean; remaining_codes: number; identity_count?: number };
+  if (result.done) revalidatePath(workspacePath);
+  return result;
 }
 export async function archiveSupplierSource(sourceId: string) {
   const { client } = await reviewer(); await supplierWrite(client, "archive_source", { source_id: sourceId }); revalidatePath(workspacePath);
@@ -188,4 +194,15 @@ export async function loadSupplierCapacityReport() {
   const { auth, client } = await reviewer();
   if (!canManageSupplierCapacity(auth.profile?.role, auth.profile?.account_status)) throw Error("Only the System Owner can view Supplier database capacity.");
   return supplierCapacityReport(client);
+}
+/** Deletes an older version of the same Supplier source only when the database verdict says it holds no review history to keep. */
+export async function deletePreviousSupplierSource(currentSourceId: string, previousSourceId: string) {
+  const { auth, client } = await reviewer();
+  if (!canManageSupplierCapacity(auth.profile?.role, auth.profile?.account_status)) throw Error("Only the System Owner can delete a previous price list.");
+  const result = await supplierDeletePreviousSource(client, currentSourceId, previousSourceId); revalidatePath(workspacePath); return result;
+}
+export async function loadSupplierSourceStorage() {
+  const { auth, client } = await reviewer();
+  if (!canManageSupplierCapacity(auth.profile?.role, auth.profile?.account_status)) throw Error("Only the System Owner can view Supplier database capacity.");
+  return supplierSourceStorage(client);
 }

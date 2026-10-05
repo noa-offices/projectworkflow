@@ -4,8 +4,8 @@ import Link from "next/link";
 import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { SupplierCoverageConflict, SupplierCoverageSuggestionRow } from "@/lib/products/supplier-price-contracts";
-import type { SupplierCoverageDefinition, SupplierFamilyCoverageRow } from "@/lib/products/supplier-price-repository";
-import { archiveSupplierSourceDefinition, assignFamiliesToSupplierSource, confirmSupplierCoverage, createSupplierSourceDefinition, deleteSupplierSourceDefinition, linkSupplierSourceDefinition, renameSupplierSourceDefinition, resolveSupplierCoverageConflict } from "@/app/products/price-updates/supplier-sources/actions";
+import type { SupplierCoverageDefinition, SupplierFamilyCoverageRow, SupplierPreviousSource } from "@/lib/products/supplier-price-repository";
+import { archiveSupplierSourceDefinition, assignFamiliesToSupplierSource, confirmSupplierCoverage, createSupplierSourceDefinition, deleteSupplierSourceDefinition, linkSupplierSourceDefinition, renameSupplierSourceDefinition, resolveSupplierCoverageConflict, archiveSupplierSource, deletePreviousSupplierSource } from "@/app/products/price-updates/supplier-sources/actions";
 
 // Same ProjectWorkflow patterns as the rest of Supplier Pricing: white card, light border, emerald primary, amber attention, red only for a real conflict.
 const card = "rounded-lg border border-zinc-200 bg-white shadow-sm";
@@ -192,4 +192,24 @@ export function SupplierFamilyCoverageSetup({ brandId, rows, sources, profiles, 
         {key === "conflict" ? <tr><td colSpan={approver ? 7 : 6} className="bg-red-50 px-3 py-2"><ConflictRow brandId={brandId} approver={approver} conflict={{ templateId: row.templateId, templateName: row.templateName, definitions: row.currentSources }} /></td></tr> : null}</Fragment>; })}</tbody></table>
       {!visible.length ? <p className="px-3 py-6 text-center text-sm text-zinc-500">No Families match these filters.</p> : null}</div>
   </section>;
+}
+
+/** After a newer price list of the same Supplier source is imported: keep the previous one, archive it, or delete it when nothing must be retained. */
+export function SupplierPreviousPriceList({ currentSourceId, previous, canReview, canDelete }: { currentSourceId: string; previous: SupplierPreviousSource[]; canReview: boolean; canDelete: boolean }) {
+  const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState(""); const [confirming, setConfirming] = useState("");
+  if (!previous.length) return null;
+  return <section className={`${card} space-y-3 p-4`} aria-label="Previous price list"><div><h3 className="text-base font-semibold text-zinc-950">Previous price list</h3>
+    <p className="text-xs text-zinc-500">What should happen to the previous version? Keeping it is the default; nothing is deleted unless you choose it.</p></div>
+    <p role="status" aria-live="polite" className="text-sm text-emerald-900">{message}</p>
+    <ul className="divide-y divide-zinc-100 text-sm">{previous.map((item) => <li key={item.source_id} className="space-y-2 py-2">
+      <p className="flex flex-wrap items-center gap-2"><span className="font-semibold text-zinc-950">{item.title}</span><span className="text-xs text-zinc-500">{String(item.created_at).slice(0, 10)} · {item.status === "archived" ? "Archived" : "Kept for history"}</span></p>
+      {item.safe_to_delete ? null : <p className="text-xs text-amber-900">{item.reasons.includes("This previous price list contains review history that must be retained.") ? "This previous price list contains review history that must be retained." : item.reasons.join(" ")}</p>}
+      {canReview ? <p className="flex flex-wrap gap-2">
+        <button type="button" className={button} disabled={busy} onClick={() => setMessage(`${item.title} is kept for history.`)}>Keep for history</button>
+        {item.status !== "archived" ? <button type="button" className={button} disabled={busy} onClick={() => void attempt(setBusy, setMessage, async () => { await archiveSupplierSource(item.source_id); setMessage(`${item.title} archived. Its data and review history are kept.`); router.refresh(); })}>Archive previous price list</button> : null}
+        {canDelete ? confirming === item.source_id
+          ? <><button type="button" className={`${button} border-red-300 text-red-900`} disabled={busy || !item.safe_to_delete} onClick={() => void attempt(setBusy, setMessage, async () => { await deletePreviousSupplierSource(currentSourceId, item.source_id); setConfirming(""); setMessage(`${item.title} deleted from the database. The original file stays in Storage.`); router.refresh(); })}>Confirm delete</button><button type="button" className={button} onClick={() => setConfirming("")}>Cancel</button></>
+          : <button type="button" className={button} disabled={busy || !item.safe_to_delete} title={item.safe_to_delete ? undefined : "This previous price list contains review history that must be retained."} onClick={() => setConfirming(item.source_id)}>Delete previous source data</button> : null}
+      </p> : null}
+    </li>)}</ul></section>;
 }
