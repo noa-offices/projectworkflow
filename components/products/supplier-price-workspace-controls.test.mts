@@ -26,6 +26,7 @@ function loadControls(scope = "complete") {
       if (name === "react") return { ...React, useState: (initial: unknown) => { const index = stateIndex++; return [initial === "complete" ? scope : initial, (value: unknown) => { if (index === 1) messages.push(String(value)); }]; } };
       if (name === "react/jsx-runtime") return require(name);
       if (name === "next/navigation") return { useRouter: () => ({ refresh() {}, push() {} }) };
+      if (name === "@/components/products/supplier-coverage") return { SupplierSourceField: () => null }; // covered by supplier-coverage.test.mts
       return new Proxy({}, { get: (_, action: string) => () => { calls.push(action); return Promise.resolve({ id: "batch" }); } });
     },
   });

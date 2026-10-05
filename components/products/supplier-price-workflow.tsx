@@ -91,7 +91,7 @@ export function SupplierCurrentPriceList({ brandName, current, inProgress, impor
   </section>;
 }
 
-export type HistoryRow = { id: string; title: string; date: string; status: "current" | "archived" | "unfinished"; coverage: string; baseline: string; viewHref: string; downloadUrl?: string };
+export type HistoryRow = { id: string; title: string; sourceName?: string; date: string; status: "current" | "archived" | "unfinished"; coverage: string; baseline: string; viewHref: string; downloadUrl?: string };
 const historyStatus = { current: ["Current", "border-emerald-200 bg-emerald-50 text-emerald-900"], archived: ["Archived", "border-zinc-200 bg-zinc-100 text-zinc-600"], unfinished: ["Unfinished import", "border-amber-200 bg-amber-50 text-amber-900"] } as const;
 /** Price-list history. Archive hides a list but deletes nothing; used lists are never deleted. */
 export function SupplierHistoryTable({ rows, showArchived, archivedCount, toggleHref, pagerHrefs, canArchive, reviews, currentBatchId, reviewHref, newReviewHref }: {
@@ -104,7 +104,7 @@ export function SupplierHistoryTable({ rows, showArchived, archivedCount, toggle
       {archivedCount ? <Link href={toggleHref} className={smallButton}>{showArchived ? "Hide archived" : `Show archived (${archivedCount})`}</Link> : null}</div>
     <div className={`${card} overflow-hidden`}><div className="overflow-x-auto"><table className="min-w-full divide-y divide-zinc-200 text-sm"><thead className="bg-zinc-50"><tr className="text-left"><th className={th}>Price list</th><th className={th}>Date</th><th className={th}>Status</th><th className={th}>Coverage</th><th className={th}>Baseline</th><th className={th}>Actions</th></tr></thead>
       <tbody className="divide-y divide-zinc-100">{visible.map((row) => { const [label, tone] = historyStatus[row.status]; return <tr key={row.id} className="align-top transition hover:bg-zinc-50">
-        <th scope="row" className="px-3 py-2 text-left font-semibold text-zinc-950">{row.title}</th><td className="px-3 py-2 tabular-nums text-zinc-600">{row.date}</td><td className="px-3 py-2"><span className={`${badge} ${tone}`}>{label}</span></td><td className="px-3 py-2 text-zinc-700">{row.coverage}</td><td className="px-3 py-2 text-zinc-700">{row.baseline}</td>
+        <th scope="row" className="px-3 py-2 text-left font-semibold text-zinc-950">{row.sourceName ? <span className="block text-xs font-medium text-emerald-900">{row.sourceName}</span> : null}{row.title}</th><td className="px-3 py-2 tabular-nums text-zinc-600">{row.date}</td><td className="px-3 py-2"><span className={`${badge} ${tone}`}>{label}</span></td><td className="px-3 py-2 text-zinc-700">{row.coverage}</td><td className="px-3 py-2 text-zinc-700">{row.baseline}</td>
         <td className="px-3 py-2"><details className="relative"><summary className={`${smallButton} cursor-pointer list-none`} aria-label={`Actions for ${row.title}`}>⋯</summary>
           <ul className="absolute right-0 z-10 mt-1 w-40 space-y-1 rounded-md border border-zinc-200 bg-white p-2 text-xs font-semibold shadow-lg"><li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={row.viewHref}>View</Link></li>
             {row.downloadUrl ? <li><a className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={row.downloadUrl} target="_blank" rel="noopener noreferrer">Download</a></li> : null}
@@ -118,11 +118,11 @@ export function SupplierHistoryTable({ rows, showArchived, archivedCount, toggle
 }
 
 /** Shown once a review is completed. Families with excluded items are left for separate verification. */
-export function SupplierFinishScreen({ brandName, title, baselineDate, overview, priceUpdatesHref, summaryHref }: { brandName: string; title: string; baselineDate: string | null; overview: FamilyOverview | null; priceUpdatesHref: string; summaryHref: string }) {
+export function SupplierFinishScreen({ brandName, title, baselineDate, overview, priceUpdatesHref, summaryHref, partialSource }: { brandName: string; title: string; baselineDate: string | null; overview: FamilyOverview | null; priceUpdatesHref: string; summaryHref: string; partialSource?: string }) {
   const unchecked = overview?.families.filter((family) => family.excluded > 0).length ?? 0, checked = (overview?.families.length ?? 0) - unchecked;
   return <section className={`${card} space-y-2 border-emerald-200 p-4`} aria-label="Review completed">
     <p className="text-xs text-zinc-500">{brandName}</p><h3 className="text-base font-semibold text-zinc-950">{title}</h3>
-    <p className={`${badge} border-emerald-200 bg-emerald-50 text-emerald-900`}>✓ Review completed. Brand price baseline activated.</p>
+    <p className={`${badge} border-emerald-200 bg-emerald-50 text-emerald-900`}>{partialSource ? `✓ ${partialSource} review completed.` : "✓ Review completed. Brand price baseline activated."}</p>{partialSource ? <p className="text-sm text-zinc-700">{checked} covered {checked === 1 ? "Family was" : "Families were"} checked. Other Families remain covered by other Supplier sources or need separate coverage.</p> : null}
     {overview ? <ul className="space-y-0.5 text-sm text-zinc-700"><li>{checked} Product {checked === 1 ? "family" : "families"} checked</li>{unchecked ? <li>{unchecked} {unchecked === 1 ? "Family still needs" : "Families still need"} separate price verification</li> : null}</ul> : null}
     {baselineDate ? <p className="text-sm">Baseline date: <span className="font-semibold">{baselineDate}</span></p> : null}
     <div className="flex flex-wrap gap-2 pt-1"><Link href={priceUpdatesHref} className={primaryLink}>Back to Price Updates</Link><Link href={summaryHref} className={linkButton}>View review summary</Link></div>

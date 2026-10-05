@@ -13,6 +13,7 @@ import { latestBrandPriceListUpdate, productTemplatePriceCheckState, type BrandP
 const migrations = await Promise.all([
   "20261002060146_pricing_identity_version_foundation", "20261002082357_supplier_price_source_review", "20261002124625_supplier_source_finish_evidence",
   "20261004090000_supplier_confirmed_unchanged_decision", "20261004120000_supplier_review_completion",
+  "20261005090000_supplier_source_definitions", "20261005120000_supplier_batch_coverage_snapshot", "20261005150000_supplier_coverage_completion_mode",
 ].map((name) => readFile(new URL(`../../supabase/migrations/${name}.sql`, import.meta.url), "utf8")));
 const id = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")}`;
 const user = id(1), brand = id(2), source = id(3), batch = id(4), linked = id(5), component = id(6);
@@ -54,8 +55,8 @@ function pgClient(db: PGlite) {
   } as unknown as SupabaseClient;
 }
 
-type Options = { scope?: string; link?: boolean; sourceStatus?: string; sourceBasis?: string };
-async function fixture({ scope = "complete", link = true, sourceStatus = "imported", sourceBasis = "list" }: Options = {}) {
+type Options = { scope?: string; link?: boolean; sourceStatus?: string; sourceBasis?: string; coverage?: string[] | null };
+async function fixture({ scope = "complete", link = true, sourceStatus = "imported", sourceBasis = "list", coverage = null }: Options = {}) {
   const db = new PGlite();
   await db.exec(`
     create role authenticated; create role anon; create schema auth; create schema storage;
@@ -101,8 +102,8 @@ async function fixture({ scope = "complete", link = true, sourceStatus = "import
   await db.query(`insert into public.supplier_source_versions(id,brand_id,title,filename,file_hash,source_type,currency,basis,profile,status,effective_from,received_at,expected_rows,expected_cells,expected_chunks,created_by)
     values($1,$2,'LAS 2026 list','s.csv',$3,'csv','EUR',$4,'{}',$5,'2026-01-15','2026-01-12',1,1,1,$6)`, [source, brand, "a".repeat(64), sourceBasis, sourceStatus, user]);
   for (const item of identities) await db.query("insert into public.supplier_source_identities values($1,$2,$3,$4)", [source, item.key, item.code, JSON.stringify(item)]);
-  await db.query(`insert into public.supplier_price_batches(id,brand_id,source_id,brand_price_list_update_id,title,scope,selected_template_ids,status,expected_matches,expected_chunks,basis_warning,created_by)
-    values($1,$2,$3,$4,'Review',$5,$6,'review',$7,1,'',$8)`, [batch, brand, source, link ? linked : null, scope, scope === "selected_templates" ? [t1] : [], matches.length, user]);
+  await db.query(`insert into public.supplier_price_batches(id,brand_id,source_id,brand_price_list_update_id,title,scope,selected_template_ids,status,expected_matches,expected_chunks,basis_warning,created_by,coverage_template_ids)
+    values($1,$2,$3,$4,'Review',$5,$6,'review',$7,1,'',$8,$9)`, [batch, brand, source, link ? linked : null, scope, scope === "selected_templates" ? [t1] : [], matches.length, user, coverage]);
   for (const item of matches) await db.query("insert into public.supplier_price_matches values($1,$2,$3,$4,null,$5,$6)", [batch, item.key, item.source?.code ?? item.targets[0]?.code ?? item.key, item.classification, [...new Set(item.targets.map((entry) => entry.template_id))], JSON.stringify(item)]);
   const decide = (key: string, decision: string, note = "reason") => db.query("insert into public.supplier_price_decisions(batch_id,key,decision,note,reviewed_by) values($1,$2,$3,$4,$5) on conflict(batch_id,key) do update set decision=excluded.decision,note=excluded.note", [batch, key, decision, note, user]);
   // Phase 2A Apply outcome (live now equals Supplier) plus durable decisions for a ready Complete review.
@@ -261,6 +262,78 @@ test("without a linked update one active complete update is created and linked; 
     assert.deepEqual(created.map(({ status, coverage_mode, currency, received_at }) => ({ status, coverage_mode, currency, received_at })), [{ status: "active", coverage_mode: "complete", currency: "EUR", received_at: "2026-01-12" }]);
     assert.equal((await f.state()).batch[0].brand_price_list_update_id, created[0].id);
     assert.equal((await f.db.query<{ status: string }>("select status from public.brand_price_list_updates where id=$1", [linked])).rows[0].status, "draft");
+  } finally { await f.db.close(); }
+});
+
+// ---- Phase 2I-3: completion means "complete for this source's coverage", never an automatic Brand-wide baseline ----
+const t5 = id(15), covered = [t1, t2, t3, t4];
+const addFamily = (f: Fixture, active = true) => f.db.exec(`insert into public.product_templates(id,brand_id,template_name,item_code,default_unit_price,is_active) values('${t5}','${brand}','LEAD','LD1',60,${active})`);
+const modes = async (f: Fixture) => (await f.db.query<{ coverage_mode: string }>("select coverage_mode from public.brand_price_list_updates order by created_at")).rows.map((row) => row.coverage_mode);
+
+for (const link of [true, false]) {
+  test(`coverage that includes every active Family claims a complete baseline (${link ? "linked" : "created"} update)`, async () => {
+    const f = await fixture({ link, coverage: covered });
+    try { await f.complete(); assert.deepEqual((await modes(f)).slice(link ? 0 : -1), ["complete"]); } finally { await f.db.close(); }
+  });
+  test(`legacy NULL coverage still claims a complete baseline (${link ? "linked" : "created"} update)`, async () => {
+    const f = await fixture({ link, coverage: null });
+    try { await f.complete(); assert.deepEqual((await modes(f)).slice(link ? 0 : -1), ["complete"]); } finally { await f.db.close(); }
+  });
+  test(`LAS Furniture example: partial coverage completes as selected_templates and leaves the uncovered Family untouched (${link ? "linked" : "created"} update)`, async () => {
+    const f = await fixture({ link, coverage: covered });
+    try {
+      await addFamily(f); // active, not covered: LEAD
+      assert.equal((await f.readiness()).ready, true); assert.equal((await f.readiness()).counts.targets_added_after_comparison, 0);
+      const before = await f.state(); const result = await f.complete(); const after = await f.state();
+      assert.equal(result.checked_templates, 2);
+      assert.deepEqual((await modes(f)).slice(link ? 0 : -1), ["selected_templates"]);
+      const byId = new Map(after.templates.map((row) => [row.id as string, row]));
+      for (const template of [t1, t2]) { assert.ok(byId.get(template)!.last_price_checked_at instanceof Date); assert.equal(byId.get(template)!.last_price_checked_by, user); }
+      for (const template of [t3, t4, t5]) assert.deepEqual(byId.get(template), before.templates.find((row) => row.id === template)); // LEAD (t5) untouched
+      assert.deepEqual(after.templates.map(({ id: key, price, currency, version }) => ({ key, price, currency, version })), before.templates.map(({ id: key, price, currency, version }) => ({ key, price, currency, version })));
+      for (const field of ["components", "brands", "history", "quotations", "sourceRows"] as const) assert.deepEqual(after[field], before[field], field);
+      assert.equal(after.batch[0].status, "completed");
+      // The Brand-level baseline helper must not see a source covering only some Families as a Brand-wide baseline.
+      const updates = (await f.db.query<BrandPriceListUpdateForCheck>("select coverage_mode,title,effective_from::text,received_at::text,created_at::text,status from public.brand_price_list_updates")).rows;
+      assert.equal(latestBrandPriceListUpdate(updates), null);
+    } finally { await f.db.close(); }
+  });
+}
+
+test("a Family created after the batch was snapshotted prevents a Brand-wide claim, yet the covered Families are still checked", async () => {
+  const f = await fixture({ coverage: covered });
+  try {
+    await addFamily(f);
+    await f.complete();
+    assert.deepEqual(await modes(f), ["selected_templates"]);
+    const checked = (await f.db.query<{ id: string }>("select id from public.product_templates where last_price_checked_at > now() - interval '1 minute' and last_price_checked_by=$1 order by id", [user])).rows.map((row) => row.id);
+    assert.deepEqual(checked, [t1, t2]);
+  } finally { await f.db.close(); }
+});
+
+test("an inactive Family outside coverage does not prevent a complete claim", async () => {
+  const f = await fixture({ coverage: covered });
+  try { await addFamily(f, false); await f.complete(); assert.deepEqual(await modes(f), ["complete"]); } finally { await f.db.close(); }
+});
+
+test("coverage-filtered readiness is unchanged by completion semantics; legacy still sees the whole Brand", async () => {
+  const scoped = await fixture({ coverage: covered }); const legacy = await fixture({ coverage: null });
+  try {
+    await addFamily(scoped); await addFamily(legacy);
+    assert.deepEqual([(await scoped.readiness()).ready, (await scoped.readiness()).counts.targets_added_after_comparison], [true, 0]);
+    assert.deepEqual([(await legacy.readiness()).ready, (await legacy.readiness()).counts.targets_added_after_comparison], [false, 1]);
+  } finally { await scoped.db.close(); await legacy.db.close(); }
+});
+
+test("a failure during partial-coverage completion rolls everything back, including the update and its coverage_mode", async () => {
+  const f = await fixture({ link: false, coverage: covered });
+  try {
+    await addFamily(f);
+    await f.db.exec("create function public.fail_batch() returns trigger language plpgsql as $$ begin raise exception 'batch write failed'; end $$; create trigger fail_batch before update on public.supplier_price_batches for each row execute function public.fail_batch();");
+    const before = await f.state();
+    await assert.rejects(f.complete(), /batch write failed/);
+    assert.deepEqual(await f.state(), before);
+    assert.deepEqual(await modes(f), ["complete"]); // only the pre-existing draft; nothing created
   } finally { await f.db.close(); }
 });
 

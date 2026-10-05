@@ -41,8 +41,8 @@ export type DimensionRule = { id: string; brand_id: string; template_id?: string
 export type DurableBinding = { id: string; code: string; price_field: string; source_dimension: string; target_keys: string[]; kind: "alias" | "shared" | "disambiguation"; confirmed: boolean };
 export type MatchClassification = "increased" | "decreased" | "unchanged" | "changed" | "unmatched" | "referenced_companion" | "ambiguous" | "shared" | "needs_dimension_mapping" | "baseline_drift" | "invalid_source" | "target_not_represented";
 export type PriceMatch = { key: string; source: SourceIdentity | null; targets: PriceTarget[]; classification: MatchClassification; comparison?: "increased" | "decreased" | "changed" | "unchanged" | null; candidate_shared: boolean; decision?: "reviewed" | "skip" | "reject" | "mapping_proposed" | "confirmed_unchanged" | "excluded_from_source"; proposed_target_keys?: string[]; provenance?: Array<{ row_number: number; sheet: string; raw_extras: Record<string, unknown> }> };
-export type SourceVersion = { id: string; brand_id: string; title: string; filename: string; file_hash: string; source_type: string; currency: SupportedCurrency; basis: PriceBasis; status: string; expected_rows: number; expected_cells: number; expected_chunks: number; stored_rows: number; stored_cells: number; identity_count: number; profile: SupplierProfile; original_reference: string | null; working_reference: string | null; effective_from: string | null; received_at: string | null };
-export type ReviewBatch = { id: string; brand_id: string; source_id: string; scope: SourceScope; selected_template_ids: string[]; status: string; basis_warning: string; title: string };
+export type SourceVersion = { id: string; brand_id: string; title: string; filename: string; file_hash: string; source_type: string; currency: SupportedCurrency; basis: PriceBasis; status: string; expected_rows: number; expected_cells: number; expected_chunks: number; stored_rows: number; stored_cells: number; identity_count: number; profile: SupplierProfile; original_reference: string | null; working_reference: string | null; effective_from: string | null; received_at: string | null; definition_id?: string | null };
+export type ReviewBatch = { id: string; brand_id: string; source_id: string; scope: SourceScope; selected_template_ids: string[]; status: string; basis_warning: string; title: string; coverage_template_ids?: string[] | null };
 
 export function assertSupplierProfile(value: unknown): asserts value is SupplierProfile {
   const p = value as Partial<SupplierProfile> | null;
@@ -54,3 +54,7 @@ export function assertSupplierProfile(value: unknown): asserts value is Supplier
   if (p.validated_article_fallback !== undefined && typeof p.validated_article_fallback !== "boolean") throw Error("Validated article fallback must be an explicit boolean.");
   if (p.strategy === "article_plus_finish" && (!Number.isInteger(p.article_length) || !Number.isInteger(p.finish_length) || p.article_length! < 1 || p.finish_length! < 1 || p.article_length! + p.finish_length! > 100)) throw Error("Article and finish lengths must be explicit positive integers.");
 }
+
+export type SupplierSourceDefinitionSummary = { id: string; name: string; profileId: string | null; isActive: boolean; confirmedFamilyCount: number; latestSource: { id: string; title: string; receivedAt: string | null } | null };
+export type SupplierCoverageSuggestionRow = { templateId: string; templateName: string; totalTargetCodes: number; foundTargetCodes: number; foundRatio: number; previouslyCovered: boolean; isNewFamily: boolean; suggested: boolean };
+export type SupplierCoverageConflict = { templateId: string; templateName: string; definitions: Array<{ definitionId: string; definitionName: string }> };

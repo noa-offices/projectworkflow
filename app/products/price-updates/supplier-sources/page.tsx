@@ -6,11 +6,12 @@ import { brandPriceListUpdateDate, latestBrandPriceListUpdate } from "@/lib/prod
 import { SupplierBrandProgress, SupplierFamilyList, SupplierFamilyTable } from "@/components/products/supplier-family-review";
 import { SupplierAdvancedImportSettings, SupplierCompletionControls, SupplierImportCard, SupplierReviewControls, SupplierStartReview } from "@/components/products/supplier-price-workspace-controls";
 import { SupplierCompleteSummary, SupplierFinishScreen, SupplierImportDetails, SupplierCurrentPriceList, SupplierHistoryTable, SupplierImportSummary, SupplierTabs, SupplierWorkflowHeader, type CurrentPriceList, type HistoryRow, type PriceListTab, type WorkflowStep } from "@/components/products/supplier-price-workflow";
+import { SupplierCoverageContext, SupplierCoverageSetup, SupplierFamilyCoverageSetup, SupplierSourceSummary, SupplierSourcesOverview, type OtherCoverage } from "@/components/products/supplier-coverage";
 import { requireBrandPriceReviewer } from "@/lib/auth";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { createClient } from "@/lib/supabase/server";
-import { SUPPLIER_BULK_LIMIT, familySections, supplierBrandMatches, supplierFamilyOverview, supplierFamilyRows, supplierRows, type FamilyOverview, type FamilyRow, type FamilySection } from "@/lib/products/supplier-price-repository";
-import type { DimensionRule, PriceMatch, ReviewBatch, SourceVersion, SupplierProfile } from "@/lib/products/supplier-price-contracts";
+import { SUPPLIER_BULK_LIMIT, familySections, supplierBrandMatches, supplierCoverageOverview, supplierFamilyCoverageSetup, supplierFamilyOverview, supplierFamilyRows, supplierRows, supplierSourceCoverageSuggestion, type FamilyOverview, type FamilyRow, type FamilySection, type SupplierCoverageOverview, type SupplierFamilyCoverageRow } from "@/lib/products/supplier-price-repository";
+import type { DimensionRule, PriceMatch, ReviewBatch, SourceVersion, SupplierCoverageSuggestionRow, SupplierProfile } from "@/lib/products/supplier-price-contracts";
 
 export const dynamic = "force-dynamic";
 type Params = Record<string, string | string[] | undefined>;
@@ -73,6 +74,32 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
     }
   }
   const approver = canApproveBrandPrices(profile?.role, profile?.account_status);
+  // Supplier sources and Family coverage. If the coverage tables are not deployed yet the page keeps working as a whole-Brand review.
+  let coverage: SupplierCoverageOverview | null = null;
+  if (brand) { try { coverage = await supplierCoverageOverview(client, brand.id); } catch { coverage = null; } }
+  const sourceOptions = (coverage?.definitions ?? []).filter((item) => item.isActive).map((item) => ({ id: item.id, name: item.name, familyCount: item.families.length }));
+  const referenceSource = sources.find((item) => item.status === "imported");
+  let familyCoverageRows: SupplierFamilyCoverageRow[] = [];
+  if (brand && coverage && tab === "current" && !source) { try { familyCoverageRows = await supplierFamilyCoverageSetup(client, brand.id, referenceSource?.id); } catch (error) { errorMessage ||= error instanceof Error ? error.message : "Family coverage unavailable"; } }
+  const definition = source?.definition_id ? coverage?.definitions.find((item) => item.id === source.definition_id) : undefined;
+  const editing = text(params.edit) === "1";
+  let coverageRows: SupplierCoverageSuggestionRow[] = [];
+  if (brand && source?.status === "imported" && definition && (view === "summary" || view === "start" || !batch)) {
+    try { coverageRows = await supplierSourceCoverageSuggestion(client, { brandId: brand.id, sourceId: source.id, definitionId: definition.id }); } catch (error) { errorMessage ||= error instanceof Error ? error.message : "Family coverage unavailable"; }
+  }
+  const otherCoverage: OtherCoverage = {};
+  for (const item of coverage?.definitions ?? []) if (item.isActive && item.id !== definition?.id) for (const family of item.families) (otherCoverage[family.id] ??= []).push(item.name);
+  const definitionConflicts = definition ? (coverage?.conflicts ?? []).filter((conflict) => conflict.definitions.some((item) => item.definitionId === definition.id)) : [];
+  const startBlocked = !definition ? "" : !definition.isActive ? "This Supplier source is no longer active." : !definition.families.length ? "Confirm Family coverage before starting this review." : definitionConflicts.length ? "Resolve Family coverage conflicts before starting this review." : "";
+  const coveredIds = batch?.coverage_template_ids ?? null;
+  const coverageContext = coveredIds && batch ? <SupplierCoverageContext sourceName={definition?.name ?? source?.title ?? "this price list"} covered={templates.filter((item) => coveredIds.includes(item.id)).map((item) => item.template_name)} notCovered={templates.filter((item) => !coveredIds.includes(item.id)).length} /> : null;
+  // Partial coverage never reads as a Brand-wide baseline: it is complete for this source only.
+  const partialSource = coveredIds && templates.some((item) => !coveredIds.includes(item.id)) ? (definition?.name ?? source?.title) : undefined;
+  const coveragePanel = brand && source?.status === "imported" && (definition || !batchResult.data?.length) ? <SupplierCoverageSetup key={`${source.id}:${definition?.id ?? ""}:${editing}`} brandId={brand.id} source={{ id: source.id, title: source.title }}
+    definition={definition ? { id: definition.id, name: definition.name, profileTitle: definition.profileTitle, coveredIds: definition.families.map((family) => family.id) } : null} rows={coverageRows} definitions={sourceOptions} others={otherCoverage} approver={approver} editing={editing}
+    editHref={href({ view: "start", edit: "1" })} doneHref={href({ view: "summary", edit: "" })} laterHref={href({ view: "summary", edit: "" })} conflicts={definitionConflicts} /> : null;
+  const sourceSummary = brand && source?.status === "imported" ? <SupplierSourceSummary sourceName={definition?.name ?? null} coveredCount={definition?.families.length ?? 0} profileTitle={definition?.profileTitle ?? null} priceList={source.title} approver={approver}
+    editHref={href({ view: "start", edit: "1" })} detailsHref={href({ view: "details" })} advancedHref={href({ tab: "import", advanced: "1" })} /> : null;
   const familyId = text(params.family); const requested = text(params.section) as FamilySection; const section: FamilySection = familySections.includes(requested) ? requested : "changed";
   let overview: FamilyOverview | null = null; let familyRows: { rows: FamilyRow[]; truncated: boolean } = { rows: [], truncated: false };
   if (batch && (view === "family" || view === "complete")) {
@@ -106,7 +133,7 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
     const url = new Map(links);
     historyRows = sources.map((item) => {
       const latest = reviewRows.find((review) => review.source_id === item.id), finished = reviewRows.find((review) => review.source_id === item.id && review.status === "completed");
-      return { id: item.id, title: item.title, date: ((item as SourceVersion & { created_at?: string }).created_at ?? item.received_at ?? "").slice(0, 10) || "—", status: item.status === "imported" ? "current" : item.status === "archived" ? "archived" : "unfinished",
+      return { id: item.id, title: item.title, sourceName: coverage?.definitions.find((entry) => entry.id === item.definition_id)?.name, date: ((item as SourceVersion & { created_at?: string }).created_at ?? item.received_at ?? "").slice(0, 10) || "—", status: item.status === "imported" ? "current" : item.status === "archived" ? "archived" : "unfinished",
         coverage: latest ? ({ complete: "Complete Brand", selected_templates: "Selected Families", partial: "Partial" } as Record<string, string>)[latest.scope] ?? "Review" : "Not reviewed",
         baseline: finished ? (finished.brand_price_list_update_id === activeId ? "Active baseline" : "Replaced") : "—", viewHref: href({ tab: "current", source: item.id, batch: "", view: "family", offset: "0", batchOffset: "0" }), downloadUrl: url.get(item.id) };
     });
@@ -119,10 +146,11 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
       summary.warnings = found.matches.filter((match) => match.classification === "invalid_source").length;
     } catch { /* The summary still shows the stored import counts. */ }
   }
-  let baselineDate: string | null = null;
+  let baselineDate: string | null = null; let completedMode: string | null = null;
   if (batch?.status === "completed") {
     const listId = (batch as ReviewBatch & { brand_price_list_update_id?: string | null }).brand_price_list_update_id;
-    const list = listId ? await client.from("brand_price_list_updates").select("effective_from,received_at,created_at").eq("id", listId).maybeSingle<{ effective_from: string | null; received_at: string | null; created_at: string | null }>() : null;
+    const list = listId ? await client.from("brand_price_list_updates").select("effective_from,received_at,created_at,coverage_mode").eq("id", listId).maybeSingle<{ effective_from: string | null; received_at: string | null; created_at: string | null; coverage_mode: string | null }>() : null;
+    completedMode = list?.data?.coverage_mode ?? null;
     baselineDate = list?.data?.effective_from ?? list?.data?.received_at ?? list?.data?.created_at?.slice(0, 10) ?? source?.effective_from ?? source?.received_at ?? null;
   }
   const familyTabs = (["changed", "same", "missing", "attention"] as const).map((key) => ({ section: key, label: { changed: "Changed", same: "Same", missing: "Missing from Supplier source", attention: "Needs attention" }[key], count: family?.[key] ?? 0, href: href({ view: "family", family: familyId, section: key }) }));
@@ -130,9 +158,9 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
   const visibleTotals = units.reduce((totals, unit) => ({ matched: totals.matched + unit.matched, changed: totals.changed + unit.changed, unchanged: totals.unchanged + unit.unchanged, unresolved: totals.unresolved + unit.unresolved }), { matched: 0, changed: 0, unchanged: 0, unresolved: 0 });
   const clearFiltersHref = href({ source: source?.id ?? "", batch: batch?.id ?? "", template: "", status: "", code: "", offset: "0" });
   const completed = batch?.status === "completed";
-  const importCard = brand ? <SupplierImportCard key={brand.id} brandId={brand.id} brandName={brand.name} profiles={profileList} suggestedTitle={`${brand.name} — ${new Date().toLocaleString("en-US", { month: "long", year: "numeric" })}`} advancedHref={href({ tab: "import", advanced: "1" }) + "#advanced"} setupHref={href({ tab: "import", setup: "1" })} /> : null;
+  const importCard = brand ? <SupplierImportCard key={brand.id} brandId={brand.id} brandName={brand.name} profiles={profileList} sources={sourceOptions} suggestedTitle={`${brand.name} — ${new Date().toLocaleString("en-US", { month: "long", year: "numeric" })}`} advancedHref={href({ tab: "import", advanced: "1" }) + "#advanced"} setupHref={href({ tab: "import", setup: "1" })} /> : null;
   const advancedReview = batch ? <><p className="text-xs"><Link href={href({ view: "family", status: "", code: "", template: "" })} className="underline">← Back to Family Review</Link></p><p className="rounded border border-amber-300 bg-amber-50 p-2 font-medium">{batch.basis_warning} Apply one reviewed changed price at a time after confirming source and Brand price basis. Build a fresh comparison after applying.</p>
-          <SupplierCompletionControls key={batch.id} batchId={batch.id} scope={batch.scope} status={batch.status} approver={approver} />
+          <SupplierCompletionControls key={batch.id} batchId={batch.id} scope={batch.scope} status={batch.status} approver={approver} partialSource={partialSource} />
           <div className="space-y-2"><h3 className="font-semibold">Visible Template totals</h3><p className="text-xs text-zinc-500">From the {units.length} Template review units loaded on this page.</p><dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">{Object.entries(visibleTotals).map(([label, total]) => <div key={label} className={`rounded border p-3 ${total > 0 && (label === "changed" || label === "unresolved") ? "border-amber-200 bg-amber-50" : "border-zinc-200 bg-zinc-50"}`}><dt className="text-xs text-zinc-600">{readable(label)}</dt><dd className="text-xl font-semibold tabular-nums">{total.toLocaleString("en-US")}</dd></div>)}</dl></div>
           <h3 className="font-semibold">Template review units</h3>
           <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="border-b bg-zinc-50"><th className="p-2">Template</th>{["Matched", "Changed", "Unchanged", "Unresolved"].map((label) => <th key={label} className="p-2 text-right">{label}</th>)}<th className="p-2">State</th></tr></thead><tbody>{units.map((unit) => <tr key={unit.template_id} className={`border-b ${templateFilter === unit.template_id ? "bg-zinc-100" : ""}`}><td className="p-2"><Link aria-current={templateFilter === unit.template_id ? "true" : undefined} className="font-semibold underline" href={href({ template: unit.template_id, offset: "0", status: "" })}>{unit.template_name}</Link>{templateFilter === unit.template_id ? <div className="mt-1 text-zinc-600">Current Template filter</div> : null}</td><td className="p-2 text-right tabular-nums">{unit.matched}</td><td className={`p-2 text-right tabular-nums ${unit.changed > 0 ? "bg-amber-50 font-semibold text-amber-800" : ""}`}>{unit.changed}</td><td className="p-2 text-right tabular-nums">{unit.unchanged}</td><td className={`p-2 text-right tabular-nums ${unit.unresolved > 0 ? "bg-amber-50 font-semibold text-amber-800" : ""}`}>{unit.unresolved}</td><td className="p-2"><span className={`${badge} border-zinc-200 bg-zinc-50`}>{readable(unit.state)}</span></td></tr>)}</tbody></table></div>
@@ -143,6 +171,7 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
           <div className="flex justify-between"><Link href={href({ offset: String(Math.max(0, from - 50)) })}>Previous comparisons</Link><span>{matches.length ? `${from + 1}–${from + matches.length}` : "0 comparisons"}</span><Link href={href({ offset: String(from + 50) })}>Next comparisons</Link></div>
         </> : null;
   const familyReview = batch ? <>
+          {coverageContext}
           {overview ? family ? <SupplierFamilyTable key={`${batch.id}:${family.template_id}:${section}`} batchId={batch.id} familyName={family.template_name} section={section} tabs={familyTabs} rows={familyRows.rows} truncated={familyRows.truncated} approver={approver} batchOpen={batch.status === "review"} limit={SUPPLIER_BULK_LIMIT}
               backHref={href({ view: "family", family: "", section: "" })} detailsHref={href({ view: "advanced", family: "", section: "", template: family.template_id })} />
             : <><SupplierBrandProgress overview={overview} />
@@ -150,16 +179,16 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
                 approverNote={approver ? undefined : "An approver applies, confirms or excludes items."} advancedHref={href({ view: "advanced", family: "", section: "" })} supplierOnlyHref={href({ view: "advanced", family: "", section: "", status: "unmatched" })} continueHref={href({ view: "complete" })} /></>
             : <p className="rounded border border-zinc-200 bg-zinc-50 p-6 text-center text-sm text-zinc-600">Family Review is unavailable for this comparison. Use Advanced / Technical Review.</p>}
         </> : null;
-  const finishScreen = batch && source && brand ? <SupplierFinishScreen brandName={brand.name} title={source.title} baselineDate={baselineDate} overview={overview} priceUpdatesHref="/products/price-updates" summaryHref={href({ view: "complete" })} /> : null;
+  const finishScreen = batch && source && brand ? <SupplierFinishScreen brandName={brand.name} title={source.title} baselineDate={baselineDate} overview={overview} priceUpdatesHref="/products/price-updates" summaryHref={href({ view: "complete" })} partialSource={completedMode === "selected_templates" && coveredIds ? (definition?.name ?? source.title) : undefined} /> : null;
   let main: React.ReactNode;
   if (!brand) main = null;
-  else if (!source) main = <SupplierCurrentPriceList brandName={brand.name} current={currentList} inProgress={inProgress} importHref={href({ tab: "import" })} />;
+  else if (!source) main = <><SupplierCurrentPriceList brandName={brand.name} current={currentList} inProgress={inProgress} importHref={href({ tab: "import" })} />{coverage ? <><SupplierSourcesOverview definitions={coverage.definitions} brandId={brand.id} approver={approver} editCoverageHref={(id) => { const sourceId = coverage.definitions.find((definition) => definition.id === id)?.latest?.id ?? ""; return sourceId ? href({ source: sourceId, view: "start", edit: "1" }) : href({ tab: "import" }); }} /><SupplierFamilyCoverageSetup brandId={brand.id} rows={familyCoverageRows} sources={sourceOptions} profiles={profileList.map((item) => ({ id: item.id, title: item.title }))} approver={approver} referenceTitle={referenceSource?.title ?? null} /></> : null}</>;
   else if (source.status === "archived") main = <><p className="rounded border border-zinc-200 bg-zinc-50 p-3">This price list is archived. Import a new price list to continue.</p>{importCard}</>;
   else if (source.status !== "imported") main = <><SupplierImportSummary brandName={brand.name} source={source} families={null} warnings={null} continueHref="" detailsHref={href({ view: "details" })} uploading />{importCard}</>;
-  else if (view === "summary" || view === "details") main = <><SupplierImportSummary brandName={brand.name} source={source} families={summary.families} warnings={summary.warnings} continueHref={href({ view: batchResult.data?.length ? "family" : "start", batch: "" })} detailsHref={href({ view: "details" })} />{view === "details" ? <SupplierImportDetails source={source} workingFileUrl={workingFile?.data?.signedUrl} /> : null}</>;
-  else if (!batch || view === "start") main = <SupplierStartReview key={source.id} brandId={brand.id} sourceId={source.id} templates={templates} />;
+  else if (view === "summary" || view === "details") main = <><SupplierImportSummary brandName={brand.name} source={source} families={summary.families} warnings={summary.warnings} continueHref={href({ view: batchResult.data?.length ? "family" : "start", batch: "" })} detailsHref={href({ view: "details" })} />{view === "summary" ? coveragePanel : null}{view === "details" ? <SupplierImportDetails source={source} workingFileUrl={workingFile?.data?.signedUrl} /> : null}</>;
+  else if (!batch || view === "start") main = <>{coveragePanel}{startBlocked ? <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">{startBlocked}</p> : <SupplierStartReview key={source.id} brandId={brand.id} sourceId={source.id} templates={templates} />}</>;
   else if (view === "advanced") main = advancedReview;
-  else if (view === "complete") main = completed ? finishScreen : overview ? <><SupplierCompleteSummary overview={overview} reviewHref={href({ view: "family", family: "", section: "" })} /><SupplierCompletionControls key={batch.id} batchId={batch.id} scope={batch.scope} status={batch.status} approver={approver} reviewHref={href({ view: "family", family: "", section: "" })} /></> : <p>Complete Review is unavailable for this comparison.</p>;
+  else if (view === "complete") main = completed ? finishScreen : overview ? <><SupplierCompleteSummary overview={overview} reviewHref={href({ view: "family", family: "", section: "" })} /><SupplierCompletionControls key={batch.id} batchId={batch.id} scope={batch.scope} status={batch.status} approver={approver} partialSource={partialSource} reviewHref={href({ view: "family", family: "", section: "" })} /></> : <p>Complete Review is unavailable for this comparison.</p>;
   else main = <>{completed ? finishScreen : null}{familyReview}</>;
   const importArea = brand ? <>{text(params.setup) === "1" ? <SupplierImportFormatWizard key={brand.id} brandId={brand.id} brandName={brand.name} approver={approver} doneHref={href({ tab: "import", setup: "" })} /> : importCard}</> : null;
   const step: WorkflowStep = !source || view === "summary" || view === "details" || source.status !== "imported" ? 1 : view === "complete" ? 3 : 2;
@@ -178,6 +207,7 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
               pagerHrefs={{ previous: href({ sourceOffset: String(Math.max(0, sourceOffset - 20)) }), next: href({ sourceOffset: String(sourceOffset + 20) }) }} reviews={source ? batchResult.data ?? [] : []} currentBatchId={batch?.id} reviewHref={(id) => href({ tab: "current", source: source?.id ?? "", batch: id, view: "family", offset: "0", template: "", status: "" })} newReviewHref={source?.status === "imported" ? href({ tab: "current", view: "start" }) : undefined} />
           : <>
             {source ? <SupplierWorkflowHeader brandName={brand.name} source={source} batch={batch} step={step} links={{ steps: [href({ tab: "import", source: "", batch: "", view: "", family: "", section: "", status: "", code: "", template: "", offset: "0" }), href({ view: "family", family: "", section: "" }), href({ view: "complete" })], history: href({ tab: "history" }), advanced: href({ tab: "import", advanced: "1" }) + "#advanced" }} /> : null}
+            {sourceSummary}
             {main}
           </>}
         <SupplierAdvancedImportSettings key={`${brand.id}:${text(params.advanced)}`} brandId={brand.id} brandName={brand.name} basis={brand.stored_price_basis} approver={approver} templates={templates} dimensions={vocabularyResult.data ?? []} profiles={profileList} open={text(params.advanced) === "1"} />

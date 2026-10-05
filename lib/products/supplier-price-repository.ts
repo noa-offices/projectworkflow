@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { DimensionRule, DurableBinding, PriceMatch, PriceTarget, ProductPriceInput, ReviewBatch, SourceIdentity, SourceVersion } from "./supplier-price-contracts";
+import type { DimensionRule, DurableBinding, PriceMatch, PriceTarget, ProductPriceInput, ReviewBatch, SourceIdentity, SourceVersion, SupplierCoverageConflict, SupplierCoverageSuggestionRow, SupplierSourceDefinitionSummary } from "./supplier-price-contracts";
 import { expectedPricingVersion, pricingConflictMessage } from "./pricing-write-version";
 import { brandPriceTargets } from "./supplier-price-targets";
 import { comparisonCode, matchSupplierPrices } from "./supplier-price-matching";
@@ -77,12 +77,26 @@ export async function supplierWrite(client: SupabaseClient, operation: string, p
   if (error) throw Error(error.message);
   return data as { id: string; reused?: boolean };
 }
-export async function supplierBrandTargets(client: SupabaseClient, brandId: string) {
-  const [templates, components] = await Promise.all([
+/** A batch’s immutable coverage snapshot: null is legacy/unrestricted, otherwise the only Families that participate in the review. */
+export function supplierBatchCoverage(batch: { coverage_template_ids?: string[] | null }): string[] | null { return batch.coverage_template_ids ?? null; }
+/** The one Supplier target universe. Every matching, review, readiness, Apply and Confirm path takes its targets here, so all agree on coverage. */
+export async function supplierBrandTargets(client: SupabaseClient, brandId: string, coverage: string[] | null = null) {
+  const [allTemplates, components] = await Promise.all([
     supplierRows<ProductPriceInput>(client, "product_templates", "id,brand_id,template_name,item_code,currency,default_unit_price,pricing_version,variant_pricing,category_pricing,desking_size_pricing,accessory_pricing", { brand_id: brandId, is_active: true }),
     supplierRows<Record<string, unknown>>(client, "product_components", "id,template_id,component_code,component_name,currency,unit_price,is_active,product_templates!inner(brand_id)", { "product_templates.brand_id": brandId, is_active: true }),
   ]);
+  const covered = coverage ? new Set(coverage) : null;
+  const templates = covered ? allTemplates.filter((template) => covered.has(template.id)) : allTemplates;
   return { templates, targets: brandPriceTargets(templates, components) };
+}
+/** Coverage for a source that has a definition: the active definition’s confirmed Families, or an error. Null for a legacy source. The database derives the same set for the batch snapshot. */
+export async function supplierSourceCoverage(client: SupabaseClient, source: { brand_id: string; definition_id?: string | null }): Promise<string[] | null> {
+  if (!source.definition_id) return null;
+  const definition = (await supplierRows<{ id: string }>(client, "supplier_source_definitions", "id", { id: source.definition_id, brand_id: source.brand_id, is_active: true })).at(0);
+  if (!definition) throw Error("This Supplier source definition is inactive or unavailable.");
+  const families = await supplierRows<{ template_id: string }>(client, "supplier_source_definition_families", "template_id", { definition_id: definition.id }, "template_id");
+  if (!families.length) throw Error("This Supplier source has no confirmed Family coverage.");
+  return families.map((family) => family.template_id);
 }
 export async function supplierSource(client: SupabaseClient, sourceId: string) {
   const { data, error } = await client.from("supplier_source_versions").select("*").eq("id", sourceId).single<SourceVersion>();
@@ -92,13 +106,29 @@ export async function supplierSource(client: SupabaseClient, sourceId: string) {
 export async function supplierBrandMatches(client: SupabaseClient, sourceId: string) {
   const source = await supplierSource(client, sourceId);
   if (source.status !== "imported") throw Error("Matching refuses an incomplete or archived source.");
+  const coverage = await supplierSourceCoverage(client, source);
   const [{ targets, templates }, identities, rules, bindings] = await Promise.all([
-    supplierBrandTargets(client, source.brand_id),
+    supplierBrandTargets(client, source.brand_id, coverage),
     supplierRows<{ data: SourceIdentity }>(client, "supplier_source_identities", "key,data", { source_id: sourceId }, "key"),
     supplierRows<DimensionRule>(client, "supplier_dimension_vocabulary", "*", { brand_id: source.brand_id, is_active: true }),
     supplierRows<DurableBinding>(client, "supplier_price_bindings", "*", { brand_id: source.brand_id }),
   ]);
-  return { source, templates, targets, matches: matchSupplierPrices(identities.map((identity) => identity.data), targets, rules, bindings) };
+  return { source, templates, targets, coverage, matches: matchSupplierPrices(identities.map((identity) => identity.data), targets, rules, bindings) };
+}
+/** Builds a review batch. Coverage is the outer boundary (a source definition’s Families, or the whole Brand for a legacy source); the scope only narrows within it. */
+export async function supplierCreateReviewBatch(client: SupabaseClient, sourceId: string, scope: string, selectedIds: string[], brandListId?: string) {
+  const { source, matches, coverage } = await supplierBrandMatches(client, sourceId);
+  if (coverage && source.definition_id && (await supplierSourceCoverageConflicts(client, { brandId: source.brand_id, definitionId: source.definition_id })).length) throw Error("Resolve Family coverage conflicts before starting this review.");
+  if (coverage && selectedIds.some((id) => !coverage.includes(id))) throw Error("A selected Family is outside this source coverage.");
+  const chunks = supplierMatchChunks(matches);
+  const result = await supplierWrite(client, "batch", { source_id: sourceId, title: source.title, scope, selected_template_ids: selectedIds, brand_price_list_update_id: brandListId || null, expected_matches: matches.length, expected_chunks: chunks.length });
+  // The database derived the stored snapshot itself; the comparison above must have used exactly that set.
+  const stored = (await client.from("supplier_price_batches").select("*").eq("id", result.id).single<ReviewBatch>()).data;
+  const snapshot = stored ? supplierBatchCoverage(stored) : null;
+  if ((snapshot ? [...snapshot].sort().join() : null) !== (coverage ? [...coverage].sort().join() : null)) throw Error("Source coverage changed while the comparison was built. Start a fresh batch.");
+  for (let index = 0; index < chunks.length; index++) await supplierWrite(client, "match_chunk", { batch_id: result.id, chunk_index: index, matches: chunks[index] });
+  await supplierWrite(client, "finalize_batch", { batch_id: result.id });
+  return result;
 }
 export function supplierMatchChunks(matches: PriceMatch[]) {
   const chunks: PriceMatch[][] = []; let chunk: PriceMatch[] = []; let size = 2;
@@ -204,7 +234,7 @@ export async function supplierApplyReviewedPrice(client: SupabaseClient, batchId
     const bound = [...binding.target_keys].sort(), reviewed = baselines.map((baseline) => baseline.key).sort();
     if (new Set(bound).size !== bound.length || bound.length !== reviewed.length || bound.some((key, index) => key !== reviewed[index])) throw Error("The durable shared binding no longer matches the reviewed targets. Build a fresh Supplier comparison.");
   }
-  const { targets, templates } = await supplierBrandTargets(client, batch.brand_id);
+  const { targets, templates } = await supplierBrandTargets(client, batch.brand_id, supplierBatchCoverage(batch));
   const baselineFields = ["key", "brand_id", "template_id", "pricing_version", "price", "currency", "raw_code", "code", "architecture", "group_id", "row_id", "column_id", "physical_field", "price_field", "dimension"] as const;
   const currents = baselines.map((baseline) => {
     const current = targets.find((target) => target.key === baseline.key);
@@ -264,7 +294,7 @@ export async function supplierConfirmUnchangedPrice(client: SupabaseClient, batc
   if (baseline.brand_id !== batch.brand_id) throw Error("Supplier target does not belong to this Brand.");
   if (!["AED", "EUR", "USD"].includes(source.currency) || identity.currency !== source.currency) throw Error("Unsupported Supplier currency. Use AED, EUR, or USD.");
   if (source.currency !== baseline.currency) throw Error("Supplier and Product currencies must match before confirming.");
-  const { targets } = await supplierBrandTargets(client, batch.brand_id);
+  const { targets } = await supplierBrandTargets(client, batch.brand_id, supplierBatchCoverage(batch));
   const current = targets.find((target) => target.key === baseline.key);
   const baselineFields = ["key", "brand_id", "template_id", "pricing_version", "price", "currency", "raw_code", "code", "architecture", "group_id", "row_id", "column_id", "physical_field", "price_field", "dimension"] as const;
   // Another price row in the same Template may have advanced pricing_version; only this exact target must be intact and still equal.
@@ -303,7 +333,7 @@ export async function supplierCompletionReadiness(client: SupabaseClient, batchI
   const [matches, decisions, { targets, templates }] = await Promise.all([
     supplierRows<{ key: string; data: PriceMatch }>(client, "supplier_price_matches", "key,data", { batch_id: batch.id }, "key"),
     supplierRows<{ key: string; decision: NonNullable<PriceMatch["decision"]> }>(client, "supplier_price_decisions", "key,decision", { batch_id: batch.id }, "key"),
-    supplierBrandTargets(client, batch.brand_id),
+    supplierBrandTargets(client, batch.brand_id, supplierBatchCoverage(batch)),
   ]);
   const decided = new Map(decisions.map((row) => [row.key, row.decision]));
   const live = new Map(targets.map((target) => [target.key, target]));
@@ -443,7 +473,7 @@ async function loadFamilyState(client: SupabaseClient, batchId: string) {
     supplierRows<{ key: string; decision: string }>(client, "supplier_price_decisions", "key,decision", { batch_id: batch.id }, "key"),
     supplierRows<{ key: string }>(client, "supplier_price_matches", "key", { batch_id: batch.id, classification: "unmatched" }, "key"),
     supplierRows<{ key: string }>(client, "supplier_price_matches", "key", { batch_id: batch.id, classification: "referenced_companion" }, "key"),
-    supplierBrandTargets(client, batch.brand_id),
+    supplierBrandTargets(client, batch.brand_id, supplierBatchCoverage(batch)),
   ]);
   const decided = new Map(decisions.map((row) => [row.key, row.decision]));
   const live = new Map(targets.map((target) => [target.key, target]));
@@ -550,7 +580,7 @@ function bulkRowCheck(row: BulkRow, identity: SourceIdentity | undefined, source
 export async function supplierBulkApplyChanged(client: SupabaseClient, batchId: string, matchKeys: string[]) {
   const { batch, source, keys, rows } = await loadBulkContext(client, batchId, matchKeys, "applying");
   const identities = await loadBulkIdentities(client, source.id, rows);
-  const { targets, templates } = await supplierBrandTargets(client, batch.brand_id);
+  const { targets, templates } = await supplierBrandTargets(client, batch.brand_id, supplierBatchCoverage(batch));
   const live = new Map(targets.map((target) => [target.key, target]));
   const checks = rows.map((row) => bulkRowCheck(row, row.data.source ? identities.get(row.data.source.key) : undefined, source, batch.brand_id, live, "changed"));
   const stale = checks.filter((check) => check === "stale").length, other = checks.filter((check) => check === "attention").length;
@@ -581,7 +611,7 @@ export async function supplierBulkApplyChanged(client: SupabaseClient, batchId: 
 export async function supplierBulkConfirmUnchanged(client: SupabaseClient, batchId: string, matchKeys: string[]) {
   const { batch, source, keys, rows } = await loadBulkContext(client, batchId, matchKeys, "confirming");
   const identities = await loadBulkIdentities(client, source.id, rows);
-  const { targets } = await supplierBrandTargets(client, batch.brand_id);
+  const { targets } = await supplierBrandTargets(client, batch.brand_id, supplierBatchCoverage(batch));
   const live = new Map(targets.map((target) => [target.key, target]));
   const checks = rows.map((row) => bulkRowCheck(row, row.data.source ? identities.get(row.data.source.key) : undefined, source, batch.brand_id, live, "unchanged"));
   const stale = checks.filter((check) => check === "stale").length, other = checks.filter((check) => check === "attention").length;
@@ -609,4 +639,165 @@ export async function supplierBulkExcludeMissing(client: SupabaseClient, batchId
     for (const key of keys) { await supplierWrite(client, "decision", { batch_id: batch.id, key, decision: "excluded_from_source", note, proposed_target_keys: [] }); done++; }
   } catch { throw Error(`${done} of ${keys.length} items were excluded before an error. Select the rest and try again.`); }
   return { message: `${keys.length} item${keys.length === 1 ? "" : "s"} excluded from this Supplier source.`, count: keys.length };
+}
+
+// ---- Phase 2I-1: read-only source-definition coverage. Nothing here writes, and no review path consumes it yet. ----
+/** Strong code overlap suggests coverage; the user always confirms. Descriptions are never evidence here. */
+const SUPPLIER_COVERAGE_SUGGEST_RATIO = 0.8;
+type DefinitionRow = { id: string; brand_id: string; name: string; profile_id: string | null; is_active: boolean };
+type DefinitionFamilyRow = { template_id: string; confirmed_at: string };
+
+async function definitionFamilies(client: SupabaseClient, definitionId: string) {
+  return supplierRows<DefinitionFamilyRow>(client, "supplier_source_definition_families", "template_id,confirmed_at", { definition_id: definitionId }, "template_id");
+}
+
+export async function supplierSourceDefinitionsForBrand(client: SupabaseClient, brandId: string): Promise<SupplierSourceDefinitionSummary[]> {
+  const [definitions, versions] = await Promise.all([
+    supplierRows<DefinitionRow>(client, "supplier_source_definitions", "id,brand_id,name,profile_id,is_active", { brand_id: brandId }, "name"),
+    supplierRows<{ id: string; title: string; received_at: string | null; created_at: string; definition_id: string | null }>(client, "supplier_source_versions", "id,title,received_at,created_at,definition_id", { brand_id: brandId, status: "imported" }, "created_at"),
+  ]);
+  return Promise.all(definitions.map(async (definition) => {
+    const latest = versions.filter((version) => version.definition_id === definition.id).at(-1);
+    return { id: definition.id, name: definition.name, profileId: definition.profile_id, isActive: definition.is_active, confirmedFamilyCount: (await definitionFamilies(client, definition.id)).length,
+      latestSource: latest ? { id: latest.id, title: latest.title, receivedAt: latest.received_at } : null };
+  }));
+}
+
+/** Per Family: how many of its distinct Product comparison codes exist in the imported source. Same canonical code as matching; no new matching semantics. */
+export async function supplierSourceCoverageSuggestion(client: SupabaseClient, input: { brandId: string; sourceId: string; definitionId?: string }): Promise<SupplierCoverageSuggestionRow[]> {
+  const source = await supplierSource(client, input.sourceId);
+  if (source.brand_id !== input.brandId) throw Error("Supplier source belongs to another Brand.");
+  if (source.status !== "imported") throw Error("Coverage can only be suggested for an imported source.");
+  let prior = new Map<string, string>(); let priorConfirmedAt = "";
+  if (input.definitionId) {
+    const definition = (await supplierRows<DefinitionRow>(client, "supplier_source_definitions", "id,brand_id,name,profile_id,is_active", { id: input.definitionId, brand_id: input.brandId })).at(0);
+    if (!definition) throw Error("Source definition unavailable for this Brand.");
+    const families = await definitionFamilies(client, definition.id);
+    prior = new Map(families.map((family) => [family.template_id, family.confirmed_at]));
+    priorConfirmedAt = families.reduce((latest, family) => (family.confirmed_at > latest ? family.confirmed_at : latest), "");
+  }
+  const [{ targets, templates }, identities, created] = await Promise.all([
+    supplierBrandTargets(client, input.brandId),
+    supplierRows<{ data: SourceIdentity }>(client, "supplier_source_identities", "key,data", { source_id: input.sourceId }, "key"),
+    supplierRows<{ id: string; created_at: string }>(client, "product_templates", "id,created_at", { brand_id: input.brandId, is_active: true }),
+  ]);
+  const sourceCodes = new Set(identities.map((identity) => comparisonCode(identity.data.code)));
+  const createdAt = new Map(created.map((template) => [template.id, template.created_at]));
+  return templates.map((template) => {
+    const codes = new Set(targets.filter((target) => target.template_id === template.id).map((target) => comparisonCode(target.code)));
+    const found = [...codes].filter((code) => sourceCodes.has(code)).length;
+    const previouslyCovered = prior.has(template.id);
+    // A Family is new only if it appeared after the definition's last confirmation; a Family left out on purpose is not re-announced.
+    const isNewFamily = Boolean(priorConfirmedAt) && !previouslyCovered && String(createdAt.get(template.id) ?? "") > priorConfirmedAt;
+    const foundRatio = codes.size ? found / codes.size : 0;
+    return { templateId: template.id, templateName: template.template_name, totalTargetCodes: codes.size, foundTargetCodes: found, foundRatio, previouslyCovered, isNewFamily,
+      suggested: previouslyCovered || (found > 0 && foundRatio >= SUPPLIER_COVERAGE_SUGGEST_RATIO) };
+  }).sort((a, b) => a.templateName.localeCompare(b.templateName));
+}
+
+/** A Family claimed by two or more active definitions. Computed, never enforced; no winner is chosen. */
+export async function supplierSourceCoverageConflicts(client: SupabaseClient, input: { brandId: string; definitionId?: string }): Promise<SupplierCoverageConflict[]> {
+  const [definitions, templates] = await Promise.all([
+    supplierRows<DefinitionRow>(client, "supplier_source_definitions", "id,brand_id,name,profile_id,is_active", { brand_id: input.brandId, is_active: true }, "name"),
+    supplierRows<{ id: string; template_name: string }>(client, "product_templates", "id,template_name", { brand_id: input.brandId }),
+  ]);
+  const claims = new Map<string, Array<{ definitionId: string; definitionName: string }>>();
+  for (const definition of definitions) for (const family of await definitionFamilies(client, definition.id)) claims.set(family.template_id, [...(claims.get(family.template_id) ?? []), { definitionId: definition.id, definitionName: definition.name }]);
+  const names = new Map(templates.map((template) => [template.id, template.template_name]));
+  return [...claims].filter(([, owners]) => owners.length > 1 && (!input.definitionId || owners.some((owner) => owner.definitionId === input.definitionId)))
+    .map(([templateId, owners]) => ({ templateId, templateName: names.get(templateId) ?? templateId, definitions: owners }))
+    .sort((a, b) => a.templateName.localeCompare(b.templateName));
+}
+
+// ---- Phase 2I-4: business-facing coverage overview and the thin write helpers behind the coverage UI. ----
+export type SupplierCoverageDefinition = { id: string; name: string; profileId: string | null; profileTitle: string | null; isActive: boolean; canDelete: boolean; families: Array<{ id: string; name: string }>; latest: { id: string; title: string; receivedAt: string | null } | null };
+export type SupplierCoverageOverview = { definitions: SupplierCoverageDefinition[]; conflicts: SupplierCoverageConflict[]; uncovered: Array<{ templateId: string; templateName: string }> };
+
+/** Everything the Brand overview needs: sources with their Families, conflicts between active sources, and active Families no active source covers. */
+export async function supplierCoverageOverview(client: SupabaseClient, brandId: string): Promise<SupplierCoverageOverview> {
+  const [summaries, templates, profiles, conflicts, versions] = await Promise.all([
+    supplierSourceDefinitionsForBrand(client, brandId),
+    supplierRows<{ id: string; template_name: string }>(client, "product_templates", "id,template_name", { brand_id: brandId, is_active: true }, "template_name"),
+    supplierRows<{ id: string; title: string }>(client, "supplier_price_profiles", "id,title", { brand_id: brandId }),
+    supplierSourceCoverageConflicts(client, { brandId }),
+    supplierRows<{ definition_id: string | null }>(client, "supplier_source_versions", "definition_id", { brand_id: brandId }),
+  ]);
+  const usedDefinitionIds = new Set(versions.flatMap((version) => version.definition_id ? [version.definition_id] : []));
+  const names = new Map(templates.map((template) => [template.id, template.template_name]));
+  const definitions = await Promise.all(summaries.map(async (summary) => ({
+    id: summary.id, name: summary.name, profileId: summary.profileId, profileTitle: profiles.find((profile) => profile.id === summary.profileId)?.title ?? null, isActive: summary.isActive, canDelete: !usedDefinitionIds.has(summary.id),
+    families: (await definitionFamilies(client, summary.id)).flatMap((family) => names.has(family.template_id) ? [{ id: family.template_id, name: names.get(family.template_id)! }] : []).sort((a, b) => a.name.localeCompare(b.name)),
+    latest: summary.latestSource ? { id: summary.latestSource.id, title: summary.latestSource.title, receivedAt: summary.latestSource.receivedAt } : null,
+  })));
+  const covered = new Set(definitions.filter((definition) => definition.isActive).flatMap((definition) => definition.families.map((family) => family.id)));
+  return { definitions, conflicts, uncovered: templates.filter((template) => !covered.has(template.id)).map((template) => ({ templateId: template.id, templateName: template.template_name })) };
+}
+
+const friendlyDefinitionError = (error: unknown) => { const message = error instanceof Error ? error.message : "Could not save."; return Error(/duplicate key|unique/i.test(message) ? "A Supplier source with this name already exists for this Brand." : message); };
+export async function supplierCreateSourceDefinition(client: SupabaseClient, brandId: string, name: string, profileId?: string | null) {
+  if (!name.trim()) throw Error("Enter a Supplier source name.");
+  try { return await supplierWrite(client, "definition", { brand_id: brandId, name: name.trim(), profile_id: profileId || null }); } catch (error) { throw friendlyDefinitionError(error); }
+}
+/** Definition metadata only: existing imported source titles and review history remain untouched. */
+export async function supplierUpdateSourceDefinition(client: SupabaseClient, brandId: string, id: string, name?: string, isActive?: boolean) {
+  if (name !== undefined && !name.trim()) throw Error("Enter a Supplier source name.");
+  try { return await supplierWrite(client, "definition", { id, brand_id: brandId, ...(name !== undefined ? { name: name.trim() } : {}), ...(isActive !== undefined ? { is_active: isActive } : {}) }); } catch (error) { throw friendlyDefinitionError(error); }
+}
+/** The RPC re-checks all historical links; this helper never treats the UI's canDelete hint as authority. */
+export async function supplierDeleteSourceDefinition(client: SupabaseClient, brandId: string, id: string) {
+  return supplierWrite(client, "definition_delete", { id, brand_id: brandId });
+}
+export async function supplierConfirmCoverage(client: SupabaseClient, definitionId: string, templateIds: string[]) {
+  return supplierWrite(client, "definition_coverage", { definition_id: definitionId, template_ids: [...new Set(templateIds)] });
+}
+export async function supplierLinkSourceDefinition(client: SupabaseClient, sourceId: string, definitionId: string | null) {
+  return supplierWrite(client, "source_definition", { source_id: sourceId, definition_id: definitionId });
+}
+export async function supplierAssignFamilyToSource(client: SupabaseClient, definitionId: string, templateId: string) {
+  const current = (await definitionFamilies(client, definitionId)).map((family) => family.template_id);
+  return supplierConfirmCoverage(client, definitionId, [...current, templateId]);
+}
+/** The chosen source keeps the Family; every other active source gives it up. No priority logic and no automatic winner. */
+export async function supplierResolveCoverageConflict(client: SupabaseClient, brandId: string, templateId: string, keepDefinitionId: string) {
+  const conflict = (await supplierSourceCoverageConflicts(client, { brandId })).find((item) => item.templateId === templateId);
+  if (!conflict || !conflict.definitions.some((definition) => definition.definitionId === keepDefinitionId)) throw Error("This Family is no longer in conflict.");
+  for (const other of conflict.definitions.filter((definition) => definition.definitionId !== keepDefinitionId)) {
+    const remaining = (await definitionFamilies(client, other.definitionId)).map((family) => family.template_id).filter((id) => id !== templateId);
+    await supplierConfirmCoverage(client, other.definitionId, remaining);
+  }
+}
+
+// ---- Phase 2I-4.1: one row per active Family for the bulk coverage setup table. Read-only; reuses the existing suggestion and overview. ----
+export type SupplierFamilyCoverageRow = {
+  templateId: string; templateName: string; mainCategory: string | null; subCategory: string | null;
+  totalTargetCodes: number | null; foundTargetCodes: number | null; foundRatio: number | null; suggested: boolean;
+  currentSources: Array<{ definitionId: string; definitionName: string }>;
+};
+/** Found/total comes from the reference source's extracted codes (null when no price list has been imported yet). Category names are the Product Library's own; nothing is inferred. */
+export async function supplierFamilyCoverageSetup(client: SupabaseClient, brandId: string, referenceSourceId?: string | null): Promise<SupplierFamilyCoverageRow[]> {
+  const [overview, templates, categories, suggestion] = await Promise.all([
+    supplierCoverageOverview(client, brandId),
+    supplierRows<{ id: string; template_name: string; main_category_id: string | null; sub_category_id: string | null }>(client, "product_templates", "id,template_name,main_category_id,sub_category_id", { brand_id: brandId, is_active: true }, "template_name"),
+    supplierRows<{ id: string; name: string }>(client, "product_categories", "id,name", { brand_id: brandId }),
+    referenceSourceId ? supplierSourceCoverageSuggestion(client, { brandId, sourceId: referenceSourceId }) : Promise.resolve(null),
+  ]);
+  const categoryName = new Map(categories.map((category) => [category.id, category.name]));
+  const found = new Map((suggestion ?? []).map((row) => [row.templateId, row]));
+  return templates.map((template) => {
+    const evidence = found.get(template.id);
+    return { templateId: template.id, templateName: template.template_name, mainCategory: template.main_category_id ? categoryName.get(template.main_category_id) ?? null : null, subCategory: template.sub_category_id ? categoryName.get(template.sub_category_id) ?? null : null,
+      totalTargetCodes: evidence?.totalTargetCodes ?? null, foundTargetCodes: evidence?.foundTargetCodes ?? null, foundRatio: evidence?.foundRatio ?? null, suggested: evidence?.suggested ?? false,
+      currentSources: overview.definitions.filter((definition) => definition.isActive && definition.families.some((family) => family.id === template.id)).map((definition) => ({ definitionId: definition.id, definitionName: definition.name })) };
+  });
+}
+
+/** Bulk assignment composed from the existing writes: optionally create the source, then confirm its coverage as the current set plus the selection. */
+export async function supplierAssignFamiliesToSource(client: SupabaseClient, brandId: string, target: { definitionId?: string; newName?: string; profileId?: string }, templateIds: string[]) {
+  if (!templateIds.length) throw Error("Select at least one Family.");
+  const definitionId = target.newName !== undefined ? (await supplierCreateSourceDefinition(client, brandId, target.newName, target.profileId)).id : target.definitionId;
+  if (!definitionId) throw Error("Choose a Supplier source.");
+  const current = (await definitionFamilies(client, definitionId)).map((family) => family.template_id);
+  await supplierConfirmCoverage(client, definitionId, [...current, ...templateIds]);
+  const name = (await supplierRows<{ name: string }>(client, "supplier_source_definitions", "name", { id: definitionId })).at(0)?.name ?? "this source";
+  return { definitionId, name, count: new Set(templateIds).size };
 }

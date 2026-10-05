@@ -7,7 +7,9 @@ import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { assertSupplierProfile, type RawSupplierRow, type SourceScope, type SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import { normalizeSupplierRows } from "@/lib/products/supplier-price-import";
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
-import { supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierBulkExcludeMissing, supplierBrandMatches, supplierBrandTargets, supplierMatchChunks, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
+import { supplierCreateReviewBatch, supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierBulkExcludeMissing, supplierBrandTargets, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
+
+import { supplierAssignFamiliesToSource, supplierAssignFamilyToSource, supplierConfirmCoverage, supplierCreateSourceDefinition, supplierDeleteSourceDefinition, supplierLinkSourceDefinition, supplierResolveCoverageConflict, supplierUpdateSourceDefinition } from "@/lib/products/supplier-price-repository";
 
 const workspacePath = "/products/price-updates/supplier-sources";
 async function reviewer() { const auth = await requireBrandPriceReviewer(); return { auth, client: await createClient() }; }
@@ -54,12 +56,7 @@ export async function archiveSupplierSource(sourceId: string) {
 export async function createSupplierReviewBatch(sourceId: string, scope: SourceScope, selectedIds: string[], brandListId?: string) {
   const { client } = await reviewer();
   if (!["complete", "partial", "selected_templates"].includes(scope)) throw Error("Invalid review scope.");
-  // Always build against the entire Brand; scope is only a review filter.
-  const { source, matches } = await supplierBrandMatches(client, sourceId);
-  const chunks = supplierMatchChunks(matches);
-  const result = await supplierWrite(client, "batch", { source_id: sourceId, title: source.title, scope, selected_template_ids: selectedIds, brand_price_list_update_id: brandListId || null, expected_matches: matches.length, expected_chunks: chunks.length });
-  for (let index = 0; index < chunks.length; index++) await supplierWrite(client, "match_chunk", { batch_id: result.id, chunk_index: index, matches: chunks[index] });
-  await supplierWrite(client, "finalize_batch", { batch_id: result.id }); revalidatePath(workspacePath); return result;
+  const result = await supplierCreateReviewBatch(client, sourceId, scope, selectedIds, brandListId); revalidatePath(workspacePath); return result;
 }
 export async function saveSupplierDecision(batchId: string, key: string, decision: string, note: string, proposedKeys: string[] = []) {
   const { client } = await reviewer(); if (!["reviewed", "skip", "reject", "mapping_proposed"].includes(decision) || note.length > 4000 || proposedKeys.length > 500) throw Error("Invalid review decision.");
@@ -152,4 +149,37 @@ export async function supplierMappingTargets(brandId: string, query = "", from =
 }
 export async function archiveSupplierDimension(id: string) {
   const { client } = await approver(); await supplierWrite(client, "archive_dimension", { id }); revalidatePath(workspacePath);
+}
+
+// Supplier source definitions and Family coverage: approver-only; the database re-checks the same permission.
+export async function createSupplierSourceDefinition(brandId: string, name: string, profileId?: string) {
+  const { client } = await approver(); const result = await supplierCreateSourceDefinition(client, brandId, name, profileId); revalidatePath(workspacePath); return result;
+}
+export async function renameSupplierSourceDefinition(brandId: string, definitionId: string, name: string) {
+  const { client } = await approver(); const result = await supplierUpdateSourceDefinition(client, brandId, definitionId, name); revalidatePath(workspacePath); return result;
+}
+export async function archiveSupplierSourceDefinition(brandId: string, definitionId: string) {
+  const { client } = await approver(); const result = await supplierUpdateSourceDefinition(client, brandId, definitionId, undefined, false); revalidatePath(workspacePath); return result;
+}
+export async function deleteSupplierSourceDefinition(brandId: string, definitionId: string) {
+  const { client } = await approver(); const result = await supplierDeleteSourceDefinition(client, brandId, definitionId); revalidatePath(workspacePath); return result;
+}
+export async function confirmSupplierCoverage(definitionId: string, templateIds: string[]) {
+  const { client } = await approver();
+  if (!Array.isArray(templateIds) || templateIds.some((id) => typeof id !== "string")) throw Error("Choose the Families this Supplier source covers.");
+  const result = await supplierConfirmCoverage(client, definitionId, templateIds); revalidatePath(workspacePath); return result;
+}
+export async function linkSupplierSourceDefinition(sourceId: string, definitionId: string | null) {
+  const { client } = await approver(); const result = await supplierLinkSourceDefinition(client, sourceId, definitionId); revalidatePath(workspacePath); return result;
+}
+export async function assignFamilyToSupplierSource(definitionId: string, templateId: string) {
+  const { client } = await approver(); const result = await supplierAssignFamilyToSource(client, definitionId, templateId); revalidatePath(workspacePath); return result;
+}
+export async function resolveSupplierCoverageConflict(brandId: string, templateId: string, keepDefinitionId: string) {
+  const { client } = await approver(); await supplierResolveCoverageConflict(client, brandId, templateId, keepDefinitionId); revalidatePath(workspacePath);
+}
+export async function assignFamiliesToSupplierSource(brandId: string, target: { definitionId?: string; newName?: string; profileId?: string }, templateIds: string[]) {
+  const { client } = await approver();
+  if (!Array.isArray(templateIds) || templateIds.some((id) => typeof id !== "string")) throw Error("Select the Families to assign.");
+  const result = await supplierAssignFamiliesToSource(client, brandId, target, templateIds); revalidatePath(workspacePath); return result;
 }

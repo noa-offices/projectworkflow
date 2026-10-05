@@ -42,7 +42,7 @@ test("Import step: one simple card, auto-selected import profile, no technical t
   for (const text of ["Import Supplier Price List", "LAS standard price list", "Ready", "Price list file", "Price list name", "Currency", "Price basis", "Received date (optional)", "Effective date (optional)", "Import price list", "LAS MOBILI — February 2026"]) assert.ok(one.includes(text), text);
   assert.doesNotMatch(one, /<textarea/); assert.doesNotMatch(one, /Profile JSON|canonical|vocabulary|Stored group|full_code_column/i);
   assert.match(one, /<span[^>]*>EUR<\/span>/); assert.match(one, /<span[^>]*>List<\/span>/);
-  assert.doesNotMatch(one, /<select/); // one obvious format needs no choice
+  assert.doesNotMatch(one, /<select(?![^>]*aria-label="Supplier source")/); // the Supplier source choice is separate from the import profile; // one obvious format needs no choice
   const many = html(controls.SupplierImportCard, { ...importProps, profiles: [profile("p1", "LAS standard price list"), profile("p2", "LAS alternate")] });
   assert.match(many, /<select[^>]*>[\s\S]*Choose import profile[\s\S]*LAS alternate/);
   const none = html(controls.SupplierImportCard, { ...importProps, profiles: [] });
@@ -129,7 +129,7 @@ test("page wiring: Family Review by default, Advanced Technical Review and techn
 test("Import card separates the file type from the saved import profile", () => {
   const one = html(controls.SupplierImportCard, { ...importProps, profiles: [profile("p1", "LAS MOBILI — Standard XLSX")] });
   assert.match(one, /<span[^>]*>Import profile<\/span><span[^>]*>LAS MOBILI — Standard XLSX <span[^>]*>· Ready<\/span>/); // single profile: shown, not a dropdown
-  assert.doesNotMatch(one, /<select/); assert.doesNotMatch(one, /Import format|import format/);
+  assert.doesNotMatch(one, /<select(?![^>]*aria-label="Supplier source")/); // the Supplier source choice is separate from the import profile; assert.doesNotMatch(one, /Import format|import format/);
   assert.match(one, /<span[^>]*>File type<\/span><span[^>]*>XLSX, CSV or JSON \(taken from the file\)<\/span>/); // read-only, derived from the chosen file
   assert.match(one, /accept="\.xlsx,\.csv,\.json"/); assert.doesNotMatch(one, /PDF|\.pdf/i); // only what the importer supports
   const many = html(controls.SupplierImportCard, { ...importProps, profiles: [profile("p1", "LAS MOBILI — Standard XLSX"), profile("p2", "LAS article + finish")] });
@@ -142,7 +142,7 @@ test("Import card separates the file type from the saved import profile", () => 
 test("normal Import card never asks to pick a profile when only one exists; currency and basis follow the profile", () => {
   const net = { ...profile("p1", "LAS MOBILI — Standard XLSX"), config: { ...profile("p1", "x").config, currency: "USD", basis: "net" } };
   const single = html(controls.SupplierImportCard, { ...importProps, profiles: [net] });
-  assert.doesNotMatch(single, /<select|Choose import profile/); assert.match(single, /LAS MOBILI — Standard XLSX <span[^>]*>· Ready<\/span>/);
+  assert.doesNotMatch(single, /<select(?![^>]*aria-label="Supplier source")|Choose import profile/); assert.match(single, /LAS MOBILI — Standard XLSX <span[^>]*>· Ready<\/span>/);
   assert.match(single, /<span[^>]*>Currency<\/span><span[^>]*>USD<\/span>/); assert.match(single, /<span[^>]*>Price basis<\/span><span[^>]*>Net<\/span>/); // read-only, from the auto-selected profile
   assert.match(single, /<span[^>]*>File type<\/span>/); assert.match(single, /type="file"/); assert.match(single, /name="title"/); assert.match(single, />Import price list<\/button>/);
   assert.doesNotMatch(single, /Change import profile/); // the change option lives only in Advanced import settings

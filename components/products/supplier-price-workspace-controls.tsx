@@ -5,10 +5,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { parseSupplierFile } from "@/lib/products/supplier-price-file";
+import { SupplierSourceField, type SourceChoice, type SourceOption } from "@/components/products/supplier-coverage";
 import { supplierImportChunks } from "@/lib/products/supplier-price-import";
 import type { DimensionRule, PriceMatch, SourceScope, SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import type { SupplierCompletionCount, SupplierCompletionReadiness } from "@/lib/products/supplier-price-repository";
-import { applySupplierReviewedPrice, completeSupplierPriceReview, confirmSupplierUnchangedPrice, excludeSupplierTargetFromSource, supplierCompletionStatus, archiveSupplierDimension, archiveSupplierSource, attachSupplierWorkingFile, confirmSupplierBindings, createSupplierReviewBatch, createSupplierSource, finalizeSupplierSource, saveSupplierDecision, saveSupplierDimension, saveSupplierProfile, supplierMappingTargets, supplierProfileForImport, uploadSupplierChunk } from "@/app/products/price-updates/supplier-sources/actions";
+import { applySupplierReviewedPrice, completeSupplierPriceReview, confirmSupplierUnchangedPrice, excludeSupplierTargetFromSource, supplierCompletionStatus, archiveSupplierDimension, archiveSupplierSource, attachSupplierWorkingFile, confirmSupplierBindings, createSupplierReviewBatch, createSupplierSource, createSupplierSourceDefinition, linkSupplierSourceDefinition, finalizeSupplierSource, saveSupplierDecision, saveSupplierDimension, saveSupplierProfile, supplierMappingTargets, supplierProfileForImport, uploadSupplierChunk } from "@/app/products/price-updates/supplier-sources/actions";
 
 // ProjectWorkflow patterns: white card, light border and shadow, emerald primary, zinc secondary.
 const card = "rounded-lg border border-zinc-200 bg-white shadow-sm";
@@ -26,10 +27,11 @@ function CodeSet({ label, codes }: { label: string; codes: string[] }) {
 type ProfileOption = { id: string; title: string; config: SupplierProfile };
 
 /** Step 1: one simple card. The approved import profile is chosen automatically; currency and basis come from that format. */
-export function SupplierImportCard({ brandId, brandName, profiles, suggestedTitle, advancedHref, setupHref }: { brandId: string; brandName: string; profiles: ProfileOption[]; suggestedTitle: string; advancedHref: string; setupHref: string }) {
+export function SupplierImportCard({ brandId, brandName, profiles, suggestedTitle, advancedHref, setupHref, sources = [] }: { brandId: string; brandName: string; profiles: ProfileOption[]; suggestedTitle: string; advancedHref: string; setupHref: string; sources?: SourceOption[] }) {
   const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState(""); const [fileType, setFileType] = useState("");
   const [profileId, setProfileId] = useState(profiles.length === 1 ? profiles[0].id : "");
   const chosen = profiles.find((profile) => profile.id === profileId);
+  const [choice, setChoice] = useState<SourceChoice>({ value: sources.length === 1 ? sources[0].id : "", newName: "" });
   async function run(work: () => Promise<void>) { setBusy(true); setMessage(""); try { await work(); } catch (error) { setMessage(error instanceof Error ? error.message : "Import failed."); } finally { setBusy(false); } }
   if (!profiles.length) return <section className={`${card} space-y-2 p-4`}><h3 className="text-base font-semibold text-zinc-950">Import Supplier Price List</h3>
     <p className="text-sm">This Brand needs an import profile before price lists can be imported.</p><Link href={setupHref} className={button + " inline-block"}>Set up import profile</Link></section>;
@@ -43,11 +45,14 @@ export function SupplierImportCard({ brandId, brandName, profiles, suggestedTitl
     const headers = rows[0].values;
     const required = [profile.full_code_column, ...profile.price_columns.map((column) => column.column), ...(profile.article_code_column ? [profile.article_code_column] : []), ...(profile.category_column ? [profile.category_column] : []), ...(profile.companion_note_column ? [profile.companion_note_column] : [])];
     if (required.some((header) => !Object.hasOwn(headers, header))) throw Error("This file does not match the import profile. Check the file, or change the import profile in Advanced import settings.");
+    if (choice.value === "new" && !choice.newName.trim()) throw Error("Enter a Supplier source name.");
     const chunks = supplierImportChunks(rows, 500, 600_000, profile);
     const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer())), (byte) => byte.toString(16).padStart(2, "0")).join("");
     const sourceType = file.name.split(".").pop()!.toLowerCase();
+    const definitionId = choice.value === "new" ? (await createSupplierSourceDefinition(brandId, choice.newName, profileId)).id : choice.value;
     const result = await createSupplierSource({ profile_id: profileId, expected_profile: profile, title: String(form.get("title")), filename: file.name, file_hash: hash, source_type: sourceType, expected_rows: rows.length, expected_cells: rows.length * profile.price_columns.length, expected_chunks: chunks.length, original_reference: String(form.get("original") ?? ""), effective_from: String(form.get("effective")), received_at: String(form.get("received")) });
     if (result.status !== "imported") {
+      if (definitionId) await linkSupplierSourceDefinition(result.id, definitionId);
       const path = `${brandId}/${result.id}/${hash}.${sourceType}`;
       const { error } = await createClient().storage.from("supplier-price-sources").upload(path, file, { upsert: false });
       if (error && !("statusCode" in error && ["409", "400"].includes(String(error.statusCode)))) throw Error(error.message);
@@ -59,6 +64,7 @@ export function SupplierImportCard({ brandId, brandName, profiles, suggestedTitl
   }); }}>
     <div><h3 className="text-base font-semibold text-zinc-950">Import Supplier Price List</h3><p className="text-xs text-zinc-500">Choose the file and name. Currency and price basis come from the import profile.</p></div>
     <p role="status" aria-live="polite" className="text-sm text-amber-800">{message}</p>
+    <SupplierSourceField options={sources} choice={choice} onChangeAction={setChoice} profileTitle={chosen?.title ?? ""} />
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       <div className="grid gap-1 text-xs"><span className="font-medium">Brand</span><span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm">{brandName}</span></div>
       <label className="grid gap-1 text-xs"><span className="font-medium">Price list file</span><input name="file" type="file" accept=".xlsx,.csv,.json" required className={input} onChange={(event) => setFileType((event.target.files?.[0]?.name.split(".").pop() ?? "").toLowerCase())} /></label>
@@ -184,7 +190,7 @@ const completionLabels: Array<[SupplierCompletionCount, string]> = [
   ["excluded_from_source", "Excluded from source"], ["unmatched", "Unmatched source items (not blocking)"], ["referenced_companion", "Referenced companions (not blocking)"], ["resolved", "Resolved"],
 ];
 
-export function SupplierCompletionControls({ batchId, scope, status, approver, reviewHref }: { batchId: string; scope: string; status: string; approver: boolean; reviewHref?: string }) {
+export function SupplierCompletionControls({ batchId, scope, status, approver, reviewHref, partialSource }: { batchId: string; scope: string; status: string; approver: boolean; reviewHref?: string; partialSource?: string }) {
   const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
   const [readiness, setReadiness] = useState<SupplierCompletionReadiness | null>(null); const [checked, setChecked] = useState(false);
   const live = approver && scope === "complete" && status === "review";
@@ -197,12 +203,12 @@ export function SupplierCompletionControls({ batchId, scope, status, approver, r
   if (!approver || status !== "review") return null;
   return <section className={`${card} space-y-3 p-4`} aria-label="Complete review">
     <h3 className="text-base font-semibold text-zinc-950">Complete Review</h3>
-    <p className="text-xs text-zinc-600">Excluded targets will remain Needs price check after this Brand baseline is activated. Unmatched Supplier items do not block completion and create no Products.</p>
+    <p className="text-xs text-zinc-600">{partialSource ? `Only the Families covered by ${partialSource} are checked. Other Families remain covered by other Supplier sources or need separate coverage. Excluded targets will remain Needs price check. Unmatched Supplier items do not block completion and create no Products.` : "Excluded targets will remain Needs price check after this Brand baseline is activated. Unmatched Supplier items do not block completion and create no Products."}</p>
     {statusLine}
     {!checked ? <p className="text-xs text-zinc-600">Checking whether this review can be completed…</p> : readiness?.issue ? <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">{readiness.issue}</p> : readiness && !readiness.ready ? <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">{readiness.blocking} {readiness.blocking === 1 ? "item needs" : "items need"} attention before you can complete.{reviewHref ? <> <Link href={reviewHref} className="underline">Review items</Link></> : null}</p>
       : readiness ? <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">Ready: {readiness.checkedTemplates} {readiness.checkedTemplates === 1 ? "family" : "families"} will be marked checked; {readiness.excludedTemplates} stay unchecked because of source exclusions.</p> : <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">Readiness could not be checked. Try again.</p>}
     <div className="flex flex-wrap gap-2">
-      <button type="button" disabled={busy || !readiness?.ready} className={primary} onClick={() => void run(async () => { const result = await completeSupplierPriceReview(batchId); setReadiness(null); setMessage(`${result.message} ${result.title} · baseline ${result.baseline_date ?? "not dated"} · ${result.checked_templates} Templates marked checked · ${result.excluded_templates} left unchecked because of source exclusions.`); router.refresh(); })}>Complete Brand Review</button>
+      <button type="button" disabled={busy || !readiness?.ready} className={primary} onClick={() => void run(async () => { const result = await completeSupplierPriceReview(batchId); setReadiness(null); setMessage(partialSource ? `${partialSource} review completed. ${result.checked_templates} covered ${result.checked_templates === 1 ? "Family was" : "Families were"} checked. Other Families remain covered by other Supplier sources or need separate coverage.` : `${result.message} ${result.title} · baseline ${result.baseline_date ?? "not dated"} · ${result.checked_templates} Templates marked checked · ${result.excluded_templates} left unchecked because of source exclusions.`); router.refresh(); })}>{partialSource ? `Complete ${partialSource} review` : "Complete Brand Review"}</button>
       <button type="button" disabled={busy} className={button} onClick={() => void run(async () => { setReadiness(await supplierCompletionStatus(batchId)); setChecked(true); })}>Check again</button>
     </div>
     {readiness ? <details><summary className="cursor-pointer text-xs">View technical readiness details</summary><dl className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">{completionLabels.map(([key, label]) => <div key={key} className={`rounded border p-2 ${readiness.counts[key] > 0 && !["resolved", "excluded_from_source", "unmatched", "referenced_companion"].includes(key) ? "border-amber-300 bg-amber-50" : "border-zinc-200"}`}><dt>{label}</dt><dd className="font-semibold tabular-nums">{readiness.counts[key]}</dd></div>)}</dl></details> : null}
