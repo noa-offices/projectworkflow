@@ -113,13 +113,13 @@ function ConflictRow({ conflict, brandId, approver }: { conflict: SupplierCovera
 }
 
 /** Brand overview: several current sources are normal; uncovered Families and conflicts are configuration issues, not pricing errors. */
-export function SupplierSourcesOverview({ definitions, brandId, approver, editCoverageHref }: { definitions: SupplierCoverageDefinition[]; brandId: string; approver: boolean; editCoverageHref: (id: string) => string }) {
+export function SupplierSourcesOverview({ definitions, brandId, approver, editCoverageHrefs }: { definitions: SupplierCoverageDefinition[]; brandId: string; approver: boolean; editCoverageHrefs: Record<string, string> }) {
   const active = definitions.filter((definition) => definition.isActive);
   if (!active.length) return null;
   return <section className={`${card} space-y-2 p-4`} aria-label="Supplier sources"><h3 className="text-base font-semibold text-zinc-950">Current Supplier sources</h3>
     <ul className="divide-y divide-zinc-100 text-sm">{active.map((definition) => <li key={definition.id} className="flex flex-wrap items-baseline justify-between gap-2 py-2"><span className="font-semibold text-zinc-950">{definition.name}</span>
       <span className="text-xs text-zinc-600">{definition.families.length} {definition.families.length === 1 ? "Family" : "Families"} · {definition.latest ? `Latest: ${definition.latest.title}` : "No price list yet"}</span>
-      <span className={`${badge} ${definition.latest ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-zinc-200 bg-zinc-50 text-zinc-700"}`}>{definition.latest ? "Current" : "Waiting for a price list"}</span>{approver ? <SupplierSourceMenu brandId={brandId} definition={definition} editCoverageHref={editCoverageHref(definition.id)} /> : null}</li>)}</ul></section>;
+      <span className={`${badge} ${definition.latest ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-zinc-200 bg-zinc-50 text-zinc-700"}`}>{definition.latest ? "Current" : "Waiting for a price list"}</span>{approver ? <SupplierSourceMenu brandId={brandId} definition={definition} editCoverageHref={editCoverageHrefs[definition.id]} /> : null}</li>)}</ul></section>;
 }
 function SupplierSourceMenu({ brandId, definition, editCoverageHref }: { brandId: string; definition: SupplierCoverageDefinition; editCoverageHref: string }) {
   const router = useRouter(); const [mode, setMode] = useState<"" | "rename" | "archive" | "delete">(""); const [name, setName] = useState(definition.name); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");

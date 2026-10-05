@@ -157,9 +157,9 @@ test("read-only users see category, codes, status and source but get no checkbox
 });
 
 test("Brand overview lists several current sources without per-Family cards", () => {
-  const out = html(coverage.SupplierSourcesOverview, { brandId: "b", approver: true, editCoverageHref: () => "/coverage", definitions: [{ id: "d1", name: "LAS Furniture", profileId: null, profileTitle: null, isActive: true, canDelete: false, families: [{ id: "a", name: "MONOLITH" }, { id: "b", name: "OXI_P" }], latest: { id: "s1", title: "October 2026", receivedAt: null } }, { id: "d2", name: "LAS Chairs", profileId: null, profileTitle: null, isActive: true, canDelete: true, families: [{ id: "c", name: "LEAD" }], latest: null }] });
+  const out = html(coverage.SupplierSourcesOverview, { brandId: "b", approver: true, editCoverageHrefs: { d1: "/coverage/d1", d2: "/coverage/d2" }, definitions: [{ id: "d1", name: "LAS Furniture", profileId: null, profileTitle: null, isActive: true, canDelete: false, families: [{ id: "a", name: "MONOLITH" }, { id: "b", name: "OXI_P" }], latest: { id: "s1", title: "October 2026", receivedAt: null } }, { id: "d2", name: "LAS Chairs", profileId: null, profileTitle: null, isActive: true, canDelete: true, families: [{ id: "c", name: "LEAD" }], latest: null }] });
   assert.match(out, /Current Supplier sources/); assert.match(out, /LAS Furniture/); assert.match(out, /2 Families/); assert.match(out, /Latest: October 2026/); assert.match(out, /LAS Chairs/); assert.match(out, /Waiting for a price list/);
-  assert.match(out, /Rename|Edit coverage|Archive|Delete/); assert.match(out, /Cannot delete a source with imported price lists or review history/); assert.doesNotMatch(out, /Assign source|Uncovered Families/);
+  assert.match(out, /Rename|Edit coverage|Archive|Delete/); assert.match(out, /href="\/coverage\/d1"/); assert.match(out, /Cannot delete a source with imported price lists or review history/); assert.doesNotMatch(out, /Assign source|Uncovered Families/);
 });
 
 test("History shows the source name; Start review is blocked while coverage is unconfirmed or in conflict", () => {
