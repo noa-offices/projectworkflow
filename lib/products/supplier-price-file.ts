@@ -46,7 +46,10 @@ export async function parseSupplierFile(file: File, sheetNames?: string[]): Prom
       // Retain typed/formula values rather than fabricating text codes or trusting cached formulas.
       return value ?? null;
     }));
-    rows.push(...records(headers, values, sheet.name));
+    // A supplier sheet can contain tens of thousands of rows.  Do not pass
+    // those records as function arguments: V8 has an argument-count limit
+    // and `push(...records)` throws RangeError before the import can start.
+    for (const record of records(headers, values, sheet.name)) rows.push(record);
   }
   return rows;
 }

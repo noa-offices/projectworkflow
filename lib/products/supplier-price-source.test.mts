@@ -60,6 +60,13 @@ test("actual XLSX text/numeric cells are preserved and PDF rejected", async () =
   await assert.rejects(parseSupplierFile(new File(["pdf"], "source.pdf")), /not supported/);
   await assert.rejects(parseSupplierFile(new File([buffer], "source.xlsx"), ["Missing"]), /sheet is missing/);
 });
+test("large XLSX sheets append records without spreading them into function arguments", async () => {
+  const workbook = new ExcelJS.Workbook(); const sheet = workbook.addWorksheet("Chairs"); sheet.addRow(["CODE", "PRICE"]);
+  for (let index = 0; index < 46_108; index++) sheet.addRow([`CHAIR-${String(index).padStart(6, "0")}`, index + 1]);
+  const buffer = await workbook.xlsx.writeBuffer();
+  const rows = await parseSupplierFile(new File([buffer], "las-chairs.xlsx"));
+  assert.equal(rows.length, 46_108); assert.equal(rows[0].values.CODE, "CHAIR-000000"); assert.equal(rows.at(-1)?.values.CODE, "CHAIR-046107");
+});
 for (const count of [100, 500, 2500, 46108]) test(`${count} source rows: bounded chunks, complete unit counts, all identities`, () => {
   const rows = Array.from({ length: count }, (_value, index) => ({ ...row(String(index).padStart(6, "0") + "144", String(index).padStart(6, "0")), unit_key: `row-${index}`, row_number: index + 2 }));
   const chunks = supplierImportChunks(rows, 500, 600_000, profile); assert.equal(chunks.flat().length, count); assert.ok(chunks.every((chunk) => chunk.length * 2 <= 500)); assert.equal(identities(rows).length, count);
