@@ -33,7 +33,9 @@ function pgClient(db: PGlite) {
         }
         if (embed) for (const row of rows) row.supplier_price_decisions = (await db.query("select decision,note from public.supplier_price_decisions where batch_id=$1 and key=$2", [row.batch_id, row.key])).rows[0] ?? null;
         return rows.map((row) => {
-          const copy = { ...row };
+          const copy: Record<string, unknown> = { ...row };
+          // PostgREST returns dates and timestamps as strings; PGlite returns Date objects.
+          for (const field of ["effective_from", "created_at", "received_at", "completed_at"]) if (copy[field] instanceof Date) copy[field] = (copy[field] as Date).toISOString().slice(0, field === "effective_from" ? 10 : undefined);
           for (const field of ["default_unit_price", "unit_price"]) if (typeof copy[field] === "string") copy[field] = Number(copy[field]);
           if (table === "product_templates" && copy.pricing_version !== undefined) copy.pricing_version = String(copy.pricing_version);
           return copy;
@@ -452,5 +454,33 @@ test("two sources of one Brand each resolve their own latest review; one card pe
     // Chairs has no review yet: its own card offers the start, and Furniture's review does not hide it.
     const chairs = cards.find((card) => card.sourceName === "LAS Chairs");
     if (chairs) assert.notEqual(chairs.batchId, furnitureBatch.id);
+  });
+});
+
+// ---- Phase 1: cards and Product source lookup use the applicable version, never a future one ----
+test("price list cards and the Product source lookup use the applicable version, never a future one", async () => {
+  await withDb(async (f) => {
+    await f.db.exec(`insert into public.supplier_source_versions(id,brand_id,title,filename,file_hash,source_type,currency,basis,profile,status,expected_rows,expected_cells,expected_chunks,created_by,definition_id,effective_from,created_at)
+      values('${id(37)}','${brand}','Future list','f2.xlsx','${"e".repeat(64)}','xlsx','EUR','list','{}','imported',1,1,1,'${user}','${furniture}','2999-01-01', now() + interval '1 hour');`);
+    const definitions = (await supplierCoverageOverview(f.client, brand)).definitions;
+    const cards = await supplierPriceListCards(f.client, brand, definitions);
+    const furnitureCard = cards.find((card) => card.sourceName === "LAS Furniture");
+    assert.equal(furnitureCard?.sourceId, furnitureSource); // the current list, not the newer future one
+    const lookup = await supplierProductSourceLookup(f.client, { brandId: brand, definitionId: furniture, code: "F1" });
+    assert.equal(lookup.source?.id, furnitureSource);
+    assert.equal(lookup.identities.length, 1);
+    // Once the date passes, the newer list becomes the applicable one without any manual step.
+    await f.db.exec("update public.supplier_source_versions set effective_from='2000-01-01' where id=" + "'" + id(37) + "'" + "; update public.supplier_source_versions set effective_from='1999-01-01' where id='" + furnitureSource + "'");
+    assert.equal((await supplierProductSourceLookup(f.client, { brandId: brand, definitionId: furniture, code: "F1" })).source?.id, id(37));
+  });
+});
+
+test("a definition with only a future list has no applicable version: no current card, no lookup source", async () => {
+  await withDb(async (f) => {
+    await f.db.exec(`update public.supplier_source_versions set effective_from='2999-01-01' where id='${furnitureSource}';`);
+    const definitions = (await supplierCoverageOverview(f.client, brand)).definitions;
+    assert.equal((await supplierPriceListCards(f.client, brand, definitions)).some((card) => card.sourceName === "LAS Furniture"), false);
+    const lookup = await supplierProductSourceLookup(f.client, { brandId: brand, definitionId: furniture, code: "F1" });
+    assert.equal(lookup.source, null); assert.equal(lookup.multiplicity, 0); // never silently the future list
   });
 });

@@ -13,7 +13,7 @@ import { latestBrandPriceListUpdate, productTemplatePriceCheckState, type BrandP
 const migrations = await Promise.all([
   "20261002060146_pricing_identity_version_foundation", "20261002082357_supplier_price_source_review", "20261002124625_supplier_source_finish_evidence",
   "20261004090000_supplier_confirmed_unchanged_decision", "20261004120000_supplier_review_completion",
-  "20261005090000_supplier_source_definitions", "20261005120000_supplier_batch_coverage_snapshot", "20261005150000_supplier_coverage_completion_mode",
+  "20261005090000_supplier_source_definitions", "20261005120000_supplier_batch_coverage_snapshot", "20261005150000_supplier_coverage_completion_mode", "20261006240000_supplier_completion_effective_date_guard",
 ].map((name) => readFile(new URL(`../../supabase/migrations/${name}.sql`, import.meta.url), "utf8")));
 const id = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")}`;
 const user = id(1), brand = id(2), source = id(3), batch = id(4), linked = id(5), component = id(6);
@@ -334,6 +334,40 @@ test("a failure during partial-coverage completion rolls everything back, includ
     await assert.rejects(f.complete(), /batch write failed/);
     assert.deepEqual(await f.state(), before);
     assert.deepEqual(await modes(f), ["complete"]); // only the pre-existing draft; nothing created
+  } finally { await f.db.close(); }
+});
+
+
+// ---- Phase 1: effective-date guard on completion ----
+test("a future-dated price list can be reviewed but not completed: rejected, nothing written, Products not stamped", async () => {
+  const f = await fixture();
+  try {
+    await f.db.exec("update public.supplier_source_versions set effective_from='2999-01-01'");
+    assert.equal((await f.readiness()).ready, true); // review and readiness remain allowed
+    const before = await f.state();
+    await assert.rejects(f.complete(), /becomes applicable on 01 Jan 2999\. It can be reviewed now and completed on or after that date\./);
+    assert.deepEqual(await f.state(), before); // no Brand update, no stamps, no pricing or version change, no batch status change
+  } finally { await f.db.close(); }
+});
+
+test("completion on the effective date and after it succeeds, and an undated list still completes", async () => {
+  for (const setup of ["update public.supplier_source_versions set effective_from=(now() at time zone 'Asia/Dubai')::date", "update public.supplier_source_versions set effective_from='2000-01-01'", "update public.supplier_source_versions set effective_from=null"]) {
+    const f = await fixture();
+    try {
+      await f.db.exec(setup);
+      const result = await f.complete();
+      assert.equal(result.checked_templates, 2, setup);
+      assert.equal((await f.state()).batch[0].status, "completed", setup);
+    } finally { await f.db.close(); }
+  }
+});
+
+test("the effective-date guard does not change completion-mode semantics for a valid completion", async () => {
+  const f = await fixture();
+  try {
+    await f.db.exec("update public.supplier_source_versions set effective_from='2000-01-01'");
+    await f.complete();
+    assert.deepEqual((await f.state()).updates.map((update) => (update as { coverage_mode: string }).coverage_mode), ["complete"]);
   } finally { await f.db.close(); }
 });
 

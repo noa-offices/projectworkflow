@@ -753,10 +753,10 @@ async function definitionFamilies(client: SupabaseClient, definitionId: string) 
 export async function supplierSourceDefinitionsForBrand(client: SupabaseClient, brandId: string): Promise<SupplierSourceDefinitionSummary[]> {
   const [definitions, versions] = await Promise.all([
     supplierRows<DefinitionRow>(client, "supplier_source_definitions", "id,brand_id,name,profile_id,is_active", { brand_id: brandId }, "name"),
-    supplierRows<{ id: string; title: string; received_at: string | null; created_at: string; definition_id: string | null }>(client, "supplier_source_versions", "id,title,received_at,created_at,definition_id", { brand_id: brandId, status: "imported" }, "created_at"),
+    supplierRows<{ id: string; title: string; received_at: string | null; created_at: string; definition_id: string | null; status: string; effective_from: string | null }>(client, "supplier_source_versions", "id,title,received_at,created_at,definition_id,status,effective_from", { brand_id: brandId, status: "imported" }, "created_at"),
   ]);
   return Promise.all(definitions.map(async (definition) => {
-    const latest = versions.filter((version) => version.definition_id === definition.id).at(-1);
+    const latest = resolveApplicableSupplierSourceVersion(versions.filter((version) => version.definition_id === definition.id), supplierBusinessDate());
     return { id: definition.id, name: definition.name, profileId: definition.profile_id, isActive: definition.is_active, confirmedFamilyCount: (await definitionFamilies(client, definition.id)).length,
       latestSource: latest ? { id: latest.id, title: latest.title, receivedAt: latest.received_at } : null };
   }));
@@ -979,7 +979,7 @@ export async function supplierProductSourceLookup(client: SupabaseClient, input:
   const normalized = normalizeManufacturerCode(input.code ?? ""); const wanted = comparisonCode(normalized);
   if (!wanted) throw Error("Enter a manufacturer code.");
   const versions = await supplierRows<SourceVersion & { created_at: string }>(client, "supplier_source_versions", "*", { brand_id: input.brandId, definition_id: definition.id, status: "imported" }, "created_at");
-  const current = versions.at(-1);
+  const current = resolveApplicableSupplierSourceVersion(versions, supplierBusinessDate());
   const empty = { definition: { id: definition.id, name: definition.name, brand_id: definition.brand_id }, code: normalized, multiplicity: 0, ambiguous: false, identities: [] };
   if (!current) return { ...empty, source: null };
   const found = await client.from("supplier_source_identities").select("key,code,data").eq("source_id", current.id).in("code", [...new Set([normalized, wanted])]).order("key").returns<Array<{ key: string; code: string; data: SourceIdentity }>>();
@@ -1014,9 +1014,12 @@ export function supplierPriceListState(input: { hasSource: boolean; hasCoverage:
 export async function supplierPriceListCards(client: SupabaseClient, brandId: string, definitions: SupplierCoverageDefinition[]): Promise<SupplierPriceListCard[]> {
   const versions = await supplierRows<SourceVersion & { created_at: string; definition_id: string | null; rows_compacted_at?: string | null }>(client, "supplier_source_versions", "*", { brand_id: brandId, status: "imported" }, "created_at");
   const batches = await supplierRows<{ id: string; source_id: string; status: string; scope: string; created_at: string }>(client, "supplier_price_batches", "id,source_id,status,scope,created_at", { brand_id: brandId }, "created_at");
-  const latestVersion = new Map<string, (typeof versions)[number]>();
-  for (const version of versions) if (version.definition_id) latestVersion.set(version.definition_id, version);
-  const current = [...latestVersion.values(), ...versions.filter((version) => !version.definition_id)];
+  // The applicable version per definition (by effective date, never by import order); legacy versions without a definition stay listed as before.
+  const businessDate = supplierBusinessDate();
+  const byDefinition = new Map<string, typeof versions>();
+  for (const version of versions) if (version.definition_id) byDefinition.set(version.definition_id, [...(byDefinition.get(version.definition_id) ?? []), version]);
+  const current = [...byDefinition.values()].flatMap((group) => { const applicable = resolveApplicableSupplierSourceVersion(group, businessDate); return applicable ? [applicable] : []; })
+    .concat(versions.filter((version) => !version.definition_id));
   const cards: SupplierPriceListCard[] = [];
   for (const version of current) {
     const definition = definitions.find((item) => item.id === version.definition_id);
@@ -1030,4 +1033,30 @@ export async function supplierPriceListCards(client: SupabaseClient, brandId: st
       state: supplierPriceListState({ hasSource: true, hasCoverage, batchStatus: batch?.status ?? null, unresolved }), unresolved, unchanged, changed });
   }
   return cards.sort((a, b) => (a.sourceName ?? "~").localeCompare(b.sourceName ?? "~") || a.title.localeCompare(b.title));
+}
+
+// ---- Phase 1: applicable Supplier Source Version by effective date (one helper for every current-version reader). ----
+/** The business date in Dubai (UAE), as YYYY-MM-DD. Server code must not use the UTC date near midnight. */
+export function supplierBusinessDate(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dubai", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+}
+/**
+ * The version that is operative today: imported, not archived, and effective on or before the business date
+ * (an undated version is immediately applicable). Among applicable versions the latest effective date wins; undated
+ * versions rank below dated ones; then the newest import, then id. Future-dated versions are never returned.
+ */
+export function resolveApplicableSupplierSourceVersion<T extends { id: string; status: string; effective_from: string | null; created_at: string }>(versions: T[], businessDate: string): T | null {
+  const applicable = versions.filter((version) => version.status === "imported" && (!version.effective_from || version.effective_from <= businessDate));
+  const sorted = [...applicable].sort((a, b) => {
+    const dated = (b.effective_from ?? "").localeCompare(a.effective_from ?? "");
+    if (dated !== 0) return dated;
+    const created = b.created_at.localeCompare(a.created_at);
+    return created !== 0 ? created : b.id.localeCompare(a.id);
+  });
+  return sorted[0] ?? null;
+}
+/** Imported versions that become operative after the business date, earliest first. Kept discoverable as "upcoming"; never current. */
+export function upcomingSupplierSourceVersions<T extends { status: string; effective_from: string | null }>(versions: T[], businessDate: string): T[] {
+  return versions.filter((version) => version.status === "imported" && version.effective_from !== null && version.effective_from > businessDate)
+    .sort((a, b) => (a.effective_from ?? "").localeCompare(b.effective_from ?? ""));
 }
