@@ -7,7 +7,7 @@ import ts from "typescript";
 import { PGlite } from "@electric-sql/pglite";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  SUPPLIER_BULK_LIMIT, supplierConfirmUnchangedPrice, supplierBrandTargets, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierBulkExcludeMissing, supplierCompleteReview, supplierFamilyOverview, supplierFamilyRows,
+  SUPPLIER_BULK_LIMIT, supplierConfirmUnchangedPrice, supplierBrandTargets, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierBulkExcludeMissing, supplierCompleteReview, supplierFamilyOverview, supplierFamilyRows, familyTierPanel, supplierWrite,
 } from "./supplier-price-repository.js";
 import type { PriceMatch, PriceTarget, SourceIdentity } from "./supplier-price-contracts.js";
 
@@ -130,6 +130,154 @@ async function fixture({ withAttention = true }: { withAttention?: boolean } = {
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 const overviewOf = async (f: Fixture) => supplierFamilyOverview(f.client, batch);
+
+test("atomic dimension replacement retains ID/scope, rolls back invalid changes, and leaves pricing and batches untouched", async () => {
+  const f = await fixture();
+  try {
+    await f.db.exec(await read("20261006054910_supplier_dimension_atomic_replace"));
+    await f.db.query("update product_templates set category_pricing=$1 where id=$2", [JSON.stringify([{ id: "tier-group", price_columns: [{ id: "b", label: "Cat B", dimension_code: "cat_b" }, { id: "h", label: "Cat H", dimension_code: "cat_h" }], items: [{ id: "tier-row", supplier_price_list_code: "LEAD", prices: { b: 100, h: 110 } }] }]), alpha]);
+    const targets = (await supplierBrandTargets(f.client, brand)).targets;
+    const target = targets.find((item) => item.dimension === "cat_h")!;
+    const base = { brand_id: brand, template_id: alpha, group_id: "tier-group", raw_labels: ["H"], finish_codes: [], dimension_code: "cat_b" };
+    const created = await supplierWrite(f.client, "dimension", base);
+    const before = await f.snapshot();
+    const batchesBefore = (await f.db.query("select * from supplier_price_batches")).rows;
+    const matchesBefore = (await f.db.query("select * from supplier_price_matches order by key")).rows;
+    const ruleBefore = (await f.db.query("select * from supplier_dimension_vocabulary where id=$1", [created.id])).rows[0];
+    const replace = { ...base, id: created.id, dimension_code: "cat_h", target };
+    for (const invalid of [{ ...replace, brand_id: id(999) }, { ...replace, dimension_code: "cat_invalid" }, { ...replace, group_id: "wrong" }, { ...replace, raw_labels: [] }, { ...replace, target: { ...target, dimension: "cat_invalid" }, dimension_code: "cat_invalid" }]) {
+      await assert.rejects(supplierWrite(f.client, "dimension_replace", invalid));
+      assert.deepEqual((await f.db.query("select * from supplier_dimension_vocabulary where id=$1", [created.id])).rows[0], ruleBefore);
+    }
+    await f.db.exec("update permissions set can_approve=false");
+    await assert.rejects(supplierWrite(f.client, "dimension_replace", replace), /insufficient_privilege/);
+    await f.db.exec("update permissions set can_approve=true");
+    await f.db.exec("create function fail_mapping_update() returns trigger language plpgsql as $$ begin raise exception 'mapping update failed'; end $$; create trigger fail_mapping before update on supplier_dimension_vocabulary for each row execute function fail_mapping_update();");
+    await assert.rejects(supplierWrite(f.client, "dimension_replace", replace), /mapping update failed/);
+    assert.deepEqual((await f.db.query("select * from supplier_dimension_vocabulary where id=$1", [created.id])).rows[0], ruleBefore);
+    await f.db.exec("drop trigger fail_mapping on supplier_dimension_vocabulary");
+    assert.equal((await supplierWrite(f.client, "dimension_replace", replace)).id, created.id);
+    const rules = (await f.db.query<{ id: string; dimension_code: string; template_id: string; group_id: string; confirmed_by: string; is_active: boolean }>("select * from supplier_dimension_vocabulary")).rows;
+    assert.equal(rules.length, 1); assert.deepEqual([rules[0].id, rules[0].dimension_code, rules[0].template_id, rules[0].group_id, rules[0].confirmed_by, rules[0].is_active], [created.id, "cat_h", alpha, "tier-group", user, true]);
+    // Both optional scopes are also valid at Brand level.
+    const global = await supplierWrite(f.client, "dimension", { ...base, template_id: undefined, group_id: undefined, raw_labels: ["GLOBAL"] });
+    await supplierWrite(f.client, "dimension_replace", { ...base, id: global.id, template_id: undefined, group_id: undefined, raw_labels: ["GLOBAL"], dimension_code: "cat_h", target });
+    await supplierWrite(f.client, "archive_dimension", { id: global.id });
+    assert.equal((await f.db.query<{ is_active: boolean }>("select is_active from supplier_dimension_vocabulary where id=$1", [global.id])).rows[0].is_active, false);
+    await assert.rejects(supplierWrite(f.client, "dimension_replace", { ...replace, id: global.id }));
+    assert.deepEqual(await f.snapshot(), before);
+    assert.deepEqual((await f.db.query("select * from supplier_price_batches")).rows, batchesBefore);
+    assert.deepEqual((await f.db.query("select * from supplier_price_matches order by key")).rows, matchesBefore);
+  } finally { await f.db.close(); }
+});
+
+test("eight LAS-style H rows become one tier task; mapped scopes, suggestions and readonly panel remain accurate", async () => {
+  const f = await fixture();
+  try {
+    const target = { ...(await supplierBrandTargets(f.client, brand)).targets[0], dimension: "cat_h", group_id: "tiers" };
+    const labels = ["B", "C", "D", "E", "F", "G", "I"];
+    const targets = [...labels, "H"].map((label) => ({ ...target, key: label, dimension: `cat_${label.toLowerCase()}` }));
+    const rules = labels.map((label, index) => ({ id: id(70 + index), brand_id: brand, raw_labels: [label], finish_codes: [], dimension_code: `cat_${label.toLowerCase()}`, ...(index === 1 ? { template_id: alpha } : index === 2 ? { template_id: alpha, group_id: "tiers" } : {}) }));
+    const matches: PriceMatch[] = Array.from({ length: 8 }, (_, index) => ({ key: `h-${index}`, source: { key: `h-${index}`, code: `1410${index}`, dimension: "H", raw_dimension: "H", finishes: [], price_field: "unit_price", currency: "EUR", price: 110, issues: [], row_keys: [] }, targets: [target], classification: "needs_dimension_mapping", candidate_shared: false }));
+    const before = structuredClone(matches);
+    const panel = familyTierPanel(matches, targets, rules, alpha);
+    assert.equal(panel.unresolved.length, 1); assert.equal(panel.unresolved[0].label, "H"); assert.equal(panel.unresolved[0].affected, 8); assert.deepEqual(panel.unresolved[0].dimensions, targets.map((item) => item.dimension).sort());
+    assert.equal(panel.mapped.length, 7); assert.deepEqual(panel.mapped.slice(0, 3).map((item) => item.scope), ["Brand", "Template", "Group"]);
+    const { createElement } = await import("react"); const { renderToStaticMarkup } = await import("react-dom/server");
+    const ui = await loadTestModule<typeof import("../../components/products/supplier-family-review.js")>("../../components/products/supplier-family-review.tsx", { "next/link": { default: ({ children, href }: { children: unknown; href: string }) => createElement("a", { href }, children as never) }, "next/navigation": { useRouter() { return { refresh() {} }; } }, "@/app/products/price-updates/supplier-sources/actions": {} });
+    assert.equal(ui.suggestSupplierTier("H", panel.unresolved[0].dimensions), "cat_h"); assert.equal(ui.suggestSupplierTier("J", ["cat_j", "cat_z"]), "cat_j"); assert.equal(ui.suggestSupplierTier("H", ["cat_b"]), ""); assert.equal(ui.suggestSupplierTier("H", ["cat_h", "tier_h"]), "");
+    const forSource = (value: typeof panel) => ({ unmapped: value.unresolved.filter((task) => !task.hasRule).map((task) => ({ ...task, scopeName: "LEAD / Upholstery pricing", finishLabel: "Supplier finishes" })), ambiguous: [], mapped: value.mapped.map((item) => ({ ...item, label: item.rule.raw_labels.join(", "), scopeName: item.scope === "Brand" ? "Brand" : item.scope === "Template" ? "LEAD" : "LEAD / Upholstery pricing" })) });
+    const html = (approver: boolean) => renderToStaticMarkup(createElement(ui.SupplierTierMappingPanel, { panel: forSource(panel), brandId: brand, sourceId: source, approver }));
+    assert.match(html(true), /1 unmapped/); assert.match(html(true), /Affects 8 Product rows/); assert.match(html(true), /value="cat_h" selected=""/); assert.match(html(true), /Mapped Supplier tiers \(7\)/); assert.doesNotMatch(html(true), /<details[^>]*open/);
+    for (const text of [">Save mapping<", ">Edit<", ">Unmap<", "Scope: Brand", "Scope: LEAD", "LEAD / Upholstery pricing", "View affected codes"]) assert.ok(html(true).includes(text), text);
+    for (const text of [">Save mapping<", ">Edit<", ">Unmap<"]) assert.ok(!html(false).includes(text), text);
+    const mapped = familyTierPanel(matches, targets, [...rules, { id: id(90), brand_id: brand, template_id: alpha, group_id: "tiers", raw_labels: ["H"], finish_codes: [], dimension_code: "cat_h" }], alpha);
+    assert.equal(mapped.unresolved[0].mappedDimension, "cat_h");
+    const mappedHtml = renderToStaticMarkup(createElement(ui.SupplierTierMappingPanel, { panel: forSource(mapped), brandId: brand, sourceId: source, approver: true }));
+    assert.doesNotMatch(mappedHtml, />Save mapping</); assert.deepEqual(matches, before);
+    const component = await readFile(new URL("../../components/products/supplier-family-review.tsx", import.meta.url), "utf8");
+    assert.match(component, /replaceSupplierDimension\(rule.id, brandId, dimension\)/); assert.match(component, /archiveSupplierDimension\(rule.id\)/); assert.match(component, /window.confirm/); assert.match(component, /refreshSupplierReviewAfterMapping/); assert.doesNotMatch(component, /cat_h|supplier_source_rows|supplier_source_cells/);
+    const familyBody = component.slice(component.indexOf("export function SupplierFamilyTable")); assert.doesNotMatch(familyBody, /<SupplierTierMappingPanel|saveSupplierDimension|Save mapping/);
+    const page = await readFile(new URL("../../app/products/price-updates/supplier-sources/page.tsx", import.meta.url), "utf8");
+    assert.ok(page.indexOf("{sourceSummary}") < page.indexOf("<SupplierTierMappingPanel")); assert.ok(page.indexOf("<SupplierTierMappingPanel") < page.indexOf("{main}"));
+  } finally { await f.db.close(); }
+});
+
+test("panel saves only on confirmation; Edit calls atomic replacement and Unmap confirms archive", async () => {
+  const calls: unknown[][] = [];
+  let state: unknown[] = [], cursor = 0;
+  const ui = await loadTestModule<typeof import("../../components/products/supplier-family-review.js")>("../../components/products/supplier-family-review.tsx", {
+    react: { useState(initial: unknown) { const index = cursor++; if (!(index in state)) state[index] = typeof initial === "function" ? initial() : initial; return [state[index], (value: unknown) => { state[index] = value; }]; } },
+    "next/link": {}, "next/navigation": { useRouter() { return { refresh() {} }; } },
+    "@/app/products/price-updates/supplier-sources/actions": {
+      async saveSupplierDimension(...args: unknown[]) { calls.push(["save", ...args]); },
+      async replaceSupplierDimension(...args: unknown[]) { calls.push(["replace", ...args]); },
+      async archiveSupplierDimension(...args: unknown[]) { calls.push(["archive", ...args]); },
+    },
+  });
+  type Element = { type: unknown; props: Record<string, unknown> };
+  const find = (node: unknown, predicate: (element: Element) => boolean): Element | undefined => {
+    if (Array.isArray(node)) { for (const child of node) { const found = find(child, predicate); if (found) return found; } return; }
+    if (!node || typeof node !== "object" || !("props" in node)) return;
+    const element = node as Element;
+    return predicate(element) ? element : find(element.props.children, predicate);
+  };
+  const render = (element: Element) => { cursor = 0; return (element.type as (props: unknown) => unknown)(element.props); };
+  const click = async (node: unknown, label: string) => { const button = find(node, (element) => element.type === "button" && element.props.children === label); assert.ok(button, label); (button.props.onClick as () => void)(); await new Promise<void>((resolve) => setImmediate(resolve)); };
+  const panel = ui.SupplierTierMappingPanel({ panel: { unmapped: [{ key: "h", label: "H", templateId: alpha, groupId: null, rawLabels: ["H"], finishCodes: [], dimensions: ["cat_h"], mode: "raw_label", affected: 8, codes: ["LEAD"], mappedDimension: null, hasRule: false, scopeName: "LEAD", finishLabel: "Supplier finishes" }], ambiguous: [], mapped: [{ rule: { id: "rule", brand_id: brand, raw_labels: ["B"], finish_codes: [], dimension_code: "cat_b" }, dimensions: ["cat_b", "cat_h"], affected: 1, scope: "Brand", scopeName: "Brand", label: "B" }] }, brandId: brand, sourceId: source, approver: true });
+  const unresolvedElement = find(panel, (element) => typeof element.type === "function" && "task" in element.props)!;
+  const onChangeAction = async (work: () => Promise<unknown>) => { await work(); };
+  const unresolved = { ...unresolvedElement, props: { ...unresolvedElement.props, onChangeAction } };
+  state = []; let node = render(unresolved);
+  assert.deepEqual(calls, [], "suggestion must not save automatically");
+  await click(node, "Save mapping");
+  assert.deepEqual(calls[0], ["save", { brand_id: brand, template_id: alpha, group_id: undefined, raw_labels: ["H"], finish_codes: [], dimension_code: "cat_h" }]);
+  const mappedElement = find(panel, (element) => typeof element.type === "function" && "item" in element.props)!;
+  // This hook harness renders each child separately; its parent state has its own store in React.
+  const mapped = { ...mappedElement, props: { ...mappedElement.props, onChangeAction } };
+  state = []; node = render(mapped); await click(node, "Edit"); node = render(mapped);
+  const select = find(node, (element) => element.type === "select")!;
+  (select.props.onChange as (event: unknown) => void)({ target: { value: "cat_h" } }); node = render(mapped);
+  await click(node, "Save changes"); assert.deepEqual(calls[1], ["replace", "rule", brand, "cat_h"]);
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  try {
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { confirm: () => false } });
+    node = render(mapped); await click(node, "Unmap"); assert.equal(calls.length, 2);
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { confirm: () => true } });
+    await click(node, "Unmap"); assert.deepEqual(calls[2], ["archive", "rule"]);
+  } finally { if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow); else Reflect.deleteProperty(globalThis, "window"); }
+});
+
+test("source panel selects the rebuilt review; no-batch/historical changes stay on future comparisons", async () => {
+  const pushes: string[] = []; const refreshes: unknown[][] = []; let states: unknown[] = [], cursor = 0; let newId: string | null = "new-batch";
+  const ui = await loadTestModule<typeof import("../../components/products/supplier-family-review.js")>("../../components/products/supplier-family-review.tsx", {
+    react: { useState(initial: unknown) { const index = cursor++; states[index] = initial; return [initial, (value: unknown) => { states[index] = value; }]; } },
+    "next/navigation": { useRouter() { return { push(url: string) { pushes.push(url); }, refresh() {} }; } }, "next/link": {},
+    "@/app/products/price-updates/supplier-sources/actions": { async refreshSupplierReviewAfterMapping(...args: unknown[]) { refreshes.push(args); return { id: newId }; } },
+  });
+  const task = { key: "h", label: "H", templateId: alpha, groupId: null, rawLabels: ["H"], finishCodes: [], dimensions: ["cat_h"], mode: "raw_label" as const, affected: 8, codes: [], mappedDimension: null, hasRule: false, scopeName: "LEAD", finishLabel: "Supplier finishes" };
+  let writes = 0;
+  const run = async (batchId: string | undefined, approver: boolean) => {
+    states = []; cursor = 0;
+    const panel = ui.SupplierTierMappingPanel({ panel: { unmapped: [task], mapped: [], ambiguous: [] }, brandId: brand, sourceId: source, batchId, approver });
+    const children = panel.props.children as Array<unknown>;
+    const tasks = children[2] as Array<{ props: { onChangeAction: (work: () => Promise<void>) => Promise<void> } }>;
+    await tasks[0].props.onChangeAction(async () => { writes++; });
+  };
+  await run(batch, true); assert.equal(writes, 1); assert.deepEqual(refreshes[0], [source, batch]);
+  assert.equal(new URL(pushes[0], "https://test.local").searchParams.get("batch"), "new-batch");
+  newId = null; await run(undefined, true); assert.match(String(states[0]), /future comparisons/); assert.equal(pushes.length, 1);
+  await run(batch, false); assert.equal(writes, 2); assert.equal(refreshes.length, 2);
+});
+
+test("source mapping renders friendly scope and collapsed finish lists without UUIDs", async () => {
+  const { createElement } = await import("react"); const { renderToStaticMarkup } = await import("react-dom/server");
+  const ui = await loadTestModule<typeof import("../../components/products/supplier-family-review.js")>("../../components/products/supplier-family-review.tsx", { "next/link": {}, "next/navigation": { useRouter() { return { refresh() {} }; } }, "@/app/products/price-updates/supplier-sources/actions": {} });
+  const finishes = Array.from({ length: 15 }, (_, index) => `FINISH${index}`);
+  const html = renderToStaticMarkup(createElement(ui.SupplierTierMappingPanel, { panel: { unmapped: [], ambiguous: [], mapped: [{ rule: { id: id(80), brand_id: brand, template_id: alpha, group_id: id(81), raw_labels: [], finish_codes: finishes, dimension_code: "melamine" }, dimensions: ["melamine"], affected: 15, scope: "Group", scopeName: "LEAD / Upholstery pricing", label: "Melamine finishes (15)" }] }, brandId: brand, sourceId: source, approver: true }));
+  assert.match(html, /Melamine finishes \(15\)/); assert.match(html, /Scope: LEAD \/ Upholstery pricing/); assert.doesNotMatch(html, /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
+  assert.match(html, /<details[^>]*><summary[^>]*>View finish codes<\/summary>/); assert.doesNotMatch(html, /<details[^>]*open/);
+});
 
 test("families group by Product Template with friendly counts; Supplier-only items stay out of Family counts", async () => {
   const f = await fixture();
@@ -336,20 +484,23 @@ test("selection helpers are bounded; Family UI is simple, gated, and resets sele
     assert.match(renderToStaticMarkup(createElement(ui.SupplierBrandProgress, { overview })), /Families ready<\/dt><dd[^>]*>0 \/ 6/);
     const rows = (await supplierFamilyRows(f.client, batch, alpha, "changed")).rows.slice(0, 3);
     const tabs = (["changed", "same", "missing", "attention"] as const).map((section) => ({ section, label: section, count: 1, href: `/x?section=${section}` }));
-    const table = (props: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(ui.SupplierFamilyTable, { batchId: batch, familyName: "ALPHA SCREEN", section: "changed", tabs, rows, truncated: false, approver: true, batchOpen: true, limit: 50, backHref: "/x", detailsHref: "/x?view=advanced", ...props } as never));
-    assert.equal((table().match(/type="checkbox"/g) ?? []).length, 3); assert.match(table(), />Select all</); assert.match(table(), />Clear selection</); assert.match(table(), /0 selected/); assert.match(table(), /Back to Family Review/);
+    const table = (props: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(ui.SupplierFamilyTable, { batchId: batch, brandId: brand, familyName: "ALPHA SCREEN", section: "changed", tabs, rows, truncated: false, approver: true, batchOpen: true, limit: 50, backHref: "/x", detailsHref: "/x?view=advanced", sourceId: "source", sourceTitle: "February price list", sourceDefinitionName: "LAS Chairs", ...props } as never));
+    assert.equal((table().match(/type="checkbox"/g) ?? []).length, 3); assert.match(table(), />Select all</); assert.match(table(), />Clear selection</); assert.match(table(), /0 selected/); assert.match(table(), /Back to Family Review/); assert.match(table(), /View extracted data/); assert.equal((table().match(/View source/g) ?? []).length, 3); assert.match(table(), /Review details/);
     assert.doesNotMatch(table({ approver: false }), /type="checkbox"/); assert.match(table({ approver: false }), /An approver applies, confirms or excludes items\./);
     assert.doesNotMatch(table({ batchOpen: false }), /type="checkbox"/);
     const attention = (await supplierFamilyRows(f.client, batch, delta1, "attention")).rows;
     const attentionHtml = table({ section: "attention", rows: attention });
-    assert.doesNotMatch(attentionHtml, /type="checkbox"/); assert.match(attentionHtml, /Review details/); assert.match(attentionHtml, /One Supplier item linked to multiple Product prices/); assert.match(attentionHtml, /status=shared/);
+    assert.doesNotMatch(attentionHtml, /type="checkbox"/); assert.match(attentionHtml, /Review details/); assert.match(attentionHtml, /One Supplier item linked to multiple Product prices/); assert.match(attentionHtml, /View extracted data/); assert.match(attentionHtml, /View source/);
+    const same = (await supplierFamilyRows(f.client, batch, alpha, "same")).rows; const missing = (await supplierFamilyRows(f.client, batch, gamma, "missing")).rows;
+    assert.match(table({ section: "same", rows: same }), /Review details/); assert.match(table({ section: "same", rows: same }), /View source/); assert.match(table({ section: "missing", rows: missing }), /Review details/); assert.match(table({ section: "missing", rows: missing }), /View source/); assert.match(table({ section: "missing", rows: missing }), /Not listed/);
     assert.match(table({ section: "same", rows: [] }), /No unchanged prices waiting for confirmation\./);
     // Selection state lives inside the keyed table, so navigating batch, Family or section remounts it with nothing selected.
     const page = await readFile(new URL("../../app/products/price-updates/supplier-sources/page.tsx", import.meta.url), "utf8");
     assert.match(page, /<SupplierFamilyTable key=\{`\$\{batch\.id\}:\$\{family\.template_id\}:\$\{section\}`\}/);
-    assert.match(page, /view === "family"/); assert.match(page, /View in Advanced|Advanced \/ Technical Review|view: "advanced"/); assert.match(page, /Back to Family Review/);
+    assert.match(page, /brandId=\{brand\.id\}/); assert.match(page, /sourceId=\{source\.id\}/); assert.match(page, /view === "family"/); assert.match(page, /View in Advanced|Advanced \/ Technical Review|view: "advanced"/); assert.match(page, /Back to Family Review/);
     const component = await readFile(new URL("../../components/products/supplier-family-review.tsx", import.meta.url), "utf8");
-    assert.match(component, /useState<string\[\]>\(\[\]\)/);
+    assert.match(component, /useState<string\[\]>\(\[\]\)/); assert.match(component, /Supplier review details/); assert.match(component, /sourceDetail\.evidence/); assert.match(component, /sourceDetail\.sourceRowCount/); assert.match(component, /View source/); assert.match(component, /Manage Supplier tier mapping above/); assert.match(component, /supplierSourceInspectorDetails/);
+    assert.match(component, /optionalSupplierRuleId\(task\.templateId\)/); assert.match(component, /optionalSupplierRuleId\(task\.groupId\)/);
   } finally { await f.db.close(); }
 });
 

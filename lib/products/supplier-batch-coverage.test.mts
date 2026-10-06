@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import type { PriceMatch, SourceIdentity, SourceVersion } from "./supplier-price-contracts.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { supplierRefreshReviewAfterMapping, supplierSourceTierPanel } from "./supplier-price-repository.js";
 import { supplierAssignFamiliesToSource, supplierAssignFamilyToSource, supplierFamilyCoverageSetup, supplierBrandMatches, supplierBulkConfirmUnchanged, supplierCompletionReadiness, supplierConfirmCoverage, supplierCoverageOverview, supplierCreateReviewBatch, supplierCreateSourceDefinition, supplierFamilyOverview, supplierLinkSourceDefinition, supplierResolveCoverageConflict, supplierWrite, supplierSourceInspectorDetail, supplierMatchProvenance, supplierProductSourceLookup } from "./supplier-price-repository.js";
 
 const read = (name: string) => readFile(new URL(`../../supabase/migrations/${name}.sql`, import.meta.url), "utf8");
@@ -19,7 +20,7 @@ function pgClient(db: PGlite) {
   const calls: string[] = [];
   const client = {
     from(table: string) {
-      const filters: Array<[string, unknown]> = []; const inFilters: Array<[string, unknown[]]> = []; let order: string | null = null, start = 0, end = 999, embed = false;
+      const filters: Array<[string, unknown]> = []; const inFilters: Array<[string, unknown[]]> = []; const orders: string[] = []; let start = 0, end = 999, embed = false;
       const execute = async () => {
         let rows: Record<string, unknown>[];
         if (table === "product_components") {
@@ -28,7 +29,7 @@ function pgClient(db: PGlite) {
           const params: unknown[] = []; const where: string[] = [];
           for (const [key, value] of filters) { params.push(value); where.push(`"${key}"=$${params.length}`); }
           for (const [key, values] of inFilters) { params.push(values); where.push(`"${key}"=any($${params.length}::text[])`); }
-          rows = (await db.query<Record<string, unknown>>(`select * from public.${table}${where.length ? ` where ${where.join(" and ")}` : ""}${order ? ` order by "${order}"` : ""} limit ${end - start + 1} offset ${start}`, params)).rows;
+          rows = (await db.query<Record<string, unknown>>(`select * from public.${table}${where.length ? ` where ${where.join(" and ")}` : ""}${orders.length ? ` order by ${orders.join(",")}` : ""} limit ${end - start + 1} offset ${start}`, params)).rows;
         }
         if (embed) for (const row of rows) row.supplier_price_decisions = (await db.query("select decision,note from public.supplier_price_decisions where batch_id=$1 and key=$2", [row.batch_id, row.key])).rows[0] ?? null;
         return rows.map((row) => {
@@ -39,8 +40,9 @@ function pgClient(db: PGlite) {
         });
       };
       return { select(columns?: string) { embed = Boolean(columns?.includes("supplier_price_decisions(")); return this; }, eq(key: string, value: unknown) { filters.push([key, value]); return this; }, in(key: string, values: unknown[]) { inFilters.push([key, values]); return this; },
-        order(column: string) { order = column; return this; }, returns() { return this; }, range(from: number, to: number) { start = from; end = to; return this; },
+        order(column: string, options?: { ascending?: boolean }) { orders.push(`"${column}" ${options?.ascending === false ? "desc" : "asc"}`); return this; }, returns() { return this; }, range(from: number, to: number) { start = from; end = to; return this; }, limit(count: number) { end = start + count - 1; return this; },
         async single() { const rows = await execute(); return { data: rows.length === 1 ? rows[0] : null, error: rows.length === 1 ? null : { message: "Record unavailable" } }; },
+        async maybeSingle() { const rows = await execute(); return { data: rows[0] ?? null, error: null }; },
         then(resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) { return execute().then((data) => resolve({ data, error: null }), reject); } };
     },
     async rpc(name: string, args: Record<string, unknown>) {
@@ -100,6 +102,60 @@ const withDb = async (run: (f: Fixture) => Promise<void>) => { const f = await f
 const coverageOf = async (f: Fixture, batchId: string) => (await f.db.query<{ c: string[] | null }>("select coverage_template_ids c from public.supplier_price_batches where id=$1", [batchId])).rows[0].c;
 const templateNames = (matches: Array<{ targets: Array<{ template_name: string }> }>) => [...new Set(matches.flatMap((match) => match.targets.map((target) => target.template_name)))].sort();
 const noBatch = { expected_matches: 0, expected_chunks: 0, title: "x" };
+
+test("mapping refresh creates a new review with identical scope/selection/link/coverage and protects historical/no-batch views", async () => {
+  await withDb(async (f) => {
+    await f.db.query("insert into brand_price_list_updates(id,brand_id,title,currency,status) values($1,$2,'Linked','EUR','draft')", [id(90), brand]);
+    const old = await supplierCreateReviewBatch(f.client, furnitureSource, "selected_templates", [oxi], id(90));
+    const oldBefore = (await f.db.query("select * from supplier_price_batches where id=$1", [old.id])).rows;
+    const matchesBefore = (await f.db.query("select * from supplier_price_matches where batch_id=$1 order by key", [old.id])).rows;
+    const productsBefore = (await f.db.query("select * from product_templates order by id")).rows;
+    const next = await supplierRefreshReviewAfterMapping(f.client, furnitureSource, old.id);
+    assert.ok(next.id); assert.notEqual(next.id, old.id);
+    const row = (await f.db.query<{ scope: string; selected_template_ids: string[]; brand_price_list_update_id: string }>("select * from supplier_price_batches where id=$1", [next.id])).rows[0];
+    assert.deepEqual([row.scope, row.selected_template_ids, row.brand_price_list_update_id], ["selected_templates", [oxi], id(90)]);
+    assert.deepEqual(await coverageOf(f, next.id), await coverageOf(f, old.id));
+    assert.deepEqual((await f.db.query("select * from supplier_price_batches where id=$1", [old.id])).rows, oldBefore);
+    assert.deepEqual((await f.db.query("select * from supplier_price_matches where batch_id=$1 order by key", [old.id])).rows, matchesBefore);
+    assert.deepEqual((await f.db.query("select * from product_templates order by id")).rows, productsBefore);
+    assert.deepEqual(await supplierRefreshReviewAfterMapping(f.client, furnitureSource), { id: null });
+    assert.deepEqual(await supplierRefreshReviewAfterMapping(f.client, furnitureSource, old.id), { id: null });
+    await f.db.query("update supplier_price_batches set status='completed' where id=$1", [next.id]);
+    assert.deepEqual(await supplierRefreshReviewAfterMapping(f.client, furnitureSource, next.id), { id: null });
+    assert.equal((await f.db.query<{ count: number }>("select count(*)::int count from supplier_price_batches")).rows[0].count, 2);
+  });
+});
+
+test("current source panel sees H mapped and F archived independently of the immutable old review", async () => {
+  await withDb(async (f) => {
+    const columns = ["f", "h"].map((label) => ({ id: label, label: `Cat ${label.toUpperCase()}`, dimension_code: `cat_${label}` }));
+    await f.db.query("update product_templates set variant_pricing='[]',category_pricing=$1 where id=$2", [JSON.stringify([{ id: id(80), group_name: "Upholstery pricing", price_columns: columns, items: ["L1", "L2", "L3"].map((code) => ({ id: code, supplier_price_list_code: code, prices: { f: 50, h: 50 } })) }]), lead]);
+    for (const code of ["L1", "L2", "L3"]) await f.db.query("update supplier_source_identities set data=data||$1::jsonb where source_id=$2 and code=$3", [JSON.stringify({ dimension: code === "L1" ? "F" : "H", raw_dimension: code === "L1" ? "F" : "H" }), legacySource, code]);
+    const fRule = await supplierWrite(f.client, "dimension", { brand_id: brand, template_id: lead, group_id: id(80), raw_labels: ["F"], finish_codes: [], dimension_code: "cat_f" });
+    const old = await supplierCreateReviewBatch(f.client, legacySource, "complete", []);
+    const oldMatches = (await f.db.query("select * from supplier_price_matches where batch_id=$1 order by key", [old.id])).rows;
+    const first = await supplierSourceTierPanel(f.client, legacySource); assert.equal(first.unmapped[0].label, "H"); assert.equal(first.unmapped[0].affected, 2);
+    await supplierWrite(f.client, "dimension", { brand_id: brand, raw_labels: ["H"], finish_codes: [], dimension_code: "cat_h" });
+    await supplierWrite(f.client, "archive_dimension", { id: fRule.id });
+    const panel = await supplierSourceTierPanel(f.client, legacySource);
+    assert.deepEqual(panel.unmapped.map((task) => task.label), ["F"]); assert.equal(panel.mapped[0].label, "H"); assert.equal(panel.mapped[0].rule.dimension_code, "cat_h");
+    assert.equal(panel.unmapped[0].scopeName, "LEAD / Upholstery pricing"); assert.equal(panel.unmapped[0].affected, 1);
+    assert.deepEqual((await f.db.query("select * from supplier_price_matches where batch_id=$1 order by key", [old.id])).rows, oldMatches);
+    const next = await supplierRefreshReviewAfterMapping(f.client, legacySource, old.id); assert.ok(next.id);
+    const classifications = (await f.db.query<{ code: string; classification: string }>("select code,classification from supplier_price_matches where batch_id=$1 and code like 'L%' order by code", [next.id])).rows;
+    assert.deepEqual(classifications.map((row) => [row.code, row.classification]), [["L1", "needs_dimension_mapping"], ["L2", "unchanged"], ["L3", "unchanged"]]);
+  });
+});
+
+test("auto rebuild refuses changed coverage instead of silently widening the review", async () => {
+  await withDb(async (f) => {
+    const old = await supplierCreateReviewBatch(f.client, furnitureSource, "complete", []);
+    await f.db.query("delete from supplier_source_definition_families where definition_id=$1 and template_id=$2", [furniture, oxi]);
+    await assert.rejects(supplierRefreshReviewAfterMapping(f.client, furnitureSource, old.id), /coverage changed/);
+    assert.equal((await f.db.query<{ count: number }>("select count(*)::int count from supplier_price_batches")).rows[0].count, 1);
+    assert.deepEqual([...(await coverageOf(f, old.id))!].sort(), [furn, oxi].sort());
+  });
+});
 
 test("a batch from a definition snapshots its confirmed Families inside the database", async () => {
   await withDb(async (f) => {
@@ -322,7 +378,7 @@ test("Inspector reads embedded identity evidence and falls back to source rows o
     await withEvidence(f, furnitureSource, "F1", 7);
     const embedded = await supplierSourceInspectorDetail(f.client, furnitureSource, "id-F1");
     assert.equal(embedded.sourceRowCount, 7); assert.equal(embedded.evidence.length, 5); assert.equal(embedded.moreEvidence, 2);
-    assert.deepEqual(embedded.evidence[0], { articleCode: "F1", fullCode: "F1140", description: "", finishCode: "140", price: 100, currency: "EUR", priceField: "unit_price", dimension: "", sourceRowNumber: 10, sheet: "Arredi", validationWarnings: [] });
+    assert.deepEqual(embedded.evidence[0], { articleCode: "F1", fullCode: "F1140", description: "", finishCode: "140", categoryLabel: "", dimensionLabel: "", rawPrice: "100", price: 100, currency: "EUR", priceField: "unit_price", dimension: "", sourceRowNumber: 10, sheet: "Arredi", validationWarnings: [] });
     assert.deepEqual(embedded.fullCodes, ["F1140", "F1141", "F1142", "F1143", "F1144"]);
     await legacyRow(f, furnitureSource, "O1", "legacy-1", 42);
     const legacy = await supplierSourceInspectorDetail(f.client, furnitureSource, "id-O1");

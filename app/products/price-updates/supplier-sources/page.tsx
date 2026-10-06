@@ -3,7 +3,8 @@ import Link from "next/link";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
 import { SupplierImportFormatWizard } from "@/components/products/supplier-import-format-wizard";
 import { brandPriceListUpdateDate, latestBrandPriceListUpdate } from "@/lib/product-price-check";
-import { SupplierBrandProgress, SupplierFamilyList, SupplierFamilyTable } from "@/components/products/supplier-family-review";
+import { SupplierBrandProgress, SupplierFamilyList, SupplierFamilyTable, SupplierTierMappingPanel } from "@/components/products/supplier-family-review";
+import { supplierSourceTierPanel, type SourceTierPanel } from "@/lib/products/supplier-price-repository";
 import { SupplierAdvancedImportSettings, SupplierCompletionControls, SupplierImportCard, SupplierReviewControls, SupplierStartReview } from "@/components/products/supplier-price-workspace-controls";
 import { SupplierCompleteSummary, SupplierFinishScreen, SupplierImportDetails, SupplierCurrentPriceList, SupplierHistoryTable, SupplierImportSummary, SupplierTabs, SupplierWorkflowHeader, type CurrentPriceList, type HistoryRow, type PriceListTab, type WorkflowStep } from "@/components/products/supplier-price-workflow";
 import { SupplierCoverageContext, SupplierCoverageSetup, SupplierFamilyCoverageSetup, SupplierPreviousPriceList, SupplierSourceSummary, SupplierSourcesOverview, type OtherCoverage } from "@/components/products/supplier-coverage";
@@ -110,6 +111,11 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
     } catch (error) { errorMessage ||= error instanceof Error ? error.message : "Family Review unavailable"; }
   }
   const family = overview?.families.find((item) => item.template_id === familyId);
+  let sourceTierPanel: SourceTierPanel | null = null;
+  if (source?.status === "imported") {
+    try { sourceTierPanel = await supplierSourceTierPanel(client, source.id); }
+    catch (error) { errorMessage ||= error instanceof Error ? error.message : "Supplier tier mapping unavailable"; }
+  }
   // Current price list: the Brand's active complete baseline and any review still in progress.
   let currentList: CurrentPriceList | null = null; let inProgress: { title: string; href: string } | null = null;
   if (brand && tab === "current" && !source) {
@@ -172,9 +178,9 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
           <SupplierReviewControls key={`${batch.id}:${from}:${templateFilter}:${classification}:${code}`} batchId={batch.id} brandId={brand.id} matches={matches} approver={approver} sourceProfile={source?.profile} sourceBasis={source?.basis ?? "unknown"} brandBasis={brand.stored_price_basis} sourceStatus={source?.status ?? ""} batchStatus={batch.status} />
           <div className="flex justify-between"><Link href={href({ offset: String(Math.max(0, from - 50)) })}>Previous comparisons</Link><span>{matches.length ? `${from + 1}–${from + matches.length}` : "0 comparisons"}</span><Link href={href({ offset: String(from + 50) })}>Next comparisons</Link></div>
         </> : null;
-  const familyReview = batch ? <>
+  const familyReview = batch && source ? <>
           {coverageContext}
-          {overview ? family ? <SupplierFamilyTable key={`${batch.id}:${family.template_id}:${section}`} batchId={batch.id} familyName={family.template_name} section={section} tabs={familyTabs} rows={familyRows.rows} truncated={familyRows.truncated} approver={approver} batchOpen={batch.status === "review"} limit={SUPPLIER_BULK_LIMIT}
+          {overview ? family ? <SupplierFamilyTable key={`${batch.id}:${family.template_id}:${section}`} batchId={batch.id} brandId={brand.id} sourceId={source.id} sourceTitle={source.title} sourceDefinitionName={definition?.name} familyName={family.template_name} section={section} tabs={familyTabs} rows={familyRows.rows} truncated={familyRows.truncated} approver={approver} batchOpen={batch.status === "review"} limit={SUPPLIER_BULK_LIMIT}
               backHref={href({ view: "family", family: "", section: "" })} detailsHref={href({ view: "advanced", family: "", section: "", template: family.template_id })} />
             : <><SupplierBrandProgress overview={overview} />
               <SupplierFamilyList overview={overview} links={overview.families.map((item) => ({ template_id: item.template_id, href: href({ view: "family", family: item.template_id, section: item.attention && !item.changed ? "attention" : "changed" }) }))}
@@ -210,6 +216,7 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
           : <>
             {source ? <SupplierWorkflowHeader brandName={brand.name} source={source} batch={batch} step={step} links={{ steps: [href({ tab: "import", source: "", batch: "", view: "", family: "", section: "", status: "", code: "", template: "", offset: "0" }), href({ view: "family", family: "", section: "" }), href({ view: "complete" })], history: href({ tab: "history" }), advanced: href({ tab: "import", advanced: "1" }) + "#advanced" }} /> : null}
             {sourceSummary}
+            {sourceTierPanel && source ? <SupplierTierMappingPanel key={`${source.id}:${batch?.id ?? ""}`} panel={sourceTierPanel} brandId={brand.id} sourceId={source.id} approver={approver} batchId={batch?.status === "review" && batchResult.data?.[0]?.id === batch.id && (definition ? definition.latest?.id === source.id : referenceSource?.id === source.id) ? batch.id : undefined} /> : null}
             {main}
           </>}
         {canManageSupplierCapacity(profile?.role, profile?.account_status) ? <SupplierCapacityPanel /> : null}

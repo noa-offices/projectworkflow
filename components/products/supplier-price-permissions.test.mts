@@ -43,10 +43,11 @@ async function actionsFor(role: string) {
   return { actions, calls };
 }
 const mutations: Array<[string, unknown[]]> = [
+  ["refreshSupplierReviewAfterMapping", ["source", "batch"]],
   ["saveSupplierProfile", ["b", "LAS", {}]], ["createSupplierSource", [{}]], ["attachSupplierWorkingFile", ["s", "p"]], ["uploadSupplierChunk", ["s", 0, []]], ["finalizeSupplierSource", ["s"]], ["archiveSupplierSource", ["s"]],
   ["createSupplierReviewBatch", ["s", "complete", []]], ["saveSupplierDecision", ["r", "k", "reviewed", ""]], ["applySupplierReviewedPrice", ["r", "k"]], ["confirmSupplierUnchangedPrice", ["r", "k"]],
   ["completeSupplierPriceReview", ["r"]], ["excludeSupplierTargetFromSource", ["r", "k", "why"]], ["bulkApplySupplierChangedPrices", ["r", ["k"]]], ["bulkConfirmSupplierUnchanged", ["r", ["k"]]],
-  ["bulkExcludeSupplierMissing", ["r", ["k"], "why"]], ["saveSupplierDimension", [{ brand_id: "b", raw_labels: ["x"], finish_codes: [], dimension_code: "d" }]], ["confirmSupplierBindings", ["b", []]], ["archiveSupplierDimension", ["d"]],
+  ["bulkExcludeSupplierMissing", ["r", ["k"], "why"]], ["saveSupplierDimension", [{ brand_id: "b", raw_labels: ["x"], finish_codes: [], dimension_code: "d" }]], ["replaceSupplierDimension", ["id", "b", "d"]], ["confirmSupplierBindings", ["b", []]], ["archiveSupplierDimension", ["d"]],
 ];
 
 for (const [role, editor] of matrix) test(`server actions: ${role} ${editor ? "can modify" : "is rejected"}`, async () => {
@@ -81,6 +82,55 @@ test("UI mutation controls follow the same helper for all roles", async () => {
   // No role lists are duplicated in the UI: every screen takes its flag from the shared helper.
   for (const path of ["./supplier-price-workspace-controls.tsx", "./supplier-family-review.tsx", "./supplier-price-workflow.tsx", "../../app/products/price-updates/supplier-sources/page.tsx"]) assert.doesNotMatch(await read(path), /["']system_owner["']|["']procurement_manager["']|["']sales_coordinator["']/, path);
   assert.match(await read("../../app/products/price-updates/supplier-sources/page.tsx"), /canApproveBrandPrices\(profile\?\.role, profile\?\.account_status\)/);
+});
+
+test("Supplier dimension mapping normalizes optional identifiers without changing valid UUIDs", async () => {
+  const saved: unknown[] = [];
+  const repository = {
+    async supplierBrandTargets() { return { targets: [{ template_id: "00000000-0000-0000-0000-000000000010", group_id: "00000000-0000-0000-0000-000000000011", dimension: "fabric" }] }; },
+    async supplierWrite(_: unknown, kind: string, rule: unknown) { assert.equal(kind, "dimension"); saved.push(rule); },
+  };
+  const actions = await load<Record<string, (...args: unknown[]) => Promise<unknown>>>("../../app/products/price-updates/supplier-sources/actions.ts", {
+    "next/cache": { revalidatePath() {} },
+    "@/lib/auth": { async requireBrandPriceReviewer() { return { profile: { role: "admin_manager", account_status: "active" } }; } },
+    "@/lib/supabase/server": { async createClient() { return {}; } },
+    "@/lib/products/supplier-price-repository": repository,
+  });
+  const base = { brand_id: "brand", raw_labels: ["Fabric A"], finish_codes: [], dimension_code: "fabric" };
+  await actions.saveSupplierDimension({ ...base, group_id: undefined });
+  await actions.saveSupplierDimension({ ...base, template_id: "undefined", group_id: "null" });
+  await actions.saveSupplierDimension({ ...base, template_id: "00000000-0000-0000-0000-000000000010", group_id: "00000000-0000-0000-0000-000000000011" });
+  assert.deepEqual(saved, [
+    { ...base, template_id: undefined, group_id: undefined },
+    { ...base, template_id: undefined, group_id: undefined },
+    { ...base, template_id: "00000000-0000-0000-0000-000000000010", group_id: "00000000-0000-0000-0000-000000000011" },
+  ]);
+  const family = await load<Record<string, (value: unknown) => string | undefined>>("./supplier-family-review.tsx", {
+    "next/link": { default() { return null; } }, "next/navigation": { useRouter() { return { refresh() {} }; } },
+    "@/app/products/price-updates/supplier-sources/actions": {},
+  });
+  assert.equal(family.optionalSupplierRuleId(undefined), undefined);
+  assert.equal(family.optionalSupplierRuleId("undefined"), undefined);
+  assert.equal(family.optionalSupplierRuleId("null"), undefined);
+  assert.equal(family.optionalSupplierRuleId(" 00000000-0000-0000-0000-000000000010 "), "00000000-0000-0000-0000-000000000010");
+});
+
+test("replace action uses one atomic write with stored scope/evidence and rejects invalid categories", async () => {
+  const writes: unknown[][] = []; const revalidated: string[] = [];
+  const rule = { id: "rule", brand_id: "brand", template_id: "undefined", group_id: "null", raw_labels: ["H"], finish_codes: [], dimension_code: "cat_b" };
+  const target = { template_id: "template", group_id: "group", dimension: "cat_h" };
+  const query = { select() { return this; }, eq() { return this; }, async single() { return { data: rule, error: null }; } };
+  const actions = await load<typeof import("../../app/products/price-updates/supplier-sources/actions.js")>("../../app/products/price-updates/supplier-sources/actions.ts", {
+    "next/cache": { revalidatePath(path: string) { revalidated.push(path); } },
+    "@/lib/auth": { async requireBrandPriceReviewer() { return { profile: { role: "admin_manager", account_status: "active" } }; } },
+    "@/lib/supabase/server": { async createClient() { return { from() { return query; } }; } },
+    "@/lib/products/supplier-price-repository": { async supplierBrandTargets() { return { targets: [target] }; }, async supplierWrite(...args: unknown[]) { writes.push(args.slice(1)); } },
+  });
+  await actions.replaceSupplierDimension("rule", "brand", "cat_h");
+  assert.deepEqual(writes, [["dimension_replace", { id: "rule", brand_id: "brand", template_id: undefined, group_id: undefined, raw_labels: ["H"], finish_codes: [], dimension_code: "cat_h", target }]]);
+  assert.deepEqual(revalidated, ["/products/price-updates/supplier-sources"]);
+  await assert.rejects(actions.replaceSupplierDimension("rule", "brand", "invalid"), /Canonical dimension/);
+  assert.equal(writes.length, 1);
 });
 
 test("the database helpers match the editor set and the migration is forward-only with unchanged grants", async () => {

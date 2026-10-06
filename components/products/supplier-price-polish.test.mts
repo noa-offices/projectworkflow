@@ -76,7 +76,7 @@ test("Family detail: tab buttons with counts, selectable table, attention rows w
   assert.match(table, /type="checkbox"[^>]*aria-label|aria-label="Select 103801 160 \/ melamine"/); assert.match(table, />Select all</); assert.match(table, />Clear selection</); assert.match(table, /4 Changed · 54 Same · 2 Missing · 1 Needs attention/);
   assert.doesNotMatch(table, /k"|architecture|row_id|group_id|target key|provenance/i);
   const attention = html(family.SupplierFamilyTable, { batchId: "r", familyName: "MONOLITH", section: "attention", tabs, rows: [{ ...rows[0], issue: "Source data problem", action: "Check the Supplier source row in Advanced Review", classification: "invalid_source", selectable: false }], truncated: false, approver: true, batchOpen: true, limit: 50, backHref: "/b", detailsHref: "/d?x=1" });
-  assert.match(attention, /⚠<\/span>Source data problem/); assert.match(attention, />Review details<\/a>/); assert.doesNotMatch(attention, /type="checkbox"/);
+  assert.match(attention, /⚠<\/span>Source data problem/); assert.match(attention, />Review details<\/button>/); assert.doesNotMatch(attention, /type="checkbox"/);
   // The bulk bar appears only with a selection, sticks to the bottom, and has a filled primary action plus Clear.
   const source = await read("./supplier-family-review.tsx");
   assert.match(source, /sticky bottom-3[^"]*"[\s\S]*role="region" aria-label="Bulk action"/); assert.match(source, /className=\{primary\} disabled=\{busy\} onClick=\{\(\) => void act\.go\(\)\}>\{act\.label\}[\s\S]*className=\{secondary\}[\s\S]*?>Clear</);

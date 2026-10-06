@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { supplierRefreshReviewAfterMapping } from "@/lib/products/supplier-price-repository";
 import { requireBrandPriceReviewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
@@ -14,6 +15,11 @@ import { canManageSupplierCapacity, supplierCapacityReport, supplierDeletePrevio
 const workspacePath = "/products/price-updates/supplier-sources";
 async function reviewer() { const auth = await requireBrandPriceReviewer(); return { auth, client: await createClient() }; }
 async function approver() { const context = await reviewer(); if (!canApproveBrandPrices(context.auth.profile?.role, context.auth.profile?.account_status)) throw Error("Brand price approver permission required."); return context; }
+function optionalSupplierRuleId(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return !trimmed || trimmed === "undefined" || trimmed === "null" ? undefined : trimmed;
+}
 
 /** Read-only inspector actions use the same authenticated reviewer access as Supplier Pricing. */
 export async function searchSupplierSourceInspector(sourceId: string, query = "", offset = 0) {
@@ -63,6 +69,12 @@ export async function createSupplierReviewBatch(sourceId: string, scope: SourceS
   const { client } = await reviewer();
   if (!["complete", "partial", "selected_templates"].includes(scope)) throw Error("Invalid review scope.");
   const result = await supplierCreateReviewBatch(client, sourceId, scope, selectedIds, brandListId); revalidatePath(workspacePath); return result;
+}
+export async function refreshSupplierReviewAfterMapping(sourceId: string, batchId?: string) {
+  const { client } = await approver();
+  const result = await supplierRefreshReviewAfterMapping(client, sourceId, batchId);
+  revalidatePath(workspacePath);
+  return result;
 }
 export async function saveSupplierDecision(batchId: string, key: string, decision: string, note: string, proposedKeys: string[] = []) {
   const { client } = await reviewer(); if (!["reviewed", "skip", "reject", "mapping_proposed"].includes(decision) || note.length > 4000 || proposedKeys.length > 500) throw Error("Invalid review decision.");
@@ -121,10 +133,11 @@ export async function bulkExcludeSupplierMissing(batchId: string, matchKeys: str
 }
 export async function saveSupplierDimension(rule: { brand_id: string; template_id?: string; group_id?: string; raw_labels: string[]; finish_codes: string[]; dimension_code: string }) {
   const { client } = await approver();
-  if (!rule.dimension_code || !Array.isArray(rule.raw_labels) || !Array.isArray(rule.finish_codes) || rule.raw_labels.length + rule.finish_codes.length === 0) throw Error("Explicit dimension labels or finish set required.");
-  const { targets } = await supplierBrandTargets(client, rule.brand_id);
-  if (!targets.some((target) => target.dimension === rule.dimension_code && (!rule.template_id || target.template_id === rule.template_id) && (!rule.group_id || target.group_id === rule.group_id))) throw Error("Canonical dimension does not exist in the selected Brand target column set.");
-  await supplierWrite(client, "dimension", rule); revalidatePath(workspacePath);
+  const normalizedRule = { ...rule, template_id: optionalSupplierRuleId(rule.template_id), group_id: optionalSupplierRuleId(rule.group_id) };
+  if (!normalizedRule.dimension_code || !Array.isArray(normalizedRule.raw_labels) || !Array.isArray(normalizedRule.finish_codes) || normalizedRule.raw_labels.length + normalizedRule.finish_codes.length === 0) throw Error("Explicit dimension labels or finish set required.");
+  const { targets } = await supplierBrandTargets(client, normalizedRule.brand_id);
+  if (!targets.some((target) => target.dimension === normalizedRule.dimension_code && (!normalizedRule.template_id || target.template_id === normalizedRule.template_id) && (!normalizedRule.group_id || target.group_id === normalizedRule.group_id))) throw Error("Canonical dimension does not exist in the selected Brand target column set.");
+  await supplierWrite(client, "dimension", normalizedRule); revalidatePath(workspacePath);
 }
 export async function confirmSupplierBindings(brandId: string, proposals: Array<{ code: string; price_field: string; source_dimension: string; kind: "alias" | "shared" | "disambiguation"; target_keys: string[]; expected_targets: Array<{ key: string; pricing_version: string; price: number | null; currency: string }> }>) {
   const { client } = await approver();
@@ -155,6 +168,19 @@ export async function supplierMappingTargets(brandId: string, query = "", from =
 }
 export async function archiveSupplierDimension(id: string) {
   const { client } = await approver(); await supplierWrite(client, "archive_dimension", { id }); revalidatePath(workspacePath);
+}
+
+/** Replace the category only; retain the existing rule's authoritative scope and evidence. */
+export async function replaceSupplierDimension(id: string, brandId: string, dimensionCode: string) {
+  const { client } = await approver();
+  const result = await client.from("supplier_dimension_vocabulary").select("*").eq("id", id).eq("brand_id", brandId).eq("is_active", true).single();
+  if (result.error || !result.data) throw Error("Active dimension mapping unavailable for this Brand.");
+  const rule = { ...result.data, template_id: optionalSupplierRuleId(result.data.template_id), group_id: optionalSupplierRuleId(result.data.group_id), dimension_code: dimensionCode };
+  const { targets } = await supplierBrandTargets(client, brandId);
+  const target = targets.find((item) => item.dimension === dimensionCode && (!rule.template_id || item.template_id === rule.template_id) && (!rule.group_id || item.group_id === rule.group_id));
+  if (!dimensionCode || !target) throw Error("Canonical dimension does not exist in the selected Brand target column set.");
+  await supplierWrite(client, "dimension_replace", { id, brand_id: brandId, template_id: rule.template_id, group_id: rule.group_id, raw_labels: rule.raw_labels, finish_codes: rule.finish_codes, dimension_code: dimensionCode, target });
+  revalidatePath(workspacePath);
 }
 
 // Supplier source definitions and Family coverage: approver-only; the database re-checks the same permission.

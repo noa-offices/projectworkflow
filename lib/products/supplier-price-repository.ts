@@ -9,7 +9,7 @@ export type SupplierSourceInspectorRow = {
   key: string; code: string; price: number | null; currency: string; priceField: string; dimension: string; finishes: string[]; sourceRowCount: number; warnings: string[]; multiplePriceIdentities?: boolean;
 };
 /** Clean read-only view over retained source rows; original source values are never altered. */
-export type SupplierNormalizedWorkingRow = { articleCode: string; fullCode: string; description: string; finishCode: string; price: number | null; currency: string; priceField: string; dimension: string; sourceRowNumber: number; sheet: string; validationWarnings: string[] };
+export type SupplierNormalizedWorkingRow = { articleCode: string; fullCode: string; description: string; finishCode: string; categoryLabel: string; dimensionLabel: string; rawPrice: string; price: number | null; currency: string; priceField: string; dimension: string; sourceRowNumber: number; sheet: string; validationWarnings: string[] };
 export type SupplierSourceInspectorEvidence = SupplierNormalizedWorkingRow;
 export type SupplierSourceInspectorDetail = SupplierSourceInspectorRow & { fullCodes: string[]; evidence: SupplierSourceInspectorEvidence[]; moreEvidence: number };
 
@@ -21,7 +21,7 @@ const inspectorRow = (identity: SourceIdentity): SupplierSourceInspectorRow => (
 function normalizedSupplierWorkingRow(source: SourceVersion, identity: SourceIdentity, row: { row_number: number; sheet: string; raw_extras: Record<string, unknown> }): SupplierNormalizedWorkingRow {
   const fullCode = inspectorText(row.raw_extras[source.profile.full_code_column]);
   const finishCode = source.profile.strategy === "article_plus_finish" && source.profile.finish_length && fullCode.length >= source.profile.finish_length ? fullCode.slice(-source.profile.finish_length) : "";
-  return { articleCode: identity.code, fullCode, description: source.profile.description_column ? inspectorText(row.raw_extras[source.profile.description_column]) : "", finishCode, price: identity.price, currency: identity.currency, priceField: identity.price_field, dimension: identity.raw_dimension || identity.dimension, sourceRowNumber: row.row_number, sheet: row.sheet, validationWarnings: identity.issues };
+  return { articleCode: identity.code, fullCode, description: source.profile.description_column ? inspectorText(row.raw_extras[source.profile.description_column]) : "", finishCode, categoryLabel: source.profile.category_column ? inspectorText(row.raw_extras[source.profile.category_column]) : "", dimensionLabel: identity.raw_dimension || identity.dimension, rawPrice: "", price: identity.price, currency: identity.currency, priceField: identity.price_field, dimension: identity.raw_dimension || identity.dimension, sourceRowNumber: row.row_number, sheet: row.sheet, validationWarnings: identity.issues };
 }
 
 /** Read-only, source-scoped identity search. Exact canonical code matches always precede browse matches. */
@@ -49,7 +49,7 @@ export async function supplierSourceInspectorSearch(client: SupabaseClient, sour
 }
 
 function evidenceWorkingRow(identity: SourceIdentity, item: SupplierIdentityEvidence): SupplierNormalizedWorkingRow {
-  return { articleCode: identity.code, fullCode: item.full_supplier_code ?? "", description: item.description ?? "", finishCode: item.finish_code ?? "", price: identity.price, currency: identity.currency, priceField: identity.price_field, dimension: identity.raw_dimension || identity.dimension, sourceRowNumber: item.row_number, sheet: item.sheet, validationWarnings: identity.issues };
+  return { articleCode: item.article_code ?? identity.code, fullCode: item.full_supplier_code ?? "", description: item.description ?? "", finishCode: item.finish_code ?? "", categoryLabel: item.category_label ?? "", dimensionLabel: item.dimension_label ?? (identity.raw_dimension || identity.dimension), rawPrice: inspectorText(item.raw_price), price: identity.price, currency: identity.currency, priceField: identity.price_field, dimension: identity.raw_dimension || identity.dimension, sourceRowNumber: item.row_number, sheet: item.sheet, validationWarnings: identity.issues };
 }
 /** The detail endpoint deliberately returns only five human-readable provenance rows, never raw source JSON. */
 export async function supplierSourceInspectorDetail(client: SupabaseClient, sourceId: string, identityKey: string): Promise<SupplierSourceInspectorDetail> {
@@ -124,7 +124,7 @@ export async function supplierBrandMatches(client: SupabaseClient, sourceId: str
     supplierRows<DimensionRule>(client, "supplier_dimension_vocabulary", "*", { brand_id: source.brand_id, is_active: true }),
     supplierRows<DurableBinding>(client, "supplier_price_bindings", "*", { brand_id: source.brand_id }),
   ]);
-  return { source, templates, targets, coverage, matches: matchSupplierPrices(identities.map((identity) => withoutEvidence(identity.data)), targets, rules, bindings) };
+  return { source, templates, targets, coverage, rules, matches: matchSupplierPrices(identities.map((identity) => withoutEvidence(identity.data)), targets, rules, bindings) };
 }
 /** Builds a review batch. Coverage is the outer boundary (a source definition’s Families, or the whole Brand for a legacy source); the scope only narrows within it. */
 export async function supplierCreateReviewBatch(client: SupabaseClient, sourceId: string, scope: string, selectedIds: string[], brandListId?: string) {
@@ -416,7 +416,7 @@ export type FamilySection = "changed" | "same" | "missing" | "attention";
 export const familySections: FamilySection[] = ["changed", "same", "missing", "attention"];
 const attentionIssues: Record<string, [string, string]> = {
   invalid_source: ["Source data problem", "Check the Supplier source row in Advanced Review"],
-  needs_dimension_mapping: ["Size / option mapping required", "Map the size or option in Advanced Review"],
+  needs_dimension_mapping: ["Category mapping needed", "Supplier data was found, but ProjectWorkflow cannot determine which Product category/tier this Supplier price belongs to."],
   ambiguous: ["More than one possible match", "Choose the correct Product price in Advanced Review"],
   shared: ["One Supplier item linked to multiple Product prices", "Use the shared price workflow in Advanced Review"],
   baseline_drift: ["Product changed after this review started", "Build a fresh comparison"],
@@ -465,7 +465,91 @@ export type FamilyOverview = {
   finished: { applied: number; confirmed: number; excluded: number };
   supplierOnly: { unmatched: number; companions: number };
 };
-export type FamilyRow = { key: string; code: string; item: string; current: string; supplier: string; change: string; issue: string; action: string; classification: string; selectable: boolean };
+export type FamilyMapping = { templateId: string; groupId: string | null; dimensions: string[]; mode: "raw_label" | "finish" | null; rawLabels: string[]; finishCodes: string[] };
+export type FamilyRow = { key: string; code: string; productCode: string; item: string; productPriceField: string; productDimension: string; sourceIdentityKey: string | null; mapping: FamilyMapping | null; current: string; supplier: string; change: string; issue: string; action: string; classification: string; selectable: boolean };
+export type FamilyTierTask = FamilyMapping & { key: string; label: string; affected: number; codes: string[]; mappedDimension: string | null; hasRule: boolean };
+export type FamilyMappedTier = { rule: DimensionRule; dimensions: string[]; affected: number; scope: "Brand" | "Template" | "Group" };
+export type FamilyTierPanel = { unresolved: FamilyTierTask[]; mapped: FamilyMappedTier[] };
+
+/** Display-only aggregation; saved match classifications and scope precedence remain authoritative. */
+export function familyTierPanel(matches: PriceMatch[], targets: PriceTarget[], rules: DimensionRule[], templateId: string): FamilyTierPanel {
+  const familyTargets = targets.filter((target) => target.template_id === templateId);
+  const dimensionsFor = (groupId?: string | null) => [...new Set(familyTargets.filter((target) => !groupId || target.group_id === groupId).map((target) => target.dimension).filter(Boolean))].sort();
+  const relevant = rules.filter((rule) => (!rule.template_id || rule.template_id === templateId) && dimensionsFor(rule.group_id).length);
+  const accepts = (rule: DimensionRule, source: SourceIdentity, target: PriceTarget) => rule.brand_id === target.brand_id && (!rule.template_id || rule.template_id === target.template_id) && (!rule.group_id || rule.group_id === target.group_id) &&
+    (!rule.raw_labels.length || rule.raw_labels.includes(source.raw_dimension ?? source.dimension)) && (rule.finish_codes.length ? Boolean(target.dimension) && source.finishes.length > 0 && source.finishes.every((code) => rule.finish_codes.includes(code)) : !(source.finishes.length && source.dimension !== (source.raw_dimension ?? source.dimension))) && Boolean(rule.raw_labels.length || rule.finish_codes.length);
+  const groups = new Map<string, FamilyTierTask>();
+  for (const match of matches) {
+    if (match.classification !== "needs_dimension_mapping" || !match.source) continue;
+    const source = match.source;
+    const finishDriven = Boolean(source.finishes.length && source.dimension !== (source.raw_dimension ?? source.dimension));
+    const rawLabels = finishDriven ? [] : [source.raw_dimension ?? source.dimension].filter(Boolean);
+    const finishCodes = finishDriven ? [...source.finishes].sort() : [];
+    if (!rawLabels.length && !finishCodes.length) continue;
+    for (const target of new Map(match.targets.filter((item) => item.template_id === templateId).map((item) => [item.group_id, item])).values()) {
+      const key = JSON.stringify([templateId, target.group_id, rawLabels, finishCodes]);
+      const task = groups.get(key) ?? { key, label: rawLabels.join(", ") || `Finishes: ${finishCodes.join(", ")}`, templateId, groupId: target.group_id || null, dimensions: dimensionsFor(target.group_id), mode: finishDriven ? "finish" : "raw_label", rawLabels, finishCodes, affected: 0, codes: [], mappedDimension: null, hasRule: false };
+      task.affected++; task.codes.push(source.code);
+      // Only report a saved mapping when the most-specific eligible rules agree.
+      const eligible = relevant.filter((rule) => accepts(rule, source, target));
+      task.hasRule ||= eligible.length > 0;
+      const specificity = (rule: DimensionRule) => (rule.template_id ? 1 : 0) + (rule.group_id ? 1 : 0);
+      const highest = Math.max(-1, ...eligible.map(specificity));
+      const codes = [...new Set(eligible.filter((rule) => specificity(rule) === highest).map((rule) => rule.dimension_code))];
+      task.mappedDimension = codes.length === 1 && task.dimensions.includes(codes[0]) ? codes[0] : null;
+      groups.set(key, task);
+    }
+  }
+  return { unresolved: [...groups.values()].sort((a, b) => a.label.localeCompare(b.label)), mapped: relevant.map((rule) => ({ rule, dimensions: dimensionsFor(rule.group_id), scope: rule.group_id ? "Group" : rule.template_id ? "Template" : "Brand", affected: matches.filter((match) => match.source && match.targets.some((target) => target.template_id === templateId && accepts(rule, match.source!, target))).length })) };
+}
+
+export type SourceTierTask = FamilyTierTask & { scopeName: string; finishLabel: string };
+export type SourceMappedTier = FamilyMappedTier & { scopeName: string; label: string };
+export type SourceTierPanel = { unmapped: SourceTierTask[]; ambiguous: SourceTierTask[]; mapped: SourceMappedTier[] };
+
+/** Current source truth: uses identities/current vocabulary/covered targets, never a saved batch. */
+export async function supplierSourceTierPanel(client: SupabaseClient, sourceId: string): Promise<SourceTierPanel> {
+  const { matches, targets, templates, rules } = await supplierBrandMatches(client, sourceId);
+  return sourceTierPanel(matches, targets, rules, templates);
+}
+
+export function sourceTierPanel(matches: PriceMatch[], targets: PriceTarget[], rules: DimensionRule[], templates: ProductPriceInput[]): SourceTierPanel {
+  const friendlyScope = (templateId?: string | null, groupId?: string | null) => {
+    if (!templateId) return "Brand";
+    const template = templates.find((item) => item.id === templateId);
+    const name = template?.template_name || "Product family";
+    if (!groupId) return name;
+    const group = template ? ["variant_pricing", "category_pricing", "desking_size_pricing", "accessory_pricing"].flatMap((field) => Array.isArray(template[field]) ? template[field] as Array<Record<string, unknown>> : []).find((item) => item.id === groupId) : undefined;
+    const title = group?.group_name ?? group?.name ?? group?.title ?? group?.category_name;
+    return `${name} / ${typeof title === "string" && title.trim() ? title : "Pricing group"}`;
+  };
+  const panels = templates.map((template) => familyTierPanel(matches, targets, rules, template.id));
+  const tasks = panels.flatMap((panel) => panel.unresolved).map((task) => ({ ...task, scopeName: friendlyScope(task.templateId, task.groupId), finishLabel: `Supplier finishes (${task.finishCodes.length})`, label: task.finishCodes.length ? `Supplier finishes (${task.finishCodes.length})` : task.label }));
+  const relevantRules = new Map<string, SourceMappedTier>();
+  for (const panel of panels) for (const item of panel.mapped) {
+    if (!item.affected) continue;
+    const previous = relevantRules.get(item.rule.id);
+    relevantRules.set(item.rule.id, { ...item, affected: (previous?.affected ?? 0) + item.affected, dimensions: [...new Set([...(previous?.dimensions ?? []), ...item.dimensions])].sort(), scopeName: friendlyScope(item.rule.template_id, item.rule.group_id), label: item.rule.raw_labels.join(", ") || `${item.rule.dimension_code.replace(/_/g, " ")} finishes (${item.rule.finish_codes.length})` });
+  }
+  return { unmapped: tasks.filter((task) => !task.hasRule), ambiguous: tasks.filter((task) => task.hasRule && !task.mappedDimension), mapped: [...relevantRules.values()] };
+}
+
+/** Rebuild only the latest open review. The existing RPC creates a new immutable snapshot. */
+export async function supplierRefreshReviewAfterMapping(client: SupabaseClient, sourceId: string, batchId?: string) {
+  if (!batchId) return { id: null };
+  const batchResult = await client.from("supplier_price_batches").select("*").eq("id", batchId).eq("source_id", sourceId).single<ReviewBatch & { brand_price_list_update_id?: string | null }>();
+  if (batchResult.error || !batchResult.data) throw Error("Supplier review unavailable for this source.");
+  const batch = batchResult.data;
+  if (batch.status !== "review") return { id: null };
+  const latest = await client.from("supplier_price_batches").select("id").eq("source_id", sourceId).order("created_at", { ascending: false }).order("id").limit(1).maybeSingle<{ id: string }>();
+  if (latest.error) throw Error(latest.error.message);
+  if (latest.data?.id !== batch.id) return { id: null };
+  const source = await supplierSource(client, sourceId);
+  const coverage = await supplierSourceCoverage(client, source);
+  const normalized = (ids: string[] | null) => ids === null ? null : [...ids].sort().join();
+  if (normalized(coverage) !== normalized(supplierBatchCoverage(batch))) throw Error("Source coverage changed. Start a review with the current coverage.");
+  return supplierCreateReviewBatch(client, sourceId, batch.scope, batch.selected_template_ids, batch.brand_price_list_update_id || undefined);
+}
 
 const rowClassifications = ["increased", "decreased", "changed", "unchanged", "shared", "ambiguous", "needs_dimension_mapping", "baseline_drift", "invalid_source", "target_not_represented"];
 async function loadFamilyState(client: SupabaseClient, batchId: string) {
@@ -517,14 +601,18 @@ export async function supplierFamilyOverview(client: SupabaseClient, batchId: st
 /** Rows for one Family section. Display strings only; nothing here is trusted by the bulk actions. */
 export async function supplierFamilyRows(client: SupabaseClient, batchId: string, templateId: string, section: FamilySection): Promise<{ rows: FamilyRow[]; truncated: boolean }> {
   if (!familySections.includes(section)) throw Error("Unknown Family section.");
-  const { rows } = await loadFamilyState(client, batchId);
+  const { rows, live } = await loadFamilyState(client, batchId);
   const money = (currency: string, price: number | null) => price === null ? "—" : `${currency} ${price}`;
   const result: FamilyRow[] = [];
   for (const row of rows) {
     if (row.state.section !== section || !row.match.targets.some((target) => target.template_id === templateId)) continue;
     const target = row.match.targets.find((item) => item.template_id === templateId)!;
     const price = row.match.source?.price ?? null, change = price !== null && target.price !== null && target.currency === row.match.source?.currency ? price - target.price : null;
-    result.push({ key: row.key, code: row.match.source?.code ?? target.raw_code, item: `${target.label}${target.dimension ? ` / ${target.dimension}` : ""}`,
+    const source = row.match.source;
+    const finishDriven = Boolean(source?.finishes.length && source.dimension !== (source.raw_dimension ?? source.dimension));
+    const dimensions = [...new Set([...live.values()].filter((candidate) => candidate.template_id === target.template_id && candidate.group_id === target.group_id && candidate.price_field === target.price_field && Boolean(candidate.dimension)).map((candidate) => candidate.dimension))].sort();
+    const mapping: FamilyMapping | null = source ? { templateId: target.template_id, groupId: target.group_id || null, dimensions, mode: finishDriven ? "finish" : source.raw_dimension ? "raw_label" : null, rawLabels: finishDriven ? [] : source.raw_dimension ? [source.raw_dimension] : [], finishCodes: finishDriven ? source.finishes : [] } : null;
+    result.push({ key: row.key, code: source?.code ?? target.raw_code, productCode: target.raw_code, item: `${target.label}${target.dimension ? ` / ${target.dimension}` : ""}`, productPriceField: target.price_field, productDimension: target.dimension, sourceIdentityKey: source?.key ?? null, mapping,
       current: money(target.currency, target.price), supplier: section === "missing" ? "Not listed" : money(row.match.source?.currency ?? target.currency, price),
       change: row.state.done ? (section === "same" ? "Confirmed" : section === "missing" ? "Excluded" : "Applied") : change === null ? (section === "missing" ? "Missing" : "—") : change === 0 ? "Same" : `${change > 0 ? "+" : ""}${Number(change.toFixed(2))}`,
       issue: row.state.issue, action: row.state.action, classification: row.match.classification, selectable: !row.state.done && section !== "attention" });
