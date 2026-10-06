@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { SupplierCoverageConflict, SupplierCoverageSuggestionRow } from "@/lib/products/supplier-price-contracts";
-import type { SupplierCoverageDefinition, SupplierFamilyCoverageRow, SupplierPreviousSource } from "@/lib/products/supplier-price-repository";
+import type { SupplierCoverageDefinition, SupplierFamilyCoverageRow, SupplierPreviousSource, SupplierPriceListCard, SupplierPriceListState } from "@/lib/products/supplier-price-repository";
 import { archiveSupplierSourceDefinition, assignFamiliesToSupplierSource, confirmSupplierCoverage, createSupplierSourceDefinition, deleteSupplierSourceDefinition, linkSupplierSourceDefinition, renameSupplierSourceDefinition, resolveSupplierCoverageConflict, archiveSupplierSource, deletePreviousSupplierSource } from "@/app/products/price-updates/supplier-sources/actions";
 
 // Same ProjectWorkflow patterns as the rest of Supplier Pricing: white card, light border, emerald primary, amber attention, red only for a real conflict.
@@ -212,4 +212,44 @@ export function SupplierPreviousPriceList({ currentSourceId, previous, canReview
           : <button type="button" className={button} disabled={busy || !item.safe_to_delete} title={item.safe_to_delete ? undefined : "This previous price list contains review history that must be retained."} onClick={() => setConfirming(item.source_id)}>Delete previous source data</button> : null}
       </p> : null}
     </li>)}</ul></section>;
+}
+
+/** Phase H: the primary landing section. One card per current price list; each card opens its own review, never a shared one. */
+export type PriceListCardView = SupplierPriceListCard & { openHref: string; editHref: string; detailsHref: string; advancedHref: string };
+const priceListStates: Record<SupplierPriceListState, [string, string, string]> = {
+  waiting: ["Waiting for a price list", "Import new", "border-zinc-200 bg-zinc-50 text-zinc-700"],
+  no_coverage: ["Confirm Family coverage", "Confirm coverage", "border-amber-200 bg-amber-50 text-amber-900"],
+  ready_to_review: ["Ready to review", "Start review", "border-emerald-200 bg-emerald-50 text-emerald-900"],
+  needs_attention: ["Needs attention", "Continue review", "border-amber-200 bg-amber-50 text-amber-900"],
+  in_review: ["In review", "Continue review", "border-zinc-200 bg-zinc-50 text-zinc-800"],
+  ready_to_complete: ["Ready to complete", "Complete review", "border-emerald-200 bg-emerald-50 text-emerald-900"],
+  completed: ["Completed", "View completed review", "border-emerald-200 bg-emerald-50 text-emerald-900"],
+};
+export function SupplierPriceListCards({ cards, importHref, approver }: { cards: PriceListCardView[]; importHref: string; approver: boolean }) {
+  const attention = cards.filter((card) => card.state === "needs_attention" || card.state === "no_coverage").length;
+  const ready = cards.filter((card) => card.state === "ready_to_review" || card.state === "ready_to_complete").length;
+  return <section className="space-y-3" aria-label="Available price lists">
+    <div className="flex flex-wrap items-end justify-between gap-2"><div><h3 className="text-base font-semibold text-zinc-950">Available price lists</h3>
+      <p className="text-xs text-zinc-500">{cards.length} current {cards.length === 1 ? "price list" : "price lists"}{attention ? ` · ${attention} need attention` : ""}{ready ? ` · ${ready} ready` : ""}</p></div>
+      {approver ? <Link href={importHref} className={primary.replace("h-9", "h-9")}>Import new price list</Link> : null}</div>
+    {cards.length === 0 ? <div className={`${card} p-6 text-center`}><p className="text-sm font-semibold text-zinc-950">No Supplier price lists yet.</p>{approver ? <Link href={importHref} className={`${primary} mt-3`}>Import price list</Link> : null}</div> : null}
+    <ul className="grid gap-3 md:grid-cols-2">{cards.map((item) => { const [label, action, tone] = priceListStates[item.state]; return <li key={item.sourceId} className={`${card} flex flex-col gap-3 p-4`}>
+      <div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{item.sourceName ?? "Not linked to a Supplier source"}</p>
+        <p className="truncate text-base font-semibold text-zinc-950" title={item.title}>{item.title}</p></div>
+        <span className={`${badge} shrink-0 ${tone}`}>{label}</span></div>
+      <dl className="grid grid-cols-3 gap-2 text-xs"><div><dt className="text-zinc-500">Families</dt><dd className="font-semibold tabular-nums text-zinc-950">{item.families ?? "—"}</dd></div>
+        <div><dt className="text-zinc-500">Source rows</dt><dd className="font-semibold tabular-nums text-zinc-950">{item.compacted ? "Detail archived" : item.sourceRows.toLocaleString("en-US")}</dd></div>
+        <div><dt className="text-zinc-500">Supplier items</dt><dd className="font-semibold tabular-nums text-zinc-950">{item.items.toLocaleString("en-US")}</dd></div></dl>
+      {item.batchId ? <p className="text-xs text-zinc-600">{item.unresolved ? `${item.unresolved} ${item.unresolved === 1 ? "item needs" : "items need"} attention` : "Nothing needs attention"}{item.unchanged ? ` · ${item.unchanged} unchanged` : ""}</p> : null}
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-zinc-100 pt-3">
+        <Link href={item.openHref} className={primary}>{action}</Link>
+        <details className="relative"><summary className={`${button} cursor-pointer list-none`} aria-label={`More actions for ${item.title}`}>⋯</summary>
+          <ul className="absolute right-0 z-10 mt-1 w-48 space-y-1 rounded-md border border-zinc-200 bg-white p-2 text-xs font-semibold shadow-lg">
+            <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.detailsHref}>View extracted data</Link></li>
+            {approver ? <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.editHref}>Edit coverage</Link></li> : null}
+            <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.detailsHref}>Price list details</Link></li>
+            {approver ? <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.advancedHref}>Advanced tools</Link></li> : null}
+          </ul></details>
+      </div></li>; })}</ul>
+  </section>;
 }

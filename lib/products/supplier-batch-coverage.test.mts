@@ -5,7 +5,7 @@ import { PGlite } from "@electric-sql/pglite";
 import type { PriceMatch, SourceIdentity, SourceVersion } from "./supplier-price-contracts.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supplierRefreshReviewAfterMapping, supplierSourceTierPanel } from "./supplier-price-repository.js";
-import { supplierAssignFamiliesToSource, supplierAssignFamilyToSource, supplierFamilyCoverageSetup, supplierBrandMatches, supplierBulkConfirmUnchanged, supplierCompletionReadiness, supplierConfirmCoverage, supplierCoverageOverview, supplierCreateReviewBatch, supplierCreateSourceDefinition, supplierFamilyOverview, supplierLinkSourceDefinition, supplierResolveCoverageConflict, supplierWrite, supplierSourceInspectorDetail, supplierMatchProvenance, supplierProductSourceLookup } from "./supplier-price-repository.js";
+import { supplierAssignFamiliesToSource, supplierAssignFamilyToSource, supplierFamilyCoverageSetup, supplierBrandMatches, supplierBulkConfirmUnchanged, supplierCompletionReadiness, supplierConfirmCoverage, supplierCoverageOverview, supplierPriceListCards, supplierCreateReviewBatch, supplierCreateSourceDefinition, supplierFamilyOverview, supplierLinkSourceDefinition, supplierResolveCoverageConflict, supplierWrite, supplierSourceInspectorDetail, supplierMatchProvenance, supplierProductSourceLookup } from "./supplier-price-repository.js";
 
 const read = (name: string) => readFile(new URL(`../../supabase/migrations/${name}.sql`, import.meta.url), "utf8");
 const migrations = await Promise.all(["20261002060146_pricing_identity_version_foundation", "20261002065310_pricing_writer_concurrency", "20261003141259_supplier_default_price_writer", "20261002082357_supplier_price_source_review",
@@ -425,5 +425,32 @@ test("Supplier source lookup: current price list of one definition, every exact 
         values('${id(36)}','${brand}','Furniture Oct','f.xlsx','${"d".repeat(64)}','xlsx','EUR','list','{}','imported',1,1,1,'${user}','${furniture}');`);
     const newer = await supplierProductSourceLookup(f.client, { brandId: brand, definitionId: furniture, code: "F1" });
     assert.deepEqual([newer.source?.id, newer.multiplicity], [id(36), 0]);
+  });
+});
+
+// ---- Phase H: each price list resolves its own review ----
+test("price-list state rule: decided only from the batch status and its unit totals", async () => {
+  const { supplierPriceListState } = await import("./supplier-price-repository.js");
+  assert.equal(supplierPriceListState({ hasSource: false, hasCoverage: false, batchStatus: null, unresolved: 0 }), "waiting");
+  assert.equal(supplierPriceListState({ hasSource: true, hasCoverage: false, batchStatus: null, unresolved: 0 }), "no_coverage");
+  assert.equal(supplierPriceListState({ hasSource: true, hasCoverage: true, batchStatus: null, unresolved: 0 }), "ready_to_review");
+  assert.equal(supplierPriceListState({ hasSource: true, hasCoverage: true, batchStatus: "review", unresolved: 2 }), "needs_attention");
+  assert.equal(supplierPriceListState({ hasSource: true, hasCoverage: true, batchStatus: "review", unresolved: 0 }), "ready_to_complete");
+  assert.equal(supplierPriceListState({ hasSource: true, hasCoverage: true, batchStatus: "matching", unresolved: 0 }), "in_review");
+  assert.equal(supplierPriceListState({ hasSource: true, hasCoverage: true, batchStatus: "completed", unresolved: 0 }), "completed");
+});
+
+test("two sources of one Brand each resolve their own latest review; one card per current price list", async () => {
+  await withDb(async (f) => {
+    const furnitureBatch = await supplierCreateReviewBatch(f.client, furnitureSource, "complete", []);
+    const definitions = await supplierCoverageOverview(f.client, brand);
+    const cards = await supplierPriceListCards(f.client, brand, definitions.definitions);
+    const furniture = cards.find((card) => card.sourceName === "LAS Furniture");
+    assert.ok(furniture); assert.equal(furniture.batchId, furnitureBatch.id); // Furniture opens Furniture's review
+    assert.equal(furniture.state, "ready_to_complete"); // no unresolved units in this fixture
+    assert.equal(cards.filter((card) => card.batchId === furnitureBatch.id).length, 1);
+    // Chairs has no review yet: its own card offers the start, and Furniture's review does not hide it.
+    const chairs = cards.find((card) => card.sourceName === "LAS Chairs");
+    if (chairs) assert.notEqual(chairs.batchId, furnitureBatch.id);
   });
 });

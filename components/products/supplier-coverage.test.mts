@@ -175,3 +175,56 @@ test("completion wording: partial coverage never claims a Brand baseline; full c
   assert.match(html(workflow.SupplierFinishScreen, props), /Review completed\. Brand price baseline activated\./);
   assert.match(controlsSource, /review completed\. \$\{result\.checked_templates\} covered/); assert.match(controlsSource, /Complete Brand Review/); assert.match(controlsSource, /baseline \$\{result\.baseline_date/); // partial and full branches
 });
+
+// ---- Phase H: Available price lists landing section ----
+const pageText = await read("../../app/products/price-updates/supplier-sources/page.tsx");
+const cardsCoverage = await load<Record<"SupplierPriceListCards", Component>>("./supplier-coverage.tsx", { "next/link": link, "next/navigation": { useRouter() { return { refresh() {}, push() {} }; } }, "@/app/products/price-updates/supplier-sources/actions": {} });
+const view = (extra: Record<string, unknown>) => ({ sourceId: "s", sourceName: "LAS Furniture", title: "LAS MOBILI — October 2026", currency: "EUR", profileId: null, families: 5, sourceRows: 46108, items: 3479, compacted: true, batchId: null, batchStatus: null, scope: null, state: "ready_to_review", unresolved: 0, unchanged: 0, changed: 0, openHref: "/open-furniture", editHref: "/edit-furniture", detailsHref: "/details-furniture", advancedHref: "/advanced", ...extra });
+const twoLists = [view({ sourceId: "f", state: "needs_attention", batchId: "bf", batchStatus: "review", unresolved: 8, unchanged: 56, openHref: "/open-furniture" }), view({ sourceId: "c", sourceName: "LAS Chairs", families: 1, sourceRows: 203870, items: 10206, compacted: false, state: "ready_to_complete", batchId: "bc", batchStatus: "review", openHref: "/open-chairs", editHref: "/edit-chairs", detailsHref: "/details-chairs" })];
+
+test("Available price lists is the primary section; two sources with the same price-list title are two distinct entries", () => {
+  const out = html(cardsCoverage.SupplierPriceListCards, { cards: twoLists, importHref: "/import", approver: true });
+  assert.match(out, /Available price lists/); assert.equal((out.match(/More actions for/g) ?? []).length, 2);
+  assert.match(out, /LAS Furniture/); assert.match(out, /LAS Chairs/);
+  assert.equal((out.match(/>LAS MOBILI — October 2026</g) ?? []).length, 2); // same title, still distinguishable by the source line above it
+  assert.doesNotMatch(out, /Review in progress/);
+});
+
+test("each card resolves its own review: Chairs opens Chairs, Furniture opens Furniture, and no Brand-wide Continue Review is shown", () => {
+  const out = html(cardsCoverage.SupplierPriceListCards, { cards: twoLists, importHref: "/import", approver: true });
+  const card = (name: string) => out.split("<li class=").find((part) => part.includes(name)) ?? "";
+  assert.match(card("LAS Furniture"), /href="\/open-furniture"/); assert.match(card("LAS Furniture"), />Continue review</);
+  assert.match(card("LAS Chairs"), /href="\/open-chairs"/); assert.match(card("LAS Chairs"), />Complete review</);
+  assert.doesNotMatch(card("LAS Chairs"), /open-furniture/); assert.doesNotMatch(card("LAS Furniture"), /open-chairs/);
+});
+
+test("states: no batch shows Start review, attention and completed render, and the secondary actions live in a menu", () => {
+  const cards = [view({ sourceId: "n", state: "ready_to_review" }), view({ sourceId: "a", sourceName: "X", state: "needs_attention", batchId: "b1", batchStatus: "review", unresolved: 3 }), view({ sourceId: "d", sourceName: "Y", state: "completed", batchId: "b2", batchStatus: "completed", openHref: "/done" }), view({ sourceId: "k", sourceName: "Z", state: "no_coverage", openHref: "/cover" })];
+  const out = html(cardsCoverage.SupplierPriceListCards, { cards, importHref: "/import", approver: true });
+  assert.match(out, />Start review</); assert.match(out, />Needs attention</); assert.match(out, />View completed review</); assert.match(out, />Confirm coverage</);
+  assert.match(out, /3 items need attention/); assert.match(out, /aria-label="More actions for LAS MOBILI — October 2026"/);
+  assert.match(out, />View extracted data</); assert.match(out, />Edit coverage</); assert.match(out, />Advanced tools</);
+  assert.equal((out.match(/Edit coverage/g) ?? []).length, 4); // one per card, inside its menu only
+});
+
+test("read-only users see the cards but no import, coverage edit or advanced actions; no raw IDs appear", () => {
+  const out = html(cardsCoverage.SupplierPriceListCards, { cards: twoLists, importHref: "/import", approver: false });
+  assert.match(out, /LAS Chairs/); assert.match(out, />Continue review</); assert.doesNotMatch(out, /Import new price list|Edit coverage|Advanced tools/);
+  assert.doesNotMatch(out, /[0-9a-f]{8}-[0-9a-f]{4}-/);
+  assert.match(html(cardsCoverage.SupplierPriceListCards, { cards: [], importHref: "/import", approver: true }), /No Supplier price lists yet\./);
+});
+
+test("page: price lists come first, coverage is a collapsed summary, system health is collapsed, and the global banner is gone", () => {
+  assert.doesNotMatch(pageText, /inProgress/); assert.doesNotMatch(pageText, /Review in progress/);
+  assert.match(pageText, /<SupplierPriceListCards cards=\{priceListCards\}/);
+  assert.ok(pageText.indexOf("<SupplierPriceListCards") < pageText.indexOf("Family coverage <span"));
+  assert.match(pageText, /open=\{coverage\.uncovered\.length > 0 \|\| coverage\.conflicts\.length > 0\}/); // open only when something needs attention
+  assert.match(pageText, /System \/ database health/); assert.match(pageText, /<SupplierCapacityPanel \/>/);
+  assert.ok(pageText.indexOf("<SupplierAdvancedImportSettings") < pageText.indexOf("System / database health"));
+});
+
+test("a single price list shows one card with its family count and the Start review action", () => {
+  const out = html(cardsCoverage.SupplierPriceListCards, { cards: [view({ sourceId: "f" })], importHref: "/import", approver: true });
+  assert.equal((out.match(/More actions for/g) ?? []).length, 1); assert.match(out, />Ready to review</); assert.match(out, />Start review</);
+  assert.match(out, /Families<\/dt><dd class="font-semibold tabular-nums text-zinc-950">5</);
+});

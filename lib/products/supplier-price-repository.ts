@@ -989,3 +989,45 @@ export async function supplierProductSourceLookup(client: SupabaseClient, input:
   return { ...empty, source: { id: current.id, title: current.title, filename: current.filename, status: current.status, currency: current.currency, basis: current.basis, effective_from: current.effective_from, received_at: current.received_at },
     multiplicity: identities.length, ambiguous: identities.length > 1, identities };
 }
+
+// ---- Phase H: one entry per current Supplier price list, each with its own review state. Read-only; uses the existing batch and unit rows. ----
+export type SupplierPriceListState = "waiting" | "no_coverage" | "ready_to_review" | "needs_attention" | "in_review" | "ready_to_complete" | "completed";
+export type SupplierPriceListCard = {
+  sourceId: string; sourceName: string | null; title: string; currency: string; profileId: string | null;
+  families: number | null; sourceRows: number; items: number; compacted: boolean;
+  batchId: string | null; batchStatus: string | null; scope: string | null; state: SupplierPriceListState;
+  unresolved: number; unchanged: number; changed: number;
+};
+/** Pure state rule: uses the batch status and the batch's own unit totals, never a second status system. */
+export function supplierPriceListState(input: { hasSource: boolean; hasCoverage: boolean; batchStatus: string | null; unresolved: number }): SupplierPriceListState {
+  if (!input.hasSource) return "waiting";
+  if (input.batchStatus === "completed") return "completed";
+  if (input.batchStatus === "review") return input.unresolved > 0 ? "needs_attention" : "ready_to_complete";
+  if (input.batchStatus === "matching") return "in_review";
+  if (!input.hasCoverage) return "no_coverage";
+  return "ready_to_review";
+}
+/**
+ * One card per current price list: the latest imported version of each active Supplier source, plus imported versions not linked
+ * to any source. Each card resolves the latest review of that version only, so two sources of one Brand never share a review.
+ */
+export async function supplierPriceListCards(client: SupabaseClient, brandId: string, definitions: SupplierCoverageDefinition[]): Promise<SupplierPriceListCard[]> {
+  const versions = await supplierRows<SourceVersion & { created_at: string; definition_id: string | null; rows_compacted_at?: string | null }>(client, "supplier_source_versions", "*", { brand_id: brandId, status: "imported" }, "created_at");
+  const batches = await supplierRows<{ id: string; source_id: string; status: string; scope: string; created_at: string }>(client, "supplier_price_batches", "id,source_id,status,scope,created_at", { brand_id: brandId }, "created_at");
+  const latestVersion = new Map<string, (typeof versions)[number]>();
+  for (const version of versions) if (version.definition_id) latestVersion.set(version.definition_id, version);
+  const current = [...latestVersion.values(), ...versions.filter((version) => !version.definition_id)];
+  const cards: SupplierPriceListCard[] = [];
+  for (const version of current) {
+    const definition = definitions.find((item) => item.id === version.definition_id);
+    const batch = [...batches].filter((item) => item.source_id === version.id).at(-1) ?? null;
+    const units = batch && batch.status === "review" ? await supplierRows<{ unresolved: number; unchanged: number; changed: number }>(client, "supplier_template_review_units", "unresolved,unchanged,changed", { batch_id: batch.id }, "template_id") : [];
+    const unresolved = units.reduce((total, unit) => total + unit.unresolved, 0), unchanged = units.reduce((total, unit) => total + unit.unchanged, 0), changed = units.reduce((total, unit) => total + unit.changed, 0);
+    const hasCoverage = Boolean(definition && definition.families.length);
+    cards.push({ sourceId: version.id, sourceName: definition?.name ?? null, title: version.title, currency: version.currency, profileId: definition?.profileId ?? null,
+      families: definition ? definition.families.length : null, sourceRows: version.stored_rows, items: version.identity_count, compacted: Boolean(version.rows_compacted_at),
+      batchId: batch?.id ?? null, batchStatus: batch?.status ?? null, scope: batch?.scope ?? null,
+      state: supplierPriceListState({ hasSource: true, hasCoverage, batchStatus: batch?.status ?? null, unresolved }), unresolved, unchanged, changed });
+  }
+  return cards.sort((a, b) => (a.sourceName ?? "~").localeCompare(b.sourceName ?? "~") || a.title.localeCompare(b.title));
+}
