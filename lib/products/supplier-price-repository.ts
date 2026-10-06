@@ -1060,3 +1060,67 @@ export function upcomingSupplierSourceVersions<T extends { status: string; effec
   return versions.filter((version) => version.status === "imported" && version.effective_from !== null && version.effective_from > businessDate)
     .sort((a, b) => (a.effective_from ?? "").localeCompare(b.effective_from ?? ""));
 }
+
+// ---- Phase 2A-0: durable per-Family review facts. Read-only; derived from the batch, match, decision and unit rows that survive Phase F. ----
+/**
+ * What one reviewed target's decision means. This is the only decision-to-outcome mapping for facts; completion and readiness keep
+ * their own price-settlement checks, which are authoritative for whether a batch can be completed.
+ * "resolved_by_decision" is progress only. A Family is "checked" only from a completed batch (see fully_checked below).
+ */
+export function supplierTargetOutcome(classification: string, decision: string | undefined): "not_reviewable" | "excluded" | "resolved_by_decision" | "open" {
+  if (classification === "unmatched" || classification === "referenced_companion") return "not_reviewable";
+  if (decision === "skip" || decision === "reject" || decision === "mapping_proposed") return "open";
+  if (classification === "target_not_represented") return decision === "excluded_from_source" ? "excluded" : "open";
+  if (["increased", "decreased", "changed", "shared"].includes(classification)) return decision === "reviewed" ? "resolved_by_decision" : "open";
+  if (classification === "unchanged") return decision === "confirmed_unchanged" ? "resolved_by_decision" : "open";
+  return "open";
+}
+export type SupplierFamilyReviewFact = {
+  brandId: string; templateId: string; sourceId: string; batchId: string; batchStatus: string; completedAt: string | null; scope: string;
+  inCoverage: boolean; hasReviewEvidence: boolean;
+  totalTargets: number; excludedTargets: number; resolvedTargets: number; unresolvedTargets: number;
+  fullyChecked: boolean; partiallyChecked: boolean;
+};
+/**
+ * Per Family, per batch (therefore per exact Source Version through batch.source_id). Targets are the batch's own reviewed universe
+ * (match.targets), the same one completion and readiness use for "covered" and "excluded". Live additions after comparison are a
+ * readiness concern and are not part of these facts. Families covered by a batch but without match rows get a zero-evidence row.
+ * Reads are paged per batch, never per Family, so no 1,000-row truncation can hide targets.
+ */
+export async function supplierFamilyReviewFacts(client: SupabaseClient, brandId: string, sourceId?: string): Promise<SupplierFamilyReviewFact[]> {
+  const batches = await supplierRows<{ id: string; source_id: string; status: string; scope: string; completed_at: string | null; coverage_template_ids: string[] | null; selected_template_ids: string[] | null }>(
+    client, "supplier_price_batches", "id,source_id,status,scope,completed_at,coverage_template_ids,selected_template_ids", { brand_id: brandId }, "id");
+  const facts: SupplierFamilyReviewFact[] = [];
+  for (const batch of batches.filter((item) => !sourceId || item.source_id === sourceId)) {
+    const [matches, decisions] = await Promise.all([
+      supplierRows<{ key: string; data: PriceMatch }>(client, "supplier_price_matches", "key,data", { batch_id: batch.id }, "key"),
+      supplierRows<{ key: string; decision: string }>(client, "supplier_price_decisions", "key,decision", { batch_id: batch.id }, "key"),
+    ]);
+    const decided = new Map(decisions.map((row) => [row.key, row.decision]));
+    const total = new Map<string, Set<string>>(), excluded = new Map<string, Set<string>>(), resolved = new Map<string, Set<string>>(), open = new Map<string, Set<string>>();
+    const add = (map: Map<string, Set<string>>, templateId: string, targetKey: string) => { map.set(templateId, (map.get(templateId) ?? new Set()).add(targetKey)); };
+    for (const { key, data: match } of matches) {
+      const outcome = supplierTargetOutcome(match.classification, decided.get(key));
+      if (outcome === "not_reviewable") continue;
+      for (const target of match.targets) {
+        add(total, target.template_id, target.key);
+        if (outcome === "excluded") add(excluded, target.template_id, target.key);
+        else if (outcome === "resolved_by_decision") add(resolved, target.template_id, target.key);
+        else add(open, target.template_id, target.key);
+      }
+    }
+    const completed = batch.status === "completed";
+    const templateIds = new Set([...total.keys(), ...(batch.coverage_template_ids ?? [])]);
+    for (const templateId of templateIds) {
+      const inCoverage = batch.coverage_template_ids === null || batch.coverage_template_ids.includes(templateId);
+      const totalTargets = total.get(templateId)?.size ?? 0, excludedTargets = excluded.get(templateId)?.size ?? 0;
+      const resolvedTargets = completed ? totalTargets - excludedTargets : resolved.get(templateId)?.size ?? 0;
+      const unresolvedTargets = completed ? 0 : open.get(templateId)?.size ?? 0;
+      const fullyChecked = completed && inCoverage && totalTargets > 0 && excludedTargets === 0 && unresolvedTargets === 0;
+      facts.push({ brandId, templateId, sourceId: batch.source_id, batchId: batch.id, batchStatus: batch.status, completedAt: batch.completed_at, scope: batch.scope,
+        inCoverage, hasReviewEvidence: totalTargets > 0, totalTargets, excludedTargets, resolvedTargets, unresolvedTargets,
+        fullyChecked, partiallyChecked: completed && inCoverage && excludedTargets > 0 && resolvedTargets > 0 });
+    }
+  }
+  return facts;
+}

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { PGlite } from "@electric-sql/pglite";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { supplierApplyReviewedPrice, supplierBrandTargets, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource } from "./supplier-price-repository.js";
+import { supplierApplyReviewedPrice, supplierBrandTargets, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierFamilyReviewFacts, supplierTargetOutcome } from "./supplier-price-repository.js";
 import type { PriceMatch, PriceTarget, SourceIdentity } from "./supplier-price-contracts.js";
 import { latestBrandPriceListUpdate, productTemplatePriceCheckState, type BrandPriceListUpdateForCheck } from "../product-price-check.js";
 
@@ -368,6 +368,73 @@ test("the effective-date guard does not change completion-mode semantics for a v
     await f.db.exec("update public.supplier_source_versions set effective_from='2000-01-01'");
     await f.complete();
     assert.deepEqual((await f.state()).updates.map((update) => (update as { coverage_mode: string }).coverage_mode), ["complete"]);
+  } finally { await f.db.close(); }
+});
+
+
+// ---- Phase 2A-0: durable per-Family review facts ----
+test("decision outcomes: excluded only for missing targets, resolved only by the decision that completion accepts, rejects stay open", () => {
+  assert.equal(supplierTargetOutcome("unmatched", undefined), "not_reviewable");
+  assert.equal(supplierTargetOutcome("referenced_companion", undefined), "not_reviewable");
+  assert.equal(supplierTargetOutcome("target_not_represented", "excluded_from_source"), "excluded");
+  assert.equal(supplierTargetOutcome("target_not_represented", "reviewed"), "open");
+  assert.equal(supplierTargetOutcome("increased", "reviewed"), "resolved_by_decision");
+  assert.equal(supplierTargetOutcome("changed", undefined), "open");
+  assert.equal(supplierTargetOutcome("unchanged", "confirmed_unchanged"), "resolved_by_decision");
+  assert.equal(supplierTargetOutcome("unchanged", "reviewed"), "open");
+  assert.equal(supplierTargetOutcome("increased", "reject"), "open");
+  assert.equal(supplierTargetOutcome("increased", "skip"), "open");
+  assert.equal(supplierTargetOutcome("increased", "mapping_proposed"), "open");
+  assert.equal(supplierTargetOutcome("ambiguous", "reviewed"), "open");
+});
+
+test("open batch: exact decided and excluded counts per Family; nothing is fully checked or partially checked", async () => {
+  const f = await fixture();
+  try {
+    const facts = await supplierFamilyReviewFacts(f.client, brand);
+    const by = Object.fromEntries(facts.map((fact) => [fact.templateId, fact]));
+    assert.ok(facts.every((fact) => fact.sourceId === source && fact.batchId === batch)); // exact Source Version proof
+    assert.deepEqual([by[t1].totalTargets, by[t1].resolvedTargets, by[t1].excludedTargets], [1, 1, 0]);
+    assert.deepEqual([by[t2].totalTargets, by[t2].resolvedTargets], [1, 1]);
+    assert.deepEqual([by[t3].totalTargets, by[t3].excludedTargets, by[t3].resolvedTargets], [1, 1, 0]);
+    assert.deepEqual([by[t4].totalTargets, by[t4].excludedTargets, by[t4].resolvedTargets], [2, 1, 1]); // 3 of ... 1 excluded counts against Family
+    assert.ok(facts.every((fact) => !fact.fullyChecked && !fact.partiallyChecked)); // an open batch proves progress only
+  } finally { await f.db.close(); }
+});
+
+test("completed batch: fully checked only with no exclusions; excluded targets make a Family partial, never fully checked", async () => {
+  const f = await fixture();
+  try {
+    await f.complete();
+    const by = Object.fromEntries((await supplierFamilyReviewFacts(f.client, brand)).map((fact) => [fact.templateId, fact]));
+    assert.equal(by[t1].fullyChecked, true); assert.equal(by[t2].fullyChecked, true);
+    assert.deepEqual([by[t3].fullyChecked, by[t3].partiallyChecked, by[t3].excludedTargets], [false, false, 1]); // excluded only: nothing resolved
+    assert.deepEqual([by[t4].fullyChecked, by[t4].partiallyChecked, by[t4].totalTargets, by[t4].excludedTargets, by[t4].resolvedTargets], [false, true, 2, 1, 1]);
+    assert.equal(by[t4].completedAt !== null, true); assert.equal(by[t4].batchStatus, "completed");
+  } finally { await f.db.close(); }
+});
+
+test("unresolved open work is never checked, and a Family with no match rows never appears as checked", async () => {
+  const f = await fixture();
+  try {
+    const data = JSON.stringify({ key: "m-open", source: null, comparison: null, candidate_shared: false, classification: "changed", targets: [{ key: "OPEN", template_id: t1 }] });
+    await f.db.query("insert into public.supplier_price_matches values($1,$2,$3,$4,null,$5,$6)", [batch, "m-open", "OPEN", "changed", [t1], data]);
+    const facts = await supplierFamilyReviewFacts(f.client, brand);
+    const t1Fact = facts.find((fact) => fact.templateId === t1)!;
+    assert.deepEqual([t1Fact.unresolvedTargets, t1Fact.fullyChecked, t1Fact.partiallyChecked], [1, false, false]);
+    assert.equal(facts.some((fact) => fact.templateId === id(99)), false); // a Family with no match rows has no evidence row
+  } finally { await f.db.close(); }
+});
+
+test("more than 1,000 targets for one Family: exact counts, no truncation", async () => {
+  const f = await fixture();
+  try {
+    await f.db.exec(`insert into public.supplier_price_matches(batch_id,key,code,classification,comparison,template_ids,data)
+      select '${batch}', 'big-' || g, 'BIG', 'target_not_represented', null, array['${t2}']::uuid[],
+        jsonb_build_object('key','big-' || g,'source',null,'comparison',null,'candidate_shared',false,'classification','target_not_represented','targets',jsonb_build_array(jsonb_build_object('key','bt-' || g,'template_id','${t2}'))) from generate_series(1,1200) g;
+      insert into public.supplier_price_decisions(batch_id,key,decision,note,reviewed_by) select '${batch}','big-' || g,'excluded_from_source','bulk test','${user}' from generate_series(1,1200) g;`);
+    const t2Fact = (await supplierFamilyReviewFacts(f.client, brand)).find((fact) => fact.templateId === t2)!;
+    assert.deepEqual([t2Fact.totalTargets, t2Fact.excludedTargets, t2Fact.resolvedTargets], [1201, 1200, 1]);
   } finally { await f.db.close(); }
 });
 
