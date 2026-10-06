@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { DimensionRule, DurableBinding, PriceMatch, PriceTarget, ProductPriceInput, ReviewBatch, SourceIdentity, SourceVersion, SupplierCoverageConflict, SupplierCoverageSuggestionRow, SupplierSourceDefinitionSummary } from "./supplier-price-contracts";
+import { normalizeManufacturerCode } from "./manufacturer-code";
+import type { DimensionRule, DurableBinding, PriceMatch, PriceTarget, ProductPriceInput, ReviewBatch, SourceIdentity, SourceVersion, SupplierIdentityEvidence, SupplierCoverageConflict, SupplierCoverageSuggestionRow, SupplierSourceDefinitionSummary } from "./supplier-price-contracts";
 import { expectedPricingVersion, pricingConflictMessage } from "./pricing-write-version";
 import { brandPriceTargets } from "./supplier-price-targets";
 import { comparisonCode, matchSupplierPrices } from "./supplier-price-matching";
@@ -15,7 +16,7 @@ export type SupplierSourceInspectorDetail = SupplierSourceInspectorRow & { fullC
 const inspectorLimit = 50;
 const inspectorText = (value: unknown) => typeof value === "string" || typeof value === "number" ? String(value) : "";
 const inspectorRow = (identity: SourceIdentity): SupplierSourceInspectorRow => ({
-  key: identity.key, code: identity.code, price: identity.price, currency: identity.currency, priceField: identity.price_field, dimension: identity.raw_dimension || identity.dimension, finishes: identity.finishes, sourceRowCount: identity.row_keys.length, warnings: identity.issues,
+  key: identity.key, code: identity.code, price: identity.price, currency: identity.currency, priceField: identity.price_field, dimension: identity.raw_dimension || identity.dimension, finishes: identity.finishes, sourceRowCount: identity.source_row_count ?? identity.row_keys.length, warnings: identity.issues,
 });
 function normalizedSupplierWorkingRow(source: SourceVersion, identity: SourceIdentity, row: { row_number: number; sheet: string; raw_extras: Record<string, unknown> }): SupplierNormalizedWorkingRow {
   const fullCode = inspectorText(row.raw_extras[source.profile.full_code_column]);
@@ -47,6 +48,9 @@ export async function supplierSourceInspectorSearch(client: SupabaseClient, sour
   return { source: { id: source.id, title: source.title }, rows: rows.map((row) => ({ ...inspectorRow(row.data), multiplePriceIdentities: Boolean(canonical && exactCount > 1) })), exactCount, hasMore: rows.length === take };
 }
 
+function evidenceWorkingRow(identity: SourceIdentity, item: SupplierIdentityEvidence): SupplierNormalizedWorkingRow {
+  return { articleCode: identity.code, fullCode: item.full_supplier_code ?? "", description: item.description ?? "", finishCode: item.finish_code ?? "", price: identity.price, currency: identity.currency, priceField: identity.price_field, dimension: identity.raw_dimension || identity.dimension, sourceRowNumber: item.row_number, sheet: item.sheet, validationWarnings: identity.issues };
+}
 /** The detail endpoint deliberately returns only five human-readable provenance rows, never raw source JSON. */
 export async function supplierSourceInspectorDetail(client: SupabaseClient, sourceId: string, identityKey: string): Promise<SupplierSourceInspectorDetail> {
   const source = await supplierSource(client, sourceId);
@@ -54,6 +58,11 @@ export async function supplierSourceInspectorDetail(client: SupabaseClient, sour
   const identityResult = await client.from("supplier_source_identities").select("key,data").eq("source_id", source.id).eq("key", identityKey).single<{ key: string; data: SourceIdentity }>();
   if (identityResult.error || !identityResult.data) throw Error(identityResult.error?.message ?? "Extracted identity unavailable.");
   const identity = identityResult.data.data; const rowKeys = identity.row_keys;
+  // Finalised identities carry their own evidence; only older identities still need the source rows.
+  if (identity.evidence?.length) {
+    const evidence = identity.evidence.map((item) => evidenceWorkingRow(identity, item));
+    return { ...inspectorRow(identity), fullCodes: [...new Set(evidence.map((row) => row.fullCode).filter(Boolean))], evidence, moreEvidence: Math.max(0, (identity.source_row_count ?? rowKeys.length) - evidence.length) };
+  }
   const provenance = rowKeys.length ? await client.from("supplier_source_rows").select("unit_key,row_number,sheet,raw_extras").eq("source_id", source.id).in("unit_key", rowKeys.slice(0, 5)).order("row_number", { ascending: true }).returns<Array<{ unit_key: string; row_number: number; sheet: string; raw_extras: Record<string, unknown> }>>() : { data: [], error: null };
   if (provenance.error) throw Error(provenance.error.message);
   const evidence = (provenance.data ?? []).map((row) => normalizedSupplierWorkingRow(source, identity, row));
@@ -103,6 +112,8 @@ export async function supplierSource(client: SupabaseClient, sourceId: string) {
   if (error || !data) throw Error(error?.message ?? "Source unavailable.");
   return data;
 }
+/** Review matches carry the identity without its evidence, so stored match rows do not grow; evidence stays on the identity. */
+function withoutEvidence(identity: SourceIdentity): SourceIdentity { const copy = { ...identity }; delete copy.evidence; return copy; }
 export async function supplierBrandMatches(client: SupabaseClient, sourceId: string) {
   const source = await supplierSource(client, sourceId);
   if (source.status !== "imported") throw Error("Matching refuses an incomplete or archived source.");
@@ -113,7 +124,7 @@ export async function supplierBrandMatches(client: SupabaseClient, sourceId: str
     supplierRows<DimensionRule>(client, "supplier_dimension_vocabulary", "*", { brand_id: source.brand_id, is_active: true }),
     supplierRows<DurableBinding>(client, "supplier_price_bindings", "*", { brand_id: source.brand_id }),
   ]);
-  return { source, templates, targets, coverage, matches: matchSupplierPrices(identities.map((identity) => identity.data), targets, rules, bindings) };
+  return { source, templates, targets, coverage, matches: matchSupplierPrices(identities.map((identity) => withoutEvidence(identity.data)), targets, rules, bindings) };
 }
 /** Builds a review batch. Coverage is the outer boundary (a source definition’s Families, or the whole Brand for a legacy source); the scope only narrows within it. */
 export async function supplierCreateReviewBatch(client: SupabaseClient, sourceId: string, scope: string, selectedIds: string[], brandListId?: string) {
@@ -838,4 +849,55 @@ export async function supplierSourceStorage(client: SupabaseClient): Promise<Sup
   const { data, error } = await client.rpc("supplier_capacity_source_storage");
   if (error) throw Error(error.message);
   return data as SupplierSourceStorageRow[];
+}
+
+// ---- Phase F1: provenance from identity evidence, and the read-only Supplier source lookup for a future Product cross-check. ----
+type ProvenanceRow = { row_number: number; sheet: string; raw_extras: Record<string, unknown> };
+/** Technical review provenance for one page of matches: embedded identity evidence first, source rows only for older identities. */
+export async function supplierMatchProvenance(client: SupabaseClient, source: SourceVersion, matches: PriceMatch[]): Promise<Map<string, ProvenanceRow[]>> {
+  const result = new Map<string, ProvenanceRow[]>();
+  const keys = [...new Set(matches.flatMap((match) => match.source ? [match.source.key] : []))];
+  if (!keys.length) return result;
+  const identities = await client.from("supplier_source_identities").select("key,data").eq("source_id", source.id).in("key", keys).returns<Array<{ key: string; data: SourceIdentity }>>();
+  if (identities.error) throw Error(identities.error.message);
+  const evidence = new Map((identities.data ?? []).flatMap((row) => row.data.evidence?.length ? [[row.key, row.data.evidence] as const] : []));
+  const asRow = (item: SupplierIdentityEvidence): ProvenanceRow => ({ row_number: item.row_number, sheet: item.sheet, raw_extras: { [source.profile.full_code_column]: item.full_supplier_code, ...(source.profile.description_column && item.description !== undefined ? { [source.profile.description_column]: item.description } : {}) } });
+  for (const match of matches) if (match.source && evidence.has(match.source.key)) result.set(match.key, evidence.get(match.source.key)!.slice(0, 3).map(asRow));
+  // Legacy identities (finalised before evidence existed): one bounded source-row query for this page, as before.
+  const legacy = matches.filter((match) => match.source && !result.has(match.key));
+  const rowKeys = [...new Set(legacy.flatMap((match) => match.source!.row_keys.slice(0, 3)))];
+  if (rowKeys.length) {
+    const rows = await client.from("supplier_source_rows").select("unit_key,row_number,sheet,raw_extras").eq("source_id", source.id).in("unit_key", rowKeys).order("unit_key").range(0, 149).returns<Array<ProvenanceRow & { unit_key: string }>>();
+    if (rows.error) throw Error(rows.error.message);
+    const byKey = new Map((rows.data ?? []).map((row) => [row.unit_key, row]));
+    for (const match of legacy) result.set(match.key, match.source!.row_keys.slice(0, 3).flatMap((key) => byKey.has(key) ? [byKey.get(key)!] : []));
+  }
+  return result;
+}
+
+export type SupplierProductSourceLookup = {
+  definition: { id: string; name: string; brand_id: string };
+  source: { id: string; title: string; filename: string; status: string; currency: string; basis: string; effective_from: string | null; received_at: string | null } | null;
+  code: string; multiplicity: number; ambiguous: boolean;
+  identities: Array<Pick<SourceIdentity, "key" | "code" | "price" | "currency" | "price_field" | "dimension" | "raw_dimension" | "finishes" | "issues" | "companion_notes" | "source_row_count" | "evidence">>;
+};
+/**
+ * Read-only: every identity with this manufacturer code in the current imported price list of one Supplier Source Definition.
+ * Scoped by Brand + definition, so two sources of one Brand (Furniture, Chairs) never mix. Same comparison code as matching.
+ */
+export async function supplierProductSourceLookup(client: SupabaseClient, input: { brandId: string; definitionId: string; code: string }): Promise<SupplierProductSourceLookup> {
+  const definition = (await supplierRows<{ id: string; name: string; brand_id: string }>(client, "supplier_source_definitions", "id,name,brand_id", { id: input.definitionId, brand_id: input.brandId, is_active: true })).at(0);
+  if (!definition) throw Error("Supplier source unavailable for this Brand.");
+  const normalized = normalizeManufacturerCode(input.code ?? ""); const wanted = comparisonCode(normalized);
+  if (!wanted) throw Error("Enter a manufacturer code.");
+  const versions = await supplierRows<SourceVersion & { created_at: string }>(client, "supplier_source_versions", "*", { brand_id: input.brandId, definition_id: definition.id, status: "imported" }, "created_at");
+  const current = versions.at(-1);
+  const empty = { definition: { id: definition.id, name: definition.name, brand_id: definition.brand_id }, code: normalized, multiplicity: 0, ambiguous: false, identities: [] };
+  if (!current) return { ...empty, source: null };
+  const found = await client.from("supplier_source_identities").select("key,code,data").eq("source_id", current.id).in("code", [...new Set([normalized, wanted])]).order("key").returns<Array<{ key: string; code: string; data: SourceIdentity }>>();
+  if (found.error) throw Error(found.error.message);
+  const identities = (found.data ?? []).filter((row) => comparisonCode(row.code) === wanted).map(({ data }) => ({ key: data.key, code: data.code, price: data.price, currency: data.currency, price_field: data.price_field, dimension: data.dimension,
+    raw_dimension: data.raw_dimension, finishes: data.finishes, issues: data.issues, companion_notes: data.companion_notes, source_row_count: data.source_row_count ?? data.row_keys.length, evidence: data.evidence ?? [] }));
+  return { ...empty, source: { id: current.id, title: current.title, filename: current.filename, status: current.status, currency: current.currency, basis: current.basis, effective_from: current.effective_from, received_at: current.received_at },
+    multiplicity: identities.length, ambiguous: identities.length > 1, identities };
 }

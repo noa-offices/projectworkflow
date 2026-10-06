@@ -11,7 +11,7 @@ import { SupplierCapacityPanel } from "@/components/products/supplier-capacity";
 import { requireBrandPriceReviewer } from "@/lib/auth";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { createClient } from "@/lib/supabase/server";
-import { SUPPLIER_BULK_LIMIT, canManageSupplierCapacity, familySections, supplierBrandMatches, supplierCoverageOverview, supplierFamilyCoverageSetup, supplierPreviousSources, supplierFamilyOverview, supplierFamilyRows, supplierRows, supplierSourceCoverageSuggestion, type FamilyOverview, type FamilyRow, type FamilySection, type SupplierCoverageOverview, type SupplierFamilyCoverageRow, type SupplierPreviousSource } from "@/lib/products/supplier-price-repository";
+import { SUPPLIER_BULK_LIMIT, canManageSupplierCapacity, familySections, supplierBrandMatches, supplierCoverageOverview, supplierFamilyCoverageSetup, supplierPreviousSources, supplierFamilyOverview, supplierFamilyRows, supplierMatchProvenance, supplierRows, supplierSourceCoverageSuggestion, type FamilyOverview, type FamilyRow, type FamilySection, type SupplierCoverageOverview, type SupplierFamilyCoverageRow, type SupplierPreviousSource } from "@/lib/products/supplier-price-repository";
 import type { DimensionRule, PriceMatch, ReviewBatch, SourceVersion, SupplierCoverageSuggestionRow, SupplierProfile } from "@/lib/products/supplier-price-contracts";
 
 export const dynamic = "force-dynamic";
@@ -65,13 +65,10 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
     if (code) query = query.ilike("code", `%${code.replace(/[\\%_]/g, "\\$&")}%`);
     const result = await query.returns<Array<{ data: PriceMatch; supplier_price_decisions: { decision: PriceMatch["decision"]; proposed_target_keys: string[] } | null }>>();
     matches = (result.data ?? []).map((row) => ({ ...row.data, ...row.supplier_price_decisions })); errorMessage ||= result.error?.message ?? "";
-    // One bounded provenance query for this page; never a query per source row.
-    const rowKeys = [...new Set(matches.flatMap((match) => match.source?.row_keys.slice(0, 3) ?? []))];
-    if (source && rowKeys.length) {
-      const provenance = await client.from("supplier_source_rows").select("unit_key,row_number,sheet,raw_extras").eq("source_id", source.id).in("unit_key", rowKeys).order("unit_key").range(0, 149).returns<Array<{ unit_key: string; row_number: number; sheet: string; raw_extras: Record<string, unknown> }>>();
-      const byKey = new Map((provenance.data ?? []).map((row) => [row.unit_key, row]));
-      matches = matches.map((match) => ({ ...match, provenance: (match.source?.row_keys.slice(0, 3) ?? []).flatMap((key) => byKey.has(key) ? [byKey.get(key)!] : []) }));
-      errorMessage ||= provenance.error?.message ?? "";
+    // Provenance from embedded identity evidence; older identities fall back to one bounded source-row query.
+    if (source && matches.length) {
+      try { const provenance = await supplierMatchProvenance(client, source, matches); matches = matches.map((match) => ({ ...match, provenance: provenance.get(match.key) ?? [] })); }
+      catch (error) { errorMessage ||= error instanceof Error ? error.message : "Provenance unavailable"; }
     }
   }
   const approver = canApproveBrandPrices(profile?.role, profile?.account_status);

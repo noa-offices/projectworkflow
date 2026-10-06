@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
+import type { PriceMatch, SourceIdentity, SourceVersion } from "./supplier-price-contracts.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { supplierAssignFamiliesToSource, supplierAssignFamilyToSource, supplierFamilyCoverageSetup, supplierBrandMatches, supplierBulkConfirmUnchanged, supplierCompletionReadiness, supplierConfirmCoverage, supplierCoverageOverview, supplierCreateReviewBatch, supplierCreateSourceDefinition, supplierFamilyOverview, supplierLinkSourceDefinition, supplierResolveCoverageConflict, supplierWrite } from "./supplier-price-repository.js";
+import { supplierAssignFamiliesToSource, supplierAssignFamilyToSource, supplierFamilyCoverageSetup, supplierBrandMatches, supplierBulkConfirmUnchanged, supplierCompletionReadiness, supplierConfirmCoverage, supplierCoverageOverview, supplierCreateReviewBatch, supplierCreateSourceDefinition, supplierFamilyOverview, supplierLinkSourceDefinition, supplierResolveCoverageConflict, supplierWrite, supplierSourceInspectorDetail, supplierMatchProvenance, supplierProductSourceLookup } from "./supplier-price-repository.js";
 
 const read = (name: string) => readFile(new URL(`../../supabase/migrations/${name}.sql`, import.meta.url), "utf8");
 const migrations = await Promise.all(["20261002060146_pricing_identity_version_foundation", "20261002065310_pricing_writer_concurrency", "20261003141259_supplier_default_price_writer", "20261002082357_supplier_price_source_review",
@@ -38,7 +39,7 @@ function pgClient(db: PGlite) {
         });
       };
       return { select(columns?: string) { embed = Boolean(columns?.includes("supplier_price_decisions(")); return this; }, eq(key: string, value: unknown) { filters.push([key, value]); return this; }, in(key: string, values: unknown[]) { inFilters.push([key, values]); return this; },
-        order(column: string) { order = column; return this; }, range(from: number, to: number) { start = from; end = to; return this; },
+        order(column: string) { order = column; return this; }, returns() { return this; }, range(from: number, to: number) { start = from; end = to; return this; },
         async single() { const rows = await execute(); return { data: rows.length === 1 ? rows[0] : null, error: rows.length === 1 ? null : { message: "Record unavailable" } }; },
         then(resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) { return execute().then((data) => resolve({ data, error: null }), reject); } };
     },
@@ -302,5 +303,71 @@ test("coverage rows: category from the Product Library, found/total from the ref
     assert.deepEqual([by.get("FURN")!.currentSources.map((s) => s.definitionName), by.get("LEAD")!.currentSources], [["LAS Furniture"], []]);
     const bare = await supplierFamilyCoverageSetup(f.client, brand, null);
     assert.deepEqual([bare[0].foundTargetCodes, bare[0].foundRatio], [null, null]);
+  });
+});
+
+// ---- Phase F1: Inspector, technical review provenance and Supplier source lookup read identity evidence ----
+const evidenceOf = (code: string, count: number) => Array.from({ length: count }, (_, index) => ({ row_number: 10 + index, sheet: "Arredi", full_supplier_code: `${code}14${index}`, article_code: code, finish_code: `14${index}`, raw_price: 100 }));
+async function withEvidence(f: Fixture, sourceId: string, code: string, rowCount: number) {
+  await f.db.query("update public.supplier_source_identities set data=data || jsonb_build_object('source_row_count',$3::int,'evidence',$4::jsonb) where source_id=$1 and code=$2", [sourceId, code, rowCount, JSON.stringify(evidenceOf(code, Math.min(rowCount, 5)))]);
+}
+async function legacyRow(f: Fixture, sourceId: string, code: string, unitKey: string, rowNumber: number) {
+  await f.db.query("insert into public.supplier_source_rows(source_id,unit_key,row_number,sheet,raw_extras) values($1,$2,$3,'Legacy',$4)", [sourceId, unitKey, rowNumber, JSON.stringify({ CODE: `${code}999`, NOTES: "x" })]);
+  await f.db.query("update public.supplier_source_identities set data=jsonb_set(data,'{row_keys}',$3::jsonb) where source_id=$1 and code=$2", [sourceId, code, JSON.stringify([unitKey])]);
+}
+
+test("Inspector reads embedded identity evidence and falls back to source rows only for older identities", async () => {
+  await withDb(async (f) => {
+    await f.db.exec(`update public.supplier_source_versions set profile='{"full_code_column":"CODE"}' where id='${furnitureSource}'`);
+    await withEvidence(f, furnitureSource, "F1", 7);
+    const embedded = await supplierSourceInspectorDetail(f.client, furnitureSource, "id-F1");
+    assert.equal(embedded.sourceRowCount, 7); assert.equal(embedded.evidence.length, 5); assert.equal(embedded.moreEvidence, 2);
+    assert.deepEqual(embedded.evidence[0], { articleCode: "F1", fullCode: "F1140", description: "", finishCode: "140", price: 100, currency: "EUR", priceField: "unit_price", dimension: "", sourceRowNumber: 10, sheet: "Arredi", validationWarnings: [] });
+    assert.deepEqual(embedded.fullCodes, ["F1140", "F1141", "F1142", "F1143", "F1144"]);
+    await legacyRow(f, furnitureSource, "O1", "legacy-1", 42);
+    const legacy = await supplierSourceInspectorDetail(f.client, furnitureSource, "id-O1");
+    assert.deepEqual([legacy.sourceRowCount, legacy.evidence.length, legacy.evidence[0].sourceRowNumber, legacy.evidence[0].fullCode], [1, 1, 42, "O1999"]);
+  });
+});
+
+test("technical review provenance uses identity evidence, with the source-row fallback for legacy identities", async () => {
+  await withDb(async (f) => {
+    await f.db.exec(`update public.supplier_source_versions set profile='{"full_code_column":"CODE"}' where id='${furnitureSource}'`);
+    await withEvidence(f, furnitureSource, "F1", 2);
+    await legacyRow(f, furnitureSource, "O1", "legacy-1", 42);
+    const source = (await f.db.query<SourceVersion>("select * from public.supplier_source_versions where id=$1", [furnitureSource])).rows[0];
+    const identities = (await f.db.query<{ data: SourceIdentity }>("select data from public.supplier_source_identities where source_id=$1 and code in ('F1','O1') order by code", [furnitureSource])).rows.map((row) => row.data);
+    const matches = identities.map((identity) => ({ key: `m-${identity.code}`, source: { ...identity, evidence: undefined }, targets: [], classification: "unmatched", candidate_shared: false })) as unknown as PriceMatch[];
+    const provenance = await supplierMatchProvenance(f.client, source, matches);
+    assert.deepEqual(provenance.get("m-F1"), [{ row_number: 10, sheet: "Arredi", raw_extras: { CODE: "F1140" } }, { row_number: 11, sheet: "Arredi", raw_extras: { CODE: "F1141" } }]);
+    assert.deepEqual(provenance.get("m-O1")?.map((row) => [row.row_number, row.raw_extras.CODE]), [[42, "O1999"]]);
+  });
+});
+
+test("Supplier source lookup: current price list of one definition, every exact match, shared codes kept, other sources never mixed", async () => {
+  await withDb(async (f) => {
+    await withEvidence(f, furnitureSource, "F1", 3);
+    // A second identity with the same code (another price field) must not be collapsed.
+    await f.db.query("insert into public.supplier_source_identities values($1,'id-F1-extra','F1',$2)", [furnitureSource, JSON.stringify({ key: "id-F1-extra", code: "F1", price_field: "additional_price", dimension: "", finishes: [], price: 40, currency: "EUR", row_keys: ["r9"], issues: [] })]);
+    // LAS Chairs has its own current source with the same code at another price.
+    const chairs = id(24), chairsSource = id(35);
+    await f.db.exec(`insert into public.supplier_source_definitions(id,brand_id,name) values('${chairs}','${brand}','LAS Chairs');
+      insert into public.supplier_source_versions(id,brand_id,title,filename,file_hash,source_type,currency,basis,profile,status,expected_rows,expected_cells,expected_chunks,created_by,definition_id)
+        values('${chairsSource}','${brand}','Chairs','c.csv','${"c".repeat(64)}','csv','EUR','list','{}','imported',1,1,1,'${user}','${chairs}');`);
+    await f.db.query("insert into public.supplier_source_identities values($1,'id-F1','F1',$2)", [chairsSource, JSON.stringify({ key: "id-F1", code: "F1", price_field: "unit_price", dimension: "", finishes: [], price: 999, currency: "EUR", row_keys: [], issues: [] })]);
+    const furnitureLookup = await supplierProductSourceLookup(f.client, { brandId: brand, definitionId: furniture, code: " f1 " });
+    assert.equal(furnitureLookup.source?.id, furnitureSource); assert.equal(furnitureLookup.definition.name, "LAS Furniture");
+    assert.deepEqual([furnitureLookup.multiplicity, furnitureLookup.ambiguous], [2, true]);
+    assert.deepEqual(furnitureLookup.identities.map((item) => [item.price_field, item.price, item.source_row_count, item.evidence?.length]), [["unit_price", 100, 3, 3], ["additional_price", 40, 1, 0]]);
+    const chairsLookup = await supplierProductSourceLookup(f.client, { brandId: brand, definitionId: chairs, code: "F1" });
+    assert.deepEqual(chairsLookup.identities.map((item) => item.price), [999]); // never mixed with LAS Furniture
+    assert.equal((await supplierProductSourceLookup(f.client, { brandId: brand, definitionId: furniture, code: "ZZZ" })).multiplicity, 0);
+    await assert.rejects(supplierProductSourceLookup(f.client, { brandId: id(99), definitionId: furniture, code: "F1" }), /unavailable for this Brand/);
+    // A newer imported version of the same definition becomes the current price list.
+    await f.db.exec(`update public.supplier_source_versions set created_at=now() - interval '1 day' where id='${furnitureSource}';
+      insert into public.supplier_source_versions(id,brand_id,title,filename,file_hash,source_type,currency,basis,profile,status,expected_rows,expected_cells,expected_chunks,created_by,definition_id)
+        values('${id(36)}','${brand}','Furniture Oct','f.xlsx','${"d".repeat(64)}','xlsx','EUR','list','{}','imported',1,1,1,'${user}','${furniture}');`);
+    const newer = await supplierProductSourceLookup(f.client, { brandId: brand, definitionId: furniture, code: "F1" });
+    assert.deepEqual([newer.source?.id, newer.multiplicity], [id(36), 0]);
   });
 });

@@ -24,8 +24,12 @@ export type SourceCell = {
   raw_price: unknown; issues: string[];
   companion_note?: string;
 };
+/** Up to five representative rows that formed a finalised identity, in row-number order. Only stored values; nothing inferred. */
+export type SupplierIdentityEvidence = { row_number: number; sheet: string; full_supplier_code: string; article_code?: string; description?: string; finish_code?: string; category_label?: string; dimension_label?: string; raw_price?: unknown };
 export type SourceIdentity = {
   raw_dimension?: string;
+  /** Distinct source rows behind this identity and their compact evidence (set by finalize from Phase F1; absent on older identities). */
+  source_row_count?: number; evidence?: SupplierIdentityEvidence[];
   companion_notes?: string[];
   key: string; code: string; price_field: string; dimension: string; finishes: string[];
   price: number | null; currency: SupportedCurrency; row_keys: string[]; issues: string[];

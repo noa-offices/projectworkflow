@@ -9,7 +9,7 @@ const read = (name: string) => readFile(new URL(`../../supabase/migrations/${nam
 const migrations = await Promise.all(["20261002060146_pricing_identity_version_foundation", "20261002065310_pricing_writer_concurrency", "20261003141259_supplier_default_price_writer", "20261002082357_supplier_price_source_review",
   "20261002124625_supplier_source_finish_evidence", "038_product_template_detail_price_history", "20261003154849_detail_history_dynamic_price_fields", "20261003170000_supplier_shared_price_writer",
   "20261004090000_supplier_confirmed_unchanged_decision", "20261004120000_supplier_review_completion", "20261005090000_supplier_source_definitions", "20261005120000_supplier_batch_coverage_snapshot",
-  "20261005150000_supplier_coverage_completion_mode", "20261005180000_supplier_source_definition_writes", "20261005210000_supplier_source_definition_delete", "20261006090000_supplier_capacity_hardening", "20261006120000_supplier_capacity_cleanup", "20261006150000_supplier_compact_source_rows", "20261006170000_supplier_cells_row_key_index", "20261006180000_supplier_staged_finalize"].map(read));
+  "20261005150000_supplier_coverage_completion_mode", "20261005180000_supplier_source_definition_writes", "20261005210000_supplier_source_definition_delete", "20261006090000_supplier_capacity_hardening", "20261006120000_supplier_capacity_cleanup", "20261006150000_supplier_compact_source_rows", "20261006170000_supplier_cells_row_key_index", "20261006180000_supplier_staged_finalize", "20261006210000_supplier_identity_evidence", "20261006230000_supplier_evidence_backfill_compaction"].map(read));
 const id = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")}`;
 const user = id(1), brand = id(2), otherBrand = id(3), template = id(4);
 const hashA = "a".repeat(64), hashB = "b".repeat(64);
@@ -543,5 +543,147 @@ test("staged finalize refuses an incomplete upload and leaves it importing", asy
     await assert.rejects(step(db, created.id), /Import incomplete/);
     assert.equal((await db.query<{ status: string }>("select status from public.supplier_source_versions where id=$1", [created.id])).rows[0].status, "importing");
     assert.equal(await count(db, "select count(*) from public.supplier_source_identities where source_id=$1", [created.id]), 0);
+  });
+});
+
+// ---- Phase F1: compact identity evidence ----
+const evidenceConfig: SupplierProfile = { full_code_column: "CODE", article_code_column: "ART", strategy: "article_plus_finish", article_length: 6, finish_length: 3, category_column: "CAT", description_column: "DESC", currency: "EUR", basis: "list", price_columns: [{ column: "PRICE", price_field: "unit_price" }] };
+// Seven rows of one article (row numbers deliberately not in unit-key order) and one finish-driven article with two tiers.
+const evidenceRows: RawSupplierRow[] = [
+  ...["144", "145", "146", "147", "148", "149", "150"].map((finish, index) => ({ unit_key: `u-${index}`, row_number: 20 - index, sheet: "Arredi", values: { CODE: `111001${finish}`, ART: "111001", CAT: " A ", DESC: "Desk 160", PRICE: 100, NOTES: "unused" } })),
+  { unit_key: "u-7", row_number: 30, sheet: "Arredi", values: { CODE: "111002144", ART: "111002", CAT: "B", DESC: "Cabinet", PRICE: 50 } },
+  { unit_key: "u-8", row_number: 31, sheet: "Arredi", values: { CODE: "111002145", ART: "111002", CAT: "B", DESC: "Cabinet", PRICE: "60" } },
+];
+async function evidenceSource(db: Db, hash: string, mode: "single" | "staged") {
+  const profileId = await profileFor(db, brand, evidenceConfig, "Evidence");
+  const created = await write(db, "source", { profile_id: profileId, expected_profile: evidenceConfig, title: `Evidence ${mode}`, filename: "e.xlsx", source_type: "xlsx", file_hash: hash, expected_rows: evidenceRows.length, expected_cells: evidenceRows.length, expected_chunks: 1 });
+  await write(db, "chunk", { source_id: created.id, chunk_index: 0, rows: evidenceRows, cells: normalizeSupplierRows(evidenceRows, evidenceConfig) });
+  if (mode === "single") await write(db, "finalize_source", { source_id: created.id });
+  else for (let guard = 0; guard < 10 && !(await step(db, created.id, 100)).done; guard++);
+  return created.id;
+}
+const identityRows = async (db: Db, sourceId: string) => (await db.query<{ data: Record<string, any> }>("select data from public.supplier_source_identities where source_id=$1 order by key", [sourceId])).rows.map((row) => row.data); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+test("finalised identities carry an exact row count and up to five deterministic evidence rows from their own cells", async () => {
+  await withDb(async (db) => {
+    const sourceId = await evidenceSource(db, hashA, "single");
+    const [desk, tierLow, tierHigh] = await identityRows(db, sourceId);
+    assert.equal(desk.code, "111001"); assert.equal(desk.source_row_count, 7); assert.equal(desk.row_keys.length, 7); // row_keys kept for compatibility
+    assert.equal(desk.evidence.length, 5);
+    assert.deepEqual(desk.evidence.map((item: { row_number: number }) => item.row_number), [14, 15, 16, 17, 18]); // row number order, not unit-key order
+    const rowNumbers = (await db.query<{ row_number: number }>("select row_number from public.supplier_source_rows where source_id=$1 and unit_key=any($2::text[])", [sourceId, desk.row_keys])).rows.map((row) => row.row_number);
+    assert.ok(desk.evidence.every((item: { row_number: number }) => rowNumbers.includes(item.row_number))); // only rows of this identity
+    assert.deepEqual(desk.evidence[0], { row_number: 14, sheet: "Arredi", full_supplier_code: "111001150", article_code: "111001", description: "Desk 160", finish_code: "150", category_label: "A", dimension_label: "A", raw_price: 100 });
+    // Finish-driven tiers: each identity's evidence is its own finish row, raw price kept as written.
+    assert.deepEqual([tierLow.source_row_count, tierLow.evidence.map((item: { finish_code: string }) => item.finish_code), tierLow.evidence[0].raw_price], [1, ["144"], 50]);
+    assert.deepEqual([tierHigh.source_row_count, tierHigh.evidence.map((item: { finish_code: string }) => item.finish_code), tierHigh.evidence[0].raw_price], [1, ["145"], "60"]);
+    // Every commercial field the matcher uses is unchanged; only the two new fields are added.
+    assert.deepEqual(Object.keys(desk).sort(), ["code", "companion_notes", "currency", "dimension", "evidence", "finishes", "issues", "key", "price", "price_field", "raw_dimension", "row_keys", "source_row_count"]);
+    assert.deepEqual([desk.key, desk.price, desk.dimension, desk.raw_dimension, desk.finishes], ['["111001", "unit_price", "A"]', 100, "A", "A", ["144", "145", "146", "147", "148", "149", "150"]]);
+    assert.ok(!JSON.stringify(desk.evidence).includes("unused")); // unrelated columns never reach evidence
+  });
+});
+
+test("staged and single-statement finalize produce the same evidence; matches store the identity without evidence", async () => {
+  await withDb(async (db) => {
+    const single = await evidenceSource(db, hashA, "single"); const staged = await evidenceSource(db, hashB, "staged");
+    assert.equal(JSON.stringify(await identityRows(db, staged)), JSON.stringify(await identityRows(db, single)));
+    const products = await productSnapshot(db);
+    const identity = (await identityRows(db, single))[0]; const withoutEvidence = { ...identity }; delete withoutEvidence.evidence;
+    const batch = await write(db, "batch", { source_id: single, title: "Review", scope: "complete", selected_template_ids: [], expected_matches: 1, expected_chunks: 1 });
+    await write(db, "match_chunk", { batch_id: batch.id, chunk_index: 0, matches: [{ key: "m-1", source: withoutEvidence, targets: [], classification: "unmatched", comparison: null, candidate_shared: false }] });
+    const stored = (await db.query<{ data: { source: Record<string, unknown> } }>("select data from public.supplier_price_matches where batch_id=$1", [batch.id])).rows[0].data.source;
+    assert.equal(stored.evidence, undefined); assert.equal(stored.source_row_count, 7);
+    const forged = { ...withoutEvidence, price: 1 };
+    const other = await write(db, "batch", { source_id: single, title: "Review 2", scope: "complete", selected_template_ids: [], expected_matches: 1, expected_chunks: 1 });
+    await assert.rejects(write(db, "match_chunk", { batch_id: other.id, chunk_index: 0, matches: [{ key: "m-1", source: forged, targets: [], classification: "unmatched", comparison: null, candidate_shared: false }] }), /forged/); // every other field is still checked
+    assert.equal(await productSnapshot(db), products);
+  });
+});
+
+// ---- Phase F2: evidence backfill and finalized-source compaction ----
+const stripEvidence = (db: Db, sourceId: string) => db.query("update public.supplier_source_identities set data=data - 'evidence' - 'source_row_count' where source_id=$1", [sourceId]);
+const backfill = (db: Db, sourceId: string, max = 500) => json(db, "public.supplier_backfill_identity_evidence($1,$2)", [sourceId, max]);
+const compact = (db: Db, sourceId: string, dryRun = true) => json(db, "public.supplier_compact_finalized_source($1,$2)", [sourceId, dryRun]);
+const commercial = async (db: Db, sourceId: string) => JSON.stringify((await db.query("select key,data - 'evidence' - 'source_row_count' d from public.supplier_source_identities where source_id=$1 order by key", [sourceId])).rows);
+const keepFile = (db: Db, sourceId: string) => db.exec(`insert into storage.objects(bucket_id,name) values('supplier-price-sources','${brand}/${sourceId}/file.xlsx'); update public.supplier_source_versions set working_reference='${brand}/${sourceId}/file.xlsx' where id='${sourceId}'`);
+
+test("backfill gives legacy identities exactly the evidence finalize produces, in bounded idempotent steps, changing nothing else", async () => {
+  await withDb(async (db) => {
+    const sourceId = await evidenceSource(db, hashA, "single");
+    const expected = JSON.stringify(await identityRows(db, sourceId)); const fingerprint = await commercial(db, sourceId);
+    await stripEvidence(db, sourceId); // as finalised before F1
+    assert.equal(await count(db, "select count(*) from public.supplier_source_identities where source_id=$1 and data ? 'evidence'", [sourceId]), 0);
+    const steps: Array<Record<string, any>> = []; // eslint-disable-line @typescript-eslint/no-explicit-any
+    for (let guard = 0; guard < 10; guard++) { const result = await backfill(db, sourceId, 1); steps.push(result); if (result.done) break; }
+    assert.deepEqual(steps.map((result) => [result.backfilled, result.remaining]), [[1, 2], [1, 1], [1, 0]]); // bounded and resumable
+    assert.equal(JSON.stringify(await identityRows(db, sourceId)), expected); // same count, order, finish tiers, category and raw price as finalize
+    assert.equal(await commercial(db, sourceId), fingerprint); // every commercial field unchanged
+    assert.deepEqual(await backfill(db, sourceId), { source_id: sourceId, backfilled: 0, remaining: 0, done: true }); // repeat is harmless
+  });
+});
+
+test("backfill refuses unfinished or inconsistent sources and non-owners", async () => {
+  await withDb(async (db) => {
+    const profileId = await profileFor(db, brand, evidenceConfig, "Evidence");
+    const uploading = (await write(db, "source", { profile_id: profileId, expected_profile: evidenceConfig, title: "Up", filename: "u.xlsx", source_type: "xlsx", file_hash: hashB, expected_rows: 9, expected_cells: 9, expected_chunks: 1 })).id;
+    await assert.rejects(backfill(db, uploading), /Only an imported Supplier source/);
+    await write(db, "chunk", { source_id: uploading, chunk_index: 0, rows: evidenceRows, cells: normalizeSupplierRows(evidenceRows, evidenceConfig) });
+    await assert.rejects(backfill(db, uploading), /Only an imported Supplier source/); // importing
+    const done = await evidenceSource(db, hashA, "single");
+    await db.query("delete from public.supplier_source_cells where source_id=$1 and unit_key=(select min(unit_key) from public.supplier_source_cells where source_id=$1)", [done]);
+    await assert.rejects(backfill(db, done), /do not match the import/);
+    await db.exec("update public.test_role set role='designer'");
+    await assert.rejects(backfill(db, done), /permission|privilege/i);
+  });
+});
+
+test("compaction: dry run first and blocked until evidence is complete and the file is retained; then deletes only cells and rows", async () => {
+  await withDb(async (db) => {
+    const sourceId = await evidenceSource(db, hashA, "single");
+    const batchId = await batchWithMatch(db, sourceId); await decide(db, batchId);
+    const definition = (await write(db, "definition", { brand_id: brand, name: "LAS Furniture" })).id;
+    await write(db, "definition_coverage", { definition_id: definition, template_ids: [template] });
+    await stripEvidence(db, sourceId);
+    const blocked = await compact(db, sourceId);
+    assert.equal(blocked.safe, false); assert.equal(blocked.evidence_ready_percent, 0);
+    assert.match(blocked.reasons.join(), /lack evidence/); assert.match(blocked.reasons.join(), /not retained in Storage/);
+    await assert.rejects(compact(db, sourceId, false), /Nothing was deleted/);
+    await backfill(db, sourceId); await keepFile(db, sourceId);
+    const before = { counts: await supplierCounts(db), identities: JSON.stringify(await identityRows(db, sourceId)), products: await productSnapshot(db),
+      version: JSON.stringify((await db.query("select status,expected_rows,stored_rows,expected_cells,stored_cells,identity_count from public.supplier_source_versions where id=$1", [sourceId])).rows),
+      coverage: await count(db, "select count(*) from public.supplier_source_definition_families"), bindings: await count(db, "select count(*) from public.supplier_price_bindings") };
+    const dry = await compact(db, sourceId);
+    assert.deepEqual([dry.safe, dry.rows, dry.cells, dry.identities, dry.evidence_ready_percent], [true, 9, 9, 3, 100]); assert.ok(dry.estimated_bytes > 0);
+    assert.equal(await supplierCounts(db), before.counts); // dry run deletes nothing
+    await db.exec("update public.test_role set role='admin_manager'");
+    await assert.rejects(compact(db, sourceId, false), /permission|privilege/i);
+    await db.exec("update public.test_role set role='system_owner'");
+    const done = await compact(db, sourceId, false);
+    assert.deepEqual([done.deleted_cells, done.deleted_rows], [9, 9]);
+    assert.equal(await count(db, "select count(*) from public.supplier_source_rows where source_id=$1", [sourceId]), 0);
+    assert.equal(JSON.stringify(await identityRows(db, sourceId)), before.identities); // identities and their evidence stay
+    assert.equal(JSON.stringify((await db.query("select status,expected_rows,stored_rows,expected_cells,stored_cells,identity_count from public.supplier_source_versions where id=$1", [sourceId])).rows), before.version); // still a complete import
+    assert.ok((await db.query<{ t: Date }>("select rows_compacted_at t from public.supplier_source_versions where id=$1", [sourceId])).rows[0].t instanceof Date);
+    assert.equal(await count(db, "select count(*) from public.supplier_source_chunks where source_id=$1 and payload_sha256 is not null", [sourceId]), 1); // receipts kept
+    for (const table of ["supplier_price_batches", "supplier_price_matches", "supplier_price_decisions", "supplier_template_review_units", "supplier_price_match_chunks"]) assert.equal(await count(db, `select count(*) from public.${table}`), JSON.parse(before.counts)[["supplier_source_versions", "supplier_source_rows", "supplier_source_cells", "supplier_source_identities", "supplier_source_chunks", "supplier_price_batches", "supplier_price_matches", "supplier_price_match_chunks", "supplier_template_review_units", "supplier_price_decisions"].indexOf(table)], table);
+    assert.deepEqual([await count(db, "select count(*) from public.supplier_source_definition_families"), await count(db, "select count(*) from public.supplier_price_bindings")], [before.coverage, before.bindings]);
+    assert.equal(await count(db, "select count(*) from storage.objects"), 1); // original file kept
+    assert.equal(await productSnapshot(db), before.products);
+    assert.equal((await compact(db, sourceId, false)).already_compacted, true); // retry is harmless
+    await assert.rejects(backfill(db, sourceId), /already compacted/);
+    assert.equal((await step(db, sourceId)).done, true); // a compacted source still reads as imported
+  });
+});
+
+test("compaction refuses a source that is not imported", async () => {
+  await withDb(async (db) => {
+    const profileId = await profileFor(db, brand, evidenceConfig, "Evidence");
+    const importing = (await write(db, "source", { profile_id: profileId, expected_profile: evidenceConfig, title: "Up", filename: "u.xlsx", source_type: "xlsx", file_hash: hashB, expected_rows: 9, expected_cells: 9, expected_chunks: 1 })).id;
+    await write(db, "chunk", { source_id: importing, chunk_index: 0, rows: evidenceRows, cells: normalizeSupplierRows(evidenceRows, evidenceConfig) });
+    const dry = await compact(db, importing);
+    assert.equal(dry.safe, false); assert.match(dry.reasons.join(), /not imported/);
+    await assert.rejects(compact(db, importing, false), /Nothing was deleted/);
+    assert.equal(await count(db, "select count(*) from public.supplier_source_rows where source_id=$1", [importing]), 9);
   });
 });
