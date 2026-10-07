@@ -87,3 +87,24 @@ export function PriceUpdatesBrandCard({ view, hrefs }: { view: PriceUpdatesBrand
 export function PriceUpdatesStatusLegend() {
   return <p className="text-xs text-zinc-500">Brand states: {Object.values(supplierBrandStateLabels).join(" · ")}</p>;
 }
+
+export type PriceUpdatesBrandSummary = { view: PriceUpdatesBrandView; priceLists: number; reviewsInProgress: number; href: string };
+/** Brand-level card for the landing page: counts and one state only. Family rows live in the Brand workspace. */
+export function PriceUpdatesBrandSummaryCard({ summary }: { summary: PriceUpdatesBrandSummary }) {
+  const { view } = summary, p = view.progress;
+  const managed = p.applicableFamilies + p.noPriceListFamilies;
+  const needReview = p.updateAvailableFamilies + p.needsAttentionFamilies + p.inReviewFamilies + p.partiallyCheckedFamilies + p.readyToCompleteFamilies;
+  const lines = [
+    managed ? `${managed} Supplier-managed ${managed === 1 ? "Family" : "Families"}` : "No Supplier-managed Families",
+    `${summary.priceLists} ${summary.priceLists === 1 ? "price list" : "price lists"}`,
+    summary.reviewsInProgress ? `${summary.reviewsInProgress} ${summary.reviewsInProgress === 1 ? "review" : "reviews"} in progress` : null,
+    p.applicableFamilies ? `${p.checkedFamilies} / ${p.applicableFamilies} Families checked` : null,
+    needReview ? `${needReview} need review` : null,
+    p.upcomingCount ? `${p.upcomingCount} upcoming ${p.upcomingCount === 1 ? "price list" : "price lists"}` : null,
+  ].filter((line): line is string => Boolean(line));
+  return <li className={`${card} flex flex-col gap-3 p-4`}>
+    <div className="flex items-start justify-between gap-2"><h3 className="text-base font-semibold text-zinc-950">{view.brandName}</h3><span className={`${badge} shrink-0 ${brandTone[view.state]}`}>{view.stateLabel}</span></div>
+    <ul className="space-y-0.5 text-sm text-zinc-700">{lines.map((line) => <li key={line}>{line}</li>)}</ul>
+    <Link href={summary.href} className="mt-auto inline-flex h-9 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800">Open Brand</Link>
+  </li>;
+}

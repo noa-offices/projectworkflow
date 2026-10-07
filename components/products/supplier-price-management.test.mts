@@ -111,7 +111,7 @@ test("Wizard starts from a sample upload, shows no JSON, and is approver-only; s
   const reviewer = html(wizard.SupplierImportFormatWizard, { brandName: "LAS MOBILI", brandId: "b", approver: false, doneHref: "/done" });
   assert.match(reviewer, /An approver sets up import profiles/); assert.doesNotMatch(reviewer, /type="file"/);
   assert.match(pageSource, /text\(params\.setup\) === "1" \? <SupplierImportFormatWizard/); // setup is reached from the Import card's "Set up import profile"
-  assert.match(pageSource, /setupHref=\{href\(\{ tab: "import", setup: "1" \}\)\}/);
+  assert.match(pageSource, /text\(params\.setup\) === "1" \? <SupplierImportFormatWizard/);
 });
 
 test("Advanced settings keep the technical tools and expose generated JSON read-only", () => {

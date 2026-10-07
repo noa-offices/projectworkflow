@@ -28,7 +28,7 @@ function parallelGroups(source: string) {
 test("management, Price Updates and Local Builder await independent reads together", () => {
   const hasTables = (source: string, tables: string[]) => parallelGroups(source).some((group) => tables.every((table) => group.includes(`.from("${table}")`)));
   assert.ok(hasTables(management, ["product_templates", "product_components", "brand_materials", "product_categories"]));
-  assert.ok(hasTables(updates, ["brands", "product_categories", "product_templates", "brand_price_list_updates"]));
+  assert.ok(hasTables(updates, ["brands", "product_templates", "supplier_price_batches"]));
   assert.ok(hasTables(builder, ["clients", "quotation_sections", "quotation_items", "brands"]));
   assert.ok(hasTables(builder, ["product_templates", "product_components", "brand_materials", "brand_price_list_updates"]));
 });

@@ -1,177 +1,79 @@
 import Link from "next/link";
 import { ErpAppShell } from "@/components/layout/erp-app-shell";
-import { PriceUpdatesReview, type PriceUpdatesReviewRow } from "@/components/products/price-updates-review";
-import { PriceUpdatesBrandCard, PriceUpdatesStatusLegend, PriceUpdatesSummaryCards, type PriceUpdatesHrefs } from "@/components/products/price-updates-brands";
+import { PriceUpdatesBrandSummaryCard, PriceUpdatesSummaryCards, type PriceUpdatesBrandSummary } from "@/components/products/price-updates-brands";
 import { requireProductPricingManager } from "@/lib/auth";
-import { formatMoney } from "@/lib/currencies";
 import { canReviewBrandPrices } from "@/lib/products/brand-price-permissions";
-import { supplierFamilyStatusLabels, type SupplierFamilyPriceStatus, type SupplierFamilyPriceStatusKey } from "@/lib/products/supplier-family-status";
-import { buildSupplierPriceUpdatesView, filterPriceUpdatesView, loadSupplierPriceUpdatesInputs, summarizePriceUpdates } from "@/lib/products/supplier-price-updates-view";
+import { buildSupplierPriceUpdatesView, loadSupplierPriceUpdatesInputs, summarizePriceUpdates, supplierBrandStateLabels } from "@/lib/products/supplier-price-updates-view";
 import { readProductPages, supplierBusinessDate } from "@/lib/products/supplier-price-repository";
-import { brandPriceBaselineDate, latestBrandPriceListUpdate, scheduledBrandPriceListUpdate, productTemplatePriceCheckState } from "@/lib/product-price-check";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
-type PriceUpdatesSearchParams = { brand?: string | string[]; currency?: string | string[]; q?: string | string[]; status?: string | string[] };
+type PriceUpdatesSearchParams = { q?: string | string[]; state?: string | string[] };
 type PriceUpdatesPageProps = { searchParams?: Promise<PriceUpdatesSearchParams> };
-type Brand = { id: string; default_currency: string | null; last_price_list_checked_at: string | null; name: string; price_list_check_interval_days: number | null; price_list_check_note: string | null };
-type Category = { id: string; brand_id: string; name: string; parent_id: string | null };
-type ProductTemplate = {
-  creation_legacy: boolean; id: string; brand_id: string; created_at: string | null; currency: string; default_unit_price: number; description: string | null; item_code: string | null;
-  last_price_checked_at: string | null; main_category_id: string | null; price_check_interval_days: number | null; price_check_note: string | null; sub_category_id: string | null; template_code: string | null; template_name: string;
-};
-type BrandPriceListUpdate = { coverage_mode: string; id: string; brand_id: string; created_at: string | null; effective_from: string | null; received_at: string | null; status: string; title: string | null };
+type Brand = { id: string; name: string };
+type FamilyRow = { id: string; brand_id: string; template_name: string };
+type OpenBatch = { id: string; brand_id: string; source_id: string };
 
-const statusOptions: Array<[SupplierFamilyPriceStatusKey, string]> = [
-  ["price_checked", supplierFamilyStatusLabels.price_checked], ["partially_checked", supplierFamilyStatusLabels.partially_checked], ["update_available", supplierFamilyStatusLabels.update_available],
-  ["in_review", supplierFamilyStatusLabels.in_review], ["ready_to_complete", supplierFamilyStatusLabels.ready_to_complete], ["needs_attention", supplierFamilyStatusLabels.needs_attention],
-  ["no_price_list", supplierFamilyStatusLabels.no_price_list], ["legacy_manual", supplierFamilyStatusLabels.legacy_manual],
-];
-const statusKeys = new Set<string>(statusOptions.map(([key]) => key));
 const input = "h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10";
-const primaryButton = "inline-flex h-9 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800";
+const stringParam = (value?: string | string[]) => Array.isArray(value) ? value[0] ?? "" : value ?? "";
+const workspaceHref = (brandId: string) => `/products/price-updates/supplier-sources?brand=${brandId}`;
 
-function stringParam(value?: string | string[]) { return Array.isArray(value) ? value[0] ?? "" : value ?? ""; }
-function formatDate(value: string | null | undefined) {
-  if (!value) return "Not set";
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return "Not set";
-  return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric" }).format(date);
-}
-function templateSearchText(template: ProductTemplate, brandName: string, categoryName: string) {
-  return [template.template_name, template.template_code, template.item_code, template.description, brandName, categoryName, template.currency].filter(Boolean).join(" ").toLowerCase();
-}
-
-/** Where each Family's primary action goes. Existing routes only; no new review screen. */
-function familyActionFor(status: SupplierFamilyPriceStatus, brandId: string): { label: string; href: string } {
-  const base = "/products/price-updates/supplier-sources";
-  const source = status.source ? `brand=${brandId}&source=${status.source.sourceId}` : `brand=${brandId}`;
-  switch (status.status) {
-    case "ready_to_complete": return { label: "Complete review", href: `${base}?${source}&tab=current&view=complete` };
-    case "needs_attention":
-    case "in_review": return { label: "Continue review", href: `${base}?${source}&tab=current&view=family` };
-    case "update_available": return { label: "Open review", href: `${base}?${source}&tab=current&view=family` };
-    case "price_checked":
-    case "partially_checked": return { label: "View review", href: `${base}?${source}&tab=current&view=family` };
-    case "no_price_list": return { label: "Import price list", href: `${base}?brand=${brandId}&tab=import` };
-    default: return { label: "Manual price check", href: `/products?brand=${brandId}` };
-  }
-}
-
+/**
+ * Landing: Brands only. One batched read per dataset (Brands, Family ids, open review batches, shared Supplier inputs); no Family rows,
+ * categories, price-list history or review rows are loaded here. Brand status comes from the shared Family and Brand resolvers.
+ */
 export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPageProps) {
   const { user, profile, displayName } = await requireProductPricingManager();
   const params = (await searchParams) ?? {};
-  const searchQuery = stringParam(params.q).trim();
-  const selectedBrand = stringParam(params.brand);
-  const selectedStatus = stringParam(params.status);
-  const selectedCurrency = stringParam(params.currency);
+  const searchQuery = stringParam(params.q).trim().toLowerCase();
+  const selectedState = stringParam(params.state);
   const supabase = await createClient();
   const canReview = canReviewBrandPrices(profile?.role, profile?.account_status);
 
-  const [
-    { data: brands, error: brandsError },
-    { data: categories, error: categoriesError },
-    { data: templates, error: templatesError },
-    { data: priceListUpdates, error: priceListUpdatesError },
-  ] = await Promise.all([
-    readProductPages((from, to) => supabase.from("brands").select("id,name,default_currency,last_price_list_checked_at,price_list_check_interval_days,price_list_check_note").eq("is_active", true).order("name", { ascending: true }).order("id", { ascending: true }).range(from, to).returns<Brand[]>()),
-    readProductPages((from, to) => supabase.from("product_categories").select("id,brand_id,parent_id,name").eq("is_active", true).order("brand_id", { ascending: true }).order("sort_order", { ascending: true }).order("name", { ascending: true }).order("id", { ascending: true }).range(from, to).returns<Category[]>()),
-    readProductPages((from, to) => supabase.from("product_templates")
-      .select("creation_legacy,id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at")
-      .eq("is_active", true).order("brand_id", { ascending: true }).order("template_name", { ascending: true }).order("id", { ascending: true }).range(from, to).returns<ProductTemplate[]>()),
-    readProductPages((from, to) => supabase.from("brand_price_list_updates").select("coverage_mode,id,brand_id,title,effective_from,received_at,created_at,status")
-      .in("status", ["draft", "active"]).order("effective_from", { ascending: false, nullsFirst: false }).order("received_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).order("id", { ascending: true }).range(from, to).returns<BrandPriceListUpdate[]>()),
+  const [brandsResult, familiesResult, openBatchesResult] = await Promise.all([
+    readProductPages((from, to) => supabase.from("brands").select("id,name").eq("is_active", true).order("name", { ascending: true }).order("id", { ascending: true }).range(from, to).returns<Brand[]>()),
+    readProductPages((from, to) => supabase.from("product_templates").select("id,brand_id,template_name").eq("is_active", true).order("id", { ascending: true }).range(from, to).returns<FamilyRow[]>()),
+    readProductPages((from, to) => supabase.from("supplier_price_batches").select("id,brand_id,source_id").in("status", ["matching", "review"]).order("id", { ascending: true }).range(from, to).returns<OpenBatch[]>()),
   ]);
-  if (brandsError) console.error("PRICE UPDATES BRANDS ERROR", brandsError.message);
-  if (categoriesError) console.error("PRICE UPDATES CATEGORIES ERROR", categoriesError.message);
-  if (templatesError) console.error("PRICE UPDATES TEMPLATES ERROR", templatesError.message);
-  if (priceListUpdatesError) console.error("PRICE UPDATES PRICE LIST ERROR", priceListUpdatesError.message);
+  if (brandsResult.error) console.error("PRICE UPDATES BRANDS ERROR", brandsResult.error.message);
+  if (familiesResult.error) console.error("PRICE UPDATES FAMILIES ERROR", familiesResult.error.message);
+  if (openBatchesResult.error) console.error("PRICE UPDATES REVIEWS ERROR", openBatchesResult.error.message);
+  const brandList = brandsResult.data ?? [], familyList = familiesResult.data ?? [];
 
-  const brandList = brands ?? [];
-  const categoryList = categories ?? [];
-  const templateList = templates ?? [];
-  const priceListUpdateList = priceListUpdates ?? [];
-  const brandById = new Map(brandList.map((brand) => [brand.id, brand]));
-  const categoryById = new Map(categoryList.map((category) => [category.id, category]));
-  const latestPriceListUpdateByBrand = new Map<string, BrandPriceListUpdate | null>();
-  const brandPriceBaselineByBrand = new Map<string, string | null>();
-  for (const brand of brandList) {
-    const latestUpdate = latestBrandPriceListUpdate(priceListUpdateList.filter((update) => update.brand_id === brand.id));
-    latestPriceListUpdateByBrand.set(brand.id, latestUpdate);
-    brandPriceBaselineByBrand.set(brand.id, brandPriceBaselineDate({ fallbackCheckedAt: brand.last_price_list_checked_at, latestBrandPriceListUpdate: latestUpdate }));
-  }
-
-  // Manual / legacy interval status: used only for Families with no Supplier workflow coverage (the resolver decides which).
-  const legacyRows = templateList.map<PriceUpdatesReviewRow>((template) => {
-    const brand = brandById.get(template.brand_id);
-    const mainCategory = template.main_category_id ? categoryById.get(template.main_category_id)?.name ?? "" : "";
-    const subCategory = template.sub_category_id ? categoryById.get(template.sub_category_id)?.name ?? "" : "";
-    const categoryName = [mainCategory, subCategory].filter(Boolean).join(" / ") || "No category";
-    const status = productTemplatePriceCheckState({
-      brandPriceCheckIntervalDays: brand?.price_list_check_interval_days,
-      scheduledBrandPriceListUpdate: scheduledBrandPriceListUpdate(priceListUpdateList.filter((update) => update.brand_id === template.brand_id)),
-      brandPriceBaselineAt: brandPriceBaselineByBrand.get(template.brand_id),
-      formatDate,
-      latestBrandPriceListUpdate: latestPriceListUpdateByBrand.get(template.brand_id),
-      template,
-    });
-    return {
-      brandName: brand?.name ?? "Unknown brand", categoryName, editHref: `/products/manage?template=${template.id}&editTemplate=${template.id}`, id: template.id,
-      lastPriceListDateLabel: formatDate(brandPriceBaselineByBrand.get(template.brand_id)), priceStatusDetail: status.detail, priceStatusKey: status.key, priceStatusLabel: status.label, priceStatusTone: status.tone,
-      searchText: templateSearchText(template, brand?.name ?? "", categoryName), sourceCurrency: template.currency, sourcePriceLabel: formatMoney(template.currency, template.default_unit_price),
-      templateCodeLabel: [template.template_code, template.item_code].filter(Boolean).join(" / ") || "No template or item code", templateName: template.template_name, viewHref: `/products?template=${template.id}`,
-    };
-  });
-  const legacyDetailById = new Map(legacyRows.map((row) => [row.id, row.priceStatusDetail]));
-
-  // Shared resolvers: batched inputs, one Family pass, one Brand pass. No status logic lives in this page.
   const { definitions, facts } = await loadSupplierPriceUpdatesInputs(supabase, brandList.map((brand) => brand.id));
   const views = buildSupplierPriceUpdatesView({
     businessDate: supplierBusinessDate(),
-    brands: brandList.map((brand) => ({ id: brand.id, name: brand.name })),
-    families: templateList.map((template) => ({ id: template.id, brandId: template.brand_id, name: template.template_name })),
-    definitions, facts,
-    legacyDetail: (familyId) => legacyDetailById.get(familyId) ?? "Manual price check",
+    brands: brandList,
+    families: familyList.map((family) => ({ id: family.id, brandId: family.brand_id, name: family.template_name })),
+    definitions, facts, legacyDetail: () => "Manual price check",
   });
-  const summary = summarizePriceUpdates(views);
-  const visible = filterPriceUpdatesView(views, { q: searchQuery, brandId: selectedBrand, status: statusKeys.has(selectedStatus) ? selectedStatus as SupplierFamilyPriceStatusKey : "" });
-  const legacyIds = new Set(views.flatMap((view) => view.legacyFamilyIds));
-  const legacyTableRows = legacyRows.filter((row) => legacyIds.has(row.id));
-
-  const hrefs: PriceUpdatesHrefs = {
-    familyAction: (status, brandId) => familyActionFor(status, brandId),
-    sourceHref: (brandId, group) => `/products/price-updates/supplier-sources?brand=${brandId}&source=${group.current?.sourceId ?? ""}&tab=current&view=summary`,
-  };
+  // A review is one open comparison per price list: duplicate open batches of one source count once.
+  const openSourcesByBrand = new Map<string, Set<string>>();
+  for (const batch of openBatchesResult.data ?? []) openSourcesByBrand.set(batch.brand_id, (openSourcesByBrand.get(batch.brand_id) ?? new Set()).add(batch.source_id));
+  const summaries: PriceUpdatesBrandSummary[] = views.map((view) => ({
+    view, href: workspaceHref(view.brandId), priceLists: view.sources.filter((group) => group.current).length, reviewsInProgress: openSourcesByBrand.get(view.brandId)?.size ?? 0,
+  }));
+  const visible = summaries.filter(({ view }) => (!searchQuery || view.brandName.toLowerCase().includes(searchQuery)) && (!selectedState || view.state === selectedState));
+  const totals = summarizePriceUpdates(views);
 
   return (
-    <ErpAppShell title="Price Updates" description="Review current Supplier price lists and Family pricing status." role={profile?.role ?? null} userDisplayName={displayName} userEmail={user.email} userAvatarUrl={profile?.avatar_url ?? null} userRole={profile?.role ?? null}>
+    <ErpAppShell title="Price Updates" description="Choose a Brand to review its Supplier price lists." role={profile?.role ?? null} userDisplayName={displayName} userEmail={user.email} userAvatarUrl={profile?.avatar_url ?? null} userRole={profile?.role ?? null}>
       <div className="space-y-5 text-sm">
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <div><p className="text-xs text-zinc-500">Brand → Supplier price list → Product Family</p><h2 className="text-base font-semibold text-zinc-950">Price status by Brand</h2></div>
-          {canReview ? <Link href="/products/price-updates/supplier-sources" className={primaryButton}>Supplier Sources / Price Review</Link> : null}
+          <div><p className="text-xs text-zinc-500">Which Brand needs attention?</p><h2 className="text-base font-semibold text-zinc-950">Price status by Brand</h2></div>
+          {canReview ? <Link href="/products/price-updates/supplier-sources?tab=import" className="inline-flex h-9 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800">Import new price list</Link> : null}
         </div>
 
-        <PriceUpdatesSummaryCards summary={summary} />
+        <PriceUpdatesSummaryCards summary={totals} />
 
         <form className="flex flex-wrap items-end gap-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm" method="get">
-          <label className="grid gap-1 text-xs font-semibold text-zinc-700">Search<input name="q" defaultValue={searchQuery} placeholder="Brand, Family, source or price list" className={`${input} min-w-64`} /></label>
-          <label className="grid gap-1 text-xs font-semibold text-zinc-700">Brand<select name="brand" defaultValue={selectedBrand} className={`${input} min-w-44`}><option value="">All Brands</option>{brandList.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label>
-          <label className="grid gap-1 text-xs font-semibold text-zinc-700">Status<select name="status" defaultValue={selectedStatus} className={`${input} min-w-48`}><option value="">All statuses</option>{statusOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+          <label className="grid gap-1 text-xs font-semibold text-zinc-700">Search<input name="q" defaultValue={stringParam(params.q)} placeholder="Brand name" className={`${input} min-w-64`} /></label>
+          <label className="grid gap-1 text-xs font-semibold text-zinc-700">Status<select name="state" defaultValue={selectedState} className={`${input} min-w-48`}><option value="">All statuses</option>{Object.entries(supplierBrandStateLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
           <button className="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50">Apply</button>
         </form>
 
-        <div className="space-y-3" aria-label="Brands">
-          {visible.length === 0 ? <p className="rounded-lg border border-zinc-200 bg-white p-6 text-center text-sm text-zinc-600">No Brands match these filters.</p> : null}
-          {visible.map((view) => <PriceUpdatesBrandCard key={view.brandId} view={view} hrefs={hrefs} />)}
-        </div>
-        <PriceUpdatesStatusLegend />
-
-        {legacyTableRows.length > 0 ? (
-          <details className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-            <summary className="cursor-pointer text-sm font-semibold text-zinc-950">Manual / legacy price checks <span className="font-normal text-zinc-600">· {legacyTableRows.length} {legacyTableRows.length === 1 ? "Product" : "Products"} without Supplier coverage</span></summary>
-            <div className="mt-3"><PriceUpdatesReview initialFilters={{ brand: selectedBrand, currency: selectedCurrency, query: searchQuery, status: selectedStatus }} rows={legacyTableRows} /></div>
-          </details>
-        ) : null}
+        {visible.length === 0 ? <p className="rounded-lg border border-zinc-200 bg-white p-6 text-center text-sm text-zinc-600">No Brands match these filters.</p> : null}
+        <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" aria-label="Brands">{visible.map((summary) => <PriceUpdatesBrandSummaryCard key={summary.view.brandId} summary={summary} />)}</ul>
       </div>
     </ErpAppShell>
   );
