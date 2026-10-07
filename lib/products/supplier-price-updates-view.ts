@@ -1,5 +1,5 @@
 import { resolveSupplierBrandPriceStatus, resolveSupplierFamilyPriceStatus, supplierFamilyStatusLabels, type SupplierBrandPriceState, type SupplierBrandPriceStatus, type SupplierFamilyPriceStatus, type SupplierFamilyPriceStatusKey, type SupplierResponsibilityInput, type SupplierVersionRef } from "./supplier-family-status";
-import { resolveApplicableSupplierSourceVersion, supplierFamilyReviewFacts, upcomingSupplierSourceVersions, type SupplierFamilyReviewFact } from "./supplier-price-repository";
+import { mapSupplierReads, readProductPages, resolveApplicableSupplierSourceVersion, supplierFamilyReviewFacts, upcomingSupplierSourceVersions, type SupplierFamilyReviewFact } from "./supplier-price-repository";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Price Updates view model. Pure grouping and filtering over the shared resolvers; the page and components only render this.
@@ -98,28 +98,27 @@ export function filterPriceUpdatesView(views: PriceUpdatesBrandView[], filters: 
   });
 }
 
-/** Batched reads only: one definition+coverage read and one fact read per Brand, plus Source Versions per Brand. Never per Family. */
+/** Shared inputs for every Brand, with bounded fact loading and complete, paged metadata reads. */
 export async function loadSupplierPriceUpdatesInputs(client: SupabaseClient, brandIds: string[]) {
-  const definitions: PriceUpdatesDefinitionInput[] = [];
-  const facts: SupplierFamilyReviewFact[] = [];
-  for (const brandId of brandIds) {
-    const [{ data: defRows }, { data: versionRows }, brandFacts] = await Promise.all([
-      client.from("supplier_source_definitions").select("id,brand_id,name,is_active").eq("brand_id", brandId).returns<Array<{ id: string; brand_id: string; name: string; is_active: boolean }>>(),
-      client.from("supplier_source_versions").select("id,definition_id,title,status,effective_from,created_at").eq("brand_id", brandId).eq("status", "imported").returns<Array<SupplierVersionRef & { definition_id: string | null }>>(),
-      supplierFamilyReviewFacts(client, brandId),
-    ]);
-    const definitionIds = (defRows ?? []).map((row) => row.id);
-    const families = definitionIds.length ? await client.from("supplier_source_definition_families").select("definition_id,template_id").in("definition_id", definitionIds).returns<Array<{ definition_id: string; template_id: string }>>() : { data: [] as Array<{ definition_id: string; template_id: string }> };
-    for (const row of defRows ?? []) {
-      definitions.push({
-        id: row.id, brandId: row.brand_id, name: row.name, isActive: row.is_active,
-        familyIds: (families.data ?? []).filter((link) => link.definition_id === row.id).map((link) => link.template_id),
-        versions: (versionRows ?? []).filter((version) => version.definition_id === row.id).map((version) => ({ id: version.id, title: version.title, status: version.status, effective_from: version.effective_from, created_at: version.created_at })),
-      });
-    }
-    facts.push(...brandFacts);
-  }
-  return { definitions, facts };
+  if (!brandIds.length) return { definitions: [], facts: [] };
+  const [definitionsResult, versionsResult, factsByBrand] = await Promise.all([
+    readProductPages((from, to) => client.from("supplier_source_definitions").select("id,brand_id,name,is_active").in("brand_id", brandIds).order("id").range(from, to).returns<Array<{ id: string; brand_id: string; name: string; is_active: boolean }>>()),
+    readProductPages((from, to) => client.from("supplier_source_versions").select("id,definition_id,title,status,effective_from,created_at").in("brand_id", brandIds).eq("status", "imported").order("id").range(from, to).returns<Array<SupplierVersionRef & { definition_id: string | null }>>()),
+    mapSupplierReads(brandIds, (brandId) => supplierFamilyReviewFacts(client, brandId)),
+  ]);
+  if (definitionsResult.error) throw Error(`Supplier definitions: ${definitionsResult.error.message}`);
+  if (versionsResult.error) throw Error(`Supplier versions: ${versionsResult.error.message}`);
+  const definitionIds = (definitionsResult.data ?? []).map((row) => row.id);
+  const familiesResult = definitionIds.length
+    ? await readProductPages((from, to) => client.from("supplier_source_definition_families").select("definition_id,template_id").in("definition_id", definitionIds).order("definition_id").order("template_id").range(from, to).returns<Array<{ definition_id: string; template_id: string }>>())
+    : { data: [], error: null };
+  if (familiesResult.error) throw Error(`Supplier coverage: ${familiesResult.error.message}`);
+  const definitions: PriceUpdatesDefinitionInput[] = (definitionsResult.data ?? []).map((row) => ({
+    id: row.id, brandId: row.brand_id, name: row.name, isActive: row.is_active,
+    familyIds: (familiesResult.data ?? []).filter((link) => link.definition_id === row.id).map((link) => link.template_id),
+    versions: (versionsResult.data ?? []).filter((version) => version.definition_id === row.id).map((version) => ({ id: version.id, title: version.title, status: version.status, effective_from: version.effective_from, created_at: version.created_at })),
+  }));
+  return { definitions, facts: factsByBrand.flat() };
 }
 
 export { supplierFamilyStatusLabels };

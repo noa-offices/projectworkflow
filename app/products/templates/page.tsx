@@ -53,6 +53,7 @@ import { materialDisplayCategoryLabel } from "@/lib/products/material-classifica
 import { flattenBaseModelPricingRows } from "@/lib/products/base-model-pricing-groups";
 import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
 import { loadSupplierFamilyPriceStatusMap } from "@/lib/products/supplier-family-price-status-loader";
+import { readProductPages } from "@/lib/products/supplier-price-repository";
 import { supplierFamilyStatusPresentation } from "@/lib/products/supplier-family-status";
 import { createClient } from "@/lib/supabase/server";
 import { profileDisplayName } from "@/lib/user-display";
@@ -1621,116 +1622,122 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
     }
   }
 
-  const { data: categories, error: categoriesError } = await supabase
-    .from("product_categories")
-    .select("id,brand_id,parent_id,name,code,description,is_active")
-    .eq("is_active", true)
-    .order("brand_id", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .order("name", { ascending: true })
-    .returns<Category[]>();
-
-  const { data: templates, error: templatesError } = await supabase
-    .from("product_templates")
-    .select(
-      "creation_legacy,pricing_version,id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,material_suggestions,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price,is_active,lifecycle_status,last_price_checked_at,last_price_checked_by,price_check_interval_days,price_check_note,price_notes,created_at",
-    )
-    .order("brand_id", { ascending: true })
-    .order("template_name", { ascending: true })
-    .returns<ProductTemplate[]>();
-
-  const { data: components, error: componentsError } = await supabase
-    .from("product_components")
-    .select("*")
-    .order("template_id", { ascending: true })
-    .order("component_group", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .order("component_name", { ascending: true })
-    .returns<ProductComponent[]>();
-
-  const { data: linkedFamilies, error: linkedFamiliesError } = await supabase
-    .from("product_template_linked_families")
-    .select("id,parent_template_id,linked_template_id,label,is_required,allow_multiple,add_to_parent_price,append_to_specification,default_qty,sort_order,is_active")
-    .order("parent_template_id", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .returns<LinkedProductFamily[]>();
-
-  const { data: templateUsageRows, error: templateUsageRowsError } = await supabase
-    .from("quotation_items")
-    .select("source_template_id")
-    .not("source_template_id", "is", null)
-    .returns<Array<{ source_template_id: string | null }>>();
-
-  const { data: materialGroups, error: materialGroupsError } = await supabase
-    .from("brand_material_groups")
-    .select("id,brand_id,group_name,description,sort_order,is_active")
-    .eq("is_active", true)
-    .order("brand_id", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .order("group_name", { ascending: true })
-    .returns<BrandMaterialGroup[]>();
-
-  const { data: materials, error: materialsError } = await supabase
-    .from("brand_materials")
-    .select("id,brand_id,material_group_id,material_category,material_collection,material_code,material_name,sort_order,is_active")
-    .eq("is_active", true)
-    .order("brand_id", { ascending: true })
-    .order("material_group_id", { ascending: true })
-    .order("material_category", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .order("material_code", { ascending: true })
-    .returns<BrandMaterial[]>();
-
-  const { data: templateMaterialGroups, error: templateMaterialGroupsError } = await supabase
-    .from("product_template_material_groups")
-    .select("id,product_template_id,material_group_id,selection_mode,label_override,is_required,allow_multiple,show_in_specification,show_in_quotation,sort_order,is_active")
-    .order("product_template_id", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .returns<ProductTemplateMaterialGroup[]>();
-
-  const { data: templateMaterialGroupItems, error: templateMaterialGroupItemsError } = await supabase
-    .from("product_template_material_group_items")
-    .select("id,product_template_material_group_id,brand_material_id,sort_order,is_active")
-    .eq("is_active", true)
-    .order("product_template_material_group_id", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .returns<ProductTemplateMaterialGroupItem[]>();
-
-  const { data: brandPriceListUpdates, error: brandPriceListUpdatesError } = await supabase
-    .from("brand_price_list_updates")
-    .select("coverage_mode,id,brand_id,title,reference_no,currency,effective_from,received_at,status,notes,attachment_url,created_by,created_at,updated_at")
-    .order("brand_id", { ascending: true })
-    .order("effective_from", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false })
-    .returns<BrandPriceListUpdate[]>();
-
-  const { data: templatePriceHistory, error: templatePriceHistoryError } = await supabase
-    .from("product_template_price_history")
-    .select("id,product_template_id,brand_price_list_update_id,old_default_unit_price,new_default_unit_price,currency,effective_from,note,changed_by,changed_at")
-    .order("product_template_id", { ascending: true })
-    .order("changed_at", { ascending: false })
-    .returns<ProductTemplatePriceHistory[]>();
-
-  const { data: templateDetailPriceHistory, error: templateDetailPriceHistoryError } = await supabase
-    .from("product_template_detail_price_history")
-    .select("id,product_template_id,brand_price_list_update_id,source_table,source_record_id,price_field,old_price,new_price,currency,effective_from,note,changed_by,changed_at")
-    .order("product_template_id", { ascending: true })
-    .order("changed_at", { ascending: false })
-    .returns<ProductTemplateDetailPriceHistory[]>();
-
-  const { data: auditActivity, error: auditActivityError } = await supabase
-    .from("audit_activity_log")
-    .select("id,entity_type,entity_id,parent_entity_type,parent_entity_id,action,title,description,metadata,created_by,created_at")
-    .in("entity_type", [
-      "brand",
-      "brand_price_list_update",
-      "product_template",
-      "product_template_price",
-      "product_template_detail_price",
-    ])
-    .order("created_at", { ascending: false })
-    .limit(500)
-    .returns<AuditActivityEntry[]>();
+  // Categories follow the backfill; the other datasets are independent.
+  const [
+    { data: categories, error: categoriesError },
+    { data: templates, error: templatesError },
+    { data: components, error: componentsError },
+    { data: linkedFamilies, error: linkedFamiliesError },
+    { data: templateUsageRows, error: templateUsageRowsError },
+    { data: materialGroups, error: materialGroupsError },
+    { data: materials, error: materialsError },
+    { data: templateMaterialGroups, error: templateMaterialGroupsError },
+    { data: templateMaterialGroupItems, error: templateMaterialGroupItemsError },
+    { data: brandPriceListUpdates, error: brandPriceListUpdatesError },
+    { data: templatePriceHistory, error: templatePriceHistoryError },
+    { data: templateDetailPriceHistory, error: templateDetailPriceHistoryError },
+    { data: auditActivity, error: auditActivityError },
+  ] = await Promise.all([
+    readProductPages((from, to) => supabase
+      .from("product_categories")
+      .select("id,brand_id,parent_id,name,code,description,is_active")
+      .eq("is_active", true)
+      .order("brand_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<Category[]>()),
+    readProductPages((from, to) => supabase
+      .from("product_templates")
+      .select(
+        "creation_legacy,pricing_version,id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,material_suggestions,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,image_settings,unit_label,currency,default_unit_price,is_active,lifecycle_status,last_price_checked_at,last_price_checked_by,price_check_interval_days,price_check_note,price_notes,created_at",
+      )
+      .order("brand_id", { ascending: true })
+      .order("template_name", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<ProductTemplate[]>()),
+    openTemplateId ? readProductPages((from, to) => supabase
+      .from("product_components")
+      .select("id,template_id,option_type,component_group,component_code,component_name,description,qty,unit_label,unit_price,currency,is_optional,is_default_selected,sort_order,is_active,calculation_data,last_price_checked_at,price_notes")
+      .eq("template_id", openTemplateId)
+      .order("template_id", { ascending: true })
+      .order("component_group", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("component_name", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<ProductComponent[]>()) : Promise.resolve({ data: [], error: null }),
+    readProductPages((from, to) => supabase
+      .from("product_template_linked_families")
+      .select("id,parent_template_id,linked_template_id,label,is_required,allow_multiple,add_to_parent_price,append_to_specification,default_qty,sort_order,is_active")
+      .order("parent_template_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<LinkedProductFamily[]>()),
+    readProductPages((from, to) => supabase
+      .from("quotation_items")
+      .select("source_template_id")
+      .not("source_template_id", "is", null)
+      .order("id", { ascending: true }).range(from, to).returns<Array<{ source_template_id: string | null }>>()),
+    readProductPages((from, to) => supabase
+      .from("brand_material_groups")
+      .select("id,brand_id,group_name,description,sort_order,is_active")
+      .eq("is_active", true)
+      .order("brand_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("group_name", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<BrandMaterialGroup[]>()),
+    readProductPages((from, to) => supabase
+      .from("brand_materials")
+      .select("id,brand_id,material_group_id,material_category,material_collection,material_code,material_name,sort_order,is_active")
+      .eq("is_active", true)
+      .order("brand_id", { ascending: true })
+      .order("material_group_id", { ascending: true })
+      .order("material_category", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("material_code", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<BrandMaterial[]>()),
+    readProductPages((from, to) => supabase
+      .from("product_template_material_groups")
+      .select("id,product_template_id,material_group_id,selection_mode,label_override,is_required,allow_multiple,show_in_specification,show_in_quotation,sort_order,is_active")
+      .order("product_template_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<ProductTemplateMaterialGroup[]>()),
+    readProductPages((from, to) => supabase
+      .from("product_template_material_group_items")
+      .select("id,product_template_material_group_id,brand_material_id,sort_order,is_active")
+      .eq("is_active", true)
+      .order("product_template_material_group_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<ProductTemplateMaterialGroupItem[]>()),
+    readProductPages((from, to) => supabase
+      .from("brand_price_list_updates")
+      .select("coverage_mode,id,brand_id,title,reference_no,currency,effective_from,received_at,status,notes,attachment_url,created_by,created_at,updated_at")
+      .order("brand_id", { ascending: true })
+      .order("effective_from", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true }).range(from, to).returns<BrandPriceListUpdate[]>()),
+    openTemplateId ? readProductPages((from, to) => supabase
+      .from("product_template_price_history")
+      .select("id,product_template_id,brand_price_list_update_id,old_default_unit_price,new_default_unit_price,currency,effective_from,note,changed_by,changed_at")
+      .eq("product_template_id", openTemplateId).order("product_template_id", { ascending: true })
+      .order("changed_at", { ascending: false })
+      .order("id", { ascending: true }).range(from, to).returns<ProductTemplatePriceHistory[]>()) : Promise.resolve({ data: [], error: null }),
+    openTemplateId ? readProductPages((from, to) => supabase
+      .from("product_template_detail_price_history")
+      .select("id,product_template_id,brand_price_list_update_id,source_table,source_record_id,price_field,old_price,new_price,currency,effective_from,note,changed_by,changed_at")
+      .eq("product_template_id", openTemplateId).order("product_template_id", { ascending: true })
+      .order("changed_at", { ascending: false })
+      .order("id", { ascending: true }).range(from, to).returns<ProductTemplateDetailPriceHistory[]>()) : Promise.resolve({ data: [], error: null }),
+    openTemplateId ? supabase
+      .from("audit_activity_log")
+      .select("id,entity_type,entity_id,parent_entity_type,parent_entity_id,action,title,description,metadata,created_by,created_at")
+      .in("entity_type", [
+        "brand",
+        "brand_price_list_update",
+        "product_template",
+        "product_template_price",
+        "product_template_detail_price",
+      ])
+      .order("created_at", { ascending: false })
+      .limit(500)
+      .returns<AuditActivityEntry[]>() : Promise.resolve({ data: [], error: null }),
+  ]);
 
   if (brandsError) console.error("TEMPLATE BRANDS LIST ERROR", brandsError.message);
   if (categoriesError) console.error("TEMPLATE CATEGORIES LIST ERROR", categoriesError.message);

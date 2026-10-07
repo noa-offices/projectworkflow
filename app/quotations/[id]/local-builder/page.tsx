@@ -17,6 +17,7 @@ import {
 } from "@/components/quotations/finish-selections-editor";
 import { canManageProductLibrary as canUseProductLibrary, requireActiveUser } from "@/lib/auth";
 import { loadSupplierFamilyPriceStatusMap } from "@/lib/products/supplier-family-price-status-loader";
+import { readProductPages } from "@/lib/products/supplier-price-repository";
 import { supplierFamilyStatusPresentation } from "@/lib/products/supplier-family-status";
 import { formatProjectReferenceDisplay } from "@/lib/project-reference";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
@@ -90,43 +91,47 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
 
   if (quotationError || !quotation) notFound();
 
-  const { data: client, error: clientError } = await supabase
+  const projectId = validUuidOrNull(quotation.project_id);
+  const [
+    { data: client, error: clientError },
+    { data: project, error: projectError },
+    { data: sections, error: sectionsError },
+    { data: items, error: itemsError },
+    { data: productBrands },
+  ] = await Promise.all([
+    supabase
     .from("clients")
     .select("id,client_number,company_name")
     .eq("id", quotation.client_id)
-    .maybeSingle<Client>();
-
-  const projectId = validUuidOrNull(quotation.project_id);
-  const { data: project, error: projectError } = projectId
-    ? await supabase
+    .maybeSingle<Client>(),
+    projectId
+    ? supabase
         .from("projects")
         .select("id,project_name,project_number,project_code,project_year,location,attention_to,attention_mobile,attention_landline,attention_email,po_box,project_address")
         .eq("id", projectId)
         .maybeSingle<Project>()
-    : { data: null, error: null };
-
-  const { data: sections, error: sectionsError } = await supabase
-    .from("quotation_sections")
-    .select("id,quotation_id,section_title,section_notes,section_type,parent_section_id,section_kind,title_align,title_bold,title_bg,title_size,row_height,sort_order,is_active")
-    .eq("quotation_id", id)
-    .eq("is_active", true)
-    .order("sort_order", { ascending: true })
-    .returns<QuotationSection[]>();
-
-  const { data: items, error: itemsError } = await supabase
-    .from("quotation_items")
-    .select("id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,allow_material_continuation_page,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,parent_item_id,include_in_total,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,is_active,notes,created_at,updated_at")
-    .eq("quotation_id", id)
-    .eq("is_active", true)
-    .order("sort_order", { ascending: true })
-    .returns<QuotationItem[]>();
-
-  const { data: productBrands } = await supabase
-    .from("brands")
-    .select("id,name,origin,last_price_list_checked_at,default_currency")
-    .eq("is_active", true)
-    .order("name", { ascending: true })
-    .returns<ProductLibraryBrand[]>();
+    : { data: null, error: null },
+    readProductPages((from, to) => supabase
+      .from("quotation_sections")
+      .select("id,quotation_id,section_title,section_notes,section_type,parent_section_id,section_kind,title_align,title_bold,title_bg,title_size,row_height,sort_order,is_active")
+      .eq("quotation_id", id)
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<QuotationSection[]>()),
+    readProductPages((from, to) => supabase
+      .from("quotation_items")
+      .select("id,quotation_id,section_id,item_type,source_template_id,source_component_data,manual_serial,item_code_snapshot,item_name_snapshot,brand_name_snapshot,category_name_snapshot,specified_image_url_snapshot,proposed_image_url_snapshot,specification_snapshot,finish_selections_snapshot,selected_options_snapshot,internal_components_snapshot,room_name_snapshot,model_snapshot,finish_snapshot,size_snapshot,origin_snapshot,warranty_snapshot,supplier_name_snapshot,supplier_notes_snapshot,allow_material_continuation_page,qty,unit_label,unit_price,discount_type,discount_value,net_price,net_total,currency,sort_order,is_optional,parent_item_id,include_in_total,internal_cost,margin_type,margin_value,is_rate_only,line_style,row_height,cell_layout,is_active,notes,created_at,updated_at")
+      .eq("quotation_id", id)
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<QuotationItem[]>()),
+    readProductPages((from, to) => supabase
+      .from("brands")
+      .select("id,name,origin,last_price_list_checked_at,default_currency")
+      .eq("is_active", true)
+      .order("name", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<ProductLibraryBrand[]>()),
+  ]);
 
   if ((productBrands ?? []).length) {
     try {
@@ -140,30 +145,87 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
     }
   }
 
-  const { data: productCategories } = await supabase
-    .from("product_categories")
-    .select("id,brand_id,parent_id,name")
-    .eq("is_active", true)
-    .order("brand_id", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .order("name", { ascending: true })
-    .returns<ProductLibraryCategory[]>();
-
-  const { data: productTemplates } = await supabase
-    .from("product_templates")
-    .select("id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,material_suggestions,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,image_settings,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,unit_label,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at,price_notes")
-    .eq("is_active", true)
-    .eq("lifecycle_status", "active")
-    .order("template_name", { ascending: true })
-    .returns<ProductLibraryTemplate[]>();
-
-  const { data: brandPriceListUpdates } = await supabase
-    .from("brand_price_list_updates")
-    .select("id,brand_id,title,effective_from,received_at,status,created_at")
-    .in("status", ["draft", "active"])
-    .order("brand_id", { ascending: true })
-    .order("effective_from", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false });
+  // The complete library is also needed for selection and pricing after opening the selector.
+  const [
+    { data: productCategories },
+    { data: productTemplates },
+    { data: brandPriceListUpdates },
+    { data: productComponents },
+    { data: linkedFamilies },
+    { data: materialGroups },
+    { data: materials },
+    { data: templateMaterialGroups },
+    { data: templateMaterialGroupItems },
+  ] = await Promise.all([
+    readProductPages((from, to) => supabase
+      .from("product_categories")
+      .select("id,brand_id,parent_id,name")
+      .eq("is_active", true)
+      .order("brand_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<ProductLibraryCategory[]>()),
+    readProductPages((from, to) => supabase
+      .from("product_templates")
+      .select("id,brand_id,main_category_id,sub_category_id,template_code,template_name,internal_selection_name,item_code,description,default_specification,material_suggestions,origin,supplier_name,default_image_url,reference_image_url,proposed_image_url_1,proposed_image_url_2,proposed_image_url_3,proposed_image_url_4,proposed_image_url_5,proposed_image_url_6,proposed_image_url_7,proposed_image_url_8,proposed_image_url_9,proposed_image_url_10,proposed_image_url_11,proposed_image_url_12,proposed_image_url_13,proposed_image_url_14,proposed_image_url_15,proposed_image_url_16,proposed_image_url_17,proposed_image_url_18,proposed_image_url_19,proposed_image_url_20,image_settings,desking_size_pricing,variant_pricing,category_pricing,accessory_pricing,unit_label,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at,price_notes")
+      .eq("is_active", true)
+      .eq("lifecycle_status", "active")
+      .order("template_name", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<ProductLibraryTemplate[]>()),
+    readProductPages((from, to) => supabase
+      .from("brand_price_list_updates")
+      .select("id,brand_id,title,effective_from,received_at,status,created_at")
+      .in("status", ["draft", "active"])
+      .order("brand_id", { ascending: true })
+      .order("effective_from", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true }).range(from, to)),
+    readProductPages((from, to) => supabase
+      .from("product_components")
+      .select("id,template_id,option_type,component_group,component_code,component_name,description,qty,unit_label,unit_price,currency,is_optional,is_default_selected,sort_order,calculation_data")
+      .eq("is_active", true)
+      .order("template_id", { ascending: true })
+      .order("option_type", { ascending: true })
+      .order("component_group", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<ProductLibraryComponent[]>()),
+    readProductPages((from, to) => supabase
+      .from("product_template_linked_families")
+      .select("id,parent_template_id,linked_template_id,label,is_required,allow_multiple,add_to_parent_price,append_to_specification,default_qty,sort_order,is_active")
+      .eq("is_active", true)
+      .order("parent_template_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<ProductLibraryLinkedFamily[]>()),
+    readProductPages((from, to) => supabase
+      .from("brand_material_groups")
+      .select("id,brand_id,group_name,sort_order")
+      .eq("is_active", true)
+      .order("brand_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<FinishMaterialGroup[]>()),
+    readProductPages((from, to) => supabase
+      .from("brand_materials")
+      .select("id,brand_id,material_group_id,material_category,material_collection,material_code,material_name,description,image_url,sort_order,is_active")
+      .eq("is_active", true)
+      .order("brand_id", { ascending: true })
+      .order("material_group_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<FinishMaterial[]>()),
+    readProductPages((from, to) => supabase
+      .from("product_template_material_groups")
+      .select("id,product_template_id,material_group_id,selection_mode,label_override,is_required,allow_multiple,show_in_specification,show_in_quotation,sort_order")
+      .eq("is_active", true)
+      .order("product_template_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<ProductTemplateMaterialGroupLink[]>()),
+    readProductPages((from, to) => supabase
+      .from("product_template_material_group_items")
+      .select("id,product_template_material_group_id,brand_material_id,sort_order,is_active")
+      .eq("is_active", true)
+      .order("product_template_material_group_id", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true }).range(from, to).returns<ProductTemplateMaterialGroupItemLink[]>()),
+  ]);
 
   const updatesByBrand = new Map<string, NonNullable<typeof brandPriceListUpdates>>();
   for (const update of brandPriceListUpdates ?? []) {
@@ -213,56 +275,7 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
     });
   }
 
-  const { data: productComponents } = await supabase
-    .from("product_components")
-    .select("id,template_id,option_type,component_group,component_code,component_name,description,qty,unit_label,unit_price,currency,is_optional,is_default_selected,sort_order,calculation_data")
-    .eq("is_active", true)
-    .order("template_id", { ascending: true })
-    .order("option_type", { ascending: true })
-    .order("component_group", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .returns<ProductLibraryComponent[]>();
 
-  const { data: linkedFamilies } = await supabase
-    .from("product_template_linked_families")
-    .select("id,parent_template_id,linked_template_id,label,is_required,allow_multiple,add_to_parent_price,append_to_specification,default_qty,sort_order,is_active")
-    .eq("is_active", true)
-    .order("parent_template_id", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .returns<ProductLibraryLinkedFamily[]>();
-
-  const { data: materialGroups } = await supabase
-    .from("brand_material_groups")
-    .select("id,brand_id,group_name,sort_order")
-    .eq("is_active", true)
-    .order("brand_id", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .returns<FinishMaterialGroup[]>();
-
-  const { data: materials } = await supabase
-    .from("brand_materials")
-    .select("id,brand_id,material_group_id,material_category,material_collection,material_code,material_name,description,image_url,sort_order,is_active")
-    .eq("is_active", true)
-    .order("brand_id", { ascending: true })
-    .order("material_group_id", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .returns<FinishMaterial[]>();
-
-  const { data: templateMaterialGroups } = await supabase
-    .from("product_template_material_groups")
-    .select("id,product_template_id,material_group_id,selection_mode,label_override,is_required,allow_multiple,show_in_specification,show_in_quotation,sort_order")
-    .eq("is_active", true)
-    .order("product_template_id", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .returns<ProductTemplateMaterialGroupLink[]>();
-
-  const { data: templateMaterialGroupItems } = await supabase
-    .from("product_template_material_group_items")
-    .select("id,product_template_material_group_id,brand_material_id,sort_order,is_active")
-    .eq("is_active", true)
-    .order("product_template_material_group_id", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .returns<ProductTemplateMaterialGroupItemLink[]>();
 
   const resolvedDocumentSetup = resolveDocumentSetup({
     client,

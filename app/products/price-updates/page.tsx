@@ -7,7 +7,7 @@ import { formatMoney } from "@/lib/currencies";
 import { canReviewBrandPrices } from "@/lib/products/brand-price-permissions";
 import { supplierFamilyStatusLabels, type SupplierFamilyPriceStatus, type SupplierFamilyPriceStatusKey } from "@/lib/products/supplier-family-status";
 import { buildSupplierPriceUpdatesView, filterPriceUpdatesView, loadSupplierPriceUpdatesInputs, summarizePriceUpdates } from "@/lib/products/supplier-price-updates-view";
-import { supplierBusinessDate } from "@/lib/products/supplier-price-repository";
+import { readProductPages, supplierBusinessDate } from "@/lib/products/supplier-price-repository";
 import { brandPriceBaselineDate, latestBrandPriceListUpdate, scheduledBrandPriceListUpdate, productTemplatePriceCheckState } from "@/lib/product-price-check";
 import { createClient } from "@/lib/supabase/server";
 
@@ -68,13 +68,20 @@ export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPag
   const supabase = await createClient();
   const canReview = canReviewBrandPrices(profile?.role, profile?.account_status);
 
-  const { data: brands, error: brandsError } = await supabase.from("brands").select("id,name,default_currency,last_price_list_checked_at,price_list_check_interval_days,price_list_check_note").eq("is_active", true).order("name", { ascending: true }).returns<Brand[]>();
-  const { data: categories, error: categoriesError } = await supabase.from("product_categories").select("id,brand_id,parent_id,name").eq("is_active", true).order("brand_id", { ascending: true }).order("sort_order", { ascending: true }).order("name", { ascending: true }).returns<Category[]>();
-  const { data: templates, error: templatesError } = await supabase.from("product_templates")
-    .select("creation_legacy,id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at")
-    .eq("is_active", true).order("brand_id", { ascending: true }).order("template_name", { ascending: true }).returns<ProductTemplate[]>();
-  const { data: priceListUpdates, error: priceListUpdatesError } = await supabase.from("brand_price_list_updates").select("coverage_mode,id,brand_id,title,effective_from,received_at,created_at,status")
-    .in("status", ["draft", "active"]).order("effective_from", { ascending: false, nullsFirst: false }).order("received_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).returns<BrandPriceListUpdate[]>();
+  const [
+    { data: brands, error: brandsError },
+    { data: categories, error: categoriesError },
+    { data: templates, error: templatesError },
+    { data: priceListUpdates, error: priceListUpdatesError },
+  ] = await Promise.all([
+    readProductPages((from, to) => supabase.from("brands").select("id,name,default_currency,last_price_list_checked_at,price_list_check_interval_days,price_list_check_note").eq("is_active", true).order("name", { ascending: true }).order("id", { ascending: true }).range(from, to).returns<Brand[]>()),
+    readProductPages((from, to) => supabase.from("product_categories").select("id,brand_id,parent_id,name").eq("is_active", true).order("brand_id", { ascending: true }).order("sort_order", { ascending: true }).order("name", { ascending: true }).order("id", { ascending: true }).range(from, to).returns<Category[]>()),
+    readProductPages((from, to) => supabase.from("product_templates")
+      .select("creation_legacy,id,brand_id,main_category_id,sub_category_id,template_code,template_name,item_code,description,currency,default_unit_price,last_price_checked_at,price_check_interval_days,price_check_note,created_at")
+      .eq("is_active", true).order("brand_id", { ascending: true }).order("template_name", { ascending: true }).order("id", { ascending: true }).range(from, to).returns<ProductTemplate[]>()),
+    readProductPages((from, to) => supabase.from("brand_price_list_updates").select("coverage_mode,id,brand_id,title,effective_from,received_at,created_at,status")
+      .in("status", ["draft", "active"]).order("effective_from", { ascending: false, nullsFirst: false }).order("received_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).order("id", { ascending: true }).range(from, to).returns<BrandPriceListUpdate[]>()),
+  ]);
   if (brandsError) console.error("PRICE UPDATES BRANDS ERROR", brandsError.message);
   if (categoriesError) console.error("PRICE UPDATES CATEGORIES ERROR", categoriesError.message);
   if (templatesError) console.error("PRICE UPDATES TEMPLATES ERROR", templatesError.message);

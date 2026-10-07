@@ -24,15 +24,15 @@ const changedAfter = /Product prices changed after Supplier review\. Build a fre
 function pgClient(db: PGlite) {
   return {
     from(table: string) {
-      const filters: Array<[string, unknown]> = []; let order: string | null = null, start = 0, end = 999;
+      const filters: Array<[string, unknown]> = []; const seeks: Array<[string, unknown]> = []; let order: string | null = null, start = 0, end = 999;
       const execute = async () => {
         let rows: Record<string, unknown>[];
         if (table === "product_components") {
           const brandFilter = filters.find(([key]) => key === "product_templates.brand_id");
           rows = (await db.query<Record<string, unknown>>("select c.* from product_components c join product_templates t on t.id=c.template_id where t.brand_id=$1 and c.is_active order by c.id", [brandFilter?.[1]])).rows;
         } else {
-          const where = filters.map(([key], index) => `"${key}"=$${index + 1}`).join(" and ");
-          rows = (await db.query<Record<string, unknown>>(`select * from public.${table}${where ? ` where ${where}` : ""}${order ? ` order by "${order}"` : ""} limit ${end - start + 1} offset ${start}`, filters.map(([, value]) => value))).rows;
+          const where = [...filters.map(([key], index) => `"${key}"=$${index + 1}`), ...seeks.map(([key], index) => `"${key}">$${filters.length + index + 1}`)].join(" and ");
+          rows = (await db.query<Record<string, unknown>>(`select * from public.${table}${where ? ` where ${where}` : ""}${order ? ` order by "${order}"` : ""} limit ${end - start + 1} offset ${start}`, [...filters, ...seeks].map(([, value]) => value))).rows;
         }
         return rows.map((row) => {
           const copy = { ...row };
@@ -41,7 +41,7 @@ function pgClient(db: PGlite) {
           return copy;
         });
       };
-      return { select() { return this; }, eq(key: string, value: unknown) { filters.push([key, value]); return this; }, order(column: string) { order = column; return this; }, range(from: number, to: number) { start = from; end = to; return this; },
+      return { select() { return this; }, eq(key: string, value: unknown) { filters.push([key, value]); return this; }, gt(key: string, value: unknown) { seeks.push([key, value]); return this; }, order(column: string) { order = column; return this; }, range(from: number, to: number) { start = from; end = to; return this; },
         async single() { const rows = await execute(); return { data: rows.length === 1 ? rows[0] : null, error: rows.length === 1 ? null : { message: "Record unavailable" } }; },
         then(resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) { return execute().then((data) => resolve({ data, error: null }), reject); } };
     },

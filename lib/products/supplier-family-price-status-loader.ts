@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { supplierBusinessDate, supplierFamilyReviewFacts } from "./supplier-price-repository";
+import { mapSupplierReads, supplierBusinessDate, supplierFamilyReviewFacts, readProductPages } from "./supplier-price-repository";
 import {
   resolveSupplierFamilyPriceStatus,
   type SupplierFamilyPriceStatus,
@@ -16,14 +16,16 @@ type VersionRow = SupplierVersionRef & { definition_id: string | null };
 export async function loadSupplierFamilyPriceStatusMap(client: SupabaseClient, families: FamilyInput[]): Promise<Map<string, SupplierFamilyPriceStatus>> {
   if (!families.length) return new Map();
   const brandIds = [...new Set(families.map((family) => family.brand_id))];
-  const definitionsResult = await client.from("supplier_source_definitions").select("id,brand_id,name").in("brand_id", brandIds).eq("is_active", true).returns<DefinitionRow[]>();
-  if (definitionsResult.error) throw Error(definitionsResult.error.message);
+  // Facts depend only on Brands, so they load while definitions are read instead of after them.
+  const factsPromise = mapSupplierReads(brandIds, async (brandId) => [brandId, await supplierFamilyReviewFacts(client, brandId)] as const);
+  const definitionsResult = await readProductPages((from, to) => client.from("supplier_source_definitions").select("id,brand_id,name").in("brand_id", brandIds).eq("is_active", true).order("id").range(from, to).returns<DefinitionRow[]>());
+  if (definitionsResult.error) { factsPromise.catch(() => undefined); throw Error(definitionsResult.error.message); }
   const definitions = definitionsResult.data ?? [];
   const definitionIds = definitions.map((definition) => definition.id);
   const [familiesResult, versionsResult, factsByBrand] = await Promise.all([
-    definitionIds.length ? client.from("supplier_source_definition_families").select("definition_id,template_id").in("definition_id", definitionIds).returns<DefinitionFamilyRow[]>() : Promise.resolve({ data: [], error: null }),
-    definitionIds.length ? client.from("supplier_source_versions").select("id,title,status,effective_from,created_at,definition_id").in("definition_id", definitionIds).eq("status", "imported").returns<VersionRow[]>() : Promise.resolve({ data: [], error: null }),
-    Promise.all(brandIds.map(async (brandId) => [brandId, await supplierFamilyReviewFacts(client, brandId)] as const)),
+    definitionIds.length ? readProductPages((from, to) => client.from("supplier_source_definition_families").select("definition_id,template_id").in("definition_id", definitionIds).order("definition_id").order("template_id").range(from, to).returns<DefinitionFamilyRow[]>()) : Promise.resolve({ data: [], error: null }),
+    definitionIds.length ? readProductPages((from, to) => client.from("supplier_source_versions").select("id,title,status,effective_from,created_at,definition_id").in("definition_id", definitionIds).eq("status", "imported").order("id").range(from, to).returns<VersionRow[]>()) : Promise.resolve({ data: [], error: null }),
+    factsPromise,
   ]);
   if (familiesResult.error) throw Error(familiesResult.error.message);
   if (versionsResult.error) throw Error(versionsResult.error.message);

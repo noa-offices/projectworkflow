@@ -70,15 +70,51 @@ export async function supplierSourceInspectorDetail(client: SupabaseClient, sour
   return { ...inspectorRow(identity), fullCodes, evidence, moreEvidence: Math.max(0, rowKeys.length - evidence.length) };
 }
 
-export async function supplierRows<T>(client: SupabaseClient, table: string, columns: string, filters: Record<string, string | boolean> = {}, order = "id"): Promise<T[]> {
+/** Read complete product datasets in stable, bounded pages; never return a silently truncated list. */
+export async function readProductPages<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<{ data: T[] | null; error: { message: string } | null }> {
   const rows: T[] = [];
   for (let from = 0; ; from += 500) {
-    let query = client.from(table).select(columns).order(order, { ascending: true }).range(from, from + 499);
+    const result = await page(from, from + 499);
+    if (result.error) return { data: null, error: result.error };
+    rows.push(...(result.data ?? []));
+    if ((result.data ?? []).length < 500) return { data: rows, error: null };
+  }
+}
+
+/** Keep database fan-out modest and preserve input order. */
+export async function mapSupplierReads<T, R>(items: T[], load: (item: T) => Promise<R>, concurrency = 3): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await load(items[index]);
+    }
+  }));
+  return results;
+}
+export async function supplierRows<T>(client: SupabaseClient, table: string, columns: string, filters: Record<string, string | boolean> = {}, order = "id", targetedOnly = false): Promise<T[]> {
+  const rows: T[] = [];
+  // Match keys are unique within the filtered batch. Avoid increasingly costly OFFSET scans
+  // of large match JSON when reconstructing Family facts; retain every match and its order.
+  const seekMatches = table === "supplier_price_matches" && order === "key" && Boolean(filters.batch_id) && columns.split(",").includes("key");
+  let lastKey: string | undefined;
+  for (let from = 0; ; from += 500) {
+    let query = client.from(table).select(columns).order(order, { ascending: true }).range(seekMatches ? 0 : from, seekMatches ? 499 : from + 499);
     for (const [key, value] of Object.entries(filters)) query = query.eq(key, value);
+    if (targetedOnly) query = query.neq("template_ids", "{}");
+    if (seekMatches && lastKey !== undefined) query = query.gt("key", lastKey);
     const { data, error } = await query;
-    if (error) throw Error(error.message);
+    if (error) throw Error(`${table} (rows ${from}-${from + 499}): ${error.message}`);
     const page = (data ?? []) as T[]; rows.push(...page);
     if (page.length < 500) return rows;
+    if (seekMatches) {
+      const nextKey = (page.at(-1) as Record<string, unknown> | undefined)?.key;
+      if (typeof nextKey !== "string" || nextKey === lastKey) throw Error("Supplier match paging did not advance safely.");
+      lastKey = nextKey;
+    }
   }
 }
 export async function supplierWrite(client: SupabaseClient, operation: string, payload: Record<string, unknown>) {
@@ -897,9 +933,9 @@ export type SupplierFamilyCoverageRow = {
   currentSources: Array<{ definitionId: string; definitionName: string }>;
 };
 /** Found/total comes from the reference source's extracted codes (null when no price list has been imported yet). Category names are the Product Library's own; nothing is inferred. */
-export async function supplierFamilyCoverageSetup(client: SupabaseClient, brandId: string, referenceSourceId?: string | null): Promise<SupplierFamilyCoverageRow[]> {
+export async function supplierFamilyCoverageSetup(client: SupabaseClient, brandId: string, referenceSourceId?: string | null, loadedOverview?: SupplierCoverageOverview): Promise<SupplierFamilyCoverageRow[]> {
   const [overview, templates, categories, suggestion] = await Promise.all([
-    supplierCoverageOverview(client, brandId),
+    loadedOverview ? Promise.resolve(loadedOverview) : supplierCoverageOverview(client, brandId),
     supplierRows<{ id: string; template_name: string; main_category_id: string | null; sub_category_id: string | null }>(client, "product_templates", "id,template_name,main_category_id,sub_category_id", { brand_id: brandId, is_active: true }, "template_name"),
     supplierRows<{ id: string; name: string }>(client, "product_categories", "id,name", { brand_id: brandId }),
     referenceSourceId ? supplierSourceCoverageSuggestion(client, { brandId, sourceId: referenceSourceId }) : Promise.resolve(null),
@@ -1036,7 +1072,7 @@ export function supplierPriceListState(input: { hasSource: boolean; hasCoverage:
  * to any source. Each card resolves the latest review of that version only, so two sources of one Brand never share a review.
  */
 export async function supplierPriceListCards(client: SupabaseClient, brandId: string, definitions: SupplierCoverageDefinition[]): Promise<SupplierPriceListCard[]> {
-  const versions = await supplierRows<SourceVersion & { created_at: string; definition_id: string | null; rows_compacted_at?: string | null }>(client, "supplier_source_versions", "*", { brand_id: brandId, status: "imported" }, "created_at");
+  const versions = await supplierRows<Pick<SourceVersion, "id" | "definition_id" | "title" | "currency" | "stored_rows" | "identity_count" | "status" | "effective_from"> & { created_at: string; rows_compacted_at?: string | null }>(client, "supplier_source_versions", "id,definition_id,title,currency,stored_rows,identity_count,status,effective_from,created_at,rows_compacted_at", { brand_id: brandId, status: "imported" }, "created_at");
   const batches = await supplierRows<{ id: string; source_id: string; status: string; scope: string; created_at: string }>(client, "supplier_price_batches", "id,source_id,status,scope,created_at", { brand_id: brandId }, "created_at");
   // The applicable version per definition (by effective date, never by import order); legacy versions without a definition stay listed as before.
   const businessDate = supplierBusinessDate();
@@ -1114,10 +1150,12 @@ export type SupplierFamilyReviewFact = {
 export async function supplierFamilyReviewFacts(client: SupabaseClient, brandId: string, sourceId?: string): Promise<SupplierFamilyReviewFact[]> {
   const batches = await supplierRows<{ id: string; source_id: string; status: string; scope: string; completed_at: string | null; coverage_template_ids: string[] | null; selected_template_ids: string[] | null }>(
     client, "supplier_price_batches", "id,source_id,status,scope,completed_at,coverage_template_ids,selected_template_ids", { brand_id: brandId }, "id");
-  const facts: SupplierFamilyReviewFact[] = [];
-  for (const batch of batches.filter((item) => !sourceId || item.source_id === sourceId)) {
+  const factsByBatch = await mapSupplierReads(batches.filter((item) => !sourceId || item.source_id === sourceId), async (batch) => {
+    const facts: SupplierFamilyReviewFact[] = [];
     const [matches, decisions] = await Promise.all([
-      supplierRows<{ key: string; data: PriceMatch }>(client, "supplier_price_matches", "key,data", { batch_id: batch.id }, "key"),
+      // Only matches with targets contribute to Family facts (the loop below skips empty targets) and template_ids mirrors targets, so the
+      // untargeted majority of a batch (unmatched/companion rows, ~97% of rows, ~1.2 KB each) is never transferred.
+      supplierRows<{ key: string; data: PriceMatch }>(client, "supplier_price_matches", "key,data", { batch_id: batch.id }, "key", true),
       supplierRows<{ key: string; decision: string }>(client, "supplier_price_decisions", "key,decision", { batch_id: batch.id }, "key"),
     ]);
     const decided = new Map(decisions.map((row) => [row.key, row.decision]));
@@ -1145,6 +1183,7 @@ export async function supplierFamilyReviewFacts(client: SupabaseClient, brandId:
         inCoverage, hasReviewEvidence: totalTargets > 0, totalTargets, excludedTargets, resolvedTargets, unresolvedTargets,
         fullyChecked, partiallyChecked: completed && inCoverage && excludedTargets > 0 && resolvedTargets > 0 });
     }
-  }
-  return facts;
+    return facts;
+  }, 2);
+  return factsByBatch.flat();
 }

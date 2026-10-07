@@ -132,7 +132,7 @@ test("Product price health reuses the existing state and speaks plainly", () => 
 
 test("Product Library and quotation selector show health without blocking selection or touching quotation prices", () => {
   assert.match(selectorSource, /friendlyPriceHealth\(status, template\.latest_brand_price_list_update, "quotation"\)/);
-  assert.match(selectorSource, /\{health\.label\}/); assert.match(selectorSource, /\{health\.helper\}/);
+  assert.match(selectorSource, /\{health\.label\}/); assert.match(selectorSource, /\{supplierPresentation\?\.detail \?\? legacyHealth\.helper\}/);
   // The warning block only adds guidance; no code path disables adding a Product because of its price-check tone.
   assert.doesNotMatch(selectorSource, /disabled=\{[^}]*priceCheckState\(/); assert.doesNotMatch(selectorSource, /tone === "warning"[^\n]*(return null|disabled)/);
   assert.match(selectorSource, /Please verify source price before finalizing quotation\./);

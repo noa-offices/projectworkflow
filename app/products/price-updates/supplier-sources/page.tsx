@@ -81,7 +81,7 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
   const sourceOptions = (coverage?.definitions ?? []).filter((item) => item.isActive).map((item) => ({ id: item.id, name: item.name, familyCount: item.families.length }));
   const referenceSource = sources.find((item) => item.status === "imported");
   let familyCoverageRows: SupplierFamilyCoverageRow[] = [];
-  if (brand && coverage && tab === "current" && !source) { try { familyCoverageRows = await supplierFamilyCoverageSetup(client, brand.id, referenceSource?.id); } catch (error) { errorMessage ||= error instanceof Error ? error.message : "Family coverage unavailable"; } }
+  if (brand && coverage && tab === "current" && !source) { try { familyCoverageRows = await supplierFamilyCoverageSetup(client, brand.id, referenceSource?.id, coverage); } catch (error) { errorMessage ||= error instanceof Error ? error.message : "Family coverage unavailable"; } }
   const definition = source?.definition_id ? coverage?.definitions.find((item) => item.id === source.definition_id) : undefined;
   const editing = text(params.edit) === "1";
   let coverageRows: SupplierCoverageSuggestionRow[] = [];
