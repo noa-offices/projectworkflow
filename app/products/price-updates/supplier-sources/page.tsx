@@ -5,7 +5,7 @@ import { SupplierImportFormatWizard } from "@/components/products/supplier-impor
 import { latestBrandPriceListUpdate } from "@/lib/product-price-check";
 import { SupplierBrandProgress, SupplierFamilyList, SupplierFamilyTable, SupplierTierMappingPanel } from "@/components/products/supplier-family-review";
 import { supplierSourceTierPanel, type SourceTierPanel } from "@/lib/products/supplier-price-repository";
-import { SupplierAdvancedImportSettings, SupplierCompletionControls, SupplierImportCard, SupplierReviewControls, SupplierStartReview } from "@/components/products/supplier-price-workspace-controls";
+import { SupplierAdvancedImportSettings, SupplierCompletionControls, SupplierImportCard, SupplierPriceBasisPanel, SupplierReviewControls, SupplierStartReview } from "@/components/products/supplier-price-workspace-controls";
 import { SupplierCompleteSummary, SupplierFinishScreen, SupplierImportDetails, SupplierHistoryTable, SupplierImportSummary, SupplierTabs, SupplierWorkflowHeader, type HistoryRow, type PriceListTab, type WorkflowStep } from "@/components/products/supplier-price-workflow";
 import { SupplierCoverageContext, SupplierCoverageSetup, SupplierFamilyCoverageSetup, SupplierPreviousPriceList, SupplierPriceListCards, SupplierSourceSummary, type OtherCoverage, type PriceListCardView } from "@/components/products/supplier-coverage";
 import { SupplierCapacityPanel } from "@/components/products/supplier-capacity";
@@ -113,6 +113,12 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
     } catch (error) { errorMessage ||= error instanceof Error ? error.message : "Family Review unavailable"; }
   }
   const family = overview?.families.find((item) => item.template_id === familyId);
+  let familyUnchangedKeys: string[] = []; let familyUnchangedAction: "confirm" | "finish" = "confirm";
+  const basisBlocked = Boolean(source && (!["list", "net"].includes(source.basis) || !["list", "net"].includes(brand?.stored_price_basis ?? "") || source.basis !== brand?.stored_price_basis));
+  if (!basisBlocked && batch && family && family.changed === 0 && family.missing === 0 && family.attention === 0 && family.same > 0) {
+    const sameRows = section === "same" ? familyRows : await supplierFamilyRows(client, batch.id, family.template_id, "same");
+    if (!sameRows.truncated && sameRows.rows.length === family.same && sameRows.rows.every((row) => row.selectable)) { familyUnchangedKeys = sameRows.rows.map((row) => row.key); familyUnchangedAction = family.doneChanged ? "finish" : "confirm"; }
+  }
   let sourceTierPanel: SourceTierPanel | null = null;
   if (source?.status === "imported") {
     try { sourceTierPanel = await supplierSourceTierPanel(client, source.id); }
@@ -162,7 +168,7 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
   const clearFiltersHref = href({ source: source?.id ?? "", batch: batch?.id ?? "", template: "", status: "", code: "", offset: "0" });
   const completed = batch?.status === "completed";
   const importCard = brand ? <SupplierImportCard key={brand.id} brandId={brand.id} brandName={brand.name} profiles={profileList} sources={sourceOptions} suggestedTitle={`${brand.name} — ${new Date().toLocaleString("en-US", { month: "long", year: "numeric" })}`} advancedHref={href({ tab: "import", advanced: "1" }) + "#advanced"} setupHref={href({ tab: "import", setup: "1" })} /> : null;
-  const advancedReview = batch ? <><p className="text-xs"><Link href={href({ view: "family", status: "", code: "", template: "" })} className="underline">← Back to Family Review</Link></p><p className="rounded border border-amber-300 bg-amber-50 p-2 font-medium">{batch.basis_warning} Apply one reviewed changed price at a time after confirming source and Brand price basis. Build a fresh comparison after applying.</p>
+  const advancedReview = batch ? <><p className="text-xs"><Link href={href({ view: "family", status: "", code: "", template: "" })} className="underline">← Back to Family Review</Link></p>{basisBlocked ? <p className="rounded border border-amber-300 bg-amber-50 p-2 font-medium">Price basis needs confirmation before prices can be applied. Use the basis panel in Family Review.</p> : null}
           <SupplierCompletionControls key={batch.id} batchId={batch.id} scope={batch.scope} status={batch.status} approver={approver} partialSource={partialSource} />
           <div className="space-y-2"><h3 className="font-semibold">Visible Template totals</h3><p className="text-xs text-zinc-500">From the {units.length} Template review units loaded on this page.</p><dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">{Object.entries(visibleTotals).map(([label, total]) => <div key={label} className={`rounded border p-3 ${total > 0 && (label === "changed" || label === "unresolved") ? "border-amber-200 bg-amber-50" : "border-zinc-200 bg-zinc-50"}`}><dt className="text-xs text-zinc-600">{readable(label)}</dt><dd className="text-xl font-semibold tabular-nums">{total.toLocaleString("en-US")}</dd></div>)}</dl></div>
           <h3 className="font-semibold">Template review units</h3>
@@ -173,12 +179,13 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
           <SupplierReviewControls key={`${batch.id}:${from}:${templateFilter}:${classification}:${code}`} batchId={batch.id} brandId={brand.id} matches={matches} approver={approver} sourceProfile={source?.profile} sourceBasis={source?.basis ?? "unknown"} brandBasis={brand.stored_price_basis} sourceStatus={source?.status ?? ""} batchStatus={batch.status} />
           <div className="flex justify-between"><Link href={href({ offset: String(Math.max(0, from - 50)) })}>Previous comparisons</Link><span>{matches.length ? `${from + 1}–${from + matches.length}` : "0 comparisons"}</span><Link href={href({ offset: String(from + 50) })}>Next comparisons</Link></div>
         </> : null;
-  const familyReview = batch && source ? <>
+  const familyReview = batch && source && brand ? <>
+          <SupplierPriceBasisPanel brandId={brand.id} sourceId={source.id} sourceName={definition?.name ?? brand.name} sourceTitle={source.title} sourceBasis={source.basis} brandBasis={brand.stored_price_basis} approver={approver} />
           {coverageContext}
           {overview ? family ? <SupplierFamilyTable key={`${batch.id}:${family.template_id}:${section}`} batchId={batch.id} brandId={brand.id} familyName={family.template_name} section={section} tabs={familyTabs} rows={familyRows.rows} truncated={familyRows.truncated} approver={approver} batchOpen={batch.status === "review"} limit={SUPPLIER_BULK_LIMIT} sourceId={source.id} sourceTitle={source.title} sourceDefinitionName={definition?.name}
-              backHref={href({ view: "family", family: "", section: "" })} detailsHref={href({ view: "advanced", family: "", section: "", template: family.template_id })} />
+              backHref={href({ view: "family", family: "", section: "" })} detailsHref={href({ view: "advanced", family: "", section: "", template: family.template_id })} basisBlocked={basisBlocked} familyUnchangedKeys={familyUnchangedKeys} familyUnchangedAction={familyUnchangedAction} />
             : <><SupplierBrandProgress overview={overview} />
-              <SupplierFamilyList overview={overview} links={overview.families.map((item) => ({ template_id: item.template_id, href: href({ view: "family", family: item.template_id, section: item.attention && !item.changed ? "attention" : "changed" }) }))}
+              <SupplierFamilyList overview={overview} links={overview.families.map((item) => ({ template_id: item.template_id, href: href({ view: "family", family: item.template_id, section: item.attention && !item.changed ? "attention" : !item.changed && !item.missing && !item.attention && item.same ? "same" : "changed" }) }))}
                 approverNote={approver ? undefined : "An approver applies, confirms or excludes items."} advancedHref={href({ view: "advanced", family: "", section: "" })} supplierOnlyHref={href({ view: "advanced", family: "", section: "", status: "unmatched" })} continueHref={href({ view: "complete" })} /></>
             : <p className="rounded border border-zinc-200 bg-zinc-50 p-6 text-center text-sm text-zinc-600">Family Review is unavailable for this comparison. Use Advanced / Technical Review.</p>}
         </> : null;

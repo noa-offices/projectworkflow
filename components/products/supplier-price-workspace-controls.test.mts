@@ -17,7 +17,7 @@ function loadControls(scope = "complete") {
   const messages: string[] = [];
   const calls: string[] = [];
   type UiComponent = (props: Record<string, unknown>) => React.ReactElement;
-  const sandboxModule = { exports: {} as { SupplierAdvancedImportSettings: UiComponent; SupplierStartReview: UiComponent; SupplierReviewControls: UiComponent } };
+  const sandboxModule = { exports: {} as { SupplierAdvancedImportSettings: UiComponent; SupplierStartReview: UiComponent; SupplierReviewControls: UiComponent; SupplierPriceBasisPanel: UiComponent } };
   const code = ts.transpileModule(controlsSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText;
   runInNewContext(code, {
     module: sandboxModule, exports: sandboxModule.exports,
@@ -95,7 +95,7 @@ test("Clear filters preserves brand/source/batch and resets only comparison filt
 });
 
 test("empty comparisons render an explicit message and leave shared confirmation available", () => {
-  const html = renderToStaticMarkup(loadControls().SupplierReviewControls({ batchId: "batch", brandId: "brand", matches: [], approver: true }));
+  const html = renderToStaticMarkup(loadControls().SupplierReviewControls({ batchId: "batch", brandId: "brand", sourceBasis: "list", brandBasis: "list", sourceStatus: "imported", batchStatus: "review", matches: [], approver: true }));
   assert.match(html, /No comparison rows match these filters\./);
   assert.match(html, /Confirm selected as shared/);
 });
@@ -103,7 +103,21 @@ test("empty comparisons render an explicit message and leave shared confirmation
 test("review rendering retains prices, actions, expandable finishes and missing-source meaning", () => {
   const target = { key: "target", code: "103801", template_name: "UNIVERSAL SCREEN", label: "Screen", dimension: "melamine", currency: "EUR", price: 92 };
   const source = { code: "103801", dimension: "melamine", currency: "EUR", price: 81, finishes: Array.from({ length: 12 }, (_, index) => String(170 + index)), row_keys: ["row"], issues: ["Check source evidence"] };
-  const html = renderToStaticMarkup(loadControls().SupplierReviewControls({ batchId: "batch", brandId: "brand", approver: false, matches: [{ key: "decreased", classification: "decreased", decision: "reviewed", source, targets: [target] }, { key: "missing", classification: "target_not_represented", targets: [target] }] }));
+  const html = renderToStaticMarkup(loadControls().SupplierReviewControls({ batchId: "batch", brandId: "brand", sourceBasis: "list", brandBasis: "list", sourceStatus: "imported", batchStatus: "review", approver: false, matches: [{ key: "decreased", classification: "decreased", decision: "reviewed", source, targets: [target] }, { key: "missing", classification: "target_not_represented", targets: [target] }] }));
   for (const text of ["EUR 92", "EUR 81", "Decreased", "-11.00", "Validation: Check source evidence", "12 total", "181", "Explicit mapping", "Not represented in source; not discontinued"]) assert.ok(html.includes(text), text);
   assert.doesNotMatch(html, /No comparison rows match/);
+});
+
+test("source-level price-basis panel covers unknown, matching, mismatch and read-only states", () => {
+  const panel = (sourceBasis: string, brandBasis: string, approver = true) => renderToStaticMarkup(loadControls().SupplierPriceBasisPanel({ brandId: "brand", sourceId: "source", sourceName: "LAS Furniture", sourceTitle: "LAS MOBILI — October 2026", sourceBasis, brandBasis, approver }));
+  assert.match(panel("unknown", "list"), /How should prices in this Supplier file be interpreted/);
+  assert.match(panel("unknown", "list"), /LAS Furniture/); assert.match(panel("unknown", "list"), /LAS MOBILI — October 2026/);
+  assert.match(panel("unknown", "net"), /Confirm Supplier basis/);
+  assert.match(panel("list", "unknown"), /Brand pricing basis needs confirmation/);
+  assert.match(panel("unknown", "unknown"), /Step 1 — Supplier price-list basis/);
+  assert.match(panel("net", "list"), /Price basis mismatch/);
+  assert.equal(panel("list", "list"), "");
+  const readOnly = panel("unknown", "list", false);
+  assert.match(readOnly, /An approver must confirm/); assert.doesNotMatch(readOnly, />Confirm Supplier basis</);
+  assert.doesNotMatch(controlsSource.slice(controlsSource.indexOf("export function SupplierReviewControls")), /<SupplierPriceBasisPanel/);
 });

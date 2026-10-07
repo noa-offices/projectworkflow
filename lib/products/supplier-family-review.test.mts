@@ -413,7 +413,7 @@ test("bulk Exclude missing needs one reason, applies it to every row, and never 
     assert.equal(result.message, "2 items excluded from this Supplier source.");
     assert.deepEqual(await f.decisions(), { "m-g0": "excluded_from_source:Not in this edition", "m-g1": "excluded_from_source:Not in this edition" });
     assert.deepEqual(await f.snapshot(), before);
-    assert.deepEqual((await supplierFamilyOverview(f.client, batch)).families.find((family) => family.template_id === gamma), { template_id: gamma, template_name: "GAMMA", items: 2, changed: 0, same: 0, missing: 0, attention: 0, done: 2, excluded: 2, status: "ready" });
+    assert.deepEqual((await supplierFamilyOverview(f.client, batch)).families.find((family) => family.template_id === gamma), { template_id: gamma, template_name: "GAMMA", items: 2, changed: 0, same: 0, missing: 0, attention: 0, done: 2, doneChanged: 0, excluded: 2, status: "ready" });
   } finally { await f.db.close(); }
 });
 
@@ -486,6 +486,11 @@ test("selection helpers are bounded; Family UI is simple, gated, and resets sele
     const tabs = (["changed", "same", "missing", "attention"] as const).map((section) => ({ section, label: section, count: 1, href: `/x?section=${section}` }));
     const table = (props: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(ui.SupplierFamilyTable, { batchId: batch, brandId: brand, familyName: "ALPHA SCREEN", section: "changed", tabs, rows, truncated: false, approver: true, batchOpen: true, limit: 50, backHref: "/x", detailsHref: "/x?view=advanced", sourceId: "source", sourceTitle: "February price list", sourceDefinitionName: "LAS Chairs", ...props } as never));
     assert.equal((table().match(/type="checkbox"/g) ?? []).length, 3); assert.match(table(), />Select all</); assert.match(table(), />Clear selection</); assert.match(table(), /0 selected/); assert.match(table(), /Back to Family Review/); assert.match(table(), /View extracted data/); assert.equal((table().match(/View source/g) ?? []).length, 3); assert.match(table(), /Review details/);
+    const unchangedFamily = table({ familyUnchangedKeys: ["m-a1", "m-a2"] });
+    assert.match(unchangedFamily, /This Family has no price changes or blockers/); assert.match(unchangedFamily, />Confirm family unchanged</);
+    assert.match(table({ basisBlocked: true }), /Price basis must be confirmed for LAS Chairs before prices can be applied/); assert.match(table({ basisBlocked: true }), /href="#supplier-price-basis"/);
+    assert.match(table({ familyUnchangedKeys: ["m-a1"], familyUnchangedAction: "finish" }), />Finish family review</);
+    assert.match(table({ familyUnchangedKeys: ["m-a1"], approver: false }), /An approver can confirm this Family unchanged/);
     assert.doesNotMatch(table({ approver: false }), /type="checkbox"/); assert.match(table({ approver: false }), /An approver applies, confirms or excludes items\./);
     assert.doesNotMatch(table({ batchOpen: false }), /type="checkbox"/);
     const attention = (await supplierFamilyRows(f.client, batch, delta1, "attention")).rows;
@@ -498,9 +503,19 @@ test("selection helpers are bounded; Family UI is simple, gated, and resets sele
     const page = await readFile(new URL("../../app/products/price-updates/supplier-sources/page.tsx", import.meta.url), "utf8");
     assert.match(page, /<SupplierFamilyTable key=\{`\$\{batch\.id\}:\$\{family\.template_id\}:\$\{section\}`\}/);
     assert.match(page, /brandId=\{brand\.id\}/); assert.match(page, /sourceId=\{source\.id\}/); assert.match(page, /view === "family"/); assert.match(page, /View in Advanced|Advanced \/ Technical Review|view: "advanced"/); assert.match(page, /Back to Family Review/);
+    assert.match(page, /SupplierPriceBasisPanel/); assert.match(page, /familyUnchangedKeys/);
     const component = await readFile(new URL("../../components/products/supplier-family-review.tsx", import.meta.url), "utf8");
     assert.match(component, /useState<string\[\]>\(\[\]\)/); assert.match(component, /Supplier review details/); assert.match(component, /sourceDetail\.evidence/); assert.match(component, /sourceDetail\.sourceRowCount/); assert.match(component, /View source/); assert.match(component, /Manage Supplier tier mapping above/); assert.match(component, /supplierSourceInspectorDetails/);
     assert.match(component, /optionalSupplierRuleId\(task\.templateId\)/); assert.match(component, /optionalSupplierRuleId\(task\.groupId\)/);
+    const familyKeys = Array.from({ length: 81 }, (_, index) => `m-${index}`);
+    assert.deepEqual(ui.supplierKeyChunks(familyKeys, 50).map((chunk: string[]) => chunk.length), [50, 31]);
+    const chunks: string[][] = [];
+    await ui.runSupplierKeyChunks(familyKeys, 50, async (chunk: string[]) => { chunks.push(chunk); return chunk.length; });
+    assert.deepEqual(chunks.map((chunk) => chunk.length), [50, 31]);
+    const completed: string[][] = []; let attempted = 0;
+    await assert.rejects(ui.runSupplierKeyChunks(familyKeys, 50, async (chunk: string[]) => { attempted++; if (attempted === 2) throw Error("second chunk failed"); completed.push(chunk); return chunk.length; }), /second chunk failed/);
+    assert.deepEqual(completed.map((chunk) => chunk.length), [50]); assert.equal(attempted, 2);
+    assert.match(component, /runSupplierKeyChunks\(familyUnchangedKeys, limit, \(keys\) => bulkConfirmSupplierUnchanged/);
   } finally { await f.db.close(); }
 });
 

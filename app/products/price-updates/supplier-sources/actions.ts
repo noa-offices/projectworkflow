@@ -38,6 +38,18 @@ export async function saveSupplierProfile(brandId: string, title: string, config
   if (!title.trim()) throw Error("Profile title required.");
   const result = await supplierWrite(client, "profile", { brand_id: brandId, title: title.trim(), config }); revalidatePath(workspacePath); return result;
 }
+export async function updateSupplierSourceBasis(brandId: string, sourceId: string, basis: string) {
+  const { client } = await approver();
+  if (!["list", "net"].includes(basis)) throw Error("Choose list or net price basis.");
+  const result = await supplierWrite(client, "source_basis_update", { brand_id: brandId, source_id: sourceId, basis });
+  revalidatePath(workspacePath); return result;
+}
+export async function updateSupplierBrandBasis(brandId: string, basis: string) {
+  const { client } = await approver();
+  if (!["list", "net"].includes(basis)) throw Error("Choose list or net price basis.");
+  const result = await supplierWrite(client, "brand_basis_update", { brand_id: brandId, basis });
+  revalidatePath(workspacePath); return result;
+}
 export async function createSupplierSource(payload: { profile_id: string; expected_profile: SupplierProfile; title: string; filename: string; file_hash: string; source_type: string; expected_rows: number; expected_cells: number; expected_chunks: number; original_reference?: string; effective_from?: string; received_at?: string }) {
   const { client } = await reviewer();
   if (!payload.title.trim() || !/^[a-f0-9]{64}$/.test(payload.file_hash) || !["xlsx", "csv", "json"].includes(payload.source_type)) throw Error("Source title, hash and structured format required.");

@@ -457,7 +457,7 @@ export function familyRowState(match: PriceMatch, decision: string | undefined, 
   return intact ? { section: "changed", done: false, issue: "", action: "", kind: "changed" } : attention("changed_after");
 }
 
-export type FamilySummary = { template_id: string; template_name: string; items: number; changed: number; same: number; missing: number; attention: number; done: number; excluded: number; status: "ready" | "needs_review" | "needs_attention" | "completed" };
+export type FamilySummary = { template_id: string; template_name: string; items: number; changed: number; same: number; missing: number; attention: number; done: number; doneChanged: number; excluded: number; status: "ready" | "needs_review" | "needs_attention" | "completed" };
 export type FamilyOverview = {
   batch: { id: string; status: string; scope: string };
   families: FamilySummary[];
@@ -582,9 +582,9 @@ export async function supplierFamilyOverview(client: SupabaseClient, batchId: st
   for (const row of rows) {
     if (!row.state.section) continue;
     for (const target of new Map(row.match.targets.map((item) => [item.template_id, item])).values()) {
-      const family = families.get(target.template_id) ?? { template_id: target.template_id, template_name: target.template_name, items: 0, changed: 0, same: 0, missing: 0, attention: 0, done: 0, excluded: 0, status: "ready" as const };
+      const family = families.get(target.template_id) ?? { template_id: target.template_id, template_name: target.template_name, items: 0, changed: 0, same: 0, missing: 0, attention: 0, done: 0, doneChanged: 0, excluded: 0, status: "ready" as const };
       family.items++;
-      if (row.state.done) { family.done++; if (row.state.section === "missing") family.excluded++; } else family[row.state.section]++;
+      if (row.state.done) { family.done++; if (row.state.section === "changed") family.doneChanged++; if (row.state.section === "missing") family.excluded++; } else family[row.state.section]++;
       families.set(target.template_id, family);
     }
   }

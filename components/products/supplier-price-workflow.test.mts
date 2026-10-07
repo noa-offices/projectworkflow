@@ -88,7 +88,7 @@ test("Start Review is the entry to Step 2 with Complete Brand as the recommended
 
 test("Complete step uses plain language, gates the button on server readiness, and keeps technical details", () => {
   const overview = (extra: Record<string, unknown> = {}) => ({ batch: { id: "r1", status: "review", scope: "complete" }, supplierOnly: { unmatched: 0, companions: 0 }, finished: { applied: 12, confirmed: 77, excluded: 4 },
-    families: [{ template_id: "a", template_name: "A", items: 3, changed: 0, same: 0, missing: 0, attention: 0, done: 3, excluded: 0, status: "ready" }, { template_id: "b", template_name: "B", items: 2, changed: 0, same: 0, missing: 0, attention: 1, done: 1, excluded: 1, status: "needs_attention" }],
+    families: [{ template_id: "a", template_name: "A", items: 3, changed: 0, same: 0, missing: 0, attention: 0, done: 3, doneChanged: 0, excluded: 0, status: "ready" }, { template_id: "b", template_name: "B", items: 2, changed: 0, same: 0, missing: 0, attention: 1, done: 1, doneChanged: 0, excluded: 1, status: "needs_attention" }],
     totals: { families: 2, ready: 1, changed: 0, same: 0, missing: 0, attention: 1 }, ...extra });
   const summary = html(workflow.SupplierCompleteSummary, { overview: overview(), reviewHref: "/family" });
   for (const text of ["2 Families", "Prices updated", "12", "Unchanged prices confirmed", "77", "Items not listed by Supplier (excluded)", "1 item still needs a decision before you can complete.", "1 item needs attention", "Review items"]) assert.ok(summary.includes(text), text);
@@ -109,7 +109,7 @@ test("technical readiness details stay available inside the Complete control", a
 
 test("finish screen reports the activated baseline in friendly terms", () => {
   const overview = { batch: { id: "r1", status: "completed", scope: "complete" }, supplierOnly: { unmatched: 0, companions: 0 }, finished: { applied: 0, confirmed: 0, excluded: 0 }, totals: { families: 6, ready: 6, changed: 0, same: 0, missing: 0, attention: 0 },
-    families: ["a", "b", "c", "d", "e", "f"].map((id, index) => ({ template_id: id, template_name: id, items: 1, changed: 0, same: 0, missing: 0, attention: 0, done: 1, excluded: index === 5 ? 1 : 0, status: "completed" })) };
+    families: ["a", "b", "c", "d", "e", "f"].map((id, index) => ({ template_id: id, template_name: id, items: 1, changed: 0, same: 0, missing: 0, attention: 0, done: 1, doneChanged: 0, excluded: index === 5 ? 1 : 0, status: "completed" })) };
   const finish = html(workflow.SupplierFinishScreen, { brandName: "LAS MOBILI", title: "February 2026", baselineDate: "2026-02-01", overview, priceUpdatesHref: "/products/price-updates", summaryHref: "/summary" });
   for (const text of ["Review completed. Brand price baseline activated.", "5 Product families checked", "1 Family still needs separate price verification", "Baseline date:", "2026-02-01", "Back to Price Updates", "View review summary"]) assert.ok(finish.includes(text), text);
   assert.doesNotMatch(finish, /batch/i);

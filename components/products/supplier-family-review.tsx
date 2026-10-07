@@ -24,6 +24,12 @@ const statusLabel: Record<string, [string, string, string]> = {
 export const selectAllKeys = (keys: string[], limit: number) => ({ keys: keys.slice(0, limit), truncated: keys.length > limit });
 export const toggleKey = (current: string[], key: string, on: boolean, limit: number) =>
   on ? (current.includes(key) || current.length >= limit ? current : [...current, key]) : current.filter((item) => item !== key);
+export const supplierKeyChunks = (keys: string[], limit: number) => Array.from({ length: Math.ceil(keys.length / limit) }, (_, index) => keys.slice(index * limit, (index + 1) * limit));
+export async function runSupplierKeyChunks<T>(keys: string[], limit: number, work: (chunk: string[]) => Promise<T>) {
+  const results: T[] = [];
+  for (const chunk of supplierKeyChunks(keys, limit)) results.push(await work(chunk));
+  return results;
+}
 
 export const optionalSupplierRuleId = (value: unknown) => {
   if (typeof value !== "string") return undefined;
@@ -112,8 +118,8 @@ export function SupplierFamilyList({ overview, links, approverNote, advancedHref
 }
 
 type Tab = { section: FamilySection; label: string; count: number; href: string };
-export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, truncated, approver, batchOpen, limit, backHref, detailsHref, sourceId, sourceTitle, sourceDefinitionName }: {
-  batchId: string; brandId: string; familyName: string; section: FamilySection; tabs: Tab[]; rows: FamilyRow[]; truncated: boolean; approver: boolean; batchOpen: boolean; limit: number; backHref: string; detailsHref: string; sourceId: string; sourceTitle: string; sourceDefinitionName?: string;
+export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, truncated, approver, batchOpen, limit, backHref, detailsHref, sourceId, sourceTitle, sourceDefinitionName, basisBlocked = false, familyUnchangedKeys = [], familyUnchangedAction = "confirm" }: {
+  batchId: string; brandId: string; familyName: string; section: FamilySection; tabs: Tab[]; rows: FamilyRow[]; truncated: boolean; approver: boolean; batchOpen: boolean; limit: number; backHref: string; detailsHref: string; sourceId: string; sourceTitle: string; sourceDefinitionName?: string; basisBlocked?: boolean; familyUnchangedKeys?: string[]; familyUnchangedAction?: "confirm" | "finish";
 }) {
   const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
   const [selected, setSelected] = useState<string[]>([]); const [asking, setAsking] = useState(false); const [reason, setReason] = useState(""); const [detailRow, setDetailRow] = useState<FamilyRow | null>(null); const [sourceDetail, setSourceDetail] = useState<SupplierSourceInspectorDetail | null>(null); const [detailBusy, setDetailBusy] = useState(false);
@@ -129,6 +135,7 @@ export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, 
   const pick = selectAllKeys(selectable, limit);
   const columns = section === "attention" ? ["Code", "Item", "Issue", "Recommended action", "", ""] : ["Code", "Item / size", "Current", "Supplier", "Change", "", ""];
   const openInspector = (code: string) => window.dispatchEvent(new CustomEvent("supplier-source-inspector", { detail: { code } }));
+  const confirmFamilyUnchanged = async () => { await runSupplierKeyChunks(familyUnchangedKeys, limit, (keys) => bulkConfirmSupplierUnchanged(batchId, keys)); return { message: `${familyUnchangedKeys.length} unchanged price${familyUnchangedKeys.length === 1 ? "" : "s"} confirmed.` }; };
   async function reviewDetails(row: FamilyRow) { setDetailRow(row); setSourceDetail(null); if (!row.sourceIdentityKey) return; setDetailBusy(true); try { setSourceDetail(await supplierSourceInspectorDetails(sourceId, row.sourceIdentityKey)); } catch (error) { setMessage(error instanceof Error ? error.message : "Could not load source details."); } finally { setDetailBusy(false); } }
   return <div className="space-y-3">
     <div className={`${card} flex flex-wrap items-start justify-between gap-3 p-4`}>
@@ -136,6 +143,8 @@ export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, 
         <p className="text-xs text-zinc-500">{tabs[0].count} Changed · {tabs[1].count} Same · {tabs[2].count} Missing{tabs[3].count ? ` · ${tabs[3].count} Needs attention` : ""}</p></div>
       <div className="flex flex-wrap gap-2"><button type="button" className={secondary} onClick={() => openInspector("")}>View extracted data</button><Link href={detailsHref} className={secondary}>Advanced / Technical Review</Link></div>
     </div>
+    {basisBlocked ? <section className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" aria-label="Price basis blocker"><p>Price basis must be confirmed for {sourceDefinitionName ?? sourceTitle} before prices can be applied.</p><a href="#supplier-price-basis" className="mt-2 inline-block font-semibold underline">Confirm source price basis</a></section> : null}
+    {!basisBlocked && familyUnchangedKeys.length ? <section className={`${card} flex flex-wrap items-center justify-between gap-3 border-emerald-200 bg-emerald-50 p-4`} aria-label="Family unchanged action"><div><h4 className="font-semibold text-emerald-950">{familyUnchangedAction === "finish" ? "Changed prices are already reviewed" : "This Family has no price changes or blockers"}</h4><p className="text-sm text-emerald-900">{familyUnchangedKeys.length} unchanged price{familyUnchangedKeys.length === 1 ? "" : "s"} can be confirmed together.</p></div>{approver && batchOpen ? <button type="button" className={primary} disabled={busy} onClick={() => void run(confirmFamilyUnchanged)}>{familyUnchangedAction === "finish" ? "Finish family review" : "Confirm family unchanged"}</button> : <p className="text-xs text-emerald-900">An approver can confirm this Family unchanged.</p>}</section> : null}
     <nav aria-label="Family sections" className="inline-flex flex-wrap gap-1 rounded-lg border border-zinc-200 bg-white p-1 shadow-sm">{tabs.map((tab) => <Link key={tab.section} href={tab.href} aria-current={tab.section === section ? "page" : undefined}
       className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800 ${tab.section === section ? "bg-emerald-900 text-white" : "text-zinc-600 hover:bg-zinc-100"}`}>{tab.label}<span className={`rounded-full px-1.5 text-xs tabular-nums ${tab.section === section ? "bg-white/20" : "bg-zinc-100 text-zinc-700"}`}>{tab.count}</span></Link>)}</nav>
     <p role="status" aria-live="polite" className="text-sm text-amber-800">{message}</p>
