@@ -16,6 +16,8 @@ import {
   type ProductTemplateMaterialGroupLink,
 } from "@/components/quotations/finish-selections-editor";
 import { canManageProductLibrary as canUseProductLibrary, requireActiveUser } from "@/lib/auth";
+import { loadSupplierFamilyPriceStatusMap } from "@/lib/products/supplier-family-price-status-loader";
+import { supplierFamilyStatusPresentation } from "@/lib/products/supplier-family-status";
 import { formatProjectReferenceDisplay } from "@/lib/project-reference";
 import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category-tree";
 import {
@@ -168,15 +170,22 @@ export default async function LocalQuotationBuilderPage({ params }: PageProps) {
     updatesByBrand.set(update.brand_id, [...(updatesByBrand.get(update.brand_id) ?? []), update]);
   }
   const brandById = new Map((productBrands ?? []).map((brand) => [brand.id, brand]));
+  const supplierPriceStatusByTemplate = await loadSupplierFamilyPriceStatusMap(supabase, productTemplates ?? []);
 
-  const productTemplatesWithPriceChecks = (productTemplates ?? []).map((template) => ({
-    ...template,
-    brand_latest_price_list_at: brandPriceBaselineDate({
-      fallbackCheckedAt: brandById.get(template.brand_id)?.last_price_list_checked_at ?? null,
-      latestBrandPriceListUpdate: latestBrandPriceListUpdate(updatesByBrand.get(template.brand_id) ?? []) ?? null,
-    }),
-    latest_brand_price_list_update: latestBrandPriceListUpdate(updatesByBrand.get(template.brand_id) ?? []) ?? null,
-  }));
+  const productTemplatesWithPriceChecks = (productTemplates ?? []).map((template) => {
+    const supplierStatus = supplierPriceStatusByTemplate.get(template.id);
+    return {
+      ...template,
+      brand_latest_price_list_at: brandPriceBaselineDate({
+        fallbackCheckedAt: brandById.get(template.brand_id)?.last_price_list_checked_at ?? null,
+        latestBrandPriceListUpdate: latestBrandPriceListUpdate(updatesByBrand.get(template.brand_id) ?? []) ?? null,
+      }),
+      latest_brand_price_list_update: latestBrandPriceListUpdate(updatesByBrand.get(template.brand_id) ?? []) ?? null,
+      supplier_family_price_presentation: supplierStatus && supplierStatus.status !== "legacy_manual"
+        ? supplierFamilyStatusPresentation(supplierStatus)
+        : undefined,
+    };
+  });
 
   for (const template of productTemplatesWithPriceChecks) {
     const brandName = brandById.get(template.brand_id)?.name ?? null;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveSupplierBrandPriceStatus, resolveSupplierFamilyPriceStatus, supplierFamilyStatusLabels, type SupplierResponsibilityInput, type SupplierVersionRef } from "./supplier-family-status.js";
+import { resolveSupplierBrandPriceStatus, resolveSupplierFamilyPriceStatus, supplierFamilyStatusLabels, supplierFamilyStatusPresentation, type SupplierResponsibilityInput, type SupplierVersionRef } from "./supplier-family-status.js";
 import type { SupplierFamilyReviewFact } from "./supplier-price-repository.js";
 
 const TODAY = "2026-10-20";
@@ -143,4 +143,17 @@ test("multi-source Brand: checked in one source and pending in another aggregate
   const chairs = resolve([responsibility([v("c1")], "def-B", "LAS Chairs", "lead")], [])[0];
   const summary = resolveSupplierBrandPriceStatus([furniture, { ...chairs, status: "update_available" }]);
   assert.equal(summary.applicableFamilies, 2); assert.equal(summary.state, "partially_checked");
+});
+
+test("shared presentation keeps every Supplier status distinct and gives an upcoming list a visible date", () => {
+  const checked = one([responsibility([v("v1")])], [fact({ sourceId: "v1" })]);
+  const partial = one([responsibility([v("v1")])], [fact({ sourceId: "v1", totalTargets: 20, resolvedTargets: 17, excludedTargets: 3, fullyChecked: false, partiallyChecked: true })]);
+  const attention = one([responsibility([v("v1")])], [openFact({ sourceId: "v1", unresolvedTargets: 1 })]);
+  const update = one([responsibility([v("v1")])], []);
+  const inReview = one([responsibility([v("v1")])], [openFact({ sourceId: "v1", batchStatus: "matching", unresolvedTargets: 0 })]);
+  const ready = one([responsibility([v("v1")])], [openFact({ sourceId: "v1", unresolvedTargets: 0, resolvedTargets: 1 })]);
+  const noList = one([responsibility([v("nov", { effective_from: "2026-11-01" })])], []);
+  assert.deepEqual([checked, partial, attention, update, inReview, ready, noList].map((item) => supplierFamilyStatusPresentation(item).label), ["Price checked", "Partially checked", "Needs attention", "Price update available", "In review", "Ready to complete", "No current price list"]);
+  assert.match(supplierFamilyStatusPresentation(partial).detail, /17 \/ 20 checked · 3 excluded/);
+  assert.match(supplierFamilyStatusPresentation(noList).detail, /New price list effective 1 Nov 2026/);
 });

@@ -154,6 +154,11 @@ export type ProductLibraryTemplate = {
     created_at: string | null;
     status: string;
   } | null;
+  supplier_family_price_presentation?: {
+    label: string;
+    tone: "success" | "info" | "warning" | "danger" | "neutral";
+    detail: string;
+  };
 };
 
 type DeskingSizePricingRow = {
@@ -461,21 +466,26 @@ function PriceCheckBadge({
   compact?: boolean;
   template: ProductLibraryTemplate;
 }) {
+  const supplierPresentation = template.supplier_family_price_presentation ?? null;
   const status = priceCheckState(template);
   // Same state as before, in plain words. Selecting a Product is never blocked by its health.
-  const health = friendlyPriceHealth(status, template.latest_brand_price_list_update, "quotation");
-  const badgeClass = status.tone === "ok"
+  const legacyHealth = friendlyPriceHealth(status, template.latest_brand_price_list_update, "quotation");
+  const health = supplierPresentation ?? legacyHealth;
+  const tone = supplierPresentation?.tone === "success" ? "ok" : supplierPresentation?.tone === "info" ? "notice" : supplierPresentation?.tone ?? status.tone;
+  const badgeClass = tone === "ok"
     ? "inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-900"
-    : status.tone === "notice"
+    : tone === "notice"
       ? "inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-900"
-      : status.tone === "neutral"
+      : tone === "neutral"
         ? "inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-bold text-zinc-700"
-        : "inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-900";
+        : tone === "danger"
+          ? "inline-flex rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-900"
+          : "inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-900";
 
   return (
     <span className={compact ? "mt-1 block" : "grid gap-1"}>
       <span className={badgeClass}>{health.label}</span>
-      {!compact ? <span className="block text-[11px] font-medium text-zinc-500">{health.helper}</span> : null}
+      {!compact ? <span className="block text-[11px] font-medium text-zinc-500">{supplierPresentation?.detail ?? legacyHealth.helper}</span> : null}
     </span>
   );
 }
@@ -4417,7 +4427,7 @@ export function ProductLibrarySelector({
                                 {formatQuotationMoney(previewCurrency, effectiveQuoteUnitPrice)}
                               </p>
                               <PriceCheckBadge template={template} />
-                              {priceCheckState(template).tone === "warning" ? (
+                              {!template.supplier_family_price_presentation && priceCheckState(template).tone === "warning" ? (
                                 <>
                                   <p className="max-w-52 text-[11px] leading-4 text-amber-700">
                                     Please verify source price before finalizing quotation.

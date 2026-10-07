@@ -26,6 +26,11 @@ export type SupplierFamilyPriceStatus = {
   editedSinceCheck?: boolean;
   detail: string;
 };
+export type SupplierFamilyStatusPresentation = {
+  label: string;
+  tone: "success" | "info" | "warning" | "danger" | "neutral";
+  detail: string;
+};
 export type SupplierBrandPriceState = "needs_attention" | "partially_checked" | "update_available" | "in_review" | "ready_to_complete" | "current" | "legacy_manual";
 export type SupplierBrandPriceStatus = {
   applicableFamilies: number; checkedFamilies: number; partiallyCheckedFamilies: number; needsAttentionFamilies: number; updateAvailableFamilies: number;
@@ -91,6 +96,29 @@ export function resolveSupplierFamilyPriceStatus(input: {
       detail: states.map(({ responsibility, state }) => `${responsibility.definitionName}: ${state.detail}`).join(" · "),
     };
   });
+}
+
+function supplierStatusDate(value: string) {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
+}
+
+/** Shared, consumer-safe wording and colour for a resolved Supplier Family status. */
+export function supplierFamilyStatusPresentation(status: SupplierFamilyPriceStatus): SupplierFamilyStatusPresentation {
+  const tone = status.status === "price_checked" ? "success"
+    : status.status === "needs_attention" ? "danger"
+      : status.status === "in_review" || status.status === "ready_to_complete" ? "info"
+        : status.status === "no_price_list" || status.status === "legacy_manual" ? "neutral"
+          : "warning";
+  const sourceDetail = status.source
+    ? `${status.source.definitionName} — ${status.source.title}`
+    : status.detail;
+  const progressDetail = status.status === "partially_checked" && status.progress
+    ? `${status.progress.checked} / ${status.progress.total} checked · ${status.progress.excluded} excluded`
+    : sourceDetail;
+  const upcoming = status.upcoming?.effectiveFrom
+    ? `New price list effective ${supplierStatusDate(status.upcoming.effectiveFrom)}`
+    : null;
+  return { label: status.label, tone, detail: [progressDetail, upcoming].filter(Boolean).join(" · ") };
 }
 
 /**

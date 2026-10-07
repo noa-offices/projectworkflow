@@ -71,7 +71,7 @@ test("direct Modular uses scalar prices and suppresses category UI", () => {
 
 test("derived required companions are selected and locked, while modular avoids CL2 and Base/Model copy", () => {
   const source = readFileSync("components/quotations/product-library-selector.tsx", "utf8");
-  ["const forcedItemId = evaluation.role === \"companion\"", "disabled={forced}", "!usesWorkstationFlow && !usesModularPricing", "Select a modular item to configure required components and options."].forEach((expected) => assert.ok(source.includes(expected), `Expected Direct Modular companion/UI behavior: ${expected}`));
+  ["const requiredItemId = evaluation.role === \"companion\"", "disabled={quantity <= 0 || (!isRequired && evaluation.fixedQuantity !== null)}", "!usesWorkstationFlow && !usesModularPricing", "Select a modular item to configure required components and options."].forEach((expected) => assert.ok(source.includes(expected), `Expected Direct Modular companion/UI behavior: ${expected}`));
 });
 
 test("Direct Modular rows render a compact role-grouped table with expandable details", () => {
@@ -325,7 +325,7 @@ test("14: Product Library composition blocking (modularCompositionIssue) is wire
     "const modularCompositionIssue = validateModularCompositionGroups(",
     // Blocking Add to Local Workspace / Add uses usesModularPricing (both pricing modes), not usesDirectModularPricing only.
     "const missingRequiredModularSelection = usesModularPricing && (selectedModularItems.length === 0 || Boolean(modularCompositionIssue));",
-    "disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice}",
+    "disabled={missingExchangeRate || missingRequiredWorkstationSelection || missingRequiredSystemSelection || missingRequiredModularSelection || missingRequiredAccessorySelection || needsUpdatedPriceDecision || hasUnavailableSelectedPrice}",
     // Matrix Modular keeps its Fabric/Category selector, gated only by !usesDirectModularPricing (unaffected by role/composition support).
     "{!usesDirectModularPricing ? <div className=\"grid gap-3 md:grid-cols-2\">",
     "<span className=\"text-[10px] font-bold uppercase text-zinc-500\">Fabric / Category</span>",

@@ -52,6 +52,8 @@ import { ensureDefaultProductCategoryTree } from "@/lib/product-default-category
 import { materialDisplayCategoryLabel } from "@/lib/products/material-classification";
 import { flattenBaseModelPricingRows } from "@/lib/products/base-model-pricing-groups";
 import { flattenWorkstationPricingRows } from "@/lib/products/workstation-pricing-groups";
+import { loadSupplierFamilyPriceStatusMap } from "@/lib/products/supplier-family-price-status-loader";
+import { supplierFamilyStatusPresentation } from "@/lib/products/supplier-family-status";
 import { createClient } from "@/lib/supabase/server";
 import { profileDisplayName } from "@/lib/user-display";
 import {
@@ -1753,6 +1755,7 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
     templateList.map((template) => [template.id, normalizeTemplateLifecycleStatus(template)]),
   );
   const activeTemplateList = templateList.filter((template) => templateLifecycleById.get(template.id) === "active");
+  const supplierPriceStatusByTemplate = await loadSupplierFamilyPriceStatusMap(supabase, activeTemplateList);
   const archivedTemplateList = templateList.filter((template) => templateLifecycleById.get(template.id) === "archived");
   const discontinuedTemplateList = templateList.filter((template) => templateLifecycleById.get(template.id) === "discontinued");
   const archivedLinkedFamilyList = (linkedFamilies ?? []).filter((link) => !link.is_active);
@@ -1957,11 +1960,21 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
     const firstImageSettings = firstVisibleImageSlot
       ? templateImageDisplaySettings(template, firstVisibleImageSlot.field)
       : template.image_settings?.default_image_url;
-    const status = priceCheckState(
+    const legacyStatus = priceCheckState(
       template,
       latestPriceListUpdateByBrand.get(template.brand_id),
       brandPriceBaselineByBrand.get(template.brand_id),
     );
+    const supplierStatus = supplierPriceStatusByTemplate.get(template.id);
+    const status = supplierStatus && supplierStatus.status !== "legacy_manual"
+      ? supplierFamilyStatusPresentation(supplierStatus)
+      : {
+        label: legacyStatus.label,
+        tone: legacyStatus.tone === "ok" ? "success" as const : legacyStatus.tone === "notice" ? "info" as const : legacyStatus.tone === "warning" ? "warning" as const : "neutral" as const,
+        detail: legacyStatus.key === "checked" && template.last_price_checked_at
+          ? `Checked ${formatShortDate(template.last_price_checked_at)} by ${actorDisplayName(actorNameById, template.last_price_checked_by)}`
+          : legacyStatus.detail,
+      };
 
     return {
       id: template.id,
@@ -1988,11 +2001,9 @@ export async function ProductTemplatesPage({ searchParams }: TemplatesPageProps)
           ? categoryMap.get(template.sub_category_id) ?? "No sub category"
           : "No sub category",
       ].join(" / "),
-      priceStatusDetail: status.key === "checked" && template.last_price_checked_at
-        ? `Checked ${formatShortDate(template.last_price_checked_at)} by ${actorDisplayName(actorNameById, template.last_price_checked_by)}`
-        : status.detail,
+      priceStatusDetail: status.detail,
       priceStatusLabel: status.label,
-      priceStatusTone: status.tone,
+      priceStatusTone: status.tone === "success" ? "ok" : status.tone === "info" ? "notice" : status.tone === "danger" ? "warning" : status.tone,
       priceText: formatMoney(template.currency, template.default_unit_price),
       searchText: templateSearchText(template, brandMap, categoryMap),
       templateCodeText: template.template_code || template.item_code
