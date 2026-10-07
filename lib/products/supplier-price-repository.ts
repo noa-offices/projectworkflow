@@ -348,28 +348,15 @@ export async function supplierCompletionReadiness(client: SupabaseClient, batchI
   ]);
   const decided = new Map(decisions.map((row) => [row.key, row.decision]));
   const live = new Map(targets.map((target) => [target.key, target]));
+  const identities = await loadReviewIdentities(client, source.id, matches.map((row) => row.data));
   const reviewedKeys = new Set<string>(), covered = new Set<string>(), excluded = new Set<string>();
   const add = (key: SupplierCompletionCount) => { counts[key]++; };
   for (const { key, data: match } of matches) {
     match.targets.forEach((target) => reviewedKeys.add(target.key));
-    const decision = decided.get(key);
-    if (match.classification === "unmatched" || match.classification === "referenced_companion") { add(match.classification); continue; }
-    if (decision === "skip") { add("skipped"); continue; }
-    if (decision === "reject") { add("rejected"); continue; }
-    if (decision === "mapping_proposed") { add("mapping_proposed"); continue; }
-    if (match.classification === "target_not_represented") {
-      if (decision === "excluded_from_source") { add("excluded_from_source"); match.targets.forEach((target) => excluded.add(target.template_id)); } else add("target_not_represented");
-      continue;
-    }
-    if (!["increased", "decreased", "changed", "unchanged", "shared"].includes(match.classification)) { add(match.classification as SupplierCompletionCount); continue; }
-    if (match.classification === "unchanged" && decision !== "confirmed_unchanged") { add("unchanged_not_confirmed"); continue; }
-    const price = match.source?.price;
-    const settled = price !== null && price !== undefined && match.targets.length > 0 && match.targets.every((target) => {
-      const current = live.get(target.key);
-      return current && current.price === price && current.currency === match.source!.currency && current.raw_code === target.raw_code;
-    });
-    if (settled) { add("resolved"); match.targets.forEach((target) => covered.add(target.template_id)); }
-    else add(match.classification === "unchanged" ? "changed_after_review" : match.classification === "shared" ? "unresolved_shared" : "unresolved_changed");
+    const state = supplierReviewRowState(match, decided.get(key), live, { key, source, brandId: batch.brand_id, identity: match.source ? identities.get(match.source.key) : undefined });
+    add(state.completionCount);
+    if (state.completionCount === "resolved") match.targets.forEach((target) => covered.add(target.template_id));
+    if (state.completionCount === "excluded_from_source") match.targets.forEach((target) => excluded.add(target.template_id));
   }
   // Complete coverage must account for every current target; new targets need a fresh comparison.
   counts.targets_added_after_comparison = targets.filter((target) => !reviewedKeys.has(target.key)).length;
@@ -425,36 +412,62 @@ const attentionIssues: Record<string, [string, string]> = {
   reject: ["Rejected earlier", "Review details in Advanced Review"],
   changed_after: ["Product changed after this review started", "Build a fresh comparison"],
   multiple_targets: ["One Supplier item linked to multiple Product prices", "Use the shared price workflow in Advanced Review"],
+  source_missing: ["Supplier price unavailable in this source", "Refresh the review or check the source identity in Advanced Review"],
+  source_changed: ["Supplier source changed — refresh required", "Build a fresh Supplier comparison"],
+  wrong_target: ["Source target does not match this Brand or currency", "Check the Product target in Advanced Review"],
+  no_target: ["Source target missing", "Build a fresh Supplier comparison"],
+  wrong_key: ["Review changed — refresh required", "Refresh Family Review"],
+  source_unavailable: ["Supplier source is not ready for review", "Finish importing the Supplier source before reviewing prices"],
 };
 const baselineKeys = ["key", "brand_id", "template_id", "pricing_version", "price", "currency", "raw_code", "code", "architecture", "group_id", "row_id", "column_id", "physical_field", "price_field", "dimension"] as const;
 const attention = (kind: string) => ({ section: "attention" as FamilySection, done: false, issue: attentionIssues[kind]?.[0] ?? "Needs a technical check", action: attentionIssues[kind]?.[1] ?? "Review details in Advanced Review", kind });
 
-/** Friendly, live-aware state of one comparison row. `section: null` rows (Supplier-only items) are not Product Family rows. */
-export function familyRowState(match: PriceMatch, decision: string | undefined, live: Map<string, PriceTarget>): { section: FamilySection | null; done: boolean; issue: string; action: string; kind: string } {
-  const none = { section: null, done: false, issue: "", action: "", kind: "" };
-  if (match.classification === "unmatched" || match.classification === "referenced_companion") return none;
-  if (decision === "skip" || decision === "reject" || decision === "mapping_proposed") return attention(decision);
-  if (match.classification === "target_not_represented") return { section: "missing", done: decision === "excluded_from_source", issue: "", action: "", kind: "missing" };
-  if (match.classification === "shared") {
-    const price = match.source?.price;
-    const applied = price !== null && price !== undefined && match.targets.length > 1 && match.targets.every((target) => live.get(target.key)?.price === price);
-    return applied ? { ...attention("shared"), done: true } : attention("shared");
+type ReviewRowContext = { key: string; source: SourceVersion; brandId: string; identity: SourceIdentity | undefined };
+export type SupplierReviewRowState = {
+  section: FamilySection | null; done: boolean; issue: string; action: string; kind: string;
+  unchangedEligible: boolean; changedEligible: boolean; blocking: boolean;
+  completionCount: SupplierCompletionCount; rejection: "attention" | "stale" | null;
+};
+
+/** One live interpretation for Family display, action eligibility and the existing completion resolution matrix. */
+export function supplierReviewRowState(match: PriceMatch, decision: string | undefined, live: Map<string, PriceTarget>, context: ReviewRowContext): SupplierReviewRowState {
+  const state = (display: { section: FamilySection | null; done: boolean; issue: string; action: string; kind: string }, completionCount: SupplierCompletionCount, rejection: "attention" | "stale" | null = null, eligible = false): SupplierReviewRowState => ({
+    ...display, completionCount, blocking: !informationalCounts.has(completionCount), rejection,
+    unchangedEligible: eligible && match.classification === "unchanged", changedEligible: eligible && ["increased", "decreased", "changed"].includes(match.classification),
+  });
+  const blocked = (kind: string, count: SupplierCompletionCount = "invalid_source", rejection: "attention" | "stale" = "attention") => state(attention(kind), count, rejection);
+  const clean = (section: FamilySection, done: boolean) => ({ section, done, issue: "", action: "", kind: section });
+  if (match.classification === "unmatched" || match.classification === "referenced_companion") return state({ section: null, done: false, issue: "", action: "", kind: "" }, match.classification);
+  if (decision === "skip" || decision === "reject" || decision === "mapping_proposed") return blocked(decision, decision === "skip" ? "skipped" : decision === "reject" ? "rejected" : "mapping_proposed");
+  if (match.classification === "target_not_represented") return state(clean("missing", decision === "excluded_from_source"), decision === "excluded_from_source" ? "excluded_from_source" : "target_not_represented");
+  if (!["increased", "decreased", "changed", "unchanged", "shared"].includes(match.classification)) return blocked(match.classification, match.classification as SupplierCompletionCount);
+  if (match.key !== context.key) return blocked("wrong_key");
+  if (context.source.status !== "imported") return blocked("source_unavailable");
+  if (context.source.brand_id !== context.brandId || !["AED", "EUR", "USD"].includes(context.source.currency)) return blocked("wrong_target");
+  if (!match.source || match.source.price === null || !Number.isFinite(match.source.price) || match.source.price < 0 || match.source.issues.length) return blocked("invalid_source");
+  const identity = context.identity;
+  if (!identity) return blocked("source_missing");
+  if (["key", "code", "price_field", "price", "currency"].some((field) => identity[field as keyof SourceIdentity] !== match.source![field as keyof SourceIdentity]) || identity.issues.length || identity.currency !== context.source.currency) return blocked("source_changed");
+  if (!match.targets.length) return blocked("no_target");
+  if (match.targets.some((target) => target.brand_id !== context.brandId || target.currency !== context.source.currency)) return blocked("wrong_target");
+  // Completion verifies every locator/code/currency against the live target, using the Supplier price and current version.
+  const settled = match.targets.every((target) => {
+    const current = live.get(target.key);
+    return current && current.price === identity.price && baselineKeys.every((field) => field === "price" || field === "pricing_version" || current[field] === target[field]);
+  });
+  const unresolved: SupplierCompletionCount = match.classification === "unchanged" ? decision === "confirmed_unchanged" ? "changed_after_review" : "unchanged_not_confirmed" : match.classification === "shared" ? "unresolved_shared" : "unresolved_changed";
+  if (match.classification === "shared") return state({ ...attention("shared"), done: settled }, settled ? "resolved" : unresolved, "attention");
+  if (match.targets.length !== 1) {
+    if (settled && (match.classification !== "unchanged" || decision === "confirmed_unchanged")) return state(clean(match.classification === "unchanged" ? "same" : "changed", true), "resolved", "attention");
+    return blocked("multiple_targets", unresolved);
   }
-  if (!["increased", "decreased", "changed", "unchanged"].includes(match.classification)) return attention(match.classification);
-  if (match.targets.length !== 1 || !match.source || match.source.price === null) return attention("multiple_targets");
-  const target = match.targets[0], current = live.get(target.key), price = match.source.price;
-  if (!current) return attention("changed_after");
-  const settled = current.price === price && current.currency === match.source.currency;
-  const intact = baselineKeys.every((field) => current[field] === target[field]);
-  const targetIntact = baselineKeys.every((field) => field === "pricing_version" || current[field] === target[field]);
-  if (match.classification === "unchanged") {
-    if (!settled) return attention("changed_after");
-    // A persisted confirmation stays valid while the live price still equals the Supplier price; an unconfirmed row needs an intact baseline.
-    if (decision === "confirmed_unchanged") return { section: "same", done: true, issue: "", action: "", kind: "same" };
-    return targetIntact ? { section: "same", done: false, issue: "", action: "", kind: "same" } : attention("changed_after");
-  }
-  if (settled) return { section: "changed", done: true, issue: "", action: "", kind: "changed" };
-  return intact ? { section: "changed", done: false, issue: "", action: "", kind: "changed" } : attention("changed_after");
+  const target = match.targets[0], current = live.get(target.key);
+  const unchanged = match.classification === "unchanged";
+  const intact = current && baselineKeys.every((field) => unchanged && field === "pricing_version" || current[field] === target[field]);
+  const eligible = Boolean(intact && (unchanged ? current!.price === identity.price : current!.price !== identity.price && expectedPricingVersion(current!.pricing_version) !== null));
+  if (settled && (!unchanged || decision === "confirmed_unchanged")) return state(clean(unchanged ? "same" : "changed", true), "resolved", eligible ? null : "stale", eligible);
+  if (!eligible) return blocked("changed_after", unresolved, "stale");
+  return state(clean(unchanged ? "same" : "changed", false), unresolved, null, true);
 }
 
 export type FamilySummary = { template_id: string; template_name: string; items: number; changed: number; same: number; missing: number; attention: number; done: number; doneChanged: number; excluded: number; status: "ready" | "needs_review" | "needs_attention" | "completed" };
@@ -572,7 +585,9 @@ async function loadFamilyState(client: SupabaseClient, batchId: string) {
   ]);
   const decided = new Map(decisions.map((row) => [row.key, row.decision]));
   const live = new Map(targets.map((target) => [target.key, target]));
-  const rows = pagedMatches.map(({ key, data }) => ({ key, match: data, decision: decided.get(key), state: familyRowState(data, decided.get(key), live) }));
+  const source = await supplierSource(client, batch.source_id);
+  const identities = await loadReviewIdentities(client, source.id, pagedMatches.map((row) => row.data));
+  const rows = pagedMatches.map(({ key, data }) => ({ key, match: data, decision: decided.get(key), state: supplierReviewRowState(data, decided.get(key), live, { key, source, brandId: batch.brand_id, identity: data.source ? identities.get(data.source.key) : undefined }) }));
   return { batch, rows, live, supplierOnly: { unmatched: unmatched.length, companions: companions.length } };
 }
 
@@ -615,7 +630,7 @@ export async function supplierFamilyRows(client: SupabaseClient, batchId: string
     result.push({ key: row.key, code: source?.code ?? target.raw_code, productCode: target.raw_code, item: `${target.label}${target.dimension ? ` / ${target.dimension}` : ""}`, productPriceField: target.price_field, productDimension: target.dimension, sourceIdentityKey: source?.key ?? null, mapping,
       current: money(target.currency, target.price), supplier: section === "missing" ? "Not listed" : money(row.match.source?.currency ?? target.currency, price),
       change: row.state.done ? (section === "same" ? "Confirmed" : section === "missing" ? "Excluded" : "Applied") : change === null ? (section === "missing" ? "Missing" : "—") : change === 0 ? "Same" : `${change > 0 ? "+" : ""}${Number(change.toFixed(2))}`,
-      issue: row.state.issue, action: row.state.action, classification: row.match.classification, selectable: !row.state.done && section !== "attention" });
+      issue: row.state.issue, action: row.state.action, classification: row.match.classification, selectable: !row.state.done && (section === "same" ? row.state.unchangedEligible : section === "changed" ? row.state.changedEligible : section === "missing") });
   }
   return { rows: result.slice(0, 500), truncated: result.length > 500 };
 }
@@ -624,7 +639,10 @@ export async function supplierFamilyRows(client: SupabaseClient, batchId: string
 export async function supplierFamilyUnchangedMatchKeys(client: SupabaseClient, batchId: string, templateId: string): Promise<string[]> {
   if (typeof templateId !== "string" || !templateId) throw Error("Product family required.");
   const { rows } = await loadFamilyState(client, batchId);
-  return rows.filter((row) => row.state.section === "same" && !row.state.done && row.match.classification === "unchanged" && row.match.targets.length === 1 && row.match.targets[0].template_id === templateId).map((row) => row.key);
+  const familyRows = rows.filter((row) => row.match.targets.some((target) => target.template_id === templateId));
+  // A shortcut must finish the Family, never just its clean subset while another unresolved row blocks it.
+  if (familyRows.some((row) => !row.state.done && !row.state.unchangedEligible)) return [];
+  return familyRows.filter((row) => !row.state.done && row.state.unchangedEligible).map((row) => row.key);
 }
 
 function bulkKeys(matchKeys: unknown) {
@@ -659,29 +677,23 @@ async function loadBulkContext(client: SupabaseClient, batchId: string, matchKey
   return { batch, source, keys, rows: keys.map((key) => byKey.get(key)!) };
 }
 async function loadBulkIdentities(client: SupabaseClient, sourceId: string, rows: BulkRow[]) {
-  const identityKeys = [...new Set(rows.flatMap((row) => row.data.source ? [row.data.source.key] : []))];
-  const result = identityKeys.length ? await client.from("supplier_source_identities").select("key,data").eq("source_id", sourceId).in("key", identityKeys) : { data: [], error: null };
-  if (result.error) throw Error("Supplier prices unavailable.");
-  return new Map(((result.data ?? []) as unknown as Array<{ key: string; data: SourceIdentity }>).map((row) => [row.key, row.data]));
+  return loadReviewIdentities(client, sourceId, rows.map((row) => row.data));
+}
+async function loadReviewIdentities(client: SupabaseClient, sourceId: string, matches: PriceMatch[]) {
+  const wanted = new Set(matches.flatMap((match) => match.source ? [match.source.key] : []));
+  if (!wanted.size) return new Map<string, SourceIdentity>();
+  // Identity keys use the same JSON-like text format as match keys. Avoid `.in()` quote parsing here too.
+  const rows = await supplierRows<{ key: string; data: SourceIdentity }>(client, "supplier_source_identities", "key,data", { source_id: sourceId }, "key");
+  return new Map(rows.filter((row) => wanted.has(row.key)).map((row) => [row.key, row.data]));
 }
 const needAttention = (count: number) => `${count} selected item${count === 1 ? "" : "s"} need${count === 1 ? "s" : ""} attention. Nothing was changed.`;
 const changedAfterStart = (count: number) => `${count} selected item${count === 1 ? "" : "s"} changed after this review started. Nothing was applied.`;
 
 /** Shared per-row eligibility for bulk Apply and bulk Confirm: the Phase 2A / 2C rules, never relaxed. */
 function bulkRowCheck(row: BulkRow, identity: SourceIdentity | undefined, source: SourceVersion, brandId: string, live: Map<string, PriceTarget>, kind: "changed" | "unchanged") {
-  const match = row.data;
-  if (match.key !== row.key || match.targets.length !== 1 || !match.source || match.source.price === null || !Number.isFinite(match.source.price) || match.source.price < 0 || match.source.issues.length) return "attention" as const;
-  if (kind === "changed" ? !["increased", "decreased", "changed"].includes(match.classification) : match.classification !== "unchanged") return "attention" as const;
-  const decision = row.supplier_price_decisions?.decision;
-  if (decision === "skip" || decision === "reject" || decision === "mapping_proposed") return "attention" as const;
-  if (!identity || ["key", "code", "price_field", "price", "currency"].some((field) => identity[field as keyof SourceIdentity] !== match.source![field as keyof SourceIdentity]) || identity.issues.length || identity.currency !== source.currency) return "attention" as const;
-  const baseline = match.targets[0];
-  if (baseline.brand_id !== brandId || baseline.currency !== source.currency) return "attention" as const;
-  const current = live.get(baseline.key);
-  // Confirming unchanged writes no Product data, so only the exact target must be intact; Apply keeps the full version-checked baseline.
-  if (!current || baselineKeys.some((field) => (kind === "unchanged" && field === "pricing_version") ? false : current[field] !== baseline[field]) || (kind === "changed" && expectedPricingVersion(current.pricing_version) === null)) return "stale" as const;
-  if (kind === "changed" ? current.price === identity.price : current.price !== identity.price) return "stale" as const;
-  return current;
+  const state = supplierReviewRowState(row.data, row.supplier_price_decisions?.decision, live, { key: row.key, identity, source, brandId });
+  if (kind === "changed" ? state.changedEligible : state.unchangedEligible) return live.get(row.data.targets[0].key)!;
+  return state.rejection ?? "attention";
 }
 
 /** Approver bulk Apply: all selected single-target changed prices go through the one transactional writer, or none do. */
@@ -724,7 +736,10 @@ export async function supplierBulkConfirmUnchanged(client: SupabaseClient, batch
   const checks = rows.map((row) => bulkRowCheck(row, row.data.source ? identities.get(row.data.source.key) : undefined, source, batch.brand_id, live, "unchanged"));
   const stale = checks.filter((check) => check === "stale").length, other = checks.filter((check) => check === "attention").length;
   if (stale) throw Error(`${stale} selected item${stale === 1 ? "" : "s"} changed after this review started. Nothing was confirmed.`);
-  if (other) throw Error(needAttention(other));
+  if (other) {
+    const reasons = rows.filter((_, index) => checks[index] === "attention").map((row) => supplierReviewRowState(row.data, row.supplier_price_decisions?.decision, live, { key: row.key, identity: row.data.source ? identities.get(row.data.source.key) : undefined, source, brandId: batch.brand_id }).issue).filter(Boolean);
+    throw Error(`${needAttention(other)}${reasons.length ? ` ${[...new Set(reasons)].join("; ")}.` : " Only unchanged Supplier prices can be confirmed unchanged."}`);
+  }
   let done = 0;
   try {
     for (let index = 0; index < keys.length; index++) {

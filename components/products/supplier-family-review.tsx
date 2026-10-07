@@ -35,6 +35,7 @@ export const FAMILY_REVIEW_CHANGED = "This Family review changed. Refresh and tr
 /** The shortcut confirms only what is still eligible now; anything different from what was displayed stops it before any write. */
 export const sameKeySet = (a: string[], b: string[]) => a.length === b.length && new Set(a).size === a.length && a.every((key) => b.includes(key));
 export const familyShortcutError = (error: unknown) => { const message = error instanceof Error ? error.message : "Action failed."; return /not part of this review/i.test(message) ? FAMILY_REVIEW_CHANGED : message; };
+export const familyReviewSuccessMessage = (familyName: string, count: number) => `${familyName} review confirmed. ${count} unchanged price${count === 1 ? " was" : "s were"} confirmed successfully.`;
 
 export const optionalSupplierRuleId = (value: unknown) => {
   if (typeof value !== "string") return undefined;
@@ -94,10 +95,11 @@ export function SupplierTierMappingPanel({ panel, brandId, sourceId, batchId, ap
     <details className="text-sm"><summary className="cursor-pointer font-medium">Mapped Supplier tiers ({panel.mapped.length})</summary><div className="mt-2">{panel.mapped.map((item) => <MappedSupplierTier key={`${item.rule.id}:${item.rule.dimension_code}`} item={item} brandId={brandId} approver={approver} busy={busy} onChangeAction={change} />)}</div></details><p role="status" aria-live="polite" className="text-xs">{message}</p></section>;
 }
 
-export function SupplierFamilyList({ overview, links, approverNote, advancedHref, supplierOnlyHref, continueHref }: { overview: FamilyOverview; links: FamilyLink[]; approverNote?: string; advancedHref: string; supplierOnlyHref: string; continueHref?: string }) {
+export function SupplierFamilyList({ overview, links, approverNote, advancedHref, supplierOnlyHref, continueHref, successMessage }: { overview: FamilyOverview; links: FamilyLink[]; approverNote?: string; advancedHref: string; supplierOnlyHref: string; continueHref?: string; successMessage?: string }) {
   const { totals, families, supplierOnly } = overview;
   const href = new Map(links.map((link) => [link.template_id, link.href]));
   return <div className="space-y-3">
+    {successMessage ? <section className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950" role="status" aria-label="Family review confirmed"><strong>{successMessage}</strong></section> : null}
     <section className={`${card} overflow-hidden`} aria-label="Product families">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-3">
         <h3 className="text-sm font-semibold text-zinc-950">{totals.families} {totals.families === 1 ? "Family" : "Families"}</h3>
@@ -123,8 +125,8 @@ export function SupplierFamilyList({ overview, links, approverNote, advancedHref
 }
 
 type Tab = { section: FamilySection; label: string; count: number; href: string };
-export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, truncated, approver, batchOpen, limit, backHref, detailsHref, sourceId, sourceTitle, sourceDefinitionName, basisBlocked = false, familyUnchangedKeys = [], familyUnchangedAction = "confirm", templateId = "" }: {
-  templateId?: string; batchId: string; brandId: string; familyName: string; section: FamilySection; tabs: Tab[]; rows: FamilyRow[]; truncated: boolean; approver: boolean; batchOpen: boolean; limit: number; backHref: string; detailsHref: string; sourceId: string; sourceTitle: string; sourceDefinitionName?: string; basisBlocked?: boolean; familyUnchangedKeys?: string[]; familyUnchangedAction?: "confirm" | "finish";
+export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, truncated, approver, batchOpen, limit, backHref, detailsHref, summaryHref, sourceId, sourceTitle, sourceDefinitionName, basisBlocked = false, familyUnchangedKeys = [], familyUnchangedAction = "confirm", templateId = "" }: {
+  templateId?: string; batchId: string; brandId: string; familyName: string; section: FamilySection; tabs: Tab[]; rows: FamilyRow[]; truncated: boolean; approver: boolean; batchOpen: boolean; limit: number; backHref: string; detailsHref: string; summaryHref: string; sourceId: string; sourceTitle: string; sourceDefinitionName?: string; basisBlocked?: boolean; familyUnchangedKeys?: string[]; familyUnchangedAction?: "confirm" | "finish";
 }) {
   const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
   const [selected, setSelected] = useState<string[]>([]); const [asking, setAsking] = useState(false); const [reason, setReason] = useState(""); const [detailRow, setDetailRow] = useState<FamilyRow | null>(null); const [sourceDetail, setSourceDetail] = useState<SupplierSourceInspectorDetail | null>(null); const [detailBusy, setDetailBusy] = useState(false);
@@ -145,9 +147,18 @@ export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, 
       const keys = await supplierFamilyUnchangedKeys(batchId, templateId);
       if (!sameKeySet(keys, familyUnchangedKeys)) throw Error(FAMILY_REVIEW_CHANGED);
       await runSupplierKeyChunks(keys, limit, (chunk) => bulkConfirmSupplierUnchanged(batchId, chunk));
-      return { message: `${keys.length} unchanged price${keys.length === 1 ? "" : "s"} confirmed.` };
+      const message = familyReviewSuccessMessage(familyName, keys.length);
+      setMessage(message);
+      router.push(summaryHref);
+      return { message };
     } catch (error) { router.refresh(); throw Error(familyShortcutError(error)); }
   };
+  async function runFamilyShortcut() {
+    setBusy(true); setMessage("");
+    try { await confirmFamilyUnchanged(); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "Action failed."); }
+    finally { setBusy(false); }
+  }
   async function reviewDetails(row: FamilyRow) { setDetailRow(row); setSourceDetail(null); if (!row.sourceIdentityKey) return; setDetailBusy(true); try { setSourceDetail(await supplierSourceInspectorDetails(sourceId, row.sourceIdentityKey)); } catch (error) { setMessage(error instanceof Error ? error.message : "Could not load source details."); } finally { setDetailBusy(false); } }
   return <div className="space-y-3">
     <div className={`${card} flex flex-wrap items-start justify-between gap-3 p-4`}>
@@ -156,7 +167,7 @@ export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, 
       <div className="flex flex-wrap gap-2"><button type="button" className={secondary} onClick={() => openInspector("")}>View extracted data</button><Link href={detailsHref} className={secondary}>Advanced / Technical Review</Link></div>
     </div>
     {basisBlocked ? <section className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" aria-label="Price basis blocker"><p>Price basis must be confirmed for {sourceDefinitionName ?? sourceTitle} before prices can be applied.</p><a href="#supplier-price-basis" className="mt-2 inline-block font-semibold underline">Confirm source price basis</a></section> : null}
-    {!basisBlocked && familyUnchangedKeys.length ? <section className={`${card} flex flex-wrap items-center justify-between gap-3 border-emerald-200 bg-emerald-50 p-4`} aria-label="Family unchanged action"><div><h4 className="font-semibold text-emerald-950">{familyUnchangedAction === "finish" ? "Changed prices are already reviewed" : "This Family has no price changes or blockers"}</h4><p className="text-sm text-emerald-900">{familyUnchangedKeys.length} unchanged price{familyUnchangedKeys.length === 1 ? "" : "s"} can be confirmed together.</p></div>{approver && batchOpen ? <button type="button" className={primary} disabled={busy} onClick={() => void run(confirmFamilyUnchanged)}>{familyUnchangedAction === "finish" ? "Finish family review" : "Confirm family unchanged"}</button> : <p className="text-xs text-emerald-900">An approver can confirm this Family unchanged.</p>}</section> : null}
+    {!basisBlocked && familyUnchangedKeys.length ? <section className={`${card} flex flex-wrap items-center justify-between gap-3 border-emerald-200 bg-emerald-50 p-4`} aria-label="Family unchanged action"><div><h4 className="font-semibold text-emerald-950">{familyUnchangedAction === "finish" ? "Changed prices are already reviewed" : "This Family has no price changes or blockers"}</h4><p className="text-sm text-emerald-900">{familyUnchangedKeys.length} unchanged price{familyUnchangedKeys.length === 1 ? "" : "s"} can be confirmed together.</p></div>{approver && batchOpen ? <button type="button" className={primary} disabled={busy} onClick={() => void runFamilyShortcut()}>{familyUnchangedAction === "finish" ? "Finish family review" : "Confirm family unchanged"}</button> : <p className="text-xs text-emerald-900">An approver can confirm this Family unchanged.</p>}</section> : null}
     <nav aria-label="Family sections" className="inline-flex flex-wrap gap-1 rounded-lg border border-zinc-200 bg-white p-1 shadow-sm">{tabs.map((tab) => <Link key={tab.section} href={tab.href} aria-current={tab.section === section ? "page" : undefined}
       className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800 ${tab.section === section ? "bg-emerald-900 text-white" : "text-zinc-600 hover:bg-zinc-100"}`}>{tab.label}<span className={`rounded-full px-1.5 text-xs tabular-nums ${tab.section === section ? "bg-white/20" : "bg-zinc-100 text-zinc-700"}`}>{tab.count}</span></Link>)}</nav>
     <p role="status" aria-live="polite" className="text-sm text-amber-800">{message}</p>

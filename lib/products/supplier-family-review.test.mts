@@ -8,9 +8,9 @@ import { PGlite } from "@electric-sql/pglite";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PostgrestClient } from "@supabase/postgrest-js";
 import {
-  SUPPLIER_BULK_LIMIT, supplierConfirmUnchangedPrice, supplierBrandTargets, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierBulkExcludeMissing, supplierCompleteReview, supplierFamilyOverview, supplierFamilyRows, familyTierPanel, supplierWrite, supplierFamilyUnchangedMatchKeys,
+  SUPPLIER_BULK_LIMIT, supplierConfirmUnchangedPrice, supplierBrandTargets, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierBulkExcludeMissing, supplierCompleteReview, supplierCompletionReadiness, supplierReviewRowState, supplierFamilyOverview, supplierFamilyRows, familyTierPanel, supplierWrite, supplierFamilyUnchangedMatchKeys,
 } from "./supplier-price-repository.js";
-import type { PriceMatch, PriceTarget, SourceIdentity } from "./supplier-price-contracts.js";
+import type { PriceMatch, PriceTarget, SourceIdentity, SourceVersion } from "./supplier-price-contracts.js";
 
 const read = (name: string) => readFile(new URL(`../../supabase/migrations/${name}.sql`, import.meta.url), "utf8");
 const migrations = await Promise.all(["20261002060146_pricing_identity_version_foundation", "20261002065310_pricing_writer_concurrency", "20261003141259_supplier_default_price_writer", "20261002082357_supplier_price_source_review",
@@ -44,7 +44,7 @@ function pgClient(db: PGlite) {
           return copy;
         });
       };
-      return { select(columns?: string) { embed = Boolean(columns?.includes("supplier_price_decisions(")); return this; }, eq(key: string, value: unknown) { filters.push([key, value]); return this; }, in(key: string, values: unknown[]) { inFilters.push([key, values]); return this; },
+      return { select(columns?: string) { embed = Boolean(columns?.includes("supplier_price_decisions(")); return this; }, eq(key: string, value: unknown) { filters.push([key, value]); return this; }, in(key: string, values: unknown[]) { assert.ok(key !== "key" || !values.some((value) => typeof value === "string" && value.includes('"')), "JSON-like identity/match keys must not use unescaped PostgREST in()"); inFilters.push([key, values]); return this; },
         order(column: string) { order = column; return this; }, range(from: number, to: number) { start = from; end = to; return this; },
         async single() { const rows = await execute(); return { data: rows.length === 1 ? rows[0] : null, error: rows.length === 1 ? null : { message: "Record unavailable" } }; },
         then(resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) { return execute().then((data) => resolve({ data, error: null }), reject); } };
@@ -443,6 +443,8 @@ test("Family unchanged shortcut derives only current-batch, current-Family, unde
   try {
     const before = await f.snapshot();
     const sameKeys = f.alphaKeys(ALPHA_CHANGED, ALPHA_CHANGED + ALPHA_SAME);
+    assert.deepEqual(await supplierFamilyUnchangedMatchKeys(f.client, batch, alpha), []); // unresolved Changed rows prohibit the Family shortcut
+    await f.db.query("delete from supplier_price_matches where batch_id=$1 and key=any($2::text[])", [batch, f.alphaKeys(0, ALPHA_CHANGED)]);
     const derived = await supplierFamilyUnchangedMatchKeys(f.client, batch, alpha);
     assert.deepEqual(derived, sameKeys); // only Alpha's Same rows; its changed rows and every other Family's rows are absent
     const stored = new Set((await f.db.query<{ key: string }>("select key from public.supplier_price_matches where batch_id=$1", [batch])).rows.map((row) => row.key));
@@ -558,16 +560,19 @@ test("selection helpers are bounded; Family UI is simple, gated, and resets sele
     let selection: string[] = []; for (const key of keys) selection = ui.toggleKey(selection, key, true, 50);
     assert.equal(selection.length, 50); assert.deepEqual(ui.toggleKey(selection, "k0", false, 50).length, 49); assert.equal(ui.toggleKey(["k1"], "k1", true, 50).length, 1);
     const overview = await overviewOf(f);
-    const list = renderToStaticMarkup(createElement(ui.SupplierFamilyList, { overview, links: overview.families.map((family) => ({ template_id: family.template_id, href: `/x?family=${family.template_id}` })), advancedHref: "/x?view=advanced", supplierOnlyHref: "/x?status=unmatched" }));
+    const list = renderToStaticMarkup(createElement(ui.SupplierFamilyList, { overview, links: overview.families.map((family) => ({ template_id: family.template_id, href: `/x?family=${family.template_id}` })), advancedHref: "/x?view=advanced", supplierOnlyHref: "/x?status=unmatched", successMessage: "OXI_P confirmed successfully." }));
     assert.match(list, /6 Families/); assert.match(list, /ALPHA SCREEN/); assert.match(list, /Needs attention/); assert.match(list, /Advanced \/ Technical Review/);
+    assert.match(list, /OXI_P confirmed successfully/); assert.match(list, /Family review confirmed/);
     assert.match(list, /Supplier-only items: 3/); assert.match(list, /View in Advanced Review/); assert.doesNotMatch(list, /target_not_represented|baseline_drift|pricing_version|unmatched</);
     assert.match(renderToStaticMarkup(createElement(ui.SupplierBrandProgress, { overview })), /Families ready<\/dt><dd[^>]*>0 \/ 6/);
     const rows = (await supplierFamilyRows(f.client, batch, alpha, "changed")).rows.slice(0, 3);
     const tabs = (["changed", "same", "missing", "attention"] as const).map((section) => ({ section, label: section, count: 1, href: `/x?section=${section}` }));
-    const table = (props: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(ui.SupplierFamilyTable, { batchId: batch, brandId: brand, familyName: "ALPHA SCREEN", section: "changed", tabs, rows, truncated: false, approver: true, batchOpen: true, limit: 50, backHref: "/x", detailsHref: "/x?view=advanced", sourceId: "source", sourceTitle: "February price list", sourceDefinitionName: "LAS Chairs", ...props } as never));
+    const table = (props: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(ui.SupplierFamilyTable, { batchId: batch, brandId: brand, familyName: "ALPHA SCREEN", section: "changed", tabs, rows, truncated: false, approver: true, batchOpen: true, limit: 50, backHref: "/x", summaryHref: "/x?view=family&confirmedFamily=ALPHA+SCREEN", detailsHref: "/x?view=advanced", sourceId: "source", sourceTitle: "February price list", sourceDefinitionName: "LAS Chairs", ...props } as never));
     assert.equal((table().match(/type="checkbox"/g) ?? []).length, 3); assert.match(table(), />Select all</); assert.match(table(), />Clear selection</); assert.match(table(), /0 selected/); assert.match(table(), /Back to Family Review/); assert.match(table(), /View extracted data/); assert.equal((table().match(/View source/g) ?? []).length, 3); assert.match(table(), /Review details/);
     const unchangedFamily = table({ familyUnchangedKeys: ["m-a1", "m-a2"] });
     assert.match(unchangedFamily, /This Family has no price changes or blockers/); assert.match(unchangedFamily, />Confirm family unchanged</);
+    assert.equal(ui.familyReviewSuccessMessage("OXI_P", 10), "OXI_P review confirmed. 10 unchanged prices were confirmed successfully.");
+    assert.equal(ui.familyReviewSuccessMessage("OXI_P", 1), "OXI_P review confirmed. 1 unchanged price was confirmed successfully.");
     assert.match(table({ basisBlocked: true }), /Price basis must be confirmed for LAS Chairs before prices can be applied/); assert.match(table({ basisBlocked: true }), /href="#supplier-price-basis"/);
     assert.match(table({ familyUnchangedKeys: ["m-a1"], familyUnchangedAction: "finish" }), />Finish family review</);
     assert.match(table({ familyUnchangedKeys: ["m-a1"], approver: false }), /An approver can confirm this Family unchanged/);
@@ -583,10 +588,10 @@ test("selection helpers are bounded; Family UI is simple, gated, and resets sele
     const page = await readFile(new URL("../../app/products/price-updates/supplier-sources/page.tsx", import.meta.url), "utf8");
     assert.match(page, /<SupplierFamilyTable key=\{`\$\{batch\.id\}:\$\{family\.template_id\}:\$\{section\}`\}/);
     assert.match(page, /brandId=\{brand\.id\}/); assert.match(page, /sourceId=\{source\.id\}/); assert.match(page, /view === "family"/); assert.match(page, /View in Advanced|Advanced \/ Technical Review|view: "advanced"/); assert.match(page, /Back to Family Review/);
-    assert.match(page, /SupplierPriceBasisPanel/); assert.match(page, /familyUnchangedKeys/);
+    assert.match(page, /SupplierPriceBasisPanel/); assert.match(page, /familyUnchangedKeys/); assert.match(page, /confirmedFamily/); assert.match(page, /summaryHref=/);
     const component = await readFile(new URL("../../components/products/supplier-family-review.tsx", import.meta.url), "utf8");
     assert.match(component, /useState<string\[\]>\(\[\]\)/); assert.match(component, /Supplier review details/); assert.match(component, /sourceDetail\.evidence/); assert.match(component, /sourceDetail\.sourceRowCount/); assert.match(component, /View source/); assert.match(component, /Manage Supplier tier mapping above/); assert.match(component, /supplierSourceInspectorDetails/);
-    assert.match(component, /optionalSupplierRuleId\(task\.templateId\)/); assert.match(component, /optionalSupplierRuleId\(task\.groupId\)/);
+    assert.match(component, /optionalSupplierRuleId\(task\.templateId\)/); assert.match(component, /optionalSupplierRuleId\(task\.groupId\)/); assert.match(component, /router\.push\(summaryHref\)/); assert.match(component, /runFamilyShortcut/);
     const familyKeys = Array.from({ length: 81 }, (_, index) => `m-${index}`);
     assert.deepEqual(ui.supplierKeyChunks(familyKeys, 50).map((chunk: string[]) => chunk.length), [50, 31]);
     const chunks: string[][] = [];
@@ -596,6 +601,139 @@ test("selection helpers are bounded; Family UI is simple, gated, and resets sele
     await assert.rejects(ui.runSupplierKeyChunks(familyKeys, 50, async (chunk: string[]) => { attempted++; if (attempted === 2) throw Error("second chunk failed"); completed.push(chunk); return chunk.length; }), /second chunk failed/);
     assert.deepEqual(completed.map((chunk) => chunk.length), [50]); assert.equal(attempted, 2);
     assert.match(component, /runSupplierKeyChunks\(keys, limit, \(chunk\) => bulkConfirmSupplierUnchanged\(batchId, chunk\)\)/); // the shortcut submits freshly derived match keys, not render-time props
+  } finally { await f.db.close(); }
+});
+
+async function cleanUnchangedFamily(count: number, name: string) {
+  const f = await fixture({ withAttention: false });
+  const oxiCodes = ["111058", "111065", "111066", "111067", "111068", "111069", "111070", "111071", "111072", "1AG301"];
+  const prices = [69, 425, 443, 494, 512, 421, 439, 490, 508, 221];
+  const codes = Array.from({ length: count }, (_, index) => name === "OXI_P" ? oxiCodes[index] : `SIG${index}`);
+  const rows = codes.map((code, index) => ({ id: `clean-${index}`, supplier_price_list_code: code, variant_name: `Size ${index}`, price: name === "OXI_P" ? prices[index] : 100, currency: "EUR" }));
+  await f.db.query("delete from supplier_price_matches where batch_id=$1", [batch]);
+  await f.db.query("delete from product_templates where id<>$1", [alpha]);
+  await f.db.query("update product_templates set template_name=$1,variant_pricing=$2 where id=$3", [name, JSON.stringify([{ id: "ga", items: rows }]), alpha]);
+  const { targets } = await supplierBrandTargets(f.client, brand);
+  const keys: string[] = [];
+  for (const target of targets) {
+    const key = JSON.stringify([target.code, "unit_price", ""]).replaceAll(",", ", "); // exact live JSON-like text, including spaces
+    const identity: SourceIdentity = { key, code: target.code, price_field: "unit_price", dimension: "", raw_dimension: "", finishes: ["144", "163"], row_keys: [], issues: [], price: target.price, currency: "EUR" };
+    const match: PriceMatch = { key, source: identity, targets: [target], classification: "unchanged", comparison: "unchanged", candidate_shared: false };
+    await f.db.query("insert into supplier_source_identities values($1,$2,$3,$4)", [source, key, target.code, JSON.stringify(identity)]);
+    await f.db.query("insert into supplier_price_matches values($1,$2,$3,'unchanged','unchanged',$4,$5)", [batch, key, target.code, [alpha], JSON.stringify(match)]);
+    keys.push(key);
+  }
+  return { ...f, keys };
+}
+
+for (const [name, count] of [["OXI_P", 10], ["Sigma", 81]] as const) test(`${name}: real JSON-like source keys agree across Same, bulk chunks, readiness and SQL completion`, async () => {
+  const f = await cleanUnchangedFamily(count, name);
+  try {
+    const before = await f.snapshot();
+    const family = (await supplierFamilyOverview(f.client, batch)).families[0];
+    assert.deepEqual([family.same, family.attention, family.changed, family.missing], [count, 0, 0, 0]);
+    const keys = await supplierFamilyUnchangedMatchKeys(f.client, batch, alpha);
+    assert.deepEqual(new Set(keys), new Set(f.keys));
+    const readyBefore = await supplierCompletionReadiness(f.client, batch);
+    assert.deepEqual([readyBefore.blocking, readyBefore.counts.unchanged_not_confirmed], [count, count]);
+    await assert.rejects(supplierCompleteReview(f.client, batch), /unresolved rows/);
+    const ui = await loadTestModule<typeof import("../../components/products/supplier-family-review.js")>("../../components/products/supplier-family-review.tsx", { "next/link": {}, "next/navigation": { useRouter() { return { refresh() {} }; } }, "@/app/products/price-updates/supplier-sources/actions": {} });
+    const chunks: number[] = [];
+    await ui.runSupplierKeyChunks(keys, SUPPLIER_BULK_LIMIT, async (chunk: string[]) => { chunks.push(chunk.length); return (await supplierBulkConfirmUnchanged(f.client, batch, chunk)).count; });
+    assert.deepEqual(chunks, count === 81 ? [50, 31] : [10]);
+    assert.deepEqual(await supplierFamilyUnchangedMatchKeys(f.client, batch, alpha), []);
+    const after = await f.snapshot();
+    assert.deepEqual(after, before); // confirmation never changes Product prices, versions, history, Brand checks or quotations
+    assert.equal((await supplierFamilyOverview(f.client, batch)).families[0].status, "ready");
+    const ready = await supplierCompletionReadiness(f.client, batch);
+    assert.deepEqual([ready.ready, ready.blocking, ready.counts.resolved], [true, 0, count]);
+    await supplierCompleteReview(f.client, batch); // unchanged SQL completion accepts the same resolution
+  } finally { await f.db.close(); }
+});
+
+test("OXI_P with one unavailable source identity: 9 Same + 1 attention, no shortcut, specific rejection and readiness blocker", async () => {
+  const f = await cleanUnchangedFamily(10, "OXI_P");
+  try {
+    await f.db.query("delete from supplier_source_identities where source_id=$1 and key=$2", [source, f.keys[0]]);
+    const family = (await supplierFamilyOverview(f.client, batch)).families[0];
+    assert.deepEqual([family.same, family.attention], [9, 1]);
+    assert.deepEqual(await supplierFamilyUnchangedMatchKeys(f.client, batch, alpha), []);
+    const attention = (await supplierFamilyRows(f.client, batch, alpha, "attention")).rows;
+    assert.deepEqual(attention.map((row) => [row.issue, row.selectable]), [["Supplier price unavailable in this source", false]]);
+    await assert.rejects(supplierBulkConfirmUnchanged(f.client, batch, f.keys), /Supplier price unavailable in this source/);
+    assert.deepEqual(await f.decisions(), {});
+    const ready = await supplierCompletionReadiness(f.client, batch);
+    assert.deepEqual([ready.ready, ready.blocking, ready.counts.invalid_source, ready.counts.unchanged_not_confirmed], [false, 10, 1, 9]);
+    await assert.rejects(supplierCompleteReview(f.client, batch), /unresolved rows/);
+  } finally { await f.db.close(); }
+});
+
+test("LEAD-style tier mapping and ambiguous rows stay attention; clean rows retain manual confirmation", async () => {
+  const f = await cleanUnchangedFamily(10, "OXI_P");
+  try {
+    await f.db.query("update product_templates set template_name='LEAD' where id=$1", [alpha]);
+    for (const [index, classification] of [[0, "needs_dimension_mapping"], [1, "ambiguous"]] as const) {
+      await f.db.query("update supplier_price_matches set classification=$1,data=jsonb_set(data,'{classification}',to_jsonb($1::text)) where batch_id=$2 and key=$3", [classification, batch, f.keys[index]]);
+    }
+    const family = (await supplierFamilyOverview(f.client, batch)).families[0];
+    assert.deepEqual([family.same, family.attention, family.status], [8, 2, "needs_attention"]);
+    assert.deepEqual(await supplierFamilyUnchangedMatchKeys(f.client, batch, alpha), []);
+    const attention = (await supplierFamilyRows(f.client, batch, alpha, "attention")).rows;
+    assert.deepEqual(new Set(attention.map((row) => row.issue)), new Set(["Category mapping needed", "More than one possible match"]));
+    const before = await f.snapshot();
+    await assert.rejects(supplierBulkConfirmUnchanged(f.client, batch, f.keys), /Category mapping needed/);
+    const manual = (await supplierFamilyRows(f.client, batch, alpha, "same")).rows.filter((row) => row.selectable).map((row) => row.key);
+    assert.equal((await supplierBulkConfirmUnchanged(f.client, batch, manual)).count, 8);
+    assert.deepEqual(await f.snapshot(), before);
+    const readiness = await supplierCompletionReadiness(f.client, batch);
+    assert.deepEqual([readiness.blocking, readiness.counts.needs_dimension_mapping, readiness.counts.ambiguous, readiness.counts.resolved], [2, 1, 1, 8]);
+    assert.equal((await supplierFamilyOverview(f.client, batch)).families[0].attention, readiness.blocking);
+    await assert.rejects(supplierCompleteReview(f.client, batch), /2 unresolved rows/);
+  } finally { await f.db.close(); }
+});
+
+test("authoritative row state keeps mapping, shared/ambiguous, decisions, missing and stale targets honest", async () => {
+  const f = await cleanUnchangedFamily(10, "OXI_P");
+  try {
+    const match = (await f.db.query<{ data: PriceMatch }>("select data from supplier_price_matches where batch_id=$1 and key=$2", [batch, f.keys[0]])).rows[0].data;
+    const sourceVersion = (await f.db.query<SourceVersion>("select * from supplier_source_versions where id=$1", [source])).rows[0];
+    const live = new Map(match.targets.map((target) => [target.key, target]));
+    const state = (value = match, decision?: string, current = live) => supplierReviewRowState(value, decision, current, { key: value.key, source: sourceVersion, identity: value.source ?? undefined, brandId: brand });
+    assert.deepEqual([state().section, state().unchangedEligible, state().blocking], ["same", true, true]);
+    for (const classification of ["needs_dimension_mapping", "ambiguous", "shared"] as const) {
+      const row = state({ ...match, classification }, undefined, new Map());
+      assert.deepEqual([row.section, row.unchangedEligible, row.blocking], ["attention", false, true]);
+    }
+    assert.deepEqual([state(match, "confirmed_unchanged").done, state(match, "confirmed_unchanged").blocking], [true, false]);
+    for (const decision of ["skip", "reject", "mapping_proposed"]) assert.equal(state(match, decision).section, "attention");
+    const changed = { ...match, classification: "increased" as const, source: { ...match.source!, price: match.source!.price! + 1 } };
+    assert.deepEqual([state(changed).section, state(changed).changedEligible, state(changed).blocking], ["changed", true, true]);
+    const applied = new Map([[match.targets[0].key, { ...match.targets[0], price: changed.source.price, pricing_version: "1" }]]);
+    assert.deepEqual([state(changed, "reviewed", applied).done, state(changed, "reviewed", applied).blocking], [true, false]);
+    const multi = { ...changed, targets: [match.targets[0], { ...match.targets[0], key: "second-target" }] };
+    const multiLive = new Map([...applied, ["second-target", { ...match.targets[0], key: "second-target", price: changed.source.price }]]);
+    assert.deepEqual([state(multi, "reviewed", multiLive).done, state(multi, "reviewed", multiLive).blocking], [true, false]);
+    assert.equal(state({ ...multi, classification: "shared" }, "reviewed", multiLive).done, true);
+    assert.equal(state({ ...multi, classification: "shared" }, "reviewed", new Map()).blocking, true);
+    const missing = { ...match, classification: "target_not_represented" as const, source: null };
+    assert.equal(state(missing).section, "missing"); assert.equal(state(missing, "excluded_from_source").done, true);
+    const drift = new Map([[match.targets[0].key, { ...match.targets[0], raw_code: "OTHER" }]]);
+    assert.deepEqual([state(match, "confirmed_unchanged", drift).section, state(match, "confirmed_unchanged", drift).blocking], ["attention", true]);
+    assert.equal(state({ ...match, source: { ...match.source!, issues: ["Needs tier mapping"] } }).section, "attention");
+  } finally { await f.db.close(); }
+});
+
+test("mixed Family only offers its remaining Same keys after every Changed row is applied", async () => {
+  const f = await fixture({ withAttention: false });
+  try {
+    assert.deepEqual(await supplierFamilyUnchangedMatchKeys(f.client, batch, alpha), []);
+    await supplierBulkApplyChanged(f.client, batch, f.alphaKeys(0, ALPHA_CHANGED));
+    const family = (await supplierFamilyOverview(f.client, batch)).families.find((item) => item.template_id === alpha)!;
+    assert.deepEqual([family.changed, family.doneChanged, family.same, family.attention, family.missing], [0, ALPHA_CHANGED, ALPHA_SAME, 0, 0]);
+    const keys = await supplierFamilyUnchangedMatchKeys(f.client, batch, alpha);
+    assert.deepEqual(keys, f.alphaKeys(ALPHA_CHANGED, ALPHA_CHANGED + ALPHA_SAME));
+    await supplierBulkConfirmUnchanged(f.client, batch, keys);
+    assert.equal((await supplierFamilyOverview(f.client, batch)).families.find((item) => item.template_id === alpha)!.status, "ready");
   } finally { await f.db.close(); }
 });
 
