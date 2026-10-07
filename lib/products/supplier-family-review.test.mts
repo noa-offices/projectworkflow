@@ -499,6 +499,18 @@ test("bulk Exclude missing needs one reason, applies it to every row, and never 
   } finally { await f.db.close(); }
 });
 
+test("missing-item review uses keep wording while reusing the safe exclusion decision", async () => {
+  const ui = await loadTestModule<typeof import("../../components/products/supplier-family-review.js")>("../../components/products/supplier-family-review.tsx", { "next/link": {}, "next/navigation": { useRouter() { return { refresh() {} }; } }, "@/app/products/price-updates/supplier-sources/actions": {} });
+  assert.equal(ui.keptMissingItemsLabel(1), "Keep item — no price change");
+  assert.equal(ui.keptMissingItemsLabel(3), "Keep 3 items — no price change");
+  assert.equal(ui.keptMissingItemsMessage(1), "1 item kept with no price change and excluded from this Supplier price list.");
+  assert.equal(ui.keptMissingItemsMessage(3), "3 items kept with no price change and excluded from this Supplier price list.");
+  assert.equal(ui.keptMissingDecisionLabel, "Kept — not in this Supplier list");
+  const component = await readFile(new URL("../../components/products/supplier-family-review.tsx", import.meta.url), "utf8");
+  for (const text of ["Why {selected.length === 1 ? \"is this item\" : \"are these items\"} missing from the Supplier price list?", "These items will stay in the Product Template with their current prices.", "They will only be excluded from this Supplier price list.", "bulkExcludeSupplierMissing(batchId, selected, reason)", "keptMissingItemsMessage(selected.length)"]) assert.ok(component.includes(text), text);
+  assert.doesNotMatch(component, /Reason for excluding|Exclude \$\{selected\.length\} item/);
+});
+
 test("with every row resolved through Family actions, Family progress reads ready and Phase 2D completion stays authoritative", async () => {
   const f = await fixture({ withAttention: false });
   try {

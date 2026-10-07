@@ -89,22 +89,31 @@ export function PriceUpdatesStatusLegend() {
 }
 
 export type PriceUpdatesBrandSummary = { view: PriceUpdatesBrandView; priceLists: number; reviewsInProgress: number; href: string };
-/** Brand-level card for the landing page: counts and one state only. Family rows live in the Brand workspace. */
+/**
+ * Brand-level card for the landing page: counts and one state only. Family rows live in the Brand workspace.
+ * Same anatomy as the Supplier price-list cards: title + badge, small-caps subtitle, grouped figures, divider, one light action.
+ */
 export function PriceUpdatesBrandSummaryCard({ summary }: { summary: PriceUpdatesBrandSummary }) {
   const { view } = summary, p = view.progress;
   const managed = p.applicableFamilies + p.noPriceListFamilies;
   const needReview = p.updateAvailableFamilies + p.needsAttentionFamilies + p.inReviewFamilies + p.partiallyCheckedFamilies + p.readyToCompleteFamilies;
-  const lines = [
-    managed ? `${managed} Supplier-managed ${managed === 1 ? "Family" : "Families"}` : "No Supplier-managed Families",
-    `${summary.priceLists} ${summary.priceLists === 1 ? "price list" : "price lists"}`,
-    summary.reviewsInProgress ? `${summary.reviewsInProgress} ${summary.reviewsInProgress === 1 ? "review" : "reviews"} in progress` : null,
-    p.applicableFamilies ? `${p.checkedFamilies} / ${p.applicableFamilies} Families checked` : null,
-    needReview ? `${needReview} need review` : null,
-    p.upcomingCount ? `${p.upcomingCount} upcoming ${p.upcomingCount === 1 ? "price list" : "price lists"}` : null,
-  ].filter((line): line is string => Boolean(line));
-  return <li className={`${card} flex flex-col gap-3 p-4`}>
-    <div className="flex items-start justify-between gap-2"><h3 className="text-base font-semibold text-zinc-950">{view.brandName}</h3><span className={`${badge} shrink-0 ${brandTone[view.state]}`}>{view.stateLabel}</span></div>
-    <ul className="space-y-0.5 text-sm text-zinc-700">{lines.map((line) => <li key={line}>{line}</li>)}</ul>
-    <Link href={summary.href} className="mt-auto inline-flex h-9 items-center justify-center rounded-md bg-emerald-900 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800">Open Brand</Link>
+  const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+  const note = needReview ? `${plural(needReview, "Family still needs", "Families still need")} review.`
+    : summary.reviewsInProgress ? `${plural(summary.reviewsInProgress, "review is", "reviews are")} currently in progress.`
+      : p.applicableFamilies && p.checkedFamilies === p.applicableFamilies ? "All Supplier-managed Families are current."
+        : summary.priceLists === 0 ? "No current Supplier price list." : "Nothing is waiting.";
+  const metrics: Array<[string, string]> = [
+    ["Price lists", String(summary.priceLists)], ["In review", String(summary.reviewsInProgress)],
+    ["Families checked", p.applicableFamilies ? `${p.checkedFamilies} / ${p.applicableFamilies}` : "—"], ["Need review", String(needReview)],
+  ];
+  return <li className={`${card} flex flex-col gap-4 p-5`}>
+    <div className="flex items-start justify-between gap-3"><div className="min-w-0">
+        <h3 className="truncate text-lg font-semibold leading-tight text-zinc-950" title={view.brandName}>{view.brandName}</h3>
+        <p className="mt-0.5 text-sm text-zinc-600">{managed ? plural(managed, "Supplier-managed Family", "Supplier-managed Families") : "No Supplier-managed Families"}</p></div>
+      <span className={`${badge} shrink-0 ${brandTone[view.state]}`}>{view.state === "legacy_manual" ? "Manual" : view.stateLabel}</span></div>
+    <dl className="grid grid-cols-2 gap-x-6 gap-y-3 border-t border-zinc-100 pt-4">{metrics.map(([label, value]) =>
+      <div key={label}><dt className="text-xs font-medium uppercase tracking-wide text-zinc-500">{label}</dt><dd className="text-lg font-semibold tabular-nums text-zinc-950">{value}</dd></div>)}</dl>
+    <p className="text-sm text-zinc-600">{note}</p>
+    <div className="mt-auto flex justify-end border-t border-zinc-100 pt-3"><Link href={summary.href} aria-label={`Open ${view.brandName}`} className="inline-flex h-8 items-center gap-1 rounded-md bg-emerald-900 px-3 text-xs font-semibold text-white transition hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800">Open Brand <span aria-hidden="true">→</span></Link></div>
   </li>;
 }

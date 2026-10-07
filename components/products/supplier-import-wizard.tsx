@@ -8,8 +8,8 @@ import { parseSupplierFile } from "@/lib/products/supplier-price-file";
 import { supplierImportChunks } from "@/lib/products/supplier-price-import";
 import type { RawSupplierRow, SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import {
-  compatibleProfile, mappingFromProfile, previewImport, profileFromMapping, profileRequiredColumns, suggestDefinition, suggestMapping,
-  type WizardDefinition, type WizardMapping, type WizardProfileOption,
+  compatibleProfile, initialPriceSelection, mappingFromProfile, previewImport, profileFromMapping, profileRequiredColumns, suggestDefinition, suggestMapping,
+  type WizardDefinition, type WizardMapping, type WizardPriceMode, type WizardProfileOption,
 } from "@/lib/products/supplier-import-wizard";
 import {
   attachSupplierWorkingFile, confirmSupplierCoverage, createSupplierReviewBatch, createSupplierSource, createSupplierSourceDefinition,
@@ -34,6 +34,7 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
   const [file, setFile] = useState<File | null>(null), [rows, setRows] = useState<RawSupplierRow[]>([]);
   const [saved, setSaved] = useState<WizardProfileOption | null>(null), [useSaved, setUseSaved] = useState(false);
   const [mapping, setMapping] = useState<WizardMapping | null>(null);
+  const [priceMode, setPriceMode] = useState<WizardPriceMode>("single"), [multiplePriceColumnsDetected, setMultiplePriceColumnsDetected] = useState(false);
   const [title, setTitle] = useState(suggestedTitle), [effective, setEffective] = useState("");
   const [definitionId, setDefinitionId] = useState(""), [newName, setNewName] = useState(`${brandName} price list`), [selected, setSelected] = useState<string[]>([]);
   const headers = rows.length ? Object.keys(rows[0].values) : [];
@@ -52,7 +53,8 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
     void run(async () => {
       const parsed = await parseSupplierFile(chosen); if (!parsed.length) throw Error("The price list has no data rows.");
       const names = Object.keys(parsed[0].values), match = compatibleProfile(profiles, names);
-      setFile(chosen); setRows(parsed); setSaved(match); setUseSaved(false); setMapping(match ? mappingFromProfile(match.config) : suggestMapping(names));
+      const initial = initialPriceSelection(names, match ? mappingFromProfile(match.config) : suggestMapping(names), Boolean(match));
+      setFile(chosen); setRows(parsed); setSaved(match); setUseSaved(false); setMapping(initial.mapping); setPriceMode(initial.mode); setMultiplePriceColumnsDetected(initial.multipleDetected);
       const suggestion = suggestDefinition(definitions, match?.id ?? null);
       if (suggestion) chooseDefinition(suggestion.id); else { setDefinitionId(definitions.length ? "" : "new"); setSelected([]); }
     });
@@ -98,6 +100,14 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
       <select id={`wizard-${key}`} value={mapping?.[key] ?? ""} onChange={(event) => set(key, event.target.value)} className={input}><option value="">{required ? "Choose heading" : "Not used"}</option>{headers.map((header) => <option key={header} value={header}>{header}</option>)}</select></div>;
   const togglePrice = (column: string, on: boolean) => setMapping((current) => current ? { ...current, priceColumns: on ? [...current.priceColumns, { column, label: "" }] : current.priceColumns.filter((item) => item.column !== column) } : current);
   const labelPrice = (column: string, label: string) => setMapping((current) => current ? { ...current, priceColumns: current.priceColumns.map((item) => item.column === column ? { ...item, label } : item) } : current);
+  const selectSinglePrice = (column: string) => setMapping((current) => current ? { ...current, priceColumns: column ? [{ column, label: "" }] : [] } : current);
+  const changePriceMode = (mode: WizardPriceMode) => {
+    setPriceMode(mode);
+    setMapping((current) => {
+      if (!current || mode === "multiple" || current.priceColumns.length <= 1) return current;
+      return { ...current, priceColumns: current.priceColumns.slice(0, 1).map((item) => ({ ...item, label: "" })) };
+    });
+  };
   const mappingReady = Boolean(mapping?.fullCode && mapping.priceColumns.length && !profileError);
   const familiesReady = selected.length > 0 && (definitionId !== "new" || newName.trim() !== "") && definitionId !== "";
 
@@ -118,11 +128,15 @@ export function SupplierImportWizard({ brandId, brandName, profiles, definitions
     {step === 2 && mapping ? <div className="space-y-3">
       <div className="divide-y divide-zinc-100 rounded-md border border-zinc-200 px-3"><div className="grid gap-2 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500 sm:grid-cols-[14rem_1fr]"><span>ProjectWorkflow field</span><span>Excel heading</span></div>
         {select("Supplier code", "fullCode", true)}{select("Description", "description", false)}{select("Category / tier column", "category", false)}</div>
-      <fieldset className="space-y-2"><legend className="text-sm font-medium text-zinc-800">Price columns</legend>
+      <fieldset className="space-y-2"><legend className="text-sm font-medium text-zinc-800">Price column{priceMode === "multiple" ? "s" : ""}</legend>
+        {priceMode === "single" ? <><label className="grid max-w-md gap-1 text-xs"><span className="sr-only">Price column</span><select aria-label="Price column" value={mapping.priceColumns[0]?.column ?? ""} onChange={(event) => selectSinglePrice(event.target.value)} className={input}><option value="">Choose heading</option>{headers.map((header) => <option key={header} value={header}>{header}</option>)}</select></label>
+          {multiplePriceColumnsDetected ? <p className="text-xs text-amber-800">Multiple price columns detected. Choose one, or select the option below.</p> : null}
+          <button type="button" className="text-xs text-zinc-500 underline underline-offset-2" onClick={() => changePriceMode("multiple")}>This file has multiple price columns</button></>
+          : <>{multiplePriceColumnsDetected ? <p className="text-xs text-amber-800">Multiple price columns detected. Select the columns that apply.</p> : null}<button type="button" className="text-xs text-zinc-500 underline underline-offset-2" onClick={() => changePriceMode("single")}>Use one price column</button>
         <p className="text-xs text-zinc-500">Tick every column that holds a price. For several price columns (Cat A, Cat B or sizes such as 120 × 145) give each its label.</p>
         <ul className="grid gap-1 sm:grid-cols-2">{headers.map((header) => { const chosen = mapping.priceColumns.find((item) => item.column === header);
           return <li key={header} className="flex items-center gap-2 rounded border border-zinc-100 px-2 py-1 text-sm"><label className="flex min-w-0 flex-1 items-center gap-2"><input type="checkbox" className="accent-emerald-900" checked={Boolean(chosen)} onChange={(event) => togglePrice(header, event.target.checked)} /><span className="truncate" title={header}>{header}</span></label>
-            {chosen ? <input aria-label={`Label for ${header}`} placeholder="Label (optional)" value={chosen.label} onChange={(event) => labelPrice(header, event.target.value)} className={`${input} h-8 w-36`} /> : null}</li>; })}</ul></fieldset>
+            {chosen ? <input aria-label={`Label for ${header}`} placeholder="Label (optional)" value={chosen.label} onChange={(event) => labelPrice(header, event.target.value)} className={`${input} h-8 w-36`} /> : null}</li>; })}</ul></>}</fieldset>
       <details className="text-xs"><summary className="cursor-pointer">Code structure</summary><div className="mt-2 grid gap-2 sm:grid-cols-3">
         <label className="grid gap-1"><span className="font-medium">Structure</span><select value={mapping.structure} onChange={(event) => set("structure", event.target.value as WizardMapping["structure"])} className={input}><option value="simple">Simple article code</option><option value="article_finish">Article + finish</option></select></label>
         {mapping.structure === "article_finish" ? <><div className="sm:col-span-3">{select("Article code", "articleCode", false)}</div>

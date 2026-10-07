@@ -17,7 +17,7 @@ function number(value: unknown): number | null { return typeof value === "number
 export function brandPriceTargets(templates: ProductPriceInput[], components: RecordValue[] = []): PriceTarget[] {
   const targets: PriceTarget[] = []; const keys = new Set<string>();
   for (const template of templates) {
-    const add = (architecture: string, group: RecordValue, row: RecordValue, physicalField: string, priceField = "unit_price", column?: { id: string; dimension_code: string }) => {
+    const add = (architecture: string, group: RecordValue, row: RecordValue, physicalField: string, priceField = "unit_price", column?: { id: string; dimension_code: string; label?: string }) => {
       const rawCode = text(row.supplier_price_list_code ?? row.item_code);
       if (!rawCode.trim() || row.is_active === false || group.is_active === false) return;
       const currency = parseSupportedCurrency(row.currency ?? template.currency);
@@ -29,7 +29,7 @@ export function brandPriceTargets(templates: ProductPriceInput[], components: Re
       if (keys.has(key)) throw Error(`Duplicate persisted target identity: ${key}`);
       keys.add(key);
       const prices = record(row.prices);
-      targets.push({ key, template_id: template.id, template_name: template.template_name, brand_id: template.brand_id, architecture, group_id: groupId, row_id: rowId, column_id: columnId, dimension: column?.dimension_code ?? "", price_field: priceField, physical_field: physicalField, code: normalizeManufacturerCode(rawCode), raw_code: rawCode, price: number(column ? prices[column.id] : row[physicalField]), currency, pricing_version: String(template.pricing_version), label: text(row.variant_name ?? row.item_name ?? row.label ?? row.component_name ?? template.template_name) });
+      targets.push({ key, template_id: template.id, template_name: template.template_name, brand_id: template.brand_id, architecture, group_id: groupId, row_id: rowId, column_id: columnId, dimension: column?.dimension_code ?? "", price_field: priceField, physical_field: physicalField, code: normalizeManufacturerCode(rawCode), raw_code: rawCode, price: number(column ? prices[column.id] : row[physicalField]), currency, pricing_version: String(template.pricing_version), label: text(row.variant_name ?? row.item_name ?? row.label ?? row.component_name ?? template.template_name), ...(column?.label?.trim() ? { dimension_label: column.label } : {}) });
     };
     const flattened = (field: string) => (Array.isArray(template[field]) ? template[field] as unknown[] : []).flatMap((root) => Array.isArray(record(root).items) ? record(root).items as unknown[] : [root]).map(record).filter((row) => row.is_active !== false);
     const categories = (Array.isArray(template.category_pricing) ? template.category_pricing : []) as CategoryPricingLike[];

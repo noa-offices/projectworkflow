@@ -40,6 +40,8 @@ export type PriceTarget = {
   group_id: string; row_id: string; column_id: string; dimension: string; price_field: string;
   physical_field: string; code: string; raw_code: string; price: number | null; currency: SupportedCurrency;
   pricing_version: string; label: string;
+  /** The pricing column's displayed label (e.g. "SG1") when the target is a matrix/category column. Display only; never a stored identity. */
+  dimension_label?: string;
 };
 export type DimensionRule = { id: string; brand_id: string; template_id?: string | null; group_id?: string | null; raw_labels: string[]; finish_codes: string[]; dimension_code: string };
 export type DurableBinding = { id: string; code: string; price_field: string; source_dimension: string; target_keys: string[]; kind: "alias" | "shared" | "disambiguation"; confirmed: boolean };

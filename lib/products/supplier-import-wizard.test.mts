@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { assertSupplierProfile, type RawSupplierRow, type SupplierProfile } from "./supplier-price-contracts";
-import { compatibleProfile, mappingFromProfile, previewImport, profileFromMapping, suggestDefinition, suggestMapping, suggestedImportTitle } from "./supplier-import-wizard";
+import { compatibleProfile, initialPriceSelection, mappingFromProfile, previewImport, profileFromMapping, suggestDefinition, suggestMapping, suggestedImportTitle } from "./supplier-import-wizard";
 
 const wizard = readFileSync("components/products/supplier-import-wizard.tsx", "utf8");
 const sources = readFileSync("app/products/price-updates/supplier-sources/page.tsx", "utf8");
@@ -14,6 +14,21 @@ test("headings are suggested, including matrix price columns", () => {
   const tiers = suggestMapping(["Code", "Cat A", "Cat B", "Cat C"]);
   assert.deepEqual(tiers.priceColumns, [{ column: "Cat A", label: "Cat A" }, { column: "Cat B", label: "Cat B" }, { column: "Cat C", label: "Cat C" }]);
   assert.equal(suggestMapping(["Code", "120 x 145", "140 x 145", "160 x 145"]).priceColumns.length, 3);
+});
+
+test("single-price selection defaults to one conventional price heading without treating other headings as prices", () => {
+  const initial = initialPriceSelection(["code", "price", "category", "description"], suggestMapping(["code", "price", "category", "description"]));
+  assert.equal(initial.mode, "single");
+  assert.deepEqual(initial.mapping.priceColumns, [{ column: "price", label: "" }]);
+  assert.equal(initial.mapping.priceColumns.some((item) => ["code", "category", "description"].includes(item.column)), false);
+});
+
+test("multiple conventional price headings ask for a multi-price choice while matrix labels remain intact", () => {
+  const multiple = initialPriceSelection(["Code", "List price", "Net price"], suggestMapping(["Code", "List price", "Net price"]));
+  assert.equal(multiple.mode, "multiple"); assert.equal(multiple.multipleDetected, true); assert.deepEqual(multiple.mapping.priceColumns, []);
+  const matrix = initialPriceSelection(["Code", "Cat A", "Cat B"], suggestMapping(["Code", "Cat A", "Cat B"]));
+  assert.equal(matrix.mode, "multiple");
+  assert.deepEqual(matrix.mapping.priceColumns, [{ column: "Cat A", label: "Cat A" }, { column: "Cat B", label: "Cat B" }]);
 });
 
 test("a confirmed mapping generates the existing profile config, with column labels as dimensions", () => {
@@ -29,6 +44,10 @@ test("saved profiles are suggested only when every required column exists, and c
   assert.equal(compatibleProfile([{ id: "p", title: "Old", config: saved }], ["Code", "Price", "Desc"])?.id, "p");
   assert.equal(compatibleProfile([{ id: "p", title: "Old", config: saved }], ["Code", "Other"]), null);
   const mapping = mappingFromProfile(saved); assert.equal(mapping.basis, "net"); assert.deepEqual(profileFromMapping(mapping), saved);
+  assert.equal(initialPriceSelection(["Code", "Price", "Desc"], mapping, true).mode, "single");
+  const savedMulti: SupplierProfile = { ...saved, price_columns: [{ column: "Cat A", price_field: "unit_price", dimension: "Cat A" }, { column: "Cat B", price_field: "unit_price", dimension: "Cat B" }] };
+  const restoredMulti = initialPriceSelection(["Code", "Cat A", "Cat B", "Desc"], mappingFromProfile(savedMulti), true);
+  assert.equal(restoredMulti.mode, "multiple"); assert.deepEqual(restoredMulti.mapping.priceColumns, mappingFromProfile(savedMulti).priceColumns);
 });
 
 test("preview shows normalised code, dimension / tier and price from the real importer", () => {
@@ -37,6 +56,10 @@ test("preview shows normalised code, dimension / tier and price from the real im
   assert.equal(preview.length, 2); assert.equal(preview[0].code, "111065"); assert.equal(preview[0].dimension, "120 × 145"); assert.equal(preview[0].price, "EUR 425");
   const tier = previewImport([raw({ Code: "141085", Cat: "H", Price: 1542 })], profileFromMapping({ ...suggestMapping(["Code"]), fullCode: "Code", category: "Cat", priceColumns: [{ column: "Price", label: "" }] }));
   assert.match(tier[0].price, /EUR 1,542/);
+  const changed = previewImport([raw({ Code: "141085", Price: 1542, "Net price": 1200 })], profileFromMapping({ ...suggestMapping(["Code"]), fullCode: "Code", priceColumns: [{ column: "Net price", label: "" }] }));
+  assert.equal(changed[0].price, "EUR 1,200");
+  const relabelled = previewImport([raw({ Code: "141085", Price: 1542 })], profileFromMapping({ ...suggestMapping(["Code"]), fullCode: "Code", priceColumns: [{ column: "Price", label: "Cat A" }] }));
+  assert.equal(relabelled[0].tier, "Cat A");
 });
 
 test("details prefill a title; a previous Source Definition is suggested but never guessed among several", () => {
@@ -49,6 +72,7 @@ test("wizard keeps the five steps, reuses the existing import/review pipeline an
   for (const step of ["Upload", "Match columns", "Details", "Families", "Review"]) assert.ok(wizard.includes(`"${step}"`), step);
   for (const action of ["saveSupplierProfile", "createSupplierSource(", "uploadSupplierChunk", "finalizeSupplierSource", "createSupplierSourceDefinition", "confirmSupplierCoverage", "linkSupplierSourceDefinition", 'createSupplierReviewBatch(result.id, "complete", [])']) assert.ok(wizard.includes(action), action);
   for (const text of ["Previous column mapping found", "Use previous mapping", "Review mapping", "Use previous Families", "Advanced import settings"]) assert.ok(wizard.includes(text), text);
+  for (const text of ['aria-label="Price column"', "This file has multiple price columns", "Use one price column", "multiplePriceColumnsDetected"]) assert.ok(wizard.includes(text), text);
   assert.doesNotMatch(wizard, /JSON\.stringify|<textarea/);
   for (const name of ["SupplierImportWizard", "SupplierAdvancedImportSettings", "SupplierImportFormatWizard"]) assert.ok(sources.includes(name), name);
 });

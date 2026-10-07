@@ -26,13 +26,21 @@ test("landing renders Brand cards only: no Family rows, source groups or review 
 });
 
 test("Brand card shows review count, price lists, checked and attention summary from the shared resolvers", () => {
-  assert.match(html, /2 reviews in progress/); assert.match(html, /1 price list/); assert.match(html, /1 \/ 3 Families checked/); assert.match(html, /2 need review/);
-  assert.match(html, /3 Supplier-managed Families/);
+  const metric = (label: string, value: string) => assert.match(html, new RegExp(`>${label}</dt><dd[^>]*>${value}<`));
+  metric("Price lists", "1"); metric("In review", "2"); metric("Families checked", "1 / 3"); metric("Need review", "2");
+  assert.match(html, />3 Supplier-managed Families</); assert.match(html, /2 Families still need review\./);
   assert.equal(view.progress.checkedFamilies, 1); assert.equal(view.state, "needs_attention"); assert.match(html, />Needs attention</);
 });
 
+test("a Manual Brand stays neutral, shows no price lists and a calm note", () => {
+  const [manual] = buildSupplierPriceUpdatesView({ businessDate: "2026-10-20", brands: [{ id: "m", name: "INTERSTUHL" }], families: [{ id: "x", brandId: "m", name: "Chair" }], definitions: [], facts: [], legacyDetail: () => "Manual" });
+  const out = renderToStaticMarkup(<ul><PriceUpdatesBrandSummaryCard summary={{ view: manual, priceLists: 0, reviewsInProgress: 0, href: "/w" }} /></ul>);
+  assert.match(out, /border-zinc-200 bg-zinc-50 text-zinc-700[^>]*>Manual</); assert.doesNotMatch(out, /red|amber/);
+  assert.match(out, />No Supplier-managed Families</); assert.match(out, /No current Supplier price list./); assert.doesNotMatch(out, />Chair</);
+});
+
 test("Open Brand routes to the existing Brand workspace", () => {
-  assert.match(html, new RegExp(`href="/products/price-updates/supplier-sources\\?brand=${BRAND}"[^>]*>Open Brand<`));
+  assert.match(html, new RegExp(`href="/products/price-updates/supplier-sources\\?brand=${BRAND}"[^>]*>Open Brand `));
 });
 
 test("page reuses the shared resolver builders and reads Brand-level data only, one batched read per dataset", () => {

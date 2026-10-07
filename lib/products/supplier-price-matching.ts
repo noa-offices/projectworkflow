@@ -6,12 +6,26 @@ export const comparisonCode = (code: string) => code.replace(/\s+/g, "");
 export function sharedBaselineDrift(targets: PriceTarget[]) {
   return targets.some((target) => target.price === null) || new Set(targets.map((target) => JSON.stringify([target.price, target.currency, target.dimension, target.price_field]))).size !== 1;
 }
+// Retained physical finishes are evidence, not automatically a price tier.
+const isFinishTier = (source: SourceIdentity) => source.finishes.length > 0 && source.dimension !== (source.raw_dimension ?? source.dimension);
+function applicableRules(source: SourceIdentity, target: PriceTarget, rules: DimensionRule[]) {
+  const finishTier = isFinishTier(source);
+  // A finish-set rule resolves a price tier; a target with no dimension has no tier to resolve, so it must not remap the source.
+  return rules.filter((rule) => rule.brand_id === target.brand_id && (!rule.finish_codes.length || Boolean(target.dimension)) && (!rule.template_id || rule.template_id === target.template_id) && (!rule.group_id || rule.group_id === target.group_id) && (!rule.raw_labels.length || rule.raw_labels.includes(source.raw_dimension ?? source.dimension)) && (rule.finish_codes.length ? source.finishes.length > 0 && source.finishes.every((finish) => rule.finish_codes.includes(finish)) : !finishTier) && (rule.raw_labels.length > 0 || rule.finish_codes.length > 0));
+}
+const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase() && a.trim() !== "";
+/**
+ * Exact, unsaved match: only when no explicit vocabulary rule applies, the Supplier tier equals the target's internal dimension code or its
+ * displayed pricing-column label (trim + case only; no fuzzy or partial matching). It never creates a rule and never renames anything.
+ */
+function directTierMatch(source: SourceIdentity, target: PriceTarget, rules: DimensionRule[]) {
+  if (isFinishTier(source) || applicableRules(source, target, rules).length) return false;
+  const tier = source.raw_dimension ?? source.dimension;
+  return same(tier, target.dimension) || same(tier, target.dimension_label ?? "");
+}
 function mappedDimension(source: SourceIdentity, target: PriceTarget, rules: DimensionRule[]): string | null {
   if (!source.dimension && !source.finishes.length) return "";
-  // Retained physical finishes are evidence, not automatically a price tier.
-  const finishTier = source.finishes.length > 0 && source.dimension !== (source.raw_dimension ?? source.dimension);
-  // A finish-set rule resolves a price tier; a target with no dimension has no tier to resolve, so it must not remap the source.
-  const matching = rules.filter((rule) => rule.brand_id === target.brand_id && (!rule.finish_codes.length || Boolean(target.dimension)) && (!rule.template_id || rule.template_id === target.template_id) && (!rule.group_id || rule.group_id === target.group_id) && (!rule.raw_labels.length || rule.raw_labels.includes(source.raw_dimension ?? source.dimension)) && (rule.finish_codes.length ? source.finishes.length > 0 && source.finishes.every((finish) => rule.finish_codes.includes(finish)) : !finishTier) && (rule.raw_labels.length > 0 || rule.finish_codes.length > 0));
+  const matching = applicableRules(source, target, rules);
   if (!matching.length && !source.dimension) return "";
   const specificity = Math.max(-1, ...matching.map((rule) => (rule.template_id ? 2 : 0) + (rule.group_id ? 1 : 0)));
   const dimensions = new Set(matching.filter((rule) => (rule.template_id ? 2 : 0) + (rule.group_id ? 1 : 0) === specificity).map((rule) => rule.dimension_code));
@@ -37,7 +51,14 @@ export function matchSupplierPrices(sources: SourceIdentity[], targets: PriceTar
       found = binding.target_keys.flatMap((key) => byKey.has(key) ? [byKey.get(key)!] : []);
       if (found.length !== binding.target_keys.length || !found.length) return { ...base, classification: "ambiguous", targets: found };
     } else {
-      found = candidates.filter((target) => mappedDimension(source, target, rules) === target.dimension);
+      const direct = new Set<string>();
+      found = candidates.filter((target) => {
+        if (mappedDimension(source, target, rules) === target.dimension) return true;
+        if (!directTierMatch(source, target, rules)) return false;
+        direct.add(target.key); return true;
+      });
+      // Two columns of one row that read the same to the Supplier tier: never pick one for the user.
+      if (found.length > 1 && found.every((target) => direct.has(target.key)) && new Set(found.map((target) => JSON.stringify([target.template_id, target.group_id, target.row_id, target.physical_field]))).size === 1) return { ...base, classification: "ambiguous", targets: found };
       if (!found.length && candidates.length && (source.dimension || candidates.some((target) => target.dimension))) {
         // The article exists in the Supplier source and only needs a mapping; its Products must not also be reported as missing from it.
         candidates.forEach((target) => represented.add(target.key));

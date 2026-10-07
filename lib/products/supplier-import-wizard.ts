@@ -5,6 +5,7 @@ import { normalizeSupplierRows } from "./supplier-price-import";
 // there is no second import format and users never see or write that JSON.
 
 export type WizardPriceColumn = { column: string; label: string };
+export type WizardPriceMode = "single" | "multiple";
 export type WizardMapping = {
   fullCode: string; articleCode: string; description: string; category: string;
   priceColumns: WizardPriceColumn[];
@@ -19,6 +20,26 @@ const first = (headers: string[], words: string[]) => headers.find((header) => w
 /** A header that is itself a matrix label: "Cat A", "Category B", "Tier C" or a size such as "120 x 145". */
 const matrixHeader = (header: string) => /^(cat(egory)?\.?|tier|group|fabric)\s*[a-z0-9]{1,3}$/i.test(header.trim()) || /\d+(\.\d+)?\s*[x×*]\s*\d+(\.\d+)?/i.test(header);
 const priceWords = ["prezzo", "price", "unitprice", "eur", "usd", "aed", "listprice"];
+
+/** Headings we can safely recognise as a single, conventional price field. */
+export function obviousPriceColumns(headers: string[]) {
+  return headers.filter((header) => /^(unit|list|net|selling)?\s*price$/i.test(header.trim().replace(/[_-]+/g, " ")));
+}
+
+/**
+ * Chooses the presentation mode only. The persisted profile remains the same
+ * `price_columns` array in either mode.
+ */
+export function initialPriceSelection(headers: string[], mapping: WizardMapping, savedProfile = false): { mode: WizardPriceMode; mapping: WizardMapping; multipleDetected: boolean } {
+  if (savedProfile || mapping.priceColumns.length > 1) return { mode: mapping.priceColumns.length > 1 ? "multiple" : "single", mapping, multipleDetected: false };
+  const obvious = obviousPriceColumns(headers);
+  if (obvious.length === 1) {
+    const existing = mapping.priceColumns.find((item) => item.column === obvious[0]);
+    return { mode: "single", mapping: { ...mapping, priceColumns: [existing ?? { column: obvious[0], label: "" }] }, multipleDetected: false };
+  }
+  if (obvious.length > 1) return { mode: "multiple", mapping: { ...mapping, priceColumns: [] }, multipleDetected: true };
+  return { mode: "single", mapping, multipleDetected: false };
+}
 
 /** Suggestions only. The user confirms every mapping before anything is imported. */
 export function suggestMapping(headers: string[]): WizardMapping {
