@@ -8,7 +8,7 @@ import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { assertSupplierProfile, type RawSupplierRow, type SourceScope, type SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import { normalizeSupplierRows } from "@/lib/products/supplier-price-import";
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
-import { supplierCreateReviewBatch, supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierBulkExcludeMissing, supplierBrandTargets, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
+import { supplierCreateReviewBatch, supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierFamilyUnchangedMatchKeys, supplierBulkExcludeMissing, supplierBrandTargets, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
 
 import { canManageSupplierCapacity, supplierCapacityReport, supplierDeletePreviousSource, supplierSourceStorage, supplierAssignFamiliesToSource, supplierAssignFamilyToSource, supplierConfirmCoverage, supplierCreateSourceDefinition, supplierDeleteSourceDefinition, supplierLinkSourceDefinition, supplierResolveCoverageConflict, supplierUpdateSourceDefinition } from "@/lib/products/supplier-price-repository";
 
@@ -130,6 +130,10 @@ export async function bulkApplySupplierChangedPrices(batchId: string, matchKeys:
   revalidatePath(workspacePath);
   revalidatePath("/products/templates");
   return result;
+}
+export async function supplierFamilyUnchangedKeys(batchId: string, templateId: string) {
+  const { client } = await approver();
+  return supplierFamilyUnchangedMatchKeys(client, batchId, templateId);
 }
 export async function bulkConfirmSupplierUnchanged(batchId: string, matchKeys: string[]) {
   const { client } = await approver();

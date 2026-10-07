@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { FamilyOverview, FamilyRow, FamilySection, SupplierSourceInspectorDetail, SourceTierPanel, SourceTierTask, SourceMappedTier } from "@/lib/products/supplier-price-repository";
-import { bulkApplySupplierChangedPrices, bulkConfirmSupplierUnchanged, bulkExcludeSupplierMissing, saveSupplierDimension, replaceSupplierDimension, archiveSupplierDimension, refreshSupplierReviewAfterMapping, supplierSourceInspectorDetails } from "@/app/products/price-updates/supplier-sources/actions";
+import { bulkApplySupplierChangedPrices, bulkConfirmSupplierUnchanged, supplierFamilyUnchangedKeys, bulkExcludeSupplierMissing, saveSupplierDimension, replaceSupplierDimension, archiveSupplierDimension, refreshSupplierReviewAfterMapping, supplierSourceInspectorDetails } from "@/app/products/price-updates/supplier-sources/actions";
 
 // ProjectWorkflow patterns: white card, light border and shadow, emerald primary, zinc secondary.
 const card = "rounded-lg border border-zinc-200 bg-white shadow-sm";
@@ -30,6 +30,11 @@ export async function runSupplierKeyChunks<T>(keys: string[], limit: number, wor
   for (const chunk of supplierKeyChunks(keys, limit)) results.push(await work(chunk));
   return results;
 }
+
+export const FAMILY_REVIEW_CHANGED = "This Family review changed. Refresh and try again.";
+/** The shortcut confirms only what is still eligible now; anything different from what was displayed stops it before any write. */
+export const sameKeySet = (a: string[], b: string[]) => a.length === b.length && new Set(a).size === a.length && a.every((key) => b.includes(key));
+export const familyShortcutError = (error: unknown) => { const message = error instanceof Error ? error.message : "Action failed."; return /not part of this review/i.test(message) ? FAMILY_REVIEW_CHANGED : message; };
 
 export const optionalSupplierRuleId = (value: unknown) => {
   if (typeof value !== "string") return undefined;
@@ -118,8 +123,8 @@ export function SupplierFamilyList({ overview, links, approverNote, advancedHref
 }
 
 type Tab = { section: FamilySection; label: string; count: number; href: string };
-export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, truncated, approver, batchOpen, limit, backHref, detailsHref, sourceId, sourceTitle, sourceDefinitionName, basisBlocked = false, familyUnchangedKeys = [], familyUnchangedAction = "confirm" }: {
-  batchId: string; brandId: string; familyName: string; section: FamilySection; tabs: Tab[]; rows: FamilyRow[]; truncated: boolean; approver: boolean; batchOpen: boolean; limit: number; backHref: string; detailsHref: string; sourceId: string; sourceTitle: string; sourceDefinitionName?: string; basisBlocked?: boolean; familyUnchangedKeys?: string[]; familyUnchangedAction?: "confirm" | "finish";
+export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, truncated, approver, batchOpen, limit, backHref, detailsHref, sourceId, sourceTitle, sourceDefinitionName, basisBlocked = false, familyUnchangedKeys = [], familyUnchangedAction = "confirm", templateId = "" }: {
+  templateId?: string; batchId: string; brandId: string; familyName: string; section: FamilySection; tabs: Tab[]; rows: FamilyRow[]; truncated: boolean; approver: boolean; batchOpen: boolean; limit: number; backHref: string; detailsHref: string; sourceId: string; sourceTitle: string; sourceDefinitionName?: string; basisBlocked?: boolean; familyUnchangedKeys?: string[]; familyUnchangedAction?: "confirm" | "finish";
 }) {
   const router = useRouter(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
   const [selected, setSelected] = useState<string[]>([]); const [asking, setAsking] = useState(false); const [reason, setReason] = useState(""); const [detailRow, setDetailRow] = useState<FamilyRow | null>(null); const [sourceDetail, setSourceDetail] = useState<SupplierSourceInspectorDetail | null>(null); const [detailBusy, setDetailBusy] = useState(false);
@@ -135,7 +140,14 @@ export function SupplierFamilyTable({ batchId, familyName, section, tabs, rows, 
   const pick = selectAllKeys(selectable, limit);
   const columns = section === "attention" ? ["Code", "Item", "Issue", "Recommended action", "", ""] : ["Code", "Item / size", "Current", "Supplier", "Change", "", ""];
   const openInspector = (code: string) => window.dispatchEvent(new CustomEvent("supplier-source-inspector", { detail: { code } }));
-  const confirmFamilyUnchanged = async () => { await runSupplierKeyChunks(familyUnchangedKeys, limit, (keys) => bulkConfirmSupplierUnchanged(batchId, keys)); return { message: `${familyUnchangedKeys.length} unchanged price${familyUnchangedKeys.length === 1 ? "" : "s"} confirmed.` }; };
+  const confirmFamilyUnchanged = async () => {
+    try {
+      const keys = await supplierFamilyUnchangedKeys(batchId, templateId);
+      if (!sameKeySet(keys, familyUnchangedKeys)) throw Error(FAMILY_REVIEW_CHANGED);
+      await runSupplierKeyChunks(keys, limit, (chunk) => bulkConfirmSupplierUnchanged(batchId, chunk));
+      return { message: `${keys.length} unchanged price${keys.length === 1 ? "" : "s"} confirmed.` };
+    } catch (error) { router.refresh(); throw Error(familyShortcutError(error)); }
+  };
   async function reviewDetails(row: FamilyRow) { setDetailRow(row); setSourceDetail(null); if (!row.sourceIdentityKey) return; setDetailBusy(true); try { setSourceDetail(await supplierSourceInspectorDetails(sourceId, row.sourceIdentityKey)); } catch (error) { setMessage(error instanceof Error ? error.message : "Could not load source details."); } finally { setDetailBusy(false); } }
   return <div className="space-y-3">
     <div className={`${card} flex flex-wrap items-start justify-between gap-3 p-4`}>

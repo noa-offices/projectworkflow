@@ -620,6 +620,13 @@ export async function supplierFamilyRows(client: SupabaseClient, batchId: string
   return { rows: result.slice(0, 500), truncated: result.length > 500 };
 }
 
+/** The only keys the Family "Confirm unchanged" shortcut may submit: supplier_price_matches.key of this batch, single-target unchanged rows of this Family that are not yet decided. */
+export async function supplierFamilyUnchangedMatchKeys(client: SupabaseClient, batchId: string, templateId: string): Promise<string[]> {
+  if (typeof templateId !== "string" || !templateId) throw Error("Product family required.");
+  const { rows } = await loadFamilyState(client, batchId);
+  return rows.filter((row) => row.state.section === "same" && !row.state.done && row.match.classification === "unchanged" && row.match.targets.length === 1 && row.match.targets[0].template_id === templateId).map((row) => row.key);
+}
+
 function bulkKeys(matchKeys: unknown) {
   if (!Array.isArray(matchKeys) || !matchKeys.length || matchKeys.some((key) => typeof key !== "string" || !key) || new Set(matchKeys).size !== matchKeys.length) throw Error("Select at least one item.");
   if (matchKeys.length > SUPPLIER_BULK_LIMIT) throw Error(`Select up to ${SUPPLIER_BULK_LIMIT} items at a time.`);
@@ -643,9 +650,11 @@ async function loadBulkContext(client: SupabaseClient, batchId: string, matchKey
     if (source.basis !== brandResult.data.stored_price_basis) throw Error("Supplier price basis does not match the Brand stored price basis.");
     if (!["AED", "EUR", "USD"].includes(source.currency)) throw Error("Unsupported Supplier currency. Use AED, EUR, or USD.");
   }
-  const matched = await client.from("supplier_price_matches").select("key,data,supplier_price_decisions(decision,note)").eq("batch_id", batch.id).in("key", keys);
-  if (matched.error) throw Error("Supplier matches unavailable.");
-  const byKey = new Map(((matched.data ?? []) as unknown as BulkRow[]).map((row) => [row.key, row]));
+  // Match keys are JSON-like text and can contain commas and double quotes. postgrest-js `.in()` does not escape embedded quotes,
+  // so read this one current batch and compare the requested keys by exact string equality instead.
+  const wanted = new Set(keys);
+  const matched = await supplierRows<BulkRow>(client, "supplier_price_matches", "key,data,supplier_price_decisions(decision,note)", { batch_id: batch.id }, "key");
+  const byKey = new Map(matched.filter((row) => wanted.has(row.key)).map((row) => [row.key, row]));
   if (keys.some((key) => !byKey.has(key))) throw Error("Some selected items are not part of this review.");
   return { batch, source, keys, rows: keys.map((key) => byKey.get(key)!) };
 }

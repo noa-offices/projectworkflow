@@ -6,8 +6,9 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { PGlite } from "@electric-sql/pglite";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { PostgrestClient } from "@supabase/postgrest-js";
 import {
-  SUPPLIER_BULK_LIMIT, supplierConfirmUnchangedPrice, supplierBrandTargets, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierBulkExcludeMissing, supplierCompleteReview, supplierFamilyOverview, supplierFamilyRows, familyTierPanel, supplierWrite,
+  SUPPLIER_BULK_LIMIT, supplierConfirmUnchangedPrice, supplierBrandTargets, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierBulkExcludeMissing, supplierCompleteReview, supplierFamilyOverview, supplierFamilyRows, familyTierPanel, supplierWrite, supplierFamilyUnchangedMatchKeys,
 } from "./supplier-price-repository.js";
 import type { PriceMatch, PriceTarget, SourceIdentity } from "./supplier-price-contracts.js";
 
@@ -402,6 +403,85 @@ test("bulk Confirm unchanged confirms many rows without any Product write and re
   } finally { await g.db.close(); }
 });
 
+test("JSON-like Supplier match keys use exact current-batch membership rather than PostgREST in() serialization", async () => {
+  const keys = [JSON.stringify(["1AJM33", "unit_price", ""]), JSON.stringify(["1AJM34", "unit_price", ""]), JSON.stringify(["141085", "unit_price", "B"])];
+  let request = "";
+  const postgrest = new PostgrestClient("https://example.test/rest/v1", { fetch: async (input) => { request = String(input); return new Response("[]", { headers: { "content-type": "application/json" } }); } });
+  await postgrest.from("supplier_price_matches").select("key").eq("batch_id", batch).in("key", keys);
+  const serialized = new URL(request).searchParams.get("key")!;
+  assert.equal(serialized, `in.("${keys[0]}","${keys[1]}","${keys[2]}")`); // embedded quotes are not escaped by postgrest-js
+
+  const f = await fixture({ withAttention: false });
+  try {
+    const original = f.alphaKeys(ALPHA_CHANGED, ALPHA_CHANGED + ALPHA_SAME);
+    for (let index = 0; index < keys.length; index++) await f.db.query("update supplier_price_matches set key=$1,data=jsonb_set(data,'{key}',to_jsonb($1::text)) where batch_id=$2 and key=$3", [keys[index], batch, original[index]]);
+    await supplierBulkConfirmUnchanged(f.client, batch, keys);
+    assert.deepEqual(await f.decisions(), Object.fromEntries(keys.map((key) => [key, "confirmed_unchanged"])));
+
+    const otherBatch = id(999);
+    const otherBatchKey = JSON.stringify(["OTHER-BATCH", "unit_price", ""]);
+    await f.db.query(
+      "insert into supplier_price_batches(id,brand_id,source_id,title,scope,selected_template_ids,status,expected_matches,expected_chunks,basis_warning,created_by) select $1,brand_id,source_id,'Other','complete','{}','review',1,1,'',$2 from supplier_price_batches where id=$3",
+      [otherBatch, user, batch]
+    );
+    await f.db.query(
+      "insert into supplier_price_matches(batch_id,key,code,classification,comparison,template_ids,data) select $1,$2,code,classification,comparison,template_ids,jsonb_set(data,'{key}',to_jsonb($2::text)) from supplier_price_matches where batch_id=$3 and key=$4",
+      [otherBatch, otherBatchKey, batch, keys[0]]
+    );
+    await assert.rejects(
+      supplierBulkConfirmUnchanged(f.client, batch, [otherBatchKey]),
+      /Some selected items are not part of this review\./
+    );
+    await assert.rejects(supplierBulkConfirmUnchanged(f.client, batch, [...keys.slice(0, 2), JSON.stringify(["OTHER", "unit_price", ""])]), /Some selected items are not part of this review\./);
+    const otherFamily = await supplierFamilyUnchangedMatchKeys(f.client, batch, delta1);
+    assert.deepEqual(otherFamily, ["m-d1"]); // another Family is neither selected nor returned
+  } finally { await f.db.close(); }
+});
+
+test("Family unchanged shortcut derives only current-batch, current-Family, undecided match keys and the backend guard is unchanged", async () => {
+  const f = await fixture({ withAttention: false });
+  try {
+    const before = await f.snapshot();
+    const sameKeys = f.alphaKeys(ALPHA_CHANGED, ALPHA_CHANGED + ALPHA_SAME);
+    const derived = await supplierFamilyUnchangedMatchKeys(f.client, batch, alpha);
+    assert.deepEqual(derived, sameKeys); // only Alpha's Same rows; its changed rows and every other Family's rows are absent
+    const stored = new Set((await f.db.query<{ key: string }>("select key from public.supplier_price_matches where batch_id=$1", [batch])).rows.map((row) => row.key));
+    assert.ok(derived.every((key) => stored.has(key))); // every key is a supplier_price_matches.key of this batch
+    const targetKeys = new Set((await supplierBrandTargets(f.client, brand)).targets.map((target) => target.key));
+    assert.ok(!derived.some((key) => targetKeys.has(key))); // never a target id
+    assert.deepEqual(await supplierFamilyUnchangedMatchKeys(f.client, batch, delta1), ["m-d1"]);
+    assert.deepEqual(await supplierFamilyUnchangedMatchKeys(f.client, batch, delta2), ["m-d2"]);
+    await supplierBulkConfirmUnchanged(f.client, batch, derived.slice(0, 1)); // already confirmed rows leave the shortcut
+    assert.deepEqual(await supplierFamilyUnchangedMatchKeys(f.client, batch, alpha), derived.slice(1));
+    await assert.rejects(supplierBulkConfirmUnchanged(f.client, batch, [...derived.slice(1), "target:not-a-match"]), /Some selected items are not part of this review\./); // fail-closed guard unchanged
+    assert.deepEqual(await f.decisions(), { [derived[0]]: "confirmed_unchanged" }); // the rejected submission wrote nothing
+    await supplierBulkConfirmUnchanged(f.client, batch, derived.slice(1));
+    assert.deepEqual(await supplierFamilyUnchangedMatchKeys(f.client, batch, alpha), []);
+    await assert.rejects(supplierFamilyUnchangedMatchKeys(f.client, batch, ""), /Product family required/);
+    const { rows: [sameRow] } = { rows: await supplierFamilyRows(f.client, batch, alpha, "same").then((result) => result.rows) };
+    assert.equal(sameRow.selectable, false);
+    const after = await f.snapshot(); // no price, version, history, quotation or Brand change
+    assert.deepEqual(after.templates, before.templates); assert.deepEqual(after.history, before.history); assert.deepEqual(after.quotations, before.quotations);
+  } finally { await f.db.close(); }
+});
+
+test("Family shortcut chunks by the bulk limit, stops on any change since render, and maps only the membership error to a friendly message", async () => {
+  const ui = await loadTestModule<typeof import("../../components/products/supplier-family-review.js")>("../../components/products/supplier-family-review.tsx", { "next/link": {}, "next/navigation": { useRouter() { return { refresh() {} }; } }, "@/app/products/price-updates/supplier-sources/actions": {} });
+  const keys = (count: number) => Array.from({ length: count }, (_, index) => `m-${index}`);
+  assert.deepEqual(ui.supplierKeyChunks(keys(81), SUPPLIER_BULK_LIMIT).map((chunk: string[]) => chunk.length), [50, 31]);
+  assert.deepEqual(ui.supplierKeyChunks(keys(81).slice(30), SUPPLIER_BULK_LIMIT).map((chunk: string[]) => chunk.length), [50, 1]); // 30 already confirmed: 51 remain
+  assert.equal(ui.sameKeySet(keys(3), [...keys(3)].reverse()), true);
+  assert.equal(ui.sameKeySet(keys(3), keys(4)), false); // a Family that changed since render
+  assert.equal(ui.sameKeySet(keys(3), ["m-0", "m-1", "m-9"]), false);
+  assert.equal(ui.familyShortcutError(Error("Some selected items are not part of this review.")), ui.FAMILY_REVIEW_CHANGED);
+  assert.equal(ui.familyShortcutError(Error("1 selected item needs attention. Nothing was changed.")), "1 selected item needs attention. Nothing was changed.");
+  const component = await readFile(new URL("../../components/products/supplier-family-review.tsx", import.meta.url), "utf8");
+  assert.match(component, /supplierFamilyUnchangedKeys\(batchId, templateId\)/); assert.match(component, /runSupplierKeyChunks\(keys, limit/);
+  assert.match(component, /same: \{ label: `Confirm \$\{selected\.length\} unchanged`, go: \(\) => run\(\(\) => bulkConfirmSupplierUnchanged\(batchId, selected\)\) \}/); // manual selection path untouched
+  const repository = await readFile(new URL("./supplier-price-repository.ts", import.meta.url), "utf8");
+  assert.match(repository, /if \(keys\.some\(\(key\) => !byKey\.has\(key\)\)\) throw Error\("Some selected items are not part of this review\."\);/);
+});
+
 test("bulk Exclude missing needs one reason, applies it to every row, and never touches the Product", async () => {
   const f = await fixture();
   try {
@@ -515,7 +595,7 @@ test("selection helpers are bounded; Family UI is simple, gated, and resets sele
     const completed: string[][] = []; let attempted = 0;
     await assert.rejects(ui.runSupplierKeyChunks(familyKeys, 50, async (chunk: string[]) => { attempted++; if (attempted === 2) throw Error("second chunk failed"); completed.push(chunk); return chunk.length; }), /second chunk failed/);
     assert.deepEqual(completed.map((chunk) => chunk.length), [50]); assert.equal(attempted, 2);
-    assert.match(component, /runSupplierKeyChunks\(familyUnchangedKeys, limit, \(keys\) => bulkConfirmSupplierUnchanged/);
+    assert.match(component, /runSupplierKeyChunks\(keys, limit, \(chunk\) => bulkConfirmSupplierUnchanged\(batchId, chunk\)\)/); // the shortcut submits freshly derived match keys, not render-time props
   } finally { await f.db.close(); }
 });
 
