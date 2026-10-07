@@ -243,6 +243,48 @@ export async function deletePreviousSupplierSource(currentSourceId: string, prev
   if (!canManageSupplierCapacity(auth.profile?.role, auth.profile?.account_status)) throw Error("Only the System Owner can delete a previous price list.");
   const result = await supplierDeletePreviousSource(client, currentSourceId, previousSourceId); revalidatePath(workspacePath); return result;
 }
+/** System Owner only. Database purge commits atomically; retained receipts make file cleanup retryable. */
+export async function permanentlyDeleteSupplierSource(sourceId: string, confirmed: boolean) {
+  const { auth, client } = await reviewer();
+  if (!canManageSupplierCapacity(auth.profile?.role, auth.profile?.account_status)) throw Error("Only the System Owner can permanently delete a Supplier price list.");
+  if (confirmed !== true) throw Error("Explicit permanent-delete confirmation required.");
+  const result = await client.rpc("purge_archived_supplier_source", { p_source_id: sourceId, p_confirm: true });
+  if (result.error) throw Error(result.error.message);
+  const paths = (result.data as { storage_paths: string[] }).storage_paths;
+  let warning = "";
+  if (paths.length) {
+    try {
+      const storage = await client.storage.from("supplier-price-sources").remove(paths);
+      if (storage.error) throw Error(storage.error.message);
+      const finish = await client.rpc("finish_supplier_source_file_cleanup", { p_source_id: sourceId });
+      if (finish.error) throw Error(finish.error.message);
+    } catch (error) {
+      warning = `Database records were deleted. Storage cleanup failed: ${error instanceof Error ? error.message : "Unknown error"}. Retry file cleanup.`;
+    }
+  }
+  // Keep the row's warning/retry control mounted until external file cleanup succeeds.
+  if (!warning) revalidatePath(workspacePath);
+  return { warning };
+}
+/** Abandons only this review. Applied prices and durable history are not rolled back. */
+export async function leaveSupplierReview(batchId: string, confirmed: boolean) {
+  const { client } = await approver();
+  if (confirmed !== true) throw Error("Explicit Leave review confirmation required.");
+  await supplierWrite(client, "review_abandon", { batch_id: batchId, confirmed: true });
+  revalidatePath(workspacePath);
+  revalidatePath("/products/price-updates");
+  revalidatePath("/products/templates");
+  revalidatePath("/quotations", "layout");
+}
+/** Restores visibility/imported state, never overrides date/version applicability. */
+export async function unarchiveSupplierSource(sourceId: string) {
+  const { client } = await approver();
+  await supplierWrite(client, "source_unarchive", { source_id: sourceId });
+  revalidatePath(workspacePath);
+  revalidatePath("/products/price-updates");
+  revalidatePath("/products/templates");
+  revalidatePath("/quotations", "layout");
+}
 export async function loadSupplierSourceStorage() {
   const { auth, client } = await reviewer();
   if (!canManageSupplierCapacity(auth.profile?.role, auth.profile?.account_status)) throw Error("Only the System Owner can view Supplier database capacity.");

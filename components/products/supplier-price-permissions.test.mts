@@ -8,6 +8,7 @@ import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { canApproveBrandPrices, canReviewBrandPrices } from "../../lib/products/brand-price-permissions.js";
 import type { AppRole } from "../../lib/supabase/types.js";
+import { canManageSupplierCapacity } from "../../lib/products/supplier-price-repository.js";
 
 const read = (path: string) => readFile(new URL(path, import.meta.url), "utf8");
 async function load<T>(path: string, dependencies: Record<string, unknown> = {}): Promise<T> {
@@ -44,11 +45,43 @@ async function actionsFor(role: string) {
 }
 const mutations: Array<[string, unknown[]]> = [
   ["refreshSupplierReviewAfterMapping", ["source", "batch"]],
+  ["leaveSupplierReview", ["batch", true]], ["unarchiveSupplierSource", ["source"]],
   ["saveSupplierProfile", ["b", "LAS", {}]], ["createSupplierSource", [{}]], ["attachSupplierWorkingFile", ["s", "p"]], ["uploadSupplierChunk", ["s", 0, []]], ["finalizeSupplierSource", ["s"]], ["archiveSupplierSource", ["s"]],
   ["createSupplierReviewBatch", ["s", "complete", []]], ["saveSupplierDecision", ["r", "k", "reviewed", ""]], ["applySupplierReviewedPrice", ["r", "k"]], ["confirmSupplierUnchangedPrice", ["r", "k"]],
   ["completeSupplierPriceReview", ["r"]], ["excludeSupplierTargetFromSource", ["r", "k", "why"]], ["bulkApplySupplierChangedPrices", ["r", ["k"]]], ["bulkConfirmSupplierUnchanged", ["r", ["k"]]],
   ["bulkExcludeSupplierMissing", ["r", ["k"], "why"]], ["saveSupplierDimension", [{ brand_id: "b", raw_labels: ["x"], finish_codes: [], dimension_code: "d" }]], ["replaceSupplierDimension", ["id", "b", "d"]], ["confirmSupplierBindings", ["b", []]], ["archiveSupplierDimension", ["d"]],
 ];
+
+test("permanent-delete server action is owner-only, confirms before RPC, and reports retryable Storage failure", async () => {
+  for (const role of ["system_owner", "admin_manager", "procurement_manager", "viewer"]) {
+    const calls: string[] = [];
+    let storageFails = true, finishFails = false;
+    const actions = await load<{ permanentlyDeleteSupplierSource(id: string, confirm: boolean): Promise<{ warning: string }> }>("../../app/products/price-updates/supplier-sources/actions.ts", {
+      "next/cache": { revalidatePath() { calls.push("refresh"); } },
+      "@/lib/auth": { async requireBrandPriceReviewer() { return { profile: { role, account_status: "active" } }; } },
+      "@/lib/products/supplier-price-repository": { canManageSupplierCapacity },
+      "@/lib/supabase/server": { async createClient() { return {
+        async rpc(name: string) { calls.push(name); return { data: { storage_paths: ["owned/file.xlsx"] }, error: name === "finish_supplier_source_file_cleanup" && finishFails ? { message: "Storage cleanup is incomplete" } : null }; },
+        storage: { from(bucket: string) { assert.equal(bucket, "supplier-price-sources"); return { async remove(paths: string[]) { assert.deepEqual(paths, ["owned/file.xlsx"]); calls.push("storage"); return { error: storageFails ? { message: "Storage unavailable" } : null }; } }; } },
+      }; } },
+    });
+    if (role !== "system_owner") {
+      await assert.rejects(actions.permanentlyDeleteSupplierSource("s", true), /Only the System Owner/);
+      assert.deepEqual(calls, []);
+    } else {
+      await assert.rejects(actions.permanentlyDeleteSupplierSource("s", false), /confirmation required/);
+      assert.deepEqual(calls, []);
+      assert.match((await actions.permanentlyDeleteSupplierSource("s", true)).warning, /Database records were deleted.*Storage unavailable.*Retry file cleanup/);
+      assert.deepEqual(calls, ["purge_archived_supplier_source", "storage"]);
+      storageFails = false; finishFails = true; calls.length = 0;
+      assert.match((await actions.permanentlyDeleteSupplierSource("s", true)).warning, /Storage cleanup is incomplete.*Retry file cleanup/);
+      assert.deepEqual(calls, ["purge_archived_supplier_source", "storage", "finish_supplier_source_file_cleanup"]);
+      finishFails = false; calls.length = 0;
+      assert.equal((await actions.permanentlyDeleteSupplierSource("s", true)).warning, "");
+      assert.deepEqual(calls, ["purge_archived_supplier_source", "storage", "finish_supplier_source_file_cleanup", "refresh"]);
+    }
+  }
+});
 
 for (const [role, editor] of matrix) test(`server actions: ${role} ${editor ? "can modify" : "is rejected"}`, async () => {
   const { actions, calls } = await actionsFor(role);

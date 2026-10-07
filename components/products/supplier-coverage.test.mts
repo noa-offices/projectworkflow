@@ -22,7 +22,8 @@ const coverage = await load<Record<"SupplierSourceField" | "SupplierCoverageSetu
 });
 const helpers = coverage as unknown as { suggestedSelection(rows: unknown[]): Set<string>; filterCoverageRows(rows: unknown[], filters: { category: string; status: string; chip: string }): unknown[]; coverageClashes(rows: unknown[], selected: Set<string>, target: string): unknown[] };
 const inspector = { SupplierSourceInspector: () => React.createElement("button", { type: "button" }, "View extracted data") };
-const workflow = await load<Record<"SupplierFinishScreen" | "SupplierHistoryTable", Component>>("./supplier-price-workflow.tsx", { "next/link": link, "@/components/products/supplier-source-inspector": inspector });
+const historyActions = await load("./supplier-history-actions.tsx", { "next/link": link, "next/navigation": { useRouter() { return { refresh() {} }; } }, "@/app/products/price-updates/supplier-sources/actions": {}, "./supplier-price-workspace-controls": { SupplierArchiveButton: () => React.createElement("button", null, "Archive") } });
+const workflow = await load<Record<"SupplierFinishScreen" | "SupplierHistoryTable", Component>>("./supplier-price-workflow.tsx", { "next/link": link, "@/components/products/supplier-source-inspector": inspector, "@/components/products/supplier-history-actions": historyActions });
 const html = (component: Component, props: Record<string, unknown>) => renderToStaticMarkup(React.createElement(component as never, props as never));
 const pageSource = await read("../../app/products/price-updates/supplier-sources/page.tsx");
 const controlsSource = await read("./supplier-price-workspace-controls.tsx");
@@ -178,7 +179,7 @@ test("completion wording: partial coverage never claims a Brand baseline; full c
 
 // ---- Phase H: Available price lists landing section ----
 const pageText = await read("../../app/products/price-updates/supplier-sources/page.tsx");
-const cardsCoverage = await load<Record<"SupplierPriceListCards", Component>>("./supplier-coverage.tsx", { "next/link": link, "next/navigation": { useRouter() { return { refresh() {}, push() {} }; } }, "@/app/products/price-updates/supplier-sources/actions": {} });
+const cardsCoverage = await load<Record<"SupplierPriceListCards", Component>>("./supplier-coverage.tsx", { "@/components/products/supplier-history-actions": historyActions, "next/link": link, "next/navigation": { useRouter() { return { refresh() {}, push() {} }; } }, "@/app/products/price-updates/supplier-sources/actions": {} });
 const view = (extra: Record<string, unknown>) => ({ sourceId: "s", sourceName: "LAS Furniture", title: "LAS MOBILI — October 2026", currency: "EUR", profileId: null, families: 5, sourceRows: 46108, items: 3479, compacted: true, batchId: null, batchStatus: null, scope: null, state: "ready_to_review", unresolved: 0, unchanged: 0, changed: 0, openHref: "/open-furniture", editHref: "/edit-furniture", detailsHref: "/details-furniture", advancedHref: "/advanced", ...extra });
 const twoLists = [view({ sourceId: "f", state: "needs_attention", batchId: "bf", batchStatus: "review", unresolved: 8, unchanged: 56, openHref: "/open-furniture" }), view({ sourceId: "c", sourceName: "LAS Chairs", families: 1, sourceRows: 203870, items: 10206, compacted: false, state: "ready_to_complete", batchId: "bc", batchStatus: "review", openHref: "/open-chairs", editHref: "/edit-chairs", detailsHref: "/details-chairs" })];
 
@@ -205,6 +206,24 @@ test("states: no batch shows Start review, attention and completed render, and t
   assert.match(out, /3 items need attention/); assert.match(out, /aria-label="More actions for LAS MOBILI — October 2026"/);
   assert.match(out, />View extracted data</); assert.match(out, />Edit coverage</); assert.match(out, />Advanced tools</);
   assert.equal((out.match(/Edit coverage/g) ?? []).length, 4); // one per card, inside its menu only
+});
+
+test("Leave review sits beside Continue review only for approvers on an open (matching/review) batch", async () => {
+  const cards = [
+    view({ sourceId: "o", sourceName: "Open", state: "needs_attention", batchId: "open-b", batchStatus: "review" }),
+    view({ sourceId: "m", sourceName: "Matching", state: "in_review", batchId: "match-b", batchStatus: "matching" }),
+    view({ sourceId: "d", sourceName: "Done", state: "completed", batchId: "done-b", batchStatus: "completed" }),
+    view({ sourceId: "x", sourceName: "Abandoned", state: "ready_to_review", batchId: "ab-b", batchStatus: "abandoned" }),
+    view({ sourceId: "n", sourceName: "NoBatch", state: "ready_to_review" }),
+  ];
+  const out = html(cardsCoverage.SupplierPriceListCards, { cards, importHref: "/import", approver: true });
+  const card = (name: string) => out.split("<li class=").find((part) => part.includes(name)) ?? "";
+  for (const name of ["Open", "Matching"]) { assert.match(card(name), />Leave review<\/button>/); assert.match(card(name), /Leave this Supplier review\?/); }
+  assert.match(card("Open"), />Continue review</);
+  for (const name of ["Done", "Abandoned", "NoBatch"]) assert.doesNotMatch(card(name), /Leave review/);
+  const readOnly = html(cardsCoverage.SupplierPriceListCards, { cards, importHref: "/import", approver: false });
+  assert.doesNotMatch(readOnly, /Leave review/); assert.match(readOnly, />Continue review</);
+  assert.ok((await read("./supplier-coverage.tsx")).includes('import { SupplierLeaveReviewButton } from "@/components/products/supplier-history-actions"'));
 });
 
 test("read-only users see the cards but no import, coverage edit or advanced actions; no raw IDs appear", () => {

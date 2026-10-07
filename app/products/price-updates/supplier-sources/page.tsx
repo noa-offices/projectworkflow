@@ -48,14 +48,14 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
   const sources = sourceResult.data ?? [];
   let source = sources.find((item) => item.id === text(params.source));
   if (!source && brand && text(params.source)) { const result = await client.from("supplier_source_versions").select("*").eq("id", text(params.source)).eq("brand_id", brand.id).maybeSingle<SourceVersion>(); source = result.data ?? undefined; errorMessage ||= result.error?.message ?? ""; }
-  const batchResult = source ? await client.from("supplier_price_batches").select("*").eq("source_id", source.id).order("created_at", { ascending: false }).order("id").range(batchOffset, batchOffset + 19).returns<ReviewBatch[]>() : { data: [], error: null };
+  const batchResult = source ? await client.from("supplier_price_batches").select("*").eq("source_id", source.id).order("created_at", { ascending: false }).order("id", { ascending: false }).range(batchOffset, batchOffset + 19).returns<ReviewBatch[]>() : { data: [], error: null };
   errorMessage ||= batchResult.error?.message ?? "";
   let batch = batchResult.data?.find((item) => item.id === text(params.batch));
   if (!batch && source && text(params.batch)) { const result = await client.from("supplier_price_batches").select("*").eq("source_id", source.id).eq("id", text(params.batch)).maybeSingle<ReviewBatch>(); batch = result.data ?? undefined; }
   let matches: PriceMatch[] = []; let units: Array<{ template_id: string; template_name: string; matched: number; changed: number; unchanged: number; unresolved: number; state: string }> = [];
   const templateFilter = text(params.template); const classification = text(params.status); const code = text(params.code).slice(0, 120);
   // A review opens in Family Review by default; the technical workspace is loaded only on request.
-  if (!batch && source && !["start", "summary", "details"].includes(view)) batch = batchResult.data?.find((item) => item.status === "review") ?? batchResult.data?.[0];
+  if (!batch && source && !["start", "summary", "details"].includes(view)) batch = batchResult.data?.find((item) => item.status === "review" || item.status === "matching") ?? batchResult.data?.find((item) => item.status !== "abandoned");
   if (batch?.status === "review" && view === "advanced") {
     const unitResult = await client.from("supplier_template_review_units").select("*").eq("batch_id", batch.id).order("template_id").range(offset(params.unitOffset), offset(params.unitOffset) + 49).returns<typeof units>();
     units = unitResult.data ?? []; errorMessage ||= unitResult.error?.message ?? "";
@@ -145,7 +145,10 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
       const latest = reviewRows.find((review) => review.source_id === item.id), finished = reviewRows.find((review) => review.source_id === item.id && review.status === "completed");
       return { id: item.id, title: item.title, sourceName: coverage?.definitions.find((entry) => entry.id === item.definition_id)?.name, date: ((item as SourceVersion & { created_at?: string }).created_at ?? item.received_at ?? "").slice(0, 10) || "—", status: item.status === "imported" ? "current" : item.status === "archived" ? "archived" : "unfinished",
         coverage: latest ? ({ complete: "Complete Brand", selected_templates: "Selected Families", partial: "Partial" } as Record<string, string>)[latest.scope] ?? "Review" : "Not reviewed",
-        baseline: finished ? (finished.brand_price_list_update_id === activeId ? "Active baseline" : "Replaced") : "—", viewHref: href({ tab: "current", source: item.id, batch: "", view: "family", offset: "0", batchOffset: "0" }), downloadUrl: url.get(item.id) };
+        baseline: finished ? (finished.brand_price_list_update_id === activeId ? "Active baseline" : "Replaced") : "—", viewHref: href({ tab: "current", source: item.id, batch: "", view: "family", offset: "0", batchOffset: "0" }), downloadUrl: url.get(item.id),
+        reviewsHref: href({ tab: "history", source: item.id, batch: "", view: "family", batchOffset: "0" }),
+        hasActiveReview: reviewRows.some((review) => review.source_id === item.id && (review.status === "matching" || review.status === "review")),
+        hasCompletedHistory: Boolean(finished) || reviewRows.some((review) => review.source_id === item.id && review.brand_price_list_update_id !== null) };
     });
   }
   const summary: { families: number | null; warnings: number | null } = { families: null, warnings: null };
@@ -214,7 +217,8 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
       {brand ? <div className="space-y-4">
         <SupplierTabs tab={tab} hrefs={{ current: href({ tab: "current", source: "", batch: "", view: "", family: "", section: "", status: "", code: "", template: "", offset: "0" }), import: href({ tab: "import", setup: "" }), history: href({ tab: "history" }) }} />
         {tab === "import" ? <>{importArea}</>
-          : tab === "history" ? <SupplierHistoryTable rows={historyRows} showArchived={text(params.showArchived) === "1"} archivedCount={historyRows.filter((row) => row.status === "archived").length} toggleHref={href({ showArchived: text(params.showArchived) === "1" ? "" : "1" })} canArchive
+          : tab === "history" ? <SupplierHistoryTable rows={historyRows} showArchived={text(params.showArchived) === "1"} archivedCount={historyRows.filter((row) => row.status === "archived").length} toggleHref={href({ showArchived: text(params.showArchived) === "1" ? "" : "1" })} canArchive={approver} canUnarchive={approver} canLeaveReview={approver} canPermanentlyDelete={canManageSupplierCapacity(profile?.role, profile?.account_status)}
+              reviewPagerHrefs={source ? { previous: href({ batchOffset: String(Math.max(0, batchOffset - 20)) }), next: href({ batchOffset: String(batchOffset + 20) }) } : undefined}
               pagerHrefs={{ previous: href({ sourceOffset: String(Math.max(0, sourceOffset - 20)) }), next: href({ sourceOffset: String(sourceOffset + 20) }) }} reviews={source ? batchResult.data ?? [] : []} currentBatchId={batch?.id} reviewHref={(id) => href({ tab: "current", source: source?.id ?? "", batch: id, view: "family", offset: "0", template: "", status: "" })} newReviewHref={source?.status === "imported" ? href({ tab: "current", view: "start" }) : undefined} />
           : <>
             {source ? <SupplierWorkflowHeader brandName={brand.name} source={source} batch={batch} step={step} links={{ steps: [href({ tab: "import", source: "", batch: "", view: "", family: "", section: "", status: "", code: "", template: "", offset: "0" }), href({ view: "family", family: "", section: "" }), href({ view: "complete" })], history: href({ tab: "history" }), advanced: href({ tab: "import", advanced: "1" }) + "#advanced" }} /> : null}

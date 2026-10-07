@@ -1083,7 +1083,8 @@ export async function supplierPriceListCards(client: SupabaseClient, brandId: st
   const cards: SupplierPriceListCard[] = [];
   for (const version of current) {
     const definition = definitions.find((item) => item.id === version.definition_id);
-    const batch = [...batches].filter((item) => item.source_id === version.id).at(-1) ?? null;
+    const sourceBatches = batches.filter((item) => item.source_id === version.id).sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+    const batch = sourceBatches.find((item) => item.status === "review" || item.status === "matching") ?? sourceBatches.find((item) => item.status !== "abandoned") ?? null;
     const units = batch && batch.status === "review" ? await supplierRows<{ unresolved: number; unchanged: number; changed: number }>(client, "supplier_template_review_units", "unresolved,unchanged,changed", { batch_id: batch.id }, "template_id") : [];
     const unresolved = units.reduce((total, unit) => total + unit.unresolved, 0), unchanged = units.reduce((total, unit) => total + unit.unchanged, 0), changed = units.reduce((total, unit) => total + unit.changed, 0);
     const hasCoverage = Boolean(definition && definition.families.length);
@@ -1137,10 +1138,24 @@ export function supplierTargetOutcome(classification: string, decision: string |
 }
 export type SupplierFamilyReviewFact = {
   brandId: string; templateId: string; sourceId: string; batchId: string; batchStatus: string; completedAt: string | null; scope: string;
+  batchCreatedAt?: string;
   inCoverage: boolean; hasReviewEvidence: boolean;
   totalTargets: number; excludedTargets: number; resolvedTargets: number; unresolvedTargets: number;
   fullyChecked: boolean; partiallyChecked: boolean;
 };
+/** One current open review per exact Brand/Source Version/Family; completed proof stays intact. */
+export function authoritativeSupplierFamilyReviewFacts(facts: SupplierFamilyReviewFact[]): SupplierFamilyReviewFact[] {
+  const current = new Map<string, SupplierFamilyReviewFact>();
+  const key = (fact: SupplierFamilyReviewFact) => JSON.stringify([fact.brandId, fact.sourceId, fact.templateId]);
+  const open = (fact: SupplierFamilyReviewFact) => fact.batchStatus === "review" || fact.batchStatus === "matching";
+  for (const fact of facts) {
+    if (!open(fact) || !fact.inCoverage) continue;
+    const previous = current.get(key(fact));
+    if (!previous || (fact.batchCreatedAt ?? "").localeCompare(previous.batchCreatedAt ?? "") > 0 ||
+      (fact.batchCreatedAt === previous.batchCreatedAt && fact.batchId.localeCompare(previous.batchId) > 0)) current.set(key(fact), fact);
+  }
+  return facts.filter((fact) => fact.batchStatus !== "abandoned" && (!open(fact) || current.get(key(fact)) === fact));
+}
 /**
  * Per Family, per batch (therefore per exact Source Version through batch.source_id). Targets are the batch's own reviewed universe
  * (match.targets), the same one completion and readiness use for "covered" and "excluded". Live additions after comparison are a
@@ -1148,9 +1163,9 @@ export type SupplierFamilyReviewFact = {
  * Reads are paged per batch, never per Family, so no 1,000-row truncation can hide targets.
  */
 export async function supplierFamilyReviewFacts(client: SupabaseClient, brandId: string, sourceId?: string): Promise<SupplierFamilyReviewFact[]> {
-  const batches = await supplierRows<{ id: string; source_id: string; status: string; scope: string; completed_at: string | null; coverage_template_ids: string[] | null; selected_template_ids: string[] | null }>(
-    client, "supplier_price_batches", "id,source_id,status,scope,completed_at,coverage_template_ids,selected_template_ids", { brand_id: brandId }, "id");
-  const factsByBatch = await mapSupplierReads(batches.filter((item) => !sourceId || item.source_id === sourceId), async (batch) => {
+  const batches = await supplierRows<{ id: string; source_id: string; status: string; scope: string; created_at: string; completed_at: string | null; coverage_template_ids: string[] | null; selected_template_ids: string[] | null }>(
+    client, "supplier_price_batches", "id,source_id,status,scope,created_at,completed_at,coverage_template_ids,selected_template_ids", { brand_id: brandId }, "id");
+  const factsByBatch = await mapSupplierReads(batches.filter((item) => item.status !== "abandoned" && (!sourceId || item.source_id === sourceId)), async (batch) => {
     const facts: SupplierFamilyReviewFact[] = [];
     const [matches, decisions] = await Promise.all([
       // Only matches with targets contribute to Family facts (the loop below skips empty targets) and template_ids mirrors targets, so the
@@ -1174,16 +1189,17 @@ export async function supplierFamilyReviewFacts(client: SupabaseClient, brandId:
     const completed = batch.status === "completed";
     const templateIds = new Set([...total.keys(), ...(batch.coverage_template_ids ?? [])]);
     for (const templateId of templateIds) {
-      const inCoverage = batch.coverage_template_ids === null || batch.coverage_template_ids.includes(templateId);
+      const inCoverage = (batch.coverage_template_ids === null || batch.coverage_template_ids.includes(templateId)) &&
+        (batch.status === "completed" || batch.scope !== "selected_templates" || (batch.selected_template_ids ?? []).includes(templateId));
       const totalTargets = total.get(templateId)?.size ?? 0, excludedTargets = excluded.get(templateId)?.size ?? 0;
       const resolvedTargets = completed ? totalTargets - excludedTargets : resolved.get(templateId)?.size ?? 0;
       const unresolvedTargets = completed ? 0 : open.get(templateId)?.size ?? 0;
       const fullyChecked = completed && inCoverage && totalTargets > 0 && excludedTargets === 0 && unresolvedTargets === 0;
-      facts.push({ brandId, templateId, sourceId: batch.source_id, batchId: batch.id, batchStatus: batch.status, completedAt: batch.completed_at, scope: batch.scope,
+      facts.push({ brandId, templateId, sourceId: batch.source_id, batchId: batch.id, batchStatus: batch.status, batchCreatedAt: batch.created_at, completedAt: batch.completed_at, scope: batch.scope,
         inCoverage, hasReviewEvidence: totalTargets > 0, totalTargets, excludedTargets, resolvedTargets, unresolvedTargets,
         fullyChecked, partiallyChecked: completed && inCoverage && excludedTargets > 0 && resolvedTargets > 0 });
     }
     return facts;
   }, 2);
-  return factsByBatch.flat();
+  return authoritativeSupplierFamilyReviewFacts(factsByBatch.flat());
 }

@@ -24,24 +24,25 @@ const changedAfter = /Product prices changed after Supplier review\. Build a fre
 function pgClient(db: PGlite) {
   return {
     from(table: string) {
-      const filters: Array<[string, unknown]> = []; const seeks: Array<[string, unknown]> = []; let order: string | null = null, start = 0, end = 999;
+      const filters: Array<[string, unknown]> = []; const seeks: Array<[string, unknown]> = []; let targeted = false; let order: string | null = null, start = 0, end = 999;
       const execute = async () => {
         let rows: Record<string, unknown>[];
         if (table === "product_components") {
           const brandFilter = filters.find(([key]) => key === "product_templates.brand_id");
           rows = (await db.query<Record<string, unknown>>("select c.* from product_components c join product_templates t on t.id=c.template_id where t.brand_id=$1 and c.is_active order by c.id", [brandFilter?.[1]])).rows;
         } else {
-          const where = [...filters.map(([key], index) => `"${key}"=$${index + 1}`), ...seeks.map(([key], index) => `"${key}">$${filters.length + index + 1}`)].join(" and ");
+          const where = [...filters.map(([key], index) => `"${key}"=$${index + 1}`), ...seeks.map(([key], index) => `"${key}">$${filters.length + index + 1}`), ...(targeted ? ["template_ids <> '{}'::uuid[]"] : [])].join(" and ");
           rows = (await db.query<Record<string, unknown>>(`select * from public.${table}${where ? ` where ${where}` : ""}${order ? ` order by "${order}"` : ""} limit ${end - start + 1} offset ${start}`, [...filters, ...seeks].map(([, value]) => value))).rows;
         }
         return rows.map((row) => {
           const copy = { ...row };
           for (const field of ["default_unit_price", "unit_price"]) if (typeof copy[field] === "string") copy[field] = Number(copy[field]);
           if (table === "product_templates" && copy.pricing_version !== undefined) copy.pricing_version = String(copy.pricing_version);
+          for (const field of ["created_at", "completed_at"]) if (copy[field] instanceof Date) copy[field] = copy[field].toISOString();
           return copy;
         });
       };
-      return { select() { return this; }, eq(key: string, value: unknown) { filters.push([key, value]); return this; }, gt(key: string, value: unknown) { seeks.push([key, value]); return this; }, order(column: string) { order = column; return this; }, range(from: number, to: number) { start = from; end = to; return this; },
+      return { select() { return this; }, eq(key: string, value: unknown) { filters.push([key, value]); return this; }, neq(key: string, value: unknown) { assert.equal(key, "template_ids"); assert.equal(value, "{}"); targeted = true; return this; }, gt(key: string, value: unknown) { seeks.push([key, value]); return this; }, order(column: string) { order = column; return this; }, range(from: number, to: number) { start = from; end = to; return this; },
         async single() { const rows = await execute(); return { data: rows.length === 1 ? rows[0] : null, error: rows.length === 1 ? null : { message: "Record unavailable" } }; },
         then(resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) { return execute().then((data) => resolve({ data, error: null }), reject); } };
     },
@@ -386,6 +387,22 @@ test("decision outcomes: excluded only for missing targets, resolved only by the
   assert.equal(supplierTargetOutcome("increased", "skip"), "open");
   assert.equal(supplierTargetOutcome("increased", "mapping_proposed"), "open");
   assert.equal(supplierTargetOutcome("ambiguous", "reviewed"), "open");
+});
+
+test("Family facts choose the latest eligible review, preserve older batches, and keep targeted matching", async () => {
+  const f = await fixture({ link: false });
+  try {
+    const oldBatch = id(60);
+    await f.db.exec(`update public.supplier_price_batches set created_at='2026-10-06' where id='${batch}';
+      insert into public.supplier_price_batches(id,brand_id,source_id,title,scope,status,expected_matches,expected_chunks,basis_warning,created_by,created_at,coverage_template_ids)
+      values('${oldBatch}','${brand}','${source}','Old review','complete','review',1,1,'','${user}','2026-10-05',array['${t2}']::uuid[]);
+      insert into public.supplier_price_matches(batch_id,key,code,classification,template_ids,data)
+      values('${oldBatch}','old','OLD','needs_dimension_mapping',array['${t2}']::uuid[],jsonb_build_object('classification','needs_dimension_mapping','targets',jsonb_build_array(jsonb_build_object('template_id','${t2}','key','old-target'))));`);
+    const facts = await supplierFamilyReviewFacts(f.client, brand);
+    assert.ok(facts.filter((item) => item.templateId === t2).every((item) => item.batchId === batch));
+    assert.equal(facts.find((item) => item.templateId === t2)?.unresolvedTargets, 0);
+    assert.equal((await f.db.query("select id from public.supplier_price_batches where id=$1", [oldBatch])).rows.length, 1);
+  } finally { await f.db.close(); }
 });
 
 test("open batch: exact decided and excluded counts per Family; nothing is fully checked or partially checked", async () => {

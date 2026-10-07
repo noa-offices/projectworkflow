@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
+import { SupplierLeaveReviewButton } from "@/components/products/supplier-history-actions";
 import type { SupplierCoverageConflict, SupplierCoverageSuggestionRow } from "@/lib/products/supplier-price-contracts";
 import type { SupplierCoverageDefinition, SupplierFamilyCoverageRow, SupplierPreviousSource, SupplierPriceListCard, SupplierPriceListState } from "@/lib/products/supplier-price-repository";
 import { archiveSupplierSourceDefinition, assignFamiliesToSupplierSource, confirmSupplierCoverage, createSupplierSourceDefinition, deleteSupplierSourceDefinition, linkSupplierSourceDefinition, renameSupplierSourceDefinition, resolveSupplierCoverageConflict, archiveSupplierSource, deletePreviousSupplierSource } from "@/app/products/price-updates/supplier-sources/actions";
@@ -242,7 +243,8 @@ export function SupplierPriceListCards({ cards, importHref, approver }: { cards:
         <div><dt className="text-zinc-500">Supplier items</dt><dd className="font-semibold tabular-nums text-zinc-950">{item.items.toLocaleString("en-US")}</dd></div></dl>
       {item.batchId ? <p className="text-xs text-zinc-600">{item.unresolved ? `${item.unresolved} ${item.unresolved === 1 ? "item needs" : "items need"} attention` : "Nothing needs attention"}{item.unchanged ? ` · ${item.unchanged} unchanged` : ""}</p> : null}
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-zinc-100 pt-3">
-        <Link href={item.openHref} className={primary}>{action}</Link>
+        <div className="flex flex-wrap items-center gap-2"><Link href={item.openHref} className={primary}>{action}</Link>
+          {approver && item.batchId && (item.batchStatus === "review" || item.batchStatus === "matching") ? <SupplierLeaveReviewButton batchId={item.batchId} /> : null}</div>
         <details className="relative"><summary className={`${button} cursor-pointer list-none`} aria-label={`More actions for ${item.title}`}>⋯</summary>
           <ul className="absolute right-0 z-10 mt-1 w-48 space-y-1 rounded-md border border-zinc-200 bg-white p-2 text-xs font-semibold shadow-lg">
             <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.detailsHref}>View extracted data</Link></li>

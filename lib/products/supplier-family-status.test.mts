@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveSupplierBrandPriceStatus, resolveSupplierFamilyPriceStatus, supplierFamilyStatusLabels, supplierFamilyStatusPresentation, type SupplierResponsibilityInput, type SupplierVersionRef } from "./supplier-family-status.js";
-import type { SupplierFamilyReviewFact } from "./supplier-price-repository.js";
+import { authoritativeSupplierFamilyReviewFacts, type SupplierFamilyReviewFact } from "./supplier-price-repository.js";
 
 const TODAY = "2026-10-20";
 const FAMILY = "fam-1";
@@ -15,6 +15,35 @@ const openFact = (over: Partial<SupplierFamilyReviewFact> = {}) => fact({ batchS
 const resolve = (responsibilities: SupplierResponsibilityInput[], facts: SupplierFamilyReviewFact[], families = [{ templateId: FAMILY, brandId: "brand" }]) =>
   resolveSupplierFamilyPriceStatus({ businessDate: TODAY, families, responsibilities, facts, legacyDetail: () => "Interval check: last checked 2026-01-01" });
 const one = (responsibilities: SupplierResponsibilityInput[], facts: SupplierFamilyReviewFact[]) => resolve(responsibilities, facts)[0];
+
+test("latest eligible open Family fact wins without deleting older batches or changing completed proof", () => {
+  const old = openFact({ batchId: "a-old", batchCreatedAt: "2026-10-05T00:00:00Z", totalTargets: 225, unresolvedTargets: 225 });
+  const current = openFact({ batchId: "z-current", batchCreatedAt: "2026-10-06T00:00:00Z", totalTargets: 10, resolvedTargets: 10, unresolvedTargets: 0 });
+  const stored = [old, current];
+  const selected = authoritativeSupplierFamilyReviewFacts(stored);
+  assert.deepEqual(selected, [current]);
+  assert.equal(stored.length, 2);
+  assert.equal(one([responsibility([v("v1")])], selected).status, "ready_to_complete");
+  const completed = fact();
+  assert.equal(one([responsibility([v("v1")])], authoritativeSupplierFamilyReviewFacts([...stored, completed])).status, "price_checked");
+});
+
+test("abandoned latest review is ignored: another open review wins, otherwise update_available or completed proof", () => {
+  const abandoned = openFact({ batchId: "left", batchStatus: "abandoned", batchCreatedAt: "2026-10-08", unresolvedTargets: 9 });
+  const older = openFact({ batchId: "older", batchCreatedAt: "2026-10-07", unresolvedTargets: 0 });
+  assert.equal(one([responsibility([v("v1")])], authoritativeSupplierFamilyReviewFacts([older, abandoned])).status, "ready_to_complete");
+  assert.equal(one([responsibility([v("v1")])], authoritativeSupplierFamilyReviewFacts([abandoned])).status, "update_available");
+  assert.equal(one([responsibility([v("v1")])], authoritativeSupplierFamilyReviewFacts([abandoned, fact()])).status, "price_checked");
+});
+
+test("open authority is scoped to exact Source Version and Family, excludes uncovered facts, and breaks time ties by ID", () => {
+  const a = openFact({ batchId: "a", batchCreatedAt: "2026-10-06", totalTargets: 1, unresolvedTargets: 1 });
+  const z = openFact({ batchId: "z", batchCreatedAt: "2026-10-06", unresolvedTargets: 0 });
+  const otherSource = openFact({ sourceId: "other", batchId: "other" });
+  const otherFamily = openFact({ templateId: "other-family", batchId: "family" });
+  const uncovered = openFact({ batchId: "uncovered", batchCreatedAt: "2026-10-07", inCoverage: false });
+  assert.deepEqual(authoritativeSupplierFamilyReviewFacts([a, z, otherSource, otherFamily, uncovered]), [z, otherSource, otherFamily]);
+});
 
 test("exact applicable version completed in full → price checked", () => {
   const status = one([responsibility([v("v1", { effective_from: "2026-10-01" })])], [fact({ sourceId: "v1" })]);

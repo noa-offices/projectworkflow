@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReviewBatch, SourceVersion } from "@/lib/products/supplier-price-contracts";
 import type { FamilyOverview } from "@/lib/products/supplier-price-repository";
-import { SupplierArchiveButton } from "@/components/products/supplier-price-workspace-controls";
+import { SupplierHistoryActions, SupplierLeaveReviewButton } from "@/components/products/supplier-history-actions";
 import { SupplierSourceInspector } from "@/components/products/supplier-source-inspector";
 
 const card = "rounded-lg border border-zinc-200 bg-white shadow-sm";
@@ -12,7 +12,7 @@ const primaryLink = "inline-flex h-9 items-center justify-center rounded-md bg-e
 const th = "px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500";
 const basisLabel = (basis: string) => basis === "list" ? "List prices" : basis === "net" ? "Net prices" : "Price basis not set";
 const coverageLabel = (scope: string) => scope === "complete" ? "Complete Brand Review" : scope === "selected_templates" ? "Selected Families Review" : "Partial Review";
-const reviewStatus = (status: string) => status === "completed" ? "Completed" : status === "review" ? "In progress" : status === "archived" ? "Previous review" : "Preparing";
+const reviewStatus = (status: string) => status === "completed" ? "Completed" : status === "review" || status === "matching" ? "In progress" : status === "abandoned" ? "Abandoned" : status === "archived" ? "Previous review" : "Preparing";
 const count = (value: number) => value.toLocaleString("en-US");
 
 export type WorkflowStep = 1 | 2 | 3;
@@ -91,12 +91,12 @@ export function SupplierCurrentPriceList({ brandName, current, inProgress, impor
   </section>;
 }
 
-export type HistoryRow = { id: string; title: string; sourceName?: string; date: string; status: "current" | "archived" | "unfinished"; coverage: string; baseline: string; viewHref: string; downloadUrl?: string };
+export type HistoryRow = { id: string; title: string; sourceName?: string; date: string; status: "current" | "archived" | "unfinished"; coverage: string; baseline: string; viewHref: string; downloadUrl?: string; reviewsHref?: string; hasActiveReview?: boolean; hasCompletedHistory?: boolean };
 const historyStatus = { current: ["Current", "border-emerald-200 bg-emerald-50 text-emerald-900"], archived: ["Archived", "border-zinc-200 bg-zinc-100 text-zinc-600"], unfinished: ["Unfinished import", "border-amber-200 bg-amber-50 text-amber-900"] } as const;
 /** Price-list history. Archive hides a list but deletes nothing; used lists are never deleted. */
-export function SupplierHistoryTable({ rows, showArchived, archivedCount, toggleHref, pagerHrefs, canArchive, reviews, currentBatchId, reviewHref, newReviewHref }: {
-  rows: HistoryRow[]; showArchived: boolean; archivedCount: number; toggleHref: string; pagerHrefs: { previous: string; next: string }; canArchive: boolean;
-  reviews: ReviewBatch[]; currentBatchId?: string; reviewHref: (id: string) => string; newReviewHref?: string;
+export function SupplierHistoryTable({ rows, showArchived, archivedCount, toggleHref, pagerHrefs, canArchive, canUnarchive = false, canPermanentlyDelete = false, canLeaveReview = false, reviews, currentBatchId, reviewHref, newReviewHref, reviewPagerHrefs }: {
+  rows: HistoryRow[]; showArchived: boolean; archivedCount: number; toggleHref: string; pagerHrefs: { previous: string; next: string }; canArchive: boolean; canUnarchive?: boolean; canPermanentlyDelete?: boolean;
+  reviews: ReviewBatch[]; currentBatchId?: string; reviewHref: (id: string) => string; newReviewHref?: string; canLeaveReview?: boolean; reviewPagerHrefs?: { previous: string; next: string };
 }) {
   const visible = rows.filter((row) => showArchived || row.status !== "archived");
   return <section className="space-y-3" aria-label="Price list history">
@@ -104,15 +104,17 @@ export function SupplierHistoryTable({ rows, showArchived, archivedCount, toggle
       {archivedCount ? <Link href={toggleHref} className={smallButton}>{showArchived ? "Hide archived" : `Show archived (${archivedCount})`}</Link> : null}</div>
     <div className={`${card} overflow-hidden`}><div className="overflow-x-auto"><table className="min-w-full divide-y divide-zinc-200 text-sm"><thead className="bg-zinc-50"><tr className="text-left"><th className={th}>Price list</th><th className={th}>Date</th><th className={th}>Status</th><th className={th}>Coverage</th><th className={th}>Baseline</th><th className={th}>Actions</th></tr></thead>
       <tbody className="divide-y divide-zinc-100">{visible.map((row) => { const [label, tone] = historyStatus[row.status]; return <tr key={row.id} className="align-top transition hover:bg-zinc-50">
-        <th scope="row" className="px-3 py-2 text-left font-semibold text-zinc-950">{row.sourceName ? <span className="block text-xs font-medium text-emerald-900">{row.sourceName}</span> : null}{row.title}</th><td className="px-3 py-2 tabular-nums text-zinc-600">{row.date}</td><td className="px-3 py-2"><span className={`${badge} ${tone}`}>{label}</span></td><td className="px-3 py-2 text-zinc-700">{row.coverage}</td><td className="px-3 py-2 text-zinc-700">{row.baseline}</td>
-        <td className="px-3 py-2"><details className="relative"><summary className={`${smallButton} cursor-pointer list-none`} aria-label={`Actions for ${row.title}`}>⋯</summary>
-          <ul className="absolute right-0 z-10 mt-1 w-40 space-y-1 rounded-md border border-zinc-200 bg-white p-2 text-xs font-semibold shadow-lg"><li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={row.viewHref}>View</Link></li>
-            {row.downloadUrl ? <li><a className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={row.downloadUrl} target="_blank" rel="noopener noreferrer">Download</a></li> : null}
-            {canArchive && row.status !== "archived" ? <li className="border-t border-zinc-100 pt-1"><SupplierArchiveButton sourceId={row.id} title={row.title} /></li> : null}</ul></details></td></tr>; })}</tbody></table></div>
+        <th scope="row" className="px-3 py-2 text-left font-semibold text-zinc-950">{row.sourceName ? <span className="block text-xs font-medium text-emerald-900">{row.sourceName}</span> : null}{row.reviewsHref ? <Link href={row.reviewsHref} className="underline-offset-2 hover:underline">{row.title}</Link> : row.title}</th><td className="px-3 py-2 tabular-nums text-zinc-600">{row.date}</td><td className="px-3 py-2"><span className={`${badge} ${tone}`}>{label}</span>{row.hasActiveReview ? <span className="block pt-1 text-xs text-amber-800">Review: In progress</span> : null}</td><td className="px-3 py-2 text-zinc-700">{row.coverage}</td><td className="px-3 py-2 text-zinc-700">{row.baseline}</td>
+        <td className="px-3 py-2"><SupplierHistoryActions sourceId={row.id} title={row.title} viewHref={row.viewHref} downloadUrl={row.downloadUrl}
+          archived={row.status === "archived"} canArchive={canArchive} canUnarchive={canUnarchive} canPermanentlyDelete={canPermanentlyDelete}
+          deleteBlockedReason={row.hasCompletedHistory ? "This price list is referenced by completed pricing history and cannot be fully deleted." : row.hasActiveReview ? "Leave all open reviews before permanently deleting this price list." : undefined} /></td></tr>; })}</tbody></table></div>
       {visible.length === 0 ? <p className="px-4 py-10 text-center text-sm text-zinc-500">No price lists to show.</p> : null}</div>
     <p className="flex justify-between text-xs"><Link href={pagerHrefs.previous} className={smallButton}>Previous price lists</Link><Link href={pagerHrefs.next} className={smallButton}>Next price lists</Link></p>
-    {reviews.length ? <div className={`${card} p-4`}><h4 className="text-sm font-semibold text-zinc-950">Reviews of the selected price list</h4>
-      <ul className="mt-2 space-y-1 text-sm">{reviews.map((item) => <li key={item.id} className="flex items-center gap-2"><Link className="font-medium underline-offset-2 hover:underline" href={reviewHref(item.id)} aria-current={item.id === currentBatchId ? "true" : undefined}>{coverageLabel(item.scope)}</Link> <span className={`${badge} border-zinc-200 bg-zinc-50`}>{reviewStatus(item.status)}</span></li>)}</ul>
+    {reviews.length || reviewPagerHrefs ? <div className={`${card} p-4`}><h4 className="text-sm font-semibold text-zinc-950">Reviews of the selected price list</h4>
+      <ul className="mt-2 space-y-1 text-sm">{reviews.map((item) => <li key={item.id} className="flex flex-wrap items-center gap-2"><Link className="font-medium underline-offset-2 hover:underline" href={reviewHref(item.id)} aria-current={item.id === currentBatchId ? "true" : undefined}>{coverageLabel(item.scope)}</Link> <span className={`${badge} border-zinc-200 bg-zinc-50`}>{reviewStatus(item.status)}</span>
+        {canLeaveReview && (item.status === "review" || item.status === "matching") ? <SupplierLeaveReviewButton batchId={item.id} /> : null}</li>)}</ul>
+      {reviews.length === 0 ? <p className="mt-2 text-sm text-zinc-500">No reviews on this page.</p> : null}
+      {reviewPagerHrefs ? <p className="mt-3 flex justify-between text-xs"><Link href={reviewPagerHrefs.previous}>Previous reviews</Link>{reviews.length >= 20 ? <Link href={reviewPagerHrefs.next}>Next reviews</Link> : <span className="text-zinc-400">Next reviews</span>}</p> : null}
       {newReviewHref ? <Link href={newReviewHref} className={`${smallButton} mt-3`}>Start a new review</Link> : null}</div> : null}
   </section>;
 }

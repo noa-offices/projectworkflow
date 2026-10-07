@@ -25,7 +25,8 @@ const common = {
 type Component = (props: Record<string, unknown>) => React.ReactElement | null;
 const html = (component: Component, props: Record<string, unknown>) => renderToStaticMarkup(React.createElement(component as never, props as never));
 const controls = await load<Record<"SupplierAdvancedImportSettings" | "SupplierArchiveButton", Component>>("./supplier-price-workspace-controls.tsx", common);
-const workflow = await load<Record<"SupplierTabs" | "SupplierCurrentPriceList" | "SupplierHistoryTable", Component>>("./supplier-price-workflow.tsx", { ...common, "@/components/products/supplier-price-workspace-controls": controls });
+const historyActions = await load("./supplier-history-actions.tsx", { ...common, "./supplier-price-workspace-controls": controls });
+const workflow = await load<Record<"SupplierTabs" | "SupplierCurrentPriceList" | "SupplierHistoryTable", Component>>("./supplier-price-workflow.tsx", { ...common, "@/components/products/supplier-price-workspace-controls": controls, "@/components/products/supplier-history-actions": historyActions });
 const wizard = await load<{ SupplierImportFormatWizard: Component; buildImportProfile: (choices: Record<string, unknown>) => Record<string, unknown>; testImportProfile: (rows: unknown[], profile: unknown) => { items: number; valid: number; attention: number; problems: Array<[string, number]> } }>("./supplier-import-format-wizard.tsx", common);
 const pageSource = await read("../../app/products/price-updates/supplier-sources/page.tsx");
 const workflowSource = await read("./supplier-price-workflow.tsx");
@@ -47,7 +48,7 @@ test("Current price list / Import new / History are the three areas", () => {
   assert.match(pageSource, /const tab: PriceListTab = /); assert.match(pageSource, /<SupplierTabs /); assert.match(pageSource, /tab === "import"/); assert.match(pageSource, /tab === "history"/);
 });
 
-test("History hides archived by default, offers View / Download / Archive, and never Delete", () => {
+test("History hides archived by default, offers View / Download / Archive, and hides permanent delete from non-owners", () => {
   const rows = [row("s1", "February 2026", "current", { baseline: "Active baseline", downloadUrl: "https://example.test/f" }), row("s0", "November 2025", "current", { baseline: "Replaced" }), row("sa", "Old list", "archived"), row("sf", "Broken import", "unfinished")];
   const props = { rows, showArchived: false, archivedCount: 1, toggleHref: "/toggle", pagerHrefs: { previous: "/p", next: "/n" }, canArchive: true, reviews: [], reviewHref: () => "/r" };
   const closed = html(workflow.SupplierHistoryTable, props);
@@ -62,6 +63,21 @@ test("History hides archived by default, offers View / Download / Archive, and n
   assert.doesNotMatch(workflowSource + controlsSource + pageSource, /deleteSupplier|delete_source|Delete price list/);
   assert.match(actionsSource, /export async function archiveSupplierSource\(sourceId: string\) \{\r?\n  const \{ client \} = await reviewer\(\);/);
   assert.match(html(controls.SupplierArchiveButton, { sourceId: "s1", title: "February 2026" }), /aria-label="Archive price list February 2026"/);
+});
+
+test("History lifecycle: archived/open rows show Unarchive, blocked delete and selected review controls; abandoned/completed history stays visible", () => {
+  const reviews = ["matching", "review", "abandoned", "completed"].map((status, index) => ({ id: `r${index}`, brand_id: "b", source_id: "s", scope: "complete", status, selected_template_ids: [], basis_warning: "", title: "Review" }));
+  const props = { rows: [row("s", "Archived test", "archived", { hasActiveReview: true, reviewsHref: "/history/s" })], showArchived: true, archivedCount: 1, toggleHref: "/t", pagerHrefs: { previous: "/p", next: "/n" },
+    canArchive: true, canUnarchive: true, canLeaveReview: true, canPermanentlyDelete: true, reviews, reviewHref: (id: string) => `/review/${id}`, reviewPagerHrefs: { previous: "/reviews/previous", next: "/reviews/next" } };
+  const out = html(workflow.SupplierHistoryTable, props);
+  assert.match(out, /href="\/history\/s"/); assert.match(out, /Review: In progress/); assert.match(out, />Unarchive<\/button>/);
+  assert.match(out, /disabled=""[^>]*title="Leave all open reviews/);
+  assert.match(out, />Abandoned<\/span>/); assert.match(out, />Completed<\/span>/);
+  assert.equal((out.match(/<dialog /g) ?? []).length, 2, "only matching/review batches offer Leave review");
+  assert.match(out, /Previous reviews/); assert.match(out, /Next reviews/);
+  const readonly = html(workflow.SupplierHistoryTable, { ...props, canArchive: false, canUnarchive: false, canLeaveReview: false, canPermanentlyDelete: false });
+  assert.doesNotMatch(readonly, /<dialog|>Unarchive<|>Leave review<|>Permanently delete</);
+  assert.match(readonly, />Abandoned<\/span>/);
 });
 
 const rows = [
