@@ -10,6 +10,8 @@ import { suggestedImportTitle } from "@/lib/products/supplier-import-wizard";
 import { SupplierAdvancedImportSettings, SupplierCompletionControls, SupplierPriceBasisPanel, SupplierReviewControls, SupplierStartReview } from "@/components/products/supplier-price-workspace-controls";
 import { SupplierCompleteSummary, SupplierFinishScreen, SupplierImportDetails, SupplierHistoryTable, SupplierImportSummary, SupplierTabs, SupplierWorkflowHeader, type HistoryRow, type PriceListTab, type WorkflowStep } from "@/components/products/supplier-price-workflow";
 import { SupplierCoverageContext, SupplierCoverageSetup, SupplierFamilyCoverageSetup, SupplierPreviousPriceList, SupplierPriceListCards, SupplierSourceSummary, type OtherCoverage, type PriceListCardView } from "@/components/products/supplier-coverage";
+import { supplierBusinessDate, resolveSupplierPriceListLifecycleState } from "@/lib/products/supplier-price-repository";
+import { priceListReviewState } from "@/lib/products/supplier-list-presentation";
 import { SupplierCapacityPanel } from "@/components/products/supplier-capacity";
 import { requireBrandPriceReviewer } from "@/lib/auth";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
@@ -138,18 +140,25 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
   // History rows: coverage and baseline come from the reviews of each price list; download links are short-lived.
   let historyRows: HistoryRow[] = [];
   if (brand && tab === "history") {
-    const reviewRows = sources.length ? (await client.from("supplier_price_batches").select("id,source_id,scope,status,brand_price_list_update_id,created_at").in("source_id", sources.map((item) => item.id)).order("created_at", { ascending: false }).returns<Array<{ id: string; source_id: string; scope: string; status: string; brand_price_list_update_id: string | null }>>()).data ?? [] : [];
+    const allVersions = await supplierRows<SourceVersion & { created_at: string }>(client, "supplier_source_versions", "*", { brand_id: brand.id }, "created_at");
+    const reviewRows = (await supplierRows<{ id: string; source_id: string; scope: string; status: string; brand_price_list_update_id: string | null; completed_at: string | null; created_at: string }>(client, "supplier_price_batches", "id,source_id,scope,status,brand_price_list_update_id,completed_at,created_at", { brand_id: brand.id }, "created_at")).sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
     const activeUpdates = (await client.from("brand_price_list_updates").select("id,title,effective_from,received_at,created_at,status,coverage_mode").eq("brand_id", brand.id).returns<Array<{ id: string; title: string; effective_from: string | null; received_at: string | null; created_at: string | null; status: string; coverage_mode: string }>>()).data ?? [];
     const activeId = latestBrandPriceListUpdate(activeUpdates)?.id;
+    const reviewUnresolved = new Map(await Promise.all(reviewRows.filter((review) => review.status === "review" && sources.some((item) => item.id === review.source_id)).map(async (review) => {
+      const units = await supplierRows<{ unresolved: number }>(client, "supplier_template_review_units", "unresolved", { batch_id: review.id }, "template_id");
+      return [review.id, units.reduce((total, unit) => total + unit.unresolved, 0)] as const;
+    })));
     const links = await Promise.all(sources.map(async (item) => item.working_reference ? [item.id, (await client.storage.from("supplier-price-sources").createSignedUrl(item.working_reference, 300)).data?.signedUrl] as const : [item.id, undefined] as const));
     const url = new Map(links);
     historyRows = sources.map((item) => {
-      const latest = reviewRows.find((review) => review.source_id === item.id), finished = reviewRows.find((review) => review.source_id === item.id && review.status === "completed");
-      return { id: item.id, title: item.title, sourceName: coverage?.definitions.find((entry) => entry.id === item.definition_id)?.name, date: ((item as SourceVersion & { created_at?: string }).created_at ?? item.received_at ?? "").slice(0, 10) || "—", status: item.status === "imported" ? "current" : item.status === "archived" ? "archived" : "unfinished",
+      const version = allVersions.find((entry) => entry.id === item.id) ?? { ...item, created_at: "" };
+      const latest = reviewRows.find((review) => review.source_id === item.id && (review.status === "review" || review.status === "matching")) ?? reviewRows.find((review) => review.source_id === item.id), finished = reviewRows.find((review) => review.source_id === item.id && review.status === "completed");
+      return { id: item.id, title: item.title, sourceName: coverage?.definitions.find((entry) => entry.id === item.definition_id)?.name, date: item.effective_from ?? "Immediately applicable", completedDate: finished?.completed_at?.slice(0, 10) ?? "—", status: resolveSupplierPriceListLifecycleState(version, allVersions, reviewRows, supplierBusinessDate()), reviewState: priceListReviewState(latest?.status ?? null, latest ? reviewUnresolved.get(latest.id) : undefined),
         coverage: latest ? ({ complete: "Complete Brand", selected_templates: "Selected Families", partial: "Partial" } as Record<string, string>)[latest.scope] ?? "Review" : "Not reviewed",
         baseline: finished ? (finished.brand_price_list_update_id === activeId ? "Active baseline" : "Replaced") : "—", viewHref: href({ tab: "current", source: item.id, batch: "", view: "family", offset: "0", batchOffset: "0" }), downloadUrl: url.get(item.id),
         reviewsHref: href({ tab: "history", source: item.id, batch: "", view: "family", batchOffset: "0" }),
         hasActiveReview: reviewRows.some((review) => review.source_id === item.id && (review.status === "matching" || review.status === "review")),
+        hasCompletedReview: Boolean(finished),
         hasCompletedHistory: Boolean(finished) || reviewRows.some((review) => review.source_id === item.id && review.brand_price_list_update_id !== null) };
     });
   }

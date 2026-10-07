@@ -1,10 +1,40 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveApplicableSupplierSourceVersion, supplierBusinessDate, upcomingSupplierSourceVersions } from "./supplier-price-repository.js";
+import { resolveApplicableSupplierSourceVersion, resolveSupplierPriceListLifecycleState, supplierPriceListLifecycleCounts, supplierBusinessDate, upcomingSupplierSourceVersions } from "./supplier-price-repository.js";
+import { priceListReviewState } from "./supplier-list-presentation.js";
 
 type V = { id: string; status: string; effective_from: string | null; created_at: string };
 const v = (id: string, extra: Partial<V> = {}): V => ({ id, status: "imported", effective_from: null, created_at: "2026-01-01T00:00:00Z", ...extra });
 const pick = (versions: V[], day: string) => resolveApplicableSupplierSourceVersion(versions, day)?.id ?? null;
+
+test("price-list lifecycle is distinct from review lifecycle and exactly one version is current", () => {
+  const versions = [v("old", { effective_from: "2026-09-01" }), v("new", { effective_from: "2026-10-01" }), v("future", { effective_from: "2026-11-01" }), v("archive", { status: "archived" })];
+  const reviews = [{ source_id: "old", status: "completed", completed_at: "2026-09-01" }, { source_id: "new", status: "review", completed_at: "2026-10-07" }];
+  const states = () => versions.map((item) => resolveSupplierPriceListLifecycleState(item, versions, reviews, "2026-10-07"));
+  assert.deepEqual(states(), ["current", "update_in_progress", "upcoming", "archived"]);
+  assert.deepEqual(supplierPriceListLifecycleCounts(versions, reviews, "2026-10-07"), { current: 1, updates: 1, upcoming: 1 });
+  reviews[1].status = "completed";
+  assert.deepEqual(states(), ["previous", "current", "upcoming", "archived"]);
+  assert.deepEqual(supplierPriceListLifecycleCounts(versions, reviews, "2026-10-07"), { current: 1, updates: 0, upcoming: 1 });
+  reviews[1].status = "abandoned";
+  assert.deepEqual(states(), ["current", "previous", "upcoming", "archived"]);
+  assert.equal(priceListReviewState("completed"), "Completed");
+  assert.equal(priceListReviewState("matching"), "In progress");
+  assert.equal(priceListReviewState("review", 2), "In progress");
+  assert.equal(priceListReviewState("review", 0), "Ready to complete");
+  assert.equal(priceListReviewState("abandoned"), "Abandoned");
+  assert.equal(priceListReviewState(null), "Not started");
+});
+
+test("open incoming review is an update even when its effective date ranks below the completed baseline", () => {
+  const versions = [v("old", { effective_from: "2026-10-01" }), v("incoming", { effective_from: null, created_at: "2026-10-07" })];
+  const reviews = [{ source_id: "old", status: "completed", completed_at: "2026-10-01" }, { source_id: "incoming", status: "matching", completed_at: "2026-10-07" }];
+  assert.equal(resolveSupplierPriceListLifecycleState(versions[1], versions, reviews, "2026-10-07"), "update_in_progress");
+  assert.equal(resolveSupplierPriceListLifecycleState(versions[0], versions, reviews, "2026-10-07"), "current");
+  reviews[1].status = "completed";
+  assert.equal(resolveSupplierPriceListLifecycleState(versions[1], versions, reviews, "2026-10-07"), "current");
+  assert.equal(resolveSupplierPriceListLifecycleState(versions[0], versions, reviews, "2026-10-07"), "previous");
+});
 
 test("one imported undated version is applicable", () => {
   assert.equal(pick([v("a")], "2026-10-20"), "a");

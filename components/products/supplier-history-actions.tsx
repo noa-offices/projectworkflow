@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { leaveSupplierReview, permanentlyDeleteSupplierSource, unarchiveSupplierSource } from "@/app/products/price-updates/supplier-sources/actions";
+import { leaveSupplierReview, permanentlyDeleteSupplierSource, removeSupplierSourceTechnicalData, unarchiveSupplierSource } from "@/app/products/price-updates/supplier-sources/actions";
 import { SupplierArchiveButton } from "./supplier-price-workspace-controls";
 
 /** Flip above bottom rows and clamp inside the viewport without altering the table layout. */
@@ -16,8 +16,8 @@ export function historyMenuPosition(anchor: { right: number; top: number; bottom
   };
 }
 
-export function SupplierHistoryActions({ sourceId, title, viewHref, downloadUrl, archived, canArchive, canUnarchive, canPermanentlyDelete, deleteBlockedReason }: {
-  sourceId: string; title: string; viewHref: string; downloadUrl?: string; archived: boolean; canArchive: boolean; canUnarchive: boolean; canPermanentlyDelete: boolean; deleteBlockedReason?: string;
+export function SupplierHistoryActions({ sourceId, title, viewHref, downloadUrl, archived, canArchive, canUnarchive, canPermanentlyDelete, canCleanTechnicalData = false, deleteBlockedReason }: {
+  sourceId: string; title: string; viewHref: string; downloadUrl?: string; archived: boolean; canArchive: boolean; canUnarchive: boolean; canPermanentlyDelete: boolean; canCleanTechnicalData?: boolean; deleteBlockedReason?: string;
 }) {
   const id = useId(), router = useRouter();
   const trigger = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null);
@@ -54,6 +54,16 @@ export function SupplierHistoryActions({ sourceId, title, viewHref, downloadUrl,
     catch (error) { setMessage(error instanceof Error ? error.message : "Could not unarchive this price list."); }
     finally { setBusy(false); }
   }
+  async function cleanTechnicalData() {
+    if (!window.confirm("Remove this price list's source file and raw technical data? Completed reviews, Product prices and audit history will be preserved. This cannot be undone.")) return;
+    setBusy(true); setMessage("");
+    try {
+      const result = await removeSupplierSourceTechnicalData(sourceId, true);
+      setMessage(result.warning || result.message);
+      if (!result.warning) router.refresh();
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not remove source technical data."); }
+    finally { setBusy(false); }
+  }
   const item = "block w-full rounded px-2 py-1 text-left text-zinc-700 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-800";
   return <>
     <button ref={trigger} type="button" aria-label={`Actions for ${title}`} aria-haspopup="dialog" aria-expanded={open} aria-controls={id}
@@ -73,6 +83,7 @@ export function SupplierHistoryActions({ sourceId, title, viewHref, downloadUrl,
       {downloadUrl ? <a className={item} href={downloadUrl} target="_blank" rel="noopener noreferrer">Download</a> : null}
       {canArchive && !archived ? <div className="border-t border-zinc-100 pt-1"><SupplierArchiveButton sourceId={sourceId} title={title} /></div> : null}
       {canUnarchive && archived ? <button type="button" disabled={busy} className={item} onClick={() => void restore()}>Unarchive</button> : null}
+      {canCleanTechnicalData ? <button type="button" disabled={busy} className={`${item} border-t border-zinc-100`} onClick={() => void cleanTechnicalData()}>Remove source file &amp; technical data</button> : null}
       {canPermanentlyDelete && archived ? <button type="button" disabled={busy || Boolean(deleteBlockedReason)} title={deleteBlockedReason} className={`${item} border-t border-zinc-100 text-red-800 hover:bg-red-50 disabled:opacity-50`} onClick={() => void remove()}>
         {busy ? "Deleting…" : retryCleanup ? "Retry file cleanup" : "Permanently delete"}
       </button> : null}

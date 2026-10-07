@@ -247,3 +247,15 @@ test("a single price list shows one card with its family count and the Start rev
   assert.equal((out.match(/More actions for/g) ?? []).length, 1); assert.match(out, />Ready to review</); assert.match(out, />Start review</);
   assert.match(out, /Families<\/dt><dd class="font-semibold tabular-nums text-zinc-950">5</);
 });
+
+test("multiple versions remain visible with separate price-list and review badges", () => {
+  const cards = [view({ sourceId: "new", title: "New list", priceListState: "update_in_progress", effectiveFrom: "2026-10-01", batchStatus: "review", unresolved: 1 }), view({ sourceId: "old", title: "Old list", priceListState: "current", batchStatus: "completed" }), view({ sourceId: "future", title: "Future list", priceListState: "upcoming" })];
+  const out = html(cardsCoverage.SupplierPriceListCards, { cards, importHref: "/import", approver: true });
+  for (const text of ["New list", "Old list", "Future list", "Updates in progress", "Price list: Current", "Price list: Update in progress", "Price list: Upcoming", "Review: Completed", "Review: In progress", "Effective date: 2026-10-01"]) assert.ok(out.includes(text), text);
+  assert.equal((out.match(/Price list: Current/g) ?? []).length, 1);
+});
+
+test("a replaced completed source leaves the Current cards and remains available through History", () => {
+  const out = html(cardsCoverage.SupplierPriceListCards, { cards: [view({ sourceId: "new", title: "New baseline", priceListState: "current", batchStatus: "completed" }), view({ sourceId: "old", title: "Old baseline", priceListState: "previous", batchStatus: "completed" })], importHref: "/import", approver: true });
+  assert.match(out, /New baseline/); assert.doesNotMatch(out, /Old baseline/);
+});

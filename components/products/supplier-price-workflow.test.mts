@@ -32,6 +32,13 @@ const historyActions = await load("./supplier-history-actions.tsx", { ...common,
 const workflow = await load<Record<"SupplierWorkflowHeader" | "SupplierImportSummary" | "SupplierImportDetails" | "SupplierTabs" | "SupplierCurrentPriceList" | "SupplierHistoryTable" | "SupplierFinishScreen" | "SupplierCompleteSummary", Component>>("./supplier-price-workflow.tsx", { "next/link": link, "@/components/products/supplier-source-inspector": inspector, "@/components/products/supplier-history-actions": historyActions });
 const html = (component: Component, props: Record<string, unknown>) => renderToStaticMarkup(React.createElement(component as never, props as never));
 
+test("History retains Previous completed versions with cleanup instead of hard delete", () => {
+  const out = html(workflow.SupplierHistoryTable, { rows: [{ id: "old", title: "Old list", date: "2026-09-01", completedDate: "2026-09-02", status: "previous", reviewState: "Completed", coverage: "Complete Brand", baseline: "Replaced", viewHref: "/old", hasCompletedHistory: true }], showArchived: true, archivedCount: 0, toggleHref: "/history", pagerHrefs: { previous: "/prev", next: "/next" }, canArchive: true, canPermanentlyDelete: true, reviews: [], reviewHref: () => "/review" });
+  assert.match(out, /Price list: Previous/); assert.match(out, /Review: Completed/);
+  assert.match(out, /Remove source file &amp; technical data/); assert.match(out, /2026-09-02/);
+  assert.doesNotMatch(out, /Price list: Current|Permanently delete/);
+});
+
 const profile = (id: string, title: string) => ({ id, title, config: { full_code_column: "CODE", strategy: "exact", currency: "EUR", basis: "list", price_columns: [{ column: "PRICE", price_field: "unit_price" }] } });
 const source = { id: "s1", brand_id: "b", title: "LAS MOBILI — February 2026", filename: "las.xlsx", file_hash: "a".repeat(64), source_type: "xlsx", currency: "EUR", basis: "list", status: "imported", stored_rows: 46108, stored_cells: 46108, identity_count: 3479, expected_rows: 46108, effective_from: "2026-02-01", received_at: null, original_reference: null };
 const batch = { id: "r1", brand_id: "b", source_id: "s1", scope: "complete", status: "review", selected_template_ids: [], basis_warning: "", title: "Review" };

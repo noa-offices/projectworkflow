@@ -11,6 +11,7 @@ const migrations = await Promise.all(["20261002060146_pricing_identity_version_f
   "20261002124625_supplier_source_finish_evidence", "038_product_template_detail_price_history", "20261003154849_detail_history_dynamic_price_fields", "20261003170000_supplier_shared_price_writer",
   "20261004090000_supplier_confirmed_unchanged_decision", "20261004120000_supplier_review_completion", "20261005090000_supplier_source_definitions", "20261005120000_supplier_batch_coverage_snapshot",
   "20261005150000_supplier_coverage_completion_mode", "20261005180000_supplier_source_definition_writes", "20261005210000_supplier_source_definition_delete", "20261006090000_supplier_capacity_hardening", "20261006120000_supplier_capacity_cleanup", "20261006150000_supplier_compact_source_rows", "20261006170000_supplier_cells_row_key_index", "20261006180000_supplier_staged_finalize", "20261006210000_supplier_identity_evidence", "20261006230000_supplier_evidence_backfill_compaction", "20261006240000_supplier_completion_effective_date_guard", "20261006250000_supplier_price_basis_confirmation_writes", "20261007082031_supplier_pricing_closeout", "20261007085236_supplier_price_list_lifecycle"].map(read));
+migrations.push(await read("20261007123620_supplier_historical_source_technical_cleanup"));
 const id = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")}`;
 const user = id(1), brand = id(2), otherBrand = id(3), template = id(4);
 const hashA = "a".repeat(64), hashB = "b".repeat(64);
@@ -81,6 +82,67 @@ const purge = (db: Db, sourceId: string, confirmed = true) => db.query<{ result:
 const archive = (db: Db, sourceId: string) => write(db, "archive_source", { source_id: sourceId });
 const leave = (db: Db, batchId: string, confirmed = true) => write(db, "review_abandon", { batch_id: batchId, confirmed });
 const unarchive = (db: Db, sourceId: string) => write(db, "source_unarchive", { source_id: sourceId });
+
+test("historical technical cleanup reuses Phase F, preserves complete audit/pricing proof, and supports safe file retries", async () => {
+  await withDb(async (db) => {
+    const sourceId = await importSource(db, { profileId: await profileFor(db) });
+    const batchId = await batchWithMatch(db, sourceId);
+    const path = `${brand}/${sourceId}/${hashA}.xlsx`;
+    await db.query("insert into storage.objects(bucket_id,name) values('supplier-price-sources',$1)", [path]);
+    await db.query("update public.supplier_source_versions set working_reference=$2 where id=$1", [sourceId, path]);
+    const clean = (confirmed = true) => db.query<{ result: { storage_paths: string[] } }>("select public.remove_supplier_source_technical_data($1,$2) result", [sourceId, confirmed]);
+    await assert.rejects(clean(false), /confirmation/);
+    await assert.rejects(clean(), /open reviews/);
+    await db.query("update public.supplier_price_batches set status='completed',completed_at=now() where id=$1", [batchId]);
+    await assert.rejects(clean(), /Archive the current/);
+    await archive(db, sourceId);
+    await db.exec("update public.test_role set role='procurement_manager'");
+    await assert.rejects(clean(), /privilege|permission/i);
+    await db.exec("update public.test_role set role='system_owner'");
+    const retained = async () => JSON.stringify(await Promise.all([
+      db.query("select * from public.supplier_price_batches order by id"), db.query("select * from public.supplier_price_matches order by key"), db.query("select * from public.supplier_price_decisions order by key"),
+      db.query("select * from public.supplier_template_review_units order by template_id"), db.query("select * from public.supplier_source_identities order by key"),
+      db.query("select * from public.brand_price_list_updates order by id"), db.query("select * from public.audit_activity_log order by id"),
+      db.query("select id,title,effective_from,currency,basis,status,expected_rows,stored_rows,identity_count from public.supplier_source_versions order by id"),
+      db.query("select * from public.product_template_price_history"), db.query("select * from public.product_template_detail_price_history"),
+    ]));
+    const products = await productSnapshot(db), proof = await retained();
+    assert.deepEqual((await clean()).rows[0].result.storage_paths, [path]);
+    assert.equal(await count(db, "select count(*) from public.supplier_source_rows where source_id=$1", [sourceId]), 0);
+    assert.equal(await count(db, "select count(*) from public.supplier_source_cells where source_id=$1", [sourceId]), 0);
+    assert.equal(await productSnapshot(db), products); assert.equal(await retained(), proof);
+    assert.deepEqual((await clean()).rows[0].result.storage_paths, [path]);
+    assert.equal(await count(db, "select count(*) from public.supplier_source_chunks where source_id=$1", [sourceId]), 1);
+    await assert.rejects(purge(db, sourceId), /completed pricing history/);
+    await db.query("delete from storage.objects where name=$1", [path]);
+    await db.query("select public.finish_supplier_source_file_cleanup($1)", [sourceId]);
+    assert.deepEqual((await clean()).rows[0].result.storage_paths, []);
+    await unarchive(db, sourceId); // retained identities and receipts still prove a finalized source
+    assert.equal(await productSnapshot(db), products);
+  });
+});
+
+test("historical technical cleanup accepts a replaced completed import without manually archiving it", async () => {
+  await withDb(async (db) => {
+    const profileId = await profileFor(db);
+    const previous = await importSource(db, { profileId });
+    const oldBatch = await batchWithMatch(db, previous);
+    const current = await importSource(db, { profileId, hash: hashB });
+    const newBatch = await batchWithMatch(db, current);
+    await db.query("update public.supplier_price_batches set status='completed',completed_at=now() where id=any($1::uuid[])", [[oldBatch, newBatch]]);
+    await db.query("update public.supplier_source_versions set effective_from=case when id=$1 then '2000-01-01'::date else '2001-01-01'::date end where id=any($2::uuid[])", [previous, [previous, current]]);
+    const path = `${brand}/${previous}/${hashA}.xlsx`;
+    await db.query("insert into storage.objects(bucket_id,name) values('supplier-price-sources',$1)", [path]);
+    await db.query("update public.supplier_source_versions set working_reference=$2 where id=$1", [previous, path]);
+    const before = await productSnapshot(db);
+    await db.query("select public.remove_supplier_source_technical_data($1,true)", [previous]);
+    assert.equal((await db.query<{ status: string }>("select status from public.supplier_source_versions where id=$1", [previous])).rows[0].status, "imported");
+    assert.equal(await count(db, "select count(*) from public.supplier_source_rows where source_id=$1", [previous]), 0);
+    assert.equal(await count(db, "select count(*) from public.supplier_source_rows where source_id=$1", [current]), sourceRows.length);
+    assert.equal(await count(db, "select count(*) from public.supplier_price_batches where status='completed'"), 2);
+    assert.equal(await productSnapshot(db), before);
+  });
+});
 
 for (const matching of [false, true]) test(`lifecycle: leave ${matching ? "matching" : "review"} abandons only the selected batch, keeps unfinished evidence and business outcomes`, async () => {
   await withDb(async (db) => {
@@ -192,7 +254,7 @@ test("lifecycle: unfinished archives and duplicate active files cannot be unarch
 
 test("lifecycle: existing RPC execution grants, constrained definer search paths and no direct workflow writes are preserved", async () => {
   await withDb(async (db) => {
-    for (const name of ["supplier_price_review_write(text,jsonb)", "purge_archived_supplier_source(uuid,boolean)"]) {
+    for (const name of ["supplier_price_review_write(text,jsonb)", "purge_archived_supplier_source(uuid,boolean)", "remove_supplier_source_technical_data(uuid,boolean)"]) {
       const row = (await db.query<{ anon: boolean; authenticated: boolean; secured: boolean }>("select has_function_privilege('anon',$1,'execute') anon,has_function_privilege('authenticated',$1,'execute') authenticated,prosecdef and proconfig @> array['search_path=\"\"'] secured from pg_proc where oid=$1::regprocedure", [`public.${name}`])).rows[0];
       assert.deepEqual(row, { anon: false, authenticated: true, secured: true });
     }

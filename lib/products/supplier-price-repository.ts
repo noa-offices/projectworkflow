@@ -1053,6 +1053,7 @@ export async function supplierProductSourceLookup(client: SupabaseClient, input:
 // ---- Phase H: one entry per current Supplier price list, each with its own review state. Read-only; uses the existing batch and unit rows. ----
 export type SupplierPriceListState = "waiting" | "no_coverage" | "ready_to_review" | "needs_attention" | "in_review" | "ready_to_complete" | "completed";
 export type SupplierPriceListCard = {
+  priceListState?: import("./supplier-list-presentation").PriceListLifecycle; effectiveFrom?: string | null; createdAt?: string;
   sourceId: string; sourceName: string | null; title: string; currency: string; profileId: string | null;
   families: number | null; sourceRows: number; items: number; compacted: boolean;
   batchId: string | null; batchStatus: string | null; scope: string | null; state: SupplierPriceListState;
@@ -1068,32 +1069,32 @@ export function supplierPriceListState(input: { hasSource: boolean; hasCoverage:
   return "ready_to_review";
 }
 /**
- * One card per current price list: the latest imported version of each active Supplier source, plus imported versions not linked
- * to any source. Each card resolves the latest review of that version only, so two sources of one Brand never share a review.
+ * Current baselines and incoming reviews only. Historical lists stay in History.
+ * Each card resolves its own review. Applicability and successful completion are separate requirements.
  */
 export async function supplierPriceListCards(client: SupabaseClient, brandId: string, definitions: SupplierCoverageDefinition[]): Promise<SupplierPriceListCard[]> {
   const versions = await supplierRows<Pick<SourceVersion, "id" | "definition_id" | "title" | "currency" | "stored_rows" | "identity_count" | "status" | "effective_from"> & { created_at: string; rows_compacted_at?: string | null }>(client, "supplier_source_versions", "id,definition_id,title,currency,stored_rows,identity_count,status,effective_from,created_at,rows_compacted_at", { brand_id: brandId, status: "imported" }, "created_at");
-  const batches = await supplierRows<{ id: string; source_id: string; status: string; scope: string; created_at: string }>(client, "supplier_price_batches", "id,source_id,status,scope,created_at", { brand_id: brandId }, "created_at");
+  const batches = await supplierRows<{ id: string; source_id: string; status: string; scope: string; created_at: string; completed_at: string | null }>(client, "supplier_price_batches", "id,source_id,status,scope,created_at,completed_at", { brand_id: brandId }, "created_at");
   // The applicable version per definition (by effective date, never by import order); legacy versions without a definition stay listed as before.
   const businessDate = supplierBusinessDate();
-  const byDefinition = new Map<string, typeof versions>();
-  for (const version of versions) if (version.definition_id) byDefinition.set(version.definition_id, [...(byDefinition.get(version.definition_id) ?? []), version]);
-  const current = [...byDefinition.values()].flatMap((group) => { const applicable = resolveApplicableSupplierSourceVersion(group, businessDate); return applicable ? [applicable] : []; })
-    .concat(versions.filter((version) => !version.definition_id));
+  const current = versions;
   const cards: SupplierPriceListCard[] = [];
   for (const version of current) {
     const definition = definitions.find((item) => item.id === version.definition_id);
     const sourceBatches = batches.filter((item) => item.source_id === version.id).sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
-    const batch = sourceBatches.find((item) => item.status === "review" || item.status === "matching") ?? sourceBatches.find((item) => item.status !== "abandoned") ?? null;
+    const batch = sourceBatches.find((item) => item.status === "review" || item.status === "matching") ?? sourceBatches[0] ?? null;
     const units = batch && batch.status === "review" ? await supplierRows<{ unresolved: number; unchanged: number; changed: number }>(client, "supplier_template_review_units", "unresolved,unchanged,changed", { batch_id: batch.id }, "template_id") : [];
     const unresolved = units.reduce((total, unit) => total + unit.unresolved, 0), unchanged = units.reduce((total, unit) => total + unit.unchanged, 0), changed = units.reduce((total, unit) => total + unit.changed, 0);
     const hasCoverage = Boolean(definition && definition.families.length);
-    cards.push({ sourceId: version.id, sourceName: definition?.name ?? null, title: version.title, currency: version.currency, profileId: definition?.profileId ?? null,
+    const priceListState = resolveSupplierPriceListLifecycleState(version, versions, batches, businessDate);
+    if (priceListState === "previous" || priceListState === "archived") continue;
+    if (priceListState === "update_in_progress" && batch?.status !== "review" && batch?.status !== "matching") continue;
+    cards.push({ priceListState, effectiveFrom: version.effective_from, createdAt: version.created_at, sourceId: version.id, sourceName: definition?.name ?? null, title: version.title, currency: version.currency, profileId: definition?.profileId ?? null,
       families: definition ? definition.families.length : null, sourceRows: version.stored_rows, items: version.identity_count, compacted: Boolean(version.rows_compacted_at),
       batchId: batch?.id ?? null, batchStatus: batch?.status ?? null, scope: batch?.scope ?? null,
       state: supplierPriceListState({ hasSource: true, hasCoverage, batchStatus: batch?.status ?? null, unresolved }), unresolved, unchanged, changed });
   }
-  return cards.sort((a, b) => (a.sourceName ?? "~").localeCompare(b.sourceName ?? "~") || a.title.localeCompare(b.title));
+  return cards.sort((a, b) => Number(b.priceListState === "current") - Number(a.priceListState === "current") || (b.effectiveFrom ?? "").localeCompare(a.effectiveFrom ?? "") || (b.createdAt ?? "").localeCompare(a.createdAt ?? "") || b.sourceId.localeCompare(a.sourceId));
 }
 
 // ---- Phase 1: applicable Supplier Source Version by effective date (one helper for every current-version reader). ----
@@ -1115,6 +1116,34 @@ export function resolveApplicableSupplierSourceVersion<T extends { id: string; s
     return created !== 0 ? created : b.id.localeCompare(a.id);
   });
   return sorted[0] ?? null;
+}
+/** Completion-aware presentation only. Never changes the applicability resolver used for matching/Family truth. */
+export function resolveSupplierPriceListLifecycleState<T extends { id: string; definition_id?: string | null; status: string; effective_from: string | null; created_at: string }>(version: T, versions: T[], reviews: Array<{ source_id: string; status: string; completed_at?: string | null }>, businessDate: string): import("./supplier-list-presentation").PriceListLifecycle {
+  if (version.status === "archived") return "archived";
+  if (version.status !== "imported") return "unfinished";
+  if (version.effective_from && version.effective_from > businessDate) return "upcoming";
+  const completed = new Set(reviews.filter((review) => review.status === "completed").map((review) => review.source_id));
+  const group = versions.filter((item) => (item.definition_id ?? null) === (version.definition_id ?? null) && completed.has(item.id));
+  const completionDate = (id: string) => reviews.filter((review) => review.source_id === id && review.status === "completed").reduce((date, review) => (review.completed_at ?? "") > date ? review.completed_at! : date, "");
+  // Applicability still excludes future dates. Among successful applicable baselines,
+  // the latest completion is the replacement, including an undated incoming list.
+  const current = group.filter((item) => resolveApplicableSupplierSourceVersion([item], businessDate) !== null)
+    .sort((a, b) => completionDate(b.id).localeCompare(completionDate(a.id)) || b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id))[0];
+  if (current?.id === version.id) return "current";
+  if (completed.has(version.id)) return "previous";
+  const ownReviews = reviews.filter((review) => review.source_id === version.id);
+  if (ownReviews.some((review) => review.status === "review" || review.status === "matching")) return "update_in_progress";
+  return ownReviews.some((review) => review.status === "abandoned") ? "previous" : "update_in_progress";
+}
+export function supplierPriceListLifecycleCounts<T extends { id: string; definition_id?: string | null; status: string; effective_from: string | null; created_at: string }>(versions: T[], reviews: Array<{ source_id: string; status: string; completed_at?: string | null }>, businessDate: string) {
+  const counts = { current: 0, updates: 0, upcoming: 0 };
+  for (const version of versions) {
+    const state = resolveSupplierPriceListLifecycleState(version, versions, reviews, businessDate);
+    if (state === "current") counts.current++;
+    if (state === "upcoming") counts.upcoming++;
+    if (state === "update_in_progress" && reviews.some((review) => review.source_id === version.id && (review.status === "review" || review.status === "matching"))) counts.updates++;
+  }
+  return counts;
 }
 /** Imported versions that become operative after the business date, earliest first. Kept discoverable as "upcoming"; never current. */
 export function upcomingSupplierSourceVersions<T extends { status: string; effective_from: string | null }>(versions: T[], businessDate: string): T[] {

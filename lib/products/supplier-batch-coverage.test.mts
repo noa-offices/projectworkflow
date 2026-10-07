@@ -458,28 +458,39 @@ test("two sources of one Brand each resolve their own latest review; one card pe
 });
 
 // ---- Phase 1: cards and Product source lookup use the applicable version, never a future one ----
-test("price list cards and the Product source lookup use the applicable version, never a future one", async () => {
+test("price list cards retain future versions while Product source lookup uses only the applicable version", async () => {
   await withDb(async (f) => {
+    const completed = await supplierCreateReviewBatch(f.client, furnitureSource, "complete", []);
+    await f.db.query("update public.supplier_price_batches set status='completed',completed_at=now() where id=$1", [completed.id]);
     await f.db.exec(`insert into public.supplier_source_versions(id,brand_id,title,filename,file_hash,source_type,currency,basis,profile,status,expected_rows,expected_cells,expected_chunks,created_by,definition_id,effective_from,created_at)
       values('${id(37)}','${brand}','Future list','f2.xlsx','${"e".repeat(64)}','xlsx','EUR','list','{}','imported',1,1,1,'${user}','${furniture}','2999-01-01', now() + interval '1 hour');`);
     const definitions = (await supplierCoverageOverview(f.client, brand)).definitions;
     const cards = await supplierPriceListCards(f.client, brand, definitions);
     const furnitureCard = cards.find((card) => card.sourceName === "LAS Furniture");
     assert.equal(furnitureCard?.sourceId, furnitureSource); // the current list, not the newer future one
+    assert.equal(cards.find((card) => card.sourceId === id(37))?.priceListState, "upcoming");
     const lookup = await supplierProductSourceLookup(f.client, { brandId: brand, definitionId: furniture, code: "F1" });
     assert.equal(lookup.source?.id, furnitureSource);
     assert.equal(lookup.identities.length, 1);
     // Once the date passes, the newer list becomes the applicable one without any manual step.
     await f.db.exec("update public.supplier_source_versions set effective_from='2000-01-01' where id=" + "'" + id(37) + "'" + "; update public.supplier_source_versions set effective_from='1999-01-01' where id='" + furnitureSource + "'");
     assert.equal((await supplierProductSourceLookup(f.client, { brandId: brand, definitionId: furniture, code: "F1" })).source?.id, id(37));
+    const incoming = await supplierCreateReviewBatch(f.client, id(37), "complete", []);
+    let updated = await supplierPriceListCards(f.client, brand, definitions);
+    assert.equal(updated.find((card) => card.sourceId === furnitureSource)?.priceListState, "current");
+    assert.equal(updated.find((card) => card.sourceId === id(37))?.priceListState, "update_in_progress");
+    await f.db.query("update public.supplier_price_batches set status='completed',completed_at=now() where id=$1", [incoming.id]);
+    updated = await supplierPriceListCards(f.client, brand, definitions);
+    assert.equal(updated.find((card) => card.sourceId === furnitureSource), undefined);
+    assert.equal(updated.filter((card) => card.sourceName === "LAS Furniture" && card.priceListState === "current").length, 1);
   });
 });
 
-test("a definition with only a future list has no applicable version: no current card, no lookup source", async () => {
+test("a definition with only a future list exposes an Upcoming card but no applicable lookup source", async () => {
   await withDb(async (f) => {
     await f.db.exec(`update public.supplier_source_versions set effective_from='2999-01-01' where id='${furnitureSource}';`);
     const definitions = (await supplierCoverageOverview(f.client, brand)).definitions;
-    assert.equal((await supplierPriceListCards(f.client, brand, definitions)).some((card) => card.sourceName === "LAS Furniture"), false);
+    assert.equal((await supplierPriceListCards(f.client, brand, definitions)).find((card) => card.sourceName === "LAS Furniture")?.priceListState, "upcoming");
     const lookup = await supplierProductSourceLookup(f.client, { brandId: brand, definitionId: furniture, code: "F1" });
     assert.equal(lookup.source, null); assert.equal(lookup.multiplicity, 0); // never silently the future list
   });

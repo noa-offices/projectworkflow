@@ -27,7 +27,7 @@ test("landing renders Brand cards only: no Family rows, source groups or review 
 
 test("Brand card shows review count, price lists, checked and attention summary from the shared resolvers", () => {
   const metric = (label: string, value: string) => assert.match(html, new RegExp(`>${label}</dt><dd[^>]*>${value}<`));
-  metric("Price lists", "1"); metric("In review", "2"); metric("Families checked", "1 / 3"); metric("Need review", "2");
+  metric("Current price lists", "1"); metric("Updates in progress", "2"); metric("Upcoming lists", "0"); metric("Families checked", "1 / 3"); metric("Need review", "2");
   assert.match(html, />3 Supplier-managed Families</); assert.match(html, /2 Families still need review\./);
   assert.equal(view.progress.checkedFamilies, 1); assert.equal(view.state, "needs_attention"); assert.match(html, />Needs attention</);
 });

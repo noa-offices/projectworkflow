@@ -1,4 +1,5 @@
 "use client";
+import { priceListLabels, priceListReviewState } from "@/lib/products/supplier-list-presentation";
 
 import Link from "next/link";
 import { Fragment, useState } from "react";
@@ -227,17 +228,25 @@ const priceListStates: Record<SupplierPriceListState, [string, string, string]> 
   completed: ["Completed", "View completed review", "border-emerald-200 bg-emerald-50 text-emerald-900"],
 };
 export function SupplierPriceListCards({ cards, importHref, approver }: { cards: PriceListCardView[]; importHref: string; approver: boolean }) {
+  const groups = [
+    { state: "current", title: "Current price list" },
+    { state: "update_in_progress", title: "Updates in progress" },
+    { state: "upcoming", title: "Upcoming price lists" },
+  ].map((group) => ({ ...group, cards: cards.filter((item) => (item.priceListState ?? "current") === group.state) }));
+  const visibleCount = groups.reduce((count, group) => count + group.cards.length, 0);
   const attention = cards.filter((card) => card.state === "needs_attention" || card.state === "no_coverage").length;
   const ready = cards.filter((card) => card.state === "ready_to_review" || card.state === "ready_to_complete").length;
   return <section className="space-y-3" aria-label="Available price lists">
     <div className="flex flex-wrap items-end justify-between gap-2"><div><h3 className="text-base font-semibold text-zinc-950">Available price lists</h3>
-      <p className="text-xs text-zinc-500">{cards.length} current {cards.length === 1 ? "price list" : "price lists"}{attention ? ` · ${attention} need attention` : ""}{ready ? ` · ${ready} ready` : ""}</p></div>
+      <p className="text-xs text-zinc-500">{visibleCount} available {visibleCount === 1 ? "price list" : "price lists"}{attention ? ` · ${attention} need attention` : ""}{ready ? ` · ${ready} ready` : ""}</p></div>
       {approver ? <Link href={importHref} className={primary.replace("h-9", "h-9")}>Import new price list</Link> : null}</div>
     {cards.length === 0 ? <div className={`${card} p-6 text-center`}><p className="text-sm font-semibold text-zinc-950">No Supplier price lists yet.</p>{approver ? <Link href={importHref} className={`${primary} mt-3`}>Import price list</Link> : null}</div> : null}
-    <ul className="grid gap-3 md:grid-cols-2">{cards.map((item) => { const [label, action, tone] = priceListStates[item.state]; return <li key={item.sourceId} className={`${card} flex flex-col gap-3 p-4`}>
+    {groups.filter((group) => group.cards.length).map((group) => <section key={group.state} aria-label={group.title} className="space-y-2"><h4 className="text-sm font-semibold text-zinc-950">{group.title}</h4><ul className="grid gap-3 md:grid-cols-2">{group.cards.map((item) => { const [label, action, tone] = priceListStates[item.state]; return <li key={item.sourceId} className={`${card} flex flex-col gap-3 p-4`}>
       <div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{item.sourceName ?? "Not linked to a Supplier source"}</p>
         <p className="truncate text-base font-semibold text-zinc-950" title={item.title}>{item.title}</p></div>
         <span className={`${badge} shrink-0 ${tone}`}>{label}</span></div>
+      <p className="text-xs text-zinc-500">Effective date: {item.effectiveFrom ?? "Immediately applicable"}</p>
+      <div className="flex flex-wrap gap-2"><span className={`${badge} border-zinc-200 bg-zinc-50`}>Price list: {priceListLabels[item.priceListState ?? "current"]}</span><span className={`${badge} border-zinc-200 bg-zinc-50`}>Review: {priceListReviewState(item.batchStatus, item.unresolved)}</span></div>
       <dl className="grid grid-cols-3 gap-2 text-xs"><div><dt className="text-zinc-500">Families</dt><dd className="font-semibold tabular-nums text-zinc-950">{item.families ?? "—"}</dd></div>
         <div><dt className="text-zinc-500">Source rows</dt><dd className="font-semibold tabular-nums text-zinc-950">{item.compacted ? "Detail archived" : item.sourceRows.toLocaleString("en-US")}</dd></div>
         <div><dt className="text-zinc-500">Supplier items</dt><dd className="font-semibold tabular-nums text-zinc-950">{item.items.toLocaleString("en-US")}</dd></div></dl>
@@ -252,6 +261,6 @@ export function SupplierPriceListCards({ cards, importHref, approver }: { cards:
             <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.detailsHref}>Price list details</Link></li>
             {approver ? <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.advancedHref}>Advanced tools</Link></li> : null}
           </ul></details>
-      </div></li>; })}</ul>
+      </div></li>; })}</ul></section>)}
   </section>;
 }

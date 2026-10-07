@@ -4,7 +4,7 @@ import { PriceUpdatesBrandSummaryCard, PriceUpdatesSummaryCards, type PriceUpdat
 import { requireProductPricingManager } from "@/lib/auth";
 import { canReviewBrandPrices } from "@/lib/products/brand-price-permissions";
 import { buildSupplierPriceUpdatesView, loadSupplierPriceUpdatesInputs, summarizePriceUpdates, supplierBrandStateLabels } from "@/lib/products/supplier-price-updates-view";
-import { readProductPages, supplierBusinessDate } from "@/lib/products/supplier-price-repository";
+import { readProductPages, supplierBusinessDate, supplierPriceListLifecycleCounts } from "@/lib/products/supplier-price-repository";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ type PriceUpdatesSearchParams = { q?: string | string[]; state?: string | string
 type PriceUpdatesPageProps = { searchParams?: Promise<PriceUpdatesSearchParams> };
 type Brand = { id: string; name: string };
 type FamilyRow = { id: string; brand_id: string; template_name: string };
-type OpenBatch = { id: string; brand_id: string; source_id: string };
+type OpenBatch = { id: string; brand_id: string; source_id: string; status: string; completed_at: string | null };
 
 const input = "h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-800 focus:ring-2 focus:ring-emerald-900/10";
 const stringParam = (value?: string | string[]) => Array.isArray(value) ? value[0] ?? "" : value ?? "";
@@ -33,7 +33,7 @@ export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPag
   const [brandsResult, familiesResult, openBatchesResult] = await Promise.all([
     readProductPages((from, to) => supabase.from("brands").select("id,name").eq("is_active", true).order("name", { ascending: true }).order("id", { ascending: true }).range(from, to).returns<Brand[]>()),
     readProductPages((from, to) => supabase.from("product_templates").select("id,brand_id,template_name").eq("is_active", true).order("id", { ascending: true }).range(from, to).returns<FamilyRow[]>()),
-    readProductPages((from, to) => supabase.from("supplier_price_batches").select("id,brand_id,source_id").in("status", ["matching", "review"]).order("id", { ascending: true }).range(from, to).returns<OpenBatch[]>()),
+    readProductPages((from, to) => supabase.from("supplier_price_batches").select("id,brand_id,source_id,status,completed_at").in("status", ["matching", "review", "completed", "abandoned"]).order("id", { ascending: true }).range(from, to).returns<OpenBatch[]>()),
   ]);
   if (brandsResult.error) console.error("PRICE UPDATES BRANDS ERROR", brandsResult.error.message);
   if (familiesResult.error) console.error("PRICE UPDATES FAMILIES ERROR", familiesResult.error.message);
@@ -47,12 +47,11 @@ export default async function PriceUpdatesPage({ searchParams }: PriceUpdatesPag
     families: familyList.map((family) => ({ id: family.id, brandId: family.brand_id, name: family.template_name })),
     definitions, facts, legacyDetail: () => "Manual price check",
   });
-  // A review is one open comparison per price list: duplicate open batches of one source count once.
-  const openSourcesByBrand = new Map<string, Set<string>>();
-  for (const batch of openBatchesResult.data ?? []) openSourcesByBrand.set(batch.brand_id, (openSourcesByBrand.get(batch.brand_id) ?? new Set()).add(batch.source_id));
-  const summaries: PriceUpdatesBrandSummary[] = views.map((view) => ({
-    view, href: workspaceHref(view.brandId), priceLists: view.sources.filter((group) => group.current).length, reviewsInProgress: openSourcesByBrand.get(view.brandId)?.size ?? 0,
-  }));
+  const summaries: PriceUpdatesBrandSummary[] = views.map((view) => {
+    const versions = definitions.filter((definition) => definition.brandId === view.brandId && definition.isActive).flatMap((definition) => definition.versions.map((version) => ({ ...version, definition_id: definition.id })));
+    const counts = supplierPriceListLifecycleCounts(versions, (openBatchesResult.data ?? []).filter((batch) => batch.brand_id === view.brandId), supplierBusinessDate());
+    return { view, href: workspaceHref(view.brandId), priceLists: counts.current, reviewsInProgress: counts.updates, upcomingLists: counts.upcoming };
+  });
   const visible = summaries.filter(({ view }) => (!searchQuery || view.brandName.toLowerCase().includes(searchQuery)) && (!selectedState || view.state === selectedState));
   const totals = summarizePriceUpdates(views);
 

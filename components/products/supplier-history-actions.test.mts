@@ -40,6 +40,14 @@ test("Leave review confirmation names the preserved Product outcomes and offers 
   assert.match(html, />Cancel<\/button>/); assert.match(html, />Leave review<\/button>/);
 });
 
+test("historical cleanup is distinct from permanent delete and hidden without its permission", () => {
+  const props = { sourceId: "s", title: "Completed history", viewHref: "/view", archived: false, canArchive: true, canUnarchive: true, canPermanentlyDelete: false, canCleanTechnicalData: true };
+  const out = renderToStaticMarkup(React.createElement(SupplierHistoryActions, props));
+  assert.match(out, /Remove source file &amp; technical data/); assert.doesNotMatch(out, /Permanently delete/);
+  const readOnly = renderToStaticMarkup(React.createElement(SupplierHistoryActions, { ...props, canArchive: false, canCleanTechnicalData: false }));
+  assert.doesNotMatch(readOnly, /Remove source file|Permanently delete|>Archive</);
+});
+
 test("bottom-row menus flip above and horizontal positioning stays inside the viewport", () => {
   assert.deepEqual(historyMenuPosition({ right: 390, top: 560, bottom: 592 }, { width: 208, height: 140 }, { width: 400, height: 600 }), { left: 182, top: 416 });
   assert.deepEqual(historyMenuPosition({ right: 40, top: 10, bottom: 42 }, { width: 208, height: 140 }, { width: 400, height: 600 }), { left: 8, top: 46 });
@@ -52,7 +60,7 @@ test("native History popup escapes a clipped bottom-row card, focuses View, dism
   const stubs: Record<string, string> = {
     "next/link": 'import React from "react"; export default function Link(p){return React.createElement("a",p,p.children)}',
     "next/navigation": 'export function useRouter(){return {refresh(){window.refreshed=true}}}',
-    "@/app/products/price-updates/supplier-sources/actions": 'export async function permanentlyDeleteSupplierSource(){window.deleted=true;return {warning:""}} export async function unarchiveSupplierSource(){window.restored=true} export async function leaveSupplierReview(){window.left=true}',
+    "@/app/products/price-updates/supplier-sources/actions": 'export async function permanentlyDeleteSupplierSource(){window.deleted=true;return {warning:""}} export async function removeSupplierSourceTechnicalData(){return {warning:"",message:"History preserved"}} export async function unarchiveSupplierSource(){window.restored=true} export async function leaveSupplierReview(){window.left=true}',
     "./supplier-price-workspace-controls": 'export function SupplierArchiveButton(){return null}',
   };
   const bundle = await build({ write: false, bundle: true, platform: "browser", format: "iife", jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' },

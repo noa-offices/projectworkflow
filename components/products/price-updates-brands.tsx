@@ -88,7 +88,7 @@ export function PriceUpdatesStatusLegend() {
   return <p className="text-xs text-zinc-500">Brand states: {Object.values(supplierBrandStateLabels).join(" · ")}</p>;
 }
 
-export type PriceUpdatesBrandSummary = { view: PriceUpdatesBrandView; priceLists: number; reviewsInProgress: number; href: string };
+export type PriceUpdatesBrandSummary = { view: PriceUpdatesBrandView; priceLists: number; reviewsInProgress: number; upcomingLists?: number; href: string };
 /**
  * Brand-level card for the landing page: counts and one state only. Family rows live in the Brand workspace.
  * Same anatomy as the Supplier price-list cards: title + badge, small-caps subtitle, grouped figures, divider, one light action.
@@ -103,7 +103,8 @@ export function PriceUpdatesBrandSummaryCard({ summary }: { summary: PriceUpdate
       : p.applicableFamilies && p.checkedFamilies === p.applicableFamilies ? "All Supplier-managed Families are current."
         : summary.priceLists === 0 ? "No current Supplier price list." : "Nothing is waiting.";
   const metrics: Array<[string, string]> = [
-    ["Price lists", String(summary.priceLists)], ["In review", String(summary.reviewsInProgress)],
+    ["Current price lists", String(summary.priceLists)], ["Updates in progress", String(summary.reviewsInProgress)],
+    ["Upcoming lists", String(summary.upcomingLists ?? 0)],
     ["Families checked", p.applicableFamilies ? `${p.checkedFamilies} / ${p.applicableFamilies}` : "—"], ["Need review", String(needReview)],
   ];
   return <li className={`${card} flex flex-col gap-4 p-5`}>

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { priceListLabels, type PriceListLifecycle, type PriceListReviewState } from "@/lib/products/supplier-list-presentation";
 import type { ReviewBatch, SourceVersion } from "@/lib/products/supplier-price-contracts";
 import type { FamilyOverview } from "@/lib/products/supplier-price-repository";
 import { SupplierHistoryActions, SupplierLeaveReviewButton } from "@/components/products/supplier-history-actions";
@@ -91,8 +92,8 @@ export function SupplierCurrentPriceList({ brandName, current, inProgress, impor
   </section>;
 }
 
-export type HistoryRow = { id: string; title: string; sourceName?: string; date: string; status: "current" | "archived" | "unfinished"; coverage: string; baseline: string; viewHref: string; downloadUrl?: string; reviewsHref?: string; hasActiveReview?: boolean; hasCompletedHistory?: boolean };
-const historyStatus = { current: ["Current", "border-emerald-200 bg-emerald-50 text-emerald-900"], archived: ["Archived", "border-zinc-200 bg-zinc-100 text-zinc-600"], unfinished: ["Unfinished import", "border-amber-200 bg-amber-50 text-amber-900"] } as const;
+export type HistoryRow = { id: string; title: string; sourceName?: string; date: string; completedDate?: string; status: PriceListLifecycle; reviewState?: PriceListReviewState; coverage: string; baseline: string; viewHref: string; downloadUrl?: string; reviewsHref?: string; hasActiveReview?: boolean; hasCompletedHistory?: boolean; hasCompletedReview?: boolean };
+const historyStatus = Object.fromEntries(Object.entries(priceListLabels).map(([key, label]) => [key, [label, "border-zinc-200 bg-zinc-50 text-zinc-700"]])) as Record<PriceListLifecycle, [string, string]>;
 /** Price-list history. Archive hides a list but deletes nothing; used lists are never deleted. */
 export function SupplierHistoryTable({ rows, showArchived, archivedCount, toggleHref, pagerHrefs, canArchive, canUnarchive = false, canPermanentlyDelete = false, canLeaveReview = false, reviews, currentBatchId, reviewHref, newReviewHref, reviewPagerHrefs }: {
   rows: HistoryRow[]; showArchived: boolean; archivedCount: number; toggleHref: string; pagerHrefs: { previous: string; next: string }; canArchive: boolean; canUnarchive?: boolean; canPermanentlyDelete?: boolean;
@@ -102,11 +103,12 @@ export function SupplierHistoryTable({ rows, showArchived, archivedCount, toggle
   return <section className="space-y-3" aria-label="Price list history">
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-base font-semibold text-zinc-950">History</h3>
       {archivedCount ? <Link href={toggleHref} className={smallButton}>{showArchived ? "Hide archived" : `Show archived (${archivedCount})`}</Link> : null}</div>
-    <div className={`${card} overflow-hidden`}><div className="overflow-x-auto"><table className="min-w-full divide-y divide-zinc-200 text-sm"><thead className="bg-zinc-50"><tr className="text-left"><th className={th}>Price list</th><th className={th}>Date</th><th className={th}>Status</th><th className={th}>Coverage</th><th className={th}>Baseline</th><th className={th}>Actions</th></tr></thead>
+    <div className={`${card} overflow-hidden`}><div className="overflow-x-auto"><table className="min-w-full divide-y divide-zinc-200 text-sm"><thead className="bg-zinc-50"><tr className="text-left"><th className={th}>Price list</th><th className={th}>Effective date</th><th className={th}>Price-list state</th><th className={th}>Review state</th><th className={th}>Completed date</th><th className={th}>Actions</th></tr></thead>
       <tbody className="divide-y divide-zinc-100">{visible.map((row) => { const [label, tone] = historyStatus[row.status]; return <tr key={row.id} className="align-top transition hover:bg-zinc-50">
-        <th scope="row" className="px-3 py-2 text-left font-semibold text-zinc-950">{row.sourceName ? <span className="block text-xs font-medium text-emerald-900">{row.sourceName}</span> : null}{row.reviewsHref ? <Link href={row.reviewsHref} className="underline-offset-2 hover:underline">{row.title}</Link> : row.title}</th><td className="px-3 py-2 tabular-nums text-zinc-600">{row.date}</td><td className="px-3 py-2"><span className={`${badge} ${tone}`}>{label}</span>{row.hasActiveReview ? <span className="block pt-1 text-xs text-amber-800">Review: In progress</span> : null}</td><td className="px-3 py-2 text-zinc-700">{row.coverage}</td><td className="px-3 py-2 text-zinc-700">{row.baseline}</td>
+        <th scope="row" className="px-3 py-2 text-left font-semibold text-zinc-950">{row.sourceName ? <span className="block text-xs font-medium text-emerald-900">{row.sourceName}</span> : null}{row.reviewsHref ? <Link href={row.reviewsHref} className="underline-offset-2 hover:underline">{row.title}</Link> : row.title}</th><td className="px-3 py-2 tabular-nums text-zinc-600">{row.date}</td><td className="px-3 py-2"><span className={`${badge} ${tone}`}>Price list: {label}</span></td><td className="px-3 py-2"><span className={`${badge} border-zinc-200 bg-zinc-50`}>Review: {row.reviewState ?? (row.hasActiveReview ? "In progress" : row.hasCompletedHistory ? "Completed" : "Not started")}</span></td><td className="px-3 py-2 text-zinc-700">{row.completedDate ?? "—"}</td>
         <td className="px-3 py-2"><SupplierHistoryActions sourceId={row.id} title={row.title} viewHref={row.viewHref} downloadUrl={row.downloadUrl}
-          archived={row.status === "archived"} canArchive={canArchive} canUnarchive={canUnarchive} canPermanentlyDelete={canPermanentlyDelete}
+          archived={row.status === "archived"} canArchive={canArchive} canUnarchive={canUnarchive} canPermanentlyDelete={canPermanentlyDelete && !row.hasCompletedHistory}
+          canCleanTechnicalData={canPermanentlyDelete && Boolean(row.hasCompletedReview ?? row.hasCompletedHistory) && !row.hasActiveReview && (row.status === "previous" || row.status === "archived")}
           deleteBlockedReason={row.hasCompletedHistory ? "This price list is referenced by completed pricing history and cannot be fully deleted." : row.hasActiveReview ? "Leave all open reviews before permanently deleting this price list." : undefined} /></td></tr>; })}</tbody></table></div>
       {visible.length === 0 ? <p className="px-4 py-10 text-center text-sm text-zinc-500">No price lists to show.</p> : null}</div>
     <p className="flex justify-between text-xs"><Link href={pagerHrefs.previous} className={smallButton}>Previous price lists</Link><Link href={pagerHrefs.next} className={smallButton}>Next price lists</Link></p>

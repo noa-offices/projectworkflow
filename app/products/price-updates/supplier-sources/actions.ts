@@ -266,6 +266,27 @@ export async function permanentlyDeleteSupplierSource(sourceId: string, confirme
   if (!warning) revalidatePath(workspacePath);
   return { warning };
 }
+/** System Owner-only historical cleanup; Phase F and Storage receipts preserve all durable pricing/review proof. */
+export async function removeSupplierSourceTechnicalData(sourceId: string, confirmed: boolean) {
+  const { auth, client } = await reviewer();
+  if (!canManageSupplierCapacity(auth.profile?.role, auth.profile?.account_status)) throw Error("Only the System Owner can remove Supplier technical data.");
+  if (confirmed !== true) throw Error("Explicit technical cleanup confirmation required.");
+  const result = await client.rpc("remove_supplier_source_technical_data", { p_source_id: sourceId, p_confirm: true });
+  if (result.error) throw Error(result.error.message);
+  const paths = (result.data as { storage_paths: string[] }).storage_paths;
+  let warning = "";
+  try {
+    if (paths.length) {
+      const storage = await client.storage.from("supplier-price-sources").remove(paths);
+      if (storage.error) throw Error(storage.error.message);
+      const finish = await client.rpc("finish_supplier_source_file_cleanup", { p_source_id: sourceId });
+      if (finish.error) throw Error(finish.error.message);
+    }
+  } catch (error) { warning = `Pricing history is preserved. File cleanup failed: ${error instanceof Error ? error.message : "Unknown error"}. Retry technical cleanup.`; }
+  if (!warning) revalidatePath(workspacePath);
+  return { warning, message: "Source technical data removed. Completed review and pricing history preserved." };
+}
+
 /** Abandons only this review. Applied prices and durable history are not rolled back. */
 export async function leaveSupplierReview(batchId: string, confirmed: boolean) {
   const { client } = await approver();
