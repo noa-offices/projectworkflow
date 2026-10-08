@@ -5,6 +5,7 @@ import {
   Building2,
   BarChart3,
   BadgeDollarSign,
+  Database,
   ChevronRight,
   FileText,
   HardHat,
@@ -172,6 +173,17 @@ export default async function SettingsPage() {
               icon={Sparkles}
               title="AI Settings"
               description="Manage AI providers and per-agent model settings."
+            />
+          </SettingsGroup>
+        ) : null}
+
+        {isSystemOwner ? (
+          <SettingsGroup title="System & Maintenance">
+            <SettingsItem
+              href="/settings/system-health"
+              icon={Database}
+              title="Database & Storage Health"
+              description="Monitor database size, storage usage, growth, and reclaimable space."
             />
           </SettingsGroup>
         ) : null}

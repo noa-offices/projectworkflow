@@ -233,13 +233,12 @@ test("read-only users see the cards but no import, coverage edit or advanced act
   assert.match(html(cardsCoverage.SupplierPriceListCards, { cards: [], importHref: "/import", approver: true }), /No Supplier price lists yet\./);
 });
 
-test("page: price lists come first, coverage is a collapsed summary, system health is collapsed, and the global banner is gone", () => {
+test("page: price lists come first, coverage is a collapsed summary, and the global banner is gone", () => {
   assert.doesNotMatch(pageText, /inProgress/); assert.doesNotMatch(pageText, /Review in progress/);
   assert.match(pageText, /<SupplierPriceListCards cards=\{priceListCards\}/);
   assert.ok(pageText.indexOf("<SupplierPriceListCards") < pageText.indexOf("Family coverage <span"));
   assert.match(pageText, /open=\{coverage\.uncovered\.length > 0 \|\| coverage\.conflicts\.length > 0\}/); // open only when something needs attention
-  assert.match(pageText, /System \/ database health/); assert.match(pageText, /<SupplierCapacityPanel \/>/);
-  assert.ok(pageText.indexOf("<SupplierAdvancedImportSettings") < pageText.indexOf("System / database health"));
+  assert.doesNotMatch(pageText, /System \/ database health|SupplierCapacityPanel/);
 });
 
 test("a single price list shows one card with its family count and the Start review action", () => {

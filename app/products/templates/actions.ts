@@ -28,6 +28,7 @@ import { persistedProductTemplateSubgroupKeys, reconcileStaleProductTemplateSubg
 import { bulkDeleteResultMessage, bulkLifecycleResultMessage } from "@/lib/products/product-management-bulk-lifecycle";
 import { brandPriceBaselineDate, latestBrandPriceListUpdate, scheduledBrandPriceListUpdate } from "@/lib/product-price-check";
 import { createClient } from "@/lib/supabase/server";
+import { PRODUCT_SOURCE_BUCKET, temporaryProductSourcePath } from "@/lib/products/temporary-product-source";
 
 const allowedOptionTypes = new Set([
   "material_finish",
@@ -85,6 +86,12 @@ async function persistPendingSubgroupReferenceUploads(formData: FormData, templa
 }
 
 function templateSavedMessage(message: string, failedImages: number) { return failedImages ? `${message} Product Template saved, but ${failedImages} reference image${failedImages === 1 ? "" : "s"} could not be uploaded.` : message; }
+async function cleanupTemporarySourceAfterSave(supabase: Awaited<ReturnType<typeof createClient>>, formData: FormData) {
+  const path = temporaryProductSourcePath(typeof formData.get("temporary_source_pdf_path") === "string" ? String(formData.get("temporary_source_pdf_path")) : null);
+  if (!path) return "";
+  const { error } = await supabase.storage.from(PRODUCT_SOURCE_BUCKET).remove([path]);
+  return error ? " Product Template saved, but temporary Source QA PDF cleanup could not be completed; it remains eligible for a later retry." : "";
+}
 const imageFits = new Set(["contain", "cover"]);
 const imageFields = [
   "proposed_image_url_1",
@@ -1267,6 +1274,8 @@ export async function createProductTemplate(formData: FormData) {
     createdBy: user.id,
   });
 
+  const sourceCleanupWarning = await cleanupTemporarySourceAfterSave(supabase, formData);
+
   revalidatePath("/products/templates");
   // Merge onto the validated return_to origin (Management vs Library, and its manage/panelBrand/etc.
   // context) instead of hardcoding Management, so a template created from Product Library still returns
@@ -1278,7 +1287,7 @@ export async function createProductTemplate(formData: FormData) {
   })}#template-${template.id}-materials`;
   redirectWithMessageToPath(
     createdTemplatePath,
-    templateSavedMessage("Product template created. Add material groups below.", pendingRowReferences.failed + pendingSubgroupReferences.failed),
+    templateSavedMessage("Product template created. Add material groups below.", pendingRowReferences.failed + pendingSubgroupReferences.failed) + sourceCleanupWarning,
   );
 }
 
@@ -1393,8 +1402,10 @@ export async function updateProductTemplate(formData: FormData) {
     createdBy: user.id,
   });
 
+  const sourceCleanupWarning = await cleanupTemporarySourceAfterSave(supabase, formData);
+
   revalidatePath("/products/templates");
-  redirectWithMessageToPath(redirectPath, templateSavedMessage("Product template updated.", pendingRowReferences.failed + pendingSubgroupReferences.failed));
+  redirectWithMessageToPath(redirectPath, templateSavedMessage("Product template updated.", pendingRowReferences.failed + pendingSubgroupReferences.failed) + sourceCleanupWarning);
 }
 
 export async function updateProductTemplateForQuotationModal(formData: FormData): Promise<ProductTemplateModalActionResult> {

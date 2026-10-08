@@ -56,7 +56,6 @@ import {
 import {
   createSmartSetupReviewRouting,
   SMART_REVIEW_DESTINATIONS,
-  smartReviewSelectionContract,
   reorderSmartSetupReviewRoutes,
   reorderSmartSetupReviewRoutesWithinKind,
   smartRouteMoveState,
@@ -85,6 +84,7 @@ import { appendOriginalImportedJsonSource, captureInitialOriginalImportedJsonSou
 import type { ManufacturerFieldPatch } from "@/lib/products/manufacturer-field-patches";
 import type { ManufacturerItemAction } from "@/lib/products/manufacturer-item-actions";
 import type { ManufacturerPriceDifference, ManufacturerUpdateWorkspace } from "@/lib/products/manufacturer-update-diff";
+import { deleteTemporaryProductSource } from "@/lib/products/temporary-product-source";
 
 const currencies: ProductTemplateDraftCurrency[] = ["AED", "USD", "EUR"];
 const inputClass = "h-9 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm outline-none focus:border-emerald-700";
@@ -820,8 +820,9 @@ export function SmartProductJsonImport({ buttonLabel = "* Import from AI JSON", 
   const revokeImages = (images: ReviewImages) => disposeStagedReviewedRowImages(images, URL.revokeObjectURL);
   const clearReview = () => { setOpen(false); setRawJson(""); setOriginalImportedJsonSources([]); setResult(null); setQuoteRepaired(false); setWrapperRemoved(false); setReviewedDraft(null); setRoutingPlan(null); setReviewIsDirty(false); setConflicts([]); setReviewedSubgroups({}); setSourcePdfMeta(undefined); setAddMoreOpen(false); setAddMoreTarget(null); setImportCount(0); };
   // Edit-existing: closing returns to the Product Template form without applying; only Smart Setup edits (if any) are discarded.
-  const backToTemplate = () => { if (reviewIsDirty && !window.confirm("Discard your Smart Setup changes? The Product Template form keeps its current values.")) return; revokeImages(stagedImagesRef.current); stagedImagesRef.current = {}; setStagedImages({}); clearReview(); };
-  const close = () => { if (reviewedDraft && !window.confirm("Discard the current reviewed and merged workspace? Staged images and subgroup assignments will also be discarded.")) return; revokeImages(stagedImagesRef.current); stagedImagesRef.current = {}; setStagedImages({}); clearReview(); };
+  const discardTemporarySource = () => { if (sourcePdfMeta?.sourcePdfStoragePath) void deleteTemporaryProductSource(sourcePdfMeta.sourcePdfStoragePath); };
+  const backToTemplate = () => { if (reviewIsDirty && !window.confirm("Discard your Smart Setup changes? The Product Template form keeps its current values.")) return; discardTemporarySource(); revokeImages(stagedImagesRef.current); stagedImagesRef.current = {}; setStagedImages({}); clearReview(); };
+  const close = () => { if (reviewedDraft && !window.confirm("Discard the current reviewed and merged workspace? Staged images and subgroup assignments will also be discarded.")) return; discardTemporarySource(); revokeImages(stagedImagesRef.current); stagedImagesRef.current = {}; setStagedImages({}); clearReview(); };
   useEffect(() => () => revokeImages(stagedImagesRef.current), []);
   useEffect(() => { const openAdditionalJson = (event: Event) => { const detail = (event as CustomEvent<{ targetRouteKey?: string; targetSubgroupId?: string } | undefined>).detail; setAddMoreTarget(detail?.targetRouteKey ? { targetRouteKey: detail.targetRouteKey, targetSubgroupId: detail.targetSubgroupId } : null); setAddMoreOpen(true); }; window.addEventListener("smart-product-add-more-json", openAdditionalJson); return () => window.removeEventListener("smart-product-add-more-json", openAdditionalJson); }, []);
   const transferAndClearImages = (pendingImages: Array<{ previewUrl: string }>) => {

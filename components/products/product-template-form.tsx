@@ -763,6 +763,7 @@ export function ProductTemplateForm({
     formData.set("pending_row_references", JSON.stringify(metadata));
     const subgroupMetadata = Object.values(pendingSubgroupImagesRef.current).map((image, index) => { const field = `pending_subgroup_reference_file_${index}`; formData.append(field, image.file, image.file.name); return { field, pricingType: image.pricingType, groupId: image.groupId, subgroupId: image.subgroupId }; });
     formData.set("pending_subgroup_references", JSON.stringify(subgroupMetadata));
+    if (smartSourcePdfMeta?.sourcePdfStoragePath) formData.set("temporary_source_pdf_path", smartSourcePdfMeta.sourcePdfStoragePath);
     const result = await baseSubmitAction(formData);
     if (result && !result.ok) {
       preserveFailedSave.current = true;
@@ -776,6 +777,7 @@ export function ProductTemplateForm({
       else setSmartSetupNotice("Product Template saved. Temporary source PDF cleanup could not be completed.");
     }
   };
+  const cleanupTemporarySourceOnCancel = () => { if (smartSourcePdfMeta?.sourcePdfStoragePath) void deleteTemporaryProductSource(smartSourcePdfMeta.sourcePdfStoragePath); };
 
   return (
     <TemplateFormShell
@@ -785,6 +787,7 @@ export function ProductTemplateForm({
       initialMessage={initialMessage}
       onInvalidFieldName={handleInvalidFieldName}
       onCancel={onCancel}
+      onCancelStart={cleanupTemporarySourceOnCancel}
       pendingLabel={submitMode === "update" ? "Saving template..." : "Adding template..."}
       pendingMessage={submitMode === "update" ? "Saving template..." : "Adding product to library..."}
       submitLabel={submitMode === "update" ? "Save template" : "Add template"}

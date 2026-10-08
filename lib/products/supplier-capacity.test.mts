@@ -5,6 +5,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { normalizeSupplierRows } from "./supplier-price-import.js";
 import type { RawSupplierRow, SupplierProfile } from "./supplier-price-contracts.js";
 import { resolveApplicableSupplierSourceVersion, upcomingSupplierSourceVersions } from "./supplier-price-repository.js";
+import type { SystemCapacityReport, CapacitySnapshot } from "./system-capacity.js";
 
 const read = (name: string) => readFile(new URL(`../../supabase/migrations/${name}.sql`, import.meta.url), "utf8");
 const migrations = await Promise.all(["20261002060146_pricing_identity_version_foundation", "20261002065310_pricing_writer_concurrency", "20261003141259_supplier_default_price_writer", "20261002082357_supplier_price_source_review",
@@ -972,13 +973,132 @@ test("compaction: dry run first and blocked until evidence is complete and the f
   });
 });
 
+test("DBH-1 aggregate health and snapshot capture preserve all business data, exclude unsafe chunks, and enforce owner permissions", async () => {
+  await withDb(async (db) => {
+    await db.exec(`create role service_role; alter table storage.objects add column metadata jsonb;
+      grant select on public.test_role to authenticated;
+      insert into storage.buckets(id) values('supplier-price-sources') on conflict do nothing;
+      insert into storage.buckets(id) values('product-images'),('quote-images'),('empty');
+      insert into storage.objects(bucket_id,name,metadata) values
+        ('product-images','p','{"size":2048}'),('quote-images','q','{"size":"4096"}'),('supplier-price-sources','source','{"size":8192}');`);
+    const profileId = await profileFor(db);
+    const done = await importSource(db, { profileId });
+    const importing = await importSource(db, { profileId, hash: hashB, finalize: false });
+    await db.query("update supplier_source_chunks set payload='{\"legacy\":true}' where source_id=$1", [done]);
+    const expected = (await db.query<{ bytes: number }>("select sum(pg_column_size(payload))::int bytes from supplier_source_chunks where source_id=$1", [done])).rows[0].bytes;
+    const before = await productSnapshot(db);
+    const supplierBefore = JSON.stringify((await db.query("select row_to_json(s) data from supplier_source_versions s union all select row_to_json(k) from supplier_source_chunks k union all select row_to_json(r) from supplier_source_rows r union all select row_to_json(c) from supplier_source_cells c")).rows);
+    const storageBefore = (await db.query("select * from storage.objects order by name")).rows;
+    await db.exec(await read("20261008045010_system_capacity_snapshots"));
+    const health = async () => (await db.query<{ r: SystemCapacityReport }>("select system_capacity_report() r")).rows[0].r;
+    const capture = async () => (await db.query<{ id: string }>("select capture_system_capacity_snapshot() id")).rows[0].id;
+    await db.exec("set role authenticated");
+    const first = await health();
+    assert.ok(first.database_bytes > 0); assert.ok(first.supplier_bytes > 0);
+    assert.equal(first.storage_bytes, 14_336);
+    assert.equal(first.reclaimable.bytes, expected); assert.equal(first.reclaimable.items, 1, "unfinished import is excluded");
+    assert.ok(first.tables.some((t) => t.name === "product_templates"));
+    assert.ok(first.tables.some((t) => t.name === "supplier_source_identities"));
+    assert.ok(first.tables.every((t, index, tables) => index === 0 || tables[index - 1].total_bytes >= t.total_bytes));
+    assert.ok(first.indexes.length > 0 && first.indexes.every((i, index, indexes) => index === 0 || indexes[index - 1].bytes >= i.bytes));
+    assert.equal(first.snapshots.length, 0); assert.equal(first.baseline_30_day, null);
+    const productBucket = first.buckets.find((b) => b.name === "product-images")!;
+    assert.equal(productBucket.objects, 1); assert.equal(productBucket.total_bytes, 2048); assert.equal(productBucket.largest_bytes, 2048);
+    assert.equal(first.buckets.find((b) => b.name === "empty")?.total_bytes, 0);
+    const snapshotId = await capture();
+    const saved = (await db.query<CapacitySnapshot>("select * from system_capacity_snapshots where id=$1", [snapshotId])).rows[0];
+    assert.equal(saved.storage_bytes, 14_336); assert.equal(saved.product_image_bytes, 2048); assert.equal(saved.quote_image_bytes, 4096); assert.equal(saved.other_storage_bytes, 8192);
+    assert.equal((await health()).snapshots[0].id, snapshotId);
+    await assert.rejects(db.exec("insert into system_capacity_snapshots(database_bytes,supplier_bytes) values(1,1)"), /permission denied/);
+    await assert.rejects(db.exec("update system_capacity_snapshots set database_bytes=0"), /permission denied/);
+    await assert.rejects(db.exec("delete from system_capacity_snapshots"), /permission denied/);
+    await db.exec("reset role");
+    for (const role of ["admin_manager", "sales_designer", "viewer"]) {
+      await db.query("update test_role set role=$1", [role]);
+      await db.exec("set role authenticated");
+      await assert.rejects(health(), /permission|privilege/i); await assert.rejects(capture(), /permission|privilege/i);
+      assert.equal((await db.query("select * from system_capacity_snapshots")).rows.length, 0);
+      await db.exec("reset role");
+    }
+    await db.exec("update test_role set role='system_owner'; create or replace function current_account_status() returns text language sql stable as $$select 'disabled'$$; set role authenticated");
+    await assert.rejects(health(), /permission|privilege/i); await assert.rejects(capture(), /permission|privilege/i);
+    assert.equal((await db.query("select * from system_capacity_snapshots")).rows.length, 0);
+    await db.exec("reset role; create or replace function current_account_status() returns text language sql stable as $$select 'active'$$; set role anon");
+    await assert.rejects(health(), /permission denied/); await assert.rejects(capture(), /permission denied/);
+    await db.exec("reset role");
+    assert.equal(await productSnapshot(db), before, "prices, pricing_version, history and quotations unchanged");
+    assert.equal(JSON.stringify((await db.query("select row_to_json(s) data from supplier_source_versions s union all select row_to_json(k) from supplier_source_chunks k union all select row_to_json(r) from supplier_source_rows r union all select row_to_json(c) from supplier_source_cells c")).rows), supplierBefore);
+    assert.deepEqual((await db.query("select * from storage.objects order by name")).rows, storageBefore);
+    assert.equal(await count(db, "select count(*) from supplier_source_chunks where source_id=$1 and payload is not null", [importing]), 1);
+    await db.exec(`insert into storage.objects(bucket_id,name,metadata) values('product-images','missing',null),('quote-images','bad','{"size":"oops"}'),('supplier-price-sources','overflow','{"size":"9999999999999999999"}');`);
+    const incomplete = await health(); assert.equal(incomplete.storage_bytes, null);
+    assert.equal(incomplete.buckets.find((b) => b.name === "product-images")?.unknown_sizes, 1);
+    const unknownId = await capture();
+    assert.equal((await db.query<CapacitySnapshot>("select * from system_capacity_snapshots where id=$1", [unknownId])).rows[0].storage_bytes, null);
+    assert.equal(await count(db, "select count(*) from system_capacity_snapshots"), 2);
+  });
+});
+
+test("DBH-1C capacity settings are single-row, audited, owner-only, nullable, and isolated from business data", async () => {
+  await withDb(async (db) => {
+    await db.exec("create role service_role");
+    const before = await productSnapshot(db);
+    await db.exec(await read("20261008052700_system_capacity_settings"));
+    const readSettings = async () => (await db.query<{ r: { database_capacity_bytes: number | null; storage_capacity_bytes: number | null; updated_at: string | null; updated_by: string | null } }>("select system_capacity_settings_read() r")).rows[0].r;
+    const saveSettings = async (database: number | null, storage: number | null) => (await db.query<{ r: { database_capacity_bytes: number | null; storage_capacity_bytes: number | null; updated_at: string; updated_by: string } }>("select system_capacity_settings_save($1::bigint,$2::bigint) r", [database, storage])).rows[0].r;
+
+    await db.exec("set role authenticated");
+    assert.deepEqual(await readSettings(), { database_capacity_bytes: null, storage_capacity_bytes: null, updated_at: null, updated_by: null });
+    const saved = await saveSettings(500 * 1_048_576, 2 * 1_073_741_824);
+    assert.equal(saved.database_capacity_bytes, 500 * 1_048_576); assert.equal(saved.storage_capacity_bytes, 2 * 1_073_741_824);
+    assert.equal(saved.updated_by, user); assert.ok(saved.updated_at);
+    await assert.rejects(db.query("select * from system_capacity_settings"), /permission denied/);
+    await assert.rejects(saveSettings(-1, 1), /positive/);
+    await assert.rejects(saveSettings(1, 0), /positive/);
+    await db.exec("reset role");
+    const stored = (await db.query<{ id: number; updated_by: string }>("select id,updated_by from system_capacity_settings")).rows[0];
+    assert.equal(stored.id, 1); assert.equal(stored.updated_by, user);
+
+    for (const role of ["admin_manager", "sales_designer", "viewer"]) {
+      await db.query("update test_role set role=$1", [role]); await db.exec("set role authenticated");
+      await assert.rejects(readSettings(), /permission|privilege/i); await assert.rejects(saveSettings(600 * 1_048_576, null), /permission|privilege/i);
+      await db.exec("reset role");
+    }
+    await db.exec("update test_role set role='system_owner'; create or replace function current_account_status() returns text language sql stable as $$select 'disabled'$$; set role authenticated");
+    await assert.rejects(readSettings(), /permission|privilege/i); await assert.rejects(saveSettings(null, null), /permission|privilege/i);
+    await db.exec("reset role; create or replace function current_account_status() returns text language sql stable as $$select 'active'$$; set role authenticated");
+    const cleared = await saveSettings(null, null); assert.equal(cleared.database_capacity_bytes, null); assert.equal(cleared.storage_capacity_bytes, null);
+    await db.exec("reset role");
+    assert.equal(await count(db, "select count(*) from system_capacity_settings"), 1);
+    assert.equal(await productSnapshot(db), before, "prices, pricing_version, history and quotations unchanged");
+  });
+});
+
+test("DBH-1 history retains latest monthly samples in Dubai time and the correct 30-day baseline", async () => {
+  await withDb(async (db) => {
+    await db.exec("create role service_role; alter table storage.objects add column metadata jsonb");
+    await db.exec(await read("20261008045010_system_capacity_snapshots"));
+    await db.exec(`insert into system_capacity_snapshots(captured_at,database_bytes,supplier_bytes) values
+      (statement_timestamp()-interval '61 days',100,10),(statement_timestamp()-interval '31 days',200,20),
+      (statement_timestamp()-interval '29 days',300,30), (statement_timestamp()-interval '2 days',400,40),
+      ('2025-01-31 21:00:00+00',500,50),('2025-02-01 01:00:00+00',600,60);`);
+    const health = (await db.query<{ r: SystemCapacityReport }>("select system_capacity_report() r")).rows[0].r;
+    assert.equal(health.baseline_30_day?.database_bytes, 200);
+    assert.equal(health.snapshots[0].database_bytes, 400);
+    const months = health.monthly.map((s) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dubai", year: "numeric", month: "2-digit" }).format(new Date(s.captured_at)));
+    assert.equal(new Set(months).size, months.length);
+    assert.ok(health.monthly.some((s) => s.database_bytes === 600));
+    assert.ok(!health.monthly.some((s) => s.database_bytes === 500), "both UTC-boundary samples belong to February in Dubai");
+  });
+});
+
 test("compaction refuses a source that is not imported", async () => {
   await withDb(async (db) => {
     const profileId = await profileFor(db, brand, evidenceConfig, "Evidence");
     const importing = (await write(db, "source", { profile_id: profileId, expected_profile: evidenceConfig, title: "Up", filename: "u.xlsx", source_type: "xlsx", file_hash: hashB, expected_rows: 9, expected_cells: 9, expected_chunks: 1 })).id;
     await write(db, "chunk", { source_id: importing, chunk_index: 0, rows: evidenceRows, cells: normalizeSupplierRows(evidenceRows, evidenceConfig) });
     const dry = await compact(db, importing);
-    assert.equal(dry.safe, false); assert.match(dry.reasons.join(), /not imported/);
+    assert.equal(dry.safe, false); assert.match(dry.reasons.join(), /not finalized \(importing\)/);
     await assert.rejects(compact(db, importing, false), /Nothing was deleted/);
     assert.equal(await count(db, "select count(*) from public.supplier_source_rows where source_id=$1", [importing]), 9);
   });

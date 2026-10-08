@@ -13,6 +13,7 @@ type TemplateFormShellProps = {
   initialMessage?: string;
   onInvalidFieldName?: (fieldName: string) => void;
   onCancel?: () => void;
+  onCancelStart?: () => void;
   pendingMessage: string;
   pendingLabel: string;
   preventReset?: () => boolean;
@@ -123,6 +124,7 @@ export function TemplateFormShell({
   initialMessage,
   onInvalidFieldName,
   onCancel,
+  onCancelStart,
   pendingMessage,
   pendingLabel,
   preventReset,
@@ -174,7 +176,7 @@ export function TemplateFormShell({
             {onCancel ? (
               <button
                 type="button"
-                onClick={onCancel}
+                onClick={() => { onCancelStart?.(); onCancel(); }}
                 className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950"
               >
                 {cancelLabel}
@@ -182,6 +184,7 @@ export function TemplateFormShell({
             ) : cancelHref ? (
               <Link
                 href={cancelHref}
+                onClick={onCancelStart}
                 className="inline-flex h-10 items-center justify-center rounded-md border border-zinc-200 px-4 text-sm font-semibold text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950"
               >
                 {cancelLabel}

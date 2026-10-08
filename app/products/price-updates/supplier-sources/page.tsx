@@ -12,7 +12,6 @@ import { SupplierCompleteSummary, SupplierFinishScreen, SupplierImportDetails, S
 import { SupplierCoverageContext, SupplierCoverageSetup, SupplierFamilyCoverageSetup, SupplierPreviousPriceList, SupplierPriceListCards, SupplierSourceSummary, type OtherCoverage, type PriceListCardView } from "@/components/products/supplier-coverage";
 import { supplierBusinessDate, resolveSupplierPriceListLifecycleState } from "@/lib/products/supplier-price-repository";
 import { priceListReviewState } from "@/lib/products/supplier-list-presentation";
-import { SupplierCapacityPanel } from "@/components/products/supplier-capacity";
 import { requireBrandPriceReviewer } from "@/lib/auth";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -238,7 +237,6 @@ export default async function SupplierSourcesPage({ searchParams }: { searchPara
             {main}
           </>}
         <SupplierAdvancedImportSettings key={`${brand.id}:${text(params.advanced)}`} brandId={brand.id} brandName={brand.name} basis={brand.stored_price_basis} approver={approver} templates={templates} dimensions={vocabularyResult.data ?? []} profiles={profileList} open={text(params.advanced) === "1"} />
-        {canManageSupplierCapacity(profile?.role, profile?.account_status) ? <details className="rounded-lg border border-zinc-200 bg-zinc-50 p-4"><summary className="cursor-pointer text-sm font-semibold text-zinc-950">System / database health <span className="font-normal text-zinc-500">· System Owner only</span></summary><div className="mt-3"><SupplierCapacityPanel /></div></details> : null}
         {approver ? <div className="flex justify-between text-xs"><Link href={href({ vocabularyOffset: String(Math.max(0, offset(params.vocabularyOffset) - 50)) })}>Previous vocabulary</Link><Link href={href({ vocabularyOffset: String(offset(params.vocabularyOffset) + 50) })}>Next vocabulary</Link></div> : null}
       </div> : <p>No active Brands available.</p>}
     </div>
