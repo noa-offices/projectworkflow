@@ -217,7 +217,7 @@ export function SupplierPreviousPriceList({ currentSourceId, previous, canReview
 }
 
 /** Phase H: the primary landing section. One card per current price list; each card opens its own review, never a shared one. */
-export type PriceListCardView = SupplierPriceListCard & { openHref: string; editHref: string; detailsHref: string; advancedHref: string };
+export type PriceListCardView = SupplierPriceListCard & { openHref: string; editHref: string; detailsHref: string; advancedHref: string; replaceHref?: string };
 const priceListStates: Record<SupplierPriceListState, [string, string, string]> = {
   waiting: ["Waiting for a price list", "Import new", "border-zinc-200 bg-zinc-50 text-zinc-700"],
   no_coverage: ["Confirm Family coverage", "Confirm coverage", "border-amber-200 bg-amber-50 text-amber-900"],
@@ -257,6 +257,7 @@ export function SupplierPriceListCards({ cards, importHref, approver }: { cards:
         <details className="relative"><summary className={`${button} cursor-pointer list-none`} aria-label={`More actions for ${item.title}`}>⋯</summary>
           <ul className="absolute right-0 z-10 mt-1 w-48 space-y-1 rounded-md border border-zinc-200 bg-white p-2 text-xs font-semibold shadow-lg">
             <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.detailsHref}>View extracted data</Link></li>
+            {approver && item.replaceHref && item.priceListState === "current" ? <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.replaceHref}>Replace Price List</Link></li> : null}
             {approver ? <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.editHref}>Edit coverage</Link></li> : null}
             <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.detailsHref}>Price list details</Link></li>
             {approver ? <li><Link className="block rounded px-2 py-1 text-zinc-700 hover:bg-zinc-100" href={item.advancedHref}>Advanced tools</Link></li> : null}

@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { canApproveBrandPrices } from "@/lib/products/brand-price-permissions";
 import { assertSupplierProfile, type RawSupplierRow, type SourceScope, type SupplierProfile } from "@/lib/products/supplier-price-contracts";
 import { normalizeSupplierRows } from "@/lib/products/supplier-price-import";
+import { archiveBlockingSource, validateReplacementRequest, verifyReplacement } from "@/lib/products/supplier-replacement";
 import { cancelIncompleteSupplierImport, continueIncompleteSupplierCleanup, supplierIncompleteImports, supplierSourceUploadProgress } from "@/lib/products/supplier-import-cancel";
 import { sharedBaselineDrift } from "@/lib/products/supplier-price-matching";
 import { supplierCreateReviewBatch, supplierApplyReviewedPrice, supplierCompleteReview, supplierCompletionReadiness, supplierConfirmUnchangedPrice, supplierExcludeTargetFromSource, supplierBulkApplyChanged, supplierBulkConfirmUnchanged, supplierFamilyUnchangedMatchKeys, supplierBulkExcludeMissing, supplierBrandTargets, supplierSource, supplierSourceInspectorDetail, supplierSourceInspectorSearch, supplierWrite } from "@/lib/products/supplier-price-repository";
@@ -344,4 +345,24 @@ export async function continueSupplierImportCleanup(sourceId: string) {
 export async function listIncompleteSupplierImports(brandId: string) {
   const { client } = await reviewer();
   return supplierIncompleteImports(client, brandId);
+}
+
+/** Replace Price List, before importing: the supplier price list belongs to this Brand and the effective date is real. */
+export async function validateSupplierReplacement(brandId: string, definitionId: string, effectiveFrom: string) {
+  const { client } = await reviewer();
+  return validateReplacementRequest(client, { brandId, definitionId, effectiveFrom });
+}
+/** "Import with New Settings": archives the earlier import of the same file after the user confirmed. Nothing is deleted; the file hash and Brand are re-checked here. */
+export async function archiveBlockingSupplierSource(brandId: string, blockingSourceId: string, fileHash: string) {
+  const { client } = await approver();
+  const result = await archiveBlockingSource(client, { brandId, sourceId: blockingSourceId, fileHash });
+  revalidatePath(workspacePath);
+  return result;
+}
+/** After the import: is the new source imported and the applicable version of its supplier price list? */
+export async function verifySupplierReplacement(brandId: string, definitionId: string, sourceId: string) {
+  const { client } = await reviewer();
+  const verdict = await verifyReplacement(client, { brandId, definitionId, sourceId });
+  revalidatePath(workspacePath);
+  return verdict;
 }

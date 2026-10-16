@@ -1054,7 +1054,7 @@ export async function supplierProductSourceLookup(client: SupabaseClient, input:
 export type SupplierPriceListState = "waiting" | "no_coverage" | "ready_to_review" | "needs_attention" | "in_review" | "ready_to_complete" | "completed";
 export type SupplierPriceListCard = {
   priceListState?: import("./supplier-list-presentation").PriceListLifecycle; effectiveFrom?: string | null; createdAt?: string;
-  sourceId: string; sourceName: string | null; title: string; currency: string; profileId: string | null;
+  sourceId: string; definitionId?: string | null; filename?: string; basis?: string; sourceName: string | null; title: string; currency: string; profileId: string | null;
   families: number | null; sourceRows: number; items: number; compacted: boolean;
   batchId: string | null; batchStatus: string | null; scope: string | null; state: SupplierPriceListState;
   unresolved: number; unchanged: number; changed: number;
@@ -1073,7 +1073,7 @@ export function supplierPriceListState(input: { hasSource: boolean; hasCoverage:
  * Each card resolves its own review. Applicability and successful completion are separate requirements.
  */
 export async function supplierPriceListCards(client: SupabaseClient, brandId: string, definitions: SupplierCoverageDefinition[]): Promise<SupplierPriceListCard[]> {
-  const versions = await supplierRows<Pick<SourceVersion, "id" | "definition_id" | "title" | "currency" | "stored_rows" | "identity_count" | "status" | "effective_from"> & { created_at: string; rows_compacted_at?: string | null }>(client, "supplier_source_versions", "id,definition_id,title,currency,stored_rows,identity_count,status,effective_from,created_at,rows_compacted_at", { brand_id: brandId, status: "imported" }, "created_at");
+  const versions = await supplierRows<Pick<SourceVersion, "id" | "definition_id" | "title" | "filename" | "basis" | "currency" | "stored_rows" | "identity_count" | "status" | "effective_from"> & { created_at: string; rows_compacted_at?: string | null }>(client, "supplier_source_versions", "id,definition_id,title,filename,basis,currency,stored_rows,identity_count,status,effective_from,created_at,rows_compacted_at", { brand_id: brandId, status: "imported" }, "created_at");
   const batches = await supplierRows<{ id: string; source_id: string; status: string; scope: string; created_at: string; completed_at: string | null }>(client, "supplier_price_batches", "id,source_id,status,scope,created_at,completed_at", { brand_id: brandId }, "created_at");
   // The applicable version per definition (by effective date, never by import order); legacy versions without a definition stay listed as before.
   const businessDate = supplierBusinessDate();
@@ -1089,7 +1089,7 @@ export async function supplierPriceListCards(client: SupabaseClient, brandId: st
     const priceListState = resolveSupplierPriceListLifecycleState(version, versions, batches, businessDate);
     if (priceListState === "previous" || priceListState === "archived") continue;
     if (priceListState === "update_in_progress" && batch?.status !== "review" && batch?.status !== "matching") continue;
-    cards.push({ priceListState, effectiveFrom: version.effective_from, createdAt: version.created_at, sourceId: version.id, sourceName: definition?.name ?? null, title: version.title, currency: version.currency, profileId: definition?.profileId ?? null,
+    cards.push({ priceListState, effectiveFrom: version.effective_from, createdAt: version.created_at, sourceId: version.id, definitionId: version.definition_id ?? null, filename: version.filename, basis: version.basis, sourceName: definition?.name ?? null, title: version.title, currency: version.currency, profileId: definition?.profileId ?? null,
       families: definition ? definition.families.length : null, sourceRows: version.stored_rows, items: version.identity_count, compacted: Boolean(version.rows_compacted_at),
       batchId: batch?.id ?? null, batchStatus: batch?.status ?? null, scope: batch?.scope ?? null,
       state: supplierPriceListState({ hasSource: true, hasCoverage, batchStatus: batch?.status ?? null, unresolved }), unresolved, unchanged, changed });
